@@ -39,6 +39,7 @@ from .pairdevice import PairAllocation, event_digest
 
 __all__ = [
     "MEMBERSHIP",
+    "api",
     "status",
     "HostPairing",
     "R6PairDeviceSource",
@@ -323,14 +324,39 @@ def start_thread(service: Any, session: Any, conn: Callable[[], Any], checkpoint
     engine.membership = membership
     engine.host.checkpoint_source = checkpoint
 
+    holder: dict[str, Any] = {}
+
     def dormant() -> None:  # the worker stopped: no stale session or publisher stays attached
         engine.routes, engine.membership = _NoRelay(), UnavailableMembership()
         engine.post = lambda fn: None
         engine.host.checkpoint_source = None
+        if getattr(service, "pair_thread", None) is holder.get("t"):
+            service.pair_thread = None
 
     thread = PairThread(engine, name=f"orch-relay-r6p-{service.workspace_id[:8]}", on_stop=dormant)
+    holder["t"] = thread
     membership.bind(_EngineEvents(engine))
+    service.pair_thread = thread  # the 9A path runs its calls as jobs on it (api)
     return thread
+
+
+def api(service: Any, name: str, *args: Any, **kw: Any) -> Any:
+    """**The internal pairing API (11A.15.9A)** for the control ops and the dashboard wrappers: ``name`` is one of
+    :data:`orch.relay.r6.pair.API_METHODS` and nothing else (the settlement paths stay the host's, Opus review of
+    #588). It runs as a job on the running pair thread, else on the dormant engine (where ``offer`` refuses: no
+    worker). A :class:`PairRefused` becomes the :class:`HostError` with its §0.6 code."""
+    from orch.relay.r6.pair import PairRefused, run_api
+    from orch.relay.r6.pairstore import PairStoreError
+
+    thread = getattr(service, "pair_thread", None)
+    try:
+        if thread is not None and thread.alive:
+            return thread.api(name, *args, **kw)
+        return run_api(engine_for(service), name, *args, **kw)
+    except PairRefused as e:
+        raise HostError(e.code, e.message) from None
+    except PairStoreError as e:
+        raise _host_error(e) from None
 
 
 class _EngineEvents:

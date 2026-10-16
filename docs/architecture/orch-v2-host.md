@@ -4277,6 +4277,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     at open before `human.recover`, and `relay.primary_set`'s body. **New host codes** (§0.6): `relay.pair_open`,
     `relay.no_primary`, `relay.quota`, `relay.pair_closed` (both catalogs). Everything stays behind the R6 gate (`R6_READY` false):
     nothing is served on a socket yet; the CLI and the control ops are R6c-2. No wire, hash or F1 change.
+64. **R6c-2: the pairing CLI and control ops (§11A.15.9, 11A.15.9A; "As built in R6c-2", §11A.15.21; the number may be
+    renumbered when a parallel change lands first):** control ops `host.relay_pair_offer|show|list|answer|cancel|
+    abandon|cert` and `host.relay_primary_set` (reads: no idem, no outcome record; the offer's link only in its direct
+    answer), `orch host relay pair [--primary external]`, `pair list|cancel|abandon`, `primary set`, the internal API
+    as pair-thread jobs (`relaypair.api`, an allowlist that never reaches the settlement paths, pinned by AST), the
+    pairing block in `host.status.relay` (`pairing`, additive, no secret) and a durable `pairing_dropped` counter. No
+    new code; no wire, hash or F1 change. `--primary inline` is refused until it is built. The pairing control ops
+    are open to every host-UID control-socket client (tier A; the `ORCH_GRANT` refusal is the CLI's: an accepted
+    residual, stated in §11A.15.21) and have outcome-unknown semantics on cancel or timeout.
 
 ---
 
@@ -9628,6 +9637,93 @@ failure at each transition; a crash at each allocation step then recovery; corru
 `test_r6c_pairrelay.py` (the five routes' HTTP fixtures on a loopback mock), `test_r6c_pair_thread.py`, and
 `tests/host/test_relay_pair.py` (a served workspace end to end through `human.prepare`/`sign`/`submit`, step 9
 refused without R6b, a crash after the append rolled forward at open).
+
+#### 11A.15.21 As built in R6c-2 (16 Oct 2026; the CLI, the control ops, the 9A path)
+
+**What is built.**
+- **The internal API as pair-thread jobs (11A.15.9A).** `orch.relay.r6.pair.API_METHODS` = `offer`, `answer`,
+  `cancel`, `abandon`, `list_offers`, `pair_cert`, `show`; `PairEngine.api_table()` maps exactly these;
+  `PairThread.api(name, ...)` runs one as a job (there is **no generic call**), `run_api` does the same on a dormant
+  engine. `orch.host.relaypair.api(service, name, ...)` is the one entry for the control ops and the dashboard
+  wrappers (orch-52's `pair/1`): the running pair thread (`service.pair_thread`, cleared when it stops), else the
+  dormant engine; `PairRefused` becomes the `HostError` with its §0.6 code. **Hard rule (Opus review of #588):** the
+  settlement paths (`settle`, `committed`, `refused`, `recover`, `adopt_existing`, `precommit`) are never reachable
+  through the thread, the API, an op or the CLI: `tests/relay/test_r6c2_boundary.py` pins by AST every call site of
+  those names in the pairing modules and that the API, the thread, the ops and the CLI never name one.
+- **Control ops** (host control socket; the CLI refuses `ORCH_GRANT`): `host.relay_pair_offer {workspace_id,
+  scopes?, ttl_ms?}` → `{offer_id, state, scopes, expires_ms, link:{native, https}}` (the link in this direct answer
+  only), `host.relay_pair_show {workspace_id, offer_id}` → `{offer}`, `host.relay_pair_list` → `{offers}`,
+  `host.relay_pair_answer {offer_id, code, approve}` → `{state, attempts_left}`, `host.relay_pair_cancel`,
+  `host.relay_pair_abandon` → `{state}`, `host.relay_pair_cert {offer_id, cert?, rejection?, challenge?}` (the
+  inline primary's hand-over, Opus L4) → `{state}`, `host.relay_primary_set {cert, label}` → `{device_id}`. All are
+  reads in the write table (no idem, no outcome record), so the link is never persisted by the host. Summaries carry
+  no secret (`has_cert`, `phone_deadline_ms` added).
+- **The CLI** (`orch.host.paircli`): `orch host relay pair --workspace W --primary external [--scopes] [--ttl]
+  [--json [--json-fd N]] [--no-qr] [--resume --offer O]`, `pair list|cancel|abandon`, `primary set --cert FILE
+  --label TEXT`. Attached: one line per state; the request's label "named by the device; not authenticated", the
+  scopes, a warning when a second key used the link; the six characters typed on `/dev/tty` (3 attempts; empty
+  rejects); the external primary's wait; **step 9 with the inline terminal passphrase signer** (`signer.run` of
+  `relay.pair_device {offer_id}` with the device key's own backend on the pinned workspace connection; the host
+  refuses click and convenience for this op); progress to `approved` (exit 0; a terminal state exits 3). The link
+  goes to the terminal (QR through `segno` when installed) or, with `--json`, to stdout only when it is a TTY, else to
+  `--json-fd`; a resumed offer prints no link.
+- **`host.status.relay.pairing`** (additive, only when a pairing engine is open): the offers, the pairing alarms,
+  the `needs` items and the in-memory drop count. **`pairing_dropped`** is written durably at most once a minute
+  (the alarm's `count` is the total).
+
+**Output injection (orch-07's scan of `paircli.py`).** Everything the CLI prints that came from the relay, a phone
+or the host goes through `paircli.safe` (`clean_label`: C0/C1, DEL, format, bidi and zero-width characters removed;
+every whitespace, a newline too, a space; printable characters only; capped) or is shown only when it is a token
+the CLI knows (`_word`: states, scopes, ids; else `?`); the label is bracketed and on one line next to the typed
+code; a link is printed only when it is printable ASCII; errors are cleaned the same way; every JSON output is
+built by the JSON encoder (ASCII, every control character escaped). Tests: `\x1b[2J`, a bidi override, a newline,
+zero-width and C1 characters in a device label (the attached loop, `pair list` text and JSON) and in a host error
+and a relayed refusal.
+
+**Opus review of #589 (16 Oct 2026, CHANGES; fixed).**
+- **M1, step 9's errors** (a declined review, `SignerRefused` "not confirmed"; `CustodyError`; `OrchError`/
+  `HostFailure`; `FrameError`; `OSError`/`TimeoutError`; anything else) end in a cleaned refusal, never a
+  traceback (`paircli._guarded`, as `hostclient._human` maps them); a decline says nothing was signed; the CLI says
+  the offer stays and how to sign later (`--resume --offer O`).
+- **L1, accepted residual, stated (as R5 for `host.relay_unlink`).** The `host.relay_pair_*` ops and
+  `host.relay_primary_set` are open to every control-socket client of the host UID; the `ORCH_GRANT` refusal is the
+  CLI's. A same-UID tier-A agent can make an offer and read its link, answer the SAS for a phone it controls,
+  cancel or abandon the person's offers (a denial of service), set a primary certificate (it still verifies under the
+  genesis `PK`) and hand in certificates, rejections or challenges (each verified under the pinned `PK`; an invalid
+  one raises a `relay_misbehaving` alarm that names the relay, not the local caller). "The SAS is typed at the
+  terminal" is a CLI property, not a host-enforced boundary against same-UID code. Completion still needs the
+  PK-signed certificate (the separate primary, whose human compares `cert_code`) and the passphrase-signed
+  `relay.pair_device`. Tier-A trust (the control socket admits only the host UID), not person authorization.
+- **L2, state-changing ops classed as reads.** The pairing ops have no idem and no outcome record (the offer's link
+  must never be persisted), so they have **outcome-unknown semantics**: a cancelled or timed-out call may still have
+  applied; look at the offer (`orch host relay pair list`) before acting again. A retried wrong code uses one more of
+  the 3 attempts; a retried offer refuses `relay.pair_open` while the first (whose link was lost) lives: cancel it.
+  `PairThread._call` drops a call that timed out **before it ran** (answer `workspace.unavailable`: never run
+  later) and answers `outcome.unknown` for one that timed out **while running**.
+- **L3:** the boundary test also scans `paircli.py`, flags every attribute and string constant equal to a settlement
+  name (an alias, a `getattr`), and pins that `PairThread._call` is referenced only in `PairThread.api`.
+- **L4:** `--json-fd` must be a pipe or a socket (`fstat`) above fd 2; a regular file or fd 0 to 2 is refused before
+  any offer exists.
+- **L6 (info):** the phone's cleaned, capped label is visible to agents (classes P and G) through
+  `host.status.relay.pairing`: a small prompt-text channel; no secret. L5 (a `CONTROL_ERRORS` tuple) is not done.
+
+**Judgement calls.**
+- J-R6c2-1 **`--primary inline` is refused** (`invalid.input`, the fix names `--primary external`) until the inline
+  primary (`orch.relay_owner`'s `PrimaryQueue` with `RecoveryCodeSource`) is built: a follow-up group, with its own
+  Opus review (it types the recovery code).
+- J-R6c2-2 **"Already in F1" is not reachable** through any op or the CLI: `allocate_existing` calls
+  `adopt_existing`, a settlement path the hard rule keeps away from ops. A follow-up decides where it runs (a
+  host-internal check inside `relay.pair_device`'s prepare is the likely place).
+- J-R6c2-3 **The R2 hooks** (releasing the baseline pin on the device's first verified column-R request; the
+  "paired but never connected" `needs` item after 24 h) are a follow-up: they need a hook in R2's column-R path.
+- J-R6c2-4 The three offer-only codes (`relay.pair_open`, `relay.no_primary`, `relay.quota`) are returned by the
+  control op, not by a registry op; `tests/cli/test_registry.py` names them; `relay.pair_closed` is declared on
+  `relay.pair_device`.
+
+**Tests.** `tests/relay/test_r6c2_api.py` (the allowlist, `show`, the drop counter), `test_r6c2_boundary.py` (the
+hard rule by AST), `tests/host/test_relay_pair_ops.py` (the ops on a real host's control socket, the status block),
+`tests/host/test_relay_pair_cli.py` (the attached loop, the refusals, the end-to-end CLI run with a scripted phone and
+external primary, `--json-fd`, resume, the argparse front, the production step-9 driver).
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

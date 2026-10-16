@@ -100,6 +100,9 @@ _READS = frozenset(
         "records.snapshot", "records.export_check", "records.status", "reader.list",
         "run.list", "run.sub",
         "host.relay_stop", "host.relay_start", "host.relay_unlink",
+        # R6c-2: relay pairing (no idem, no outcome record: the offer's link is only in its direct answer)
+        "host.relay_pair_offer", "host.relay_pair_show", "host.relay_pair_list", "host.relay_pair_answer",
+        "host.relay_pair_cancel", "host.relay_pair_abandon", "host.relay_pair_cert", "host.relay_primary_set",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a; ``relay.submit`` through the

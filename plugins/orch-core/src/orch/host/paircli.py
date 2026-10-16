@@ -1,0 +1,429 @@
+"""R6c-2: ``orch host relay pair ...`` and ``orch host relay primary set`` (orch-v2-host 11A.15.9), thin wrappers over
+the pairing control ops (``host.relay_pair_*``, ``host.relay_primary_set``).
+
+* ``orch host relay pair --workspace W [--scopes look,decide] [--ttl 10m] [--json [--json-fd N]] [--no-qr]
+  [--resume --offer O] --primary external``: makes the offer (or attaches to one with ``--resume``), prints the
+  native link (in a QR when ``segno`` is installed) and the HTTPS link labelled "fallback: your relay operator's page
+  can read it", then **stays attached**: it shows the incoming request (the label "named by the device", the scopes,
+  a warning when a second key used the link), asks the person to **type** the six characters the phone shows (3
+  attempts; an empty line rejects), waits while the separate primary signs the certificate (``--primary external``),
+  drives the ``relay.pair_device`` signature with the inline terminal passphrase signer (step 9; never click or
+  convenience), and shows the progress to ``approved``.
+* ``--primary inline`` (the design's default) runs the primary steps itself through ``orch.relay_owner``; it is **not
+  built yet** (JUDGEMENT CALL, R6c-2: a follow-up), so it is refused with a fix naming ``--primary external``.
+* ``orch host relay pair list|cancel|abandon --workspace W [--offer O]`` and ``orch host relay primary set
+  --workspace W --cert FILE --label TEXT``.
+
+**The link** is written only to the person's terminal (stdout) or, with ``--json``, to stdout when it is a TTY or to
+the descriptor ``--json-fd`` names (the dev path's private pipe); never to a file, never as an argument of another
+process, never logged. A resumed offer has no link (it is never stored). Human only: refused under ``ORCH_GRANT``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any, TextIO
+
+from .errors import HostError
+
+__all__ = ["main", "parse_ttl"]
+
+TERMINAL = ("rejected", "expired", "cancelled", "failed")
+STATES = frozenset({"open", "pending", "confirmed", "cert_pending", "allocated", "published", "approved", *TERMINAL})
+_LINK_CHARS = frozenset(chr(c) for c in range(0x21, 0x7F))
+
+
+def safe(text: object, cap: int = 80) -> str:
+    """Terminal-safe text from the relay, a phone or the host (output injection): ``clean_label`` (protocol §2.5:
+    C0/C1 controls, format and bidi characters, zero-width and other default-ignorable code points removed), then
+    every whitespace (a newline too) a space, only printable characters, runs collapsed, at most ``cap`` characters.
+    Never printed raw next to the code the person compares."""
+    from orch.identity.pairing import clean_label
+
+    if not isinstance(text, str):
+        return "?"
+    try:
+        cleaned = clean_label(text.replace("\n", " "))
+    except Exception:  # noqa: BLE001 - lone surrogates
+        return "?"
+    kept = "".join(" " if c.isspace() else c for c in cleaned if c.isspace() or c.isprintable())
+    return " ".join(kept.split())[:cap]
+
+
+def _word(value: object, allowed: frozenset[str] | None = None) -> str:
+    """A token the host sends (a state, a scope, an id): shown only when it is one we know, else ``?``."""
+    if not isinstance(value, str) or not value or (allowed is not None and value not in allowed):
+        return "?"
+    return value if all(c.isalnum() or c in "_-." for c in value) and len(value) <= 64 else "?"
+
+
+def _link(value: object) -> str:
+    """A pairing link: printable ASCII only (the host builds it from a checked origin and b64u fields); anything
+    else is never written to the terminal."""
+    if not isinstance(value, str) or not value or len(value) > 2048 or not set(value) <= _LINK_CHARS:
+        raise HostError("internal", "the host returned a link that is not printable ASCII; nothing is shown")
+    return value
+
+
+POLL_S = 1.0
+FALLBACK = "fallback: your relay operator's page can read it"
+
+
+def parse_ttl(text: str | None) -> int:
+    """``10m``, ``90s`` or milliseconds; at most 10 minutes."""
+    if text is None:
+        return 600_000
+    t = text.strip().lower()
+    try:
+        ms = int(t[:-1]) * 60_000 if t.endswith("m") else int(t[:-1]) * 1000 if t.endswith("s") else int(t)
+    except ValueError:
+        raise HostError("invalid.input", "--ttl: like 10m, 90s or milliseconds") from None
+    if not 60_000 <= ms <= 600_000:
+        raise HostError("invalid.input", "--ttl: between 1 and 10 minutes")
+    return ms
+
+
+class _Refused(Exception):
+    def __init__(self, error: Mapping[str, Any], exit_code: int) -> None:
+        super().__init__(error.get("code"))
+        self.error, self.exit = dict(error), exit_code
+
+
+def _caller(client: Any) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
+    def call(op: str, args: dict[str, Any]) -> dict[str, Any]:
+        res = client.call(op, args)
+        if not res.get("ok"):
+            raise _Refused(res.get("error") or {"code": "internal"}, int(res.get("exit", 1)))
+        return res["result"]["data"]
+
+    return call
+
+
+def _qr(link: str) -> str | None:
+    try:
+        import segno  # type: ignore[import-not-found]  # optional: orch[qr]
+    except ImportError:
+        return None
+    import io
+
+    buf = io.StringIO()
+    segno.make(link, error="m").terminal(out=buf, compact=True)
+    return buf.getvalue()
+
+
+def _tty_ask(prompt: str) -> str:
+    """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed)."""
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as tty:
+            tty.write(prompt)
+            tty.flush()
+            return tty.readline().strip()
+    except OSError:
+        raise HostError("custody.no_prompt", "the code is typed at a terminal: run this in one") from None
+
+
+def attach(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]],
+    wid: str,
+    offer_id: str,
+    out: TextIO,
+    *,
+    ask: Callable[[str], str],
+    step9: Callable[[str], None],
+    emit: Callable[[dict[str, Any]], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_polls: int | None = None,
+) -> int:
+    """The attached part (11A.15.9): one line per state; the typed SAS; the external primary's wait; step 9 once the
+    certificate is in hand; progress to ``approved``. Returns the exit code (0 approved, 3 otherwise)."""
+    last: str | None = None
+    signed = False
+    waiting_shown = False
+    polls = 0
+    while True:
+        offer = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
+        state = _word(offer.get("state"), STATES)
+        scopes = ", ".join(_word(x, frozenset({"look", "decide"})) for x in offer.get("scopes") or [])
+        label = safe(offer.get("label"))
+        if state != last:
+            last = state
+            out.write(f"state: {state}\n")
+            out.flush()
+            if emit is not None:
+                emit({"offer_id": offer_id, "state": state, "expires_ms": offer.get("expires_ms")})
+        if state == "approved":
+            out.write(f"approved: {label or 'the device'} is paired ({scopes})\n")
+            return 0
+        if state in TERMINAL:
+            out.write(f"the pairing ended: {state}\n")
+            return 3
+        if state == "pending":
+            if offer.get("second_key"):
+                out.write("WARNING: someone else has this link (a second key used it): reject\n")
+            out.write(f"request from: [{label}] (named by the device; not authenticated)\n")
+            out.write(f"scopes: {scopes}\n")
+            code = ask("type the 6 characters the phone shows (empty: reject): ")
+            got = call(
+                "host.relay_pair_answer",
+                {"workspace_id": wid, "offer_id": offer_id, "code": code, "approve": bool(code)},
+            )
+            if got["state"] == "pending":
+                left = got.get("attempts_left")
+                out.write(f"that is not the code: {left if type(left) is int else '?'} attempt(s) left\n")
+            continue
+        if state in ("confirmed", "cert_pending") and offer.get("has_cert") and not signed:
+            signed = True
+            out.write("the certificate is verified: sign the pairing (device.added) with your passphrase\n")
+            out.flush()
+            step9(offer_id)
+            continue
+        if state == "cert_pending" and not offer.get("has_cert") and not waiting_shown:
+            waiting_shown = True
+            out.write("waiting for the primary (external) to sign the certificate; compare its code with the phone\n")
+        polls += 1
+        if max_polls is not None and polls >= max_polls:
+            return 3
+        sleep(POLL_S)
+
+
+def _workspace(state: Path, given: str) -> dict[str, Any]:
+    from .custody import read_json
+    from .registry import registry_path
+
+    reg = read_json(registry_path(state), os.getuid()) or {"workspaces": []}
+    match = [w for w in reg.get("workspaces") or [] if given in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        raise HostError("not_found", f"no single registered workspace {given}")
+    return match[0]
+
+
+def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Callable[[str], None]:
+    """Step 9 with the **inline terminal passphrase signer** (the person path, as every person command in host
+    mode: ``human.prepare`` of ``relay.pair_device``, the review on ``/dev/tty``, the device key, ``human.submit``).
+    Never the click signer, never ``auth:"convenience"`` (the host refuses both for this op)."""
+
+    def run(offer_id: str) -> None:
+        from orch.hostclient import Target, _connect, _durable, workspace_socket
+        from orch.identity import device_ref
+        from orch.ops import human
+
+        from . import signer
+        from .control_client import new_idem
+
+        wid = entry["workspace_id"]
+        host_uid = entry.get("host_uid")
+        if type(host_uid) is not int:
+            raise HostError("host.unavailable", "the registry entry has no host UID")
+        person = ((entry.get("peers") or {}).get(str(os.getuid())) or {}).get("person")
+        if not person:
+            raise HostError("human_only", "this UID is not mapped to a person in this workspace")
+        directory = human.keys_dir(state, wid)
+        if not (directory / human.KEY_FILE).is_file():
+            raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
+        target = Target(wid, host_uid, workspace_socket(env, state, host_uid, wid), "person", state, entry)
+        link = [_connect(target)]
+        idem = new_idem()
+        name = Path(str(entry.get("root") or wid)).name
+        try:
+            backend = human.open_backend(directory)
+            device = device_ref(backend.public_key(human.KEY_ID))
+            signer.run(
+                _durable(target, link, idem), "relay.pair_device", {"offer_id": offer_id}, backend=backend,
+                key_id=human.KEY_ID, workspace_id=wid, person=person, device=device,
+                workspace=lambda w: (name, str(entry.get("prefix"))) if w == wid else None,
+                confirm=human.review_prompt, show_secret=human.show_secret, idem=idem,
+            )  # fmt: skip
+        finally:
+            link[0].close()
+
+    return run
+
+
+class _Step9Failed(HostError):
+    """A step-9 refusal; ``main`` prints that the offer stays and how to sign it later."""
+
+    def __init__(self, code: str, message: str, *, offer: str) -> None:
+        super().__init__(code, message)
+        self.offer = offer
+
+
+def _cut(text: object) -> str:
+    return safe(str(text), 200)
+
+
+def _guarded(step9: Callable[[str], None]) -> Callable[[str], None]:
+    """Step 9's errors as :class:`HostError` (Opus review of #589, M1, as ``hostclient._human`` maps them), so every
+    one ends in ``main``'s cleaned refusal, never a traceback: a declined review (``SignerRefused``, "not
+    confirmed"), the key custody (``CustodyError``), the host connection (``OrchError``/``HostFailure``,
+    ``FrameError``, ``OSError``, ``TimeoutError``), anything else as ``internal``. The hint says the offer stays."""
+
+    def run(offer_id: str) -> None:
+        from orch.custody.base import CustodyError
+        from orch.ops.errors import OrchError
+
+        from . import frames
+        from .signer import SignerRefused
+
+        oid = _word(offer_id)
+        try:
+            step9(offer_id)
+        except HostError as exc:
+            raise _Step9Failed(exc.code, _cut(exc.message), offer=oid) from None
+        except SignerRefused as exc:
+            declined = "not confirmed" in str(exc)
+            text = "not confirmed: nothing was signed" if declined else f"{exc}; nothing was signed"
+            raise _Step9Failed("invalid.input", _cut(text), offer=oid) from None
+        except CustodyError as exc:
+            raise _Step9Failed(str(getattr(exc, "code", "custody")), _cut(str(exc)), offer=oid) from None
+        except OrchError as exc:
+            raise _Step9Failed(str(exc.code), _cut(str(exc)), offer=oid) from None
+        except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
+            raise _Step9Failed(
+                "host.unavailable", _cut(f"lost the connection to the orch host ({exc})"), offer=oid
+            ) from None
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never a traceback: the class name only
+            raise _Step9Failed("internal", _cut(f"step 9 failed ({type(exc).__name__})"), offer=oid) from None
+
+    return run
+
+
+def _json_sink(fd: object, out: TextIO) -> TextIO:
+    """Where ``--json`` writes the link (11A.15.9, Opus #589 L4): stdout only when it is a TTY, else ``--json-fd``,
+    which must be a pipe or a socket (never a regular file, never fd 0, 1 or 2)."""
+    import stat
+
+    if fd is None:
+        if out.isatty():
+            return out
+        raise HostError("invalid.input", "--json writes the link only to a TTY or to --json-fd")
+    if type(fd) is not int or fd < 3:
+        raise HostError("invalid.input", "--json-fd must be a descriptor above 2 (a pipe or a socket)")
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        raise HostError("invalid.input", "--json-fd is not an open descriptor") from None
+    if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+        raise HostError("invalid.input", "--json-fd must be a pipe or a socket: the link is never written to a file")
+    return os.fdopen(fd, "w", closefd=False)
+
+
+def main(
+    args: Any,
+    env: Mapping[str, str],
+    out: TextIO,
+    *,
+    state: Path,
+    control: Path,
+    ask: Callable[[str], str] = _tty_ask,
+    step9: Callable[[str], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    from orch.custody.cli import write_error
+
+    from .control_client import ControlClient
+
+    as_json = bool(getattr(args, "json", False))
+    if env.get("ORCH_GRANT"):
+        return write_error(out, as_json, "human_only", "an agent never pairs a device or sets the primary")
+    sub = getattr(args, "sub", None)
+    try:
+        entry = _workspace(state, args.workspace)
+        wid = entry["workspace_id"]
+        try:
+            client = ControlClient(control)
+        except (OSError, ValueError) as exc:  # no socket, nobody listening, or an unsafe socket path
+            raise HostError("host.unavailable", f"the orch host is not reachable ({type(exc).__name__})") from None
+        with client:
+            call = _caller(client)
+            if args.action == "primary":
+                if sub != "set" or not args.cert or not args.label:
+                    raise HostError(
+                        "invalid.input", "orch host relay primary set --workspace W --cert FILE --label TEXT"
+                    )
+                cert = json.loads(Path(args.cert).read_text())
+                data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": args.label})
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
+            if sub == "list":
+                data = call("host.relay_pair_list", {"workspace_id": wid})
+                if as_json:
+                    out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                else:
+                    for o in data["offers"]:
+                        label = safe(o.get("label")) or "-"
+                        req = _word(o.get("outstanding_request")) if o.get("outstanding_request") else "-"
+                        sc = ",".join(_word(x, frozenset({"look", "decide"})) for x in o.get("scopes") or [])
+                        st = _word(o.get("state"), STATES)
+                        out.write(f"{_word(o.get('offer_id'))}  {st:<12} {sc}  [{label}]  request={req}\n")
+                return 0
+            if sub in ("cancel", "abandon"):
+                if not args.offer:
+                    raise HostError("invalid.input", f"orch host relay pair {sub} needs --offer")
+                data = call(f"host.relay_pair_{sub}", {"workspace_id": wid, "offer_id": args.offer})
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
+            if sub is not None:
+                raise HostError("invalid.input", "orch host relay pair [list|cancel|abandon]")
+            if (args.primary or "inline") != "external":
+                raise HostError(
+                    "invalid.input",
+                    "the inline primary is not built yet: pass --primary external (the separate primary signs the "
+                    "certificate)",
+                )
+            emit = None
+            if as_json:
+                sink = _json_sink(getattr(args, "json_fd", None), out)
+
+                def emit(obj: dict[str, Any], sink: TextIO = sink) -> None:
+                    sink.write(json.dumps(obj, sort_keys=True) + "\n")
+                    sink.flush()
+
+            if args.resume:
+                if not args.offer:
+                    raise HostError("invalid.input", "--resume needs --offer")
+                offer_id = args.offer
+            else:
+                scopes = [s for s in (args.scopes or "look,decide").split(",") if s]
+                offer = call(
+                    "host.relay_pair_offer",
+                    {"workspace_id": wid, "scopes": scopes, "ttl_ms": parse_ttl(args.ttl)},
+                )
+                offer_id = _word(offer.get("offer_id"))
+                link = {"native": _link(offer["link"]["native"]), "https": _link(offer["link"]["https"])}
+                if emit is not None:
+                    emit({"offer_id": offer_id, "state": offer["state"], "link": link["https"],
+                          "native_link": link["native"], "expires_ms": offer["expires_ms"]})  # fmt: skip
+                else:
+                    exp = offer.get("expires_ms")
+                    out.write(f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n")
+                    qr = None if args.no_qr else _qr(link["native"])
+                    out.write(qr if qr else ("" if args.no_qr else "install orch[qr] for a QR\n"))
+                    out.write(f"link: {link['native']}\n")
+                    out.write(f"{FALLBACK}: {link['https']}\n")
+                    out.flush()
+                del link
+            driver = _guarded(step9 or _step9(env, state, entry))
+            return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep)
+    except _Refused as exc:  # the host's refusal, JSON-encoded (ASCII: every control character escaped)
+        out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True, ensure_ascii=True))
+        out.write("\n")
+        return exc.exit
+    except HostError as exc:
+        if isinstance(exc, _Step9Failed):
+            out.write(f"nothing was added; the offer stays: sign later with orch host relay pair --resume --offer "
+                      f"{exc.offer}\n")  # fmt: skip
+        hint = safe(exc.hint, 300) if exc.hint else None
+        return write_error(out, as_json, _word(exc.code) if exc.code else "internal", safe(exc.message, 400), hint=hint)
+    except (FileNotFoundError, ConnectionRefusedError):
+        return write_error(out, as_json, "host.unavailable", "the orch host is not running: orch host start")
+    except (OSError, ValueError) as exc:
+        return write_error(out, as_json, "invalid.input", safe(f"{type(exc).__name__}: {exc}", 300))
+    except KeyboardInterrupt:
+        out.write("interrupted: the offer stays; attach again with --resume --offer\n")
+        return 130

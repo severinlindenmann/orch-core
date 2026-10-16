@@ -325,6 +325,8 @@ class OfferSummary:
     outstanding_request: str | None
     second_key: bool
     sas_tries_left: int | None
+    has_cert: bool = False
+    phone_deadline_ms: int | None = None
 
 
 # -- answers: pure functions of the record (11A.15.6 "Answers per state") ------------------------------------------
@@ -524,6 +526,8 @@ class PairEngine:
         self._last_poll: dict[str, int] = {}
         self._retry_at: dict[str, int] = {}
         self.dropped = 0  # silent drops (unknown offer, bad tag, budget, overflow), counted (alarm pairing_dropped)
+        self._dropped_flushed = 0
+        self._dropped_at = -(10**15)
         self._req_digest = ""  # the request being answered (receive() runs one at a time, on the pair thread)
         membership.bind(_Events(self))
 
@@ -828,9 +832,30 @@ class PairEngine:
                     outstanding_request=out["request_id"] if out is not None and out["offer_id"] == oid else None,
                     second_key=bool(rec.get("second_key")),
                     sas_tries_left=SAS_TRIES - int(rec.get("sas_tries") or 0) if rec["state"] == "pending" else None,
+                    has_cert=rec.get("cert") is not None,
+                    phone_deadline_ms=rec.get("phone_deadline_ms"),
                 )  # fmt: skip
             )
         return rows
+
+    def show(self, offer_id: str) -> OfferSummary:
+        """One offer's summary (the attached CLI's view): no secret, as :meth:`list_offers`."""
+        self._get_or_refuse(offer_id)
+        row = next((r for r in self.list_offers() if r.offer_id == offer_id), None)
+        if row is None:
+            raise PairRefused("not_found", "no such offer")
+        return row
+
+    def api_table(self) -> dict[str, Callable[..., Any]]:
+        """**The internal API (11A.15.9A), and nothing else.** The one table every outside caller goes through
+        (:meth:`PairThread.api`, :func:`run_api`): the host's settlement paths (``settle``, ``committed``,
+        ``refused``, ``recover``, ``adopt_existing``, ``precommit``) are never in it (Opus review of #588)."""
+        table = {
+            "offer": self.offer, "answer": self.answer, "cancel": self.cancel, "abandon": self.abandon,
+            "list_offers": self.list_offers, "pair_cert": self.pair_cert, "show": self.show,
+        }  # fmt: skip
+        assert frozenset(table) == API_METHODS
+        return table
 
     def pair_cert(self, offer_id: str, *, cert: Any = None, rejection: Any = None, challenge: Any = None) -> str:
         """``relay.pair_cert`` (Opus L4): the inline primary hands the certificate it signed, or its rejection
@@ -1494,6 +1519,25 @@ class PairEngine:
         out = self.store.outstanding()
         if out is not None and now > int(out["expires_ms"]) + OUTSTANDING_GRACE_MS:
             self.store.clear_outstanding(out["request_id"])
+        self._flush_dropped(now)
+
+    def _flush_dropped(self, now: int) -> None:
+        """The ``pairing_dropped`` counter (11A.15.2), durably at most once a minute: the alarm's ``count`` is the
+        total of silent drops (unknown offer, bad tag, budget, queue overflow) since the alarms were reset."""
+        delta = self.dropped - self._dropped_flushed
+        if delta <= 0 or now - self._dropped_at < 60_000:
+            return
+        try:
+            with self.store.lock:
+                obj = self.store.alarms()
+                a = obj["alarms"].setdefault("pairing_dropped", {"count": 0, "at_ms": 0, "detail": ""})
+                a["count"] = int(a.get("count", 0)) + delta
+                a["at_ms"], a["detail"] = now, "silent drops"
+                self.store.write_alarms(obj)
+        except (OSError, StateError):
+            return  # retried at the next tick
+        self._dropped_flushed += delta
+        self._dropped_at = now
 
     def _tail(self, rec: dict[str, Any], now: int) -> None:
         end = int(rec.get("terminal_ms") or rec.get("approved_ms") or 0)
@@ -1524,6 +1568,17 @@ class _Events:
 
     def on_refused(self, offer_id: str, reason: str) -> None:
         self._engine.post(lambda: self._engine.membership_refused(offer_id, reason))
+
+
+#: the internal API's names (11A.15.9A); pinned by a test, the settlement paths are never among them
+API_METHODS = frozenset({"offer", "answer", "cancel", "abandon", "list_offers", "pair_cert", "show"})
+
+
+def run_api(engine: PairEngine, name: str, *args: Any, **kw: Any) -> Any:
+    """Run one internal-API call on ``engine`` (the caller is on the pair thread, or the engine is dormant)."""
+    if type(name) is not str or name not in API_METHODS:
+        raise PairRefused("invalid.input", "not a pairing API call")
+    return engine.api_table()[name](*args, **kw)
 
 
 # -- the thread and R2's seam --------------------------------------------------------------------------------------
@@ -1569,15 +1624,36 @@ class PairThread:
     def post(self, fn: Callable[[], None]) -> None:
         self._q.put(("job", fn, None))
 
-    def call(self, fn: Callable[[], Any], timeout: float = 30.0) -> Any:
-        """Run ``fn`` on the pair thread and return (or raise) its result."""
+    def api(self, name: str, *args: Any, timeout: float = 30.0, **kw: Any) -> Any:
+        """Run the internal-API call ``name`` (one of :data:`API_METHODS`, nothing else) as a pair-thread job and
+        return (or raise) its result. There is no generic call: the settlement paths stay the host's."""
+        if type(name) is not str or name not in API_METHODS:
+            raise PairRefused("invalid.input", "not a pairing API call")
+        return self._call(lambda: run_api(self.engine, name, *args, **kw), timeout)
+
+    @property
+    def alive(self) -> bool:
+        return self._thread.is_alive() and not self._stop.is_set()
+
+    def _call(self, fn: Callable[[], Any], timeout: float = 30.0) -> Any:
+        """Run ``fn`` on the pair thread and return (or raise) its result. A call that times out **before it runs**
+        is dropped (it never runs later: the caller was told ``workspace.unavailable``, so nothing was applied); one
+        that times out **while it runs** is ``outcome.unknown`` (look at the offer before acting again). Opus review
+        of #589, L2."""
         if threading.current_thread() is self._thread:
             return fn()
         done = threading.Event()
         box: dict[str, Any] = {}
         self._q.put(("call", fn, (done, box)))
         if not done.wait(timeout):
-            raise PairRefused("workspace.unavailable", "the pair thread did not answer in time")
+            with self._lock:
+                started = box.get("started", False)
+                if not started:
+                    box["dropped"] = True
+            if not started:
+                raise PairRefused("workspace.unavailable", "the pair thread did not answer in time; nothing was done")
+            if not done.wait(0):
+                raise PairRefused("outcome.unknown", "the call is still running: look at the offer before retrying")
         if "error" in box:
             raise box["error"]
         return box.get("result")
@@ -1636,6 +1712,11 @@ class PairThread:
                             self._done.add(n)
                 elif kind == "call":
                     done, box = extra
+                    with self._lock:
+                        dropped = box.get("dropped", False)
+                        box["started"] = not dropped
+                    if dropped:  # the caller gave up before it started: never run later
+                        continue
                     try:
                         box["result"] = fn()
                     except BaseException as e:  # noqa: BLE001 - handed back to the caller

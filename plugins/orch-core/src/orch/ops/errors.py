@@ -167,6 +167,17 @@ _SPECS = [
         "(orch-v2-host 0.8.6 item 9.9).",
     ),
     _e(
+        "host.dev_refused",
+        3,
+        False,
+        "refused by the Simulator dev gate",
+        "a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace",
+        ["orch", "host", "status"],
+        "A host started with --dev-sim-convenience refused to start or refused a non-sandbox workspace, or a normal "
+        "host refused a dev-pair sandbox workspace (prefix SBX); the reason is first in the message (orch-v2-host "
+        "11A.17).",
+    ),
+    _e(
         "reader.decl_invalid",
         3,
         False,

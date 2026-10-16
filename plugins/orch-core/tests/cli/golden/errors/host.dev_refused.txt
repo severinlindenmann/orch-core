@@ -1,0 +1,1 @@
+err host.dev_refused refused by the Simulator dev gate · retry:false · next: a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace · fix: orch host status

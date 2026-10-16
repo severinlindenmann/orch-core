@@ -32,13 +32,13 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from . import frames
+from . import devmode, frames
 from .custody import check_tree, check_workspace_files, ensure_private_dir, same_or_inside, unsafe, write_private
 from .errors import HostError
 from .intents import Intent, IntentStore
 from .outcomes import CONTROL_WRITES, request_idem
 from .ownership import OwnershipLock
-from .registry import PERSON, Entry, group_name, validate_peers
+from .registry import PERSON, Entry, admit, group_name, validate_peers
 from .transport import Session
 from .workspace import ok_result, person_ok
 
@@ -105,6 +105,12 @@ _SCHEMAS = {
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
+
+
+def _genesis_view(event: dict[str, Any]) -> devmode.View:
+    """A new workspace's view for :func:`orch.host.registry.admit`: its genesis, its owner as the only member."""
+    owner = (event.get("owner") or {}).get("person") if isinstance(event.get("owner"), dict) else None
+    return devmode.View(event, frozenset({owner}) if isinstance(owner, str) else frozenset())
 
 
 def _replay(record: dict[str, Any]) -> dict[str, Any]:
@@ -174,7 +180,14 @@ class ControlOps:
                     "person": self.host.registry.mapping(caller_uid, entry.workspace_id),
                 }
             )
-        return ok_result({"workspaces": rows})
+            if self.host.dev is not None:  # §11A.17.2: per workspace, only on a dev host
+                rows[-1]["sandbox"] = service is not None and service.dev_ok is True
+        data: dict[str, Any] = {"workspaces": rows}
+        if self.host.dev is not None:  # absent, not false, on a normal host (goldens unchanged)
+            data["dev"] = {"sim_convenience": True, "sandbox": self.host.dev.id8}
+        if self.host.dev_alarms:  # §11A.17.3 D3: absent while there is none
+            data["alarms"] = [dict(a) for a in self.host.dev_alarms]
+        return ok_result(data)
 
     # -- host.wsk_create
     def wsk_create(self) -> dict[str, Any]:
@@ -224,8 +237,8 @@ class ControlOps:
                     continue
 
     # -- host.register
-    def _inspect(self, root: str) -> tuple[str, str, Any]:
-        """Check a root for registration; returns (workspace id, prefix, workspace view)."""
+    def _inspect(self, root: str) -> tuple[str, str, Any, dict[str, Any]]:
+        """Check a root for registration; returns (workspace id, prefix, workspace view, verified genesis)."""
         from orch.ops.caps import Files
         from orch.ops.runtime import _config
         from orch.store import Store, StoreError
@@ -262,7 +275,10 @@ class ControlOps:
             ws = store.state.workspace
             if ws.genesis != pin or ws.workspace_id != workspace_id:
                 raise HostError("trust.genesis_mismatch", "the verified genesis differs from the pinned one")
-            return workspace_id, ws.prefix, ws
+            genesis = store.genesis_event()
+            if genesis is None:
+                raise HostError("trust.genesis_mismatch", "the workspace has no verified genesis")
+            return workspace_id, ws.prefix, ws, genesis
         finally:
             store.close()
 
@@ -307,9 +323,16 @@ class ControlOps:
                 raise HostError("host.busy", f"{root} is already registered")
             if self.host.bootstrapping_root(root):
                 raise HostError("host.busy", f"{root} is being bootstrapped")
-            workspace_id, prefix, ws = self._inspect(root)
+            workspace_id, prefix, ws, genesis = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
+            view = devmode.View(
+                genesis,
+                frozenset(ws.members),
+                frozenset(ws.former),
+                devmode._link_origin(self.state_dir, workspace_id, self.host_uid),  # noqa: SLF001
+            )
+            devmode.check_admit(self.host.dev, workspace_id, root, view)  # §11A.17: before anything is touched
             now = self.host.clock()
             peers = validate_peers(
                 args["peers"],
@@ -322,7 +345,7 @@ class ControlOps:
             entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
                 self._import_readers(workspace_id, root)  # H12d-2: after admission, under the store lock
-                self.host.registry.add(entry)
+                admit(self.host, entry, view)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
             return self.intents.complete(intent, ok_result({"workspace_id": workspace_id}))["result"]
 
@@ -490,7 +513,29 @@ class ControlOps:
             pins=self.host.pins,
             person_valid=lambda person: person == owner and person_scope_ok(cert.get("o") or {}),
         )
+        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event))  # §11A.17: nothing appended
+        self._check_reserved_prefix(event)
         return peers, backend
+
+    def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
+        """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
+        person (a member of no registered workspace) with the owner name ``orch dev sandbox <id8>`` of the dev host's
+        sandbox. The host cannot see whether the init generated the recovery code; the client side refuses a code it
+        did not generate (:func:`orch.ops.workspace_init.check_reserved_prefix`)."""
+        from orch import devsandbox
+
+        if event.get("prefix") != devsandbox.RESERVED_PREFIX:
+            return
+        owner = event.get("owner") if isinstance(event.get("owner"), dict) else {}
+        dev = self.host.dev
+        if dev is None or owner.get("name") != devsandbox.owner_name(dev.sandbox_id):
+            raise HostError("invalid.input", "SBX is reserved for dev-pair sandboxes")
+        for entry in self.host.registry.entries():
+            if any(p.get("person") == owner.get("person") for p in entry.peers.values()):
+                raise HostError(
+                    "invalid.input",
+                    "SBX is reserved for dev-pair sandboxes: the owner is not a fresh person",
+                )
 
     def _run_bootstrap(self, intent: Intent, root: str, peers: dict[str, dict[str, Any]], backend: Any) -> dict:
         from orch.store import BackendSigner, Store, StoreError
@@ -544,7 +589,7 @@ class ControlOps:
         if self.host.registry.get(workspace_id) is None:
             entry = Entry(workspace_id, str(event["prefix"]), root, self.host_uid, group_name(workspace_id), peers)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
-                self.host.registry.add(entry)
+                admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)
         return self.intents.complete(intent, result)["result"]

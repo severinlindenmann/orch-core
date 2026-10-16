@@ -127,6 +127,7 @@ class Host:
         journal_check_interval: float = JOURNAL_CHECK_SECONDS,
         runner_identity: Callable[[Any], bool] | None = None,
         dev_runner: bool = False,
+        dev: Any = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
@@ -136,6 +137,12 @@ class Host:
 
             if is_service_run_dir(self.run_dir):
                 raise HostError("invalid.input", f"--dev-runner is for a dev run directory only, never {self.run_dir}")
+        #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
+        #: for the life of the process; ``None`` on every normal host
+        self.dev = dev
+        #: §11A.17.3 D3: registered workspaces a normal host skipped at start (an ``SBX`` genesis), as alarms
+        self.dev_alarms: list[dict[str, Any]] = []
+        self._dev_logger: asyncio.Task[None] | None = None
         self.backend_factory = backend or self._registry_backend
         self.pins = pins or AgentPins()
         self.clock = clock
@@ -278,6 +285,7 @@ class Host:
         try:
             self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
+            self._check_dev_registry()
             self.intents.open()
             self.jobs.open()
             self.runners.load()
@@ -288,6 +296,18 @@ class Host:
         except BaseException:
             self._release_host_lock()
             raise
+
+    def _check_dev_registry(self) -> None:
+        """§11A.17.2 check 4 and 17.3 D3: a dev host refuses to start with a non-sandbox workspace registered; a
+        normal host skips every ``SBX`` workspace of its registry (an edited registry bypasses ``admit``) and raises
+        the alarm ``sandbox_workspace_registered`` for each, in ``host.list`` and ``orch host status``."""
+        from .devmode import check_registry
+
+        skipped = check_registry(self.dev, self.state_dir, self.registry.entries(), self.host_uid)
+        self.dev_alarms = [{"code": "sandbox_workspace_registered", "workspace_id": wid} for wid in skipped]
+
+    def skipped(self, workspace_id: str) -> bool:
+        return any(a["workspace_id"] == workspace_id for a in self.dev_alarms)
 
     def _release_host_lock(self) -> None:
         if self._lock_fd is not None:
@@ -322,9 +342,13 @@ class Host:
         await self._serve_runner()
         self.bus.start()
         for entry in self.registry.entries():
+            if self.skipped(entry.workspace_id):
+                continue  # §11A.17.3 D3: a sandbox workspace on a normal host is never served
             await self.serve(entry)
         self._sweeper = asyncio.create_task(self._sweep_loop())
         self._checker = asyncio.create_task(self._check_loop())
+        if self.dev is not None:
+            self._dev_logger = asyncio.create_task(self._dev_log_loop())
 
     async def _serve_runner(self) -> None:
         """The runner socket (H11a). A failure leaves the host without a runner (``runner.unavailable``), never down."""
@@ -370,11 +394,16 @@ class Host:
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
         service.git_pool = self.git_pool
         service.runners = self.runners  # H11a: run.list / run.sub
+        service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
         backend = self.backend_factory()
         from .relayhook import make_starter
 
         service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
+        if self.dev is not None:
+            from .devmode import dev_gate
+
+            service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
@@ -516,6 +545,15 @@ class Host:
             await asyncio.sleep(self.journal_check_interval)
             await self.check_journals()
 
+    async def _dev_log_loop(self) -> None:
+        """§11A.17.2 "Visible everywhere": the dev host's line at start and at every hour of uptime."""
+        from .devmode import LOG as DEV_LOG
+        from .devmode import status_line
+
+        while True:
+            DEV_LOG.warning("%s", status_line(self.dev))
+            await asyncio.sleep(SWEEP_SECONDS)
+
     async def _sweep_loop(self) -> None:
         while True:
             await asyncio.sleep(self.sweep_interval)
@@ -552,11 +590,11 @@ class Host:
             await asyncio.sleep(0.01)
 
     async def close(self) -> None:
-        for task in (self._sweeper, self._checker):
+        for task in (self._sweeper, self._checker, self._dev_logger):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-        self._sweeper = self._checker = None
+        self._sweeper = self._checker = self._dev_logger = None
         await self.bus.stop()
         for name in list(self.servers):
             pair = self.servers.pop(name)

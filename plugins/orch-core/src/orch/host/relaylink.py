@@ -97,7 +97,9 @@ def linked_workspaces(state_dir: Path) -> list[str]:
 
 
 @contextlib.contextmanager
-def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any = time.time) -> Iterator[None]:
+def link_reservation(
+    service: Any, *, relay_level: int | None = None, clock: Any = time.time, origin: str | None = None
+) -> Iterator[None]:
     """The guard of ``store.relay_link`` (§11A.6), the only writer of ``link.json``:
     ``store.relay_link(link, guard=lambda: relaylink.link_reservation(service, relay_level=info.reader))``, with the
     level R5 read from ``GET /v2/relay-info`` just before (:func:`orch.relay.session.fetch_relay_info`; ``None``: not
@@ -110,7 +112,9 @@ def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any
     from orch.store.readerrecs import clear_relay_level, write_relay_level
 
     from .convenience import _flock, refuse_reader_op
+    from .devmode import refuse_link
 
+    refuse_link(service, origin)  # §11A.17.3 F5, F2: dev_origin on a dev host, sandbox_workspace on a normal one
     store = service.store
     if store is None:
         raise HostError("workspace.unavailable", "the workspace is not open")
@@ -152,6 +156,7 @@ def observe_relay_level(
     *,
     origin: str,
     clock: Any = time.time,
+    gated: Any = None,
 ) -> bool:
     """The R1 login hook (9.8), bound to its link (#555 review F2, DECIDED): R5 builds it per session with that
     session's link origin, ``relay_info=lambda lv: observe_relay_level(state, ws, uid, lv, alarm, origin=origin)``.
@@ -171,7 +176,10 @@ def observe_relay_level(
             link = read_json(link_path(state_dir, workspace_id), host_uid)
             if not isinstance(link, dict) or link.get("origin") != origin:
                 return False
-            on = enabled(state_dir, workspace_id, host_uid) or convenience_seen(state_dir, workspace_id)
+            # the flag or the Simulator dev gate (``gated``: orch.host.devmode.gated of the service, §11A.17.4; the
+            # same rule as convenience.flag_or_gate), or the durable mark
+            dev = gated is not None and gated() is True
+            on = enabled(state_dir, workspace_id, host_uid) or dev or convenience_seen(state_dir, workspace_id)
             required = 1 if on else 0
             write_relay_level(state_dir, workspace_id, host_uid, level, int(clock() * 1000))
     except Exception as exc:  # noqa: BLE001 - the stored level stays; say so

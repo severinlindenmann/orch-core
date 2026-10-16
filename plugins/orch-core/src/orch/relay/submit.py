@@ -58,8 +58,20 @@ _PROBE_AT, _PROBE_SIG, _PROBE_HEAD = "2026-01-01T00:00:00Z", "A" * 86, "sha256:"
 AUTH = frozenset({"secure-enclave-unlocked", "passphrase"})
 
 
+#: §11A.17: the one event type a convenience-signed column-R event may have, and only through the host's dev gate
+GATED_TYPE = "question.answered"
+CONVENIENCE = "convenience"
+
+
 def check_events(
-    op: str, args: Mapping[str, Any], identity: Identity, dk_sig_pub: bytes, *, idem: str
+    op: str,
+    args: Mapping[str, Any],
+    identity: Identity,
+    dk_sig_pub: bytes,
+    *,
+    idem: str,
+    convenience_gate: Callable[[], bool] | None = None,
+    convenience_refused: Callable[[], None] | None = None,
 ) -> tuple[str, list[dict]]:
     """The lock-free checks of a ``relay.submit`` request (14.6 P1 to P7, in order, with 14.6's codes): P1 the args
     shape, exactly one event, ``log`` a ticket uid, idem == event id (``invalid.input``); P2 the event type of the
@@ -82,7 +94,16 @@ def check_events(
     check_schema(ev)
     if ev.get("actor") != {"kind": "person", "id": identity.person_id, "device": identity.device_id}:
         raise Refusal("op.not_allowed")
-    if ev.get("auth") not in AUTH:  # convenience never through the relay (11A.6)
+    auth = ev.get("auth")
+    if auth == CONVENIENCE:
+        # §11A.17.4 P5: only an answer, only while the host's dev gate passes (the lock-free, cached form; the host
+        # checks it again under the store lock and at the append). Otherwise op.not_allowed, as before; the alarm
+        # dev_convenience_refused counts only a refusal whose signature verified (F7).
+        if ev.get("type") != GATED_TYPE or convenience_gate is None or convenience_gate() is not True:
+            if convenience_refused is not None and _verified(ev, identity, log_id, dk_sig_pub):
+                convenience_refused()
+            raise Refusal("op.not_allowed")
+    elif auth not in AUTH:  # convenience never through the relay (11A.6), except the dev gate above
         raise Refusal("op.not_allowed")
     try:
         sig = crypto.unb64u(ev.get("sig"), crypto.SIG_LEN)
@@ -95,6 +116,15 @@ def check_events(
     if not crypto.verify(dk_sig_pub, sig, signed):
         raise Refusal("sig.invalid")
     return log_id, [dict(ev)]
+
+
+def _verified(ev: Mapping[str, Any], identity: Identity, log_id: str, dk_sig_pub: bytes) -> bool:
+    """P7 for the alarm only: the event's signature verifies under the requesting device's key."""
+    try:
+        sig = crypto.unb64u(ev.get("sig"), crypto.SIG_LEN)
+        return bool(crypto.verify(dk_sig_pub, sig, canon.person_signing_bytes(identity.workspace_id, log_id, ev)))
+    except Exception:  # noqa: BLE001 - anything unverifiable is not counted
+        return False
 
 
 def check_schema(ev: Mapping[str, Any]) -> None:

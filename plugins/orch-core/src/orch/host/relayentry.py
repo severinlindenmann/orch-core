@@ -201,6 +201,10 @@ class RelayEntry:
         seq = relayadmit.known_or_fresh(store, log, ev, service.clock())
         if seq is not None:  # an identical landed event: committed, duplicate (before anything is judged)
             return relay_submit.result(log, [seq], duplicate=True)
+        try:
+            relay_submit.check_phase1(ev)  # B10 Part B phase 1: again under the lock (a recovered write meets it too)
+        except Refusal:
+            raise HostError("op.not_allowed", "the phone decides requirements and plan only") from None
         relayadmit.check_target(store, log, ev)
         try:
             relayadmit.judge_events(store, log, events)

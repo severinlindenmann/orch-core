@@ -39,6 +39,7 @@ from .pairdevice import PairAllocation, event_digest
 
 __all__ = [
     "MEMBERSHIP",
+    "status",
     "HostPairing",
     "R6PairDeviceSource",
     "close",
@@ -469,3 +470,31 @@ def primary_set(service: Any, cert: Any, label: str) -> str:
         raise HostError("invalid.input", "label: printable text")
     keys_for(service).write_primary({"v": 1, "cert": cert, "label": cleaned, "set_ms": int(service.clock() * 1000)})
     return o["device_id"]
+
+
+# -- status (no secret) -------------------------------------------------------------------------------------------
+
+
+def status(service: Any) -> dict[str, Any] | None:
+    """The pairing part of ``host.status.relay`` (R6c-2 adds it to the status frame): the offers as
+    :meth:`PairEngine.list_offers` gives them (never ``S``, a link, the SAS, ``sas_nonce`` or a challenge), the
+    pairing alarms and the ``needs`` items. ``None`` while no engine is open in this process."""
+    from orch.relay.r6.pairstore import PairStoreError
+
+    engine = _OPEN.get(str(_membership(service)))
+    if engine is None:
+        return None
+    try:
+        alarms = engine.store.alarms()
+        offers = engine.list_offers()
+    except PairStoreError:
+        return {"offers": [], "alarms": {"pairing_state_corrupt": {"count": 1}}, "needs": []}
+    return {
+        "offers": [
+            {"offer_id": o.offer_id, "state": o.state, "scopes": list(o.scopes), "expires_ms": o.expires_ms,
+             "label": o.label, "device_id": o.device_id, "path": o.path,
+             "outstanding_request": o.outstanding_request, "second_key": o.second_key}
+            for o in offers
+        ],
+        "alarms": alarms["alarms"], "needs": alarms["needs"], "dropped": engine.dropped,
+    }  # fmt: skip

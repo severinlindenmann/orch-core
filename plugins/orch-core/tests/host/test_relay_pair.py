@@ -169,3 +169,13 @@ def test_a_precommit_refusal_of_r6_appends_nothing(served, human, linked):
     res = human.submit_res(prepared["request"]["id"], signed.events)
     assert err(res) in ("relay.pair_closed", "human.request_mismatch")
     assert served.service.store.state.workspace.devices.get("d_" + phone.device_id) is None
+
+
+def test_status_shows_offers_alarms_and_needs_without_a_secret(served, linked):
+    engine, runner, mem, owner = linked
+    h = engine.offer()
+    st = relaypair.status(served.service)
+    assert [o["offer_id"] for o in st["offers"]] == [h.offer_id] and st["offers"][0]["state"] == "open"
+    rec = engine.store.get(h.offer_id)
+    text = repr(st)
+    assert rec["secret"] not in text and rec["sas_nonce"] not in text and "orch://" not in text

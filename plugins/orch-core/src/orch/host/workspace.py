@@ -406,8 +406,9 @@ class WorkspaceService:
 
     def _committed_hook(self, journal: Any) -> Callable[[str, dict[str, Any]], None]:
         """``Store.on_commit``: the journal's, then the relay wakes (11A.5 "Wake chaining (B1)"): the publisher on every
-        append (it publishes now, not at its next idle check) and the unpublished consumer after a commit that can
-        revoke. Called inside the store's critical section; the wakes only set events and never raise."""
+        append (it publishes now, not at its next idle check), the membership thread (it re-plans) and the
+        unpublished consumer after a commit that can revoke. Called inside the store's critical section; the wakes only
+        set events and never raise."""
         committed = journal.committed
 
         def hook(log: str, event: dict[str, Any]) -> None:
@@ -426,6 +427,10 @@ class WorkspaceService:
             wake = getattr(getattr(worker, "publisher", None), "wake", None)  # NoPublisher has none
             if callable(wake):
                 wake()
+            for companion in getattr(worker, "companions", ()):  # R6b's membership thread re-plans on any commit
+                wake = getattr(companion, "wake", None)
+                if callable(wake):
+                    wake()
             if isinstance(event, dict) and event.get("type") in self._REVOKING_COMMITS:
                 wake = getattr(getattr(worker, "unpublished", None), "wake", None)
                 if callable(wake):

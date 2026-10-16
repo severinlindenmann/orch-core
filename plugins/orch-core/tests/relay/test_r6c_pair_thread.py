@@ -37,7 +37,7 @@ def test_handle_returns_at_once_and_the_thread_completes_the_item(kit):
     t = PairThread(kit.engine, name="orch-relay-r6p-test")
     t.start()
     try:
-        h = t.call(lambda: kit.engine.offer())
+        h = t.api("offer")
         phone = Phone(h.link.native)
         env, rid = phone.envelope(phone.meta(), ts=kit.clock.ms)
         t.handle(7, env, rid, phone.device_id)
@@ -53,7 +53,7 @@ def test_call_raises_the_apis_refusal(kit):
     t.start()
     try:
         with pytest.raises(PairRefused):
-            t.call(lambda: kit.engine.offer(("operate",)))
+            t.api("offer", ("operate",))
     finally:
         t.stop()
         t.join(5)
@@ -73,7 +73,7 @@ def test_a_failing_job_never_stops_the_thread(kit):
     t.start()
     try:
         t.post(lambda: 1 / 0)
-        assert t.call(lambda: "alive") == "alive"
+        assert t.api("list_offers") == []
     finally:
         t.stop()
         t.join(5)

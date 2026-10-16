@@ -314,7 +314,13 @@ def start_thread(service: Any, session: Any, conn: Callable[[], Any], checkpoint
     engine.routes = SessionPairRelay(session, service.workspace_id, conn=conn)
     engine.membership = membership
     engine.host.checkpoint_source = checkpoint
-    thread = PairThread(engine, name=f"orch-relay-r6p-{service.workspace_id[:8]}")
+
+    def dormant() -> None:  # the worker stopped: no stale session or publisher stays attached
+        engine.routes, engine.membership = _NoRelay(), UnavailableMembership()
+        engine.post = lambda fn: None
+        engine.host.checkpoint_source = None
+
+    thread = PairThread(engine, name=f"orch-relay-r6p-{service.workspace_id[:8]}", on_stop=dormant)
     membership.bind(_EngineEvents(engine))
     return thread
 

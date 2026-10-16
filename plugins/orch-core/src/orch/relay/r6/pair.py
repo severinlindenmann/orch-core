@@ -1457,8 +1457,9 @@ class PairThread:
     timeout (the next tick), never sleeps. :meth:`call` runs a job and returns its result (the internal API);
     :meth:`post` queues one. :meth:`handle` and :meth:`completed` are R2's ``R6Pairing`` (11A.15.2)."""
 
-    def __init__(self, engine: PairEngine, *, name: str) -> None:
+    def __init__(self, engine: PairEngine, *, name: str, on_stop: Callable[[], None] | None = None) -> None:
         self.engine = engine
+        self._on_stop = on_stop
         self._q: queue.Queue[Any] = queue.Queue()
         self._items = 0  # pair items queued and not yet handled
         self._lock = threading.Lock()
@@ -1475,8 +1476,11 @@ class PairThread:
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop the thread; ``on_stop`` returns the engine to dormant (no session, no publisher: step 9 refuses)."""
         self._stop.set()
         self._q.put(None)
+        if self._on_stop is not None:
+            self._on_stop()
 
     def join(self, timeout: float) -> bool:
         self._thread.join(timeout)

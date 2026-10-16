@@ -210,3 +210,19 @@ def test_a_stored_primary_that_expired_or_widened_is_no_primary(served, linked):
         with pytest.raises(PairRefused) as e:
             engine.offer()
         assert e.value.code == "relay.no_primary"
+
+
+def test_the_pair_thread_attaches_the_session_and_returns_to_dormant_on_stop(served, linked, monkeypatch):
+    engine, runner, mem, owner = linked
+    from orch.relay.r6.pairrelay import SessionPairRelay
+
+    ready = FakeMembership()
+    monkeypatch.setattr(relaypair, "MEMBERSHIP", lambda svc: ready)
+    t = relaypair.start_thread(served.service, session=object(), conn=lambda: None)
+    assert isinstance(engine.routes, SessionPairRelay) and engine.membership is ready and ready.events is not None
+    t.start()
+    t.stop()
+    assert t.join(5)
+    assert isinstance(engine.membership, UnavailableMembership) and not engine.membership.ready()
+    with pytest.raises(Exception):  # noqa: B017 - the dormant routes answer retry
+        engine.routes.put_device("ab" * 16, {})

@@ -6,7 +6,7 @@ import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
 import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
 
-/** Verbatim (owner decision, 12 Oct 2026). Also the first line of every sign panel. */
+/** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
 
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
@@ -17,6 +17,7 @@ export const HOLD_MS = 1500
 
 /** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
 export interface ClickCard {
+  risk_ack?: string | null
   custody: 'convenience' | 'passphrase' | 'none'
   enabled: boolean
   available: boolean
@@ -42,6 +43,8 @@ export interface ClickPrepared {
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
+  headline?: string
+  content?: import('./signing').SignContent
   risk: string
   op: string
   workspace: { id: string; name: string; prefix: string }

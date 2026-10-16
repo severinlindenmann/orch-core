@@ -3506,6 +3506,14 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    `<state>/dashboard/sign_default.json` (0600, per person and workspace; `GET`/`PUT /api/w/{ws}/me/sign_default`); a default
    the workspace no longer allows reads back as `terminal`. A `sign_methods` change is signed with the typed word, not one click.
 
+6. **Not built: one signature for "New quick task (1 of 2)".** A quick task is `ticket.created` then a labelling
+   `ticket.updated`. One request cannot carry both: every event of a request shares one `based_on`, and the second event
+   of a new ticket must name the head of the first, which exists only after the host stamps and appends it (F1 §5.5;
+   `event.bad_base` at submit). Two ways forward, both outside B6: (a) `ticket.created` carries `labels` (an F1 format
+   change, readers must learn it), or (b) a sequential signer session: one review that states both, one typed word, two
+   signatures (the second request is prepared after the first lands and checked against the review the person
+   confirmed). The dashboard keeps its two hand-offs until one is chosen.
+
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as

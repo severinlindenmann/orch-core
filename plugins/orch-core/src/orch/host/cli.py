@@ -658,6 +658,8 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
                         hint="let them expire (10 minutes), then switch convenience on",
                     )
+            if args.switch == "on":  # B10: never leave the flag on with every click refused (names the devices)
+                convenience.refuse_turn_on(state, match[0], uid)
             convenience.set_enabled(state, wid, args.switch == "on", uid)
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)

@@ -687,3 +687,62 @@ def test_the_recheck_refuses_a_pair_entry_bound_to_another_offer_or_attempt(serv
     record["readers"][0]["bind"] = {"via": "pair", "offer_id": "c" * 32, "attempt": ATTEMPT}
     served.service.requests.write(record)
     assert err(human.submit_res(rid, signed.events)) == "human.request_mismatch"  # at submit
+
+
+# --- the lockout fix: switching click-to-sign on is refused up front while a reader is below level 1 ------------------
+
+
+@pytest.fixture(autouse=True)
+def _own_device(request, monkeypatch):
+    """The lab's owner device stands in for this machine's key (no key file in the lab's state directory)."""
+    monkeypatch.setattr(
+        convenience, "_own_device", lambda state, wid: request.getfixturevalue("served").lab.ws.owner.device
+    )
+
+
+def _cli(*argv):
+    from tests.host.test_click_cli import run
+
+    return run(*argv)
+
+
+def _pair_old_phone(served, human):
+    facts, phone = make_facts(served, level=None)  # an old app: no declaration
+    _install(served, facts)
+    ok(_submit(human, human.prepare("relay.pair_device", {"offer_id": OFFER})))
+    return phone
+
+
+def test_convenience_on_is_refused_naming_the_old_phone_and_leaves_the_flag_off(served, human):
+    phone = _pair_old_phone(served, human)
+    state = str(served.lab.state)
+    code, out, err_ = _cli("host", "convenience", "on", "--workspace", served.wid, "--state", state)
+    text = out + err_
+    assert code != 0 and "sign.convenience_unavailable" in text and "phone_device" in text and phone.device in text
+    assert "orch host convenience off" in text and "--in-place" in text  # the escape is named
+    assert not convenience.enabled(served.lab.state, served.wid, UID)
+
+
+def test_convenience_on_works_again_once_the_phone_is_removed_or_declares(served, human):
+    phone = _pair_old_phone(served, human)
+    state = str(served.lab.state)
+    args = ("host", "convenience", "on", "--workspace", served.wid, "--state", state)
+    assert _cli(*args)[0] != 0
+    from orch.ops import readers as rd
+
+    monkey_levels = {phone.device: 1}
+    import orch.host.convenience as cv
+
+    orig = rd.levels
+    rd.levels = lambda *a, **k: {**orig(*a, **k), **monkey_levels}  # the app was updated and declared
+    try:
+        assert _cli(*args)[0] == 0
+    finally:
+        rd.levels = orig
+    assert convenience.enabled(served.lab.state, served.wid, UID)
+    assert cv is convenience
+
+
+def test_convenience_on_is_allowed_with_no_other_reader(served):
+    code, *_ = _cli("host", "convenience", "on", "--workspace", served.wid, "--state", str(served.lab.state))
+    assert code == 0

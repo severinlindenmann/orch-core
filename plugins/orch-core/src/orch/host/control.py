@@ -79,6 +79,9 @@ _PEERS = {
 }
 
 
+_OFFER = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
+
+
 def _closed(required: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": required, "required": list(required), "additionalProperties": False}
 
@@ -92,6 +95,45 @@ _SCHEMAS = {
     "host.relay_stop": _closed({"workspace_id": _WS}),
     "host.relay_start": _closed({"workspace_id": _WS}),
     "host.relay_unlink": _closed({"workspace_id": _WS}),
+    # R6c-2 (11A.15.9): relay pairing, human-only (the CLI refuses under ORCH_GRANT); none is a write (no idem, no
+    # outcome record): the offer's link exists only in its direct answer
+    "host.relay_pair_offer": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "scopes": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"enum": ["look", "decide"]}},
+            "ttl_ms": {"type": "integer", "minimum": 60_000, "maximum": 600_000},
+        },
+        "required": ["workspace_id"],
+        "additionalProperties": False,
+    },
+    "host.relay_pair_show": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_list": _closed({"workspace_id": _WS}),
+    "host.relay_pair_answer": _closed(
+        {
+            "workspace_id": _WS,
+            "offer_id": _OFFER,
+            "code": {"type": "string", "maxLength": 32},
+            "approve": {"type": "boolean"},
+        }
+    ),  # fmt: skip
+    "host.relay_pair_cancel": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_abandon": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_cert": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "offer_id": _OFFER,
+            "cert": {"type": "object"},
+            "rejection": {"type": "object"},
+            "challenge": {"type": "object"},
+        },  # fmt: skip
+        "required": ["workspace_id", "offer_id"],
+        "additionalProperties": False,
+    },
+    "host.relay_primary_set": _closed(
+        {"workspace_id": _WS, "cert": {"type": "object"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
+    ),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -102,6 +144,7 @@ _SCHEMAS = {
         }
     ),
 }
+PAIR_OPS = frozenset(op for op in _SCHEMAS if op.startswith("host.relay_pair_") or op == "host.relay_primary_set")
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
@@ -438,6 +481,46 @@ class ControlOps:
             raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
         name = service.relay_unlink()
         return ok_result({"workspace_id": workspace_id, "unlinked": name})
+
+    # -- R6c-2: relay pairing (11A.15.9), thin wrappers over the internal API (relaypair.api)
+    def relay_pair(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from . import relaypair
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        data: dict[str, Any] = {"workspace_id": workspace_id}
+        if op == "host.relay_primary_set":
+            data["device_id"] = relaypair.primary_set(service, args["cert"], args["label"])
+        elif op == "host.relay_pair_offer":
+            h = relaypair.api(service, "offer", tuple(args.get("scopes") or ("look", "decide")),
+                              args.get("ttl_ms", 600_000))  # fmt: skip
+            data.update(h.public())
+            data["link"] = {"native": h.link.native, "https": h.link.https}  # the direct answer only
+        elif op == "host.relay_pair_list":
+            data["offers"] = [{**asdict(o), "scopes": list(o.scopes)} for o in relaypair.api(service, "list_offers")]
+        elif op == "host.relay_pair_show":
+            shown = relaypair.api(service, "show", args["offer_id"])
+            data["offer"] = {**asdict(shown), "scopes": list(shown.scopes)}
+        elif op == "host.relay_pair_answer":
+            state, left = relaypair.api(service, "answer", args["offer_id"], args["code"], args["approve"])
+            data.update(offer_id=args["offer_id"], state=state, attempts_left=left)
+        elif op == "host.relay_pair_cancel":
+            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "cancel", args["offer_id"]))
+        elif op == "host.relay_pair_abandon":
+            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "abandon", args["offer_id"]))
+        elif op == "host.relay_pair_cert":
+            state = relaypair.api(service, "pair_cert", args["offer_id"], cert=args.get("cert"),
+                                  rejection=args.get("rejection"), challenge=args.get("challenge"))  # fmt: skip
+            data.update(offer_id=args["offer_id"], state=state)
+        else:  # pragma: no cover - the schema table names every op
+            raise HostError("unknown_command", op)
+        return ok_result(data)
 
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
@@ -792,6 +875,7 @@ class ControlGate:
                 "host.relay_stop": lambda: ops.relay_stop(args),
                 "host.relay_start": lambda: ops.relay_start(args),
                 "host.relay_unlink": lambda: ops.relay_unlink(args),
+                **{name: (lambda n=name: ops.relay_pair(n, args)) for name in PAIR_OPS},
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

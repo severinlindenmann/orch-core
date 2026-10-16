@@ -574,6 +574,18 @@ def _stored_alarms(service: WorkspaceService) -> list[dict[str, Any]]:
 
 
 def status(service: WorkspaceService) -> dict[str, Any] | None:
+    """``host.status.relay`` with R6c's pairing block (``pairing``: offers, alarms, ``needs`` items, the drop count;
+    no secret) when a pairing engine is open in this process."""
+    from . import relaypair
+
+    out = _status(service)
+    pairing = relaypair.status(service)
+    if out is not None and pairing is not None:
+        out["pairing"] = pairing
+    return out
+
+
+def _status(service: WorkspaceService) -> dict[str, Any] | None:
     """``host.status.relay`` (classes P and G; ``None``, so no field, for a workspace that never had a relay
     directory and runs no worker): the link state, the worker (``running``, ``stopping``, ``stuck`` or
     ``off``) and whether a thread is alive, why none runs, the stop marker, the R6 gate, the outbox entries queued for

@@ -84,3 +84,39 @@ def me(identity, roster, ws, *, runner_supported=False):
         workspace=ws,
         runner=runner(identity, runner_supported),
     )
+
+
+SANDBOX_ID = re.compile(r"[0-9a-f]{8}")
+WORKSPACE_ID = re.compile(r"[0-9a-f]{32}")
+ALARM_CODES = ("sandbox_workspace_registered", "dev_convenience_refused")
+ALARMS_MAX = 16
+
+
+def host_info(data):
+    """The host-level dev facts of `host.list` (core D1, #582): `dev` (only a dev host has it) and `alarms` (only while
+    there are any). Each field is checked and rebuilt; nothing else is passed on. A code this dashboard does not know
+    stays as a code (`code` only, never text); a `workspace_id` that is not 32 lowercase hex is dropped."""
+    out: dict = {}
+    if not isinstance(data, dict):
+        return out
+    dev = data.get("dev")
+    if isinstance(dev, dict) and dev.get("sim_convenience") is True:
+        out["dev"] = {"sim_convenience": True}
+        sandbox = dev.get("sandbox")
+        if isinstance(sandbox, str) and SANDBOX_ID.fullmatch(sandbox):
+            out["dev"]["sandbox"] = sandbox
+    alarms = data.get("alarms")
+    if isinstance(alarms, list):
+        rows = []
+        for alarm in alarms[:ALARMS_MAX]:
+            code = alarm.get("code") if isinstance(alarm, dict) else None
+            if not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
+                continue
+            row: dict = {"code": code}
+            wid = alarm.get("workspace_id")
+            if isinstance(wid, str) and WORKSPACE_ID.fullmatch(wid):
+                row["workspace_id"] = wid
+            rows.append(row)
+        if rows:
+            out["alarms"] = rows
+    return out

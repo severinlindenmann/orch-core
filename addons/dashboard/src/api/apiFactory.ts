@@ -105,6 +105,8 @@ export function createApi(transport: Transport) {
     getMe: (_ws?: string) => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
+    /** Core D1 (#582): the host's dev facts (`dev`, `alarms`); `{}` on a normal host and in the mock. Read it through `hostInfoOf`. */
+    getHostInfo: () => call<unknown>('GET', '/api/host'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
     getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),
     /** The board's own list: every ticket the board draws. The mock serves it as the plain list. */

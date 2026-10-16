@@ -51,22 +51,149 @@ class Script:
         if op == "host.relay_pair_answer":
             self.answers.append((args["code"], args["approve"]))
             left = 3 - len(self.answers)
-            return {"state": "pending" if args["code"] != "RIGHT1" else "cert_pending", "attempts_left": left}
+            return {"state": "pending" if args["code"] != "RIGHTA" else "cert_pending", "attempts_left": left}
         raise AssertionError(op)
 
 
 def test_attach_types_the_sas_waits_for_the_primary_signs_step_9_and_ends_approved():
     s = Script([("open", False), ("pending", False, True), ("pending", False), ("cert_pending", False),
                 ("cert_pending", True), ("allocated", True), ("approved", True)])  # fmt: skip
-    codes, signed, out = iter(["WRONG1", "RIGHT1"]), [], io.StringIO()
+    codes, signed, out = iter(["WRONGA", "RIGHTA"]), [], io.StringIO()
     rc = paircli.attach(
         s, "w" * 32, "o" * 32, out, ask=lambda p: next(codes), step9=signed.append, sleep=lambda t: None
     )
     text = out.getvalue()
-    assert rc == 0 and s.answers == [("WRONG1", True), ("RIGHT1", True)] and signed == ["o" * 32]
+    assert rc == 0 and s.answers == [("WRONGA", True), ("RIGHTA", True)] and signed == ["o" * 32]
     assert "someone else has this link" in text and "named by the device" in text
     assert "that is not the code: 2 attempt(s) left" in text and "waiting for the primary" in text
     assert "approved:" in text
+
+
+class InlineScript(Script):
+    """``Script`` plus the cert hand-over: ``relay_pair_cert`` flips ``has_cert``; ``cancel`` ends the offer."""
+
+    def __init__(self, states):
+        super().__init__(states)
+        self.certs, self.cancelled = [], []
+
+    def __call__(self, op, args):
+        if op == "host.relay_pair_cert":
+            self.certs.append(args)
+            return {"state": "cert_pending"}
+        if op == "host.relay_pair_cancel":
+            self.cancelled.append(args["offer_id"])
+            self.states = [("cancelled", False)]
+            return {"state": "cancelled"}
+        got = super().__call__(op, args)
+        if op == "host.relay_pair_show":
+            got["offer"]["outstanding_request"] = "r" * 32 if got["offer"]["state"] == "cert_pending" else None
+            got["offer"]["device_id"] = "d" * 32
+        return got
+
+
+class Outcome:
+    def __init__(self, cert=None, rejection=None):
+        self.cert, self.rejection = cert, rejection
+
+
+def test_attach_inline_primary_runs_once_and_hands_the_certificate_to_r6():
+    s = InlineScript([("pending", False), ("cert_pending", False), ("cert_pending", False),
+                      ("cert_pending", True), ("approved", True)])  # fmt: skip
+    seen, signed, out = [], [], io.StringIO()
+
+    def primary(offer_id, rid, offer):
+        seen.append((offer_id, rid, offer["device_id"]))
+        return Outcome(cert={"o": {}, "sig": "x"})
+
+    rc = paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=signed.append,
+                        sleep=lambda t: None, primary=primary)  # fmt: skip
+    assert rc == 0 and seen == [("o" * 32, "r" * 32, "d" * 32)] and signed == ["o" * 32]
+    assert s.certs == [{"workspace_id": "w" * 32, "offer_id": "o" * 32, "cert": {"o": {}, "sig": "x"}}]
+    assert "waiting for the primary" not in out.getvalue()
+
+
+def test_attach_inline_rejection_goes_to_r6_as_a_rejection():
+    s = InlineScript([("pending", False), ("cert_pending", False), ("rejected", False)])
+    out = io.StringIO()
+    rc = paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=lambda *a: Outcome(rejection={"o": {}, "sig": "r"}))  # fmt: skip
+    assert rc == 3 and s.certs[0]["rejection"] == {"o": {}, "sig": "r"} and "cert" not in s.certs[0]
+
+
+def test_attach_inline_failure_cancels_the_offer_and_never_hangs():
+    s = InlineScript([("pending", False), ("cert_pending", False)])
+    out = io.StringIO()
+
+    def primary(*a):
+        raise RuntimeError("secret-looking text from somewhere")
+
+    rc = paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=primary, max_polls=50)  # fmt: skip
+    text = out.getvalue()
+    assert rc == 3 and s.cancelled == ["o" * 32] and s.certs == []
+    assert "RuntimeError" in text and "secret-looking" not in text and "start a new one" in text
+
+
+def test_attach_inline_interrupt_leaves_the_offer_for_resume():
+    s = InlineScript([("pending", False), ("cert_pending", False)])
+
+    def primary(*a):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        paircli.attach(s, "w" * 32, "o" * 32, io.StringIO(), ask=lambda p: "ABCDEF", step9=lambda o: None,
+                       sleep=lambda t: None, primary=primary)  # fmt: skip
+    assert s.cancelled == []
+
+
+def test_attach_waits_for_the_request_id_before_the_inline_step():
+    s = InlineScript([("pending", False), ("cert_pending", False)])
+    calls, shown = [], []
+    real = s.__call__
+
+    def hidden(op, args):  # the host reports no outstanding request yet on the first cert_pending poll
+        got = real(op, args)
+        if op == "host.relay_pair_show" and got["offer"]["state"] == "cert_pending":
+            shown.append(1)
+            if len(shown) == 1:
+                got["offer"]["outstanding_request"] = None
+        return got
+
+    def primary(*a):
+        calls.append(a)
+        return Outcome(rejection={"o": {}, "sig": "r"})
+
+    paircli.attach(hidden, "w" * 32, "o" * 32, io.StringIO(), ask=lambda p: "ABCDEF", step9=lambda o: None,
+                   sleep=lambda t: None, primary=primary, max_polls=3)  # fmt: skip
+    assert len(calls) == 1 and len(shown) >= 2
+
+
+def test_sas_input_that_is_not_a_code_is_never_sent():
+    s = Script([("pending", False), ("pending", False), ("pending", False), ("rejected", False)])
+    typed = iter(["one two three", "abc", "not a code"])
+    out = io.StringIO()
+    rc = paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: next(typed), step9=lambda o: None,
+                        sleep=lambda t: None)  # fmt: skip
+    text = out.getvalue()
+    assert rc == 3 and s.answers == [("", False)]  # after 3 unusable entries: a reject, never the text
+    assert text.count("that did not look like the phone's code; nothing was sent") == 3
+    assert "never type your recovery code here" in text
+
+
+def test_sas_is_normalised_before_it_is_sent():
+    s = Script([("pending", False), ("cert_pending", False)])
+    paircli.attach(s, "w" * 32, "o" * 32, io.StringIO(), ask=lambda p: "  abcd23 ", step9=lambda o: None,
+                   sleep=lambda t: None, max_polls=1)  # fmt: skip
+    assert s.answers == [("ABCD23", True)]
+
+
+def test_the_two_prompts_are_worded_differently():
+    assert (
+        paircli.SAS_PROMPT != "step 2 of 2, compare code: type the 6 characters the phone shows now (empty: reject): "
+    )
+    from orch.relay_owner.inline import CERT_CODE_PROMPT
+
+    assert CERT_CODE_PROMPT != paircli.SAS_PROMPT and "step 1 of 2" in paircli.SAS_PROMPT
 
 
 def test_attach_empty_code_rejects_and_a_terminal_state_ends_with_3():
@@ -227,8 +354,8 @@ def test_primary_set_from_a_file_then_list_shows_no_offer(host, tmp_path):
     "kw, env, code",
     [
         ({}, {"ORCH_GRANT": "g"}, "human_only"),
-        ({"primary": "inline"}, {}, "invalid.input"),
-        ({"primary": None}, {}, "invalid.input"),  # the default is inline: not built yet
+        ({"primary": "inline"}, {}, "relay.no_primary"),  # inline is built (B1b); the host has no primary set here
+        ({"primary": None}, {}, "relay.no_primary"),  # the default is inline
         ({"json": True}, {}, "invalid.input"),  # stdout is no TTY and no --json-fd
         ({"sub": "cancel"}, {}, "invalid.input"),  # needs --offer
         ({"sub": "nope"}, {}, "invalid.input"),

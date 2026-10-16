@@ -24,7 +24,6 @@ never one a relay served.
 
 from __future__ import annotations
 
-import hmac
 import os
 import re
 import stat
@@ -43,10 +42,11 @@ from orch.relay_owner import (
     OwnerClient,
     PrimaryJournal,
     PrimaryQueue,
-    QueueRefused,
     journal_dir,
     primary_certificate,
 )
+from orch.relay_owner import inline as product_inline
+from orch.relay_owner.inline import InlineRefused, PairOutcome
 
 from . import personkey_sandbox as sandbox
 
@@ -58,7 +58,6 @@ CERT_FILE = "primary-cert.json"
 CERT_FILE_TMP = "primary-cert.json.tmp"  # a name dev-pair lists in the manifest
 LABEL = "orch dev sandbox primary"
 _SCALAR = re.compile(r"[0-9a-f]{64}")
-_CODE = re.compile(r"[A-Z2-7]{6}")
 
 
 class OwnerRefusedError(Exception):
@@ -145,18 +144,6 @@ class PrimaryKeys:
 
     def unseal(self, object_id: bytes, sealed: bytes) -> bytes:
         return crypto.open_sealed(self._kx, self.device_id, "cert-request", object_id, 0, sealed)
-
-
-class PairOutcome:
-    """What :meth:`SandboxOwner.serve_request` decided: ``cert`` (the signed certificate) or ``rejected``."""
-
-    def __init__(self, request_id: str, *, cert: dict[str, Any] | None, cert_code: str | None, label: str,
-                 scopes: tuple[str, ...]) -> None:  # fmt: skip
-        self.request_id, self.cert, self.cert_code, self.label, self.scopes = request_id, cert, cert_code, label, scopes
-
-    @property
-    def rejected(self) -> bool:
-        return self.cert is None
 
 
 # -- the owner ----------
@@ -279,44 +266,29 @@ class SandboxOwner:
         poll_wait: int = 2,
         sleep: Callable[[float], None] = time.sleep,
     ) -> PairOutcome:
-        """Work the one cert request the host reported for the offer: wait for it in the queue, check and open it,
-        sign the challenge, show ``cert_code``, then sign the certificate **only if** ``read_code(cert_code_label,
-        offer note)`` returns the code the phone shows (a comparison happens, 11A.15.11 step 8); anything else rejects.
+        """Work the one cert request the host reported for the offer with the **product's** step
+        (:func:`orch.relay_owner.inline.serve_request`, B1b/N6): wait for it in the queue, check and open it, then sign
+        the challenge, and sign the certificate **only if** ``read_code(label, scopes)`` returns the code the phone
+        shows (11A.15.11 step 8); anything else rejects. Only the person-key source (the sandbox's file), the
+        packaging and the single try (``recovery_tries=1, code_tries=1``: the script types once) differ.
 
         ``read_code(label, scopes)`` is the caller's prompt or FIFO read: ``label`` is the device's own name for itself
-        ("named by the device"), ``scopes`` the requested ones; it returns the typed code or ``None`` (reject).
-        Returns the certificate to hand to ``host.relay_pair_cert`` (or the fact that it was rejected)."""
+        ("named by the device"), ``scopes`` the requested ones; it returns the typed code or ``None`` (reject)."""
         card = self.card(workspace_id, state_dir)
         journal_dir_ = journal_dir(self.state)
         journal_dir_.mkdir(parents=True, exist_ok=True, mode=0o700)
-        deadline = time.monotonic() + wait_s
         with self.person_key(ANSWER_LABELS) as pk:
+            owner_pk = pk.pk_pub
             q = PrimaryQueue(
-                self.client, PrimaryJournal(journal_dir_), pk_pub=pk.pk_pub,
+                self.client, PrimaryJournal(journal_dir_), pk_pub=owner_pk,
                 cards=lambda ws: card if ws == card.workspace_id else None, unseal=self.keys.unseal,
                 now_ms=self._now,
             )  # fmt: skip
-            pending = None
-            while pending is None:
-                pending = q.poll(request_id, wait=poll_wait).get(request_id)
-                if pending is None:
-                    if time.monotonic() >= deadline:
-                        raise OwnerRefusedError("timeout", "the cert request did not reach the primary")
-                    sleep(0.2)
-            try:
-                challenged = q.challenge(request_id, pk)
-            except QueueRefused as exc:
-                raise OwnerRefusedError(exc.code, "the primary refused the request") from None
-            code = challenged.cert_code or ""
-            typed = read_code(challenged.label, ",".join(challenged.scopes_max))
-            if (
-                typed is not None
-                and _CODE.fullmatch(typed.strip().upper())
-                and hmac.compare_digest(typed.strip().upper().encode(), code.encode())
-            ):
-                cert = q.sign(request_id, pk)
-                return PairOutcome(request_id, cert=cert, cert_code=code, label=challenged.label,
-                                   scopes=challenged.scopes_max)  # fmt: skip
-            q.reject(request_id, pk)
-            return PairOutcome(request_id, cert=None, cert_code=code, label=challenged.label,
-                               scopes=challenged.scopes_max)  # fmt: skip
+        try:
+            return product_inline.serve_request(
+                q, request_id, owner_pk=owner_pk, pk_factory=lambda **kw: self.person_key(kw["labels"]),
+                ask_cert_code=lambda _p, pending, _d: read_code(pending.label, ",".join(pending.scopes_max)),
+                recovery_tries=1, code_tries=1, wait_s=wait_s, poll_wait=poll_wait, now_ms=self._now, sleep=sleep,
+            )  # fmt: skip
+        except InlineRefused as exc:
+            raise OwnerRefusedError(exc.detail or exc.code, exc.message) from None

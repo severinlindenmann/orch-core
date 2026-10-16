@@ -243,6 +243,76 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
     return run
 
 
+class _Step9Failed(HostError):
+    """A step-9 refusal; ``main`` prints that the offer stays and how to sign it later."""
+
+    def __init__(self, code: str, message: str, *, offer: str) -> None:
+        super().__init__(code, message)
+        self.offer = offer
+
+
+def _cut(text: object) -> str:
+    return safe(str(text), 200)
+
+
+def _guarded(step9: Callable[[str], None]) -> Callable[[str], None]:
+    """Step 9's errors as :class:`HostError` (Opus review of #589, M1, as ``hostclient._human`` maps them), so every
+    one ends in ``main``'s cleaned refusal, never a traceback: a declined review (``SignerRefused``, "not
+    confirmed"), the key custody (``CustodyError``), the host connection (``OrchError``/``HostFailure``,
+    ``FrameError``, ``OSError``, ``TimeoutError``), anything else as ``internal``. The hint says the offer stays."""
+
+    def run(offer_id: str) -> None:
+        from orch.custody.base import CustodyError
+        from orch.ops.errors import OrchError
+
+        from . import frames
+        from .signer import SignerRefused
+
+        oid = _word(offer_id)
+        try:
+            step9(offer_id)
+        except HostError as exc:
+            raise _Step9Failed(exc.code, _cut(exc.message), offer=oid) from None
+        except SignerRefused as exc:
+            declined = "not confirmed" in str(exc)
+            text = "not confirmed: nothing was signed" if declined else f"{exc}; nothing was signed"
+            raise _Step9Failed("invalid.input", _cut(text), offer=oid) from None
+        except CustodyError as exc:
+            raise _Step9Failed(str(getattr(exc, "code", "custody")), _cut(str(exc)), offer=oid) from None
+        except OrchError as exc:
+            raise _Step9Failed(str(exc.code), _cut(str(exc)), offer=oid) from None
+        except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
+            raise _Step9Failed(
+                "host.unavailable", _cut(f"lost the connection to the orch host ({exc})"), offer=oid
+            ) from None
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never a traceback: the class name only
+            raise _Step9Failed("internal", _cut(f"step 9 failed ({type(exc).__name__})"), offer=oid) from None
+
+    return run
+
+
+def _json_sink(fd: object, out: TextIO) -> TextIO:
+    """Where ``--json`` writes the link (11A.15.9, Opus #589 L4): stdout only when it is a TTY, else ``--json-fd``,
+    which must be a pipe or a socket (never a regular file, never fd 0, 1 or 2)."""
+    import stat
+
+    if fd is None:
+        if out.isatty():
+            return out
+        raise HostError("invalid.input", "--json writes the link only to a TTY or to --json-fd")
+    if type(fd) is not int or fd < 3:
+        raise HostError("invalid.input", "--json-fd must be a descriptor above 2 (a pipe or a socket)")
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        raise HostError("invalid.input", "--json-fd is not an open descriptor") from None
+    if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+        raise HostError("invalid.input", "--json-fd must be a pipe or a socket: the link is never written to a file")
+    return os.fdopen(fd, "w", closefd=False)
+
+
 def main(
     args: Any,
     env: Mapping[str, str],
@@ -308,13 +378,7 @@ def main(
                 )
             emit = None
             if as_json:
-                fd = getattr(args, "json_fd", None)
-                if fd is not None:
-                    sink = os.fdopen(int(fd), "w", closefd=False)
-                elif out.isatty():
-                    sink = out
-                else:
-                    raise HostError("invalid.input", "--json writes the link only to a TTY or to --json-fd")
+                sink = _json_sink(getattr(args, "json_fd", None), out)
 
                 def emit(obj: dict[str, Any], sink: TextIO = sink) -> None:
                     sink.write(json.dumps(obj, sort_keys=True) + "\n")
@@ -344,13 +408,16 @@ def main(
                     out.write(f"{FALLBACK}: {link['https']}\n")
                     out.flush()
                 del link
-            driver = step9 or _step9(env, state, entry)
+            driver = _guarded(step9 or _step9(env, state, entry))
             return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep)
     except _Refused as exc:  # the host's refusal, JSON-encoded (ASCII: every control character escaped)
         out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True, ensure_ascii=True))
         out.write("\n")
         return exc.exit
     except HostError as exc:
+        if isinstance(exc, _Step9Failed):
+            out.write(f"nothing was added; the offer stays: sign later with orch host relay pair --resume --offer "
+                      f"{exc.offer}\n")  # fmt: skip
         hint = safe(exc.hint, 300) if exc.hint else None
         return write_error(out, as_json, _word(exc.code) if exc.code else "internal", safe(exc.message, 400), hint=hint)
     except (FileNotFoundError, ConnectionRefusedError):

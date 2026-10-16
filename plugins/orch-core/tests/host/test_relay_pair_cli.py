@@ -381,3 +381,98 @@ def test_a_link_that_is_not_printable_ascii_is_never_printed():
     with pytest.raises(Exception):  # noqa: B017 - HostError internal
         paircli._link("orch://pair?relay=x#v2.\x1b[2J")
     assert paircli.safe("a\x1b[2Jb‮c\nd") == "a[2Jbc d"
+
+
+# -- Opus review of #589: M1 (step 9's errors never escape as tracebacks), L4 (--json-fd) ----------------------------
+
+
+def _drive_to_step9(host, step9):
+    """The CLI from the offer to step 9 (a scripted phone and external primary), with ``step9`` as the driver."""
+    lab, h, wid, service, engine, owner, primary = host
+    relaypair.primary_set(service, primary.cert(scopes=("look",)), "Mac")
+    out = io.StringIO()
+    state = {"phone": None}
+
+    def sleep(_t):
+        if state["phone"] is None:
+            line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("link: "))
+            state["phone"] = Phone(line[len("link: ") :])
+            engine.receive(*state["phone"].envelope(state["phone"].meta(), ts=engine.now_ms()))
+            return
+        rec = engine.store.get(state["phone"].offer)
+        if rec["state"] == "cert_pending" and not rec["cert"]:
+            req = engine.routes.requests[-1]
+            ch = make_challenge(req["o"], state["phone"], owner.pk)
+            cert = make_cert(state["phone"], pk_priv=owner.pk, created_ms=engine.now_ms() - 1000)
+            engine.pair_cert(state["phone"].offer, cert=cert, challenge=ch)
+
+    def ask(prompt):
+        p = state["phone"]
+        rec = engine.store.get(p.offer)
+        return pairing.sas(wid, p.offer, p.sig_pub, p.kx_pub, engine.ctx.wsk_pub, crypto.unb64u(rec["sas_nonce"]))
+
+    rc = paircli.main(ns(workspace=wid), {}, out, state=lab.state, control=h.host.control_path, ask=ask, step9=step9,
+                      sleep=sleep)  # fmt: skip
+    return rc, out.getvalue(), state["phone"].offer
+
+
+def _raiser(exc):
+    def step9(offer_id):
+        raise exc
+
+    return step9
+
+
+def _errors():
+    from orch.custody.base import CustodyError
+    from orch.host import frames
+    from orch.host.signer import SignerRefused
+    from orch.ops.errors import OrchError
+
+    class Wrong(CustodyError):
+        code = "custody.wrong_passphrase"
+
+    return [
+        SignerRefused("refusing to sign: not confirmed\x1b[2J‮"),
+        Wrong("wrong\x1b[2J passphrase"),
+        OrchError("host.unavailable", "lost\x1b[2J the connection"),
+        frames.FrameError("frame.invalid", "frame\x1b[2J broke"),
+        TimeoutError("timed\x1b[2J out"),
+        ConnectionError("reset\x1b[2J"),
+        RuntimeError("anything\x1b[2J else"),
+    ]
+
+
+@pytest.mark.parametrize("exc", _errors(), ids=lambda e: type(e).__name__)
+def test_a_step_9_error_is_a_clean_refusal_never_a_traceback(host, exc):
+    rc, text, offer = _drive_to_step9(host, _raiser(exc))
+    assert rc != 0
+    assert "Traceback" not in text and not any(c in text for c in ("\x1b", "‮"))
+    assert f"--resume --offer {offer}" in text  # the offer stays: sign later
+
+
+def test_declining_the_review_says_nothing_was_signed(host):
+    from orch.host.signer import SignerRefused
+
+    rc, text, offer = _drive_to_step9(host, _raiser(SignerRefused("refusing to sign: not confirmed\x1b[2J")))
+    assert rc != 0 and "nothing was signed" in text
+
+
+@pytest.mark.parametrize("which", ["stdin", "stdout", "stderr", "file"])
+def test_json_fd_must_be_a_pipe_or_a_socket_never_0_to_2_or_a_file(host, tmp_path, which):
+    lab, h, wid, service, engine, owner, primary = host
+    relaypair.primary_set(service, primary.cert(scopes=("look",)), "Mac")
+    f = None
+    if which == "file":
+        f = open(tmp_path / "link.txt", "w")  # noqa: SIM115 - closed below
+        fd = f.fileno()
+    else:
+        fd = {"stdin": 0, "stdout": 1, "stderr": 2}[which]
+    try:
+        rc, text = run(lab, h, ns(workspace=wid, json=True, json_fd=fd), sleep=lambda t: None)
+    finally:
+        if f is not None:
+            f.close()
+    assert rc != 0 and "invalid.input" in text and engine.list_offers() == []  # refused before any offer
+    if which == "file":
+        assert (tmp_path / "link.txt").read_text() == ""

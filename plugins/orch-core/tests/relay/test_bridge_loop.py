@@ -136,3 +136,12 @@ def test_fenced_stops_the_worker(env):
     sim.holders[WS] = (gen + 1, until)  # another holder took over
     assert _wait(lambda: loop.error is not None)
     assert loop.join(10)
+
+
+def test_the_loop_keeps_the_last_polls_notices_for_r4(env):
+    """R4 (11A.9): ``BridgeLoop.notices`` is the ``notices`` object of the last poll, a copy, read-only for R4."""
+    m, sim, w, loop = env
+    assert loop.notices is None
+    loop.start()
+    assert _wait(lambda: sim.polls >= 1 and loop.notices is not None)
+    assert loop.notices == {"revocations_cursor": 0, "cert_requests": [], "rotation_due": [], "unpublished": None}

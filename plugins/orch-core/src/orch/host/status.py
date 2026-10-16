@@ -112,7 +112,10 @@ def _relay(state: Path, wid: str, host_uid: int) -> dict[str, Any] | None:
         outbox = 0
     except OSError:
         outbox = None
-    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox}
+    from .relayr4 import ledger_at
+
+    ledger = ledger_at(state, wid, host_uid)
+    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox, "held": ledger["held"], "ledger": ledger}
 
 
 def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
@@ -165,6 +168,11 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
         relay = _relay(state, wid, host_uid)
         if relay is not None:
             row["relay"] = relay
+            from .relayr4 import held_attention
+
+            note = held_attention(str(entry.get("prefix")), relay.get("held") or [], relay.get("ledger"))
+            if note is not None:  # R4 (11A.9): held evidence the owner must publish (interim for #572)
+                problems.append(note)
             why = relay.get("blocker") or relay.get("error")
             if relay.get("linked") and why and why != "stopped":
                 problems.append(
@@ -264,7 +272,7 @@ def render(rep: Mapping[str, Any]) -> str:
             r = w["relay"]
             lines.append(
                 f"  relay linked={_yes(r.get('linked'))} worker={'may start' if not r.get('blocker') else r['blocker']}"
-                f" outbox={r.get('outbox_pending')}"
+                f" outbox={r.get('outbox_pending')}" + (f" held_evidence={len(r['held'])}" if r.get("held") else "")
             )
     here = rep["here"]
     if here is None:

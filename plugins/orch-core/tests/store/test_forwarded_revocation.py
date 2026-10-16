@@ -80,10 +80,11 @@ def test_intake_is_idempotent_per_pair(ws):
     assert _revocations_file(env) == first
 
 
-def test_a_member_whose_device_is_not_associated_is_pending(ws):
+def test_a_member_whose_device_is_not_associated_is_held_as_unknown(ws):
     env, _device, _sig_pub = ws
     stray = crypto.public_bytes(crypto.generate_private_key())  # a key the workspace never listed
-    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "pending"
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "held"  # visible: standing `unknown`
+    assert env.store.pair_standings([(certs.device_ref(stray), env.owner.ref, "compromised")]) == ["unknown"]
     assert any(pair(r) == (certs.device_ref(stray), env.owner.ref) for r in env.store._pins.revocations())
 
 
@@ -104,7 +105,7 @@ def test_a_substituted_outer_field_is_dropped(ws, field):
         "person_id": crypto.person_id(other.pk_pub).hex(),
         "reason": "compromised",
     }[field]
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
     assert _revocations_file(env) == b""
 
 
@@ -112,7 +113,7 @@ def test_a_wrong_provenance_digest_is_dropped(ws):
     env, _device, sig_pub = ws
     it = item(env.owner, sig_pub)
     it["provenance"]["digest"] = "sha256:" + "0" * 64
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
 
 
 def test_a_forged_revocation_is_dropped(ws):
@@ -121,7 +122,7 @@ def test_a_forged_revocation_is_dropped(ws):
     it["revocation"]["o"]["reason"] = "compromised"  # signature no longer verifies
     it["reason"] = "compromised"
     it["provenance"]["digest"] = "sha256:" + hashlib.sha256(canon.cj_checked(it["revocation"])).hexdigest()
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
     assert _revocations_file(env) == b""
 
 
@@ -129,14 +130,14 @@ def test_a_certificate_of_another_person_is_dropped(ws):
     env, _device, sig_pub = ws
     bob = Person()
     it = item(env.owner, sig_pub, cert=_cert(bob, sig_pub))
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
 
 
 def test_a_pk_pub_that_is_not_the_persons_is_dropped(ws):
     env, _device, sig_pub = ws
     it = item(env.owner, sig_pub)
     it["pk_pub"] = crypto.b64u(Person().pk_pub)
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
 
 
 def test_an_expired_historical_certificate_is_still_evidence(ws):
@@ -149,7 +150,8 @@ def test_a_cap_rejection_is_dropped(ws, monkeypatch):
     env, _device, _sig_pub = ws
     stray = crypto.public_bytes(crypto.generate_private_key())
     monkeypatch.setattr(pins_mod.HostPins, "note_revocation", lambda *a, **k: False)  # its caps dropped it
-    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "dropped"
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "held"  # the ledger never loses it
+    assert not any(pair(r) == (certs.device_ref(stray), env.owner.ref) for r in env.store._pins.revocations())
 
 
 @pytest.mark.parametrize(
@@ -158,7 +160,7 @@ def test_a_cap_rejection_is_dropped(ws, monkeypatch):
 )
 def test_garbage_is_dropped(ws, bad):
     env, _device, _sig_pub = ws
-    assert env.store.note_forwarded_revocation(bad) == "dropped"
+    assert env.store.note_forwarded_revocation(bad) == "unverifiable"
 
 
 def test_garbage_fields_inside_a_well_shaped_item_are_dropped(ws):
@@ -166,7 +168,7 @@ def test_garbage_fields_inside_a_well_shaped_item_are_dropped(ws):
     for key, value in (("pk_pub", "!!"), ("device_cert", "x"), ("provenance", None), ("revocation", 3)):
         it = item(env.owner, sig_pub)
         it[key] = value
-        assert env.store.note_forwarded_revocation(it) == "dropped", key
+        assert env.store.note_forwarded_revocation(it) == "unverifiable", key
 
 
 def test_held_evidence_refuses_that_pair_as_a_restore_signer(ws):
@@ -197,29 +199,29 @@ def _big_label_item(person: Person, size: int) -> dict:
 def test_poc_f2_huge_items_are_dropped_and_the_store_stays_usable(ws):
     env, _device, _sig_pub = ws
     for _ in range(3):
-        assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 300_000)) == "dropped"
+        assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 300_000)) == "unverifiable"
     assert _revocations_file(env) == b""
     stray = crypto.public_bytes(crypto.generate_private_key())
-    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "pending"
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "held"
     env.store.restore_facts("workspace")  # still readable
 
 
 def test_an_item_above_4_kib_is_dropped(ws):
     env, _device, _sig_pub = ws
-    assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 3000)) == "dropped"
+    assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 3000)) == "unverifiable"
 
 
 def test_extra_keys_are_dropped(ws):
     env, _device, sig_pub = ws
     it = item(env.owner, sig_pub)
     it["extra"] = 1
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
     it = item(env.owner, sig_pub)
     it["provenance"]["extra"] = 1
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
     it = item(env.owner, sig_pub)
     del it["chain_reason"]
-    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert env.store.note_forwarded_revocation(it) == "unverifiable"
 
 
 def test_the_record_count_is_bounded_for_every_person_including_the_owner(ws, monkeypatch):
@@ -229,7 +231,8 @@ def test_the_record_count_is_bounded_for_every_person_including_the_owner(ws, mo
         env.store.note_forwarded_revocation(item(env.owner, crypto.public_bytes(crypto.generate_private_key())))
         for _ in range(5)
     ]
-    assert results == ["pending"] * 3 + ["dropped"] * 2
+    assert results == ["held"] * 5  # every one is visible to the owner ...
+    assert len([r for r in env.store._pins.revocations() if is_forwarded(r)]) == 3  # ... HostPins keeps its cap
 
 
 def _add_member(env: Env) -> Person:
@@ -253,9 +256,10 @@ def test_the_total_is_bounded_for_members_and_the_owner_is_exempt_from_it(ws, mo
     mara = _add_member(env)
     monkeypatch.setattr(pins_mod, "MAX_FORWARDED_HARD", 2)
     results = [env.store.note_forwarded_revocation(item(mara, _stray())) for _ in range(4)]
-    assert results == ["pending"] * 2 + ["dropped"] * 2
+    assert results == ["held"] * 4
+    assert len([r for r in env.store._pins.revocations() if is_forwarded(r) and pair(r)[1] == mara.ref]) == 2
     # the owner's records do not count against the total and are not refused by it (only by its own 256)
-    assert [env.store.note_forwarded_revocation(item(env.owner, _stray())) for _ in range(3)] == ["pending"] * 3
+    assert [env.store.note_forwarded_revocation(item(env.owner, _stray())) for _ in range(3)] == ["held"] * 3
 
 
 def test_revocations_are_read_without_a_size_limit(ws, monkeypatch):

@@ -5453,7 +5453,7 @@ same backup cannot be detected (inherent to any local state), nor can a block-le
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
 | `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
-| `unpublished.json` | `{cursor, last_full_read_ms}` | no | the cursor is acked only after every item up to it is settled by the store (11A.9) |
+| `unpublished.json`, `unpublished.seq` | `{v, cursor, scan, gen, last_full_ms, notice, ack, resume, scan_pages, ack_refusals, scan_unv, held, unverifiable, overflow, person_overflow, first_scan_ms, rebuilding, last_complete_ms, failed_turns, ledger_seq}` and `{seq}` (its mirror, same `relay/` directory) | no | the held LEDGER (11A.9): relay input only adds or raises rows, only the store's own state removes one; the ledger and its mirror are written under one lock, before the ack; `ack` is the pending ack, cleared only once the relay accepted it |
 | `alarms.json` | the H8 counters and open alarms (`host.status`) | no | rewritten atomically |
 
 **Read through the host store, never copied.**
@@ -5777,7 +5777,7 @@ order: (1) R6 merged: the real `EpochKeySource` (`seal_snapshot`, `refusal_key`,
 in the store's critical sections), the real `R6View` (the committed list re-verified at load) and `R6Pairing` for
 `pair` items; (2) `relayhook.SEAMS.r6` set to R6's builder, `SEAMS.link_source` to R6a's card keys and the
 genesis-pin person path, `SEAMS.publisher` to R3 (else the first link stops at `publish` and never reaches `linked`)
-and `SEAMS.unpublished` to R4; (3) R6's integration tests against the real relay pass in the `relay-t2` job,
+and `SEAMS.unpublished` to R4 (`relayr4.unpublished`; still unwired today, so R4 runs only in tests until the flip); (3) R6's integration tests against the real relay pass in the `relay-t2` job,
 including an R5 T2 test: a served workspace linked through the hook with the test owner client
 (`tests/relay/owner.py`, 11A.15.11, 11A.15.14 step 4), a paired device, a column-R read and a write through the
 worker; (4) the Opus security review and orch-52's review of R5 and of the R6 groups; (5) the flip is its own PR that
@@ -6958,6 +6958,212 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   raises the rotation gate. The host **never** appends `device.revoked` or a restore by itself. It raises a `needs`
   item for the owners ("publish this revocation"), and publication follows only F1 §5.3, through the person path.
 - A failed item is logged with its pair and the reason, and skipped. Unverified data never changes host state.
+- **As built in R4 (15-16 Oct 2026, orch-29; PR #571; behind the dormant R6 gate; round 4 below is the final shape).**
+  `orch/relay/unpublished.py` (`UnpublishedConsumer.step()`, the `Unpublished` seam, on the aux thread): at most one
+  page per turn (`GET unpublished?[cursor=]&limit=64`, 10 s, 4 MiB; the field set `{items, cursor, more}` exact, at most
+  64 object items, a b64u `cursor` that goes into the query string only after a strict check). A read from the start
+  after a new holder `gen`, after `cursor_ahead`, after a ledger loss and daily (`FULL_EVERY_MS`: by the wall clock, a
+  stored time in the future, or this process's monotonic clock), page by page, ALWAYS continuing from the stored scan
+  position (a scan is never restarted because it is long: beyond 1,500 pages it goes at one page per 30 s with one
+  alarm `unpublished_scan_long`); otherwise from the stored position while the last poll's `notices.unpublished` is
+  non-null and differs from the notice a COMPLETED read answered. Every item goes to the host's `hold` (`relayr4`:
+  `worker.job(store.note_forwarded_revocation(item))`, so all verification is the store's, H12b). The aux thread
+  waits on the worker's jobs for at most 20 s per turn (after at least one item; one single job can still wait without
+  bound: a local store job queued behind the workspace's own ops, `RelayWorker.job` has no timeout parameter); the rest
+  of the page carries to the next turn with `resume` `{pos, n, sig}` (valid only for the same position and content),
+  no ack. Then `relay/unpublished.json` is written atomically and only then `POST unpublished/ack {cursor}` (exactly
+  that field). **The ack is a pending ack:** `ack` in the file from the write until the relay accepted it; retried
+  first on every turn and after a restart; a pending ack of an older generation is dropped (the new generation re-reads
+  and re-acks every position); 5 consecutive non-transient refusals (not 429, not `cursor_ahead`, not transport) drop
+  it with one alarm `unpublished_ack_dropped` and reading goes on from the stored position (an ack only moves
+  `notices.unpublished`); `cursor_ahead` drops it and restarts the scan (with a 30 s back-off); a lost ack is harmless
+  either way. 429 waits `Retry-After` (else 60 s); other refusals, transport errors, store faults and unknown results
+  back off 30 s, one alarm per class; the session's `Fenced`/`SessionError` reach the aux guard (the worker stops). A
+  page with the wrong field set is `RelayMisbehaving`, a `SessionError`: it **stops the worker**; a page this consumer
+  finds malformed (over 64 items, a bad cursor, wrong types) is a `RelayRefused(200, "malformed")` and backs off 30 s.
+  A page's repeated items cost one job. **R2 change (minimal, read-only):** `BridgeLoop.notices` keeps a copy of the last
+  poll's `notices`; nothing in the bridge acts on it. The full file is
+  `{v, cursor, scan, gen, last_full_ms, notice, ack, resume, scan_pages, ack_refusals, scan_unv, held, unverifiable,
+  overflow, rebuilding, last_complete_ms, failed_turns, ledger_seq}` plus its mirror `unpublished.seq`.
+- **Held evidence, interim for #572 (DECIDED 15 Oct 2026, orch-d6 with orch-52):** the host has no host-originated
+  `needs` items yet, so held evidence is the LEDGER below, shown by `host.status.relay` (`held_evidence`, `ledger`,
+  `attention: [{what, fix}]`) and by `orch host status` as a problem with the same text. **SEAM (#572): promote
+  `unpublished_held` to a host-originated `needs` item ("publish this revocation") when those exist**
+  (`orch/host/relayr4.py`, `orch/relay/unpublished.py`). **SEAM (flip): `SEAMS.unpublished` is still unwired (R6), and the
+  host's commit hook calls `UnpublishedConsumer.wake()` after a commit that can revoke (`device.revoked`,
+  `member.removed`, a restore); until it does, the aux turn re-judges the ledger every 2 s on its own.**
+- **R4 held ledger: the sticky ledger (round 4, 16 Oct 2026; AS BUILT; designed after three Opus reviews, a Codex
+  challenge (nine findings) and orch-07's adjustments).** Three reviews found one class (a
+  security notice hidden by relay behaviour), so the structure changes instead of the paths: the owner's view is a
+  **monotone ledger** and the relay is a write-only input to it.
+  - **Ledger.** Persisted in `relay/unpublished.json`: `held` (rows), `unverifiable` `{n, first_ms, last_seen_ms,
+    clean_scans}`, `overflow` (a count), `person_overflow` (a count per person), `rebuilding` (bool), `last_complete_ms`,
+    `first_scan_ms`, `ledger_seq`. A row is keyed by the
+    exact `(d_device, p_person)` pair and carries `need` (the reason of the strongest verified item seen for it; required
+    strength `revoke_strength(need)`: compromised 2 > lost = retired 1), `ver` (incremented on every raise), the
+    item's digest, `at_ms` and a derived `state` (below). At most 4,096 rows (the relay's ever-device quota).
+  - **ONE write API** (`Ledger` in `relay/unpublished.py`): `add_or_raise(row)` (relay input: adds a pair, or raises its
+    `need`; an equal or weaker item changes nothing), `settle_from_store(judged)` (the only removal: a row goes only
+    when the store judged it `settled` AND its current `(need, ver)` still equals the judged `(need, ver)`: a
+    compare-and-set, so an answer computed before a raise can never delete the raised requirement) and
+    `note_unverifiable(n)`; `rebuilding`, `overflow` and the freshness fields have their own single setters. An AST test
+    pins that no other code mutates any of them or the persisted `held` list. Raising compares reasons with a function
+    INJECTED by `relayr4` (built on `orch.identity.certs.revoke_strength`; `orch.relay` cannot import `orch.identity`,
+    and no second strength table exists), pinned for all 3x3 reason pairs.
+  - **Settle source (orch-07).** `Store.pair_settled(device, person, need)` (`pair_standings` for a batch) is a
+    read-only function of the workspace's own verified state under the store lock: `rec =
+    state.revocations[device][person]` and `revoke_strength(rec.revocation.reason) >= revoke_strength(need)`.
+    `ws.revocations` is written by every accepted `device.revoked`, for live devices AND restore tombstones; it is NOT
+    `dev.revoked`. The model accepts a `compromised` upgrade over a tombstone's `lost`/`retired` (`model/workspace.py:203`:
+    only non-compromised -> compromised lands; lost after retired or the reverse is already covered). It needs THAT
+    person's entry: a tombstone holding only other persons' evidence refuses this person's revocation (`DEVICE_CERT`,
+    `workspace.py:187`), a device with no tombstone at all is `DEVICE_UNKNOWN`: both stay held and visible. The model
+    verifies against `ws.members.get(p) or ws.former.get(p)` (`workspace.py:191`), so a FORMER member's device is a
+    normal row.
+  - **Standing of a row** (derived; judged by the host on every aux turn, which a store commit that can revoke
+    (`device.revoked`, `member.removed`, a restore) WAKES, still not synchronously; always under the store lock):
+    `settled` (row removed) | `stronger` (state holds a weaker revocation) | `revoke` (the device is the person's, no
+    revocation) | `other` (the device is another person's, or a tombstone holds other persons' evidence only) |
+    `unknown` (no device, no tombstone). **Honest text per row** (`orch host status` and `host.status.relay`
+    `attention`, each with `actionable`): `revoke` (actionable) "an owner signs a `device.revoked` for that device with
+    reason X (F1 §5.3)"; `stronger` (actionable) "an owner signs a `device.revoked` with the stronger reason X; it
+    replaces the weaker one; the relay may keep listing the item until the next restore, which is harmless"; `other`
+    (NOT actionable from this host) "cannot be settled from this host: the workspace holds only other persons'
+    evidence for this device (the model refuses this person's revocation, DEVICE_CERT); shown so it is never hidden;
+    it settles only if the state changes (a restore that carries this person's revocation, or the device is
+    re-associated)"; `unknown` (NOT actionable yet) "the device is not known to this workspace: nothing to sign until
+    it is added (the row then becomes `revoke`); shown so it is never hidden". Never an instruction to re-append an
+    equal-strength revocation (relay obligation 5).
+  - **Store result per item** (`Store.note_forwarded_revocation`, one lock): `unverifiable` (does not verify, parse, fit
+    the size caps, or an outer field differs from the signed objects), `dropped` (verified, but NO person key is known
+    here: neither member nor former member, no tombstone entry for that person; counted as `unverifiable`), `settled`
+    (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, a cap that kept the
+    record out of `HostPins`). Without host state the store RAISES `store.busy` (no result: R4 reads again). `pending` no
+    longer exists. An exception is no result at all.
+  - **Per-item durability (H3).** The ledger file is written atomically (`StateDir`: temp, fsync, rename, directory
+    fsync, 0600) after EACH item that changes it, before the next item is judged, and `ledger_seq` is incremented; a
+    failure or crash at item k therefore keeps the results of items 1..k-1. The page's ack still goes out only after
+    every item of the page has a result and the position is saved.
+  - **Loss and rebuilding (H2).** `HostPins` cannot recover every obligation: its caps are smaller than the ledger's and
+    it stores a stronger forwarded reason beside a chain record in `upgrade`; a record it REJECTED at its cap exists only
+    in the relay's derived view. So: at every start the ledger is seeded (union) from `Store.forwarded_evidence()`, which
+    returns each record AND its `upgrade`; and when the ledger file is LOST (missing), unparseable, fails validation, or
+    is OLDER than its mirror (`ledger_seq` below the sequence in `relay/unpublished.seq`, the same directory, written
+    after every ledger save, under the same lock) the host enters `rebuilding`: the ledger starts from the seed, a full read from the start of the relay's view
+    begins, and `orch host status` is NOT ok ("the held list is being rebuilt") until a COMPLETE full read, started after
+    the loss, finishes with every item given a result (no exception, `more` false). The ledger is re-seeded from the
+    store on EVERY such loss (also while the process runs), not only at start. An older backup of the whole state
+    directory (file and mirror together), or BOTH files missing (the whole `relay/` directory removed), is
+    undetectable: it looks like a fresh install (no rebuild until the next start re-seeds), as for every local state
+    (11A.3).
+  - **`unverifiable` is sticky (H1).** Relay behaviour never clears it. It is cleared only when BOTH at least 2
+    consecutive COMPLETE full scans did not see an unverifiable item (`clean_scans`) AND at least 7 days passed since
+    `last_seen_ms`; any sighting resets both. Justification: an unverifiable item carries no verified evidence, a
+    relay can withhold anything before first delivery anyway, but the counter exists so the owner sees tampering; a
+    single empty or short answer must not erase it, and a week gives the owner time to look. An owner acknowledge
+    command is a later option, not in R4.
+  - **Capacity and overflow (M5, round 5).** Three bounds, none of which evicts a row: at most 4,096 rows; at most
+    256 NON-ACTIONABLE (`unknown`/`other`) rows per person (`PERSON_MAX`, HostPins' own per-person bound; actionable
+    rows are bounded by real devices and by the global 4,096), so one known key (a removed or compromised member's)
+    cannot crowd out another person's obligation, nor its own real one; and a SEPARATE budget of 512 rows in standing
+    `unknown`/`other` (nothing the owner can sign), so such rows can never displace an actionable obligation (the
+    standing of a new row is asked of the store before the caps are applied; actionable rows do not count against that
+    budget). A pair beyond a bound is NOT stored: a visible counter instead (`person_overflow[person]` for the per-person
+    cap, at most 256 persons, the rest in `overflow`; `overflow` for the other two; each pair counts ONCE, by a bounded
+    set of short digests, and the text says "up to N" (it may overcount once the list is full or lost, or after a pair is later listed) and names up to five persons), an alarm
+    `unpublished_overflow`, `orch host status` not ok, and `actionable: true` while any overflow is open (unlisted
+    obligations may exist). Pairs beyond a bound are neither settled nor raised; their evidence is in `HostPins`
+    within ITS caps. The counters never clear by relay behaviour (those pairs were delivered and not listed). With an
+    HONEST relay none of the bounds is reachable (4,096 is its ever-device quota); a hostile relay holding a known
+    person key can fill that person's share and the non-actionable budget, never anyone else's capacity. What the owner
+    can do: rows clear only when the workspace state settles them (a restore that carries the revocation, an owner's
+    `device.revoked`); the counters clear only with an owner reset, and NO reset command exists yet (the fix text says
+    so; a minimal safe command is future work).
+  - **Bounded work and store-lock time per aux turn (automated review flags).** Per turn: one page of at most 64 items
+    (the relay's own cap, 4 MiB read cap, items over 4 KiB are `unverifiable` before any signature work); each item
+    is its OWN worker job, so the store lock is held for ONE item's verification and association, never for a page; the
+    ledger is re-judged in chunks of 256 rows (`JUDGE_BATCH`), one job and one lock hold each, within the 20 s
+    per-turn budget, the rest carrying to the next turn; seeding at start (`forwarded_evidence`) reads `HostPins`
+    once, bounded by its own caps (at most (1,536 + 256) x 6 KiB), on the worker thread; the ledger is at most 4,096
+    rows plus the overflow counter; a hostile relay can therefore make the host spend at most one page, 64 verifications
+    and a bounded judging pass per aux turn (and one page per 30 s in the slow mode of a scan beyond 1,500 pages). One
+    single `worker.job` can still wait without bound (no timeout parameter on `RelayWorker.job`).
+  - **Status freshness (M9).** `last_complete_ms` is the end of the last COMPLETE full read. `orch host status` shows its
+    age and is NOT ok ("stale") when the worker is linked and the last complete read is older than 2 x 24 h, or when
+    scans keep failing (3 consecutive failed turns in a row after the last complete read: the alarm stays open). The
+    clock starts at the first scan attempt (`first_scan_ms`) when no scan ever completed. DECIDED: stale means "no
+    COMPLETE scan in 48 h", so a scan in `unpublished_scan_long` slow mode that advances but never completes is stale
+    too (it says so in `orch host status`; the ledger it has already built stays visible).
+
+  **Ledger and item states** (rows of the ledger or counters): *no row*; *row `revoke`* (need S); *row `stronger`*
+  (need S); *row `other`*; *row `unknown`*; *`unverifiable` n>0*; *`overflow` n>0*; *`rebuilding`*; *stale*; *settled*
+  (the row is gone; only through `pair_settled` with an unchanged `(need, ver)`).
+
+  | Input | Ledger | `note_forwarded_revocation` | Alarm | `orch host status` | Ack |
+  |---|---|---|---|---|---|
+  | New verified item, device is the person's, no revocation in state | no row -> row `revoke`, need S, ver 1 | `held` | `unpublished_held` (once per new row or raise) | not ok: "sign device.revoked, reason X" | yes, after every item has a result and the file is saved |
+  | New item, state holds a weaker revocation | row `stronger`, need S | `held` | `unpublished_held` | not ok: "sign device.revoked with the stronger reason X" | yes |
+  | New item, state revocation of the exact pair at >= S (equal strength included) | no row | `settled` | none | ok (if nothing else is open) | yes |
+  | Item for a restore-tombstone-only device, the tombstone has THIS person's entry | by strength: no row, or row `stronger` | `settled` / `held` | as above | as above | yes |
+  | Same, but the tombstone holds only other persons' evidence, or the device is another person's | row `other` | `held` | `unpublished_held` | not ok, NOT actionable: "cannot be settled from this host" | yes |
+  | Item for a member's (or FORMER member's) device the workspace does not know, no tombstone | row `unknown` | `held` | `unpublished_held` | not ok, not actionable yet: "device not known" | yes |
+  | Item whose person key is unknown (no member, no former member, no tombstone entry) | `unverifiable` +1 (`last_seen_ms` now, `clean_scans` 0) | `dropped` | `unpublished_unverifiable` (once per page) | not ok: "N items could not be verified" | yes |
+  | Item with a wrong outer field, unknown shape, over the size cap | `unverifiable` +1 as above (no per-item row) | `unverifiable` | as above | as above | yes |
+  | Re-served EQUAL item | unchanged | `held` or `settled` | none (not a new row) | unchanged | yes |
+  | Re-served WEAKER item for a pair whose row needs more | unchanged: never lowers, never removes | by its own reason | none | unchanged | yes |
+  | Re-served STRONGER item | row `need` raised to S, `ver`+1 | `held` | `unpublished_held` | text follows the new need | yes |
+  | Sequence: lost item -> compromised item -> lost item again (HostPins keeps the compromised one in `upgrade` beside a chain record) | need 1 -> 2 -> stays 2; the row is removed only when state holds compromised | `held`, `held`, by own reason | one per raise | text follows need 2 | yes |
+  | Sequence: state `lost`, relay compromised (row `stronger`), owner signs compromised, relay re-serves lost and compromised | row `stronger` -> removed at the next judging; both re-served items are `settled` | `held`, then `settled` | none after the first | not ok -> ok | yes |
+  | Item omitted or "forgotten" by the relay (any page, any read) | unchanged: no input is no change | not called | none | unchanged | n/a |
+  | A complete full read WITH or WITHOUT the item | held rows unchanged either way; `last_complete_ms` set; `unverifiable.clean_scans` +1 if it saw no unverifiable item | per item | none | freshness refreshed; `unverifiable` clears only by its own rule (>= 2 clean complete scans AND 7 days) | yes |
+  | An EMPTY complete full read (hostile or genuine) | nothing removed; `clean_scans` +1 at most once per scan | none | none | `unverifiable` stays for 7 days | yes |
+  | Restart, or a new holder generation | ledger kept; scan, `ack`, `resume`, counters restart; ledger re-seeded (union) from `Store.forwarded_evidence()` incl. `upgrade` entries | none | none | unchanged | the old gen's ack is dropped |
+  | Ledger file LOST, unparseable, invalid, or OLDER than its mirror | `rebuilding` = true; seeded from `HostPins`; full read from the start | `held` again, idempotent | `unpublished_held` for the re-added rows; one `unpublished_rebuilding` | NOT ok: "rebuilding" until a complete full read started after the loss finishes with every item given a result | yes (ack as usual) |
+  | An obligation HostPins REJECTED at its cap, then the file is lost | not in the seed; recovered only by the rebuild scan from the relay's view; `rebuilding` stays on until it completes | `held` | as above | NOT ok: rebuilding | yes |
+  | A store commit that adds a revocation (`device.revoked`, `member.removed`, a restore, an upgrade); it WAKES the aux turn | next aux turn: `pair_standings` under the store lock: `settled` -> row removed (only if `(need, ver)` unchanged); otherwise `state` rewritten | `pair_standings` (not `note_...`) | none | ok when nothing else is open | n/a |
+  | A raise racing a settle (judged at need 1, a stronger item raises to 2 before the answer is applied) | the settle is refused (CAS on `(need, ver)`); the row stays, judged again next turn | n/a | none | unchanged | n/a |
+  | Crash or exception MID-PAGE at item k | rows of items 1..k-1 are already persisted; nothing is lost | no result for k | the aux guard's one alarm per class | unchanged | NO: no ack, 30 s back-off, the page is read again (`resume` skips what is already held) |
+  | An exception inside the judging job | unchanged | none | one alarm per class | unchanged | n/a |
+  | No host state / store closed | judging returns `unknown` for every row, nothing is removed; for a NEW item the store RAISES `store.busy` (no result, never a row for an item it cannot judge): no ack, 30 s back-off, read again | none (an exception) | the aux guard's one alarm per class | unchanged | NO |
+  | Ledger at 4,096 rows, or the person at 256, or a non-actionable row over its 512 budget | NOT stored; `overflow` / `person_overflow[person]` +1; nothing evicted; other persons' and actionable capacity untouched | `held` | `unpublished_overflow` (once per process) | not ok: "overflowed (N pairs not listed)" (until an owner reset: none exists yet) | yes |
+  | A hostile relay holding one known person key floods unknown devices | that person's share (256) and the non-actionable budget (512) fill, then counters; a later REAL obligation of anyone else is still listed | `held` | `unpublished_overflow` | not ok | yes |
+  | Scans keep failing (relay unreachable, repeated refusals) or no complete scan for > 48 h | unchanged; `last_complete_ms` ages | none | the existing transport/refusal alarms stay open | NOT ok: "stale: last complete scan <age> ago" | n/a |
+
+  - **Invariants (pinned by tests).** (0) Raising a row's `need` uses the comparison injected by `relayr4` (3x3 test
+    against `revoke_strength`). (1) Relay input can only ADD a row or RAISE its `need`: a full read (empty or not), an
+    omitted item, a re-served weaker item, a restarted page, a new holder gen, a lost or older file never remove or lower
+    anything. (2) Only `Store.pair_settled` (the store's own verified state, `ws.revocations[device][person]`, the one
+    `revoke_strength`) removes a row, by compare-and-set on `(need, ver)`, re-judged by the host, never driven by what
+    the relay says. (3) Every item the relay serves gets a result: `settled` (no row needed), `held` (a row, persisted
+    before the next item), or `unverifiable` (a sticky counter); there is no path from relay behaviour to a smaller
+    ledger; an ack follows only complete results. (4) `orch host status` is ok only when the ledger is empty,
+    `unverifiable` and `overflow` are 0, the host is not `rebuilding`, and the last complete scan is fresh.
+  - **Test plan.** Cell tests for every row above, the probes of rounds 2 and 3 as regressions, the mutants of both
+    rounds as regression targets, plus a **model-based stateful test**: a pure oracle (the set of obligations
+    `(pair, need)` delivered by the relay and not yet settled by the store's state) against the real
+    `UnpublishedConsumer` and the real store, over random sequences of {relay inputs: new, equal, weaker, stronger,
+    wrong-field, empty page, omitted item, restarted or reordered page, more-forever} x {restart, new gen, ledger file
+    lost, older file restored} x {store commits: `device.revoked` of each reason, `member.removed`, restore} x {crash or
+    exception at any item}. The invariant checked after every step: the ledger never lacks an obligation that the
+    oracle holds and the store has not settled (and every row the store has settled disappears at the next judging),
+    plus the status is not ok whenever the oracle is non-empty or `rebuilding`/`unverifiable`/`overflow` is set.
+- JUDGEMENT CALLS (R4): the held list is display data only, never evidence (the evidence is the store's
+  `HostPins`); the store's per-pair dedup makes a re-read after a lost ack idempotent; positions are opaque, so the
+  stored position is the last acked page's `cursor` (a read from it only moves forward; a completed full read ends
+  past everything). `orch status` (the workspace op) is unchanged: the held evidence is a host fact, shown by
+  `orch host status` and `host.status.relay`.
+- Mutation pass (R4): across the four review rounds about 150 mutants on `git archive` copies and the worktree: the ack
+  order and the owed ack, the full-read triggers, the notice rule, `cursor_ahead`, `Retry-After`, a swallowed store fault,
+  an unknown result, the page and position checks, the worker job, both status surfaces, the generation reset, the hold
+  budget, the slow scan, the ack drop, and (round 4, 59 mutants) the ledger: replaced or cleared by a scan, restart or
+  generation, removal without the compare-and-set, a weaker item lowering a row, persistence after the page instead of
+  the item, the sequence mirror (not written, outside the lock, before the ledger, ahead or missing treated as ok),
+  `unverifiable` cleared by one scan or without the 7 days or without a sighting reset, `rebuilding` never set or
+  cleared early, no seeding, an overflow that evicts, hostile text kept verbatim, strength compared strictly or
+  inverted, a tombstone treated as unknown, a former member or a tombstone entry ignored, the `pins.py`/`checkpoints.py`
+  equal-strength rules, status ignoring failed turns, the judging chunk and budget. All killed except two equivalents
+  (`ver` and `need` change together, so a compare-and-set on `need` alone is the same; a judging pass marked done on a
+  cut-off is masked by the wake flag).
 
 **Authenticity, not currency.** R1's readers (`GET card`, `members`, `checkpoint`) prove that an object was signed by
 the right key for this workspace, not that it is the newest: a relay can serve an older card, an older WSK-signed member

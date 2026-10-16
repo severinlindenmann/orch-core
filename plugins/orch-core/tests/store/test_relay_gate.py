@@ -123,11 +123,11 @@ def test_a_held_forwarded_revocation_gates(env):
     assert rec.calls == [(d2[2:], "held_evidence")]
 
 
-def test_a_pending_forwarded_revocation_does_not_gate(env):
+def test_a_forwarded_revocation_for_an_unknown_device_is_held_but_does_not_gate(env):
     rec = Recorder(env.store)
     stray = crypto.public_bytes(crypto.generate_private_key())
-    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "pending"
-    assert rec.calls == []
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "held"  # visible to the owner (R4 ledger)
+    assert rec.calls == []  # but no device of the workspace is concerned: nothing to gate
 
 
 def test_unrelated_appends_and_reloads_do_not_gate(env):

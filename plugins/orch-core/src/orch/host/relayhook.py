@@ -612,7 +612,7 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
         out["alarms"] = list(st.get("alarms") or [])
         if st.get("gen") is not None:
             out["gen"] = st["gen"]
-        return out
+        return _with_held(service, out)
     if stuck:
         out.update(worker="stuck", alive=True, reason="relay_thread_stuck")
     elif stopping:
@@ -622,4 +622,17 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     with contextlib.suppress(Exception):
         out["alarms"] = _stored_alarms(service) if out["link"] != "none" else []
     out.setdefault("alarms", [])
+    return _with_held(service, out)
+
+
+def _with_held(service: WorkspaceService, out: dict[str, Any]) -> dict[str, Any]:
+    """R4 (11A.9): the held unpublished evidence for the owner, with what to do (``attention``); SEAM #572."""
+    from .relayr4 import held_attention, ledger_at
+
+    ledger = ledger_at(service.state_dir, service.workspace_id, service.host_uid)
+    pairs = ledger["held"]
+    out["held_evidence"] = pairs
+    out["ledger"] = {k: v for k, v in ledger.items() if k != "held"}
+    note = held_attention(str(service.entry.prefix), pairs, ledger)
+    out["attention"] = [note] if note is not None else []
     return out

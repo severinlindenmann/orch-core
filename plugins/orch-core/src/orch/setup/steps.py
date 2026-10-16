@@ -285,6 +285,9 @@ class Creator:
         self.items = list(plan.items)
         self._grant_skipped = False
         self._passphrase: str | None = None
+        self._shown = False  # the passphrase was shown on the terminal (once)
+        self._typed = False  # the person typed it in Finish: never shown back
+        self._custody_done = False
 
     # -- the public entry
     def execute(self) -> None:
@@ -311,9 +314,32 @@ class Creator:
         except BaseException as e:  # noqa: BLE001 - the thread must report, never die silently
             self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), post_genesis)
         finally:
+            if self.run.error is not None:
+                self._rescue_passphrase()  # before the wipe: a one-click key must not be left under an unseen passphrase
             self._passphrase = None
             if self.secrets is not None:
                 self.secrets.wipe()
+
+    def _rescue_passphrase(self) -> None:
+        """HIGH-1: in one-click mode the passphrase is never shown up front. Any failure after the genesis and before
+        the conversion is done (a signing mismatch, a host error, Ctrl-C, an internal error) leaves the only device key
+        under it, so it is shown ONCE on the terminal before it is wiped. Residual: SIGKILL/SIGHUP of the setup process
+        cannot run this (R6 notes); the recovery code is then the way back to the person key."""
+        if self.mode == "new" and self.profile["method"] == "click" and self.wid is not None and not self._custody_done:
+            with contextlib.suppress(Exception):
+                self._show_passphrase_once()
+
+    def _show_passphrase_once(self) -> None:
+        if self._shown or self._typed or self._passphrase is None:
+            return
+        self._shown = True
+        self.ports.terminal.show(
+            "\n=== orch setup: your device passphrase ===\n"
+            "Your key stays under this passphrase (the move to one-click custody did not finish).\n"
+            "Write it down now; it is shown here once and never on the page:\n\n    "
+            + self._passphrase
+            + "\n\nRun `orch setup` here again, or `orch keys custody convenience`, to finish.\n"
+        )
 
     def _stop_point(self) -> None:
         """Ctrl-C on the setup terminal sets ``cancelled``; it takes effect between steps, never in one."""
@@ -529,7 +555,7 @@ class Creator:
                 raise SetupError(
                     "tty.unavailable", "no terminal to ask the passphrase on; the key was not moved", 409
                 ) from None
-            typed = True
+            typed = self._typed = True
         last: Exception | None = None
         for _attempt in (1, 2):  # retry in-process once
             staged = None
@@ -548,6 +574,7 @@ class Creator:
                     with contextlib.suppress(Exception):
                         self.ports.undo(wid, staged)
                 continue
+            self._custody_done = True
             self.run.set("custody", "done")
             return
         # still failing: the key stays under the passphrase, so the passphrase is shown ONCE, on this terminal only
@@ -559,13 +586,7 @@ class Creator:
                 "custody.conversion_failed", "the key could not be moved to one-click custody; it stays as it was", 500
             )
         try:
-            self.ports.terminal.show(
-                "\n=== orch setup: your device passphrase ===\n"
-                "Moving your key to one-click custody did not work, so your key stays under this passphrase.\n"
-                "Write it down now; it is shown here once and never on the page:\n\n    "
-                + self._passphrase
-                + "\n\nRun `orch keys custody convenience` later to try again.\n"
-            )
+            self._show_passphrase_once()
         except Exception:  # noqa: BLE001 - no terminal: the key is unusable; say so, never print elsewhere
             raise SetupError(
                 "custody.passphrase_lost", "custody conversion failed and no terminal could show the passphrase", 500

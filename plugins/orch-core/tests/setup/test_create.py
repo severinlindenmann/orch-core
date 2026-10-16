@@ -261,6 +261,46 @@ def test_r6_ctrl_c_during_conversion_undoes_the_staged_copy(tmp):
     assert ports.staged_undone == 1 and p["error"]["code"] == "stop"
 
 
+def _once_on_the_tty_only(f, ports, p):
+    shown = [t for t in ports.terminal.shown if ports.passphrase_seen in t]
+    assert len(shown) == 1 and "never on the page" in shown[0]
+    blob = json.dumps(p) + json.dumps(f.dispatch("GET", "state", {}, None)[1])
+    assert ports.passphrase_seen not in blob
+
+
+def test_high1_a_failed_submit_in_click_mode_still_shows_the_passphrase_once(tmp):
+    """The one-click passphrase is never shown up front: a failure after the genesis must not leave the only device
+    key under an unseen passphrase (lockout)."""
+    ports = FakePorts()
+    ports.fail_submit = 1
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    assert p["error"]["finishable"] is True and "custody" not in [s["id"] for s in p["steps"] if s["status"] == "done"]
+    _once_on_the_tty_only(f, ports, p)
+
+
+def test_high1_ctrl_c_after_the_genesis_in_click_mode_shows_the_passphrase_once(tmp, monkeypatch):
+    ports = FakePorts()
+
+    def stop(self, root, name, raw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(FakePorts, "install_addon", stop)
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    assert p["error"]["code"] == "stop"
+    _once_on_the_tty_only(f, ports, p)
+
+
+def test_high1_a_failure_before_the_genesis_shows_nothing_and_a_terminal_run_never_does(tmp):
+    ports = FakePorts()
+    ports.fail_genesis = SetupError("host.unavailable", "no orch host answers", 500)
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    assert not any(ports.passphrase_seen in t for t in ports.terminal.shown)
+    ports = FakePorts()
+    ports.fail_submit = 1
+    f, ports, p, _ = run_ok(tmp, PROFILE, ports=ports)  # terminal method: the person already has the passphrase
+    assert not any(ports.passphrase_seen in t for t in ports.terminal.shown)
+
+
 def test_click_path_never_shows_the_passphrase_in_the_browser_secrets(tmp):
     f = setup_flow(tmp, FakePorts())
     f.dispatch("POST", "profile", {}, CLICK)

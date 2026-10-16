@@ -108,9 +108,7 @@ def attempt(client):
 
 def claim(client, auth=None):
     auth = auth or client.app.state.auth
-    res = client.post(
-        "/auth/setup", json={"nonce": auth.launch(PORT, setup=True)["code"]}, headers={"Origin": ORIGIN}
-    )
+    res = client.post("/auth/setup", json={"nonce": auth.launch(PORT, setup=True)["code"]}, headers={"Origin": ORIGIN})
     assert res.status_code == 200
     return {"X-Setup-Token": res.json()["token"], "Origin": ORIGIN}
 

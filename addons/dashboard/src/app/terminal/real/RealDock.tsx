@@ -124,7 +124,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             <DropdownMenuItem onSelect={() => void ask(false)}>Shell in the workspace</DropdownMenuItem>
             {ticket && <DropdownMenuItem onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={!agents} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents && ' — not available on this host'}</DropdownMenuItem>
+            {/* agent.preview needs a ticket (contract §12.3): without one the host refuses "args is not valid" */}
+            <DropdownMenuItem disabled={!agents || !ticket} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents ? ' — not available on this host' : !ticket && ' — open a ticket first'}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         {current && current.state === 'running' && (
@@ -171,7 +172,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             </div>
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
-      {ws && agents && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
+      {ws && agents && ticket && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
       <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
     </section>
   )

@@ -30,7 +30,7 @@ def test_a_root_below_a_sticky_directory_is_refused_early(dp, scratch):
     assert "sticky" in dp.sticky_problem(scratch)  # a directory of ours directly below /tmp
     with pytest.raises(dp.Refused, match="sticky"):
         dp.check_root_path(str(scratch / "sb"))
-    assert dp.sticky_problem(Path("/Users")) is None or sys.platform != "darwin"
+    assert dp.sticky_problem(Path("/usr")) is None  # root-owned, not sticky, present on macOS and Linux
 
 
 # -- the origin allow-list and the refusals ---------------------------------------------------------------------------

@@ -141,8 +141,14 @@ OPS: Mapping[str, OpSpec] = {
     # H12d-3 (§0.8.6 item 9.5, 9.11): the device's own reader declaration; idempotent on its digest, so it takes no
     # idem (kind "read" here: answered synchronously, a crash re-issues it). Exempt from the rd check.
     "reader.declare": OpSpec("reader.declare", "read", "look"),
+    # B10 Part B (phase 1): the phone's own requests (the viewer's open hints) and the gate-hash input it recomputes
+    "phone.requests": OpSpec("phone.requests", "read", "look"),
+    "gate.input": OpSpec("gate.input", "read", "look"),
     "new_ticket": OpSpec("relay.submit", "write", "decide", "ticket.created"),
     "answer": OpSpec("relay.submit", "write", "decide", "question.answered"),
+    # B10 Part B (phase 1): gate decisions on requirements and plan only (check_events / the host refuse the rest)
+    "approve": OpSpec("relay.submit", "write", "decide", "gate.approved"),
+    "changes": OpSpec("relay.submit", "write", "decide", "gate.changes_requested"),
 }
 
 #: the person-event write kinds the host serves on column R, with their versions (the ``whoami.relay.ops`` field);
@@ -182,7 +188,11 @@ RETRY: Mapping[str, str] = {
     **dict.fromkeys(("already_done", "rid_conflict", "pending", "idem.expired"), "B"),
     **dict.fromkeys(("members.stale", "ticket.key_not_next"), "C-auto"),
     **dict.fromkeys(
-        ("event.bad_base", "question.stale", "event.expired", "event.abandoned", "outcome.unknown_idem"), "C-review"
+        (
+            "event.bad_base", "question.stale", "event.expired", "event.abandoned", "outcome.unknown_idem",
+            "gate.stale",  # B10 Part B: the gate moved (gen, policy or hash): re-open, re-review, re-sign
+        ),
+        "C-review",
     ),
     **dict.fromkeys(
         (

@@ -20,14 +20,15 @@ export const DEV_HOST_SENTENCE =
 /** `sign.convenience_unavailable`: the host refuses a click-signed (convenience) signature, first match wins. */
 export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
   disabled: 'Click-to-sign is switched off for this workspace.',
-  relay_paired: 'Click-to-sign is off because this workspace is paired with a phone through the relay.',
+  relay_paired:
+    'Click-to-sign is refused because the relay’s side of this workspace has not declared that it reads click-signed entries. Update the relay, or sign in the terminal.',
   other_member:
     'This workspace has another member who cannot yet read click-signed entries (their orch, or one of their devices). Click-to-sign stays off until that member updates orch and declares what it reads, on their computer and on each of their devices; a removed device no longer counts.',
   phone_device:
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
   pair_device:
-    'Adding a phone to this workspace is signed in the terminal with your passphrase (orch sign CODE), never with click-to-sign. If this Mac’s key was switched to click-to-sign, switch it back first in a terminal (orch keys custody passphrase --in-place, for this workspace).',
+    'Adding a phone is signed with the typed word, like adding a member: a click alone never adds a device. Sign it in the terminal (orch sign CODE) if the dashboard does not offer it.',
   dev_host: DEV_HOST_SENTENCE,
 }
 

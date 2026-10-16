@@ -23,6 +23,7 @@ CODE = "sign.click_only"
 @pytest.fixture(autouse=True)
 def _lab_clock(served, monkeypatch):
     monkeypatch.setattr(host_cli, "_clock", lambda: served.lab.ws.clock[0])
+    monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)  # B10 preflight
 
 
 def run(*argv):

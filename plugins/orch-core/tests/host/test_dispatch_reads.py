@@ -83,6 +83,9 @@ DASHBOARD_READS = {
     "workspace.settings": lambda ref: {},
     "ticket.text": lambda ref: {"ref": ref, "seq": 1, "field": "text"},
     "reader.list": lambda ref: {},  # H12d-2
+    "gate.input": lambda ref: {"ref": ref, "gate": "requirements"},  # B10 Part B
+    "phone.requests": lambda ref: {},
+    "phone.status": lambda ref: {},
 }
 
 

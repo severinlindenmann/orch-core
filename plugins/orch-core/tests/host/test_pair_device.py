@@ -264,69 +264,73 @@ def test_an_extra_event_field_or_a_swapped_certificate_is_refused(served, human,
         human.check(_resealed(prepared, material=m, events=ev))
 
 
-# --- convenience is refused (11A.15.6) ------------------------------------------------------------------------------
+# --- convenience is allowed, word-confirmed (B10 Part A, N4 reversed) ----------------------------------------
 
 
-def test_pair_device_refuses_convenience_auth_at_prepare_with_the_pair_device_reason(served, human, pairing):
-    res = human.prepare_res(
-        "relay.pair_device", {"offer_id": OFFER}, signer={"device": human.person.device, "auth": "convenience"}
-    )
-    assert err(res) == "sign.convenience_unavailable"
-    assert res["error"]["message"].startswith("pair_device:")
-    assert res["error"]["detail"] == {"reason": "pair_device", "devices": []}
+def _conv_signer(human):
+    return {"device": human.person.device, "auth": "convenience"}
 
 
-def test_pair_device_refusal_fix_text_names_custody_passphrase(served, human, pairing):
-    res = human.prepare_res(
-        "relay.pair_device", {"offer_id": OFFER}, signer={"device": human.person.device, "auth": "convenience"}
-    )
-    assert "orch keys custody passphrase" in res["error"]["hint"] and "--in-place" in res["error"]["hint"]
-
-
-def test_pair_device_refuses_convenience_under_dev_opt_in(served, human, pairing, monkeypatch):
-    # whatever relaxes the convenience condition (the flag on, every reader qualified, a dev opt-in): still refused
-    monkeypatch.setattr(convenience, "check", lambda *a, **k: None)
-    monkeypatch.setattr(convenience, "why", lambda *a, **k: None)
-    monkeypatch.setenv("ORCH_DEV_CONVENIENCE", "1")
+def test_pair_device_is_allowed_with_the_convenience_key_when_the_flag_is_on_and_the_phone_is_level_1(served, human):
+    facts, phone = make_facts(served, level=1)
+    _install(served, facts)
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
-    res = human.prepare_res(
-        "relay.pair_device", {"offer_id": OFFER}, signer={"device": human.person.device, "auth": "convenience"}
-    )
-    assert err(res) == "sign.convenience_unavailable"
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER}, signer=_conv_signer(human))
+    assert "error" not in res, res
 
 
-def test_a_handoff_request_is_never_bound_to_a_convenience_signer(served, human, pairing):
+def test_pair_device_with_the_convenience_key_still_needs_the_flag(served, human, pairing):
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER}, signer=_conv_signer(human))
+    assert err(res) == "sign.convenience_unavailable" and res["error"]["detail"]["reason"] == "disabled"
+
+
+@pytest.mark.parametrize(("level", "reason"), [(None, "no_declaration"), (0, "reader_too_old")])
+def test_the_allocation_counts_the_incoming_phones_declaration_with_the_flag_on(served, human, level, reason):
+    facts, phone = make_facts(served, level=level)
+    src = _install(served, facts)
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER})
+    assert err(res) == "sign.convenience_readers" and res["error"]["detail"]["reason"] == reason
+    assert not [e for e in _ws_events(served) if e["device"] == phone.device] and not src.calls
+
+
+def test_a_level_1_phone_is_paired_by_a_convenience_signature_after_the_word(served, human):
+    facts, phone = make_facts(served, level=1)
+    _install(served, facts)
+    c = Click(served)  # the flag is on
+    try:
+        p = c.prepare("relay.pair_device", {"offer_id": OFFER})
+        v = c.view(p["request_id"])
+        assert v["view"]["confirm"]["kind"] == "word"  # never a bare click
+        word = v["view"]["confirm"]["word"]
+        assert word == phone.device[-8:]
+        c.mono.t += 2
+        refused(lambda: c.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
+        assert c.signatures == 0
+        c.sign(p["request_id"], v["view_digest"], word=word)
+    finally:
+        c.close()
+    (logged,) = [e for e in _ws_events(served) if e["device"] == phone.device]
+    assert logged["auth"] == "convenience"
+
+
+def test_a_handoff_request_binds_to_a_convenience_signer_when_allowed(served, human):
+    facts, _ = make_facts(served, level=1)
+    _install(served, facts)
     prepared = human.prepare("relay.pair_device", {"offer_id": OFFER}, handoff=True)
-    res = human.get(prepared["request"]["id"], signer={"device": human.person.device, "auth": "convenience"})
-    assert err(res) == "sign.convenience_unavailable" and res["error"]["detail"]["reason"] == "pair_device"
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    res = human.get(prepared["request"]["id"], signer=_conv_signer(human))
+    # the hand-off itself is refused while the flag is on (sign.click_only, §0.8.6 item 8), never for pair_device
+    assert err(res) == "sign.click_only"
 
 
-def test_the_signer_refuses_a_convenience_backend_and_convenience_events(served, human, pairing):
+def test_the_signer_accepts_a_convenience_backend_and_convenience_events_for_pair_device(served, human, pairing):
     prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
-    with pytest.raises(signer.SignerRefused, match="convenience"):
+    with pytest.raises(signer.SignerRefused, match="another auth"):  # the events say passphrase: they must agree
         signer.check(prepared, workspace_id=served.wid, person=human.person.ref, auth="convenience")
     ev = copy.deepcopy(prepared["events"])
     ev[0]["auth"] = "convenience"
-    with pytest.raises(signer.SignerRefused):
-        signer.check(_resealed(prepared, events=ev), workspace_id=served.wid, person=human.person.ref)
-
-
-def test_submit_refuses_convenience_events_on_a_pair_request(served, human, pairing):
-    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
-    signed = human.sign(prepared)
-    events = copy.deepcopy(signed.events)
-    events[0]["auth"] = "convenience"
-    res = human.submit_res(prepared["request"]["id"], events)
-    assert err(res) in ("sign.convenience_unavailable", "human.request_mismatch")
-    assert not [e for e in _ws_events(served) if e["device"] == pairing[1].device]
-
-
-def test_the_click_signer_refuses_relay_pair_device_as_terminal_only(served, pairing):
-    c = Click(served)
-    try:
-        refused(lambda: c.prepare("relay.pair_device", {"offer_id": OFFER}), "human.click_refused", "terminal_only")
-    finally:
-        c.close()
+    signer.check(_resealed(prepared, events=ev), workspace_id=served.wid, person=human.person.ref, auth="convenience")
 
 
 # --- submit: the critical section ---------------------------------------------------------------------------------
@@ -683,3 +687,62 @@ def test_the_recheck_refuses_a_pair_entry_bound_to_another_offer_or_attempt(serv
     record["readers"][0]["bind"] = {"via": "pair", "offer_id": "c" * 32, "attempt": ATTEMPT}
     served.service.requests.write(record)
     assert err(human.submit_res(rid, signed.events)) == "human.request_mismatch"  # at submit
+
+
+# --- the lockout fix: switching click-to-sign on is refused up front while a reader is below level 1 ------------------
+
+
+@pytest.fixture(autouse=True)
+def _own_device(request, monkeypatch):
+    """The lab's owner device stands in for this machine's key (no key file in the lab's state directory)."""
+    monkeypatch.setattr(
+        convenience, "_own_device", lambda state, wid: request.getfixturevalue("served").lab.ws.owner.device
+    )
+
+
+def _cli(*argv):
+    from tests.host.test_click_cli import run
+
+    return run(*argv)
+
+
+def _pair_old_phone(served, human):
+    facts, phone = make_facts(served, level=None)  # an old app: no declaration
+    _install(served, facts)
+    ok(_submit(human, human.prepare("relay.pair_device", {"offer_id": OFFER})))
+    return phone
+
+
+def test_convenience_on_is_refused_naming_the_old_phone_and_leaves_the_flag_off(served, human):
+    phone = _pair_old_phone(served, human)
+    state = str(served.lab.state)
+    code, out, err_ = _cli("host", "convenience", "on", "--workspace", served.wid, "--state", state)
+    text = out + err_
+    assert code != 0 and "sign.convenience_unavailable" in text and "phone_device" in text and phone.device in text
+    assert "orch host convenience off" in text and "--in-place" in text  # the escape is named
+    assert not convenience.enabled(served.lab.state, served.wid, UID)
+
+
+def test_convenience_on_works_again_once_the_phone_is_removed_or_declares(served, human):
+    phone = _pair_old_phone(served, human)
+    state = str(served.lab.state)
+    args = ("host", "convenience", "on", "--workspace", served.wid, "--state", state)
+    assert _cli(*args)[0] != 0
+    from orch.ops import readers as rd
+
+    monkey_levels = {phone.device: 1}
+    import orch.host.convenience as cv
+
+    orig = rd.levels
+    rd.levels = lambda *a, **k: {**orig(*a, **k), **monkey_levels}  # the app was updated and declared
+    try:
+        assert _cli(*args)[0] == 0
+    finally:
+        rd.levels = orig
+    assert convenience.enabled(served.lab.state, served.wid, UID)
+    assert cv is convenience
+
+
+def test_convenience_on_is_allowed_with_no_other_reader(served):
+    code, *_ = _cli("host", "convenience", "on", "--workspace", served.wid, "--state", str(served.lab.state))
+    assert code == 0

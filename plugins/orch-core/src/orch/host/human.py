@@ -390,8 +390,6 @@ class HumanOps:
         store.refresh()
         if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
-        if name == pairdevice.OP and signer is not None and signer["auth"] == "convenience":
-            raise convenience.refuse_pair_device()  # H12c-e (11A.15.6): whatever the flag or any opt-in
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
@@ -664,8 +662,6 @@ class HumanOps:
         )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
-        if record["op"] == pairdevice.OP and signer["auth"] == "convenience":  # H12c-e: never bound to convenience
-            raise convenience.refuse_pair_device()
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
@@ -873,8 +869,6 @@ class HumanOps:
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
             if record["op"] == pairdevice.OP:
-                if any(e.get("auth") == "convenience" for e in events):
-                    raise convenience.refuse_pair_device()  # H12c-e: also when a bound request was altered
                 pairdevice.check_entries(record["prepared"], record.get("readers") or [])
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])

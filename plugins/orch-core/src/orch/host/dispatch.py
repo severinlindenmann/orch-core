@@ -81,8 +81,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from jsonschema import Draft202012Validator
 
 from . import diff as git_diff
+from . import phonehints, readerops, reads, sessions, terms
 from . import quick as quick_list
-from . import readerops, reads, sessions, terms
 from . import records as records_ops
 from .agents import AGENT_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
@@ -210,6 +210,7 @@ def served_ops() -> dict[str, int]:
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     out.update(records_ops.RECORDS_OPS)
+    out.update(phonehints.PHONE_WRITE_OPS)  # B10 Part B: phone.request, phone.cancel (P only)
     out.update(readerops.READER_HOST_OPS)  # H12d-2: reader.declare (reader.list is a read, cap reader/1)
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
@@ -235,6 +236,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
+    if name in phonehints.PHONE_WRITE_OPS:  # B10 Part B: column P only (G and N get op.not_allowed)
+        return ("person_write", "write")
     if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R: device_signed, H12d-3)
         return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
@@ -389,7 +392,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKTREE_CAPS, *readerops.CAPS,
+            *WORKTREE_CAPS, *readerops.CAPS, *phonehints.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -603,6 +606,8 @@ class RegistryBackend:
                 result = records_ops.serve(call)
             elif op in readerops.READER_HOST_OPS:
                 result = readerops.serve(call)
+            elif op in phonehints.PHONE_WRITE_OPS:
+                result = phonehints.serve(call)
             elif op in TERM_OPS or op == "run.stop":
                 result = terms.serve(call)
             elif op in AGENT_OPS:

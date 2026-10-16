@@ -48,6 +48,7 @@ from .custody import check_tree, check_workspace_files
 from .errors import HostError
 from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
+from .phonehints import HintStore
 from .registry import Entry
 from .relayid import RelayIdentity
 from .requests import RequestStore
@@ -143,6 +144,8 @@ class WorkspaceService:
         self.journal_failed = ""
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
+        #: B10 Part B: the unsigned phone-approval hints (``<state>/hosts/<ws>/phone-hints.json``)
+        self.phone_hints = HintStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
         self.outcomes.prepared = self._prepared
         #: blobs (§0.10, H4a2): ``<state>/hosts/<ws>/blobs/``; the host shares one quota among its workspaces

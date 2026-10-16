@@ -51,7 +51,10 @@ def push(service: Any, worker: Any, keys: Any, signer: Any, view: Any) -> Any:
         raise
     if ob.restored:
         worker.alarm("push_outbox_restarted", "the state directory is another instance: no old push is sent")
+    from .phonehints import open_after
+
     return PushThread(
         store, ob=ob, job=worker.job, session=worker.session, keys=keys, signer=signer, view=view,
-        standing=device_standing_ok, alarm=worker.alarm, conn=worker.conn, on_error=on_error, now_ms=now_ms,
+        hints=lambda n: open_after(service, n), standing=device_standing_ok, alarm=worker.alarm,
+        conn=worker.conn, on_error=on_error, now_ms=now_ms,
     )  # fmt: skip

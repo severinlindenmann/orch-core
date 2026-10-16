@@ -7024,8 +7024,9 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   - **Store result per item** (`Store.note_forwarded_revocation`, one lock): `unverifiable` (does not verify, parse, fit
     the size caps, or an outer field differs from the signed objects), `dropped` (verified, but NO person key is known
     here: neither member nor former member, no tombstone entry for that person; counted as `unverifiable`), `settled`
-    (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, no host state, a cap
-    that kept the record out of `HostPins`). `pending` no longer exists. An exception is no result at all.
+    (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, a cap that kept the
+    record out of `HostPins`). Without host state the store RAISES `store.busy` (no result: R4 reads again). `pending` no
+    longer exists. An exception is no result at all.
   - **Per-item durability (H3).** The ledger file is written atomically (`StateDir`: temp, fsync, rename, directory
     fsync, 0600) after EACH item that changes it, before the next item is judged, and `ledger_seq` is incremented; a
     failure or crash at item k therefore keeps the results of items 1..k-1. The page's ack still goes out only after
@@ -7049,13 +7050,16 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     single empty or short answer must not erase it, and a week gives the owner time to look. An owner acknowledge
     command is a later option, not in R4.
   - **Capacity and overflow (M5, round 5).** Three bounds, none of which evicts a row: at most 4,096 rows; at most
-    256 rows per person (`PERSON_MAX`, HostPins' own per-person bound), so one known key (a removed or compromised
-    member's) cannot crowd out another person's obligation; and a SEPARATE budget of 512 rows in standing
+    256 NON-ACTIONABLE (`unknown`/`other`) rows per person (`PERSON_MAX`, HostPins' own per-person bound; actionable
+    rows are bounded by real devices and by the global 4,096), so one known key (a removed or compromised member's)
+    cannot crowd out another person's obligation, nor its own real one; and a SEPARATE budget of 512 rows in standing
     `unknown`/`other` (nothing the owner can sign), so such rows can never displace an actionable obligation (the
     standing of a new row is asked of the store before the caps are applied; actionable rows do not count against that
     budget). A pair beyond a bound is NOT stored: a visible counter instead (`person_overflow[person]` for the per-person
-    cap, at most 256 persons, the rest in `overflow`; `overflow` for the other two), an alarm `unpublished_overflow`,
-    `orch host status` not ok. Pairs beyond a bound are neither settled nor raised; their evidence is in `HostPins`
+    cap, at most 256 persons, the rest in `overflow`; `overflow` for the other two; each pair counts ONCE, by a bounded
+    set of short digests, and the text says "at least N" and names up to five persons), an alarm
+    `unpublished_overflow`, `orch host status` not ok, and `actionable: true` while any overflow is open (unlisted
+    obligations may exist). Pairs beyond a bound are neither settled nor raised; their evidence is in `HostPins`
     within ITS caps. The counters never clear by relay behaviour (those pairs were delivered and not listed). With an
     HONEST relay none of the bounds is reachable (4,096 is its ever-device quota); a hostile relay holding a known
     person key can fill that person's share and the non-actionable budget, never anyone else's capacity. What the owner

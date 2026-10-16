@@ -1656,9 +1656,10 @@ def test_one_person_cannot_crowd_out_another_persons_obligation(state, monkeypat
     monkeypatch.setattr(up, "PERSON_MAX", 3)
     flood = [_it(dev=f"{i:032x}", person=P2) for i in range(8)]
     c, st, relay, clock, alarms = _fill(state, flood[:5])
+    for i in range(8):
+        st.kind[(f"d_{i:032x}", "p_" + P2)] = "unknown"  # fake pairs: nothing the owner can sign
     c.step()
-    real = _it(dev=A, person=P1)
-    relay.pages[None] = ([real], pos(1), False)
+    relay.pages[None] = ([_it(dev=A, person=P1)], pos(1), False)
     clock.ms += up.FULL_EVERY_MS
     c.step()
     doc = c.load()[0]
@@ -1666,9 +1667,48 @@ def test_one_person_cannot_crowd_out_another_persons_obligation(state, monkeypat
     assert (A, P1) in rows(c)  # the other person's real obligation keeps its place
     assert any(a[0] == "unpublished_overflow" for a in alarms)
     view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
-    assert (
-        view["overflow"] == 2 and relayr4.held_attention("X", view["held"], view)["fix"].count("no reset command") == 1
-    )
+    note = relayr4.held_attention("X", view["held"], view)
+    assert view["overflow"] == 2 and "at least 2 pairs" in note["what"] and f"p_{P2}" in note["what"]
+    assert note["fix"].count("no reset command") == 1
+
+
+def test_a_person_flooding_fake_pairs_cannot_displace_their_own_real_obligation(state, monkeypatch):  # R1
+    monkeypatch.setattr(up, "PERSON_MAX", 3)
+    flood = [_it(dev=f"{i:032x}", person=P2) for i in range(6)]
+    c, st, relay, clock, alarms = _fill(state, flood)
+    for i in range(6):
+        st.kind[(f"d_{i:032x}", "p_" + P2)] = "unknown"
+    c.step()
+    relay.pages[None] = ([_it(dev=A, person=P2)], pos(1), False)  # the same person's REAL, actionable obligation
+    clock.ms += up.FULL_EVERY_MS
+    c.step()
+    assert rows(c)[(A, P2)]["state"] == "revoke"  # listed: the per-person cap counts only the quiet rows
+
+
+def test_a_flood_of_actionable_rows_goes_to_the_global_overflow_and_still_says_act(state, monkeypatch):  # R1
+    monkeypatch.setattr(up, "LEDGER_MAX", 4)
+    c, st, relay, clock, alarms = _fill(state, [_it(dev=f"{i:032x}", person=P2) for i in range(7)])
+    c.step()
+    doc = c.load()[0]
+    assert len(doc["held"]) == 4 and doc["overflow"] == 3 and doc["person_overflow"] == {}
+    view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
+    note = relayr4.held_attention("X", [], {**view, "held": []})
+    assert note["actionable"] is True and "at least 3 pairs" in note["what"]  # never "nothing to do" while open
+    assert any(a[0] == "unpublished_overflow" for a in alarms)
+
+
+def test_the_overflow_counts_distinct_pairs_not_deliveries(state, monkeypatch):  # L1
+    monkeypatch.setattr(up, "LEDGER_MAX", 2)
+    items = [_it(dev=f"{i:032x}", person=P2) for i in range(5)]
+    c, st, relay, clock, _ = _fill(state, items)
+    c.step()
+    for _ in range(3):  # daily rescans and a restart re-deliver the same 3 unlisted pairs
+        clock.ms += up.FULL_EVERY_MS
+        tick(c, clock, 1)
+    c2, _, _, _ = fake(state, relay)
+    clock.ms += up.FULL_EVERY_MS
+    c2.step()
+    assert c.load()[0]["overflow"] == 3 and len(c.load()[0]["overflow_seen"]) == 3
 
 
 def test_the_non_actionable_budget_never_displaces_a_settle_able_obligation(state, monkeypatch):  # F2
@@ -1689,6 +1729,8 @@ def test_a_person_overflow_counter_is_bounded_and_survives_a_reload(state, monke
     monkeypatch.setattr(up, "PERSON_OVERFLOW_PERSONS", 2)
     items = [_it(dev=f"{i:032x}", person=f"{i // 2:032x}") for i in range(8)]  # 4 persons, 2 items each
     c, st, relay, clock, alarms = _fill(state, items)
+    for i in range(8):
+        st.kind[(f"d_{i:032x}", f"p_{i // 2:032x}")] = "unknown"
     c.step()
     doc = c.load()[0]
     assert len(doc["person_overflow"]) == 2 and doc["overflow"] == 2  # the 3rd and 4th person fold into `overflow`
@@ -1760,7 +1802,7 @@ def test_pair_standings_reads_the_state_under_the_store_lock(ws, monkeypatch):  
 
 def test_the_overflow_alone_makes_the_status_not_ok_and_names_it(state):  # M40
     note = relayr4.held_attention("X", [], {"overflow": 3})
-    assert note is not None and "overflowed (3 pairs" in note["what"] and note["fix"] == relayr4.FIX_OVERFLOW
+    assert note is not None and "overflowed (at least 3 pairs" in note["what"] and note["fix"] == relayr4.FIX_OVERFLOW
 
 
 def test_actionable_rows_do_not_use_up_the_non_actionable_budget(state, monkeypatch):
@@ -1780,3 +1822,42 @@ def test_an_item_the_store_calls_held_but_judging_calls_settled_makes_no_row(sta
     c, _, alarms = make(state, relay, lambda i: "held", judge=lambda pairs: ["settled"] * len(pairs))
     c.step()
     assert rows(c) == {} and alarms == []
+
+
+def test_the_standing_of_a_new_row_comes_from_the_store_never_from_the_relays_item(state, monkeypatch):  # M4
+    monkeypatch.setattr(up, "NONACTIONABLE_MAX", 1)
+    relay = Relay(
+        state, {None: ([_it(dev=A, person=P1, state="unknown"), _it(dev=B, person=P2, state="unknown")], pos(1), False)}
+    )
+    c, st, _, _ = fake(state, relay)  # the store's standing for both: `revoke` (actionable)
+    c.step()
+    assert {r["state"] for r in c.load()[0]["held"]} == {"revoke"} and len(c.load()[0]["held"]) == 2
+
+
+def test_the_stale_clock_is_set_by_the_first_attempt_even_when_it_fails_and_never_moves(state):  # M7b, M7d
+    relay = Relay(state)
+    note = {"unpublished": pos(1)}
+    c, _, clock, _ = fake(state, relay, notices=lambda: note)
+    relay.fail[GET] = RelayRefused(500, "x")
+    c.step()  # the very first attempt fails
+    first = json.loads(state.read(up.FILE))["first_scan_ms"]
+    assert first == clock.ms
+    for k in range(3):  # more failures much later: the clock does not start over
+        clock.ms += up.FULL_EVERY_MS
+        clock.mono += up.BACKOFF_S + 1
+        relay.fail[GET] = RelayRefused(500, "x")
+        note["unpublished"] = pos(10 + k)
+        c.step()
+    assert json.loads(state.read(up.FILE))["first_scan_ms"] == first
+
+
+def test_a_damaged_overflow_seen_list_is_a_loss(state):
+    c, _, _, _ = fake(state, Relay(state, {None: ([], pos(1), False)}))
+    c.step()
+    doc = json.loads(state.read(up.FILE))
+    doc["overflow_seen"] = ["0" * 16] * (up.OVERFLOW_SEEN_MAX + 1)
+    state.write_json(up.FILE, doc)
+    assert c.load()[1] is True
+    doc["overflow_seen"] = ["zz"]
+    state.write_json(up.FILE, doc)
+    assert c.load()[1] is True

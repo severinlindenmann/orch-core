@@ -3613,7 +3613,8 @@ class Store:
         * ``settled``: the workspace's own state holds a verified revocation of exactly this pair at least as strong
           as the item's verified reason (:func:`_standing`, ``revoke_strength``);
         * ``held``: everything else, whatever the reason (no revocation yet, a weaker one, a device known only as
-          another person's tombstone or not at all, no host state, a cap that kept the record out of ``HostPins``).
+          another person's tombstone or not at all, a cap that kept the record out of ``HostPins``). Without host
+          state the item cannot be judged: ``store.busy`` is raised (no result at all).
 
         The record is durable in ``HostPins`` (capped) before ``held``/``settled`` is returned. Idempotent per
         ``(device_id, person_id)``. The host never appends ``device.revoked`` or a restore for it."""

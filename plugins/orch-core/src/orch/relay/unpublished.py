@@ -72,9 +72,10 @@ SCAN_LONG_PAGES = 1500  # a full read beyond this many pages is slowed to one pa
 HOLD_BUDGET_S = 20.0  # the aux thread waits at most this long on the worker's jobs per turn
 FULL_EVERY_S = FULL_EVERY_MS / 1000.0
 LEDGER_MAX = 4096  # the relay's ever-device quota per workspace; beyond it: overflow (never an eviction)
-PERSON_MAX = 256  # rows per person (HostPins' MAX_FORWARDED_PER_PERSON_HARD): one key cannot crowd out the others
+PERSON_MAX = 256  # NON-ACTIONABLE rows per person (HostPins' per-person bound): one key cannot crowd out the others
 NONACTIONABLE_MAX = 512  # rows in standing `unknown`/`other` (nothing the owner can sign): a separate budget, so they
 # can never crowd out settle-able obligations; beyond a cap: a visible counter (`overflow`, `person_overflow`)
+OVERFLOW_SEEN_MAX = 4096  # distinct unlisted pairs remembered (short digests) so a rescan does not recount them
 PERSON_OVERFLOW_PERSONS = 256  # distinct persons tracked in `person_overflow` (the rest fold into `overflow`)
 UNVERIFIABLE_CLEAN_SCANS = 2  # the sticky `unverifiable` counter clears after this many complete clean scans ...
 UNVERIFIABLE_HOLD_MS = 7 * 86400 * 1000  # ... AND this long after it was last seen
@@ -87,6 +88,7 @@ STANDINGS = ("settled", "stronger", "revoke", "other", "unknown")  # Store.pair_
 _POSITION = re.compile(r"[A-Za-z0-9_-]{1,512}")  # an opaque b64u position, put into a query string unescaped
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _SIG = re.compile(r"[0-9a-f]{64}")
+_HEX16 = re.compile(r"[0-9a-f]{16}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _REASONS = ("compromised", "lost", "retired")  # the revokeReason enum; any other text is shown as "unknown"
 _ROW_KEYS = {"device_id", "person_id", "need", "ver", "digest", "at_ms", "state"}
@@ -104,8 +106,8 @@ def _empty() -> dict[str, Any]:
         "resume": None, "scan_pages": 0, "ack_refusals": 0, "scan_unv": False,
         # the ledger (only `Ledger` writes these; `_save` bumps ledger_seq)
         "held": [], "unverifiable": {"n": 0, "first_ms": 0, "last_seen_ms": 0, "clean_scans": 0}, "overflow": 0,
-        "person_overflow": {}, "first_scan_ms": 0, "rebuilding": False, "last_complete_ms": 0, "failed_turns": 0,
-        "ledger_seq": 0,
+        "person_overflow": {}, "overflow_seen": [], "first_scan_ms": 0, "rebuilding": False, "last_complete_ms": 0,
+        "failed_turns": 0, "ledger_seq": 0,
     }  # fmt: skip
 
 
@@ -157,19 +159,37 @@ class Ledger:
                 return "same"
         held = self._st["held"]
         person = row["person_id"]
-        if sum(1 for r in held if r["person_id"] == person) >= PERSON_MAX:
-            po = self._st["person_overflow"]  # one person's share is full: a visible per-person counter
-            if person in po or len(po) < PERSON_OVERFLOW_PERSONS:
-                po[person] = po.get(person, 0) + 1
-            else:
-                self._st["overflow"] += 1
+        quiet = row["state"] in ("other", "unknown")  # nothing the owner can sign: the only rows that are capped
+        if (
+            quiet
+            and sum(1 for r in held if r["person_id"] == person and r["state"] in ("other", "unknown")) >= PERSON_MAX
+        ):
+            self._count_overflow(row, person)  # one person's quiet share is full: a visible per-person counter
             return "overflow"
-        nonactionable = sum(1 for r in held if r["state"] in ("other", "unknown"))
-        if len(held) >= LEDGER_MAX or (row["state"] in ("other", "unknown") and nonactionable >= NONACTIONABLE_MAX):
-            self._st["overflow"] += 1
+        if len(held) >= LEDGER_MAX or (
+            quiet and sum(1 for r in held if r["state"] in ("other", "unknown")) >= NONACTIONABLE_MAX
+        ):
+            self._count_overflow(row, None)
             return "overflow"
         self._st["held"].append(dict(row))
         return "added"
+
+    def _count_overflow(self, row: Mapping[str, Any], person: str | None) -> None:
+        """A pair that could not be listed counts ONCE (a rescan or a restart re-delivers the same pair): its short
+        digest joins ``overflow_seen`` (bounded by ``OVERFLOW_SEEN_MAX``; beyond that the count is only a lower
+        bound: the text says "at least")."""
+        key = hashlib.sha256(f"{row['device_id']}:{row['person_id']}".encode()).hexdigest()[:16]
+        seen = self._st["overflow_seen"]
+        if key in seen:
+            return
+        if len(seen) < OVERFLOW_SEEN_MAX:
+            seen.append(key)
+        if person is not None:
+            po = self._st["person_overflow"]
+            if person in po or len(po) < PERSON_OVERFLOW_PERSONS:
+                po[person] = po.get(person, 0) + 1
+                return
+        self._st["overflow"] += 1
 
     def settle_from_store(self, judged: Sequence[Mapping[str, Any]]) -> bool:
         """THE ONLY REMOVAL. ``judged`` rows carry the store's ``standing`` of the exact ``(device, person)`` pair and
@@ -314,6 +334,15 @@ class UnpublishedConsumer:
         if type(u) is dict and set(u) == set(st["unverifiable"]) and all(type(u[k]) is int and u[k] >= 0 for k in u):
             st["unverifiable"] = dict(u)
         else:
+            lost = True
+        seen = obj.get("overflow_seen")
+        if (
+            type(seen) is list
+            and len(seen) <= OVERFLOW_SEEN_MAX
+            and all(type(k) is str and _HEX16.fullmatch(k) for k in seen)
+        ):
+            st["overflow_seen"] = list(seen)
+        elif "overflow_seen" in obj:
             lost = True
         po = obj.get("person_overflow")
         if (
@@ -660,7 +689,8 @@ def ledger_view(state_doc: object, now_ms: int) -> dict[str, Any]:
     failed = doc.get("failed_turns") if type(doc.get("failed_turns")) is int else 0
     overflow = doc.get("overflow") if type(doc.get("overflow")) is int else 0
     po = doc.get("person_overflow")
-    overflow += sum(v for v in po.values() if type(v) is int) if type(po) is dict else 0
+    persons = {k: v for k, v in po.items() if type(k) is str and type(v) is int} if type(po) is dict else {}
+    overflow += sum(persons.values())
     first = doc.get("first_scan_ms") if type(doc.get("first_scan_ms")) is int else 0
     # stale: failed turns, or no COMPLETE scan for 48 h (counted from the last one, else from the first attempt):
     # a scan that advances but never completes is stale too
@@ -673,4 +703,5 @@ def ledger_view(state_doc: object, now_ms: int) -> dict[str, Any]:
     return {
         "held": rows, "unverifiable": n, "overflow": overflow, "rebuilding": doc.get("rebuilding") is True,
         "stale": stale, "age_s": (now_ms - last) // 1000 if last else None, "failed_turns": failed,
+        "overflow_persons": sorted(persons)[:5],
     }  # fmt: skip

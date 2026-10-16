@@ -162,7 +162,12 @@ def held_attention(
         parts.append(f"{unv} item{'s' if unv != 1 else ''} the relay serves could not be verified")
         fixes.append(FIX_UNVERIFIABLE)
     if overflow:
-        parts.append(f"the held list overflowed ({overflow} pair{'s' if overflow != 1 else ''} not listed)")
+        who = ledger.get("overflow_persons") or []
+        parts.append(
+            f"the held list overflowed (at least {overflow} pair{'s' if overflow != 1 else ''} not listed"
+            + (f"; persons {', '.join('p_' + p for p in who)}" if who else "")
+            + "): there may be obligations this host cannot show"
+        )
         fixes.append(FIX_OVERFLOW)
     if rebuilding:
         parts.append("the held list is being rebuilt")
@@ -171,5 +176,6 @@ def held_attention(
         age = ledger.get("age_s")
         parts.append("the unpublished scan is stale" + (f" (last complete scan {age // 3600} h ago)" if age else ""))
         fixes.append(FIX_STALE)
-    actionable = any(p.get("state") in ("revoke", "stronger") for p in pairs)
+    # an overflow means obligations may exist that are not listed: never claim "nothing to do" while one is open
+    actionable = overflow > 0 or any(p.get("state") in ("revoke", "stronger") for p in pairs)
     return {"what": f"{prefix}: " + "; ".join(parts), "fix": "; and ".join(fixes), "actionable": actionable}

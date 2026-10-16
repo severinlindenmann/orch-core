@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Setup } from './Setup'
-import { SetupAPI, bootstrapSetup, type SetupState, type Review } from '../api/setup'
+import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
   phase: 'profile',
@@ -287,6 +287,15 @@ test('long access cannot be submitted when core omits its required typed word', 
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('typed confirmation is required')
+})
+
+test('the shared launch link (root with to=/setup) and a reload of /setup are the setup page; a login link is not', () => {
+  history.replaceState(null, '', '/#launch=demo-not-a-real-code&to=/setup')
+  expect(isSetupPage()).toBe(true)
+  history.replaceState(null, '', '/setup')
+  expect(isSetupPage()).toBe(true)
+  history.replaceState(null, '', '/#launch=demo-not-a-real-code&to=/w/ABC')
+  expect(isSetupPage()).toBe(false)
 })
 
 test('without a nonce nothing is claimed', async () => {

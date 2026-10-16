@@ -406,32 +406,45 @@ class Creator:
         wid = self.wid
         ident = self.ports.identity(wid)
         link = self.ports.workspace(wid)
-        prepared: list[dict[str, Any]] = []
+        prepared: dict[str, dict[str, Any]] = {}
+        # B8: a runner grant may last at most the workspace's ``grant_hours``. When this batch sets that setting, the
+        # grant can only be prepared once the setting has landed: it is prepared (and checked against the review) right
+        # before ITS signature, still inside the one unlock. Every other request is checked before the first signature.
+        deferred = {i.id for i in self.items if i.id == "runner_grant" and any(j.id == "settings" for j in self.items)}
+
+        def prepare(batch: list[review_mod.Item]) -> None:
+            fresh: list[dict[str, Any]] = []
+            for it in batch:
+                res = link.call(
+                    "human.prepare",
+                    {"op": it.op, "args": it.args, "signer": {"device": ident.device, "auth": ident.auth}},
+                )
+                p = res["data"]
+                prepared[it.id] = p
+                fresh.append(p)
+                host_signer.check(p, workspace_id=wid, person=ident.person, device=ident.device, auth=ident.auth)
+            # R1: EVERY host-prepared event equals its reviewed rows
+            rows = [r for r in self.plan.rows if r["id"] in {i.id for i in batch}]
+            review_mod.check_prepared(batch, rows, [p["events"] for p in fresh], self.clock())
+
         try:
             for it in self.items:
                 self.run.set(it.id, "doing")
             try:
-                for it in self.items:
-                    res = link.call(
-                        "human.prepare",
-                        {"op": it.op, "args": it.args, "signer": {"device": ident.device, "auth": ident.auth}},
-                    )
-                    p = res["data"]
-                    host_signer.check(p, workspace_id=wid, person=ident.person, device=ident.device, auth=ident.auth)
-                    prepared.append(p)
-                # R1: EVERY host-prepared event equals its reviewed rows, before the first signature
-                rows = [r for r in self.plan.rows if r["id"] in {i.id for i in self.items}]
-                review_mod.check_prepared(self.items, rows, [p["events"] for p in prepared], self.clock())
+                prepare([i for i in self.items if i.id not in deferred])  # before the first signature
             except BaseException:
-                self._cancel_requests(link, prepared)
+                self._cancel_requests(link, list(prepared.values()))
                 for it in self.items:
                     self.run.set(it.id, "failed")
                 raise
             fields = (("workspace", wid), ("requests", str(len(self.items))), ("review", self.plan.digest[:23]))
             done: list[str] = []
             with self.ports.unlock(wid, self._passphrase, self.plan.digest, fields) as backend:
-                for it, p in zip(self.items, prepared, strict=True):
+                for it in self.items:
                     try:
+                        if it.id in deferred:
+                            prepare([it])
+                        p = prepared[it.id]
                         signed = host_signer.sign(p, backend=backend, key_id="dk", workspace_id=wid)
                         link.call(
                             "human.submit", {"request_id": p["request"]["id"], "events": signed.events}, idem=new_idem()
@@ -440,7 +453,9 @@ class Creator:
                         self.run.set(it.id, "failed")
                         for later in self.items[len(done) + 1 :]:
                             self.run.set(later.id, "skipped")
-                        self._cancel_requests(link, prepared[len(done) + 1 :])
+                        self._cancel_requests(
+                            link, [prepared[i.id] for i in self.items[len(done) + 1 :] if i.id in prepared]
+                        )
                         raise
                     done.append(it.id)
                     if it.id == "runner_grant":

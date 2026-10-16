@@ -301,3 +301,25 @@ def test_the_grant_secret_is_deposited_and_never_stored_by_the_flow(tmp):
     deposits = [e for e in ports.log if e[0] == "call" and e[1] == "grant.deposit"]
     assert len(deposits) == 1
     assert GRANT_SECRET not in repr(vars(f)) and GRANT_SECRET not in repr(vars(f.run))
+
+
+def test_b8_a_longer_runner_grant_is_prepared_only_after_the_settings_landed(tmp):
+    prof = {**AGENT, "agent_hours": 72}
+    f, ports, p, rv = run_ok(tmp, prof, typed="GRANT")
+    assert p["done"] is True and ports.submits[0] == "settings.changed" and ports.submits[-1] == "grant.issued"
+    calls = [e for e in ports.log if e[0] == "call"]
+    kinds = [(c[1], i) for i, c in enumerate(calls)]
+    prepares = [i for k, i in kinds if k == "human.prepare"]
+    settings_submit = next(i for i, c in enumerate(calls) if c[1] == "human.submit")
+    assert len(prepares) == 5 and prepares[-1] > settings_submit  # the grant is the last prepare, after settings
+    assert all(i < settings_submit for i in prepares[:-1])
+    assert ports.unlocks == 1
+
+
+def test_b8_the_deferred_grant_is_still_checked_against_the_review(tmp):
+    ports = FakePorts()
+    ports.tamper = lambda ev: ev.update(hours=ev["hours"] + 1) if ev["type"] == "grant.issued" else None
+    f, ports, p, _ = run_ok(tmp, {**AGENT, "agent_hours": 72}, ports=ports, typed="GRANT")
+    assert p["error"]["code"] == "review.mismatch" and "grant.issued" not in ports.submits
+    assert ports.submits[0] == "settings.changed"  # the earlier, already checked requests landed; finishable
+    assert p["error"]["finishable"] is True

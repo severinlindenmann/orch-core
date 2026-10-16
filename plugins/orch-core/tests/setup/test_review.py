@@ -45,8 +45,8 @@ def test_review_has_the_contract_fields_and_plain_rows(flow):
     ):
         assert k in out
     ids = [i["id"] for i in out["items"]]
-    assert ids == ["addon:terminals", "addon:worktrees"]
-    term = out["items"][0]
+    assert ids == ["addon:dashboard", "addon:terminals", "addon:worktrees"]
+    term = out["items"][1]
     assert term["lines"][0] == "Grant the add-on terminals"
     assert any("capabilities" in line and "pty" in line for line in term["lines"])
     assert out["digest"].startswith("sha256:") and out["runner_grant"] is None and out["risk"] is None
@@ -54,7 +54,9 @@ def test_review_has_the_contract_fields_and_plain_rows(flow):
 
 def test_terminal_default_has_no_settings_item_and_no_word(flow):
     out = to_review(flow, {**PROFILE, "addons": ["dashboard"]})
-    assert out["items"] == [] and out["typed_word"] is None and out["tty_confirm"] is False
+    # the dashboard is locked on: its grant is the one item of a default workspace (it is what makes the workspace show)
+    assert [i["id"] for i in out["items"]] == ["addon:dashboard"]
+    assert out["typed_word"] is None and out["tty_confirm"] is False
     assert out["fingerprint"] is None
 
 
@@ -108,8 +110,10 @@ def test_digest_binds_the_profile_and_the_dir(tmp):
 
 
 def test_digest_includes_the_manifest_hashes(tmp):
+    from orch.addons import builtin
+
     def digest(raw):
-        f = SetupFlow(make_env(tmp, manifest_bytes=lambda n: raw))
+        f = SetupFlow(make_env(tmp, manifest_bytes=lambda n: raw if n == "terminals" else builtin.manifest_bytes(n)))
         f.launch(str(tmp.work))
         return to_review(f, {**PROFILE, "addons": ["dashboard", "terminals"]})["digest"]
 
@@ -249,3 +253,15 @@ def test_an_event_the_view_cannot_render_is_a_mismatch_not_a_pass(monkeypatch):
     )
     with pytest.raises(SetupError):
         rv.check_prepared(p.items, p.rows, pre, NOW)
+
+
+def test_the_builtin_dashboard_manifest_is_the_dashboards_own_file():
+    """The setup grants the dashboard from the copy that ships in orch-core: it must not drift from the add-on's."""
+    from pathlib import Path
+
+    from orch.addons import builtin
+
+    own = Path(__file__).resolve().parents[4] / "addons" / "dashboard" / "orch-addon.json"
+    if not own.is_file():
+        pytest.skip("not in the monorepo checkout")
+    assert builtin.manifest_bytes("dashboard") == own.read_bytes()

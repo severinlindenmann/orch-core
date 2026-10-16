@@ -91,7 +91,14 @@ PROF = {**PROFILE, "addons": ["dashboard", "terminals", "worktrees"], "agent_gra
 
 def test_r7_nothing_done_everything_missing():
     f = facts_of(ws())
-    assert missing_items(f, PROF, INFO) == ["addon:terminals", "addon:worktrees", "runner", "settings", "runner_grant"]
+    assert missing_items(f, PROF, INFO) == [
+        "addon:dashboard",
+        "addon:terminals",
+        "addon:worktrees",
+        "runner",
+        "settings",
+        "runner_grant",
+    ]
 
 
 @pytest.mark.parametrize("state", ["granted", "revoked", "removed", "purged", "disabled"])
@@ -120,7 +127,8 @@ def test_r7_a_setting_that_was_set_is_not_set_again_and_a_runner_that_is_on_stay
 
 
 def test_r7_without_the_profile_asking_for_it_nothing_is_missing():
-    f = facts_of(ws())
+    done = NS(name="dashboard", enabled=True, purged=False, removed=False)
+    f = facts_of(ws(addons={"dashboard": done}))
     assert missing_items(f, {**PROF, "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8}, INFO) == []
 
 
@@ -189,7 +197,14 @@ def test_finish_mode_skips_the_secrets_and_fixes_name_and_prefix(tmp):
 
 
 def test_finish_review_has_only_the_missing_items_and_needs_the_tty(tmp):
-    box = [mkfacts(addons=frozenset({"terminals"}), runner_enabled=True, terminals_enabled=True, grant_hours_set=True)]
+    box = [
+        mkfacts(
+            addons=frozenset({"dashboard", "terminals"}),
+            runner_enabled=True,
+            terminals_enabled=True,
+            grant_hours_set=True,
+        )
+    ]
     f = finish_flow(tmp, FakePorts(), box)
     f.dispatch("POST", "profile", {}, PROF)
     rv = f.dispatch("POST", "review", {}, {})[1]
@@ -200,7 +215,7 @@ def test_finish_review_has_only_the_missing_items_and_needs_the_tty(tmp):
 
 def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     ports = FakePorts(FakeTerminal([]))
-    box = [mkfacts(addons=frozenset({"terminals"}), runner_enabled=True, grant_hours_set=True)]
+    box = [mkfacts(addons=frozenset({"dashboard", "terminals"}), runner_enabled=True, grant_hours_set=True)]
     f = finish_flow(tmp, ports, box)
     f.dispatch("POST", "profile", {}, PROF)
     rv = f.dispatch("POST", "review", {}, {})[1]
@@ -224,7 +239,7 @@ def test_finish_create_with_changed_facts_asks_for_a_new_review(tmp):
     f = finish_flow(tmp, ports, box)
     f.dispatch("POST", "profile", {}, PROF)
     rv = f.dispatch("POST", "review", {}, {})[1]
-    box[0] = mkfacts(addons=frozenset({"terminals", "worktrees"}))  # someone granted them meanwhile
+    box[0] = mkfacts(addons=frozenset({"dashboard", "terminals", "worktrees"}))  # someone granted them meanwhile
     with pytest.raises(SetupError) as e:
         f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"], "typed_word": "GRANT"})
     assert e.value.code == "review.changed" and names(ports) == []
@@ -233,7 +248,7 @@ def test_finish_create_with_changed_facts_asks_for_a_new_review(tmp):
 def test_finish_never_resurrects_a_revoked_addon_in_the_review(tmp):
     box = [
         mkfacts(
-            addons=frozenset({"terminals", "worktrees"}),
+            addons=frozenset({"dashboard", "terminals", "worktrees"}),
             runner_enabled=True,
             grant_hours_set=True,
             grant_issued=True,

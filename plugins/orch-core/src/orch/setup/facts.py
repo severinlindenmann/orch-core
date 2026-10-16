@@ -57,7 +57,7 @@ class AddonInfo:
 
 def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
     """The "Agents may" list. The three add-ons whose host code ships inside orch-core come with their capabilities from
-    their own manifest (the same bytes ``addon.grant`` will read); the dashboard is locked on and is not an event;
+    their own manifest (the same bytes ``addon.grant`` will read); the dashboard is locked on and IS an event (its grant is what makes the workspace show up in the dashboard);
     quick tasks are plain tickets and need no setting (a flag with no machine state)."""
     import json
 
@@ -68,18 +68,10 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
         "start-agent": ("Start agents", "Agents can be started from the dashboard and run as you.", True, False),
         "terminals": ("Terminals", "The dashboard can open a terminal on this machine, as you.", True, True),
         "worktrees": ("Worktrees", "The dashboard can create git worktrees for tickets.", True, False),
+        "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
-    out = [
-        AddonInfo(
-            "dashboard",
-            "Dashboard",
-            "This workspace's dashboard (locked on).",
-            required=True,
-            default=True,
-            kind="flag",
-        )
-    ]
-    for name in builtin.NAMES:
+    out = []
+    for name in ("dashboard", *(n for n in builtin.NAMES if n != "dashboard")):
         doc = json.loads(read(name))
         title, desc, runner, terms = texts[name]
         out.append(
@@ -87,8 +79,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
                 name,
                 title,
                 desc,
-                required=False,
-                default=False,
+                required=name == "dashboard",
+                default=name == "dashboard",
                 kind="addon",
                 capabilities=tuple(str(c) for c in doc.get("capabilities") or ()),
                 needs_runner=runner,

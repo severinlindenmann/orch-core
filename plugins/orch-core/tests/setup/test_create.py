@@ -77,7 +77,7 @@ def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
     f, ports, p, rv = run_ok(tmp, AGENT, typed="GRANT")
     assert p["error"] is None and p["done"] is True and f.phase == "done"
     assert ports.unlocks == 1
-    assert ports.submits == ["addon.granted", "addon.granted", "addon.granted", "grant.issued"]
+    assert ports.submits == ["addon.granted"] * 4 + ["grant.issued"]  # dashboard, start-agent, terminals, worktrees
     n = names(ports)
     assert n.index("genesis") < n.index("install_addon") < n.index("runner_enable") < n.index("runner_hello")
     assert n.index("runner_hello") < n.index("human.prepare") < n.index("unlock") < n.index("human.submit")
@@ -91,7 +91,7 @@ def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
 def test_all_requests_are_prepared_and_checked_before_the_unlock(tmp):
     f, ports, p, _ = run_ok(tmp, AGENT, typed="GRANT")
     n = names(ports)
-    assert n.count("human.prepare") == 4
+    assert n.count("human.prepare") == 5
     assert max(i for i, x in enumerate(n) if x == "human.prepare") < n.index("unlock")
 
 
@@ -186,7 +186,7 @@ def test_r4_no_hello_means_no_grant_is_signed(tmp):
     ports.hello = False
     f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
     assert p["error"] is None and p["done"] is True  # finishable, not failed
-    assert "grant.issued" not in ports.submits and ports.submits.count("addon.granted") == 3
+    assert "grant.issued" not in ports.submits and ports.submits.count("addon.granted") == 4
     st = {s["id"]: s["status"] for s in p["steps"]}
     assert st["runner_grant"] == "skipped" and p["retry"] == ["runner_grant"]
     assert ports.unlocks == 1
@@ -211,12 +211,12 @@ def test_the_grant_is_done_only_on_a_confirmed_deposit(tmp):
 
 def test_a_failed_submit_stops_the_chain_and_marks_the_rest_skipped(tmp):
     ports = FakePorts()
-    ports.fail_submit = 1  # the second request
+    ports.fail_submit = 2  # the third request (dashboard and start-agent went through)
     f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
     st = {s["id"]: s["status"] for s in p["steps"]}
-    assert st["addon:start-agent"] == "done" and st["addon:terminals"] == "failed"
+    assert st["addon:dashboard"] == "done" and st["addon:start-agent"] == "done" and st["addon:terminals"] == "failed"
     assert st["addon:worktrees"] == "skipped" and st["runner_grant"] == "skipped"
-    assert ports.submits == ["addon.granted"] and p["error"]["finishable"] is True
+    assert ports.submits == ["addon.granted", "addon.granted"] and p["error"]["finishable"] is True
 
 
 # --- one-click: R6
@@ -228,7 +228,7 @@ CLICK = {**PROFILE, "method": "click", "addons": ["dashboard", "worktrees"]}
 def test_click_path_settings_then_flag_then_conversion_last(tmp):
     f, ports, p, rv = run_ok(tmp, CLICK)
     n = names(ports)
-    assert p["done"] is True and ports.submits == ["settings.changed", "addon.granted"]
+    assert p["done"] is True and ports.submits == ["settings.changed", "addon.granted", "addon.granted"]
     assert n.index("human.submit") < n.index("convenience_on") < n.index("stage") < n.index("finish_conversion")
     assert n[-1] == "finish_conversion" and "lock" in n and n.index("lock") < n.index("stage")
     assert [s["id"] for s in p["steps"]][-2:] == ["flags", "custody"]
@@ -311,7 +311,7 @@ def test_b8_a_longer_runner_grant_is_prepared_only_after_the_settings_landed(tmp
     kinds = [(c[1], i) for i, c in enumerate(calls)]
     prepares = [i for k, i in kinds if k == "human.prepare"]
     settings_submit = next(i for i, c in enumerate(calls) if c[1] == "human.submit")
-    assert len(prepares) == 5 and prepares[-1] > settings_submit  # the grant is the last prepare, after settings
+    assert len(prepares) == 6 and prepares[-1] > settings_submit  # the grant is the last prepare, after settings
     assert all(i < settings_submit for i in prepares[:-1])
     assert ports.unlocks == 1
 

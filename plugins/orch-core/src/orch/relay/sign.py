@@ -239,6 +239,26 @@ class RelaySigner:
             raise SignerRefused("chunk over 256 KiB")
         return self._sign(wire.bridge_signed_bytes(header, body))
 
+    def push(self, epoch: int, payload: Mapping[str, Any]) -> bytes:
+        """The raw ``WSK`` signature of a push payload (H13-1, 11A.16.2) over ``sig_push || suite || ws || u32(epoch) ||
+        cj(payload)`` (protocol-v2 §9). Called by ``_PushSealer.seal_push`` only. Checks: the payload is exactly
+        ``{kind, id, label, ts_ms}`` with a host kind and a padded label, and ``epoch`` is one ``BridgeKeys`` holds.
+        The workspace is the link's."""
+        from orch.crypto import push as cpush
+
+        if self._epochs is None or type(epoch) is not int or epoch < 1 or not self._epochs.holds(epoch):
+            raise SignerRefused("push epoch not held")
+        try:
+            p = dict(payload)
+            if p.get("kind") not in cpush.HOST_PUSH_KINDS or type(p.get("label")) is not str:
+                raise cpush.PushError("input", "kind")
+            if cpush.pad_label(p["label"].rstrip(" ")) != p["label"]:
+                raise cpush.PushError("input", "label is not padded")
+            signed = cpush.push_signed_bytes(bytes.fromhex(self.link.workspace_id), epoch, p)
+        except (cpush.PushError, TypeError, ValueError):
+            raise SignerRefused("push payload") from None
+        return self._sign(signed)
+
     def card(self, o: Mapping[str, Any]) -> str:
         """The b64u ``sig`` of a card object over ``"orch/v2/sig/card-wsk|" || cj(o)`` (proto §7.1)."""
         if not isinstance(o, Mapping) or set(o) != CARD_FIELDS:

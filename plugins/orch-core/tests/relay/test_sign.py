@@ -221,7 +221,7 @@ def test_card_seq_never_signs_two_different_cards_at_one_seq():
 def test_no_generic_sign_method():
     s = signer()
     public = {n for n in dir(s) if not n.startswith("_")}
-    want = {"login", "response_chunk", "card", "member_list", "wk_grant", "pair_answer", "cert_request"}
+    want = {"login", "response_chunk", "card", "member_list", "wk_grant", "pair_answer", "cert_request", "push"}
     assert public == want | {"public_key", "link"}, public
 
 

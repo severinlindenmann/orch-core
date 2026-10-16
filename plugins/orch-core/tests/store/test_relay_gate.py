@@ -206,6 +206,7 @@ def test_a_device_that_vanishes_from_the_state_counts_as_lost():
     calls = []
     s = Store.__new__(Store)
     s._state_v = s._relay_pregated = None  # noqa: SLF001
+    s.auth_gen = 0  # set by __init__, which this test skips
     s.relay_gate = lambda d, r: calls.append((d, r))
     dev = "d_" + "1" * 32
     s._state = NS(workspace=NS(devices={dev: NS(removed=False, revoked=False)}))  # noqa: SLF001

@@ -39,6 +39,8 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from orch.crypto import push as cpush
+
 from . import framing, wire
 from .sign import RelaySigner
 
@@ -188,6 +190,60 @@ class BridgeKeys:
             if type(state) is not SealState:
                 raise TypeError("seal_snapshot must yield a SealState")
             yield _Sealer(_TOKEN, self, signer, state, self._wk)
+
+    def _k_push(self, epoch: int) -> bytes:
+        if not self.serves(epoch):
+            raise KeyMissing("epoch key not held")
+        wk = self._source.wk(epoch)
+        assert wk is not None
+        return cpush.k_push(wk, self._ws, epoch)
+
+    @contextlib.contextmanager
+    def push_sealing(self, signer: RelaySigner) -> Iterator[_PushSealer]:
+        """H13-1 (11A.16.2): the seal lock and ONE snapshot of the seal state, like :meth:`sealing`, for push objects.
+        The caller seals AND persists the outer inside the span. A sealer is bound to the snapshot's committed epoch
+        and refuses while the gate is up."""
+        with self._source.seal_snapshot() as state:
+            if type(state) is not SealState:
+                raise TypeError("seal_snapshot must yield a SealState")
+            yield _PushSealer(_TOKEN, self, signer, state, self._ws, self._k_push)
+
+
+class _PushSealer:
+    """Seals push objects under one :class:`SealState` snapshot (11A.16.2 ``_PushSealer``). Built only by
+    :meth:`BridgeKeys.push_sealing` (the token); the key never leaves ``BridgeKeys``: ``channel`` is its
+    ``K_push(epoch)`` closure and is used only inside :meth:`seal_push`."""
+
+    def __init__(
+        self, token: object, keys: BridgeKeys, signer: RelaySigner, state: SealState, ws: bytes,
+        channel: Callable[[int], bytes],
+    ) -> None:  # fmt: skip
+        if token is not _TOKEN:
+            raise TypeError("a push sealer is built only by BridgeKeys.push_sealing")
+        self._keys, self._signer, self.state, self._ws, self._channel = keys, signer, state, ws, channel
+
+    @property
+    def sealable(self) -> bool:
+        """The snapshot's committed epoch is held and the rotation gate is down."""
+        return not self.state.gated and self._keys.serves(self.state.current)
+
+    @property
+    def epoch(self) -> int:
+        return self.state.current
+
+    def seal_push(self, payload: Mapping[str, Any]) -> tuple[bytes, int]:
+        """``(cj(outer), epoch)`` for ``payload`` = exactly ``{kind, id, label, ts_ms}`` (the label unpadded: it is
+        a fixed point of ``clean_label``, padded here to 80 code points), signed inside by ``RelaySigner.push`` and
+        sealed under ``K_push`` of the snapshot's epoch. :class:`SealRefused` when the snapshot is not sealable;
+        :class:`orch.crypto.push.PushError` for a bad payload or an outer above 3,072 bytes."""
+        if not self.sealable:
+            raise SealRefused("no push under a gated or unheld epoch")
+        if not isinstance(payload, Mapping) or set(payload) != {"kind", "id", "label", "ts_ms"}:
+            raise cpush.PushError("input", "payload is exactly {kind, id, label, ts_ms}")
+        epoch = self.state.current
+        padded = cpush.push_payload(payload["kind"], payload["id"], payload["label"], payload["ts_ms"])
+        sig = self._signer.push(epoch, padded)
+        return cpush.seal_push(self._channel(epoch), self._ws, epoch, padded, sig), epoch
 
 
 class _Sealer:

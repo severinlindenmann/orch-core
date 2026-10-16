@@ -318,6 +318,9 @@ class Store:
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
         self._state_v: State | None = None
+        #: H13a (11A.16.2): raised in the ONE place the model state changes (the ``_state`` setter), under the store
+        #: lock; the push dispatch step records it. An AST test pins that it is assigned nowhere else.
+        self.auth_gen = 0
         self._relay_pregated: State | None = None  # _commit's new state whose losses were gated before its write
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
@@ -467,6 +470,8 @@ class Store:
         """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
         here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
         old, self._state_v = self._state_v, new
+        if old is not new:
+            self.auth_gen += 1  # conservative: any state change (an authorization change is one of them)
         pregated, self._relay_pregated = self._relay_pregated, None
         if self.relay_gate is not None and old is not None and new is not None and old is not new:
             if new is not pregated:  # _commit raised it already, before the event became durable
@@ -543,6 +548,71 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    # -- H13a: the push planner's read-only view (11A.16.4) ---------------------------------------------------------
+
+    def log_marks(self) -> dict[str, tuple[int, int]]:
+        """``{log: (size, mtime_ns)}`` of every log this store knows, after a directory scan (a stat per ticket, no
+        replay): the planner examines a log only when its mark moved. The workspace log is ``(bytes read, 0)``."""
+        with self._locked():
+            self._scan_dirs()
+            out = {uid: (h.sig[0], h.sig[2]) for uid, h in self._hints.items()}
+            info = self._logs.get(WORKSPACE)
+            out[WORKSPACE] = (info.offset if info is not None else 0, 0)
+            return out
+
+    def head_at(self, log: str, seq: int) -> str | None:
+        """The head (event hash) of ``seq`` in ``log`` as replayed and chain-checked, or ``None`` (seq 0, a log this
+        store does not hold, or a log shorter than ``seq``). Loads the ticket."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or not 1 <= seq <= info.seq or seq > len(info.heads):
+                return None
+            return info.heads[seq - 1]
+
+    def log_seq(self, log: str) -> int | None:
+        """The head ``seq`` of ``log`` as loaded, or ``None`` when the log cannot be read right now (not held, or a
+        read error): the planner tells "unreadable, try later" from "shorter than my cursor" with it. Loads the
+        ticket."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or log in self._read_errors:
+                return None
+            return int(info.seq)
+
+    def events_after(self, log: str, after: int, limit: int = 256) -> list[tuple[dict[str, Any], str]]:
+        """``(event, head)`` for the events of ``log`` with ``seq`` above ``after``, at most ``limit``, oldest first;
+        ``head`` is the event's hash as the chain has it. Read-only; loads the ticket (replayed and verified)."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or log in self._read_errors:
+                return []
+            first, last = max(after, 0) + 1, min(info.seq, max(after, 0) + max(limit, 0))
+            return [(e, info.heads[e["seq"] - 1]) for e in self._read_events(log, first, last)]
+
+    def seq_before(self, log: str, at_epoch: int) -> int:
+        """The greatest ``seq`` of ``log`` whose ``at`` is before ``at_epoch`` (seconds), 0 if none: the start fence
+        of a log the planner has no cursor for. Reads back from the head in chunks."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None:
+                return 0
+            hi = info.seq
+            while hi > 0:
+                lo = max(1, hi - 31)
+                for e in reversed(self._read_events(log, lo, hi)):
+                    if _epoch(e["at"]) < at_epoch:
+                        return int(e["seq"])
+                hi = lo - 1
+            return 0
 
     def revision(self) -> tuple[Any, ...]:
         """A value that stays equal exactly while no log changed (H12d-3, #555 review F1): the read heads ``(log, seq,

@@ -544,9 +544,9 @@ def test_r2_epoch_keys_are_used_only_through_bridgekeys():
 
 
 def test_r2_only_the_rid_store_opens_sqlite_and_nothing_appends_to_the_store():
-    """The rid store is the only SQLite user; no orch.relay module calls a store ``append`` (the relay path appends
-    only through the host's ``append_relay``, behind HostPort)."""
-    assert {p.name for p in MODULES if "sqlite3" in _imports(p)} == {"rids.py"}
+    """The rid store and (H13a, 11A.16.3) the push outbox are the only SQLite users; no orch.relay module calls a
+    store ``append`` (the relay path appends only through the host's ``append_relay``, behind HostPort)."""
+    assert {p.name for p in MODULES if "sqlite3" in _imports(p)} == {"rids.py", "outbound.py"}
     for p in MODULES:
         assert not _calls_to(p, "append_signed") and not _calls_to(p, "append_relay"), p.name
         assert not _calls_to(p, "host_append"), p.name

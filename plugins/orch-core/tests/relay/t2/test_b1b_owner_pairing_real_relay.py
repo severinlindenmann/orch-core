@@ -224,7 +224,7 @@ class Install:
     # -- the prompts every command shares
     def review(self) -> Responder:
         return Responder(
-            re.compile(r"Type (\S+) and Enter to continue to the passphrase; anything else stops: "),
+            re.compile(r"Type (\S+)(?: and Enter)? to continue(?: to the passphrase; anything else stops| \(d = details\)): "),
             lambda m: m.group(1),
             quiet=0.3,
         )

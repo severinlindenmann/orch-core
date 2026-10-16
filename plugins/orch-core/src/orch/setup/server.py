@@ -9,8 +9,8 @@
 Session binding: the launch code is single use, lives 30 s and is bound to the ``setup_id``; the first claim wins, a
 second one is refused (409) and reported to the terminal. The code never travels in a URL or an argument: it is written
 to ``<state>/setup/setup.code`` (0600, in the 0700 setup directory), which the dashboard server reads and deletes,
-and claimed over this socket together with the dashboard's own port; the browser is bound to that port (``Host``/``Origin``), and
-no browser request is answered before a claim named one. The session dies on done, cancel or 10 minutes without a
+and claimed over this socket together with the dashboard's own port; the browser is bound to that port
+(``Host``/``Origin``), and no browser request is answered before a claim named one. The session dies on done, cancel or 10 minutes without a
 request, never while a run is in progress (the flow says so through ``busy``).
 """
 

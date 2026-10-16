@@ -53,7 +53,7 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(state.host.calls.filter((c) => c.path.endsWith('/handoff') && c.method === 'POST')).toEqual([]) // nothing yet
   await user.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
   const panel = await within(dialog).findByTestId('click-panel', {}, T)
-  expect(panel.firstElementChild).toHaveTextContent(CLICK_RISK)
+  expect(within(panel).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
   expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(panel).not.toHaveTextContent(/HOST-BEFORE-VALUE|Preview|orch sign/)
   expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 12 })

@@ -1,5 +1,7 @@
+import { SignContent, SignDetails } from './SignContent'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
-// own preview, the host's fingerprint or a cached ticket. The risk line comes first. `lines` are core's terminal
+// own preview, the host's fingerprint or a cached ticket. The risk notice is available from the One-click badge. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
 // not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
@@ -24,6 +26,8 @@ function RiskLine({ text }: { text: string }) {
 
 /** The risk line alone: the workspace card and the dialog before the request exists. */
 export const ClickRisk = () => <RiskLine text={CLICK_RISK} />
+
+export const ClickBadge = () => <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="w-fit rounded border border-border px-2 py-0.5 text-[11px] text-text-muted">One-click</button></TooltipTrigger><TooltipContent className="max-w-xs">{CLICK_RISK}</TooltipContent></Tooltip></TooltipProvider>
 
 function When({ stamp }: { stamp: string }) {
   const t = Date.parse(stamp)
@@ -71,7 +75,9 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const hintId = useId()
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <RiskLine text={view.risk} />
+      <ClickBadge />
+      {view.content && <SignContent content={view.content} />}
+      <SignDetails>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-text-muted">Action</dt>
         <dd>
@@ -98,13 +104,14 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           <When stamp={view.expires_at} />
         </dd>
       </dl>
-      <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
+      {view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
         {view.lines.map((line, i) => (
           <div key={i} className="whitespace-pre-wrap break-all">
             {line === '' ? ' ' : line}
           </div>
         ))}
-      </div>
+      </div>}
+
       {view.checks.length > 0 && (
         <ul data-testid="click-checks" className="space-y-0.5 text-[12px] text-text-muted">
           {view.checks.map((c, i) => (
@@ -119,6 +126,8 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           {view.artifacts === 'checked' ? 'The signer checked the artifact bytes it signs.' : 'The signer did not see the artifact bytes: only their hash is signed.'}
         </p>
       )}
+      </SignDetails>
+      {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {view.confirm.kind === 'word' && (
         <p id={hintId} data-testid="click-hold-hint" className="text-[13px] text-text">
           Hold Sign to confirm <Raw>{view.confirm.word}</Raw>

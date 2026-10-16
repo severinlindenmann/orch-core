@@ -60,7 +60,7 @@ export interface ListTicketsParams {
 }
 
 export function createApi(transport: Transport) {
-  async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  async function call<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
     const res = await transport.request(method, path, body)
     if (res.status >= 400) {
       const err = (res.json as ApiErrorBody | null)?.error ?? {
@@ -138,6 +138,8 @@ export function createApi(transport: Transport) {
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
+    getSignDefault: (ws: string) => call<import('./signing').SignDefault>('GET', `/api/w/${ws}/me/sign_default`),
+    putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
     /** H12d-2: every device's reader level and the workspace's `required_reader` (real host only). */

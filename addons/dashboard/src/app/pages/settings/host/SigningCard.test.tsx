@@ -49,7 +49,7 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeDisabled()
     fireEvent.change(field, { target: { value: 'my passphrase' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions are signed here/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
     expect(sw).toHaveBeenCalledWith(WS, { on: true, passphrase: 'my passphrase' })
     expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
   })
@@ -202,7 +202,7 @@ describe('Sign in the dashboard', () => {
     await act(async () => {
       await qcOf.invalidateQueries({ queryKey: ['click-status', WS] })
     })
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions are signed here/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
     expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
     expect(screen.queryByTestId('signing-error')).toBeNull()
     expect(screen.queryByText(/Reloading the card/)).toBeNull()
@@ -273,4 +273,10 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
     expect(document.body.innerHTML).not.toContain('typed then left')
   })
+})
+
+it('describes the Other ways menu and keeps the full risk notice for older acknowledgements', async () => {
+  mount({ ...ON, risk_ack: null })
+  await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('Other ways'))
+  expect(screen.getByTestId('click-risk')).toHaveTextContent('Convenience signing:')
 })

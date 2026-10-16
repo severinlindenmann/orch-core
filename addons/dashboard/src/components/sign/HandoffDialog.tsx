@@ -1,3 +1,5 @@
+import { OtherWays, PhoneWaiting, useSignMethods } from './SignMethods'
+import { methodLabel, type SignMethod } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
@@ -12,12 +14,12 @@ import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
 import { alreadySigned, clickEligible, clickReady } from '@/api/click'
-import { refusalOf, refusalSentence, signerProblem } from '@/api/refusals'
+import { refusalOf, refusalSentence } from '@/api/refusals'
 import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
-import { ClickRisk, ClickSignPanel } from './ClickSignPanel'
+import { ClickBadge, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
-import { Raw } from './visible'
+import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 
 interface Words {
@@ -97,9 +99,38 @@ export function HandoffDialog(p: HandoffDialogProps) {
     toast.success(`${p.title}: signed`)
     p.onSettled?.('done', state, request)
   })
-  const canClick = clickReady(here) && clickEligible(p.action)
-  // ONE signing path per workspace (owner decision, 12 Oct 2026): where click-to-sign is on, there is no terminal hand-off.
-  const clickOnly = !!here?.click?.enabled
+  const methods = useSignMethods(p.ws)
+  const [chosen, setChosen] = useState<SignMethod | null>(null)
+  const [phone, setPhone] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
+  const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action)
+  const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || clickEligible(p.action))
+  const preferred = methods.preference?.method
+  const fallback = methods.preference?.fallback
+  const available = (m: SignMethod) => m !== 'click' || canClick
+  const method: SignMethod = chosen && allowed?.includes(chosen) ? chosen
+    : allowed ? (preferred && allowed.includes(preferred) && available(preferred) ? preferred
+      : fallback && allowed.includes(fallback) && available(fallback) ? fallback
+        : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal')
+    : canClick ? 'click' : 'terminal'
+  const startMethod = (m: SignMethod, retryFloor = 0) => {
+    if (!p.action) return
+    if (m === 'phone') setPhone(true)
+    else if (m === 'click') void click.start(p.action, retryFloor)
+    else void run.prepare(p.action, retryFloor)
+  }
+  const selectMethod = async (m: SignMethod) => {
+    if (switching) return
+    setSwitching(true)
+    const retryFloor = Math.max(run.retry, click.retry) + (phase === 'waiting' || click.phase === 'ready' ? 1 : 0)
+    if (phase === 'waiting') { await run.cancel(); run.reset() }
+    if (click.phase === 'ready') { await click.cancel(); click.reset() }
+    setPhone(false)
+    setChosen(m)
+    setSwitching(false)
+    startMethod(m, retryFloor)
+  }
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -108,13 +139,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
 
   useEffect(() => {
     // Not before the list of workspaces is known: whether this one offers Sign decides how the dialog starts.
-    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !canClick && !clickOnly) {
+    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && method === 'terminal' && !methods.loading && !allowed) {
       started.current = true
       void run.prepare(p.action)
     }
     // Once per opening: a changed action object is not a new click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.autoStart, p.ws, known.isPending, canClick])
+  }, [p.autoStart, p.ws, known.isPending, canClick, methods.loading, method])
 
   // Switching workspace cancels the open request at the host; the dialog belongs to the old workspace and closes.
   useEffect(() => {
@@ -173,7 +204,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
       <DialogContent
         data-handoff-dialog
-        className="max-w-lg gap-4 border-border bg-surface"
+        className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           ;(p.initialFocus?.() ?? cancelRef.current)?.focus()
@@ -182,7 +213,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
-            <bdi>{p.title}</bdi>
+            <Inline>{click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
           </DialogTitle>
           {shared && here && (
             <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
@@ -196,26 +227,21 @@ export function HandoffDialog(p: HandoffDialogProps) {
             </p>
           )}
           <DialogDescription>
-            {clickOpen
+            {(click.view?.view.content || run.request?.content) ? 'Review what you’re approving.' : clickOpen
               ? 'Signed with your key by core’s signing helper, only after you press Sign. An agent or an addon cannot prepare this request.'
               : phase === 'idle'
-                ? canClick
+                ? method === 'click'
                   ? 'Sign here with one click. Core prepares the request and its signing helper signs it.'
-                  : clickOnly
-                    ? 'This workspace signs in the dashboard.'
-                    : 'You sign in your terminal. This dashboard prepares the request and never signs.'
+                  : method === 'phone' ? 'Review and approve on your phone.' : 'You sign in your terminal. This dashboard prepares the request and never signs.'
                 : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
           </DialogDescription>
         </DialogHeader>
 
-        {p.summary}
+        {!(click.view?.view.content || run.request?.content) && p.summary}
+        {phone && <PhoneWaiting />}
         {phase === 'idle' && !clickOpen && p.children}
-        {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
-        {phase === 'idle' && !clickOpen && clickOnly && !canClick && (
-          <p role="alert" data-testid="click-unavailable" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-            The signing helper cannot sign right now.{here?.click?.problem ? <> <span data-testid="click-unavailable-why">{signerProblem(here.click.problem)}</span></> : null} Fix that, or turn convenience off from the terminal with <code>orch host convenience off --workspace {here?.prefix ?? 'W'}</code>. Nothing was prepared.
-          </p>
-        )}
+        {phase === 'idle' && !clickOpen && method === 'click' && <ClickBadge />}
+
 
         {(click.phase === 'preparing' || click.phase === 'viewing') && (
           <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
@@ -229,7 +255,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             ws={p.ws}
             answer={click.view}
             problem={click.problem}
-            signing={click.phase === 'signing'}
+            signing={click.phase === 'signing' || switching}
             onSign={(word) => void click.sign(word)}
             onCancel={() => void close()}
             waitUntil={waitUntil}
@@ -300,6 +326,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
           </div>
         )}
 
+        {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
+          <OtherWays allowed={allowed} current={method} disabled={switching || !p.action || !!p.hint} onSelect={m => void selectMethod(m)} />
+        )}
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span aria-live="polite" className="text-[12px] text-text-muted">
             {phase === 'idle' && p.hint}
@@ -311,14 +340,14 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   Cancel
                 </Button>
-                {!clickOnly || canClick ? (
+                {(
                   <Button
-                    onClick={() => (canClick ? p.action && void click.start(p.action) : p.action && void run.prepare(p.action))}
-                    disabled={!p.action || !p.ws || !!p.hint}
+                    onClick={() => startMethod(method)}
+                    disabled={!p.action || !p.ws || !!p.hint || methods.loading || switching || phone || (method === 'click' && !canClick)}
                   >
-                    {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
+                    {method === 'click' ? 'Sign' : allowed ? methodLabel[method] : (p.confirmLabel ?? p.title)}
                   </Button>
-                ) : null}
+                )}
               </>
             )}
             {click.phase === 'settling' && (

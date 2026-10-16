@@ -2739,7 +2739,7 @@ to your orch runner on this machine and is never shown") only then, with the per
 | Class | Ops |
 |---|---|
 | **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
-| **Click + typed word** | `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
+| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
 | **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
 
@@ -4434,6 +4434,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V2` (= V1 + `grant.revoked` on the human-only `grant` op; V1 frozen), no verb
     covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
     names a number of hours. The signing views read lengths as days and hours.
+
+74. **B10 Part A: one click together with a phone (owner decision F of 16 Oct 2026; JUDGEMENT CALL reversing orch-52's N4):**
+    `relay.pair_device` may be signed with the convenience device key; it is WORD class (`WORD_OPS`: the typed word is the
+    last eight hex of the device id; a bare click never adds a device); the three `refuse_pair_device` sites and the
+    signer's convenience refusal are removed, `paircli` signs with the key's custody. `convenience.check` still refuses
+    with the flag off (`disabled`); the allocation's `check_readers` counts the incoming phone's level-1 declaration; the
+    primary's keys stay barred from convenience custody. `pair.preview` no longer blocks on the flag or on custody.
+    Lockout fix: `orch host convenience on` and the dashboard switch (`custody_on`) call `convenience.refuse_turn_on`
+    first: refused up front, naming the devices, while a reader is below level 1 (the B9 setup profile does the same
+    when B9 lands). No wire, hash, F1 or schema change; no new error code (the reason `pair_device` is no longer emitted).
 
 75. **B10 Part B: approve requirements and plan on the phone (phase 1; owner decision F of 16 Oct 2026; §11A.15.24):**
     unsigned host-local hints (`phone.request`, `phone.cancel`, `phone.status`, column P only; derived state; 10 minutes;
@@ -8411,7 +8421,7 @@ set.
 | 7c | **The primary's challenge.** On a `notices.cert_requests` wake (fallback: `GET /v2/cert-requests/{id}` at most every 10 s, 5 s deadline, never blocking the pair thread) R6 reads the request. It verifies the PK-signed challenge with H12c `check_cert_challenge(signed, pk_pub, request_o)` (under the pinned `PK` and against the stored request's binding; the phone verifies again, §8.4 step 5) and relays it **unchanged** in `cert_pending`. Unverifiable relay data is dropped and alarmed `relay_misbehaving` | the challenge bytes, in the record, **before** the first answer that carries them; never replaced | a relay that withholds the challenge only delays: the phone's deadline gives `expired` |
 | 7d | **The primary signs or rejects** (owner client, 11A.15.9): it uploads the certificate (`PUT /v2/devices/{device}`) and the relay marks the request `signed`; or it posts a `cert_rejection`. The inline CLI also hands the certificate it signed (or the rejection) straight to R6 through the control op `relay.pair_cert` (Opus L4): the relay keeps a request only until `expires_ms + 60 s`, and a workspace session cannot `GET devices/{id}` before the device is in `ever_devices` (`directory.py`), so a host down at that moment would otherwise lose a signed cert. R6 still verifies it itself (step 8) | — | `rejected` with a rejection verified by `check_cert_rejection(signed, pk_pub, request_o)`: R6 relays the long form `{state, wsk_pub, pk_pub, rejection}` unchanged (§8.3 G3b). `expired`: `expired` |
 | 8 | **Certificate in hand** (from 7a, from `relay.pair_cert`, or from `GET cert-requests/{id}` `state:"signed"`). R6 verifies it itself, never trusting the relay's state: `check_cert` under the pinned owner `PK`; the keys equal the pending keys; `person_id` is the owner's; `verify_cert` at now; no revocation known (relay feed and `HostPins`); for 7b `scopes_max` equals what was requested, for 7a it covers the offer's scopes. The offer must still be `cert_pending`/`confirmed` (a cancelled offer's cert is refused here) | the cert, in the record; `outstanding.json` cleared | any failure ends the offer `failed` (short `rejected`, alarm `pairing_cert_invalid`) |
-| 9 | **The R6 allocation (the authoritative gate).** Refused when the phone's deadline is near (above). The CLI drives the person path: `human.prepare` of the material kind `relay.pair_device` (H12c item 12) renders `device.added {device, cert}` with the device id, the label (the cleaned label as `clean_label` returned it, shown for review only; there is no F1 copy of the label and no NFC step, 11A.15.13), scopes, `cert_code` (7b) or SAS (7a), and the cert digest. The Mac's workspace device signs it at a **terminal with its passphrase**: the hand-off (`orch sign CODE`) or the attached CLI's inline passphrase signer; there is **no click or convenience path** (N4, 15 Oct 2026: never the click signer, never `auth:"convenience"`, below; DECIDED in #528's review: an inline `auth:"passphrase"` signer stays allowed while the click flag is on, since it is a terminal passphrase signature and not a weakening. With the click-to-sign flag on, the hand-off is refused, `sign.click_only`, so the hand-off branch does not work there and the CLI uses the inline terminal passphrase signer instead; `pair.preview` says so up front rather than refusing, 11A.15.9A), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert and within its deadline; (ii) **the allocation intent** `{offer_id, attempt, event digest (the reviewed prepared material), decl_digest, device_id}` is written into the offer record (Codex 2); (iii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iv) `append_signed(...)` of `device.added`; (v) the reader record (§9.10, `source:"pair"`); (vi) `membership/devices/<id>.json`; (vii) the offer state `allocated` with the event id | the intent before the append; the F1 log line is the commit; then the reader record, devices and offer, under the same lock before it is released | **crash recovery** (at open, before either R6 thread starts, before anything is served): an offer whose intent's event digest matches a `device.added` in the log is rolled forward by recovering **all** derived records: the reader record, `devices/<id>` and `allocated`. Matching is by the intent (offer, attempt, reviewed event, declaration), never by "same cert, same device". A `device.added` without an intent is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected`. **Already in F1** (orch-f1 S3): if F1 already holds this exact device with the same keys and certificate and it is valid, the allocation is idempotent (no second append; the intent names the existing event), and if the device is in `excluded` the same critical section clears it (re-admission, N2, 11A.15.4); if the id was removed or revoked, refuse `revoked` |
+| 9 | **The R6 allocation (the authoritative gate).** Refused when the phone's deadline is near (above). The CLI drives the person path: `human.prepare` of the material kind `relay.pair_device` (H12c item 12) renders `device.added {device, cert}` with the device id, the label (the cleaned label as `clean_label` returned it, shown for review only; there is no F1 copy of the label and no NFC step, 11A.15.13), scopes, `cert_code` (7b) or SAS (7a), and the cert digest. the Mac signs `device.added` with the workspace device key: at a terminal with its passphrase (the hand-off `orch sign CODE` or the attached CLI's inline signer), or, when the key is in convenience custody and the flag is on (B10, 17 Oct 2026: JUDGEMENT CALL reversing N4, 11A.15.6), with `auth:"convenience"` after the typed word (WORD class: in the dashboard, or in the attached CLI's TTY confirmation after the SAS and certificate steps, never a bare click). With the click-to-sign flag on the hand-off is refused, `sign.click_only`, so the CLI uses its inline signer, which may use the convenience key; `pair.preview` does not block (11A.15.9A), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert and within its deadline; (ii) **the allocation intent** `{offer_id, attempt, event digest (the reviewed prepared material), decl_digest, device_id}` is written into the offer record (Codex 2); (iii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iv) `append_signed(...)` of `device.added`; (v) the reader record (§9.10, `source:"pair"`); (vi) `membership/devices/<id>.json`; (vii) the offer state `allocated` with the event id | the intent before the append; the F1 log line is the commit; then the reader record, devices and offer, under the same lock before it is released | **crash recovery** (at open, before either R6 thread starts, before anything is served): an offer whose intent's event digest matches a `device.added` in the log is rolled forward by recovering **all** derived records: the reader record, `devices/<id>` and `allocated`. Matching is by the intent (offer, attempt, reviewed event, declaration), never by "same cert, same device". A `device.added` without an intent is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected`. **Already in F1** (orch-f1 S3): if F1 already holds this exact device with the same keys and certificate and it is valid, the allocation is idempotent (no second append; the intent names the existing event), and if the device is in `excluded` the same critical section clears it (re-admission, N2, 11A.15.4); if the id was removed or revoked, refuse `revoked` |
 | 10 | **Publication.** `PUT /v2/devices/{device} {cert}` (idempotent: an identical `cj(o)` is a free 200; `cert_conflict` is alarmed `pairing_cert_conflict` and fails the offer), then the pair thread asks the membership thread for the body that **adds** the device (11A.15.4; a rotation if the gate is up). **No WK is sealed before steps 8 and 9** (§8.3 step 5) | H1/H2 `head.json` write-ahead | as 11A.15.4. A content refusal of the add ends the offer `failed`, puts the device in `excluded` and forces the rotation (holder invariant). The device stays an F1 device: R6 raises the `needs` item "pairing of <label> failed after it was added: remove the device" and never appends `device.removed` itself (Q13) |
 | 11 | **The baseline.** After the add committed: R1's verified `GET checkpoint` gives the held `{n, hash}`. `POST /v2/workspaces/{ws}/baselines {hash, offer_id}` (W(g), 7 days). **JUDGEMENT CALL:** a linked workspace always has a held checkpoint, so a missing one while `published.jsonl` has an accepted entry is `relay_rolled_back` (11A.5): R6 does not approve with `baseline: null` and retries until the phone's deadline | `published` with the acknowledged publication `{epoch, list_seq, list_hash}`, the current accepted `card_seq`, and the baseline | `404 not_found` or `410 checkpoint_gone`: reread H and pin the new one. `quota_exceeded` (16 pins): alarm, retry every 30 s until the deadline. A baseline is never downgraded |
 | 12 | **Approved.** Every later `pair_status` gets `{state:"approved", scopes, cert, pk_pub, epoch, list_seq, card_seq, baseline, wsk_pub}` from the record. `scopes` are **byte-equal to the accepted list entry's** (orch-f1 S7: else the phone refuses `scopes_mismatch`); `epoch` and `list_seq` name the exact locally persisted publication the relay acknowledged | `approved` | the pin is released (`DELETE baselines/{hash}?offer_id`) on the device's first verified column-R request, but only if no other non-tombstoned offer names the same hash (Opus L5: the relay keys pins by `(ws, hash)`); else left to expire. The record becomes a tombstone after 7 days |
@@ -8464,17 +8474,41 @@ the phone show "link used by someone else" after 60 s, the wrong message for an 
 - **Dissent (Opus L11):** give both an expiry and a renewal path. Recorded; it needs a relay rule for certificate
   renewal of an existing device id (Q15: decided 15 Oct 2026, no relay change now; a pre-public relay item).
 
-**Convenience custody is refused for pairing (DECIDED 15 Oct 2026, orch-52; owner rule 11A.11 Q4, §11A.6 "no owner
-exception", 11A.14.3).** Adding a reader is the authority-expanding act, and the human is at the TTY anyway:
-- **`relay.pair_device` refuses `auth:"convenience"`** with `sign.convenience_unavailable`, new reason `pair_device`,
-  whatever H12d relaxes and under any dev opt-in. A click-to-sign workspace whose passphrase key was converted away
-  must run `orch keys custody passphrase --in-place` first; the refusal's fix text names it.
+**Convenience custody may sign the pairing, word-confirmed (JUDGEMENT CALL of B10, 17 Oct 2026; REVERSES orch-52's
+decided item "convenience custody is refused for pairing", 15 Oct 2026, N4; owner decision F: phone and one-click
+together).** The old rule made a phone and one-click exclusive: the pairing signature had to be a terminal passphrase
+signature, and a key in convenience custody has no passphrase. Opus's reasoning for the reversal:
+- **The recovery code is the human gate, and `PK` is never stored.** The pairing is anchored in the person key,
+  which only the typed recovery code derives (11A.15.6 steps 7 to 9); the Mac's workspace *device* key only adds the
+  `device.added` line. `PERSON_KEY_LABELS` payloads stay refused by the convenience backend (`convenience_sign_refuses_person_key_labels`),
+  so a convenience device key can neither mint nor certify a device on its own.
+- **`member.add` is already word-class under convenience** (§0.8.6 item 6), and it adds a reader of the same weight.
+  `relay.pair_device` joins `WORD_OPS`: the person types the last eight hex of the device id (the review shows the
+  device, label, scopes, SAS or cert code and cert digest) in the dashboard, or confirms in the attached CLI's TTY after
+  the SAS and certificate steps. Never a bare click.
+- **The passphrase swap would protect nothing.** Moving the key to passphrase custody for one signature and back
+  (`downgrade_in_place` re-wraps the same scalar) leaves the same key material in the same hands; it only adds a
+  failure window (a crash in between leaves the click path refusing `not_convenience`). It is dropped.
+- **Residual 7a (accepted):** an agent or process running as the person could prepare `relay.pair_device` for an offer
+  that the owner's **own certified phone** started (path 7a) and sign it with the convenience key. It still needs the
+  human at the phone to start the offer and compare the SAS, the new device is capped by `scopes_max` of the
+  certificate (no `operate`), and the word is required in the dashboard. Accepted.
+- The reader gate is unchanged and stays authoritative: `check_readers` at the allocation counts the incoming phone's
+  level-1 pair declaration (`allocation_gate_refuses_old_reader_nothing_appended`); `convenience.check` still refuses
+  when the flag is off (`disabled`). The reason `pair_device` stays in the closed reason sets (nothing emits it now).
 - **The primary's keys (`dk_sig`, `kx`, and any stored `PK`) can never enter convenience custody:**
-  `orch keys custody convenience` refuses the primary role. The convenience backend already refuses every
-  `PERSON_KEY_LABELS` payload structurally (`convenience.py` `sign`: `DEVICE_KEY_LABELS` only).
-- Tests: `pair_device_refuses_convenience_auth`, `pair_device_refuses_convenience_under_dev_opt_in`,
-  `custody_convenience_refuses_primary_role`, `convenience_sign_refuses_person_key_labels` (exists; cited),
-  `pair_device_refusal_fix_text_names_custody_passphrase`.
+  `orch keys custody convenience` refuses the primary role (`custody_convenience_refuses_primary_role`, unchanged).
+- **Lockout prevented:** `orch host convenience on`, the dashboard's "Turn on one click" and the B9 setup profile refuse
+  up front, naming the devices, while any reader is below level 1 (an old phone app, `no_declaration`, a relay too
+  old) instead of leaving the flag on with every click refused. The escape: update the app on the named devices (it
+  declares), remove them, or `orch host convenience off` and, if the key was moved, `orch keys custody passphrase
+  --in-place`.
+- Tests: `pair_device_is_allowed_with_the_convenience_key_when_the_flag_is_on_and_the_phone_is_level_1`,
+  `pair_device_with_the_convenience_key_still_needs_the_flag`,
+  `the_allocation_counts_the_incoming_phones_declaration_with_the_flag_on`,
+  `a_level_1_phone_is_paired_by_a_convenience_signature_after_the_word`,
+  `convenience_on_is_refused_naming_the_old_phone_and_leaves_the_flag_off`,
+  `custody_convenience_refuses_primary_role`, `convenience_sign_refuses_person_key_labels` (exists; cited).
 
 **What R6 never does in pairing:**
 - it signs nothing with `PK` or a device key (only WSK objects through `RelaySigner`);
@@ -8612,10 +8646,9 @@ refusals are those of 11A.15.6, with the host codes of 11A.15.9.
 grant).**
 - `pair.preview`: the blocked codes and warnings, without creating an offer. **Its convenience basis (DECIDED 15 Oct
   2026, orch-52 re-check of beafc6c8, N3a):**
-  - **blocked** when the workspace's click-to-sign flag is on **or** the Mac device's custody selection is
-    `convenience` (step 9 is the terminal hand-off only, and `relay.pair_device` refuses `auth:"convenience"`,
-    11A.15.6). The fix text names both `orch host convenience off --workspace W` and
-    `orch keys custody passphrase --workspace W --in-place`;
+  - **not blocked** on the click flag or on convenience custody (B10, 17 Oct 2026, reversing N3a: the pairing may be
+    signed with the convenience key after the typed word, 11A.15.6). It is blocked only by the reader gate for a real
+    refusal: a reader below level 1 (`no_declaration`, `reader_too_old`), naming the devices;
   - **not blocked** on convenience **history**: that is H12d's reader gate (§0.8.6 item 9; the owner decision of 13 Oct
     admits a qualifying phone, level-1 readers may pair, on a workspace with convenience history). It is shown as a
     warning naming the requirement (the phone must declare the required reader level);
@@ -9128,7 +9161,7 @@ a primary's rejection withdraws an open or challenged request; §7.2, an empty l
 - allocation: `no_wk_sealed_before_cert_and_allocation`, `allocation_gate_refuses_old_reader_nothing_appended`,
   `crash_after_device_added_recovers_reader_record_devices_and_allocated`, `crash_recovery_matches_by_intent_not_cert`,
   `restart_at_every_allocation_write`, `allocation_idempotent_same_device_same_keys`,
-  `allocation_removed_device_id_refused_revoked`, `pair_device_refuses_convenience_auth` (and the four convenience
+  `allocation_removed_device_id_refused_revoked`, `pair_device_is_allowed_with_the_convenience_key_when_the_flag_is_on_and_the_phone_is_level_1` (and the convenience
   tests of 11A.15.6);
 - publication: `approved_numbers_are_the_acknowledged_publication`, `approved_scopes_equal_accepted_entry`,
   `link_origin_equals_card_relay_url`, `approved_baseline_never_null_when_published`,
@@ -9638,8 +9671,8 @@ paragraph disagree, the item wins.
     it, and accepts an equal repeat (roll-forward). `committed(alloc, seq)` is idempotent and checks the log line
     (`pairdevice.event_digest(line) == alloc.event_digest`). `refused(alloc, err)` runs when nothing landed after an
     accepted `precommit` (including a same-id, different-content line).
-14. **With the click flag on** the hand-off is refused (`sign.click_only`), so the CLI uses the inline terminal
-    passphrase signer; `pair.preview` SAYS so and does not refuse (11A.15.9A).
+14. **With the click flag on** the hand-off is refused (`sign.click_only`), so the CLI uses its inline signer
+    (passphrase, or the convenience key after the typed word, B10); `pair.preview` does not block on the flag (11A.15.9A).
 15. **`RecoveryCodeSource(labels=..., pk_pub=... | person_id=..., action=...)`** (#519): `labels` is required: add a
     device `{sig_cert_challenge, sig_cert_rejection, sig_device_cert}`, revoke `{sig_revocation}`; read `pk_pub` only
     inside the block, or construct with `pk_pub=`. Test sandbox: `tests/relay/personkey_sandbox.py`

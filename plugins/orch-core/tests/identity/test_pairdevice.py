@@ -209,7 +209,6 @@ OTHER = Person()
         (_mut(("m", "comparison", "code"), "ABC23!"), "comparison"),
         (_mut(("ev", "label"), "Sev's iPhone"), "event"),  # any extra event field
         (_mut(("ev", "type"), "member.added"), "event"),
-        (_mut(("ev", "auth"), "convenience"), "auth"),
         (_mut(("ev", "cert", "o", "scopes_max"), ["look", "decide", "operate"]), "cert"),
         (_mut(("ev", "cert", "o", "person_id"), OTHER.ref[2:]), "cert"),
     ],

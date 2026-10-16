@@ -53,7 +53,7 @@ describe('every reason is a plain sentence', () => {
   })
 
   it('the sentences say what the spec says', () => {
-    expect(UNAVAILABLE_SENTENCE.relay_paired).toBe('Click-to-sign is off because this workspace is paired with a phone through the relay.')
+    expect(UNAVAILABLE_SENTENCE.relay_paired).toMatch(/relay’s side of this workspace has not declared/)
     expect(READERS_SENTENCE.reader_too_old).toBe('A device’s orch app is too old to show what click-to-sign changes: update it, or sign in the terminal.')
     for (const s of [...Object.values(UNAVAILABLE_SENTENCE), ...Object.values(READERS_SENTENCE), DECL_INVALID_SENTENCE]) expect(s).toMatch(/^[A-Z].*\.$/)
   })

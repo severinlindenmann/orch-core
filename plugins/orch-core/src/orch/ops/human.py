@@ -152,7 +152,7 @@ def review_prompt(text: str, expect: str) -> bool:
             raise NoPrompt("/dev/tty is not a terminal")
         details = getattr(text, "details", "") or ""  # B6: a plain view with the full review behind `d`
         if not details:
-            prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
+            prompt = f"Type {expect} and Enter to continue; anything else stops: "
         else:
             prompt = f"Type {expect} to continue (d = details): "
         shown = text

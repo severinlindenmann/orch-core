@@ -12,6 +12,7 @@ import socket
 import stat
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 from fastapi import Request
@@ -205,6 +206,17 @@ def register(app, auth, proxy, port):
             body.clear()
         if reply.status in (401, 410) or (route in ("cancel", "finish") and reply.status == 200):
             auth.forget_setup(request.state.token)
+        if route == "finish" and reply.status == 200:
+            # The setup scope ends here, so hand the browser a normal signed-in session the way `orch dashboard open`
+            # does: a fresh one-time (30 s) login code in the fragment of the destination, redeemed by the normal
+            # bootstrap. The core's {url} is only a destination; nothing else of its body is kept.
+            try:
+                await asyncio.to_thread(reply.read, 4097)  # the core's {url} is only "/": discarded
+            finally:
+                reply.close()
+                conn.close()
+            fragment = urllib.parse.urlencode({"launch": auth.launch(port)["code"], "to": "/"})
+            return JSONResponse({"url": f"/#{fragment}"}, headers={"Cache-Control": "no-store"})
 
         async def chunks():
             try:

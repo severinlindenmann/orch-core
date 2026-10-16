@@ -4,6 +4,7 @@ import json
 import socketserver
 import tempfile
 import threading
+import urllib.parse
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -310,7 +311,20 @@ def test_real_core_claim_and_proxy(tmp_path):
                 res = client.get("/api/setup/progress?run_id=demo-run", headers=headers)
                 assert res.json()["query"] == {"run_id": "demo-run"}
                 assert res.headers["cache-control"] == "no-store"
-                assert client.post("/api/setup/finish", json={}, headers=headers).json() == {"url": "/"}
+                url = client.post("/api/setup/finish", json={}, headers=headers).json()["url"]
+                login = urllib.parse.parse_qs(urllib.parse.urlsplit(url).fragment)
+                assert url.startswith("/#launch=") and login["to"] == ["/"]
+                # the code opens a normal session once; the setup scope is gone
+                normal = client.post(
+                    "/auth/session", json={"code": login["launch"][0]}, headers={"Origin": ORIGIN}
+                ).json()["token"]
+                assert app.state.auth.valid(normal) and not app.state.auth.valid_setup(normal)
+                assert (
+                    client.post(
+                        "/auth/session", json={"code": login["launch"][0]}, headers={"Origin": ORIGIN}
+                    ).status_code
+                    == 401
+                )
                 assert client.get("/api/setup/state", headers=headers).status_code == 401
         finally:
             core.stop()

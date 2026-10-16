@@ -342,6 +342,7 @@ class Host:
         welcome = {
             "host": HOST_NAME,
             "workspace": None,
+            "release": _release_id(),
             "tier": self._tier(),
             "caps": ["control/1", "outcome/1"],
             "ops": dict(CONTROL_OPS),

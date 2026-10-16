@@ -426,7 +426,64 @@ def enable(
         )
     data = {"mode": "host", "service": unit.kind, "unit": str(unit.unit_path), "changed": changed, "ran": ran,
             "control": str(control)}  # fmt: skip
+    from .release import code_digest
+
+    mine = code_digest()
+    theirs = _host_release(control)
+    if theirs != mine:  # a host that predates the welcome's release field is older by definition (``None``)
+        if manager.active() is True:  # started by the service manager: restart it (never a process it did not start)
+            if _restart(manager, control, mine):
+                data["restarted"] = mine
+                data["message"] = f"restarted the host on the new release {mine}"
+            else:
+                data["message"] = f"the host still runs release {theirs or 'unknown'}: run `orch host restart`"
+        else:  # a foreground or dev host: not ours to kill
+            data["restart_needed"] = True
+            data["message"] = (
+                f"the running host (release {theirs or 'unknown'}) is not under the service manager: "
+                "stop it and start it again (or `orch host restart` when it is supervised) to run the new release"
+            )
     return {"ok": True, "result": {"data": data}}
+
+
+def _host_release(control: Path) -> str | None:
+    """The release digest the host on ``control`` reports in its welcome (``None``: none, or it does not say)."""
+    from .control_client import ControlClient
+
+    try:
+        with ControlClient(control, timeout=2) as client:
+            release = (client.welcome or {}).get("release")
+    except Exception:  # noqa: BLE001 - nobody answers: nothing to compare
+        return None
+    return release if isinstance(release, str) else None
+
+
+def _restart(manager: Any, control: Path, mine: str) -> bool:
+    """Drain the host through its control socket (``orch host restart``), let the service manager bring it back
+    (started again if it does not), and wait until a host reports release ``mine``."""
+    import time
+
+    from .control_client import ControlClient
+    from .enable import START_WAIT
+
+    try:
+        with ControlClient(control, timeout=10) as client:
+            client.call("host.restart")
+    except (OSError, ConnectionError):
+        return False
+    deadline = time.monotonic() + START_WAIT
+    started = False
+    while time.monotonic() < deadline:
+        if _host_release(control) == mine:
+            return True
+        if not started and manager.active() is not True:
+            started = True
+            try:
+                manager.start(changed=False)
+            except OSError:
+                return False
+        time.sleep(0.2)
+    return False
 
 
 def disable(

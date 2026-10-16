@@ -198,7 +198,7 @@ def stale_host_warning() -> str | None:
     theirs = _SEEN["release"]
     if theirs == mine:
         return None
-    return f"the orch host runs an older release ({theirs or 'unknown'}) than this CLI ({mine}): run `orch host enable`"
+    return f"the orch host runs an older release ({theirs or 'unknown'}) than this CLI ({mine}): run `orch host enable` (it restarts the host on the new release)"
 
 
 def _sleep(i: int) -> None:

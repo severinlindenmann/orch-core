@@ -74,6 +74,7 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
         "next_page": nxt,
         "gates": thaw(ws.policies),
         "defaults": [k for k in DURATIONS if k not in set_by_event],
+        "sign_methods": list(ws.settings.get("sign_methods") or ["terminal"]),  # B6: the allowed ways to sign
         "settings_at": _last(store, "settings.changed"),
         "policy_at": _last(store, "policy.changed"),
         "sub_cursor": host.cursor,
@@ -177,17 +178,22 @@ def grants(store, ws, person: str, args: dict[str, Any], ext: bool) -> dict[str,
 def settings_set(builder, args):
     builder.exact(args, {"set"})
     given = args["set"]
-    if not isinstance(given, dict) or not given or set(given) - set(DURATIONS) - {"repos"}:
-        raise invalid("set is grant_hours, claim_ttl_min, lease_ttl_min or repos")
+    if not isinstance(given, dict) or not given or set(given) - set(DURATIONS) - {"repos", "sign_methods"}:
+        raise invalid("set is grant_hours, claim_ttl_min, lease_ttl_min, sign_methods or repos")
     if "repos" in given:
         raise fail("op.unsupported", "the dev stub changes durations only (repos belong to the Repos addon)", exit=1)
     for k, v in given.items():
+        if k == "sign_methods":
+            if not isinstance(v, list) or "terminal" not in v or len(set(v)) != len(v) or set(v) - {"terminal", "click", "phone"}:
+                raise invalid("sign_methods is terminal plus click or phone, once each")
+            continue
         low, high = DURATIONS[k]
         if type(v) is not int or not low <= v <= high:
             raise invalid(f"{k} is {low} to {high}")
     event = {"type": "settings.changed", "set": dict(given)}
     # `before` is labelled "current values according to the host, not signed" and only needs to be keys of `set`.
-    before = {k: builder.store.state.workspace.settings[k] for k in given}
+    before = {k: builder.store.state.workspace.settings.get(k) for k in given if k != "sign_methods"}
+    before.update({"sign_methods": builder.store.state.workspace.settings.get("sign_methods") or ["terminal"]} if "sign_methods" in given else {})
     events = [builder.envelope(event, "workspace")]
     return events, "workspace", builder.payload_material(None, events, before=before, ticket=None)
 

@@ -684,8 +684,8 @@ def test_submitted_failed_intent_never_claims_done(ready):
 
 @pytest.mark.parametrize("mutate", ["none", "before", "section_text", "policy"])
 def test_the_plain_view_is_shown_only_when_the_signers_material_checks_hold(ready, monkeypatch, mutate):
-    """B6: `content` is derived from the host's material, so the server first runs the signer's own material checks
-    (gate, policy and section hashes, every `before` against `base_rev`); one that fails leaves the preview as it was."""
+    """B6: `content` is derived from the host's material, so the server first runs the signer's own material
+    checks (gate, policy and section hashes, every `before` against `base_rev`); a failing one leaves the old view."""
     client, token, stub, rich, signing = ready
     from orch.host import review
 
@@ -720,6 +720,8 @@ def test_the_plain_view_is_shown_only_when_the_signers_material_checks_hold(read
     assert res.status_code == 200, res.text
     got = res.json()
     if mutate == "none":
-        assert got["headline"].startswith("Change the summary of") and got["content"]["sections"][0]["text"] == "New text."
+        assert (
+            got["headline"].startswith("Change the summary of") and got["content"]["sections"][0]["text"] == "New text."
+        )
     else:
         assert "content" not in got and "headline" not in got and got["material"]["review"]

@@ -89,6 +89,17 @@ def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
     return isinstance(entry, dict) and entry.get("enabled") is True
 
 
+def risk_ack(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
+    """When the one-click risk notice was acknowledged by switching click-to-sign on (B6), else ``None``: a workspace
+    enabled before B6, or one that is off."""
+    try:
+        entry = _doc(state_dir, host_uid)["workspaces"].get(workspace_id)
+    except HostError:
+        return None
+    ack = entry.get("risk_ack") if isinstance(entry, dict) and entry.get("enabled") is True else None
+    return ack if isinstance(ack, str) else None
+
+
 def flag_or_gate(service: Any) -> bool:
     """``required_reader`` 1 (§0.8.6 item 9.4): the per-workspace flag is on, or the Simulator dev gate passes for
     this workspace (§11A.17.4, the lock-free :func:`orch.host.devmode.gated`)."""
@@ -114,7 +125,9 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
         doc = _doc(state_dir, host_uid)
         if on:
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            doc["workspaces"][workspace_id] = {"enabled": True, "at": stamp}
+            # B6 (owner decision F): switching it on is where the risk notice is required; every path that gets here
+            # shows it (the CLI prints it, the dashboard's switch shows it), and the time is recorded
+            doc["workspaces"][workspace_id] = {"enabled": True, "at": stamp, "risk_ack": stamp}
         else:
             doc["workspaces"].pop(workspace_id, None)
         write_private(flag_path(state_dir), doc)
@@ -152,6 +165,9 @@ def why(
 
     if not gated and not enabled(state_dir, workspace_id, host_uid):  # §11A.17.4: the dev gate stands in
         return "disabled", []
+    methods = store.state.workspace.settings.get("sign_methods")
+    if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
+        return "disabled", []
     if _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
@@ -170,7 +186,8 @@ def reason(store: Any, state_dir: Path, workspace_id: str, host_uid: int, person
 
 
 _TEXT = {
-    "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W)",
+    "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W; "
+    "and the workspace setting sign_methods must allow click)",
     "relay_paired": "the workspace is paired with a relay, whose readers may not know convenience signatures",
     "other_member": "another member's reader (a core or a device) has not declared that it knows convenience "
     "signatures",

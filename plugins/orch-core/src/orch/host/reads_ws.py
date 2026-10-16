@@ -422,6 +422,17 @@ def _repo_entry(raw: dict[str, Any], manager: bool) -> dict[str, Any]:
     return entry
 
 
+def sign_methods(service: Any, ws: Any) -> list[str]:
+    """B6: the workspace's allowed ways to sign. The explicit ``settings.sign_methods`` when a signed
+    ``settings.changed`` set it; else ``terminal``, plus ``click`` where click-to-sign is switched on."""
+    from . import convenience
+
+    if "sign_methods" in ws.settings:
+        return list(ws.settings["sign_methods"])
+    on = convenience.enabled(service.state_dir, service.workspace_id, service.host_uid)
+    return ["terminal", "click"] if on else ["terminal"]
+
+
 def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
     from orch.store.render import thaw
 
@@ -432,6 +443,7 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "settings": {k: int(ws.settings[k]) for k in SETTINGS},
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
+        "sign_methods": sign_methods(ctx.service, ws),
         "settings_at": settings_at,
         "policy_at": policy_at,
         "sub_cursor": cursor,
@@ -477,6 +489,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "next_page": ctx.pages.token(snap, nxt, ctx.args) if nxt is not None else None,
         "gates": data["gates"],
         "defaults": data["defaults"],
+        "sign_methods": data["sign_methods"],
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column != "N":

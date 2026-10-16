@@ -1329,6 +1329,7 @@ existing F1 event, so no format change is needed. H0 records them as ops.
 ```
 policy.set   {ref?:Ref, gates:{Gate: Policy}{1..4}}          → policy.changed {gates}   (ticket log with ref, else workspace log)
 settings.set {set:{grant_hours?:int 1..24, claim_ttl_min?:int 15..1440, lease_ttl_min?:int 5..1440,
+                   sign_methods?:["terminal"|"click"|"phone"]{1..3, unique, contains "terminal"},   // B6: "touchid" is reserved
                    repos?:{str/[a-z0-9][a-z0-9._-]{0,63}/: {path:str{1..1024}, remote?:str{1..512},
                                                            default_branch?:str{1..255}} | null}{1..32}}}
                                                               → settings.changed {set}
@@ -1998,6 +1999,7 @@ A client must not call an op or send an argument whose cap it did not see (§0.4
  next_page:str | null,
  gates:{Gate: Policy},
  defaults:["grant_hours"|"claim_ttl_min"|"lease_ttl_min"]{0..3},
+ sign_methods:["terminal"|"click"|"phone"],    // B6, additive: the setting, else terminal (+ click where click-to-sign is on)
  settings_at?:{seq:int, at:Time, by:Person} | null,
  policy_at?:{seq:int, at:Time, by:Person} | null,
  sub_cursor:Cursor}
@@ -2285,9 +2287,9 @@ with one click. The person's device key sits in a store that needs no user prese
 separate **person-class signer process** next to the dashboard holds it. The host still holds no device key and never
 prompts (D-P2-15); the prepare → check and recompute → sign → submit contract of §0.8.1, the review, `review_digest`
 and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **while the flag is off** (one signing path per workspace, item 8).
-**Accepted risk, shown on the workspace
-card, on every sign panel and in the docs: "Convenience signing: agents running as you, or anything that takes over
-this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
+**Accepted risk, shown when click-to-sign is switched on, in the workspace settings and in the docs (amended 16 Oct 2026,
+"As built in B6": no longer on every sign panel): "Convenience signing: agents running as you, or anything that takes
+over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
 isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
 
 **0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
@@ -2586,6 +2588,7 @@ status  {} → {core:str, contract:1|2, workspaces:[{workspace_id:WsId, prefix:s
                            available:bool, problem?:str}]}
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
         op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
+        headline:str, content:SignContent,                 // B6: the plain view (additive), derived from the same events and material
         lines:[str],                                       // the terminal review of orch sign, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
         confirm:{kind:"click"} | {kind:"word", word:str}, expires_at:Time, auth:"convenience", device:Device,
@@ -2755,11 +2758,14 @@ member, policy or addon operations.
 - **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
   shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
   prepares a separate hand-off request.
-- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk line; the checks with
+- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (a badge with the line as its tooltip, B6); the checks with
   their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
   as "what you sign".
 - **Workspace card**: when `status` reports `custody:"convenience"`, the card shows "Convenience signing: agents running
-  as you, or anything that takes over this dashboard, could sign." The same line opens every sign panel.
+  as you, or anything that takes over this dashboard, could sign." **Amended 16 Oct 2026 (owner decision F, "As built
+  in B6"):** the line is required at enable time and in Settings, and is *not* repeated in every sign panel: a panel
+  shows a "One-click" badge whose tooltip carries the line. The View's `risk` field stays (same text, in `view_digest`);
+  the dashboard may render it as a badge with a tooltip instead of a banner.
 - **HTTP.** Bind only the intended loopback listener and validate the exact Host on every route. Require the bearer on
   every authenticated API and never accept it through cookies or URLs; keep it in tab memory or `sessionStorage`, never
   `localStorage`. Apply exact Origin validation, reject null or missing Origin, enforce Fetch Metadata when present, and
@@ -3464,6 +3470,41 @@ against the code (`ops/readers.py`, `ops/commands/member_add.py`, `host/convenie
 10. **Land the records-push mark (9.7) separately and first?** *Yes:* it is a gap in today's code.
 11. **A second appender in P8?** *A constraint, not a phase-2 question:* it must replicate the reader records and
     enforce invariant I.
+
+**As built in B6 (16 Oct 2026; owner decisions E and F of 16 Oct 2026: plain signing view, one signature per action, sign
+methods).** Presentation only: the signed events, `material`, `review_digest` and the fingerprint are unchanged.
+
+1. **The plain view is derived from the signed material.** `orch.host.signcontent.build(prepared)` is a pure function of
+   `events` and `material` (checked by the signer before it renders) and returns `SignContent = {headline, ticket?:
+   {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}], tasks?: [{n, title, verify?:
+   [str]}], fields_changed?: [{field, before, after}], note?: str}`. A gate does not bind the title, so `ticket.title`
+   is `""` for a gate request and set only when a signed `ticket.created` states it. A payload key it does not account
+   for is shown as a `fields_changed` row (never dropped). Every string goes through `canon.clean`.
+2. **Terminal.** The review has three layers: the headline and the content (`signer.plain`), then `Type KEY/FRAG to
+   continue (d = details): `; `d` prints today's full review (`signer.render`: the header with uid/pid/"self-declared,
+   unverified", the fingerprint, the hashes, the policy JSON and the gate input), `orch sign CODE --details` or
+   `ORCH_SIGN_DETAILS=1` print it first. The full review is still built (and every refusal of it raised) before the
+   prompt. `confirm(text, word)` receives a `str` subclass `signer.Review` whose `.details` is the full review; a
+   confirm that does not know it shows the plain view. A relay pairing (`relay.pair_device`) keeps the full review as its
+   only view (the code the person compared is part of what it binds). Other prompts (import, genesis pin) are unchanged.
+3. **Dashboard.** `human.prepare` answers are unchanged. The dashboard server adds `headline` and `content` as siblings
+   of `material` in its `HandoffRequest` (never inside `material`, which is hashed by the server and the browser), and
+   the click signer's View gets `headline` and `content` next to `lines` and `risk` (both in `view_digest`).
+4. **Risk notice once (item 5 of the batch; amends §0.8.6 above).** The notice is required when click-to-sign is switched
+   on (`orch host convenience on` prints it, the dashboard's switch shows it) and in Settings; sign panels need not
+   render it as a banner. `View.risk` and the server's check that a View carries the exact text stay, so a panel can
+   always show it. Every enable records `risk_ack` (the time) next to `enabled` in `convenience.json`, and the click
+   signer's `status` reports it per workspace; a workspace enabled before B6 reports `risk_ack: null` until it is
+   switched on again.
+5. **Sign methods.** The workspace setting `settings.sign_methods` (a signed `settings.changed`, owner only) lists the
+   ways a signature may be made in this workspace: `terminal` (always present, always allowed), `click` (one click on
+   this computer, convenience custody), `phone` (the paired phone), `touchid` (reserved: refused until it is built). The
+   default, when the setting was never set, is `["terminal", "click"]` where click-to-sign is on and `["terminal"]`
+   otherwise. A convenience signature is refused (`sign.convenience_unavailable`, reason `disabled`) while the setting
+   exists and does not list `click`. The person's own default (`sign_default`: `{method, fallback?}`) is host-local, not
+   signed and not a rule: it only chooses which button is primary in the dashboard. The dashboard server keeps it in
+   `<state>/dashboard/sign_default.json` (0600, per person and workspace; `GET`/`PUT /api/w/{ws}/me/sign_default`); a default
+   the workspace no longer allows reads back as `terminal`. A `sign_methods` change is signed with the typed word, not one click.
 
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
@@ -4332,6 +4373,14 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     already holds files; it refuses only a root holding a store name (`config.json`, `keys.jsonl`, `events`, `tickets`,
     `.state`) or `.orch`. The 24-word recovery code is shown numbered (4 rows of 6) and the input accepts the plain or the
     numbered form. No wire, hash, F1 or error-code change.
+
+70. **B6: plain signing view, sign methods, risk notice once (owner decisions E and F of 16 Oct 2026; §0.8.6 "As built in
+    B6"):** the terminal review shows a headline and the content first and the full review behind `d` / `--details`;
+    `View` and the dashboard `HandoffRequest` carry `headline` and `content` (additive; `lines`, `risk`, `material` and
+    all hashes unchanged); the one-click risk notice is required at enable time and in Settings instead of on every
+    sign panel (amends §0.8.6 item 7 and the status paragraph); `settings.changed` may set `sign_methods`
+    (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and a convenience signature is
+    refused while it excludes `click`.
 
 ---
 

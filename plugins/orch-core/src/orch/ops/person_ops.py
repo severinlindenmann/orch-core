@@ -69,6 +69,14 @@ _SET = {
         "grant_hours": {"type": "integer", "minimum": 1, "maximum": 24},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+        "sign_methods": {  # B6: terminal always; touchid is reserved
+            "type": "array",
+            "items": {"enum": ["terminal", "click", "phone"]},
+            "uniqueItems": True,
+            "minItems": 1,
+            "maxItems": 3,
+            "contains": {"const": "terminal"},
+        },
         "repos": {
             "type": "object",
             "minProperties": 1,

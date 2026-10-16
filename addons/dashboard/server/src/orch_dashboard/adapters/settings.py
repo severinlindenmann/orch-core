@@ -11,7 +11,7 @@ local path belongs to its owner's machine). A `remote` is shown only as a canoni
 
 import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 from ..errors import fail
 from ..text import hidden
@@ -57,12 +57,21 @@ class Settings(BaseModel):
     grant_hours: int | None = None
     claim_ttl_min: int | None = None
     lease_ttl_min: int | None = None
+    #: B6: the workspace's allowed ways to sign (`terminal` always). Absent when the host did not say (an older core).
+    sign_methods: list[str] | None = None
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
     repos_more: bool = False
     settings_at: Stamp | None = None
     policy_at: Stamp | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unknown_sign_methods(self, handler):
+        out = handler(self)
+        if out.get("sign_methods") is None:
+            out.pop("sign_methods", None)
+        return out
 
 
 def unavailable() -> Settings:
@@ -154,11 +163,19 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         defaults = first["defaults"]
         if not isinstance(defaults, list) or any(d not in DURATIONS for d in defaults):
             raise bad()
+        methods = first.get("sign_methods")
+        if methods is not None and (
+            not isinstance(methods, list)
+            or "terminal" not in methods
+            or any(m not in ("terminal", "click", "phone", "touchid") for m in methods)
+        ):
+            raise bad()
         repos: list[Repo] = []
         for page in [first, *more_pages]:
             repos += [repo(n, e) for n, e in sorted(page["settings"]["repos"].items())]
         return Settings(
             **out,
+            sign_methods=methods,
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

@@ -620,7 +620,7 @@ class HumanOps:
                     if key == "repos":
                         now = {name: thaw(current.repos.get(name)) for name in value}
                     else:
-                        now = current.settings.get(key)
+                        now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
                     before.setdefault(key, now)
         if before:
             material["before"] = before

@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from ..text import hidden
 from .addons import runner
 
+TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
 DEVICE = re.compile(r"d_[0-9a-f]{32}")
 
 
@@ -44,6 +46,8 @@ def click_card(row):
     }
     if isinstance(row.get("problem"), str):
         out["problem"] = row["problem"][:200]
+    ack = row.get("risk_ack")  # B6: when the one-click risk notice was acknowledged at enable time, else null
+    out["risk_ack"] = ack if isinstance(ack, str) and TIME.fullmatch(ack) else None
     if isinstance(row.get("device"), str) and DEVICE.fullmatch(row["device"]):
         out["device"] = row["device"]  # the key the switch would move (shown before the person types the passphrase)
     return out

@@ -16,6 +16,8 @@ WORKSPACE = "workspace"  # the `log` name of the workspace log; a ticket log is 
 GATES = ("requirements", "plan", "verify", "code")
 TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
 WS_ROLES = ("owner", "maintainer", "member", "viewer")
+#: B8 (owner decision 16 Oct, D60): the longest a grant may last, in hours (7 days); also the ``grant_hours`` ceiling
+GRANT_MAX_HOURS = 168
 DEFAULT_SETTINGS = {"grant_hours": 8, "claim_ttl_min": 120, "lease_ttl_min": 60}
 DEFAULT_LINKS = {"repos": [], "branches": {}, "prs": [], "external": []}
 

@@ -275,7 +275,7 @@ def test_settings_set_checks_its_input(human):
         {"set": {}},
         {},
         {"set": {"grant_hours": 0}},
-        {"set": {"grant_hours": 25}},
+        {"set": {"grant_hours": 169}},
         {"set": {"claim_ttl_min": 14}},
         {"set": {"lease_ttl_min": 4}},
         {"set": {"other": 1}},

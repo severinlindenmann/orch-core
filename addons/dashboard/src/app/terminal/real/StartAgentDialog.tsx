@@ -219,9 +219,12 @@ export type GrantStep =
   | { kind: 'unknown'; grant: string | null }
   | { kind: 'refused'; text: string }
 
+/** B8: the lengths offered (hours); the host refuses what the workspace setting `grant_hours` does not allow. */
+const RUNNER_LENGTHS: ReadonlyArray<readonly [number, string]> = [[1, '1 hour'], [4, '4 hours'], [8, '8 hours'], [12, '12 hours'], [24, '1 day'], [72, '3 days'], [168, '7 days']]
+
 /**
  * The runner grant card: the owner's risk sentence (verbatim), the person's current grant with Forget, or "Issue runner
- * grant" (hours at most 12, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
+ * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
 export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial }: { initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
@@ -274,7 +277,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
     return () => { stopped = true; clearTimeout(timer) }
   }, [step, ws])
 
-  // A refusal before anything was signed: terminal only (execution off, over 12 h), an older orch, click off.
+  // A refusal before anything was signed: terminal only (execution off, longer than the workspace allows), an older orch, click off.
   useEffect(() => {
     if (click.phase !== 'failed' || !click.problem) return
     setStep({ kind: 'refused', text: refusalText(click.error) ?? click.problem.body })
@@ -325,9 +328,9 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
       {!grant && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
         <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor="grant-hours" className="text-xs text-text-muted">Hours</Label>
+          <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => <option key={h} value={h}>{h}</option>)}
+            {RUNNER_LENGTHS.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <Label htmlFor="grant-scope" className="text-xs text-text-muted">Tickets</Label>
           <select id="grant-scope" className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>

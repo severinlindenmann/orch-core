@@ -99,6 +99,16 @@ def _s(value: Any) -> str:
     return value if isinstance(value, str) else canon.dumps(value).decode("utf-8")
 
 
+def span(hours: Any) -> str:
+    """B8: a grant length in the words a person uses: ``3 days`` for a whole number of days, else ``N hours``."""
+    if type(hours) is not int or hours < 1:
+        return one(hours)
+    if hours % 24 == 0:
+        days = hours // 24
+        return f"{days} day" + ("" if days == 1 else "s")
+    return f"{hours} hour" + ("" if hours == 1 else "s")
+
+
 def one(value: Any) -> str:
     """The ONE helper every single-line value goes through (security review: a newline inside a title, a verify command,
     an acceptance text or a field must not fake structure such as a second task). Each line break is made visible as
@@ -451,17 +461,23 @@ def _event(
         _row(out, "until", ev.get("expires_at"))
         _row(out, "grant id", ev.get("grant"))
         out.setdefault("notes", []).append(
-            f"Agents can act for you for {hours} hours, as far as the scope and verbs above allow."
+            f"Agents can act for you for {span(hours)}, as far as the scope and verbs above allow."
         )
-        return f"Give agents access for {hours} hours (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
+        return f"Give agents access for {span(hours)} (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
     if typ == "grant.revoked":
         _row(out, "grant id", ev.get("grant"))
+        if ev.get("reason") == "extended":  # B8: the old half of an Extend
+            out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
         return f"Take back the agent access {_s(ev.get('grant'))}"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             _row(out, key, value, before.get(key), ctx.note(False))
+        if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
+            out.setdefault("notes", []).append(
+                f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
+            )
         return "Change the workspace settings"
     if typ == "policy.changed":
         for gate, p in sorted((ev.get("gates") or {}).items()):

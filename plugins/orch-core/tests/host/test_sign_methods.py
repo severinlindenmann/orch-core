@@ -113,7 +113,8 @@ def test_custody_not_the_label_decides_while_click_is_left_out(human, served):
 
 
 def test_a_sign_methods_change_is_signed_with_a_typed_word_not_a_click():
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "word"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"sign_methods": ["terminal"]}}]) == "word"
 
 

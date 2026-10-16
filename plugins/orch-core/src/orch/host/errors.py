@@ -115,6 +115,8 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "event.expired": (3, False),
     "event.abandoned": (3, False),
     "ticket.key_not_next": (3, False),
+    # §11A.17 (D1), the Simulator dev gate: a dev-host start refused, or a dev-host or sandbox-workspace refusal
+    "host.dev_refused": (3, False),
 }
 
 
@@ -145,8 +147,35 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "ticket.key_not_next": {"next_key": None},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e: pair_device (relay.pair_device is never convenience-signed)
-        "reason": ("disabled", "relay_paired", "other_member", "phone_device", "reader_version", "pair_device"),
+        "reason": (
+            "disabled",
+            "relay_paired",
+            "other_member",
+            "phone_device",
+            "reader_version",
+            "pair_device",
+            "dev_host",
+        ),
         "devices": DEVICES,
+    },
+    # §11A.17 (D1): the closed reason of a dev-host refusal (orch.host.devmode.REASONS)
+    "host.dev_refused": {
+        "reason": (
+            "not_foreground",
+            "service_managed",
+            "service_dir",
+            "no_manifest",
+            "state_not_in_root",
+            "home_not_in_root",
+            "no_dev_json",
+            "dev_json_mismatch",
+            "no_person",
+            "custody_convenience",
+            "not_sandbox",
+            "sandbox_workspace",
+            "dev_origin",
+            "dev_host",
+        ),
     },
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),

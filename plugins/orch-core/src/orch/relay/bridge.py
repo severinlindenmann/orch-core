@@ -217,8 +217,11 @@ class Bridge:
         post: Poster,
         now_ms: Callable[[], int] = _now_ms,
         alarm: Callable[[str, str], None] = lambda code, detail: None,
+        convenience_gate: Callable[[], bool] | None = None,
     ) -> None:
         self.ws_hex, self.ws = workspace_id, bytes.fromhex(workspace_id)
+        #: §11A.17.4 P5: the host's lock-free dev gate (``orch.host.devmode.gated``); ``None``: convenience refused
+        self.convenience_gate = convenience_gate
         self.rids, self.keys, self.signer, self.r6, self.port = rids, keys, signer, r6, port
         self.job, self.post, self.now_ms, self.alarm = job, post, now_ms, alarm
         self._budget: collections.deque[int] = collections.deque()
@@ -450,7 +453,10 @@ class Bridge:
             adm = Admission(h, ident, req, member)
             if req.spec.kind == "write":
                 dk = crypto.unb64u(cert_o["dk_sig_pub"], crypto.PUB_LEN)
-                adm.log, adm.events = submit.check_events(req.op, req.args, ident, dk, idem=req.idem or "")
+                adm.log, adm.events = submit.check_events(
+                    req.op, req.args, ident, dk, idem=req.idem or "", convenience_gate=self.convenience_gate,
+                    convenience_refused=self._convenience_refused,
+                )  # fmt: skip
                 # ruling B: the same idem admitted or running under another rid: pending, never a second run
                 if any(r.state == "admitted" for r in self.rids.by_idem(device, req.idem or "")):
                     raise Refusal("pending")
@@ -468,6 +474,11 @@ class Bridge:
             submission=None if adm.events is None else (req.op, adm.log or "", adm.events),
         )  # fmt: skip
         return adm
+
+    def _convenience_refused(self) -> None:
+        """§11A.7 F7: a paired device's verified convenience event refused on column R (a Simulator build against a
+        real host or workspace): the alarm ``dev_convenience_refused`` (count, first, last). Never raised at 0."""
+        self.alarm("dev_convenience_refused", "a convenience-signed event was refused on column R (op.not_allowed)")
 
     def _device_check(
         self, device: str, member: Member | None, hb: bytes, body: bytes, sig: bytes, now: int, *, rid: str = ""

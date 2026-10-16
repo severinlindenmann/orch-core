@@ -564,7 +564,7 @@ def _assert_kept_and_unvoided(lab, wid, message):
     assert "void" not in message and "nothing was created" not in message
 
 
-@pytest.mark.parametrize("failure", ["lock.busy", "RuntimeError in registry.add"])
+@pytest.mark.parametrize("failure", ["lock.busy", "RuntimeError in registry._add"])
 def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device_key_is_kept(
     lab, tmp_path, monkeypatch, term, passphrases, recording, failure
 ):
@@ -583,7 +583,7 @@ def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device
         Flaky.exclusive = _once(OwnershipLock.exclusive, busy)
         monkeypatch.setattr(control, "OwnershipLock", Flaky)
     else:
-        monkeypatch.setattr(registry.Registry, "add", _once(registry.Registry.add, RuntimeError("disk full")))
+        monkeypatch.setattr(registry.Registry, "_add", _once(registry.Registry._add, RuntimeError("disk full")))
     root = fresh_root(tmp_path, "work")
     with lab.host() as h:
         res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})

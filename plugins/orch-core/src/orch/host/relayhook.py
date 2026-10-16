@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .devmode import gated as devmode_gated
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -171,6 +172,8 @@ def convenience_block(service: WorkspaceService) -> str | None:
     """§11A.6 at worker start and after a foreign append: ``convenience_events_present`` when the merged history (or
     the durable mark, or the flag) would refuse ``relay.link``; ``None`` otherwise. Under the store lock (worker
     thread)."""
+    from orch.store.readerrecs import read_relay_level
+
     from .convenience import refuse_reader_op
 
     store = service.store
@@ -178,7 +181,10 @@ def convenience_block(service: WorkspaceService) -> str | None:
         return "workspace_unavailable"
     try:
         with store.locked():
-            refuse_reader_op(service, "relay.link", history=True)
+            # the relay's last verified reader level (H12d-3 9.8, stored at link and every R1 login): a relay of
+            # level 1 passes with convenience history (§11A.17.4, the dev sandbox's worker restart); None counts as 0
+            level = read_relay_level(service.state_dir, service.workspace_id, service.host_uid)
+            refuse_reader_op(service, "relay.link", history=True, relay_level=level)
     except HostError as exc:
         if exc.code == "sign.convenience_readers":
             return "convenience_events_present"
@@ -278,7 +284,10 @@ def start_worker(
             # H12d-3 9.8: every login re-reads the relay's reader level; stored only while link.json still names THIS
             # origin, exactly as link.json stores it (#555 F2), under relay-link.lock (a leaf lock: no store lock,
             # no relay_cond; it runs on a relay thread under the session's login lock)
-            relaylink.observe_relay_level(service.state_dir, ws, service.host_uid, level, alarms, origin=origin)
+            relaylink.observe_relay_level(
+                service.state_dir, ws, service.host_uid, level, alarms, origin=origin,
+                gated=lambda: devmode_gated(service),
+            )  # fmt: skip
 
         session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop, relay_info=observe)
 
@@ -304,9 +313,11 @@ def start_worker(
         def no_post(device: str, rid: str, envelope: bytes) -> str:
             raise RuntimeError("the loop installs the poster")  # replaced in the poll thread before any POST
 
+        from .devmode import gated
+
         bridge = Bridge(
             workspace_id=ws, rids=rids, keys=bkeys, signer=signer, r6=view, port=RelayEntry(service, backend),
-            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms,
+            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms, convenience_gate=lambda: gated(service),
         )  # fmt: skip
         # R6c: the pair thread (11A.15.2 "Threads"), started and stopped with the bridge loop; its own connection
         pairing = relaypair.start_thread(service, session, conn)
@@ -399,7 +410,7 @@ def reserve_link(
         link["ca_file"] = ca_file
     if proxy is not None:
         link["proxy"] = proxy
-    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level))
+    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level, origin=origin))
     return {**link, "state": "linking"}
 
 

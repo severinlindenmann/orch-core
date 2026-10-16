@@ -206,6 +206,46 @@ def _label_key(scalar: bytes) -> bytes:
     return crypto.hkdf(scalar, b"", b"orch/v2/pvk|p1")
 
 
+SBX_REFUSED = "SBX is reserved for dev-pair sandboxes"
+
+
+def check_reserved_prefix(root: Path, sd: Path, prefix: str, owner_name: str) -> None:
+    """``--prefix SBX`` only for a dev-pair sandbox (orch-v2-host §11A.17.3 F1, D4): ``root``'s parent holds a valid
+    sandbox manifest (its id 8 or more lowercase hex characters), the owner name is exactly ``orch dev sandbox <id8>``,
+    and the state directory holds no person yet (no person custody, no device key of another workspace: the new person
+    owns nothing else). The recovery code is checked where the genesis is signed (:func:`_signed_genesis`).
+    ``invalid.input`` otherwise, before anything is created."""
+    from orch import devsandbox
+
+    if prefix != devsandbox.RESERVED_PREFIX:
+        return
+    try:
+        manifest = devsandbox.check_manifest(Path(os.path.abspath(root)).parent)
+    except devsandbox.SandboxRefused as exc:
+        raise _refuse(
+            "invalid.input", f"{SBX_REFUSED} (no dev-pair sandbox here: {exc})", "use another prefix"
+        ) from None
+    if owner_name != devsandbox.owner_name(manifest["id"]):
+        raise _refuse(
+            "invalid.input", f"{SBX_REFUSED}: the owner name must be {devsandbox.owner_name(manifest['id'])!r}"
+        )
+    if not _fresh_person(sd):
+        raise _refuse(
+            "invalid.input", f"{SBX_REFUSED}: this state directory already holds a person", "use another prefix"
+        )
+
+
+def _fresh_person(sd: Path) -> bool:
+    with contextlib.suppress(FileNotFoundError):
+        if os.listdir(sd / "person"):
+            return False
+    try:
+        names = os.listdir(sd / "hosts")
+    except FileNotFoundError:
+        return True
+    return not any(os.path.lexists(sd / "hosts" / name / "person") for name in names)
+
+
 def _name(ctx: Context, given: str | None) -> str:
     name = canon.nfc(" ".join((given or ctx.env.get("USER") or "owner").split()))
     if not _NAME_OK.fullmatch(name):
@@ -366,6 +406,7 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     prefix = args["prefix"]
     _preflight(ctx, root, sd)
     owner_name = _name(ctx, args.get("name"))
+    check_reserved_prefix(root, sd, prefix, owner_name)
     if ctx.dry_run:
         return Result(
             data={"prefix": prefix, "workspace_id": ""},
@@ -489,7 +530,7 @@ def _host_refusal(error: dict[str, Any]) -> OrchError:
     message = str(error.get("message", code))[:300]
     if code in _UNDECIDED:
         return _unavailable(f"the host is not ready ({code}: {message})")
-    if code in ("host.busy", "custody.unsafe_mode", "lock.busy", "internal"):
+    if code in ("host.busy", "custody.unsafe_mode", "lock.busy", "internal", "host.dev_refused"):
         return OrchError(code, f"{message}; nothing was created")
     return _refuse("invalid.input", f"the host refused the workspace ({code}): {message}; nothing was created")
 
@@ -593,6 +634,7 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     _preflight(ctx, root, sd)
     _empty_root(root)
     owner_name = _name(ctx, args.get("name"))
+    check_reserved_prefix(root, sd, prefix, owner_name)
     if ctx.dry_run:
         return Result(
             data={"prefix": prefix, "workspace_id": ""},
@@ -626,7 +668,9 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
                 wid = data["workspace_id"]
                 try:
                     wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
-                    event, person = _signed_genesis(ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code)
+                    event, person = _signed_genesis(
+                        ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code, generated=True
+                    )
                 except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
                     raise _failure(e) from e
                 request = {
@@ -685,13 +729,27 @@ def _void(shown: bool) -> str:
 
 
 def _signed_genesis(
-    ctx: Context, sd: Path, wid: str, wsk_pub: bytes, prefix: str, owner_name: str, passphrase: str, code: str
+    ctx: Context,
+    sd: Path,
+    wid: str,
+    wsk_pub: bytes,
+    prefix: str,
+    owner_name: str,
+    passphrase: str,
+    code: str,
+    *,
+    generated: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """The device key (made here, under :func:`person_dir`), its certificate and the delegation of ``wsk_pub``, both
     signed by the person key derived from ``code``, and the genesis ``workspace.created`` signed with the device key.
 
     Direct mode and the host composite both call this, so the genesis is the same bytes in both modes. The person key
-    is dropped before it returns; it never leaves this function."""
+    is dropped before it returns; it never leaves this function. An ``SBX`` genesis is signed only from a code this
+    run generated in :func:`_dialogue` (``generated``, §11A.17.3 D1): a typed, restored or imported code never."""
+    from orch import devsandbox
+
+    if prefix == devsandbox.RESERVED_PREFIX and generated is not True:
+        raise _refuse("invalid.input", f"{SBX_REFUSED}: only a recovery code this orch init generated may sign it")
     pk = derive_person_key(code)
     pk_pub = crypto.public_bytes(pk)
     pk_scalar = crypto.private_scalar(pk)
@@ -752,7 +810,7 @@ def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, pas
         (host_dir / MARKER).write_text(f"{os.getpid()}\n")
         wsk_backend = FileBackend(host_dir / "keys")
         wsk_pub = wsk_backend.create(WORKSPACE_KEY)
-        event, person = _signed_genesis(ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code)
+        event, person = _signed_genesis(ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code, generated=True)
         store = Store.open(
             root,
             expected_workspace_id=wid,

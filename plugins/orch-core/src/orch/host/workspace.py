@@ -168,6 +168,10 @@ class WorkspaceService:
         #: why no relay worker runs (``host.status.relay``): ``not_linked``, ``stopped``, the R6 gate, ``start_failed:
         #: <code>``, ``convenience_events_present``, ``relay_thread_stuck``, …; ``None`` while one runs or before open
         self.relay_reason: str | None = None
+        #: §11A.17: the host's :class:`orch.host.devmode.DevHost` (``None`` on a normal host) and whether this
+        #: workspace passed the dev gate at its last fresh check (serve, and every column-R L2)
+        self.dev: Any = None
+        self.dev_ok = False
 
     @property
     def workspace_id(self) -> str:

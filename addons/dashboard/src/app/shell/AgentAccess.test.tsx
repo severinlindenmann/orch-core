@@ -8,7 +8,7 @@ import { setClock } from '@/lib/time'
 
 vi.mock('@/app/useMe', () => ({ useMe: () => ({ data: { person: 'me' } }) }))
 vi.mock('@/app/terminal/real/StartAgentDialog', () => ({ RunnerGrantCard: (p: { extend?: { id: string }; onOutcome: () => void }) => <button onClick={p.onOutcome}>Complete {p.extend?.id ?? 'new grant'}</button> }))
-vi.mock('@/components/sign/HandoffDialog', () => ({ HandoffDialog: (p: { action: { grant: string }; summary: React.ReactNode; onSettled: (phase: string) => void }) => <div>{p.summary}<button onClick={() => p.onSettled('done')}>Sign stop {p.action.grant}</button></div> }))
+vi.mock('@/components/sign/HandoffDialog', () => ({ HandoffDialog: (p: { action: { grant: string }; summary: React.ReactNode; onInterrupted: () => void; onClose: () => void; onSettled: (phase: string) => void }) => <div>{p.summary}<button onClick={() => p.onSettled('done')}>Sign stop {p.action.grant}</button><button onClick={() => p.onSettled('cancelled')}>Reject stop</button><button onClick={p.onClose}>Close stop</button><button onClick={p.onInterrupted}>Reject click stop</button></div> }))
 const now = Date.parse('2026-10-16T12:00:00Z')
 let runner: Runner
 beforeEach(() => {
@@ -24,9 +24,11 @@ beforeEach(() => {
 function show() { return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AgentAccess ws="ws" /></QueryClientProvider>) }
 it('shows the runner expiry and short-grant reminder and opens Extend', async () => {
   show()
-  expect(await screen.findByText(/Agents can work for you until/)).toHaveTextContent('Fri 13:00')
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Fri 13:00')
   expect(await screen.findByRole('status')).toHaveTextContent('Agent access ends at 13:00')
-  fireEvent.click(screen.getAllByRole('button', { name: 'Extend' })[0])
+  expect(screen.getByRole('button', { name: 'Extend agent access from reminder' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Extend agent access' }))
+  expect(screen.getByText(/Agents that are running now stop; new agents use the extended access/)).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
 it('hides terminal-only access', async () => {
@@ -46,13 +48,31 @@ it('confirms Stop and signs each own grant separately with progress', async () =
   fireEvent.click(screen.getByRole('button', { name: 'Sign stop terminal' }))
   expect(screen.queryByText('Stopping access 2 of 2. 1 stopped.')).not.toBeInTheDocument()
 })
-it('shows stopped after a completed Extend with no live runner grant, and Retry opens a new flow', async () => {
+it('shows stopped after a completed Extend with no live runner grant, and Start again opens a new flow', async () => {
   show()
-  fireEvent.click((await screen.findAllByRole('button', { name: 'Extend' }))[0])
+  fireEvent.click(await screen.findByRole('button', { name: 'Extend agent access' }))
   runner = { ...runner, grant: null }
   fireEvent.click(screen.getByRole('button', { name: 'Complete runner' }))
   await screen.findByText('Agents stopped')
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-  fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+  expect(screen.getByText('Signs new agent access')).toBeInTheDocument()
+  fireEvent.click(await screen.findByRole('button', { name: 'Start again' }))
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
+})
+
+it.each(['Reject stop', 'Close stop', 'Reject click stop'])('retains partial Stop progress after %s', async (name) => {
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign stop runner' }))
+  runner = { ...runner, grant: null }
+  vi.mocked(api.listHostGrants).mockResolvedValue([{ id: 'terminal', person: 'me', expires_at: '2026-10-17T13:00:00Z', revoked: null }] as Awaited<ReturnType<typeof api.listHostGrants>>)
+  fireEvent.click(screen.getByRole('button', { name }))
+  expect(screen.getByText(/Stopped 1 of 2/)).toHaveTextContent('Stopped 1 of 2. 1 still active — Stop again')
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: 'Stop again' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Stop agent access' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  expect(await screen.findByRole('button', { name: 'Sign stop terminal' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Sign stop runner' })).not.toBeInTheDocument()
 })

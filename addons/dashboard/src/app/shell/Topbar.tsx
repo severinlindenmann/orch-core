@@ -73,7 +73,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b border-border bg-bg px-4">
+    <header className="topbar flex min-h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4">
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
         {header.breadcrumb}
         <span className="truncate font-medium text-text" data-testid="topbar-title">
@@ -132,9 +132,10 @@ export function Topbar() {
       <button
         type="button"
         onClick={openPalette}
-        className="flex h-8 w-[300px] items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-text-faint hover:border-border-strong hover:text-text-muted"
+        aria-label="Search or run a command"
+        className="topbar-search flex h-8 w-[300px] shrink-0 items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-text-faint hover:border-border-strong hover:text-text-muted"
       >
-        <Search className="size-3.5" />
+        <Search className="size-3.5 shrink-0" />
         <span className="flex-1 text-left">Search or run a command</span>
         <kbd className="rounded border border-border bg-surface-2 px-1.5 font-mono text-[10px] text-text-muted">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
       </button>

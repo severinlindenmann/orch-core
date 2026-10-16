@@ -75,7 +75,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
       covers: [
         `Default length of a grant: ${plural(hoursNum, 'hour')} (was ${plural(current, 'hour')})`,
         `Members can sign a grant for themselves up to ${plural(hoursNum, 'hour')}, for the tickets they may work on`,
-        `Owners and maintainers can sign up to ${GRANT_MAX_HOURS} h for all tickets`,
+        'Owners and maintainers can sign up to 7 days for all tickets',
         'Grants that are already signed keep their end time',
       ],
       req: { op: 'grant.hours', hours: hoursNum },

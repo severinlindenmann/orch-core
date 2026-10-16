@@ -39,6 +39,8 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: '1 day' }))
     await user.click(save)
     expect(await screen.findByText(/Default length of a grant: 24 hours \(was 8 hours\)/)).toBeInTheDocument()
+    expect(screen.getByText('Owners and maintainers can sign up to 7 days for all tickets')).toBeInTheDocument()
+    expect(screen.queryByText(/up to 168 h/)).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(mockStore.workspaces[0].grant_hours).toBe(24))
   })

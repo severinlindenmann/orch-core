@@ -225,3 +225,15 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Respond to the shell width, including a docked terminal. */
+.topbar { container-type: inline-size; }
+@container (max-width: 1200px) {
+  .agent-access-detail { display: none; }
+  .topbar-search { width: 2rem; justify-content: center; padding-inline: 0; }
+  .topbar-search > span, .topbar-search > kbd { display: none; }
+}
+
+@container (max-width: 1500px) {
+  .agent-access-reminder { display: none; }
+}

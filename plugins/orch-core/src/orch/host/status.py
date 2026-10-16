@@ -112,9 +112,10 @@ def _relay(state: Path, wid: str, host_uid: int) -> dict[str, Any] | None:
         outbox = 0
     except OSError:
         outbox = None
-    from .relayr4 import held_pairs_at
+    from .relayr4 import ledger_at
 
-    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox, "held": held_pairs_at(state, wid, host_uid)}
+    ledger = ledger_at(state, wid, host_uid)
+    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox, "held": ledger["held"], "ledger": ledger}
 
 
 def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
@@ -169,7 +170,7 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             row["relay"] = relay
             from .relayr4 import held_attention
 
-            note = held_attention(str(entry.get("prefix")), relay.get("held") or [])
+            note = held_attention(str(entry.get("prefix")), relay.get("held") or [], relay.get("ledger"))
             if note is not None:  # R4 (11A.9): held evidence the owner must publish (interim for #572)
                 problems.append(note)
             why = relay.get("blocker") or relay.get("error")

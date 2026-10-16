@@ -7,36 +7,34 @@ its own (2), check its own association (3), store it durably and only then ack (
 
 :class:`UnpublishedConsumer` is R5's :class:`orch.relay.worker.Unpublished` seam: :meth:`~UnpublishedConsumer.step`
 runs on the aux thread after the lease renewal, at most ONE page per turn (one GET of at most 10 s, then the
-holds as worker jobs, then the durable position, then one ack of at most 10 s):
+judging jobs, then the durable position, then one ack of at most 10 s):
 
-* **When it reads.** From the start (no ``cursor``) after every new holder ``gen``, after ``cursor_ahead`` and at
-  least once a day (``FULL_EVERY_MS``), page by page until ``more`` is false; otherwise from the stored position while
-  the last poll's ``notices.unpublished`` is non-null and differs from the notice a completed read already answered.
-* **Verify and hold.** Every item goes to ``hold(item)``, the host's worker job around
-  ``Store.note_forwarded_revocation`` (H12b): it derives every fact from the signed objects (``pk_pub``, the
-  certificate at its own ``created_ms``, the revocation, the digest), never from the item's outer fields, and checks
-  the association under the store lock: ``held``, ``pending`` or ``dropped``. Nothing here trusts or rewrites an item.
-  A store fault (an exception) means no result: nothing after it is stored or acked; the page is read again.
-* **Order.** All items of the page have a result (``held``/``pending`` are durable in ``HostPins``), then the new
-  position is written atomically (``unpublished.json``), and only then the page's ``cursor`` is acked
-  (``POST unpublished/ack {cursor}``, exactly that field: the relay refuses any other). An ack is not publication.
-  The ack is owed (``ack`` in the file) from the write until the relay accepted it: a failed one is retried first,
-  later or after a restart.
-* **Held evidence.** The host has no host-originated ``needs`` items yet (issue #572), so a ``held`` result raises
-  the relay alarm ``unpublished_held`` naming the pair, and the pair joins ``held`` in ``unpublished.json``
-  (bounded; every completed full read replaces it with the pairs that read held), which ``host.status.relay`` and
-  ``orch host status`` show to the owner with what to do. THE INVARIANT: an item leaves that view ONLY through
-  :meth:`UnpublishedConsumer._settle`, on the store's ``settled`` answer (a verified revocation of the exact pair at
-  least as strong as the item's reason, judged inside ``note_forwarded_revocation``); every other answer about held
-  evidence, ``weaker`` included, is a visible row and an alarm, whatever the relay's fields look like (they are
-  reduced to closed forms, never rejected).
-  SEAM (#572): promote this to a host-originated ``needs`` item ("publish this revocation") when those exist.
-* **Failures.** ``cursor_ahead`` (a bug, a forgery or a relay restored from backup): restart from the start (the
-  store deduplicates per pair). 429: wait ``Retry-After`` (else 60 s). Any other refusal or transport error: one
-  alarm per class, 30 s back-off. The session's own errors (``Fenced``, ``SessionError``) are re-raised: the aux
-  thread's guard stops the worker. Unverified data never changes host state.
+* **When it reads.** From the start (no ``cursor``) after every new holder ``gen``, after ``cursor_ahead``, after a
+  ledger loss and at least once a day (``FULL_EVERY_MS``), page by page until ``more`` is false, ALWAYS from the stored
+  scan position (never restarted because a scan is long: beyond ``SCAN_LONG_PAGES`` it is slowed and alarmed once);
+  otherwise from the stored position while the last poll's ``notices.unpublished`` is non-null and differs from the
+  notice a completed read already answered.
+* **THE LEDGER (the invariant).** The owner's view is a MONOTONE ledger (:class:`Ledger`): relay input can only ADD a
+  row (keyed by the exact ``(device, person)`` pair) or RAISE its ``need``; no relay behaviour (a complete or empty
+  read, an omitted or re-served or weaker item, a restart, a new generation, a lost file) removes or lowers anything. A
+  row leaves ONLY through :meth:`Ledger.settle_from_store`, on the store's own verified state (``hold``/``judge`` are
+  the host's worker jobs around ``Store.note_forwarded_revocation`` and ``Store.pair_standings``), by compare-and-set on
+  the row's ``(need, ver)``. Every item gets a result: ``settled`` (no row needed), ``held`` (a row, persisted before
+  the next item) or ``unverifiable`` (a sticky counter).
+* **Order.** All items of the page have a result, then the new position is written atomically
+  (``unpublished.json`` plus its sequence mirror, under one lock), and only then the page's ``cursor`` is acked
+  (``POST unpublished/ack {cursor}``, exactly that field). The ack is owed (``ack`` in the file) from the write until
+  the relay accepted it; 5 non-transient refusals of it drop it. A store fault (an exception) means no result for
+  that item (the ones before it are already persisted), no ack and a back-off.
+* **Loss.** A missing, damaged or OLDER ledger file puts the host into ``rebuilding`` (status not ok) until a complete
+  read from the start finishes with every item given a result. At every start the ledger is also seeded from what the
+  store already holds durably (``evidence``).
+* **Failures.** ``cursor_ahead``: restart from the start (the ledger is kept). 429: wait ``Retry-After`` (else 60 s).
+  Any other refusal or transport error: one alarm per class, 30 s back-off. The session's own errors (``Fenced``,
+  ``SessionError``) are re-raised: the aux thread's guard stops the worker. Unverified data never changes host state.
 
-Nothing here touches the store directly (``orch.store`` is reached only through ``hold``) or any key.
+Nothing here touches the store directly (``orch.store`` is reached only through ``hold``/``judge``/``evidence``) or
+any key.
 """
 
 from __future__ import annotations
@@ -46,7 +44,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .http import TransportError
@@ -54,11 +52,15 @@ from .retry import RelayRefused
 from .session import Session
 from .state import StateDir, StateError
 
-__all__ = ["FILE", "FULL_EVERY_MS", "HELD_MAX", "UnpublishedConsumer", "held_pairs"]
+__all__ = [
+    "FILE", "FULL_EVERY_MS", "LEDGER_MAX", "MIRROR", "STANDINGS", "Ledger", "UnpublishedConsumer", "held_pairs",
+    "ledger_view",
+]  # fmt: skip
 
 log = logging.getLogger("orch.relay.unpublished")
 
 FILE = "unpublished.json"
+MIRROR = "unpublished.seq"  # the ledger's sequence mirror: written after the ledger, under the same lock
 FULL_EVERY_MS = 24 * 3600 * 1000  # obligation 1: at least once a day from the start
 PAGE_LIMIT = 64  # the relay's default and maximum
 PAGE_CAP = 4 << 20  # 11A.7: R4 pages read at most 4 MiB (the relay sends at most 256 KiB)
@@ -66,16 +68,23 @@ DEADLINE_S = 10.0  # 11A.7: 10 s per relay call on the aux thread
 BACKOFF_S = 30.0
 RATE_LIMIT_S = 60.0
 SCAN_LONG_PAGES = 1500  # a full read beyond this many pages is slowed to one page per BACKOFF_S and alarmed once; it
-# NEVER restarts from the start or gives up (D4): availability of the host is bounded by the rate, never by reach
-HOLD_BUDGET_S = 20.0  # the aux thread waits at most this long on the worker's jobs per turn (F6)
+# NEVER restarts from the start or gives up: availability of the host is bounded by the rate, never by reach
+HOLD_BUDGET_S = 20.0  # the aux thread waits at most this long on the worker's jobs per turn
 FULL_EVERY_S = FULL_EVERY_MS / 1000.0
-HELD_MAX = 256  # the held pairs shown to the owner; the store keeps the evidence itself (HostPins)
+LEDGER_MAX = 4096  # the relay's ever-device quota per workspace; beyond it: overflow (never an eviction)
+UNVERIFIABLE_CLEAN_SCANS = 2  # the sticky `unverifiable` counter clears after this many complete clean scans ...
+UNVERIFIABLE_HOLD_MS = 7 * 86400 * 1000  # ... AND this long after it was last seen
+STALE_MS = 2 * FULL_EVERY_MS  # a status older than this (no complete scan) is stale
+FAILED_TURNS_STALE = 3  # ... and so are this many failed turns in a row since the last complete scan
+ACK_REFUSALS_MAX = 5  # a pending ack the relay refuses this often (non-transient) is dropped, once alarmed
+JUDGE_EVERY_S = 2.0  # the ledger is re-judged against the store at most this often, unless woken
+STANDINGS = ("settled", "stronger", "revoke", "other", "unknown")  # Store.pair_standings' closed answer set
 _POSITION = re.compile(r"[A-Za-z0-9_-]{1,512}")  # an opaque b64u position, put into a query string unescaped
 _HEX32 = re.compile(r"[0-9a-f]{32}")
-_ROW_KEYS = {"device_id", "person_id", "reason", "digest", "at_ms"}
-_REASONS = ("compromised", "lost", "retired")  # the revokeReason enum; any other text is shown as "unknown"
-ACK_REFUSALS_MAX = 5  # D5: a pending ack the relay refuses this often (non-transient) is dropped, once alarmed
 _SIG = re.compile(r"[0-9a-f]{64}")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_REASONS = ("compromised", "lost", "retired")  # the revokeReason enum; any other text is shown as "unknown"
+_ROW_KEYS = {"device_id", "person_id", "need", "ver", "digest", "at_ms", "state"}
 
 
 def _position(value: object) -> str:
@@ -85,15 +94,123 @@ def _position(value: object) -> str:
 
 
 def _empty() -> dict[str, Any]:
-    return {"v": 1, "cursor": None, "scan": None, "gen": None, "last_full_ms": 0, "notice": None, "held": [],
-            "scan_held": [], "ack": None, "resume": None, "scan_pages": 0, "ack_refusals": 0}  # fmt: skip
+    return {
+        "v": 2, "cursor": None, "scan": None, "gen": None, "last_full_ms": 0, "notice": None, "ack": None,
+        "resume": None, "scan_pages": 0, "ack_refusals": 0, "scan_unv": False,
+        # the ledger (only `Ledger` writes these; `_save` bumps ledger_seq)
+        "held": [], "unverifiable": {"n": 0, "first_ms": 0, "last_seen_ms": 0, "clean_scans": 0}, "overflow": 0,
+        "rebuilding": False, "last_complete_ms": 0, "failed_turns": 0, "ledger_seq": 0,
+    }  # fmt: skip
+
+
+# -- the ledger: ONE write API ---------------------------------------------------------------------------------------
+
+
+def _hex(v: object) -> str:
+    return v if type(v) is str and _HEX32.fullmatch(v) else "0" * 32
+
+
+def _need(v: object) -> str:
+    return v if type(v) is str and v in _REASONS else "unknown"
+
+
+def _digest(v: object) -> str:
+    return v if type(v) is str and _DIGEST.fullmatch(v) else "sha256:" + "0" * 64
+
+
+def row_of(item: Mapping[str, Any], at_ms: int) -> dict[str, Any]:
+    """A ledger row from a relay item the store judged held: every field reduced to a closed form (a hex id, a reason
+    of the enum or ``unknown``, a digest shape); relay text never appears as anything else, and a row ALWAYS results."""
+    prov = item.get("provenance")
+    return {
+        "device_id": _hex(item.get("device_id")), "person_id": _hex(item.get("person_id")),
+        "need": _need(item.get("reason", item.get("need"))), "ver": 1,
+        "digest": _digest(prov.get("digest") if isinstance(prov, Mapping) else item.get("digest")),
+        "at_ms": at_ms, "state": "revoke",
+    }  # fmt: skip
+
+
+class Ledger:
+    """The owner's held view over a state record ``st``: the ONLY code that writes ``held``, ``unverifiable``,
+    ``overflow``, ``rebuilding``, ``last_complete_ms`` or ``failed_turns`` (an AST test pins it). Relay input reaches it
+    only through :meth:`add_or_raise` and :meth:`note_unverifiable`: it can add or raise, never remove or lower."""
+
+    def __init__(self, st: dict[str, Any], stronger: Callable[[str, str], bool]) -> None:
+        self._st, self._stronger = st, stronger
+
+    def rows(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._st["held"]]
+
+    def add_or_raise(self, row: Mapping[str, Any]) -> str:
+        """``added`` | ``raised`` | ``same`` | ``overflow``. An equal or weaker item changes nothing."""
+        for cur in self._st["held"]:
+            if (cur["device_id"], cur["person_id"]) == (row["device_id"], row["person_id"]):
+                if self._stronger(row["need"], cur["need"]):
+                    cur.update(need=row["need"], digest=row["digest"], at_ms=row["at_ms"], ver=cur["ver"] + 1)
+                    return "raised"
+                return "same"
+        if len(self._st["held"]) >= LEDGER_MAX:
+            self._st["overflow"] += 1
+            return "overflow"
+        self._st["held"].append(dict(row))
+        return "added"
+
+    def settle_from_store(self, judged: Sequence[Mapping[str, Any]]) -> bool:
+        """THE ONLY REMOVAL. ``judged`` rows carry the store's ``standing`` of the exact ``(device, person)`` pair and
+        the ``(need, ver)`` it was judged at: a row goes only on ``settled`` and only if its current ``(need, ver)``
+        still equals the judged one (compare-and-set: an answer computed before a raise cannot delete the raised
+        requirement); any other standing only rewrites the derived ``state``. Returns whether anything changed."""
+        changed = False
+        for j in judged:
+            for cur in list(self._st["held"]):
+                if (cur["device_id"], cur["person_id"]) != (j["device_id"], j["person_id"]):
+                    continue
+                if (cur["need"], cur["ver"]) != (j["need"], j["ver"]):
+                    continue
+                if j["standing"] == "settled":
+                    self._st["held"].remove(cur)
+                    changed = True
+                elif cur["state"] != j["standing"]:
+                    cur["state"] = j["standing"]
+                    changed = True
+        return changed
+
+    def note_unverifiable(self, n: int, now_ms: int) -> None:
+        u = self._st["unverifiable"]
+        u["n"] += n
+        u["first_ms"] = u["first_ms"] or now_ms
+        u["last_seen_ms"], u["clean_scans"] = now_ms, 0
+        self._st["scan_unv"] = True
+
+    def complete_scan(self, now_ms: int) -> None:
+        """A COMPLETE full read finished with every item given a result: freshness, the end of ``rebuilding``, and the
+        sticky ``unverifiable`` counter's expiry (>= 2 clean complete scans AND 7 days since it was last seen)."""
+        st = self._st
+        st["last_complete_ms"], st["failed_turns"], st["rebuilding"] = now_ms, 0, False
+        u = st["unverifiable"]
+        if u["n"] and not st["scan_unv"]:
+            u["clean_scans"] += 1
+            if u["clean_scans"] >= UNVERIFIABLE_CLEAN_SCANS and now_ms - u["last_seen_ms"] >= UNVERIFIABLE_HOLD_MS:
+                st["unverifiable"] = _empty()["unverifiable"]
+        st["scan_unv"] = False
+
+    def start_rebuild(self) -> None:
+        self._st["rebuilding"] = True
+
+    def note_failure(self) -> None:
+        self._st["failed_turns"] += 1
+
+    def note_success(self) -> None:
+        self._st["failed_turns"] = 0
 
 
 class UnpublishedConsumer:
     """One workspace's R4 consumer. ``hold(item)`` is the host's worker job around the store's one answer, ``"held" |
-    "weaker" | "settled" | "pending" | "dropped"`` (``settled``: the workspace's own state already revokes the pair
-    at least as strongly; it raises on a store fault); ``notices()`` returns the last poll's ``notices`` object (or
-    ``None``); ``alarm(code, detail)`` is the worker's alarm sink."""
+    "settled" | "dropped" | "unverifiable"``; ``judge(pairs)`` returns the store's standing of each ``(d_, p_,
+    need)`` (``STANDINGS``) in one job; ``evidence()`` returns what the store already holds durably (seeding);
+    ``stronger(new, old)`` compares two reasons (injected by the host, built on ``revoke_strength``: this module has
+    no strength table); ``notices()`` returns the last poll's ``notices`` object (or ``None``); ``alarm(code,
+    detail)`` is the worker's alarm sink."""
 
     def __init__(
         self,
@@ -102,43 +219,67 @@ class UnpublishedConsumer:
         session: Session,
         state: StateDir,
         hold: Callable[[Mapping[str, Any]], str],
+        stronger: Callable[[str, str], bool],
         notices: Callable[[], Mapping[str, Any] | None],
         alarm: Callable[[str, str], None],
         now_ms: Callable[[], int],
+        judge: Callable[[list[tuple[str, str, str]]], list[str]] | None = None,
+        evidence: Callable[[], list[dict[str, str]]] | None = None,
         mono: Callable[[], float] = time.monotonic,
     ) -> None:
         if type(workspace_id) is not str or not _HEX32.fullmatch(workspace_id):
             raise ValueError("workspace id")
         self.ws = workspace_id
-        self._session, self._state, self._hold = session, state, hold
+        self._session, self._state, self._hold, self._stronger = session, state, hold, stronger
+        self._judge, self._evidence = judge, evidence
         self._notices, self._alarm, self._now_ms, self._mono = notices, alarm, now_ms, mono
         self._not_before = 0.0
         self._alarmed: set[str] = set()
         self._full_mono: float | None = None  # when this process last completed a full read (the wall clock may move)
+        self._seeded = False
+        self._judged_at: float | None = None
+        self._woken = True
 
     def __repr__(self) -> str:
         return f"UnpublishedConsumer(workspace={self.ws})"
 
-    # -- the durable position ----------------------------------------------------------------------------------------
+    def wake(self) -> None:
+        """A store commit that can revoke (``device.revoked``, ``member.removed``, a restore) asks for an immediate
+        re-judging of the ledger on the next aux turn (never synchronous)."""
+        self._woken = True
 
-    def load(self) -> dict[str, Any]:
-        """``unpublished.json`` (11A.3), or a fresh record. A record that does not parse starts over from the start
-        (fail closed: the relay re-serves everything, the store deduplicates)."""
+    # -- the durable ledger and position -------------------------------------------------------------------------------
+
+    def load(self) -> tuple[dict[str, Any], bool]:
+        """``(record, lost)``: ``unpublished.json`` (11A.3) or a fresh record, and whether the LEDGER was lost: the file
+        missing while its mirror exists, the mirror missing or AHEAD of the file's ``ledger_seq`` (an older file),
+        a file that does not parse, or a damaged row. A fresh install (neither file) is not a loss. The ledger keeps
+        every valid row either way; a loss only forces a rebuilding read (never a smaller ledger)."""
         try:
             obj = self._state.read_json(FILE)
         except StateError:
-            obj = None
+            obj = False  # damaged
+        try:
+            mirror = self._state.read_json(MIRROR)
+        except StateError:
+            mirror = False
+        mseq = mirror.get("seq") if type(mirror) is dict and type(mirror.get("seq")) is int else None
         st = _empty()
+        if obj is None:
+            return st, mirror is not None  # no file: a loss only if its mirror says there was one
         if type(obj) is not dict:
-            return st
+            return st, True
+        lost = False
         for key in ("cursor", "scan", "notice", "ack"):
             v = obj.get(key)
             if v is None or (type(v) is str and (v == "" or _POSITION.fullmatch(v))):
                 st[key] = v
-        if type(obj.get("gen")) is int and obj["gen"] >= 0:
-            st["gen"] = obj["gen"]
-        if type(obj.get("last_full_ms")) is int and obj["last_full_ms"] >= 0:
-            st["last_full_ms"] = obj["last_full_ms"]
+        for key in ("gen", "last_full_ms", "last_complete_ms", "failed_turns", "overflow", "scan_pages",
+                    "ack_refusals", "ledger_seq"):  # fmt: skip
+            if type(obj.get(key)) is int and 0 <= obj[key] <= 1 << 62:
+                st[key] = obj[key]
+        st["rebuilding"] = obj.get("rebuilding") is True
+        st["scan_unv"] = obj.get("scan_unv") is True
         r = obj.get("resume")
         if type(r) is dict and set(r) == {"pos", "n", "sig"} and type(r["pos"]) is str and type(r["n"]) is int:
             if (
@@ -147,38 +288,66 @@ class UnpublishedConsumer:
                 and _SIG.fullmatch(str(r["sig"]))
             ):
                 st["resume"] = dict(r)
-        for key in ("scan_pages", "ack_refusals"):
-            if type(obj.get(key)) is int and 0 <= obj[key] <= 1 << 20:
-                st[key] = obj[key]
-        for key in ("held", "scan_held"):
-            if type(obj.get(key)) is list:
-                st[key] = [h for h in obj[key] if _held_ok(h)][-HELD_MAX:]
-        return st
+        u = obj.get("unverifiable")
+        if type(u) is dict and set(u) == set(st["unverifiable"]) and all(type(u[k]) is int and u[k] >= 0 for k in u):
+            st["unverifiable"] = dict(u)
+        else:
+            lost = True
+        rows = obj.get("held")
+        if type(rows) is list:
+            good = [dict(h) for h in rows if _row_ok(h)]
+            lost = lost or len(good) != len(rows) or len(good) > LEDGER_MAX
+            st["held"] = good[:LEDGER_MAX]
+        else:
+            lost = True
+        if mseq is None or mseq > st["ledger_seq"]:
+            lost = True  # the mirror is missing, or AHEAD of the file: an older ledger (behind: a crash window, fine)
+        return st, lost
 
     def _save(self, st: dict[str, Any]) -> None:
-        self._state.write_json(FILE, st)
+        """The ledger file, then its mirror, in ONE critical section (the state directory's lock): a crash between the
+        two leaves the file ahead of the mirror, which is no loss; an older file next to a newer mirror is."""
+        with self._state.lock:
+            st["ledger_seq"] += 1
+            self._state.write_json(FILE, st)
+            self._state.write_json(MIRROR, {"seq": st["ledger_seq"]})
 
     # -- one step ------------------------------------------------------------------------------------------------------
 
     def step(self) -> None:
         """At most one page (see the module docstring). Re-raises the session's own errors."""
-        if self._mono() < self._not_before:
-            return
         gen = self._session.gen
         if gen is None:
             return  # no holder generation: nothing is read before this holder's own host/hold
-        st = self.load()
+        st, lost = self.load()
+        led = Ledger(st, self._stronger)
         now = self._now_ms()
+        dirty = False
+        if lost:
+            led.start_rebuild()  # a loss never shrinks the view: seeded + re-read, and status is not ok meanwhile
+            self._restart(st)
+            self._alarm_once(
+                "unpublished_rebuilding", "the held ledger was lost or is older: rebuilding from the relay"
+            )
+            dirty = True
+        if not self._seeded:
+            self._seed(led, now)
+            self._seeded = True
+            dirty = True
         if st["gen"] != gen:
-            # A new holder generation always starts over, whatever a crashed predecessor left mid-scan (the scan
-            # position, its held pairs) or still owed (a pending ack: the new full read re-reads and re-acks every
-            # position from the start, so an older generation's ack is dropped, never sent).
+            # A new holder generation always starts over (the ledger is kept): whatever a crashed predecessor left
+            # mid-scan, or an ack it still owed (the new full read re-reads and re-acks every position from the start).
             self._restart(st)
             st["gen"] = gen
-            self._save(st)
+            dirty = True
         elif st["scan"] is None and self._daily_due(st, now):
             self._restart(st)  # the daily full read from the start
+            dirty = True
+        if dirty:
             self._save(st)
+        self._rejudge(st, led)  # the store's verified state alone removes rows; never behind the relay's back-off
+        if self._mono() < self._not_before:
+            return
         if st["ack"] is not None:
             self._send_ack(st)  # an ack owed from an earlier turn or run: retried first, nothing else this turn
             return
@@ -192,22 +361,24 @@ class UnpublishedConsumer:
         try:
             page = self._get(position)
         except RelayRefused as e:
-            self._refused(e, st)
+            self._refused(e, st, led)
             return
         except TransportError as e:
+            self._failed(st, led)
             self._backoff("unpublished_transport", type(e).__name__, BACKOFF_S)
             return
         items, cursor, more = page
+        led.note_success()
         sig = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
         key = position or ""
         done = st["resume"]["n"] if st["resume"] and (st["resume"]["pos"], st["resume"]["sig"]) == (key, sig) else 0
-        started, seen = self._mono(), set()
+        started, seen, page_unv = self._mono(), set(), 0
         try:
             for n, item in enumerate(items):
                 if n < done:
-                    continue  # held durably in an earlier turn of this same page (checked by position and content)
+                    continue  # judged durably in an earlier turn of this same page (checked by position and content)
                 if n > done and self._mono() - started >= HOLD_BUDGET_S:
-                    # F6: the aux thread does not wait on the worker without bound; the rest carries to the next turn
+                    # the aux thread does not wait on the worker without bound; the rest carries to the next turn
                     st["resume"] = {"pos": key, "n": n, "sig": sig}
                     self._save(st)
                     return
@@ -215,32 +386,98 @@ class UnpublishedConsumer:
                 if ident in seen:
                     continue  # a page that repeats an item costs one job, not one per copy
                 seen.add(ident)
-                # a store fault raises: no result, nothing stored, nothing acked
-                self._settle(st, item, self._hold(item), full)
+                result = self._hold(item)  # a store fault raises: no result for this item, nothing acked
+                if self._ingest(led, item, result, now):
+                    page_unv += result in ("dropped", "unverifiable")
+                    self._save(st)  # durable before the next item: a failure at item k keeps 1..k-1
         except BaseException:
-            self._not_before = self._mono() + BACKOFF_S  # F4: a faulting store is not asked again on every tick
+            self._not_before = self._mono() + BACKOFF_S  # a faulting store is not asked again on every tick
             raise
+        if page_unv:
+            self._alarm("unpublished_unverifiable", f"{page_unv} item(s) of this page could not be verified")
         st["resume"] = None
         if full:
             st["scan"] = cursor if more else None
             st["scan_pages"] += 1
-            if not more:  # a completed full read: the held list is exactly what the relay still serves as held
-                st["last_full_ms"], st["held"], st["scan_held"] = now, st["scan_held"], []
+            if not more:
+                st["last_full_ms"] = now
                 st["scan_pages"] = 0
+                led.complete_scan(now)
                 self._full_mono = self._mono()
         if not full or not more:
             st["cursor"] = cursor  # a read from the stored position only moves forward; a full read ends past all
         if not more:
             st["notice"] = notice  # this notice is answered: read again only when it changes
         if full and more and st["scan_pages"] > SCAN_LONG_PAGES:
-            # D4: a very long scan goes on from its stored position, slowly, with one alarm (not one per page)
+            # a very long scan goes on from its stored position, slowly, with one alarm (not one per page)
             self._not_before = self._mono() + BACKOFF_S
-            if "scan_long" not in self._alarmed:
-                self._alarmed.add("scan_long")
-                self._alarm("unpublished_scan_long", f"a full read passed {SCAN_LONG_PAGES} pages: continuing slowly")
+            self._alarm_once("unpublished_scan_long", f"a full read passed {SCAN_LONG_PAGES} pages: continuing slowly")
         st["ack"] = cursor  # the ack is owed from here on, also across a restart, until the relay accepts it
         self._save(st)  # durable before the ack (obligation 4)
+        self._rejudge(st, led, force=True)
         self._send_ack(st)
+
+    def _ingest(self, led: Ledger, item: Mapping[str, Any], result: str, now: int) -> bool:
+        """One item's result into the ledger (relay input: add, raise or count; never remove). Returns whether the
+        record changed (and so must be persisted before the next item)."""
+        if result == "held":
+            row = row_of(item, now)
+            out = led.add_or_raise(row)
+            if out in ("added", "raised"):
+                self._alarm("unpublished_held", f"d_{row['device_id']} of p_{row['person_id']}: reason {row['need']}")
+            elif out == "overflow":
+                self._alarm_once("unpublished_overflow", f"the held ledger is full ({LEDGER_MAX} pairs): not listed")
+            return out != "same"
+        if result == "settled":
+            return False
+        if result in ("dropped", "unverifiable"):
+            led.note_unverifiable(1, now)
+            return True
+        raise ValueError("note_forwarded_revocation answered no known result")
+
+    def _seed(self, led: Ledger, now: int) -> None:
+        """At every start the ledger takes in what the store already holds durably (union: adds, raises, never
+        removes), so a lost or older file can never make it smaller than the host's own evidence."""
+        if self._evidence is None:
+            return
+        for ev in self._evidence():
+            led.add_or_raise(row_of(ev, now))
+
+    def _rejudge(self, st: dict[str, Any], led: Ledger, *, force: bool = False) -> None:
+        """Ask the store for the standing of every row and let :meth:`Ledger.settle_from_store` act on it. A store
+        fault is no answer (nothing is removed); it backs off and reaches the aux guard."""
+        rows = led.rows()
+        if not rows or (
+            not force and not self._woken and self._judged_at is not None
+            and self._mono() - self._judged_at < JUDGE_EVERY_S
+        ):  # fmt: skip
+            return
+        pairs = [("d_" + r["device_id"], "p_" + r["person_id"], r["need"]) for r in rows]
+        try:
+            standings = self._judge(pairs) if self._judge is not None else ["unknown"] * len(rows)
+        except BaseException:
+            self._not_before = self._mono() + BACKOFF_S
+            raise
+        if type(standings) is not list or len(standings) != len(rows) or any(s not in STANDINGS for s in standings):
+            raise ValueError("pair_standings answered no known standing")
+        self._judged_at, self._woken = self._mono(), False
+        judged = [
+            {
+                "device_id": r["device_id"],
+                "person_id": r["person_id"],
+                "need": r["need"],
+                "ver": r["ver"],
+                "standing": s,
+            }
+            for r, s in zip(rows, standings, strict=True)
+        ]
+        if led.settle_from_store(judged):
+            self._save(st)
+
+    def _alarm_once(self, code: str, detail: str) -> None:
+        if code not in self._alarmed:
+            self._alarmed.add(code)
+            self._alarm(code, detail)
 
     def _daily_due(self, st: dict[str, Any], now: int) -> bool:
         """Obligation 1 ("at least once a day"): by the wall clock, by this process's monotonic clock (a clock set back
@@ -251,19 +488,24 @@ class UnpublishedConsumer:
 
     @staticmethod
     def _restart(st: dict[str, Any]) -> None:
-        """A full read from the start: nothing of an earlier scan (position, held pairs, owed ack, partial page,
-        counters) survives."""
-        st.update(scan="", scan_held=[], ack=None, resume=None, scan_pages=0, ack_refusals=0)
+        """A full read from the start: nothing of an earlier scan (position, owed ack, partial page, counters) survives.
+        The ledger does."""
+        st.update(scan="", ack=None, resume=None, scan_pages=0, ack_refusals=0, scan_unv=False)
+
+    def _failed(self, st: dict[str, Any], led: Ledger) -> None:
+        led.note_failure()
+        self._save(st)
 
     def _send_ack(self, st: dict[str, Any]) -> None:
+        led = Ledger(st, self._stronger)
         try:
             self._ack(st["ack"])
         except RelayRefused as e:
             if e.status != 429 and not (e.status == 409 and e.code == "cursor_ahead"):
                 st["ack_refusals"] += 1
                 if st["ack_refusals"] >= ACK_REFUSALS_MAX:
-                    # D5: a permanently refused ack must not block reading for ever: drop it (the page is settled
-                    # and durable; an ack only moves the notice), alarm once, and read on from the stored position
+                    # a permanently refused ack must not block reading for ever: drop it (the page is judged and
+                    # durable; an ack only moves the notice), alarm once, and read on from the stored position
                     st["ack"], st["ack_refusals"] = None, 0
                     self._save(st)
                     self._alarm(
@@ -271,9 +513,10 @@ class UnpublishedConsumer:
                     )
                     return
                 self._save(st)
-            self._refused(e, st)  # the retry-class table; the pending ack stays (except cursor_ahead)
+            self._refused(e, st, led)  # the retry-class table; the pending ack stays (except cursor_ahead)
             return
         except TransportError as e:
+            self._failed(st, led)
             self._backoff("unpublished_transport", type(e).__name__, BACKOFF_S)
             return
         st["ack"], st["ack_refusals"] = None, 0  # only now: the relay accepted it
@@ -305,13 +548,14 @@ class UnpublishedConsumer:
             body={"cursor": _position(cursor)}, holder=True, deadline_s=DEADLINE_S, keys={"acked"},
         )  # fmt: skip
 
-    def _refused(self, e: RelayRefused, st: dict[str, Any]) -> None:
+    def _refused(self, e: RelayRefused, st: dict[str, Any], led: Ledger) -> None:
         if e.status == 409 and e.code == "cursor_ahead":
-            self._restart(st)  # obligation 1: restart from the start; the store deduplicates
+            self._restart(st)  # restart from the start; the store deduplicates, the ledger is kept
             self._save(st)
-            self._not_before = self._mono() + BACKOFF_S  # F4: the relay's answer does not set the pace
+            self._not_before = self._mono() + BACKOFF_S  # the relay's answer does not set the pace
             self._alarm("unpublished_cursor_ahead", "the relay refused the stored position: reading from the start")
             return
+        self._failed(st, led)
         if e.status == 429:
             self._backoff("unpublished_rate_limited", str(e.code), float(e.retry_after or RATE_LIMIT_S))
             return
@@ -324,72 +568,40 @@ class UnpublishedConsumer:
             self._alarm(code, detail)
         log.info("unpublished: %s (%s), next read in %.0f s", code, detail, seconds)
 
-    def _settle(self, st: dict[str, Any], item: Mapping[str, Any], result: str, full: bool) -> None:
-        """THE invariant of R4 (11A.9): an item leaves the owner's view (held row, alarm, status not-ok) ONLY here,
-        and ONLY when the store answered ``settled`` (inside ``note_forwarded_revocation``, under its one lock: the
-        workspace holds a verified revocation of exactly this pair at least as strong as the item's). Every other
-        answer about held evidence (``held``, ``weaker``) creates a visible row, whatever the relay's fields look like
-        (they are sanitised, never rejected); ``pending`` and ``dropped`` are not held evidence; anything else is an
-        error: no result, no ack."""
-        if result == "settled":
-            pair = (item.get("device_id"), item.get("person_id"))
-            for key in ("held", "scan_held"):
-                st[key] = [h for h in st[key] if (h["device_id"], h["person_id"]) != pair]
-        elif result in ("held", "weaker"):
-            self._held(st, item, full, weaker=result == "weaker")
-        elif result not in ("pending", "dropped"):
-            raise ValueError("note_forwarded_revocation answered no known result")
 
-    def _held(self, st: dict[str, Any], item: Mapping[str, Any], full: bool, *, weaker: bool) -> None:
-        """The interim owner notice (#572): the pair joins ``held`` and the alarm names it. Never rejects and never
-        returns before the row exists: every field is reduced to a closed form (a hex id, a reason of the enum or
-        ``unknown``, a digest shape), so the relay's text can only ever appear as such a token."""
-        prov = item.get("provenance")
-        digest = prov.get("digest") if isinstance(prov, Mapping) else None
-        row = {
-            "device_id": _hex(item.get("device_id")), "person_id": _hex(item.get("person_id")),
-            "reason": _reason(item.get("reason")), "digest": _digest(digest), "at_ms": self._now_ms(), "weaker": weaker,
-        }  # fmt: skip
-        for key in ("held", "scan_held") if full else ("held",):
-            rest = [h for h in st[key] if (h["device_id"], h["person_id"]) != (row["device_id"], row["person_id"])]
-            st[key] = [*rest, row][-HELD_MAX:]  # one row per pair
-        todo = (
-            f"sign a device.revoked with the stronger reason {row['reason']} (F1 §5.3)"
-            if weaker
-            else f"sign a device.revoked, reason {row['reason']} (F1 §5.3)"
-        )
-        self._alarm("unpublished_held", f"d_{row['device_id']} of p_{row['person_id']}: {todo}")
-
-
-def _hex(v: object) -> str:
-    return v if type(v) is str and _HEX32.fullmatch(v) else "0" * 32
-
-
-def _reason(v: object) -> str:
-    return v if type(v) is str and v in _REASONS else "unknown"
-
-
-def _digest(v: object) -> str:
-    return v if type(v) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", v) else "sha256:" + "0" * 64
-
-
-def _held_ok(h: object) -> bool:
+def _row_ok(h: object) -> bool:
     """A stored row (a row this module wrote always passes; a hand-edited or damaged file's row does not)."""
-    if type(h) is not dict or set(h) not in (_ROW_KEYS, _ROW_KEYS | {"weaker"}):
-        return False
-    if "weaker" in h and type(h["weaker"]) is not bool:
+    if type(h) is not dict or set(h) != _ROW_KEYS:
         return False
     if type(h["device_id"]) is not str or not _HEX32.fullmatch(h["device_id"]):
         return False
     if type(h["person_id"]) is not str or not _HEX32.fullmatch(h["person_id"]):
         return False
-    if h["reason"] not in (*_REASONS, "unknown"):
+    if h["need"] not in (*_REASONS, "unknown") or h["state"] not in STANDINGS[1:]:
         return False
-    return type(h["digest"]) is str and len(h["digest"]) <= 80 and type(h["at_ms"]) is int
+    if type(h["ver"]) is not int or h["ver"] < 1 or type(h["at_ms"]) is not int:
+        return False
+    return type(h["digest"]) is str and bool(_DIGEST.fullmatch(h["digest"]))
 
 
 def held_pairs(state_doc: object) -> list[dict[str, Any]]:
-    """The held pairs of an ``unpublished.json`` document (for the host's status), validated; ``[]`` otherwise."""
+    """The held rows of an ``unpublished.json`` document (for the host's status), validated; ``[]`` otherwise."""
     if type(state_doc) is not dict or type(state_doc.get("held")) is not list:
         return []
-    return [dict(h) for h in state_doc["held"] if _held_ok(h)][-HELD_MAX:]
+    return [dict(h) for h in state_doc["held"] if _row_ok(h)][:LEDGER_MAX]
+
+
+def ledger_view(state_doc: object, now_ms: int) -> dict[str, Any]:
+    """What ``orch host status`` shows (11A.9): the held rows and every other reason the view is not ok, from an
+    ``unpublished.json`` document: ``{held, unverifiable, overflow, rebuilding, stale, age_s, failed_turns}``."""
+    doc = state_doc if type(state_doc) is dict else {}
+    unv = doc.get("unverifiable")
+    n = unv.get("n") if type(unv) is dict and type(unv.get("n")) is int else 0
+    last = doc.get("last_complete_ms") if type(doc.get("last_complete_ms")) is int else 0
+    failed = doc.get("failed_turns") if type(doc.get("failed_turns")) is int else 0
+    overflow = doc.get("overflow") if type(doc.get("overflow")) is int else 0
+    stale = failed >= FAILED_TURNS_STALE or (last > 0 and now_ms - last > STALE_MS)
+    return {
+        "held": held_pairs(doc), "unverifiable": n, "overflow": overflow, "rebuilding": doc.get("rebuilding") is True,
+        "stale": stale, "age_s": (now_ms - last) // 1000 if last else None, "failed_turns": failed,
+    }  # fmt: skip

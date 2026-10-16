@@ -66,6 +66,16 @@ class State:
         entry = self._core.ws.revocations.get(device, {}).get(person)
         return None if entry is None else str(entry["revocation"]["o"]["reason"])
 
+    def knows_person(self, person: str) -> bool:
+        """Whether a person key for ``p_person`` is known: a current or past member, or the person of a revocation
+        entry (a restore tombstone carries the person's key)."""
+        ws = self._core.ws
+        return person in ws.members or person in ws.former or any(person in by for by in ws.revocations.values())
+
+    def has_revocations_for(self, device: str) -> bool:
+        """Whether ``ws.revocations`` holds any person's revocation of ``device`` (a restore's tombstone included)."""
+        return bool(self._core.ws.revocations.get(device))
+
     def device_person(self, device: str) -> str | None:
         """The ``p_`` person a live (known, not tombstone-only) device is associated with, or None."""
         dev = self._core.ws.devices.get(device)

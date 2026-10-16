@@ -38,7 +38,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
@@ -46,7 +46,7 @@ from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
 from orch.identity import CryptoVerifier, new_ulid
-from orch.identity.certs import revoke_strength
+from orch.identity.certs import REVOKE_REASONS, revoke_strength
 from orch.model import (
     WORKSPACE,
     Code,
@@ -3598,38 +3598,38 @@ class Store:
 
     # ------------------------------------------------------------------ forwarded revocation evidence (H12b)
 
-    def note_forwarded_revocation(self, item: object) -> Literal["held", "weaker", "settled", "pending", "dropped"]:
-        """Hold one verified item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
+    def note_forwarded_revocation(self, item: object) -> Literal["held", "settled", "dropped", "unverifiable"]:
+        """Judge one item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
 
         Every fact comes from the signed objects: ``pk_pub`` parses and names the person; the certificate verifies
         under it (``check_cert``) and is judged at its own ``created_ms`` (an expired historical certificate is
         still evidence); the revocation verifies under it against that certificate; device, person and reason are
         the certificate's and revocation's, and the item's outer ``device_id``, ``person_id`` and ``reason`` and
-        ``provenance.digest`` (``sha256:`` over ``cj(revocation)``) must equal them. Then, under the store lock:
-        ``held`` when the workspace associates the device with that person (the caller raises the owners' ``needs``
-        item); ``pending`` when it does not but the person is a current or past member; ``dropped`` for anything
-        else, for anything that does not verify and when ``HostPins.note_revocation`` (forwarded, capped) does not
-        retain it. ``held`` and ``pending`` mean the record is durable. Idempotent per ``(device_id, person_id)``.
-        A held pair is then SETTLED under the same lock: ``settled`` when the workspace's own state holds a verified
-        revocation of exactly this pair at least as strong as the item's verified reason (``revoke_strength``),
-        ``weaker`` when it holds a weaker one (the owner signs a stronger ``device.revoked``), ``held`` when it holds
-        none; only ``settled`` takes the item out of the owner's view (R4, 11A.9). The host never appends
-        ``device.revoked`` or a restore for it."""
+        ``provenance.digest`` (``sha256:`` over ``cj(revocation)``) must equal them. One answer, under the store lock:
+
+        * ``unverifiable``: anything that does not verify or parse (R4 counts it visibly; it carries no evidence);
+        * ``dropped``: verified, but no person key is known here (neither a current or past member nor the person
+          of a revocation entry: R4 counts it as ``unverifiable``);
+        * ``settled``: the workspace's own state holds a verified revocation of exactly this pair at least as strong
+          as the item's verified reason (:func:`_standing`, ``revoke_strength``);
+        * ``held``: everything else, whatever the reason (no revocation yet, a weaker one, a device known only as
+          another person's tombstone or not at all, no host state, a cap that kept the record out of ``HostPins``).
+
+        The record is durable in ``HostPins`` (capped) before ``held``/``settled`` is returned. Idempotent per
+        ``(device_id, person_id)``. The host never appends ``device.revoked`` or a restore for it."""
         facts = _verify_forwarded(item)
         if facts is None:
-            return "dropped"
+            return "unverifiable"
         device, person, reason, rev, cert, pk_pub = facts
         with self._locked():
             if self._pins is None or self._state is None:
-                _log.info("forwarded revocation dropped (%s, %s): no host state", device, person)
-                return "dropped"
+                _log.info("forwarded revocation (%s, %s) held: no host state", device, person)
+                return "held"
             state = self._state
-            if state.device_person(device) == person:
-                result: Literal["held", "pending", "dropped"] = "held"  # refined below for a held pair
-            elif state.is_member(person):
-                result = "pending"
-            else:
-                _log.info("forwarded revocation dropped (%s, %s): not a member", device, person)
+            have = state.revoked_reason(device, person)
+            associated = state.device_person(device) == person
+            if not (associated or state.knows_person(person)):
+                _log.info("forwarded revocation dropped (%s, %s): no person key is known", device, person)
                 return "dropped"
             owner = None
             if self._genesis_event is not None:
@@ -3639,19 +3639,61 @@ class Store:
                 device, reason, rev, self._now(), cert, pk_pub, chain=False, is_member=state.is_member, owner=owner
             )
             if not kept:
-                _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
-                return "dropped"
-            if result != "held":
-                return result
-            self._raise_relay_gate(device, "held_evidence")  # R6a: the relay gate invariant, under the store lock
-            # SETTLING (the one place, under this one lock): the evidence leaves the owner's view only when the
-            # workspace's own state holds a verified revocation of exactly this pair at least as strong as the
-            # VERIFIED reason of the item (``revoke_strength``: compromised > lost = retired). A weaker one does not
-            # cover it (the owner signs a stronger device.revoked); no revocation at all is plainly held.
-            have = state.revoked_reason(device, person)
-            if have is None:
-                return "held"
-            return "settled" if revoke_strength(have) >= revoke_strength(reason) else "weaker"
+                _log.info("forwarded revocation (%s, %s) over the caps: held in the owner's view only", device, person)
+            elif associated or have is not None:
+                self._raise_relay_gate(device, "held_evidence")  # R6a: the relay gate invariant, under the store lock
+            return "settled" if _standing(state, device, person, reason) == "settled" else "held"
+
+    def pair_standings(self, pairs: Sequence[tuple[str, str, str]]) -> list[str]:
+        """The standing of each ``(d_device, p_person, reason)`` of the owner's held ledger (R4), read-only, under
+        the store lock: ``settled`` | ``stronger`` | ``revoke`` | ``other`` | ``unknown`` (:func:`_standing`). The
+        ledger removes a row ONLY on ``settled``, a pure function of this state and never of relay behaviour."""
+        with self._locked():
+            if self._state is None:
+                return ["unknown"] * len(pairs)
+            return [_standing(self._state, d, p, r) for d, p, r in pairs]
+
+    def pair_settled(self, device: str, person: str, reason: str) -> bool:
+        """Whether the workspace's own state revokes exactly ``(d_device, p_person)`` at least as strongly as
+        ``reason``."""
+        return self.pair_standings([(device, person, reason)])[0] == "settled"
+
+    def forwarded_evidence(self) -> list[dict[str, str]]:
+        """The forwarded revocation evidence ``HostPins`` holds durably, as ``{device_id, person_id, reason,
+        digest}`` (32-hex ids): R4 re-seeds its held ledger from it, so a lost or older ``unpublished.json`` can
+        never make the ledger smaller than the evidence the host already holds."""
+        with self._locked():
+            if self._pins is None:
+                return []
+            out = []
+            for rec in self._pins.revocations():
+                # a forwarded record, and the stronger forwarded evidence kept beside a chain record (``upgrade``)
+                for r in ([rec] if is_forwarded(rec) else []) + ([rec["upgrade"]] if rec.get("upgrade") else []):
+                    out.append({
+                        "device_id": rec["device"][2:], "person_id": pair(rec)[1][2:], "reason": r["reason"],
+                        "digest": canon.artifact_digest(canon.cj_checked(r["revocation"])),
+                    })  # fmt: skip
+            return out
+
+
+def _standing(state: State, device: str, person: str, reason: str) -> str:
+    """The standing of the relay's evidence ``(d_device, p_person, reason)`` against the workspace's own state, the
+    single judgement of R4's held ledger (11A.9): ``settled`` when ``ws.revocations[device][person]`` (live devices
+    and restore tombstones alike) is at least as strong as ``reason`` (``revoke_strength``; a reason outside the enum
+    needs ``compromised``); ``stronger`` when it holds a weaker one; else what the owner can still do: ``revoke``
+    (the device is the person's, no revocation yet), ``other`` (the device is another person's or a tombstone
+    holds other persons' evidence only: the model refuses a revocation by this person), ``unknown`` (no such
+    device, no tombstone)."""
+    need = revoke_strength(reason) if reason in REVOKE_REASONS else revoke_strength("compromised")
+    have = state.revoked_reason(device, person)
+    if have is not None:
+        return "settled" if revoke_strength(have) >= need else "stronger"
+    owner = state.device_person(device)
+    if owner == person:
+        return "revoke"
+    if owner is not None or state.has_revocations_for(device):
+        return "other"
+    return "unknown"
 
 
 def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:

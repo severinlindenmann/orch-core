@@ -18,14 +18,16 @@ from tests.host.lifecycle_helpers import UID
 
 from .test_relay_hook import _on_worker, _reserve
 
-HELD = {"device_id": "ab" * 16, "person_id": "cd" * 16, "reason": "compromised", "digest": "sha256:" + "1" * 64,
-        "at_ms": 1}  # fmt: skip
+HELD = {"device_id": "ab" * 16, "person_id": "cd" * 16, "need": "compromised", "ver": 1,
+        "digest": "sha256:" + "1" * 64, "at_ms": 1, "state": "revoke"}  # fmt: skip
 
 
-def _write_held(svc, pairs):
+def _write_held(svc, pairs, **extra):
     path = svc.state_dir / "hosts" / svc.workspace_id / "relay" / up.FILE
-    write_private(path, {"v": 1, "cursor": None, "scan": None, "gen": 1, "last_full_ms": 0, "notice": None,
-                         "held": pairs, "scan_held": []})  # fmt: skip
+    doc = {"v": 2, "cursor": None, "scan": None, "gen": 1, "last_full_ms": 0, "notice": None, "held": pairs,
+           "unverifiable": {"n": 0, "first_ms": 0, "last_seen_ms": 0, "clean_scans": 0}, "overflow": 0,
+           "rebuilding": False, "last_complete_ms": 0, "failed_turns": 0, "ledger_seq": 1}  # fmt: skip
+    write_private(path, {**doc, **extra})
 
 
 def test_host_status_relay_shows_held_evidence_with_what_to_do(served):  # noqa: F811
@@ -39,6 +41,11 @@ def test_host_status_relay_shows_held_evidence_with_what_to_do(served):  # noqa:
     (note,) = rel["attention"]
     assert f"d_{'ab' * 16}" in note["what"] and "compromised" in note["what"] and "not published" in note["what"]
     assert "device.revoked" in note["fix"] and "#572" in note["fix"]
+    _write_held(svc, [], unverifiable={"n": 2, "first_ms": 1, "last_seen_ms": 1, "clean_scans": 0})
+    (note,) = relayhook.status(svc)["attention"]
+    assert "2 items the relay serves could not be verified" in note["what"] and rel["ledger"]["unverifiable"] == 0
+    _write_held(svc, [], rebuilding=True)
+    assert "being rebuilt" in relayhook.status(svc)["attention"][0]["what"]
 
 
 def test_orch_host_status_names_held_evidence_as_a_problem(served):  # noqa: F811
@@ -54,7 +61,7 @@ def test_orch_host_status_names_held_evidence_as_a_problem(served):  # noqa: F81
                         "person": None, "click_to_sign": False, "root": "/r", "relay": got}],
     }  # fmt: skip
     assert "held_evidence=1" in host_status.render(rep)
-    note = relayr4.held_attention("DEMO", got["held"])
+    note = relayr4.held_attention("DEMO", got["held"], got["ledger"])
     assert note is not None and note["what"].startswith("DEMO: the relay holds 1 revocation this workspace")
 
 
@@ -97,8 +104,10 @@ def test_the_seam_holds_through_the_worker_job_on_the_real_store(served, tmp_pat
         c = relayr4.unpublished(svc, worker)
         assert isinstance(c, up.UnpublishedConsumer)
         assert c._notices() == {"unpublished": None}  # noqa: SLF001 - the bridge loop's last poll
-        got = c._hold({"device_id": "00"})  # noqa: SLF001 - garbage: dropped by the store
-        assert got == "dropped" and len(jobs) == 1
+        got = c._hold({"device_id": "00"})  # noqa: SLF001 - garbage: unverifiable, counted by R4
+        assert got == "unverifiable" and len(jobs) == 1
+        assert c._judge([("d_" + "00" * 16, "p_" + "11" * 16, "lost")]) == ["unknown"]  # noqa: SLF001
+        assert c._evidence() == []  # noqa: SLF001
         worker.loop = None
         assert c._notices() is None  # noqa: SLF001
     finally:

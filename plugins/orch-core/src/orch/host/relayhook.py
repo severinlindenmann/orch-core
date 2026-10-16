@@ -625,10 +625,12 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
 
 def _with_held(service: WorkspaceService, out: dict[str, Any]) -> dict[str, Any]:
     """R4 (11A.9): the held unpublished evidence for the owner, with what to do (``attention``); SEAM #572."""
-    from .relayr4 import held_attention, held_pairs_at
+    from .relayr4 import held_attention, ledger_at
 
-    pairs = held_pairs_at(service.state_dir, service.workspace_id, service.host_uid)
+    ledger = ledger_at(service.state_dir, service.workspace_id, service.host_uid)
+    pairs = ledger["held"]
     out["held_evidence"] = pairs
-    note = held_attention(str(service.entry.prefix), pairs)
+    out["ledger"] = {k: v for k, v in ledger.items() if k != "held"}
+    note = held_attention(str(service.entry.prefix), pairs, ledger)
     out["attention"] = [note] if note is not None else []
     return out

@@ -3500,8 +3500,14 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    ways a signature may be made in this workspace: `terminal` (always present, always allowed), `click` (one click on
    this computer, convenience custody), `phone` (the paired phone), `touchid` (reserved: refused until it is built). The
    default, when the setting was never set, is `["terminal", "click"]` where click-to-sign is on and `["terminal"]`
-   otherwise. A convenience signature is refused (`sign.convenience_unavailable`, reason `disabled`) while the setting
-   exists and does not list `click`. The person's own default (`sign_default`: `{method, fallback?}`) is host-local, not
+   otherwise. **The model enforces it** (`orch.model.authz.method_refusal`, new refusal code `sign.method`, F1 §5.11 table):
+   a person event whose `auth` is `convenience` (the way `click`) or `secure-enclave-unlocked` (the iPhone app, the way
+   `phone`) is refused on append and invalid on replay when the workspace state *at that event's position* has a
+   `sign_methods` that leaves the way out; events before the setting, or before a change of it, stay valid (no
+   retroactive invalidation). The terminal (`passphrase`) is never judged; the reserved labels are not judged yet. The
+   relay path needs no copy of the rule: `append_relay` goes through `append_signed` and the store's append, i.e. the
+   model. Early, for a friendly error, a convenience prepare, bind or submit is also refused with
+   `sign.convenience_unavailable` reason `disabled` while the setting exists and does not list `click`. The person's own default (`sign_default`: `{method, fallback?}`) is host-local, not
    signed and not a rule: it only chooses which button is primary in the dashboard. The dashboard server keeps it in
    `<state>/dashboard/sign_default.json` (0600, per person and workspace; `GET`/`PUT /api/w/{ws}/me/sign_default`); a default
    the workspace no longer allows reads back as `terminal`. A `sign_methods` change is signed with the typed word, not one click.
@@ -4387,8 +4393,8 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `View` and the dashboard `HandoffRequest` carry `headline` and `content` (additive; `lines`, `risk`, `material` and
     all hashes unchanged); the one-click risk notice is required at enable time and in Settings instead of on every
     sign panel (amends §0.8.6 item 7 and the status paragraph); `settings.changed` may set `sign_methods`
-    (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and a convenience signature is
-    refused while it excludes `click`.
+    (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and the model refuses a person event
+    made a way it excludes (`sign.method`, by the state at the event's position).
 
 ---
 

@@ -37,6 +37,7 @@ class Code(StrEnum):
     DEVICE_EXISTS = "device.exists"
     DEVICE_INVALID = "device.invalid"
     DEVICE_SCOPE = "device.scope"
+    SIGN_METHOD = "sign.method"
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"

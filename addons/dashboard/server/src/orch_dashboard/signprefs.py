@@ -74,6 +74,8 @@ def register(app: FastAPI, gateway: Gateway):
         if not link.supports("workspace.settings", "settings/1"):
             return ["terminal"]
         methods = link.call("workspace.settings", {}).get("sign_methods")
+        if methods is None:  # never set: the model judges no way, every way is allowed
+            return ["terminal", "click", "phone"]
         ok = isinstance(methods, list) and "terminal" in methods
         return [m for m in methods if m in ("terminal", "click", "phone")] if ok else ["terminal"]
 

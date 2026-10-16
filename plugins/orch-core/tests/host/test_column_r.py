@@ -489,7 +489,9 @@ class FakeStore:
     def state(self) -> Any:
         from types import SimpleNamespace
 
-        return SimpleNamespace(workspace=SimpleNamespace(devices={}, members={}), device_evidence=lambda d: None)
+        return SimpleNamespace(
+            workspace=SimpleNamespace(devices={}, members={}, settings={}), device_evidence=lambda d: None
+        )
 
     def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:
         for e in self.appended:

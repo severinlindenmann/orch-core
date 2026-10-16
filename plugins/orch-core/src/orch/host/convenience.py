@@ -100,6 +100,43 @@ def risk_ack(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
     return ack if isinstance(ack, str) else None
 
 
+def _methods(service: Any) -> Any:
+    return service.store.state.workspace.settings.get("sign_methods")
+
+
+def refuse_click_removal(service: Any, op: str, events: list[dict[str, Any]]) -> None:
+    """B6 (Opus round 1, HIGH-2): a ``settings.set`` that takes ``click`` out of ``sign_methods`` is refused while
+    click-to-sign is on here: the owner's key is in convenience custody and the terminal path is closed (one signing
+    path per workspace), so the change would lock the honest signer out. The fix is named."""
+    if op != "settings.set" or not enabled(service.state_dir, service.workspace_id, service.host_uid):
+        return
+    for ev in events:
+        methods = (ev.get("set") or {}).get("sign_methods")
+        if methods is not None and "click" not in methods:
+            raise HostError(
+                "invalid.input",
+                "sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in "
+                "convenience custody",
+                hint="move the key back first: orch host convenience off --workspace W and "
+                "orch keys custody passphrase --workspace W --in-place",
+            )
+
+
+def refuse_excluded_click_custody(service: Any) -> HostError | None:
+    """B6 (Opus round 1, HIGH-2): while click-to-sign is on the device key is in convenience custody, and any process
+    running as the person can sign with it and write any ``auth`` label. So, whatever label an event carries, nothing
+    lands from this machine's person path while the workspace's ``sign_methods`` leaves ``click`` out. The custody
+    decides, not the self-declared label. (With the flag off, only the key's own custody protects it: see §0.8.6.)"""
+    methods = _methods(service)
+    if (
+        methods is not None
+        and "click" not in methods
+        and enabled(service.state_dir, service.workspace_id, service.host_uid)
+    ):
+        return unavailable("disabled", [])
+    return None
+
+
 def flag_or_gate(service: Any) -> bool:
     """``required_reader`` 1 (§0.8.6 item 9.4): the per-workspace flag is on, or the Simulator dev gate passes for
     this workspace (§11A.17.4, the lock-free :func:`orch.host.devmode.gated`)."""

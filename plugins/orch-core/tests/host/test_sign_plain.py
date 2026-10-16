@@ -27,20 +27,21 @@ def build(prepared, verified=True):
 
 
 APPROVE = """\
-Approve the requirements of DEMO-0001
+Approve the requirements of DEMO-0001 (…<TAIL>)
 in workspace Acme (DEMO)
+ticket DEMO-0001: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Context
-  the context
+  | the context
 
 Out of scope
-  the out_of_scope
+  | the out_of_scope
 
 Requirements
-  the requirements
+  | the requirements
 
 Summary
-  (empty)
+  | (empty)
 
 Acceptance criteria
   [ ] AC1  it works
@@ -51,8 +52,9 @@ Fields
 """
 
 NEW = """\
-Create ticket DEMO-0002 · Elefant Chart
+Create ticket DEMO-0002 · Elefant Chart (…<TAIL>)
 in workspace Acme (DEMO)
+ticket DEMO-0002: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Fields
   type: chore
@@ -65,8 +67,8 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
-    assert str(text) == APPROVE
-    for hidden in ("sha256", "fingerprint", "uid ", "pid ", "not proven", "self-declared", "policy", "gate input"):
+    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:])
+    for hidden in ("sha256", "fingerprint", "uid ", "pid ", "self-declared", "policy", "gate input"):
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
@@ -75,7 +77,7 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
 def test_the_plain_view_of_a_new_ticket(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("new", {"title": "Elefant Chart", "type": "chore"})
-    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"])
+    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace("<TAIL>", p["log"][-8:])
 
 
 def test_the_content_comes_from_the_signed_events_and_material_only(human, served):
@@ -83,8 +85,8 @@ def test_the_content_comes_from_the_signed_events_and_material_only(human, serve
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     c = build(p)
-    assert c["headline"] == "Approve the requirements of DEMO-0001"
-    assert c["ticket"] == {"key": "DEMO-0001", "title": ""}  # a gate does not bind the title
+    assert c["headline"].startswith("Approve the requirements of DEMO-0001")
+    assert (c["ticket"]["key"], c["ticket"]["title"]) == ("DEMO-0001", "")  # a gate does not bind the title
     assert c["acceptance"] == [{"id": "AC1", "text": "it works", "checked": False}]
     assert {s["id"]: s["text"] for s in c["sections"]}["requirements"] == "the requirements"
     # a tampered text is no longer what the events sign: the signer refuses before it renders
@@ -98,7 +100,7 @@ def test_changed_fields_show_before_and_after_and_tasks_are_numbered(human, serv
     p = human.prepare("set", {"ref": key, "pairs": ["priority=high"]})
     c = build(p)
     assert c["fields_changed"] == [{"field": "priority", "before": "medium", "after": "high"}]
-    assert c["headline"] == "Change the priority of DEMO-0001"
+    assert c["headline"].startswith("Change the priority of DEMO-0001")
     plan = {  # the plan gate binds the tasks with their verify commands
         "op": "approve",
         "events": [{"type": "gate.approved"}],
@@ -118,12 +120,12 @@ def test_changed_fields_show_before_and_after_and_tasks_are_numbered(human, serv
         },
     }
     c = build(plan)
-    assert c["headline"] == "Approve the plan of DEMO-0001"
+    assert c["headline"].startswith("Approve the plan of DEMO-0001")
     assert c["tasks"] == [
-        {"n": 1, "title": "write it (proves AC1)", "verify": ["pytest -q"]},
-        {"n": 2, "title": "ship it"},
+        {"n": 1, "id": "T1", "title": "write it (proves AC1)", "verify": ["pytest -q"]},
+        {"n": 2, "id": "T2", "title": "ship it"},
     ]
-    assert "  1. write it (proves AC1)\n       verify: pytest -q\n  2. ship it\n" in "\n".join(
+    assert "  1. [T1] write it (proves AC1)\n       verify: pytest -q\n  2. [T2] ship it\n" in "\n".join(
         signcontent.text(c, signer._clean)
     )
 
@@ -132,7 +134,7 @@ def test_a_control_character_never_reaches_the_plain_view(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("log", {"ref": key, "text": "line one\nline two"})
     text = str(signer.plain(p, WS))
-    assert "  line one\n  line two\n" in text
+    assert "  | line one\n  | line two\n" in text
     esc = {**p, "events": [{**p["events"][0], "text": "x\x1b[2Jy"}]}
     assert "\x1b" not in str(signcontent.text(build(esc), signer._clean))
 
@@ -145,7 +147,7 @@ def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_un
     v = view.build(
         p, WS, kind="click", device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None
     )
-    assert v["headline"] == "Add a note to DEMO-0001" and v["content"]["sections"][0]["text"] == "note"
+    assert v["headline"].startswith("Add a note to DEMO-0001") and v["content"]["sections"][0]["text"] == "note"
     assert v["lines"] == signer.render(p, WS).rstrip("\n").split("\n")  # the full review is still there, line for line
     assert v["risk"]
 
@@ -452,7 +454,89 @@ def test_a_question_shows_its_options_and_labels_what_the_question_hash_does_not
         rows["addressed to"].endswith("(per host, not signed)")
         and rows["blocks the ticket"] == "true (per host, not signed)"
     )
-    assert c["headline"] == "Answer “Which way?” on DEMO-0001 with Left"
+    assert c["headline"].startswith("Answer “Which way?” on DEMO-0001") and c["headline"].endswith("with Left")
     material["question"]["future"] = 1
     with pytest.raises(signcontent.PlainUnavailable):
         build({"op": "answer", "events": [ev], "material": material})
+
+
+# --- round 1 of the Opus review ---------------------------------------------------------------------------------------
+
+
+def test_a_line_break_in_a_value_cannot_fake_structure():
+    """HIGH-1: a verify command or an acceptance text with a newline is ONE visible line; a section is a block under marks."""
+    evil = "pytest\n  2. Tidy workspace: rm -rf ~/src"
+    plan = {
+        "op": "approve",
+        "events": [{"type": "gate.approved", "gate": "plan"}],
+        "material": {
+            "kind": "gate",
+            "gate": "plan",
+            "ticket": {"key": "DEMO-0001", "uid": UID},
+            "texts": {"summary": "line a\n  2. fake"},
+            "policy": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False},
+            "input": {
+                "fields": {"acceptance": [{"id": "AC1", "text": "works\nAC9 [ ] also"}]},
+                "tasks": [{"id": "T1", "text": "do it\n  3. other", "verify": {"cmd": evil}, "proves": []}],
+            },
+        },
+    }
+    c = build(plan)
+    assert "\n" not in c["tasks"][0]["verify"][0] and "\n" not in c["tasks"][0]["title"]
+    assert "\n" not in c["acceptance"][0]["text"] and " ⏎ " in c["acceptance"][0]["text"]
+    lines = signcontent.text(c, signer._clean)
+    assert [x for x in lines if x.lstrip().startswith("2.")] == []  # no line of its own starts a second task
+    assert "       verify: pytest ⏎   2. Tidy workspace: rm -rf ~/src" in lines
+    assert "  1. [T1] do it ⏎   3. other" in lines
+    assert "  | line a" in lines and "  |   2. fake" in lines  # a section: every line under a mark
+    ev = {"type": "ticket.moved", "from": "open", "to": "backlog", "reason": "x\nowner: evil"}
+    c = build(
+        {"op": "move", "events": [ev], "material": {"kind": "payload", "ticket": {"key": "DEMO-0001", "uid": UID}}}
+    )
+    assert all("\n" not in r["after"] for r in c["fields_changed"])
+
+
+def test_the_ticket_key_is_the_hosts_word_and_the_signed_id_tail_is_shown():
+    """MEDIUM-1."""
+    ev = {"type": "log.added", "text": "x"}
+    c = build({"op": "log", "events": [ev], "material": {"kind": "payload", "ticket": {"key": "ORCH-12", "uid": UID}}})
+    assert c["headline"].endswith(f"(…{UID[-8:]})") and "key per host" in c["ticket"]["key_note"]
+    assert c["ticket"]["uid_tail"] == UID[-8:]
+
+
+def test_prior_source_and_receipts_are_checked_and_shown():
+    """LOW L2/L3: unknown keys in prior or source_sha fall back; a receipt shows its event; tasks show their ids."""
+    base = {
+        "op": "approve",
+        "events": [{"type": "gate.approved", "gate": "verify"}],
+        "material": {
+            "kind": "gate",
+            "gate": "verify",
+            "ticket": {"key": "DEMO-0001", "uid": UID},
+            "texts": {},
+            "policy": POLICY,
+            "input": {
+                "fields": {},
+                "tasks": [],
+                "receipts": {"T1": {"event": "01EVENT", "repo": "app", "commit": "c" * 40, "exit": 0}},
+                "source_sha": [{"repo": "app", "ref": "refs/heads/x", "sha": "a" * 40}],
+                "prior": {"plan": {"gen": 2, "approvals": ["p_" + "1" * 32]}},
+            },
+        },
+    }
+    c = build(base)
+    assert any("event 01EVENT" in (r["after"] or "") for r in c["fields_changed"])
+    for where, extra in (
+        ("prior", {"plan": {"gen": 2, "approvals": [], "sneaky": 1}}),
+        ("source_sha", [{"repo": "a", "ref": "b", "sha": "c", "x": 1}]),
+    ):
+        bad = json.loads(json.dumps(base))
+        bad["material"]["input"][where] = extra
+        with pytest.raises(signcontent.PlainUnavailable):
+            build(bad)
+
+
+def test_notes_are_a_list():
+    g = sample("grant.issued")
+    c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    assert isinstance(c["notes"], list) and "note" not in c

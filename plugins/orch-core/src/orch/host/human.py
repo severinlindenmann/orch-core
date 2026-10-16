@@ -437,6 +437,7 @@ class HumanOps:
         prepared, extras = self._build(call, name, log, capture, store, now)
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         convenience.refuse_reader_op(service, name, events=prepared["events"], readers=capture.readers)
+        convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
@@ -1318,6 +1319,10 @@ def append_signed(
         try:
             if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
                 error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
+            if (
+                error is None and signed_by is None
+            ):  # B6: by custody, not by the label; under the lock, on the re-read state
+                error = convenience.refuse_excluded_click_custody(service)
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):

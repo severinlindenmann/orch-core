@@ -228,6 +228,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     p = progress(f, out["run_id"])
     n = names(ports)
     assert p["done"] is True and "genesis" not in n and ports.unlocks == 1
+    assert p["workspace"] and p["workspace"]["prefix"] == PROF["prefix"]  # the page's Done and the terminal name it
     assert ports.submits == ["addon.granted", "grant.issued"]
     assert [s["id"] for s in p["steps"]] == ["addon:worktrees", "runner_grant"]
     assert ports.passphrase_seen is None  # no new passphrase in finish mode

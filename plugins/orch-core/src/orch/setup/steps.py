@@ -278,6 +278,8 @@ class Creator:
         self.manifest_bytes = manifest_bytes
         self.ports, self.plan, self.profile, self.root = ports, plan, profile, root
         self.secrets, self.run, self.mode, self.wid = secrets, run, mode, wid
+        if mode == "finish" and wid:  # Finish setup: the workspace already exists; the page's Done offers it
+            run.workspace = {"id": wid, "prefix": profile["prefix"]}
         self.clock = clock
         self.cancelled = cancelled or threading.Event()
         self.items = list(plan.items)

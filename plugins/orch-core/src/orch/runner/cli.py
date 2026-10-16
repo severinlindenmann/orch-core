@@ -40,9 +40,17 @@ class RunnerTerminal(Terminal):
 TERMINAL: Any = RunnerTerminal()
 
 
+class _Exact(argparse.ArgumentParser):
+    """No abbreviated long option (``--fore`` never means ``--foreground``), in every subcommand."""
+
+    def __init__(self, *args: Any, **kw: Any) -> None:
+        kw["allow_abbrev"] = False
+        super().__init__(*args, **kw)
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="orch runner", description="the orch runner (dashboard execution)")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = _Exact(prog="orch runner", description="the orch runner (dashboard execution)")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_Exact)
     en = sub.add_parser(
         "enable",
         help="turn on dashboard execution for a workspace and start the runner service",

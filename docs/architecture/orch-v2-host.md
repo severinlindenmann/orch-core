@@ -480,6 +480,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 step W, after L3: amendment A; H12e `admission.known_or_fresh`). Definite, nothing landed (class C-review) | — |
 | `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
 | `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the `Error` carries the advisory `detail.next_key` (v1.9, §0.3; R2's relay answer may carry it too), never a reservation. Class C-auto | — |
+| `host.dev_refused` | 3 | no | stays | §11A.17 (D1), the Simulator dev gate; `detail.reason` is closed: a `--dev-sim-convenience` start refused (`not_foreground`, `service_managed`, `service_dir`, `no_manifest`, `state_not_in_root`, `home_not_in_root`, `no_dev_json`, `dev_json_mismatch`, `no_person`, `custody_convenience`; the host does not start, never a normal host instead), a dev host refusing a workspace that fails S1 to S5 (`not_sandbox`) or a `relay.link` to another origin than `dev.json`'s (`dev_origin`) or a records push (`dev_host`), and a normal host refusing a dev-pair sandbox workspace (`SBX` genesis or the workspace marker) at `host.register`, `host.bootstrap`, `relay.link` and a records push (`sandbox_workspace`, fix text "this is a throwaway dev-pair sandbox; start a real workspace") | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -4253,7 +4254,17 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told; the
     dashboard's Changes tab shows hunk headers without function context, and a diff git cannot produce as "Diff
     unavailable". No op, code, wire, hash or schema change.
-62. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
+62. **D1: the Simulator dev gate, built (owner option 2, §11A.17.11 "As built in D1"; the number may be renumbered
+    when a parallel change lands first):** `orch host run --foreground --dev-sim-convenience` with a `dev-pair`
+    sandbox proof (manifest, `dev.json`, `HOME`/`ORCH_STATE_DIR` pinned by identity) is a dev host; column R accepts
+    `auth:"convenience"` only for `question.answered` on an `SBX` sandbox workspace passing S1 to S6 (P5 cached gate,
+    L2 fresh gate, L8 token plus fresh gate). One registry choke point `orch.host.registry.admit`; normal hosts refuse
+    every `SBX` workspace (register, bootstrap, link, records push) and skip plus alarm one already registered; the
+    dev host refuses the click signer (`dev_host`); `orch init`/`host.bootstrap` reserve `SBX`. New code
+    `host.dev_refused` (§0.6, both catalogs); additive fields `host.status.dev`, column-R `whoami.relay.dev`,
+    `host.list.dev`/`sandbox`/`alarms` (absent elsewhere); the alarm `dev_convenience_refused`; one R2 vector.
+    `dev-pair` (D2) and the phone part are not in it.
+63. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
     be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the caller
     spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file)
     could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through
@@ -5719,8 +5730,11 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   job=worker.job)` and `BridgeLoop`; then `service.relay = worker` and only then `worker.start()` (round 2, review R1).
   Any failure clears `service.relay`, closes what it opened and releases the slot.
 - **The worker.** `start()` checks the gate and spawns `orch-relay-start-<id8>`, which (1) runs the convenience check
-  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True)` under the store lock;
-  a hit is the alarm `convenience_events_present` and the worker stops, nothing sent), (2) while `link.json` is
+  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True, relay_level=<the stored
+  relay reader level>)` under the store lock, so convenience history refuses only while the relay's last verified
+  level (H12d-3 9.8, `read_relay_level`; none counts as 0) is below `required_reader` (D1, §11A.17.4; R6's
+  `relayr6._convenience_block` reads it the same way); a hit is the alarm `convenience_events_present` and the worker
+  stops, nothing sent), (2) while `link.json` is
   `linking`, runs R1's `first_link` with the host's `LinkSteps` (`card`/`genesis` from `LinkSource`, `publish` =
   `publisher.publish_first`, `mark_linked` = a worker job `store.relay_mark_linked(expect)`, `expect` the exact record
   the worker started for), (3) starts the loop (threads `orch-relay-{poll,resp,job0,job1,aux}-<id8>`) and the
@@ -5730,7 +5744,8 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   closes the rid store and the `StateDir` (the lock is free for the next worker) and releases the slot, once. A
   stuck worker keeps all of them (fail closed). `close()` and `relay_stop()` keep H12a's bounded 120 s wait.
 - **Foreign appends (11A.6).** `_build_journal(audit=True)` (a refresh that loaded events this host did not append)
-  calls `_relay_audit`: with a worker running, `convenience_block` again; a hit (or a check that raises) halts it:
+  calls `_relay_audit`: with a worker running, `convenience_block` again (with the stored relay level, as at start); a
+  hit (or a check that raises) halts it:
   taken out under `relay_cond`, alarmed, `stop()` at once on the worker thread (no store job is queued from then on),
   the bounded join on `orch-relay-halt-<id8>` (the relay threads may be waiting for this very worker thread). (J) Not
   persisted: the next start checks again and refuses again while the history holds the event.
@@ -6308,7 +6323,7 @@ Session) and `StateDir.open_private`/`file_path` (the checked SQLite open of 11A
 builder's `HostError` is stored as that `failed` outcome (`outcomes._fields`).
 
 **R2 framing (the sheet orch-mobile codes against; data: `tests/relay/r2_vectors/r2_framing.json`, generated by
-`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases; H12d-3: 40).**
+`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases; H12d-3: 40; D1 (§11A.17): 41, `answer_convenience_refused`).**
 
 - Request meta, strict JSON inside the seal, `data` empty: `{"op", "args", "idem"?, "rd"?}`. Checked in this order
   before any column: an `auth` key → `req.invalid`; a grant-shaped string anywhere → `grant.secret_in_args`; an op
@@ -6805,7 +6820,11 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
 - **Foreign appends.** A start-up scan alone misses history added later. `RelayWorker.start` runs
   `has_convenience_events` once, and again after every store refresh that loaded events this host did not append (the
   `_build_journal(audit=True)` path), before R2 serves or R3 publishes anything further. A hit stops the worker and
-  alarms `convenience_events_present`.
+  alarms `convenience_events_present`. **As built (H12d-3, D1):** the check is `relay.link`'s rule with the relay's
+  stored reader level, so a relay of level 1 keeps serving a workspace with convenience history (the dev sandbox,
+  §11A.17.4). DECIDED (orch-07, 16 Oct 2026): a later **drop** of the relay's level (an R1 login that reads a lower
+  `relay-info`) does **not** halt the worker; the alarm `relay_reader_old` (`observe_relay_level`, 9.8) stays the rule,
+  and the next worker start or foreign-append audit applies the stored level.
 - **No owner exception in v1.7.** The D-P2-34 private-remote mark has no relay analogue: a relay's devices are other
   readers by definition, and a "private relay" label cannot establish what every retained reader understands
   (11A.11 Q4).
@@ -7190,7 +7209,7 @@ the placement in the log, consent to the latest view, or the surrounding authori
 | `id` | a fresh ULID (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`): 48-bit ms time from the phone clock, 80 random bits from the OS CSPRNG; admitted only within the window of 14.4 | the phone |
 | `type` | `question.answered` or `ticket.created` | the action |
 | `actor` | `{"kind":"person","id":"p_<32 hex>","device":"d_<32 hex>"}`, exactly the phone's certificate | the certificate |
-| `auth` | `"secure-enclave-unlocked"`; `"convenience"` only from a Simulator build against a §11A.17 dev host and sandbox workspace (14.3) | the custody |
+| `auth` | `"secure-enclave-unlocked"`; `"convenience"` only from a Simulator build against a §11A.17 dev host and sandbox workspace, and only on `question.answered` (answers only, decided with orch-b8; 14.3) | the custody |
 | `roster_v` | the member-list version | host-sourced, person-signed: `ticket.get` → `members_v` |
 | `based_on` | answer: the reviewed log head; creation: `null` (always `seq` 1) | host-sourced, person-signed: `ticket.get` → `doc.head.head` |
 | `sig` | b64u of the raw 64-byte P-256 signature `r ‖ s` (CryptoKit `rawRepresentation`; high-s is accepted) | 14.2 |
@@ -7392,7 +7411,7 @@ Checks before the lock (no state read):
 | P2 | the type is `question.answered` or `ticket.created` | `forbidden_scope` |
 | P3 | submitted-subset schema: `cj`-canonical, exact field set, no `seq`/`at`/`prev`/`ws_seq`/`host_sig`, `v` 2, `hash_v` 1, a creation's `based_on` null; F1 §11.3 text | `validation.event` / `validation.text` |
 | P4 | `actor` = `{person, identity.person_id, identity.device_id}`, `sig` present | `op.not_allowed` |
-| P5 | `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}; `convenience` only where §11A.17's `dev_gate` passes (design, not built) | `op.not_allowed` |
+| P5 | `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}; `convenience` only on a `question.answered` (answers only; `ticket.created` never) where §11A.17's `dev_gate` passes (built in D1) | `op.not_allowed` |
 | P7 | `sig` verifies under the identity's `dk_sig_pub` over 14.2's bytes | `sig.invalid` |
 
 One `store.locked()` span (re-entrant), held through the append and the outcome:
@@ -10193,9 +10212,9 @@ I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
 
 ### 11A.17 Simulator dev-only convenience answers (owner option 2, design)
 
-**Status: design, docs only, 15 Oct 2026 (orch-52's stream; written for orch-52 with orch-29 on the core and relay
-side and orch-f1 on the phone side). Every item marked DECIDED-pending-review needs the Opus review before the
-design merges; nothing here is built.** The Opus review of `3cbb98f1` (CHANGES, docs only, findings F1 to F9) is
+**Status: design 15 Oct 2026 (orch-52's stream; written for orch-52 with orch-29 on the core and relay
+side and orch-f1 on the phone side); core D1 built 16 Oct 2026 (see 11A.17.11 "As built in D1"); D2 (`dev-pair`) and the
+phone part are not built yet.** The Opus review of `3cbb98f1` (CHANGES, docs only, findings F1 to F9) is
 applied below as **DECIDED (orch-07)** (orch-07 was orch-52). It replaces the "open OWNER decision" in 11A.14.3 and narrows, for one
 throwaway case, the rejection in 11A.14.10 item 1.
 
@@ -10357,8 +10376,9 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 
 **DECIDED-pending-review: core's column-R admission is the only gate; the relay neither knows nor decides.**
 
-- **P5 (11A.14.6)** becomes: `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}, or `auth` = `convenience` and
-  `dev_gate(service, ws)` is not `None` (checked before the lock from the start-up proof and the cached S1 to S6, and
+- **P5 (11A.14.6)** becomes: `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}, or `auth` = `convenience` on a
+  `question.answered` (**answers only**, DECIDED with orch-b8 15 Oct 2026: a convenience `ticket.created` stays
+  refused even on the dev gate) and `dev_gate(service, ws)` is not `None` (checked before the lock from the start-up proof and the cached S1 to S6, and
   again at L2 on fresh state). Otherwise `op.not_allowed`, unchanged. A real workspace on any host, and every
   workspace on a normal host, answers exactly as today.
 - **`_signed_by` and the append** (L8) accept `convenience` on column R only when **both** hold (DECIDED (orch-07),
@@ -10409,9 +10429,13 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 #### 11A.17.6 The phone side (requirement 4, orch-f1)
 
 **DECIDED-pending-review.**
-- **Only Simulator builds can sign `convenience`.** The custody is compiled in only under `targetEnvironment(simulator)`
-  and DEBUG; TestFlight and App Store builds have no such code path (they sign `secure-enclave-unlocked` only,
-  11A.14.3). The key is a software P-256 key in the Simulator's keychain, no presence check.
+- **Only Debug Simulator builds can sign `convenience`.** Aligned with orch-f1 (D1): the `SoftwareCustody` key type
+  stays in **every** Simulator build (it is how a Simulator holds a key at all); only the **signing lane** that puts
+  `auth:"convenience"` on an event is compiled in under `targetEnvironment(simulator)` **and** DEBUG. TestFlight,
+  App Store and Release Simulator builds have no convenience signing lane (device builds sign
+  `secure-enclave-unlocked` only, 11A.14.3). The key is a software P-256 key in the Simulator's keychain, no presence
+  check. The phone's tests check that a Release Simulator build and a Debug device build have no convenience signing
+  lane (17.8).
 - **It signs only when the host says so, per workspace.** Before every review the Simulator reads the column-R
   `whoami` of that workspace, never a cached copy (O6, DECIDED (orch-07)); it offers the sign sheet only when
   `relay.dev.sim_convenience` is `true`. A failed read or an absent field →
@@ -10566,6 +10590,84 @@ reserved `SBX` prefix and the normal-host refusal are built.
    (`SBX` ticket keys) but not refused, and an `SBX` workspace already in a normal host's registry would be served.
    D1 closes both (the `admit` refusal and the start-time skip and alarm, D3); do not run `--sim-convenience` before
    D1 merges.
+
+#### 11A.17.11 As built in D1 (16 Oct 2026)
+
+**Where.** `orch.devsandbox` (the sandbox files and the shared manifest check, moved from
+`tests/relay/personkey_sandbox.py`; the writers `write_manifest`, `write_dev_json`, `write_marker` are the ones
+`dev-pair` uses), `orch.host.devmode` (`check_launch`, `prove`, S1 to S6 as `sandbox_reason`, `dev_gate`, its
+lock-free form `gated`, `check_admit`, `refuse_link`, `refuse_push`, `check_registry`), `orch.host.registry.admit`
+(the one choke point). Tests: `tests/host/test_devgate.py`, `tests/host/test_devgate_relay.py` (every test of 17.8
+that is core's), the R2 vector `answer_convenience_refused`.
+
+**The formats `dev-pair` (D2, orch-47) writes** (all 0600 regular files of this UID; `orch.devsandbox` reads them with
+`O_NOFOLLOW` through a pinned directory descriptor and refuses anything else):
+- `<root>/.orch-dev-sandbox`: `{"id": "<8 to 128 lowercase hex>", "root": {"st_dev": int, "st_ino": int},
+  "person_id": "p_<32 hex>", "workspaces": [{"id": "<32 hex>", "st_dev": int, "st_ino": int}]}`. `root` is
+  `<root>`'s own identity, each `workspaces` row the identity of `<root>/ws` (or `ws-<n>`); other keys are ignored.
+  `person_id` and `workspaces` are added after `orch init`, before the host starts.
+- `<root>/state/host/dev.json`: exactly `{"v": 1, "sim_convenience": true, "sandbox_id": "<manifest id>",
+  "root": {"st_dev": int, "st_ino": int}, "relay_origin": "<scheme://host[:port]>"}` (`<root>/state/host` 0700).
+- `<ws>/.state/dev-sandbox.json`: exactly `{"v": 1, "sandbox_id": "<manifest id>", "workspace_id": "<32 hex>"}`.
+- The start: `HOME=<root>/home ORCH_STATE_DIR=<root>/state orch host run --foreground --dev-sim-convenience`
+  (`ORCH_NO_CONVENIENCE` unset for this process only; any non-empty value turns the gate off). Then
+  `orch host register <root>/ws`. The order of 17.3 "Creation" holds: `orch init --prefix SBX` (owner name
+  `orch dev sandbox <id8>`, a fresh state directory) in `<root>/ws` with the manifest already in `<root>`, then the
+  marker, the manifest's `person_id` and `workspaces`, `dev.json`, the host, the registration.
+
+**Judgement calls.**
+1. **Restore and adopt.** No code path adds a restored or adopted workspace to the registry other than
+   `host.register` (a relay restore or a records rebuild produces a root that is then registered), so `admit` has
+   three callers: `host.register`, `host.bootstrap` and its start-up recovery (`registry_add_paths_table` pins
+   them; `Registry.add` is called only by `admit`). `host.bootstrap` also runs the admit check in its validation,
+   before the genesis is appended. A dev host therefore refuses every bootstrap (a new root is in no manifest):
+   `dev-pair` creates the sandbox with a direct-mode `orch init` and registers it.
+2. **The SBX init rules.** "No person identity in `HOME`" is checked as: the state directory holds no
+   `<state>/person/` entry and no `<state>/hosts/*/person/` device key. "The recovery code this init generated" is
+   structural: `_signed_genesis` refuses `SBX` unless its caller passes `generated=True`, which only the two init paths
+   do, with the code `_dialogue` generated. `host.bootstrap` cannot see the code; it accepts `SBX` only on a dev host,
+   with the exact owner name and an owner who is in no registered workspace.
+3. **L2 inside the outcome record's apply.** The fresh `dev_gate` of L2 runs in the column-R job after the outcome
+   record lookup (a replay of a stored outcome answers as stored), under the store lock; its result also refreshes
+   the cached gate P5 reads. A roll forward at open has no L2 token, so a convenience event is refused there (fail
+   closed).
+4. **The P5 alarm** is counted in the bridge after the request's signature verified (P7 run for the alarm only); the
+   refusal code and its order are unchanged (`op.not_allowed`). It counts on every host, not only on a normal one.
+5. **`convenience_block`** (the worker start check) now passes the relay's stored reader level to the `relay.link`
+   rule; before, it passed none, so a workspace with convenience history never restarted its worker even with a
+   level-1 relay. Level 0 (or none) still refuses.
+6. **The start-time registry check** of a dev host opens each registered workspace read-only against its pinned
+   genesis; one that cannot be opened counts as not a sandbox (the start is refused). A normal host skips a
+   workspace when the registry prefix (recorded from the verified genesis at registration) or the unverified genesis
+   line says `SBX` (narrowing only, no store opened at start; a tampered first line breaks the chain anyway) and lists
+   the alarm in `host.list.alarms` and `orch host status`. Column-R `whoami` (fresh `dev_gate`) also refreshes the
+   cached gate P5 reads, so a sandbox that failed a check once is admitted again after the phone's next `whoami`.
+7. **Detail.** `host.dev_refused` carries `detail.reason` (closed, §0.3); `sign.convenience_unavailable` gains the
+   reason `dev_host`. `invalid.input` for `SBX` and for a dev flag in a unit carries no detail (the §0.3 envelope has
+   no `prefix`/`flag` key): the message says it. The unit writers refuse `--dev-sim-convenience`, `--dev-runner`
+   and `--foreground` in any argument (`extra_args`, which nothing passes today).
+8. **S1** compares the workspace root's parent with the sandbox root by `st_dev`/`st_ino` (a registry root is
+   `realpath`ed, a state directory may be reached through a symbolic link above `<root>`).
+
+**Follow-ups of the Opus review (orch-07, APPROVE of `89b59586`), folded in:**
+- The choke point is structural: `Registry` has no public `add`; `Registry._add` and `_save` add nothing without the
+  single-use `AdmitToken` bound to its entry, which only `admit` can make (a module-private key). The AST table stays
+  as an extra check.
+- The host and runner CLIs take no abbreviated option (`allow_abbrev=False` in every subcommand: `--dev-sim` and
+  `--fore` are errors); the unit writers refuse a dev flag by the exact token, `--flag=…` and any prefix of it.
+- `orch host run` marks the process (`devsandbox.mark_dev_process`) right after `prove()`: in a dev host process the
+  click signer's switches refuse (`dev_host`) whatever their state directory or `HOME`. Not redundant: the in-host
+  click paths already refuse through `service.dev`, but the mark also covers a core function called in the host
+  process against another state directory. Only the CLI sets it, never `Host`, so tests that run hosts in-process
+  stay unmarked.
+- `relayr6._convenience_block` passes the stored relay level like `relayhook.convenience_block`; a level drop does not
+  halt the worker (the alarm `relay_reader_old` is the rule, §11A.6 "Foreign appends").
+- `Registry._save` adds a new entry only by consuming the spent `AdmitToken` of `_add` (a direct `_save` cannot).
+- `orch init` declares `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
+  CLI goldens). The other refusing paths (`host.register`, `host.bootstrap`, `relay.link`, a records push) are host
+  ops, not P1 operations, so the code is in the host table and §0.6 for them.
+- `convenience.flag_or_gate` also decides `refuse_reader_op`'s "convenience on" refusal and `observe_relay_level`'s
+  required level (`gated=` from the relay hook).
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

@@ -9342,8 +9342,21 @@ clears an unreadable `outstanding.json`; an unreadable record blocks a new offer
 - J-R6c-9 **A definite relay refusal** of the cert request or of `PUT /v2/devices` (not `request_open`, `replayed`,
   `expired`, `cert_conflict`) ends the offer `failed` and excludes an allocated device.
 - J-R6c-10 **Already in F1** (orch-f1 S3) is `R6PairDeviceSource.allocate_existing(offer)`: the step-9 driver
-  (R6c-2's CLI) calls it before `human.prepare`; it adopts the existing `device.added` (same certificate) as the
-  intent's event, or refuses a removed or revoked id.
+  (R6c-2's CLI) calls it before `human.prepare`; it adopts the existing `device.added` (same certificate, same
+  person) as the intent's event, or refuses a removed or revoked id or one F1 holds for another person.
+- J-R6c-11 **Certificates, at every acceptance point (orch-07's fourth scan flag).** A presented certificate (3.5):
+  `verify_cert` under the pinned owner `PK` at the host clock (signature, exact fields, `device_id` of
+  `dk_sig_pub`, `person_id` of `PK`, not expired), no known revocation (F1 or `HostPins`), and exactly the request's
+  two keys, all before the offer is consumed; the one unverified read is the protocol's `other_person` refusal
+  code (proto §8.3 step 3.5, corpus `pair_with_another_persons_cert`), which only selects the refusal. The v1.7
+  phone ceiling (decide, at most look; N1) is step 8's, as 11A.15.6 places it: the corpus accepts a presented
+  four-scope certificate at 3.5 (`pair_with_existing_cert`), so such an offer ends `failed` after the SAS, before
+  any allocation. Step 8 repeats every check for both paths (7b: `scopes_max` equal to what was requested). A
+  relayed challenge or rejection is kept only after `check_cert_challenge`/`check_cert_rejection` under the pinned
+  `PK` against the stored request (workspace, person, request, offer, attempt, device, `dk_hash`, expiry). **The
+  primary** is accepted only with `verify_cert` at the host clock and `scopes_max == ["look"]` exactly, at
+  `relay.primary_set` and again at every use. Device certificates carry no workspace: the binding to this
+  workspace is the offer (`K_pair`, the gate's `bind`) and the material of step 9.
 
 **Seams for the next groups.**
 - **orch-47 (R6b):** set `orch.host.relaypair.MEMBERSHIP = fn(service) -> MembershipQueue`. `bind(events)` once;

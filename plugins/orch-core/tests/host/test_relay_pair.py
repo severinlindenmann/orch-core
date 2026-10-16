@@ -179,3 +179,34 @@ def test_status_shows_offers_alarms_and_needs_without_a_secret(served, linked):
     rec = engine.store.get(h.offer_id)
     text = repr(st)
     assert rec["secret"] not in text and rec["sas_nonce"] not in text and "orch://" not in text
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda owner, now: _same_person(owner).cert(scopes=("look", "decide")),  # wider than ["look"]
+        lambda owner, now: _same_person(owner).cert(scopes=("look",), created=now - 10_000, expires=now - 1),
+        lambda owner, now: Person().cert(scopes=("look",)),  # another person's key
+        lambda owner, now: {"o": _same_person(owner).cert(scopes=("look",))["o"], "sig": "AAAA"},  # unsigned
+    ],
+)
+def test_primary_set_refuses_every_invalid_primary_certificate(served, linked, make):
+    engine, runner, mem, owner = linked
+    now = int(served.service.clock() * 1000)
+    with pytest.raises(HostError):
+        relaypair.primary_set(served.service, make(owner, now), "x")
+
+
+def test_a_stored_primary_that_expired_or_widened_is_no_primary(served, linked):
+    engine, runner, mem, owner = linked
+    now = int(served.service.clock() * 1000)
+    keys = relayr6.keys_for(served.service)
+    for cert in (
+        _same_person(owner).cert(scopes=("look",), created=now - 10_000, expires=now - 1),
+        _same_person(owner).cert(scopes=("look", "decide")),
+    ):
+        keys.write_primary({"v": 1, "cert": cert, "label": "x", "set_ms": 0})
+        assert engine.host.primary() is None
+        with pytest.raises(PairRefused) as e:
+            engine.offer()
+        assert e.value.code == "relay.no_primary"

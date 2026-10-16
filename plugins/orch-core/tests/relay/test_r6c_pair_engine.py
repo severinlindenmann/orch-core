@@ -1099,3 +1099,108 @@ def test_an_unreadable_outstanding_request_is_cleared_and_alarmed(kit):
     (kit.store.root / "pairing" / "outstanding.json").write_bytes(b"[]")
     kit.engine.recover(lambda i: False)
     assert kit.store.outstanding() is None and "pairing_state_corrupt" in kit.store.alarms()["alarms"]
+
+
+# -- certificate validation at every acceptance point (orch-07: "authentication / certificate validation") -------------
+
+
+def _forged(cert, **o_changes):
+    """The certificate with fields of ``o`` changed and the signature kept (no longer valid)."""
+    return {"o": {**cert["o"], **o_changes}, "sig": cert["sig"]}
+
+
+def _unsigned(cert):
+    return {"o": cert["o"], "sig": crypto.b64u(b"\0" * 64)}
+
+
+@pytest.mark.parametrize(
+    "make, code",
+    [
+        (lambda ph: make_cert(ph, pk_priv=crypto.generate_private_key()), "other_person"),  # another person's key
+        (lambda ph: _forged(make_cert(ph, pk_priv=crypto.generate_private_key()), person_id=OWNER), "cert_invalid"),
+        (lambda ph: _unsigned(make_cert(ph)), "cert_invalid"),  # unsigned
+        (lambda ph: _forged(make_cert(ph), scopes_max=["look"]), "cert_invalid"),  # altered after signing
+        (lambda ph: make_cert(ph, created_ms=T0 - 10_000, expires_ms=T0 - 1), "cert_expired"),
+        (lambda ph: make_cert(Phone(ph.link)), "cert_invalid"),  # a valid cert for other keys
+        (lambda ph: "not a cert", "cert_invalid"),
+    ],
+)
+def test_a_presented_certificate_is_verified_before_the_offer_is_consumed(kit, make, code):
+    h, phone = offer(kit)
+    phone.link = h.link.native
+    got, _, _ = send(kit, phone, phone.meta(cert=make(phone)))
+    assert got == f"refuse:{code}"
+    rec = kit.rec(h.offer_id)
+    assert rec["state"] == "open" and rec["consumed"] is None and kit.host.gates == []  # nothing changed
+
+
+def test_a_revoked_presented_device_is_refused_before_consumption(kit):
+    h, phone = offer(kit)
+    kit.host.revoked_ids.add(phone.device_id)
+    assert send(kit, phone, phone.meta(cert=make_cert(phone)))[0] == "refuse:revoked"
+    assert kit.rec(h.offer_id)["state"] == "open"
+
+
+@pytest.mark.parametrize("scopes", [("look", "decide", "operate"), ("look", "decide", "operate", "type")])
+def test_an_over_scoped_presented_certificate_never_reaches_step_9(kit, scopes):
+    """The protocol accepts it at 3.5 (corpus pair_with_existing_cert carries all four scopes); the v1.7 phone ceiling
+    (N1) is step 8's: the offer ends failed after the SAS, before any allocation, no WK."""
+    h, phone = offer(kit)
+    send(kit, phone, phone.meta(cert=make_cert(phone, scopes=scopes)))
+    assert kit.engine.answer(h.offer_id, code_of(kit, h, phone), True)[0] == "failed"
+    with pytest.raises(PairRefused):
+        kit.engine.facts(h.offer_id)
+    assert kit.membership.additions == [] and "pairing_cert_invalid" in kit.store.alarms()["alarms"]
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda ph: make_cert(ph, pk_priv=crypto.generate_private_key()),  # another person's key
+        lambda ph: _unsigned(make_cert(ph)),
+        lambda ph: make_cert(ph, created_ms=T0 - 10_000, expires_ms=T0 - 1),  # expired
+        lambda ph: make_cert(ph, scopes=("look", "decide", "operate")),  # over the requested ceiling
+        lambda ph: make_cert(Phone(ph.link)),  # other keys
+        lambda ph: _forged(make_cert(ph), device_id="ab" * 16),
+    ],
+)
+def test_the_relays_certificate_at_step_8_is_verified_before_it_is_kept(kit, make):
+    h, phone, req, ch = challenged(kit)
+    phone.link = h.link.native
+    kit.relay.request_state = {"state": "signed", "challenge": ch, "cert": make(phone), "rejection": None}
+    kit.clock.ms += 10_000
+    kit.engine.tick()
+    rec = kit.rec(h.offer_id)
+    assert rec["state"] == "failed" and rec["cert"] is None
+    with pytest.raises(PairRefused):
+        kit.engine.facts(h.offer_id)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"workspace_id": "cd" * 16}, {"person_id": "ef" * 16}, {"request_id": "12" * 16}, {"attempt": "34" * 16},
+     {"offer_id": "56" * 16}],
+)  # fmt: skip
+def test_a_challenge_of_another_workspace_person_request_attempt_or_offer_is_never_stored(kit, change):
+    from .pairkit import pk_sign
+
+    h, phone = confirmed_7b(kit)
+    req = kit.relay.requests[-1]
+    ch = make_challenge(req["o"], phone)
+    bad = pk_sign("sig_cert_challenge", {**ch["o"], **change})
+    kit.relay.request_state = {"state": "challenged", "challenge": bad, "cert": None, "rejection": None}
+    kit.clock.ms += 10_000
+    kit.engine.tick()
+    assert kit.rec(h.offer_id)["challenge"] is None and "relay_misbehaving" in kit.store.alarms()["alarms"]
+
+
+def test_a_rejection_signed_by_another_key_is_never_relayed(kit):
+    from .pairkit import make_rejection
+
+    h, phone, req, ch = challenged(kit)
+    rej = make_rejection(req["o"])
+    forged = {"o": rej["o"], "sig": crypto.b64u(crypto.sign(crypto.generate_private_key(), b"x"))}
+    kit.relay.request_state = {"state": "rejected", "challenge": ch, "cert": None, "rejection": forged}
+    kit.clock.ms += 10_000
+    kit.engine.tick()
+    assert kit.rec(h.offer_id)["state"] == "cert_pending" and kit.rec(h.offer_id)["rejection"] is None

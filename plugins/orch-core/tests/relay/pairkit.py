@@ -259,10 +259,12 @@ def make_rejection(request_o: dict[str, Any]) -> dict[str, Any]:
     return pk_sign("sig_cert_rejection", {"v": 2, "suite": crypto.SUITE_ID, "kind": "cert_rejection", **o})
 
 
-def make_cert(phone: Phone, *, scopes=("look", "decide"), created_ms: int = T0 - 1000, pk_priv=None) -> dict[str, Any]:
+def make_cert(
+    phone: Phone, *, scopes=("look", "decide"), created_ms: int = T0 - 1000, pk_priv=None, expires_ms=None
+) -> dict[str, Any]:
     priv = pk_priv or OWNER_PRIV
     pk = crypto.public_bytes(priv)
     return certs.make_device_cert(
         pk, lambda payload: crypto.sign(priv, payload), dk_sig_pub=phone.sig_pub, dk_kx_pub=phone.kx_pub,
-        label_sealed=secrets.token_bytes(40), created_ms=created_ms, expires_ms=None, scopes_max=list(scopes),
+        label_sealed=secrets.token_bytes(40), created_ms=created_ms, expires_ms=expires_ms, scopes_max=list(scopes),
     )  # fmt: skip

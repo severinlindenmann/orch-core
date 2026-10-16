@@ -924,6 +924,9 @@ class PairEngine:
         path = "7b"
         who = {"pk_pin": crypto.b64u(crypto.pk_pin(self.ctx.owner_pk_pub))}
         if pm.cert is not None:  # step 3.5: a presented certificate
+            # the protocol's order (proto §8.3 step 3.5, corpus pair_with_another_persons_cert): a certificate naming
+            # another person is refused other_person before its signature is checked. That unverified field only
+            # selects the refusal code; nothing is accepted before verify_cert under the pinned owner PK below.
             o = pm.cert.get("o") if type(pm.cert) is dict else None
             if type(o) is dict and o.get("person_id") != self.ctx.owner_person_id:
                 return self._refuse(rec, h, "other_person")

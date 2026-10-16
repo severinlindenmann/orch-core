@@ -54,6 +54,7 @@ LOG = logging.getLogger("orch.host.relaypair")
 #: the R6b seam (orch-47): ``fn(service) -> MembershipQueue``; None until R6b lands (fail closed)
 MEMBERSHIP: Callable[[Any], Any] | None = None
 
+PRIMARY_SCOPES = ("look",)  # the primary's certificate: least privilege, never a member (11A.15.1)
 MAX_DEVICES = 1024  # the member list's cap (11A.15.4): no offer while the relay-reachable devices reach it
 PRIMARY_LABEL_MAX = 80
 
@@ -159,7 +160,7 @@ class HostPairing:
     def primary(self) -> Any:
         """``membership/primary.json`` verified now (11A.15.1, Opus M7), or ``None``."""
         from orch import crypto
-        from orch.identity.certs import check_cert
+        from orch.identity.certs import verify_cert
         from orch.identity.errors import Refused
         from orch.identity.pairing import clean_label
         from orch.relay.r6.pair import PrimaryInfo
@@ -173,8 +174,8 @@ class HostPairing:
         if not isinstance(obj, dict) or set(obj) != {"v", "cert", "label", "set_ms"} or obj["v"] != 1:
             return None
         try:
-            o = check_cert(obj["cert"], _owner_pk(self.service))
-            if o["scopes_max"][0].startswith("drop:") or self.revoked(o["device_id"]):
+            o = verify_cert(obj["cert"], _owner_pk(self.service), int(self.service.clock() * 1000))
+            if o["scopes_max"] != list(PRIMARY_SCOPES) or self.revoked(o["device_id"]):
                 return None
             label = obj["label"]
             if type(label) is not str or clean_label(label) != label or not label:
@@ -396,6 +397,8 @@ class R6PairDeviceSource:
             view = store.state.workspace.devices.get(facts.device)
             if view is None:
                 return False
+            if view.person != facts.person:
+                raise HostError("relay.pair_closed", "F1 holds this device id for another person")
             if view.removed or view.revoked:
                 raise HostError("relay.pair_closed", "this device id was removed or revoked: pair with new keys")
             found = None
@@ -445,7 +448,7 @@ def register(service: Any) -> None:
 def primary_set(service: Any, cert: Any, label: str) -> str:
     """Verify the primary's ``PK``-signed certificate under the genesis ``PK`` (the owner's person, not ``drop:``,
     not revoked), clean the human's label, write ``membership/primary.json``. Returns the primary's device id."""
-    from orch.identity.certs import check_cert
+    from orch.identity.certs import verify_cert
     from orch.identity.errors import Refused
     from orch.identity.pairing import clean_label
 
@@ -453,14 +456,14 @@ def primary_set(service: Any, cert: Any, label: str) -> str:
 
     if _link(service) is None:
         raise HostError("relay.not_linked", "the workspace is not linked to a relay")
-    try:
-        o = check_cert(cert, _owner_pk(service))
+    try:  # under the genesis PK, at the host's clock: signature, keys, ids, not expired
+        o = verify_cert(cert, _owner_pk(service), int(service.clock() * 1000))
     except Refused as e:
         raise HostError(
             "invalid.input", f"the primary's certificate does not verify under the owner key ({e.code})"
         ) from None
-    if o["scopes_max"][0].startswith("drop:"):
-        raise HostError("invalid.input", "a drop: certificate is never a primary")
+    if o["scopes_max"] != list(PRIMARY_SCOPES):
+        raise HostError("invalid.input", 'the primary\'s certificate has scopes_max ["look"] exactly (11A.15.1)')
     if HostPairing(service).revoked(o["device_id"]):
         raise HostError("invalid.input", "the primary's device is revoked")
     if type(label) is not str:

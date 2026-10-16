@@ -13,6 +13,7 @@ import { CopyButton } from '../General'
 import { Raw } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
+import { HostAlarms } from '@/components/dev/DevHost'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -32,6 +33,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const settings = useQuery(queries.hostSettings(workspace.id))
   const identity = useQuery(queries.identity(workspace.id))
   const role = useViewerRole(workspace)
+  const hostInfo = useQuery(queries.hostInfo())
   const { ask, dialog } = useSettingsHandoff(workspace.id)
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
@@ -57,6 +59,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
       <h2 className="text-base font-semibold">General</h2>
+      <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
       <Section title="Workspace">
         <dl className="divide-y divide-border">
           <Row label="Name">

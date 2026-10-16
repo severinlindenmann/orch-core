@@ -18,6 +18,7 @@ import { toastApiError } from '@/app/toast'
 import { queries } from '@/api/queries'
 import { useMandatesOp, useMandatesPreview } from '../mandates/shared'
 import { useWorkspace } from '../workspace'
+import { DevBadge } from '@/components/dev/DevHost'
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
@@ -77,6 +78,7 @@ export function Topbar() {
           {header.title ?? fallback}
         </span>
       </div>
+      <DevBadge />
       <div className="flex-1" />
  {!isRealHost() && (
       <div className="flex items-center gap-1">

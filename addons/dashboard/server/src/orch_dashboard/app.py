@@ -108,6 +108,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def workspaces():
         return gateway.workspaces()
 
+    @app.get("/api/host")
+    def host():
+        return gateway.host_info()
+
     def identity_row(ws):
         link = gateway.enabled(ws)
         return adapters.me(

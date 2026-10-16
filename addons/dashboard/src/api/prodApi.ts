@@ -173,6 +173,7 @@ const reads = {
     return { person: first.person, name: first.name, role }
   },
   getWorkspaces: listWorkspaces,
+  getHostInfo: () => call<unknown>('/api/host'),
   listPeople: async (ws: string): Promise<KnownPerson[]> =>
     ((await listWorkspaces()).find((x) => x.id === ws)?.members ?? []).map((m) => ({ person: m.person, name: m.name, email: '' })),
   getToday: (ws: string) => call<TodayDocument>(`${w(ws)}/today`),

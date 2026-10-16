@@ -74,6 +74,14 @@ export const LAYOUT_SCENARIOS = [
   'signing-terminal-on',
   'signing-unsafe',
   'signing-unknown',
+  // Core D1 (#582): the dev sandbox host. The DEV SANDBOX badge (normal and with a long workspace name), the alarms list,
+  // every host.dev_refused reason, and the signing card on a dev host.
+  'signing-dev-host',
+  'dev-badge',
+  'dev-badge-long',
+  'dev-alarms',
+  'dev-status-failed', // the host status read fails: a neutral "Host status unavailable" cue, never a normal-looking host
+  'dev-refused',
   // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
   'drop-unavailable',
   'drop-list',
@@ -93,7 +101,9 @@ const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
 const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
 const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
 const signingCard = (scenario: LayoutScenario): ClickCard =>
-  scenario === 'signing-on' || scenario === 'signing-unknown'
+  scenario === 'signing-dev-host'
+    ? { custody: 'passphrase', enabled: false, available: false, problem: 'dev_host', switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-on' || scenario === 'signing-unknown'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
     : scenario === 'signing-off'
       ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
@@ -104,6 +114,30 @@ const signingWorkspace = (scenario: LayoutScenario, workspace: Workspace): Works
   prefix: scenario === 'signing-unsafe' ? 'X;rm -rf ~' : SIGNING_LONG_PREFIX,
   click: signingCard(scenario),
 })
+
+// Core D1 fixtures: obvious placeholder ids, never real ones.
+const DEV_WS = 'f'.repeat(32)
+const hostInfoFor = (scenario: LayoutScenario): unknown =>
+  scenario === 'dev-alarms'
+    ? {
+        dev: { sim_convenience: true, sandbox: '0123abcd' },
+        alarms: [
+          { code: 'sandbox_workspace_registered', workspace_id: DEV_WS },
+          { code: 'sandbox_workspace_registered', workspace_id: 'not-a-workspace-id-' + LONG_WORD },
+          { code: 'dev_convenience_refused', count: 3 },
+          { code: 'some_future_alarm' },
+          { code: 'Not a code <b>x</b>' },
+        ],
+      }
+    : scenario === 'dev-badge' || scenario === 'dev-badge-long' || scenario === 'signing-dev-host'
+      ? { dev: { sim_convenience: true, sandbox: '0123abcd' } }
+      : {}
+const DEV_REFUSED_REASONS = ['sandbox_workspace', 'not_sandbox', 'dev_origin', 'dev_host', 'not_foreground', 'service_managed', 'home_not_in_root']
+const devRefusedSamples = () => [
+  ...DEV_REFUSED_REASONS.map((r) => ({ title: `host.dev_refused · ${r}`, error: new ApiError(409, { code: 'host.dev_refused', message: `refused: as the host says it, with a long tail ${LONG_WORD}`, retryable: false, detail: { reason: r } }) })),
+  { title: 'host.dev_refused · a reason this page does not know', error: new ApiError(409, { code: 'host.dev_refused', message: 'refused', retryable: false, detail: { reason: 'brand_new_reason' } }) },
+  { title: 'host.dev_refused · no reason', error: new ApiError(409, { code: 'host.dev_refused', message: 'refused', retryable: false }) },
+]
 
 const quickRow = (i: number, over: Partial<QuickRow> = {}): QuickRow =>
   ({
@@ -464,6 +498,10 @@ function install() {
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
   // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
+  set('getHostInfo', async () => {
+    if (current === 'dev-status-failed') throw new ApiError(502, { code: 'host.unavailable', message: 'fixture: no answer', retryable: true })
+    return hostInfoFor(current)
+  })
   set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
@@ -508,6 +546,8 @@ export function LayoutPreview({ name }: { name: string }) {
     }
     // Nothing of an earlier scenario stays in the cache.
     for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status']) qc.removeQueries({ queryKey: [key] })
+    // The topbar is already mounted and watches this one: it is refetched, not removed.
+    void qc.invalidateQueries({ queryKey: ['host-info'] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
@@ -532,6 +572,18 @@ export function LayoutPreview({ name }: { name: string }) {
           </section>
         )}
       </div>
+    )
+  if (scenario === 'dev-refused')
+    return (
+      <section aria-label="Every dev host refusal (layout preview)" data-testid="dev-refused-gallery" className="max-w-4xl space-y-3">
+        <h2 className="text-base font-semibold">Every dev host refusal (layout preview)</h2>
+        {devRefusedSamples().map((sample) => (
+          <div key={sample.title} data-testid="dev-refused-sample" className="space-y-1">
+            <p className="font-mono text-[12px] text-text-faint">{sample.title}</p>
+            <ClickProblemBox problem={clickProblem(sample.error)} ws={workspace.id} />
+          </div>
+        ))}
+      </section>
     )
   if (scenario === 'convenience-refusals')
     return (
@@ -563,7 +615,7 @@ export function LayoutPreview({ name }: { name: string }) {
     )
   return (
     <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-      <HostGeneral workspace={scenario.startsWith('signing-') ? signingWorkspace(scenario, workspace) : workspace} />
+      <HostGeneral workspace={scenario.startsWith('signing-') ? signingWorkspace(scenario, workspace) : scenario === 'dev-badge-long' ? { ...workspace, name: SIGNING_LONG_NAME, prefix: SIGNING_LONG_PREFIX } : workspace} />
     </SettingsFrame>
   )
 }

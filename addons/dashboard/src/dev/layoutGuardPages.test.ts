@@ -38,3 +38,12 @@ it('the H12d-2 reader scenarios have guard pages, listed and checked', () => {
   }
   expect(selectsRealHost(/readers|refusals/)).toBe(true)
 })
+
+it('the core D1 dev-host scenarios have guard pages, listed and checked', () => {
+  for (const s of ['dev-badge', 'dev-badge-long', 'dev-alarms', 'dev-refused', 'signing-dev-host'] as const) {
+    expect(LAYOUT_SCENARIOS).toContain(s)
+    expect(REAL_HOST_PAGES).toContain(`real-host-${s}`)
+    expect(guard).toContain(`['real-host-${s}', '${s}',`)
+  }
+  expect(selectsRealHost(/dev-/)).toBe(true)
+})

@@ -4,7 +4,7 @@
 import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
-import { refusalOf, refusalSentence } from './refusals'
+import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
 
 /** Verbatim (owner decision, 12 Oct 2026). Also the first line of every sign panel. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
@@ -188,8 +188,10 @@ export function clickProblem(e: unknown): ClickProblem {
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
-      return { title: 'Click-to-sign is not available here', body: `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
+      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
+    case DEV_REFUSED:
+      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
     case 'intent.done':
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
     case 'intent.failed':

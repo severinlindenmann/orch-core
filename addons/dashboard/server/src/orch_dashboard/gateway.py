@@ -257,6 +257,14 @@ class Gateway:
                 result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
         return result
 
+    def host_info(self):
+        """The host-level dev facts (core D1, #582) from the last `host.list`, checked: `dev` and `alarms`, each absent
+        when the host sends none. Never more than the closed shape below reaches the page."""
+        with self.lock:
+            if self.control is None or self.control.sock.fileno() < 0:
+                self.control = HostLink.connect(self.run / "control/host.sock", os.getuid(), None)
+            return adapters.host_info(self.control.call("host.list"))
+
     def call(self, ws, op, args=None):
         return self.enabled(ws).call(op, args)
 

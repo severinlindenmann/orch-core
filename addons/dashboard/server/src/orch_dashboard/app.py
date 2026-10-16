@@ -10,9 +10,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals
+from .adapters.setup import SetupProxy
+from .adapters.setup import register as register_setup
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
-from .gateway import Gateway
+from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
 
@@ -30,7 +32,7 @@ SPA_PATH = re.compile(
 )
 
 
-def create_app(port: int, gateway=None, auth=None, static=None):
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
@@ -141,6 +143,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             "runner": who.runner,
         }
 
+    register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
@@ -159,7 +162,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-        elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
+        elif path in ("", "setup", "favicon.svg") or SPA_PATH.fullmatch(path):
             # The file:// launcher is cross-site too: serve its shell, but forbid
             # automatic session sharing in foreign documents. Missing metadata keeps
             # old-browser compatibility (and cannot protect their foreign loads).

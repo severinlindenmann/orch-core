@@ -40,7 +40,6 @@ __all__ = [
     "REASONS",
     "check",
     "enabled",
-    "refuse_pair_device",
     "pair_gate",
     "flag_path",
     "pending_handoffs",
@@ -50,6 +49,7 @@ __all__ = [
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
+    "refuse_turn_on",
     "set_enabled",
     "unavailable",
     "why",
@@ -156,6 +156,60 @@ def flag_or_gate(service: Any) -> bool:
     return enabled(service.state_dir, service.workspace_id, service.host_uid) or gated(service)
 
 
+#: the way out of a refused switch-on (B10, the lockout fix): update the readers, or stay with the passphrase key
+TURN_ON_ESCAPE = (
+    "update the orch app on those devices (it then declares what it reads) or remove them, then switch click-to-sign "
+    "on again; to stay without it: orch host convenience off --workspace W and, if the key was moved, "
+    "orch keys custody passphrase --workspace W --in-place"
+)
+
+
+def _own_device(state_dir: Path, workspace_id: str) -> str:
+    """This machine's device for the workspace (the public part of its key, no passphrase asked); ``""`` when it cannot
+    be found, so that nothing is excluded and the answer can only be stricter."""
+    try:
+        from orch.identity import device_ref
+        from orch.ops.human import KEY_ID, device_backend
+
+        return device_ref(device_backend(state_dir, workspace_id, convenience=True).public_key(KEY_ID))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, person: str | None = None) -> None:
+    """B10 (the lockout fix): switching click-to-sign on is refused **up front** while any reader of the workspace is
+    below level 1 (an old phone app, ``no_declaration``, a relay too old), naming the devices, instead of leaving the
+    flag on with every click signature refused. The same readers rule as every convenience signature
+    (:func:`why`, with the flag treated as on), read from the verified log and the reader records: the machine's own
+    device is the signer and does not count. Fail closed: a log or record that cannot be read refuses. Raises
+    ``sign.convenience_unavailable`` (reason ``relay_paired`` / ``other_member`` / ``phone_device`` and ``devices``)
+    whose hint names the escape (:data:`TURN_ON_ESCAPE`). The same check runs again at every signature."""
+    from orch.store import Store, StoreError
+
+    wid = entry["workspace_id"]
+    me = person
+    if me is None:
+        me = ((entry.get("peers") or {}).get(str(os.getuid())) or {}).get("person")
+    try:
+        store = Store.open(entry["root"], expected_workspace_id=wid, host_state_dir=None, load="lazy")
+    except StoreError as exc:
+        raise HostError(exc.code, exc.detail or exc.code) from None
+    except (OSError, KeyError) as exc:
+        raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
+    try:
+        with store.locked():
+            store.refresh()
+            mine = _own_device(state_dir, wid)
+            found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
+    finally:
+        store.close()
+    if found is None:
+        return
+    reason, devices = found
+    err = unavailable(reason, devices)
+    raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
+
+
 def refuse_dev_host(state_dir: Path, env: Any = None) -> None:
     """§11A.17.2 F3, D2: the click signer's switches (``orch host convenience on``, the dashboard switch) refuse on
     a dev host's or a sandbox's state, or with ``HOME`` under a sandbox root (``sign.convenience_unavailable``,
@@ -243,11 +297,7 @@ _TEXT = {
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
     "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
     "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
-    "pair_device": "pairing a device (relay.pair_device) is signed in your terminal with your passphrase, never with "
-    "convenience custody",
 }
-#: the fix of ``pair_device`` (11A.15.6 "Convenience custody is refused for pairing"): back to passphrase custody
-PAIR_DEVICE_FIX = "orch keys custody passphrase --workspace W --in-place"
 
 
 def unavailable(reason: str, devices: list[str]) -> HostError:
@@ -261,17 +311,6 @@ def unavailable(reason: str, devices: list[str]) -> HostError:
         f"{reason}: {_TEXT[reason]}{named}",
         hint=hint,
         detail={"reason": reason, "devices": devices},
-    )
-
-
-def refuse_pair_device() -> HostError:
-    """``sign.convenience_unavailable`` with reason ``pair_device`` (H12c-e, 11A.15.6): ``relay.pair_device`` refuses
-    ``auth:"convenience"`` whatever the flag, the readers or any dev opt-in; the fix names passphrase custody."""
-    return HostError(
-        "sign.convenience_unavailable",
-        f"pair_device: {_TEXT['pair_device']}",
-        hint=f"sign it with orch sign CODE; a key converted to convenience custody goes back with {PAIR_DEVICE_FIX}",
-        detail={"reason": "pair_device", "devices": []},
     )
 
 

@@ -910,6 +910,13 @@ class ClickSigner:
             )
         self._custody_budget()
         try:
+            convenience.refuse_turn_on(self.state, entry, uid)  # B10: before any passphrase work or key move
+        except HostError as exc:
+            head = exc.message.split(":", 1)[0]
+            raise ClickError(
+                exc.code, exc.message, reason=head if head in REASONS else None, detail=exc.detail
+            ) from None
+        try:
             before = select.read_selection(self.state, wid)
             self._refuse_pending(convenience, self.state, wid, uid, self.wall)  # early; checked again under the lock
             try:

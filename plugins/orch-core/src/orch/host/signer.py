@@ -93,8 +93,6 @@ def check(
 ) -> None:
     """Refuse (:class:`SignerRefused`) anything the signer cannot vouch for, **before any prompt**. ``device`` and
     ``auth``, when given, must be what the events carry (a bound request)."""
-    if prepared.get("op") == pairdevice.OP and auth == "convenience":  # H12c-e (11A.15.6): the terminal signer only
-        _refuse("relay.pair_device is never signed with convenience custody: sign it with orch sign CODE")
     _shape(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
     _formats(prepared)
     _hashes(prepared, workspace_id)

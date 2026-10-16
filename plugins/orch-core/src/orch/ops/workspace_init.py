@@ -66,6 +66,7 @@ __all__ = [
     "connect_host",
     "create_workspace",
     "create_workspace_hosted",
+    "BootstrapState",
     "open_backend",
     "person_dir",
 ]
@@ -154,6 +155,10 @@ class Terminal:
     def ask_secret(self, prompt: str) -> str:
         """One line from the person with echo off."""
         return self._read(prompt, echo=False)
+
+    def ask(self, prompt: str) -> str:
+        """One line from the person, echoed (``orch setup`` asks the fingerprint words with it)."""
+        return self._read(prompt, echo=True)
 
 
 #: The terminal of this process; tests replace it. Production code never passes another.
@@ -623,6 +628,89 @@ def _bootstrap(
         _sleep(0.25)
 
 
+class BootstrapState:
+    """What a hosted bootstrap leaves for its caller's cleanup: the connection, the workspace id of the key in use, the
+    idem of a bootstrap whose outcome is unknown (its device key is kept) and the definite result."""
+
+    def __init__(self) -> None:
+        self.client: Any = None
+        self.wid: str | None = None
+        self.pending: str | None = None
+        self.result: dict[str, Any] | None = None
+        self.person: str = ""
+
+
+def _hosted_bootstrap(
+    ctx: Context,
+    sd: Path,
+    root: Path,
+    prefix: str,
+    owner_name: str,
+    passphrase: str,
+    code: str,
+    st: BootstrapState,
+    backend_factory: Any = None,
+) -> None:
+    """The ``host.wsk_create`` + ``host.bootstrap`` loop of :func:`create_workspace_hosted`, shared with ``orch setup``
+    (``backend_factory`` opens the device key's backend; ``None`` is :func:`open_backend`, which asks the terminal).
+    State for the caller's cleanup is in ``st``; on a refusal the device key of an undecided outcome is kept."""
+    from orch.host.control_client import new_idem
+
+    try:
+        st.client = connect_host(sd)
+    except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
+        raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
+    for attempt in range(BOOTSTRAP_ATTEMPTS):
+        try:
+            created = _call(st.client, "host.wsk_create", {})
+        except _Lost as lost:
+            raise _unavailable(f"the host connection dropped ({lost})") from None
+        if not created.get("ok"):
+            raise _host_refusal(created.get("error") or {})
+        data = created["result"]["data"]
+        if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
+            raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
+        st.wid = data["workspace_id"]
+        try:
+            wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
+            event, st.person = _signed_genesis(
+                ctx,
+                sd,
+                st.wid,
+                wsk_pub,
+                prefix,
+                owner_name,
+                passphrase,
+                code,
+                generated=True,
+                backend_factory=backend_factory,
+            )
+        except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
+            raise _failure(e) from e
+        request = {
+            "workspace_id": st.wid,
+            "root": str(root),
+            "events": [event],
+            "peers": {str(os.getuid()): {"class": "person", "person": st.person}},
+        }
+        st.pending = new_idem()
+        st.client, st.result, error = _bootstrap(sd, st.client, request, st.pending)
+        st.pending = None  # a definite answer
+        if st.result is not None:
+            return
+        _drop_person(sd, st.wid)
+        st.wid = None
+        if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
+            raise _host_refusal(error or {})
+        TERMINAL.wait(
+            "\nThe host restarted and rolled the new workspace back; its id and key are gone.\n"
+            "Press Enter to sign a new genesis with a new workspace key (your passphrase is asked again): "
+        )
+        if not root.exists():  # the person's directory, re-created as the host requires it (not the umask)
+            os.mkdir(root, 0o700)
+            os.chmod(root, 0o700)
+
+
 def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     """``orch init --host``: the ``host.wsk_create`` + ``host.bootstrap`` composite (§0.8, D-P2-9).
 
@@ -632,7 +720,6 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     sends it. The device key is dropped, and the person told that nothing was created, **only** on a definite answer
     (:func:`_bootstrap`). A bootstrap the host rolled back (``control.rolled_back``) starts again from
     ``host.wsk_create`` after one confirmation on the person's terminal: the new id and key need a new genesis."""
-    from orch.host.control_client import new_idem
 
     root = Path(ctx.workspace._cwd if ctx.workspace is not None and ctx.workspace._cwd else os.getcwd())
     sd = state_dir(ctx.env, ctx.caps.files)
@@ -649,75 +736,29 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
             hints=["run it without --dry-run"],
         )
     shown_secrets = False
-    wid: str | None = None
-    pending: str | None = None  # the idem of a bootstrap whose outcome is unknown: its device key is kept
-    client: Any = None
-    result: dict[str, Any] | None = None
+    st = BootstrapState()
     try:
         with _hangup_as_interrupt():
             shown_secrets = True
             passphrase, code = _dialogue(ctx, owner_name, prefix)
-            try:
-                client = connect_host(sd)
-            except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
-                raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
-            for attempt in range(BOOTSTRAP_ATTEMPTS):
-                try:
-                    created = _call(client, "host.wsk_create", {})
-                except _Lost as lost:
-                    raise _unavailable(f"the host connection dropped ({lost})") from None
-                if not created.get("ok"):
-                    raise _host_refusal(created.get("error") or {})
-                data = created["result"]["data"]
-                if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
-                    raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
-                wid = data["workspace_id"]
-                try:
-                    wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
-                    event, person = _signed_genesis(
-                        ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code, generated=True
-                    )
-                except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
-                    raise _failure(e) from e
-                request = {
-                    "workspace_id": wid,
-                    "root": str(root),
-                    "events": [event],
-                    "peers": {str(os.getuid()): {"class": "person", "person": person}},
-                }
-                pending = new_idem()
-                client, result, error = _bootstrap(sd, client, request, pending)
-                pending = None  # a definite answer
-                if result is not None:
-                    break
-                _drop_person(sd, wid)
-                wid = None
-                if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
-                    raise _host_refusal(error or {})
-                TERMINAL.wait(
-                    "\nThe host restarted and rolled the new workspace back; its id and key are gone.\n"
-                    "Press Enter to sign a new genesis with a new workspace key (your passphrase is asked again): "
-                )
-                if not root.exists():  # the person's directory, re-created as the host requires it (not the umask)
-                    os.mkdir(root, 0o700)
-                    os.chmod(root, 0o700)
+            _hosted_bootstrap(ctx, sd, root, prefix, owner_name, passphrase, code, st)
     except KeyboardInterrupt:
-        _drop_unless_pending(sd, wid, pending)
-        if pending is not None:
-            raise _unavailable("init was interrupted during host.bootstrap", pending) from None
+        _drop_unless_pending(sd, st.wid, st.pending)
+        if st.pending is not None:
+            raise _unavailable("init was interrupted during host.bootstrap", st.pending) from None
         raise _refuse("stop", "init cancelled; nothing was created" + _void(shown_secrets)) from None
     except OrchError as e:
-        _drop_unless_pending(sd, wid, pending)
+        _drop_unless_pending(sd, st.wid, st.pending)
         if shown_secrets and "void" not in e.message and e.code != "host.unavailable":
             e.message += _void(shown_secrets)
         raise
     except BaseException:
-        _drop_unless_pending(sd, wid, pending)
+        _drop_unless_pending(sd, st.wid, st.pending)
         raise
     finally:
-        _close(client)
+        _close(st.client)
     key_line = "the workspace key stays with the orch host, which serves this workspace (orch host list)"
-    return _finish(root, sd, wid, key_line, prefix, owner_name, person, int((result or {}).get("seq", 1)))
+    return _finish(root, sd, st.wid, key_line, prefix, owner_name, st.person, int((st.result or {}).get("seq", 1)))
 
 
 def _drop_unless_pending(sd: Path, wid: str | None, pending: str | None) -> None:
@@ -745,6 +786,7 @@ def _signed_genesis(
     code: str,
     *,
     generated: bool = False,
+    backend_factory: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """The device key (made here, under :func:`person_dir`), its certificate and the delegation of ``wsk_pub``, both
     signed by the person key derived from ``code``, and the genesis ``workspace.created`` signed with the device key.
@@ -763,7 +805,7 @@ def _signed_genesis(
     def pk_sign(payload: bytes) -> bytes:
         return crypto.sign(pk, payload)
 
-    dk_backend = open_backend(person_dir(sd, wid))
+    dk_backend = (backend_factory or open_backend)(person_dir(sd, wid))
     dk_pub = dk_backend.create(DEVICE_KEY, role="device", passphrase=passphrase)
     kx_pub = crypto.public_bytes(crypto.generate_private_key())  # P1 has no key-exchange user (relay is P3)
     person = person_ref(pk_pub)

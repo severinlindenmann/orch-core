@@ -646,6 +646,10 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
     try:
+        if (
+            args.switch == "on"
+        ):  # B10: before the lock (like custody_on): never leave the flag on with every click refused
+            convenience.refuse_turn_on(state, match[0], uid)
         with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
             if args.switch == "on":
                 waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)

@@ -7,8 +7,8 @@ the pairing control ops (``host.relay_pair_*``, ``host.relay_primary_set``).
   can read it", then **stays attached**: it shows the incoming request (the label "named by the device", the scopes,
   a warning when a second key used the link), asks the person to **type** the six characters the phone shows (3
   attempts; an empty line rejects), waits while the separate primary signs the certificate (``--primary external``),
-  drives the ``relay.pair_device`` signature with the inline terminal passphrase signer (step 9; never click or
-  convenience), and shows the progress to ``approved``.
+  drives the ``relay.pair_device`` signature with the inline terminal signer (step 9; the key in its custody:
+  passphrase, or convenience after the typed word, B10; never the click dialog), and shows the progress to ``approved``.
 * ``--primary inline`` (the default, B1b, 11A.15.23) runs the primary steps itself in this process
   (:func:`orch.relay_owner.inline.serve_request`): the primary passphrase, then the owner's recovery code (typed once,
   after the request is verified and shown), then the phone's second code; ``--primary external`` waits for a separate
@@ -392,9 +392,9 @@ def _workspace(state: Path, given: str) -> dict[str, Any]:
 
 
 def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Callable[[str], None]:
-    """Step 9 with the **inline terminal passphrase signer** (the person path, as every person command in host
+    """Step 9 with the **inline terminal signer** (the person path, as every person command in host
     mode: ``human.prepare`` of ``relay.pair_device``, the review on ``/dev/tty``, the device key, ``human.submit``).
-    Never the click signer, never ``auth:"convenience"`` (the host refuses both for this op)."""
+    The key signs in its custody (B10: ``auth:"convenience"`` after the typed word); never the click dialog."""
 
     def run(offer_id: str) -> None:
         from orch.hostclient import Target, _connect, _durable, workspace_socket
@@ -416,7 +416,9 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
         idem = new_idem()
         name = Path(str(entry.get("root") or wid)).name
         try:
-            backend = _device_backend(state, wid)
+            backend = _device_backend(
+                state, wid, convenience=True
+            )  # B10: a key in one-click custody signs it too (word-confirmed)
             device = device_ref(backend.public_key(human.KEY_ID))
             signer.run(
                 _durable(target, link, idem), "relay.pair_device", {"offer_id": offer_id}, backend=backend,

@@ -153,7 +153,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "runner.disabled": {"missing": ("addon", "machine", "terminals")},
     "ticket.key_not_next": {"next_key": None},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
-    "sign.convenience_unavailable": {  # H12c-e: pair_device (relay.pair_device is never convenience-signed)
+    "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (
             "disabled",
             "relay_paired",

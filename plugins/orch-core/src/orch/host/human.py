@@ -607,7 +607,8 @@ class HumanOps:
         material: dict[str, Any] = {"kind": "payload", "ticket": ticket}
         texts: dict[str, str] = {}
         for ev, extra in zip(events, extras, strict=True):
-            for sid in ev.get("sections") or {}:
+            sections = ev.get("sections")
+            for sid in sections if isinstance(sections, dict) else ():  # addon.granted's are declarations (a list)
                 body = extra.get("body") or {}
                 texts[sid] = body.get(sid) or ""
         if texts:

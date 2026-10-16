@@ -828,6 +828,12 @@ verdict's id is in its `prior`); landing needs both on that commit. Turning it o
 only `done` tickets with an open landing; landed or merged tickets stay `done` (the landing addon, P2, supplies
 which is which; in P1 no ticket moves back).
 
+**As built in B5b (16 Oct 2026).** Separation of duties needs a second person. In a workspace with exactly one member the
+token and `not` checks of a decision are waived for that member (a `viewer` still decides nothing), and `gates[].eligible`
+and the `approve` needs list that member; otherwise a solo owner who claimed a ticket (an assignee, never a `reviewer`)
+could never give the `verify` verdict under the default policy. With two or more members nothing changes. `independent`
+is not relaxed (`code` stays unreachable for a sole worker). Adding a second member re-enables the policy as written.
+
 ### 5.8 Edits, `base_rev` and external edits
 
 - **Paths.** `ticket.<key>` for a top-level key of `ticket.json` (`ticket.title`, `ticket.tasks`, …),

@@ -4332,6 +4332,11 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     already holds files; it refuses only a root holding a store name (`config.json`, `keys.jsonl`, `events`, `tickets`,
     `.state`) or `.orch`. The 24-word recovery code is shown numbered (4 rows of 6) and the input accepts the plain or the
     numbered form. No wire, hash, F1 or error-code change.
+70. **B5b: owner-test fixes (16 Oct 2026; §5.7 of the ticket format, "As built in B5b"):** (a) in a workspace with exactly one
+    member that member (not a viewer) may decide every gate; with two or more members the policy applies as written;
+    (b) `worktrees` add-on manifest, and the manifests of start-agent, terminals and worktrees ship in the package:
+    `orch addon manifest <name> [--write WORKSPACE] [--force]`; (c) the workspace `welcome` carries `release` (12 hex of the
+    host's code digest) and the CLI warns on stderr when it differs or is absent. No hash, F1 or error-code change.
 
 ---
 

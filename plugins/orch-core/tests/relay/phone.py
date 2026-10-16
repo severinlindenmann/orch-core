@@ -182,6 +182,17 @@ class HttpNet:
     def bridge_post(self, rid: str, envelope: bytes) -> None:
         self._ok("POST", f"/v2/workspaces/{self.ws}/bridge/{rid}", raw=envelope, auth=True)
 
+    def push_register(self, registration_id: str, token: bytes, *, env: str = "sandbox", topic: str = "io.severin.orch"
+                      ) -> dict[str, Any]:  # fmt: skip
+        """``POST /v2/push/register`` (§19.10) as the logged-in device; the relay's answer, or ``PhoneError``."""
+        body = {"workspace_id": self.ws, "registration_id": registration_id, "env": env, "topic": topic,
+                "token": crypto.b64u(token)}  # fmt: skip
+        return self._ok("POST", "/v2/push/register", body=body, auth=True)  # type: ignore[no-any-return]
+
+    def push_status(self, path: str = "/v2/push/register") -> int:
+        """The HTTP status of an empty-bodied push call (the 404 of a relay without push)."""
+        return self._call("POST", path, body={}, auth=True)[0]
+
     def bridge_answers(self, rid: str, wait_s: float) -> list[bytes]:
         """Every chunk of the rid's mailbox so far (non-consuming), in order."""
         out: list[bytes] = []

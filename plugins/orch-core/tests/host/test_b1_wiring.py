@@ -85,6 +85,9 @@ def test_install_seams_sets_all_four_and_the_membership_seam_once_and_keeps_what
     assert (seams.r6, seams.link_source) == (relayr6.r6, relayr6.link_source)
     assert seams.publisher is relayr3.publisher and callable(seams.unpublished)
     assert relaypair.MEMBERSHIP is relayr6b.membership
+    from orch.host import relaypush
+
+    assert seams.push is relaypush.push  # H13a
     assert relayhook.install_seams() == seams  # idempotent
     mine = lambda s, w: None  # noqa: E731
     monkeypatch.setattr(relayhook, "SEAMS", relayhook.Seams(publisher=mine))

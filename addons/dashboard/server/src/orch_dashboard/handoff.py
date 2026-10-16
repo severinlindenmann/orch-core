@@ -199,7 +199,7 @@ class SettingsSet(Action):
     """`settings.set {set:{grant_hours?, claim_ttl_min?, lease_ttl_min?}}`; `repos` is refused (the Repos addon)."""
 
     action: Literal["settings_set"]
-    grant_hours: Annotated[int, Field(ge=1, le=24)] | None = None
+    grant_hours: Annotated[int, Field(ge=1, le=168)] | None = None  # core GRANT_MAX_HOURS (cross-checked by a test)
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
     #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
@@ -336,8 +336,10 @@ class RunnerGrant(Action):
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 
     action: Literal["runner_grant"]
-    hours: Annotated[int, Field(ge=1, le=12)] = 8
+    hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS; the host holds the workspace cap
     scope: Literal["all", "workable"] = "workable"
+    #: B8 Extend: the runner grant this one replaces (one request, one signature, typed word); the signer revokes it
+    extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
 PrepareBody = Annotated[
@@ -415,7 +417,9 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
-            return "grant", {"hours": action.hours, "scope": action.scope}
+            return "grant", {"hours": action.hours, "scope": action.scope} | (
+                {"extend": action.extend} if action.extend else {}
+            )
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -456,14 +460,35 @@ def expected(action: Action, person: str | None = None):
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
-            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (at most 12 h), and
-            # the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
+            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (the host applies
+            # the workspace setting), and the caller as its person (the actor). Anything else is not shown, so it is
+            # never signed (M7b).
+            if action.extend:  # B8: the new grant, then the revoke of exactly the one named (nothing else, no reason)
+                return lambda ev: (
+                    len(ev) == 2
+                    and ev[0].get("type") == "grant.issued"
+                    and ev[0].get("label") == "runner"
+                    and ev[0].get("verbs") == "agent"
+                    and ev[0].get("hours") == action.hours
+                    and ev[0].get("scope") == action.scope
+                    and set(ev[0]) <= GRANT_ISSUED_KEYS
+                    and ev[1].get("type") == "grant.revoked"
+                    and ev[1].get("grant") == action.extend
+                    and ev[1].get("reason") == "extended"
+                    and person is not None
+                    and all(
+                        isinstance(e.get("actor"), dict)
+                        and e["actor"].get("kind") == "person"
+                        and e["actor"].get("id") == person
+                        for e in ev
+                    )
+                )
             return lambda ev: (
                 one(ev, "grant.issued", label="runner", verbs="agent", hours=action.hours, scope=action.scope)
                 # Review I2: exactly the grant.issued payload (plus the envelope), nothing a future field could add.
                 and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and type(ev[0].get("hours")) is int
-                and 1 <= ev[0]["hours"] <= 12
+                and 1 <= ev[0]["hours"] <= 168
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"

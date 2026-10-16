@@ -148,7 +148,7 @@ def test_the_repo_adapter_strips_credentials_and_forwards_no_path():
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda d: d["settings"].update(grant_hours=25),
+        lambda d: d["settings"].update(grant_hours=169),
         lambda d: d["settings"].update(claim_ttl_min=14),
         lambda d: d["settings"].update(lease_ttl_min="60"),
         lambda d: d.update(gates={"requirements": {"approvers": ["owner"]}}),
@@ -316,7 +316,7 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     [
         {"action": "settings_set"},
         {"action": "settings_set", "grant_hours": 0},
-        {"action": "settings_set", "grant_hours": 25},
+        {"action": "settings_set", "grant_hours": 169},
         {"action": "settings_set", "claim_ttl_min": 14},
         {"action": "settings_set", "claim_ttl_min": 1441},
         {"action": "settings_set", "lease_ttl_min": 4},

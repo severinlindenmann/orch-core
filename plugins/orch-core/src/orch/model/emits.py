@@ -106,4 +106,8 @@ an agent's event covered by ``approve`` or ``import.v1``. ``tests/ops/test_emits
 registry's human operations and pins its digest next to ``EMITS_V1``: replay judges old logs by it, so changing it
 means a new table version, like a change of the emits."""
 
-CURRENT = EMITS_V1
+# B8: differs from V1 only in a HUMAN_ONLY key, so grant-verb verdicts are identical; the model keeps judging by
+# EMITS_V1 and VERSION stays 1. ``grant`` (Extend) also emits the ``grant.revoked`` of the runner grant it replaces.
+EMITS_V2: dict[str, frozenset[str]] = {**EMITS_V1, "grant": frozenset({"grant.issued", "grant.revoked"})}
+
+CURRENT = EMITS_V2

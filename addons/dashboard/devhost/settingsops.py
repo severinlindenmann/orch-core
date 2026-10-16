@@ -22,7 +22,7 @@ from orch.store.render import thaw
 from orch_dashboard.errors import fail
 
 PAGE = 32
-DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
+DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
 GATES = ("requirements", "plan", "verify", "code")
 TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 ROLES = ("owner", "maintainer", "member", "viewer")

@@ -54,8 +54,8 @@ TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
-    "hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
 DEPOSITS = ("confirmed", "rejected", "unknown")

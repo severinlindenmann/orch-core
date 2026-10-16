@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from orch import canon, crypto
+from orch.model.types import GRANT_MAX_HOURS
 
 from .errors import Refused
 
@@ -129,7 +130,7 @@ def check_grant_issued(
     :class:`Refused`:
 
     ``grant.role`` (viewer, or an unknown role); ``grant.scope`` (not ``all``/``workable``, or ``all`` for a member);
-    ``grant.hours`` (not an int, outside 1-24, or above ``grant_hours`` for a member); ``grant.issued_at`` (more than
+    ``grant.hours`` (not an int, outside 1-168, or above ``grant_hours`` for a member); ``grant.issued_at`` (more than
     300 s from ``at``); ``grant.expires_at`` (not ``issued_at + 3600 * hours``); ``grant.verbs``
     (``human_only`` is required, the list is exact operation names and none equals or is a segment of a human-only
     operation; neither ``"agent"`` nor
@@ -137,13 +138,13 @@ def check_grant_issued(
     """
     if role not in ("owner", "maintainer", "member"):
         raise Refused("grant.role", f"{role!r} may not issue grants")
-    if not (type(grant_hours) is int and 1 <= grant_hours <= 24):
+    if not (type(grant_hours) is int and 1 <= grant_hours <= GRANT_MAX_HOURS):
         raise Refused("grant.hours", "grant_hours setting")
     scope, hours = event.get("scope"), event.get("hours")
     if scope not in _SCOPES or (role == "member" and scope != "workable"):
         raise Refused("grant.scope", f"{role} may issue {'workable' if role == 'member' else 'all or workable'} only")
-    if type(hours) is not int or hours < 1 or hours > (grant_hours if role == "member" else 24):
-        raise Refused("grant.hours", f"1 to {grant_hours if role == 'member' else 24}")
+    if type(hours) is not int or hours < 1 or hours > (grant_hours if role == "member" else GRANT_MAX_HOURS):
+        raise Refused("grant.hours", f"1 to {grant_hours if role == 'member' else GRANT_MAX_HOURS}")
     issued = parse_timestamp(event.get("issued_at"))
     if abs(parse_timestamp(at) - issued) > GRANT_SKEW_S:
         raise Refused("grant.issued_at", "more than 300 s from the event time")

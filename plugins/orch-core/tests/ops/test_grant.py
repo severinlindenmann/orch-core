@@ -69,11 +69,15 @@ def test_verbs_scope_and_hours(hws, me):
     e = issued(hws)[-1]
     assert (e["hours"], e["scope"], e["verbs"]) == (2, "all", ["task.done", "log"])
     assert me("grant", "--hours", "0", "--json").err_code == "invalid.input"
-    assert me("grant", "--hours", "25", "--json").err_code == "invalid.input"
+    assert me("grant", "--hours", "169", "--json").err_code == "invalid.input"
+    assert me("grant", "--days", "8", "--json").err_code == "invalid.input"
+    assert me("grant", "--days", "2", "--hours", "3", "--json").err_code == "invalid.input"  # alternatives
+    assert me("grant", "--hours", "25").code == 0  # B8: owners go up to 168 h
+    assert me("grant", "--days", "7").code == 0
     assert me("grant", "--verbs", "approve", "--json").err_code == "invalid.input"  # a human operation is never granted
     assert me("grant", "--verbs", "task", "--json").err_code == "invalid.input"  # exact operation names only
     assert me("grant", "--verbs", "Bad Name", "--json").err_code == "invalid.input"
-    assert len(hws.shown_secrets) == 1  # the refusals showed no secret
+    assert len(hws.shown_secrets) == 3  # the refusals showed no secret (three grants were made)
 
 
 def test_a_member_gets_workable_grants_up_to_the_workspace_hours(hws, me):

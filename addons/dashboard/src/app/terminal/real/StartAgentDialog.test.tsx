@@ -78,7 +78,7 @@ describe('the preview', () => {
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
     expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.')
+    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.')
     expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
   })
 
@@ -176,12 +176,12 @@ describe('the runner grant', () => {
     expect(await screen.findByTestId('runner-grant-needed', {}, T)).toHaveTextContent(text)
   })
 
-  it('issues a deposit grant with hours (at most 12) and scope; confirmed reads the grant and previews again', async () => {
+  it('issues a deposit grant with hours (a length from the list) and scope; confirmed reads the grant and previews again', async () => {
     s.preview.mockResolvedValue(noGrant())
     mount()
     await screen.findByTestId('runner-grant-issue', {}, T)
-    expect(within(card()).getByLabelText('Hours').querySelectorAll('option')).toHaveLength(12)
-    fireEvent.change(within(card()).getByLabelText('Hours'), { target: { value: '12' } })
+    expect(within(card()).getByLabelText('Length').querySelectorAll('option')).toHaveLength(7)
+    fireEvent.change(within(card()).getByLabelText('Length'), { target: { value: '12' } })
     fireEvent.change(within(card()).getByLabelText('Tickets'), { target: { value: 'all' } })
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } }) })
     await issueAndSign()

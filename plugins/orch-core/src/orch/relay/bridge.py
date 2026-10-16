@@ -75,7 +75,7 @@ from .http import Transport, TransportError
 from .keys import BridgeKeys, KeyMissing, Member, R6View, SealRefused
 from .retry import RelayRefused
 from .rids import Rid, RidStore, seq_accept
-from .session import Fenced, Session, SessionError
+from .session import Fenced, LoginHeldOff, Session, SessionError
 from .sign import RelaySigner, SignerRefused
 
 __all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult", "WorkerStop"]
@@ -1125,7 +1125,7 @@ class BridgeLoop:
                     "GET /v2/workspaces/{ws}/host/poll", holder=True, cap=POLL_CAP, deadline_s=POLL_DEADLINE_S,
                     keys={"items", "notices", "next"}, transport=conn,
                 )  # fmt: skip
-            except (TransportError, RelayRefused) as e:
+            except (TransportError, RelayRefused, LoginHeldOff) as e:  # a login hold-off is transient (as publish.py)
                 log.info("relay poll failed: %s", type(e).__name__)
                 self._stop.wait(1.0)
                 continue
@@ -1246,12 +1246,18 @@ class BridgeLoop:
         for attempt in (1, 2):
             try:
                 self.session.renew(deadline_s=AUX_HOLD_DEADLINE_S, transport=conn)
-            except (TransportError, RelayRefused) as e:
+            except TransportError as e:
                 if self._stop.is_set():
                     return
                 if attempt == 2:
                     self._item_failed("renew", e)
-                continue
+                continue  # at once, once more: the failed request closed the connection, the next one opens a new one
+            except (RelayRefused, LoginHeldOff) as e:
+                # the relay's own answer (5xx, 429 with Retry-After) or a login hold-off (60 s after a bad signature,
+                # transient like publish.py's renewal): not hammered, the next tick tries again
+                if not self._stop.is_set():
+                    self._item_failed("renew", e)
+                return
             self._last_poll = self._mono()
             return
 
@@ -1299,8 +1305,8 @@ class BridgeLoop:
                         deadline_s=POST_DEADLINE_S, keys=set(), transport=conn,
                     )  # fmt: skip
                     return "posted"
-                except TransportError:
-                    return "retry"
+                except (TransportError, LoginHeldOff):
+                    return "retry"  # a login hold-off is transient: the same bytes again later (11A.7 backoff)
                 except RelayRefused as e:
                     return classify_post(e)
 

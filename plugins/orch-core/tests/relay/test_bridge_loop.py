@@ -206,3 +206,51 @@ def test_aux_renewal_fenced_still_stops_the_worker(monkeypatch):
     assert _wait(lambda: loop.error is not None, 5)
     assert isinstance(loop.error, Fenced)
     assert loop.join(5)
+
+
+def test_aux_renewal_refusal_and_login_holdoff_wait_for_the_next_tick_and_keep_the_thread(monkeypatch):
+    from orch.relay.retry import RelayRefused
+    from orch.relay.session import LoginHeldOff
+
+    refused = RelayRefused("POST hold", 503, "unavailable", None)
+    loop, sess, clock = _aux_loop(monkeypatch, [LoginHeldOff("held"), refused])
+    t = threading.Thread(target=loop._aux_main, daemon=True)
+    t.start()
+    try:
+        assert sess.ok.wait(5)
+        assert sess.calls == 3  # one attempt per tick: no immediate second attempt after a refusal or a hold-off
+        assert t.is_alive() and loop.error is None
+    finally:
+        loop._stop.set()
+        t.join(5)
+
+
+def test_a_login_holdoff_is_transient_for_the_poster_and_the_poll_loop(monkeypatch):
+    from orch.relay.session import LoginHeldOff
+
+    class S:
+        calls = 0
+
+        def hold(self, **kw):
+            pass
+
+        def call(self, *a, **kw):
+            S.calls += 1
+            raise LoginHeldOff("held")
+
+    bridge = types.SimpleNamespace(
+        post=None, start=lambda: None, rids=types.SimpleNamespace(cursor=lambda: 0), alarm=lambda *a: None,
+        sweep=lambda: None, retry_stuck=lambda: None, flush=lambda: None,
+    )  # fmt: skip
+    loop = BridgeLoop(bridge, S(), conn=lambda: object(), workspace_id=WS)  # type: ignore[arg-type]
+    assert loop._poster(object())("d" * 16, "r" * 16, b"x") == "retry"
+    monkeypatch.setattr(loop, "_spawn", lambda role, fn: None)  # only the poll loop runs here
+    t = threading.Thread(target=loop._poll_main, daemon=True)
+    t.start()
+    try:
+        assert _wait(lambda: S.calls >= 1, 5)
+        time.sleep(1.3)  # the loop pauses 1 s after a failed poll and polls again: it did not stop
+        assert t.is_alive() and loop.error is None and S.calls >= 2
+    finally:
+        loop.stop()
+        t.join(5)

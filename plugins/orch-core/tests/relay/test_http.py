@@ -930,9 +930,11 @@ def test_a_fresh_connection_that_fails_is_not_retried():
         srv.close()
 
 
-def _rst_server(first_answer: bytes | None, *, then_partial: bool):
-    """Answer the first request fully (keep-alive); on the SECOND request on that connection send ``then_partial``'s
-    status-line prefix (or nothing) and reset the connection (RST). Counts the requests that arrived."""
+def _server(second: str):
+    """Per connection, the first request is answered fully (keep-alive). What happens to the SECOND request on that
+    connection (``second``): ``rst_after_first``: the connection is reset right after the first answer (the client's
+    next write fails); ``fin``: the request is read, then a clean close with no bytes; ``partial_status``: ``HTTP/1.1 2``
+    (no CRLF), 0.3 s, RST; ``partial_headers``: a full status line and half a header, RST. Counts parsed requests."""
     import socket
     import struct
 
@@ -940,6 +942,7 @@ def _rst_server(first_answer: bytes | None, *, then_partial: bool):
     srv.bind(("127.0.0.1", 0))
     srv.listen(8)
     hits = []
+    rst = struct.pack("ii", 1, 0)
 
     def serve(s) -> None:
         n = 0
@@ -955,12 +958,21 @@ def _rst_server(first_answer: bytes | None, *, then_partial: bool):
             n += 1
             if n == 1:
                 s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                if second == "rst_after_first":
+                    time.sleep(0.05)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    s.close()
+                    return
                 continue
-            if then_partial:
+            if second == "partial_status":
+                s.sendall(b"HTTP/1.1 2")
+                time.sleep(0.3)
+            elif second == "partial_headers":
                 s.sendall(b"HTTP/1.1 200 OK\r\nContent-Le")
-                time.sleep(0.05)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-            s.close()  # RST
+                time.sleep(0.1)
+            if second != "fin":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, rst)
+            s.close()
             return
 
     def run() -> None:
@@ -975,39 +987,46 @@ def _rst_server(first_answer: bytes | None, *, then_partial: bool):
     return srv, hits
 
 
-def test_a_reset_after_response_bytes_is_never_resent_the_request_may_have_been_processed():
-    srv, hits = _rst_server(None, then_partial=True)
+def _second_call(second: str, *, resend_ok: bool = True):
+    srv, hits = _server(second)
     c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
     try:
         assert call(c).status == 200
-        with pytest.raises(http.TransportError):
-            call(c)
-        assert len(hits) == 2  # the first request, and the second ONCE: not sent a third time
+        time.sleep(0.2)
+        if second == "rst_after_first":
+            c._last_used = c._mono()
+        try:
+            r = c.request("POST", "/v2/x", route="POST /v2/x", headers={}, body=b"{}", deadline_s=5.0, cap=1024,
+                          resend_ok=resend_ok)  # fmt: skip
+            return r, hits
+        except http.TransportError as e:
+            return e, hits
     finally:
         c.close()
         srv.close()
 
 
-def test_a_reset_with_no_response_byte_on_a_reused_connection_is_resent_once_unless_resend_is_off():
-    srv, hits = _rst_server(None, then_partial=False)
-    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
-    try:
-        assert call(c).status == 200
-        c._last_used = c._mono()
-        # the resend lands on a new connection, whose first request is answered
-        assert call(c).status == 200
-        assert len(hits) == 3
-    finally:
-        c.close()
-        srv.close()
-    srv, hits = _rst_server(None, then_partial=False)
-    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
-    try:
-        assert call(c).status == 200
-        with pytest.raises(http.TransportError):
-            c.request("POST", "/v2/x", route="POST /v2/x", headers={}, body=b"{}", deadline_s=5.0, cap=1024,
-                      resend_ok=False)  # fmt: skip
-        assert len(hits) == 2  # a non-idempotent call is never sent twice
-    finally:
-        c.close()
-        srv.close()
+@pytest.mark.parametrize("second", ["partial_status", "partial_headers"])
+def test_a_reset_after_the_request_was_sent_is_never_resent(second):
+    r, hits = _second_call(second)
+    assert isinstance(r, http.TransportError)
+    assert len(hits) == 2  # the first request, and the second exactly once: never sent a third time
+
+
+def test_a_clean_close_after_the_request_was_read_is_resent_once_on_a_new_connection():
+    r, hits = _second_call("fin")
+    assert not isinstance(r, Exception) and r.status == 200
+    assert len(hits) == 3  # first, the second (read, then FIN), its one resend
+
+
+def test_a_reset_while_sending_on_a_reused_connection_is_resent_once():
+    r, hits = _second_call("rst_after_first")
+    assert not isinstance(r, Exception) and r.status == 200
+    assert len(hits) == 2  # the first request; the second never arrived on the dead connection, its resend did
+
+
+@pytest.mark.parametrize("second", ["fin", "rst_after_first"])
+def test_resend_off_never_resends(second):
+    r, hits = _second_call(second, resend_ok=False)
+    assert isinstance(r, http.TransportError)
+    assert len(hits) <= 2 and (second == "rst_after_first" or len(hits) == 2)

@@ -117,50 +117,9 @@ class _Stale(Exception):
     """Internal: a reused connection failed before any response byte (the peer had closed it)."""
 
 
-def _stale(e: BaseException) -> bool:
-    """A failure of the kind a connection the peer closed produces."""
-    return isinstance(e, (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
-
-
-class _CountingFile:
-    """The response's read file, counting every byte received (``counter[0]``): a stale-connection resend is only
-    allowed while NO response byte arrived."""
-
-    def __init__(self, fp, counter: list[int]) -> None:
-        self._fp, self._counter = fp, counter
-
-    def readline(self, *a):
-        d = self._fp.readline(*a)
-        self._counter[0] += len(d)
-        return d
-
-    def read(self, *a):
-        d = self._fp.read(*a)
-        self._counter[0] += len(d)
-        return d
-
-    def read1(self, *a):
-        d = self._fp.read1(*a)
-        self._counter[0] += len(d)
-        return d
-
-    def readinto(self, b):
-        n = self._fp.readinto(b)
-        self._counter[0] += n or 0
-        return n
-
-    def peek(self, *a):
-        return self._fp.peek(*a)
-
-    def close(self) -> None:
-        self._fp.close()
-
-    def flush(self) -> None:
-        self._fp.flush()
-
-    @property
-    def closed(self) -> bool:
-        return self._fp.closed
+def _send_reset(e: BaseException) -> bool:
+    """A failure while WRITING the request to a kept connection the peer had closed."""
+    return isinstance(e, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
 
 
 class RelayConn:
@@ -202,7 +161,6 @@ class RelayConn:
         self._fired = threading.Event()  # the current call's watchdog has fired
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
-        self._rx = [0]
         self._last_used = 0.0  # when the last response was fully read (the idle clock of the kept connection)
 
     def __repr__(self) -> str:
@@ -339,16 +297,6 @@ class RelayConn:
                 except OSError:
                     pass
 
-    def _response_class(self):
-        current = lambda: self._rx  # noqa: E731 - this attempt's counter
-
-        class Counting(http.client.HTTPResponse):
-            def __init__(self, *a, **kw) -> None:
-                super().__init__(*a, **kw)
-                self.fp = _CountingFile(self.fp, current())
-
-        return Counting
-
     def _open(self, timeout: float) -> http.client.HTTPConnection:
         host, port = self.proxy or (self.host, self.port)
         if self._ctx is not None:
@@ -359,7 +307,6 @@ class RelayConn:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         if self.proxy is not None:
             conn.set_tunnel(self.host, self.port)
-        conn.response_class = self._response_class()  # type: ignore[assignment]
         conn._create_connection = self._socket  # type: ignore[attr-defined]  # keep a dup for the watchdog
         established = conn.connect
 
@@ -412,11 +359,12 @@ class RelayConn:
     def _request(self, method, target, route, headers, body, deadline_s, cap, resend_ok=True) -> Response:
         """One call. A kept connection the relay has probably closed is never trusted (stale keep-alive, the relay
         closes an idle one after a few seconds): idle longer than :data:`IDLE_REUSE_S`, it is dropped before sending
-        (proactive); and a reused connection the peer had closed is reopened and the same bytes sent once more within the
-        same deadline (reactive), but only when the failure came while sending, or is a reset / disconnect with ZERO
-        response bytes received, and ``resend_ok`` is true. A reset after the first response byte is never resent (the
-        relay may have processed the request). ``resend_ok`` is false for a call that is not idempotent (the holder
-        acquire, probe and takeover, the login challenge and login)."""
+        (proactive). A reused connection the peer had closed is reopened and the same bytes sent once more within the
+        same deadline (reactive) only when (1) the failure came while WRITING the request (EPIPE / reset before it was
+        fully sent), or (2) the request was fully sent and the answer is ``RemoteDisconnected`` (a clean EOF with an
+        empty status line, the relay's idle FIN). Any other failure after the request was sent (a reset, a partial
+        status line or header block) is never resent: the relay may have processed it. ``resend_ok`` false (the
+        holder acquire, probe and takeover, the login challenge and login: not idempotent) never resends."""
         t0 = self._mono()
         deadline = t0 + deadline_s
         if self._conn is not None and t0 - self._last_used > IDLE_REUSE_S:
@@ -445,7 +393,6 @@ class RelayConn:
         watchdog = threading.Timer(left, expire)
         watchdog.daemon = True
         watchdog.start()
-        rx = self._rx = [0]  # response bytes received by this attempt
         sent = False
         try:
             if self._conn is None:
@@ -486,8 +433,7 @@ class RelayConn:
             self.close()
             if (
                 reused
-                and _stale(e)
-                and (not sent or rx[0] == 0)
+                and (isinstance(e, http.client.RemoteDisconnected) if sent else _send_reset(e))
                 and not (fired.is_set() or self._shut.is_set() or self._mono() >= deadline)
             ):
                 raise _Stale from None

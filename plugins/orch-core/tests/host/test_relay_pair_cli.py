@@ -284,3 +284,26 @@ def test_step_9_runs_the_person_path_with_the_terminal_signer(tmp_path, monkeypa
     entry = {"workspace_id": "a" * 32, "host_uid": os.getuid(), "peers": peers, "root": str(tmp_path), "prefix": "ACME"}
     paircli._step9({}, tmp_path, entry)("c" * 32)
     assert seen == {"op": "relay.pair_device", "args": {"offer_id": "c" * 32}, "auth": "passphrase", "closed": True}
+
+
+def test_the_host_cli_parses_pair_and_primary_and_routes_them(tmp_path):
+    """``orch host relay pair|primary`` through the real argparse front: ORCH_GRANT refused before anything, a list
+    with no host is host.unavailable, stop/start take no subcommand."""
+    from orch.host.cli import main
+    from orch.host.registry import registry_path
+
+    state = tmp_path / "state"
+    reg = registry_path(state)
+    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": "a" * 32, "prefix": "DEMO", "root": "/x"}]})
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(tmp_path / "r")}
+    out = io.StringIO()
+    code = main(["relay", "pair", "--workspace", "DEMO", "--state", str(state), "--primary", "external"],
+                env={**env, "ORCH_GRANT": "x"}, out=out)  # fmt: skip
+    assert code != 0 and "human_only" in out.getvalue()
+    out = io.StringIO()
+    code = main(["relay", "pair", "list", "--workspace", "DEMO", "--state", str(state), "--json"], env=env, out=out)
+    assert code == 9 and "host.unavailable" in out.getvalue()
+    out = io.StringIO()
+    code = main(["relay", "stop", "list", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    assert code != 0 and "invalid.input" in out.getvalue()

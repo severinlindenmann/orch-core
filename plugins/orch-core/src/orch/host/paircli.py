@@ -226,7 +226,11 @@ def main(
     try:
         entry = _workspace(state, args.workspace)
         wid = entry["workspace_id"]
-        with ControlClient(control) as client:
+        try:
+            client = ControlClient(control)
+        except (OSError, ValueError) as exc:  # no socket, nobody listening, or an unsafe socket path
+            raise HostError("host.unavailable", f"the orch host is not reachable ({type(exc).__name__})") from None
+        with client:
             call = _caller(client)
             if args.action == "primary":
                 if sub != "set" or not args.cert or not args.label:

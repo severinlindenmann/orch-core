@@ -133,3 +133,12 @@ def test_no_control_op_reaches_a_settlement_path():
     for op in control.CONTROL_OPS:
         for name in ("settle", "committed", "refused", "recover", "adopt", "precommit", "existing"):
             assert name not in op, op
+
+
+def test_host_status_relay_carries_the_pairing_block(linked):
+    c, wid, service, engine, owner = linked
+    relaypair.primary_set(service, _primary(owner).cert(scopes=("look",)), "Mac")
+    ok(c.call("host.relay_pair_offer", {"workspace_id": wid}))
+    st = relayhook.status(service)
+    assert st is not None and [o["state"] for o in st["pairing"]["offers"]] == ["open"]
+    assert "orch://" not in repr(st)

@@ -390,7 +390,9 @@ class OutboundStore:
         return self._set(key, "state='failed', reason=?, label=''", (reason,), only=("planned", "sealed"))
 
     def sent(self, key: str, accepted: int, now_ms: int) -> bool:
-        return self._set(key, "state='sent', accepted=?, sent_ms=?, reason=NULL, label=''", (accepted, now_ms), only=("sealed",))
+        return self._set(
+            key, "state='sent', accepted=?, sent_ms=?, reason=NULL, label=''", (accepted, now_ms), only=("sealed",)
+        )
 
     def retry(self, key: str, next_ms: int, reason: str) -> bool:
         """The same outer again later: ``attempts + 1``, nothing else changes."""
@@ -418,7 +420,8 @@ class OutboundStore:
 
         def body(db: sqlite3.Connection) -> int:
             return db.execute(
-                "UPDATE push_intent SET state='dropped', reason=?, label='' WHERE state IN ('planned','sealed')", (reason,)
+                "UPDATE push_intent SET state='dropped', reason=?, label='' WHERE state IN ('planned','sealed')",
+                (reason,),
             ).rowcount
 
         with self._lock:

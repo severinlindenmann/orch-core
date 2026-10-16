@@ -18,6 +18,13 @@ Method             Checks before signing                                        
 ``wk_grant``       (R6a) exact field set, the link's workspace, an epoch with a recorded          ``sig_wk_grant``
                    ``wk_commit``, the sealed key's length, the device in the list signed at
                    ``list_seq``; never other bytes for ``(device, epoch)``
+``pair_answer``    (R6c) ORB2 direction 2, **epoch 0**, the link's workspace, ``stream`` an offer  ``sig_bridge``
+                   R6 holds live (non-terminal or within its 10-minute tail: the ``pair_live``
+                   callback, not an import of R6 state), the whole envelope within 64 KiB
+``cert_request``   (R6c) exact field set, the link's workspace, ``person_id`` the pinned owner,  ``sig_cert_request``
+                   ``primary_device_id`` the verified ``primary.json``'s (``primary_device``
+                   callback, re-verified at every call), ``expires_ms - created_ms <= 600 000``;
+                   never other bytes for one ``request_id`` (ledger ``("cert_request", id)``)
 =================  ==========================================================================  ==================
 
 The key comes in as a :class:`WorkspaceKey`, a structural interface (``public_key``, ``sign(payload)``) that
@@ -57,8 +64,8 @@ from . import wire
 from .state import SignLedger
 
 __all__ = [
-    "CARD_FIELDS", "GRANT_FIELDS", "MEMBER_LIST_FIELDS", "EpochKeys", "LinkContext", "RelaySigner", "SignerRefused",
-    "WorkspaceKey",
+    "CARD_FIELDS", "CERT_REQUEST_FIELDS", "GRANT_FIELDS", "MEMBER_LIST_FIELDS", "PAIR_ANSWER_MAX", "EpochKeys",
+    "LinkContext", "RelaySigner", "SignerRefused", "WorkspaceKey",
 ]  # fmt: skip
 
 CARD_FIELDS = frozenset(
@@ -92,6 +99,14 @@ _SEALED_KEY_LEN = crypto.PUB_LEN + 32 + 16
 _MAX_EPOCH = 2**32 - 1
 _MAX_SAFE = 2**53 - 1
 _MAX_MEMBERS = 1024
+# R6c (11A.15.7): a pair answer's whole envelope is at most 64 KiB; a cert request's fields (§8.4, the same set as
+# ``orch.identity.certreq.REQUEST_FIELDS``, pinned equal by a test) and its 10-minute bound
+PAIR_ANSWER_MAX = 65_536
+CERT_REQUEST_FIELDS = frozenset(
+    {"v", "suite", "kind", "request_id", "workspace_id", "person_id", "primary_device_id", "offer_id", "attempt",
+     "device_id", "dk_hash", "created_ms", "expires_ms", "sealed"}
+)  # fmt: skip
+_CERT_PENDING_MS = 600_000
 
 
 def _hex32(v: object) -> bool:
@@ -149,7 +164,10 @@ def _bind(key: WorkspaceKey) -> Callable[[bytes], bytes]:
 class RelaySigner:
     """Purpose-specific WSK signatures for the relay client (11A.2)."""
 
-    __slots__ = ("_burned", "_epochs", "_last_card_seq", "_ledger", "_lock", "_pub", "_sign_bytes", "link")
+    __slots__ = (
+        "_burned", "_epochs", "_last_card_seq", "_ledger", "_lock", "_owner", "_pair_live", "_primary", "_pub",
+        "_sign_bytes", "link",
+    )  # fmt: skip
 
     def __init__(
         self,
@@ -160,6 +178,9 @@ class RelaySigner:
         ledger: SignLedger | None = None,
         last_card_seq: int = 0,
         burned: Callable[[int], bool] | None = None,
+        owner_person_id: str | None = None,
+        primary_device: Callable[[], str | None] | None = None,
+        pair_live: Callable[[str], bool] | None = None,
     ) -> None:
         if type(last_card_seq) is not int or last_card_seq < 0:
             raise SignerRefused("last card_seq")
@@ -169,6 +190,9 @@ class RelaySigner:
         self._last_card_seq = last_card_seq
         self._ledger = ledger
         self._burned = burned
+        self._owner = owner_person_id
+        self._primary = primary_device
+        self._pair_live = pair_live
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -370,4 +394,69 @@ class RelaySigner:
                 return prior[1]
             sig = crypto.b64u(self._sign(L["sig_wk_grant"] + body))
             self._ledger.record("wk_grant", key, digest, sig)
+        return sig
+
+    # -- R6c: pair answers and cert requests (11A.15.7) --------------------------------------------------------------
+
+    def pair_answer(self, header: bytes, body: bytes) -> bytes:
+        """The raw signature of a pair answer (ORB2 direction 2, **epoch 0**) over ``header || body``. ``stream`` must
+        name an offer R6 holds live (``pair_live``: a non-terminal offer or one within its 10-minute tail); the whole
+        envelope is at most 64 KiB. No ledger: answers are stored per ``rid`` instead (``pairing/<offer>.answers``).
+        ``response_chunk`` keeps refusing epoch 0, so neither can pass as the other."""
+        try:
+            h = wire.parse_header(header)
+        except wire.WireError:
+            raise SignerRefused("ORB2 header") from None
+        if h.direction != 2 or h.epoch != 0:
+            raise SignerRefused("not an epoch-0 answer header")
+        if not wire.ct_equal(h.workspace, bytes.fromhex(self.link.workspace_id)):
+            raise SignerRefused("header workspace")
+        if type(body) is not bytes or len(body) < wire.TAG_LEN:
+            raise SignerRefused("body")
+        if wire.HEADER_LEN + len(body) + wire.SIG_LEN > PAIR_ANSWER_MAX:
+            raise SignerRefused("pair answer over 64 KiB")
+        offer = h.stream.hex()
+        if self._pair_live is None or offer == "0" * 32 or self._pair_live(offer) is not True:
+            raise SignerRefused("the stream is not an offer R6 holds live")
+        return self._sign(wire.bridge_signed_bytes(header, body))
+
+    def cert_request(self, o: Mapping[str, Any]) -> str:
+        """The b64u ``sig`` of a cert request over ``"orch/v2/sig/cert-request|" || cj(o)`` (proto §8.4 step 1).
+        ``person_id`` must be the pinned owner and ``primary_device_id`` the device of the verified ``primary.json``
+        (``primary_device()``, which R6 re-verifies under the genesis ``PK`` at every call; ``None``: no valid
+        primary, refused). ``("cert_request", request_id)`` is recorded before the signature leaves: the same bytes
+        get the recorded signature back, other bytes are refused (R6 never re-signs a request: it resends)."""
+        if not isinstance(o, Mapping) or set(o) != CERT_REQUEST_FIELDS:
+            raise SignerRefused("cert request field set")
+        if o["v"] != 2 or o["suite"] != crypto.SUITE_ID or o["kind"] != "cert_request":
+            raise SignerRefused("cert request v, suite or kind")
+        if o["workspace_id"] != self.link.workspace_id:
+            raise SignerRefused("cert request workspace")
+        if not _hex32(o["request_id"]) or not _hex32(o["person_id"]) or not _hex32(o["primary_device_id"]):
+            raise SignerRefused("cert request ids")
+        if self._owner is None or not wire.ct_equal(o["person_id"].encode(), self._owner.encode()):
+            raise SignerRefused("cert request person is not the pinned owner")
+        primary = self._primary() if self._primary is not None else None
+        if type(primary) is not str or not wire.ct_equal(o["primary_device_id"].encode(), primary.encode()):
+            raise SignerRefused("cert request primary is not the verified primary")
+        created, expires = o["created_ms"], o["expires_ms"]
+        if type(created) is not int or type(expires) is not int or not 0 <= created < expires <= _MAX_SAFE:
+            raise SignerRefused("cert request times")
+        if expires - created > _CERT_PENDING_MS:
+            raise SignerRefused("cert request longer than 10 minutes")
+        try:
+            body = canon.dumps(dict(o))
+        except canon.JcsError:
+            raise SignerRefused("cert request is not canonical JSON") from None
+        if self._ledger is None:
+            raise SignerRefused("cert request signing needs a durable sign ledger")
+        digest = crypto.sha256(body).hex()
+        with self._lock:
+            held = self._ledger.get("cert_request", o["request_id"])
+            if held is not None:
+                if not wire.ct_equal(held[0].encode(), digest.encode()):
+                    raise SignerRefused("another cert request was signed with this request_id")
+                return held[1]
+            sig = crypto.b64u(self._sign(L["sig_cert_request"] + body))
+            self._ledger.record("cert_request", o["request_id"], digest, sig)  # durable before the signature leaves
         return sig

@@ -3623,8 +3623,9 @@ class Store:
         device, person, reason, rev, cert, pk_pub = facts
         with self._locked():
             if self._pins is None or self._state is None:
-                _log.info("forwarded revocation (%s, %s) held: no host state", device, person)
-                return "held"
+                raise StoreError(
+                    "store.busy", "no host state yet: the item cannot be judged"
+                )  # no result: R4 reads again
             state = self._state
             have = state.revoked_reason(device, person)
             associated = state.device_person(device) == person

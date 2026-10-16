@@ -5440,7 +5440,7 @@ same backup cannot be detected (inherent to any local state), nor can a block-le
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
 | `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
-| `unpublished.json` | `{v, cursor, scan, gen, last_full_ms, notice, held, scan_held, ack, resume, scan_pages, ack_refusals}` | no | the cursor is acked only after every item up to it is settled by the store; `ack` is the pending ack, cleared only once the relay accepted it (11A.9) |
+| `unpublished.json`, `unpublished.seq` | `{v, cursor, scan, gen, last_full_ms, notice, ack, resume, scan_pages, ack_refusals, scan_unv, held, unverifiable, overflow, person_overflow, first_scan_ms, rebuilding, last_complete_ms, failed_turns, ledger_seq}` and `{seq}` (its mirror, same `relay/` directory) | no | the held LEDGER (11A.9): relay input only adds or raises rows, only the store's own state removes one; the ledger and its mirror are written under one lock, before the ack; `ack` is the pending ack, cleared only once the relay accepted it |
 | `alarms.json` | the H8 counters and open alarms (`host.status`) | no | rewritten atomically |
 
 **Read through the host store, never copied.**
@@ -6984,7 +6984,8 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   security notice hidden by relay behaviour), so the structure changes instead of the paths: the owner's view is a
   **monotone ledger** and the relay is a write-only input to it.
   - **Ledger.** Persisted in `relay/unpublished.json`: `held` (rows), `unverifiable` `{n, first_ms, last_seen_ms,
-    clean_scans}`, `overflow` (a count), `rebuilding` (bool), `last_complete_ms`, `ledger_seq`. A row is keyed by the
+    clean_scans}`, `overflow` (a count), `person_overflow` (a count per person), `rebuilding` (bool), `last_complete_ms`,
+    `first_scan_ms`, `ledger_seq`. A row is keyed by the
     exact `(d_device, p_person)` pair and carries `need` (the reason of the strongest verified item seen for it; required
     strength `revoke_strength(need)`: compromised 2 > lost = retired 1), `ver` (incremented on every raise), the
     item's digest, `at_ms` and a derived `state` (below). At most 4,096 rows (the relay's ever-device quota).
@@ -7033,21 +7034,34 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     it stores a stronger forwarded reason beside a chain record in `upgrade`; a record it REJECTED at its cap exists only
     in the relay's derived view. So: at every start the ledger is seeded (union) from `Store.forwarded_evidence()`, which
     returns each record AND its `upgrade`; and when the ledger file is LOST (missing), unparseable, fails validation, or
-    is OLDER than its mirror (`ledger_seq` below the sequence mirrored beside `HostPins`, written after every ledger
-    save) the host enters `rebuilding`: the ledger starts from the seed, a full read from the start of the relay's view
+    is OLDER than its mirror (`ledger_seq` below the sequence in `relay/unpublished.seq`, the same directory, written
+    after every ledger save, under the same lock) the host enters `rebuilding`: the ledger starts from the seed, a full read from the start of the relay's view
     begins, and `orch host status` is NOT ok ("the held list is being rebuilt") until a COMPLETE full read, started after
-    the loss, finishes with every item given a result (no exception, `more` false). An older backup of the whole state
-    directory (file and mirror together) is undetectable, as for every local state (11A.3).
+    the loss, finishes with every item given a result (no exception, `more` false). The ledger is re-seeded from the
+    store on EVERY such loss (also while the process runs), not only at start. An older backup of the whole state
+    directory (file and mirror together), or BOTH files missing (the whole `relay/` directory removed), is
+    undetectable: it looks like a fresh install (no rebuild until the next start re-seeds), as for every local state
+    (11A.3).
   - **`unverifiable` is sticky (H1).** Relay behaviour never clears it. It is cleared only when BOTH at least 2
     consecutive COMPLETE full scans did not see an unverifiable item (`clean_scans`) AND at least 7 days passed since
     `last_seen_ms`; any sighting resets both. Justification: an unverifiable item carries no verified evidence, a
     relay can withhold anything before first delivery anyway, but the counter exists so the owner sees tampering; a
     single empty or short answer must not erase it, and a week gives the owner time to look. An owner acknowledge
     command is a later option, not in R4.
-  - **Overflow (M5).** At 4,096 rows a new pair is NOT stored: `overflow` +1, an alarm, `orch host status` not ok, and
-    nothing is evicted. Pairs beyond the cap are not tracked, so they are neither settled nor raised; the evidence is
-    in `HostPins` within ITS caps. The overflow count never clears by relay behaviour (those pairs were delivered and
-    not stored); it stays until an owner reset (unreachable by design: 4,096 is the relay's ever-device quota).
+  - **Capacity and overflow (M5, round 5).** Three bounds, none of which evicts a row: at most 4,096 rows; at most
+    256 rows per person (`PERSON_MAX`, HostPins' own per-person bound), so one known key (a removed or compromised
+    member's) cannot crowd out another person's obligation; and a SEPARATE budget of 512 rows in standing
+    `unknown`/`other` (nothing the owner can sign), so such rows can never displace an actionable obligation (the
+    standing of a new row is asked of the store before the caps are applied; actionable rows do not count against that
+    budget). A pair beyond a bound is NOT stored: a visible counter instead (`person_overflow[person]` for the per-person
+    cap, at most 256 persons, the rest in `overflow`; `overflow` for the other two), an alarm `unpublished_overflow`,
+    `orch host status` not ok. Pairs beyond a bound are neither settled nor raised; their evidence is in `HostPins`
+    within ITS caps. The counters never clear by relay behaviour (those pairs were delivered and not listed). With an
+    HONEST relay none of the bounds is reachable (4,096 is its ever-device quota); a hostile relay holding a known
+    person key can fill that person's share and the non-actionable budget, never anyone else's capacity. What the owner
+    can do: rows clear only when the workspace state settles them (a restore that carries the revocation, an owner's
+    `device.revoked`); the counters clear only with an owner reset, and NO reset command exists yet (the fix text says
+    so; a minimal safe command is future work).
   - **Bounded work and store-lock time per aux turn (automated review flags).** Per turn: one page of at most 64 items
     (the relay's own cap, 4 MiB read cap, items over 4 KiB are `unverifiable` before any signature work); each item
     is its OWN worker job, so the store lock is held for ONE item's verification and association, never for a page; the
@@ -7059,8 +7073,10 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     single `worker.job` can still wait without bound (no timeout parameter on `RelayWorker.job`).
   - **Status freshness (M9).** `last_complete_ms` is the end of the last COMPLETE full read. `orch host status` shows its
     age and is NOT ok ("stale") when the worker is linked and the last complete read is older than 2 x 24 h, or when
-    scans keep failing (3 consecutive failed turns in a row after the last complete read: the alarm stays open). A scan in
-    `unpublished_scan_long` slow mode is still fresh while it advances.
+    scans keep failing (3 consecutive failed turns in a row after the last complete read: the alarm stays open). The
+    clock starts at the first scan attempt (`first_scan_ms`) when no scan ever completed. DECIDED: stale means "no
+    COMPLETE scan in 48 h", so a scan in `unpublished_scan_long` slow mode that advances but never completes is stale
+    too (it says so in `orch host status`; the ledger it has already built stays visible).
 
   **Ledger and item states** (rows of the ledger or counters): *no row*; *row `revoke`* (need S); *row `stronger`*
   (need S); *row `other`*; *row `unknown`*; *`unverifiable` n>0*; *`overflow` n>0*; *`rebuilding`*; *stale*; *settled*
@@ -7091,8 +7107,9 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   | A raise racing a settle (judged at need 1, a stronger item raises to 2 before the answer is applied) | the settle is refused (CAS on `(need, ver)`); the row stays, judged again next turn | n/a | none | unchanged | n/a |
   | Crash or exception MID-PAGE at item k | rows of items 1..k-1 are already persisted; nothing is lost | no result for k | the aux guard's one alarm per class | unchanged | NO: no ack, 30 s back-off, the page is read again (`resume` skips what is already held) |
   | An exception inside the judging job | unchanged | none | one alarm per class | unchanged | n/a |
-  | No host state / store closed | judging returns `unknown` for every row, nothing is removed; a new verified item becomes a row `unknown` | `held` | `unpublished_held` | not ok | yes |
-  | Ledger at 4,096 rows and a new pair arrives | NOT stored; `overflow` +1; nothing evicted | `held` | `unpublished_overflow` (once per process) | not ok: "ledger full" (until an owner reset) | yes |
+  | No host state / store closed | judging returns `unknown` for every row, nothing is removed; for a NEW item the store RAISES `store.busy` (no result, never a row for an item it cannot judge): no ack, 30 s back-off, read again | none (an exception) | the aux guard's one alarm per class | unchanged | NO |
+  | Ledger at 4,096 rows, or the person at 256, or a non-actionable row over its 512 budget | NOT stored; `overflow` / `person_overflow[person]` +1; nothing evicted; other persons' and actionable capacity untouched | `held` | `unpublished_overflow` (once per process) | not ok: "overflowed (N pairs not listed)" (until an owner reset: none exists yet) | yes |
+  | A hostile relay holding one known person key floods unknown devices | that person's share (256) and the non-actionable budget (512) fill, then counters; a later REAL obligation of anyone else is still listed | `held` | `unpublished_overflow` | not ok | yes |
   | Scans keep failing (relay unreachable, repeated refusals) or no complete scan for > 48 h | unchanged; `last_complete_ms` ages | none | the existing transport/refusal alarms stay open | NOT ok: "stale: last complete scan <age> ago" | n/a |
 
   - **Invariants (pinned by tests).** (0) Raising a row's `need` uses the comparison injected by `relayr4` (3x3 test

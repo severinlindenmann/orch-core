@@ -1570,7 +1570,7 @@ def test_a_standing_outside_the_closed_set_is_an_error_never_an_answer(state):
 
 def test_the_judging_job_never_covers_more_than_a_batch_of_rows(state):
     n = up.JUDGE_BATCH * 2 + 5
-    items = [_it(dev=f"{i:032x}") for i in range(n)]
+    items = [_it(dev=f"{i:032x}", person=f"{i // 200:032x}") for i in range(n)]
     relay = Relay(state, {None: (items[:64], pos(1), False)})
     c, st, clock, _ = fake(state, relay)
     sizes = []
@@ -1596,7 +1596,7 @@ def test_a_budget_cut_off_carries_the_rest_of_the_ledger_to_the_next_turn(state,
     doc = c.load()[0]
     led = up.Ledger(doc, relayr4.stronger)
     for i in range(n):
-        led.add_or_raise(up.row_of(_it(dev=f"{i:032x}"), 1))
+        led.add_or_raise(up.row_of(_it(dev=f"{i:032x}", person=f"{i // 200:032x}"), 1))
     c._save(doc)  # noqa: SLF001
     judged = []
     real = st.judge
@@ -1612,3 +1612,171 @@ def test_a_budget_cut_off_carries_the_rest_of_the_ledger_to_the_next_turn(state,
 
 def test_the_ledger_is_bounded_and_a_page_is_bounded():
     assert up.LEDGER_MAX == 4096 and up.PAGE_LIMIT == 64 and up.PAGE_CAP == 4 << 20 and up.JUDGE_BATCH <= 256
+
+
+# -- round 5: re-seed on every loss, per-person and non-actionable caps, first-scan stale clock -----------------
+
+
+def test_a_loss_while_the_process_runs_is_reseeded_from_the_store(state):  # F1
+    relay = Relay(state, {None: ([_it()], pos(1), False)})
+    ev = [{"device_id": A, "person_id": P1, "reason": "compromised", "digest": "sha256:" + "5" * 64}]
+    c, _, clock, _ = fake(state, relay, evidence=lambda: ev)
+    c.step()
+    relay.pages[None] = ([], pos(1), False)  # the relay will omit it from now on
+    state.remove(up.FILE)  # the ledger file is lost while the worker runs (its mirror remains)
+    tick(c, clock, 3)
+    assert not c.load()[0]["rebuilding"]  # the rebuild finished ...
+    assert (A, P1) in rows(c)  # ... and the store-backed row is still there
+
+
+def test_a_rebuild_never_completes_on_a_scan_that_started_before_the_loss(state):  # M26
+    relay = Relay(state, {None: ([], pos(1), True), pos(1): ([], pos(2), False)})
+    c, _, clock, _ = fake(state, relay)
+    c.step()
+    old = state.read(up.FILE)
+    assert json.loads(old)["scan"] == pos(1)  # a scan is under way
+    clock.mono += up.BACKOFF_S + 1
+    c.step()  # it completes; the mirror moves on
+    state.write(up.FILE, old)  # an OLDER file (mid-scan) next to the newer mirror: a loss
+    n = gets(relay)
+    clock.mono += up.BACKOFF_S + 1
+    c.step()
+    last_get = [c_ for c_ in relay.calls if c_[0] == "GET"][-1]
+    assert gets(relay) == n + 1 and last_get[1].endswith("unpublished?limit=64")  # from the START, not from pos(1)
+    assert c.load()[0]["rebuilding"] is True and c.load()[0]["scan"] == pos(1)  # still rebuilding: not completed yet
+
+
+def _fill(state, relay_items, **kw):
+    relay = Relay(state, {None: (relay_items, pos(1), False)})
+    c, st, clock, alarms = fake(state, relay, **kw)
+    return c, st, relay, clock, alarms
+
+
+def test_one_person_cannot_crowd_out_another_persons_obligation(state, monkeypatch):  # F2
+    monkeypatch.setattr(up, "PERSON_MAX", 3)
+    flood = [_it(dev=f"{i:032x}", person=P2) for i in range(8)]
+    c, st, relay, clock, alarms = _fill(state, flood[:5])
+    c.step()
+    real = _it(dev=A, person=P1)
+    relay.pages[None] = ([real], pos(1), False)
+    clock.ms += up.FULL_EVERY_MS
+    c.step()
+    doc = c.load()[0]
+    assert len([r for r in doc["held"] if r["person_id"] == P2]) == 3 and doc["person_overflow"] == {P2: 2}
+    assert (A, P1) in rows(c)  # the other person's real obligation keeps its place
+    assert any(a[0] == "unpublished_overflow" for a in alarms)
+    view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
+    assert (
+        view["overflow"] == 2 and relayr4.held_attention("X", view["held"], view)["fix"].count("no reset command") == 1
+    )
+
+
+def test_the_non_actionable_budget_never_displaces_a_settle_able_obligation(state, monkeypatch):  # F2
+    monkeypatch.setattr(up, "NONACTIONABLE_MAX", 3)
+    c, st, relay, clock, alarms = _fill(state, [_it(dev=f"{i:032x}", person=f"{i:032x}") for i in range(6)])
+    for i in range(6):
+        st.kind[(f"d_{i:032x}", f"p_{i:032x}")] = "unknown"  # nothing the owner can sign
+    c.step()
+    assert len(c.load()[0]["held"]) == 3 and c.load()[0]["overflow"] == 3  # the 4th..6th unknown rows are counted
+    relay.pages[None] = ([_it(dev=A, person=P1)], pos(1), False)  # a real, actionable obligation arrives later
+    clock.ms += up.FULL_EVERY_MS
+    c.step()
+    assert rows(c)[(A, P1)]["state"] == "revoke"  # listed: it has its own capacity
+
+
+def test_a_person_overflow_counter_is_bounded_and_survives_a_reload(state, monkeypatch):
+    monkeypatch.setattr(up, "PERSON_MAX", 1)
+    monkeypatch.setattr(up, "PERSON_OVERFLOW_PERSONS", 2)
+    items = [_it(dev=f"{i:032x}", person=f"{i // 2:032x}") for i in range(8)]  # 4 persons, 2 items each
+    c, st, relay, clock, alarms = _fill(state, items)
+    c.step()
+    doc = c.load()[0]
+    assert len(doc["person_overflow"]) == 2 and doc["overflow"] == 2  # the 3rd and 4th person fold into `overflow`
+    assert c.load()[0]["person_overflow"] == doc["person_overflow"]  # persisted
+    doc = json.loads(state.read(up.FILE))
+    doc["person_overflow"] = {"zz": 1}  # damaged: a loss, never a crash
+    state.write_json(up.FILE, doc)
+    assert c.load()[1] is True
+
+
+def test_the_stale_clock_starts_at_the_first_scan_attempt(state):  # F3
+    relay = Relay(state)
+    relay.call = lambda *a, **k: {"items": [], "cursor": pos(1), "more": True} if a[0] == "GET" else {"acked": pos(1)}
+    c, _, clock, _ = fake(state, relay)
+    c.step()
+    doc = json.loads(state.read(up.FILE))
+    assert doc["last_complete_ms"] == 0 and doc["first_scan_ms"] == clock.ms
+    assert up.ledger_view(doc, clock.ms + up.STALE_MS)["stale"] is False
+    assert up.ledger_view(doc, clock.ms + up.STALE_MS + 1)["stale"] is True  # a scan that never completes is stale
+    assert up.ledger_view({"first_scan_ms": 0}, 10**12)["stale"] is False
+    first = clock.ms
+    clock.ms += 5 * up.STALE_MS
+    tick(c, clock, 2)  # later attempts never move the clock's start
+    assert json.loads(state.read(up.FILE))["first_scan_ms"] == first
+
+
+def test_the_status_rows_say_whether_the_owner_can_act(state):  # F4
+    rowd = {"device_id": A, "person_id": P1, "need": "lost", "ver": 1, "digest": "sha256:" + "1" * 64, "at_ms": 1}
+    doc = {"held": [{**rowd, "state": "revoke"}, {**rowd, "device_id": B, "state": "other"}]}
+    view = up.ledger_view(doc, 0)
+    assert [r["actionable"] for r in view["held"]] == [True, False]
+    assert relayr4.held_attention("X", view["held"])["actionable"] is True
+    assert relayr4.held_attention("X", view["held"][1:])["actionable"] is False
+
+
+def test_the_store_raises_without_host_state_instead_of_answering(ws, monkeypatch):  # F4 (M41)
+    from orch.store import StoreError
+
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    monkeypatch.setattr(type(env.store), "_state", property(lambda self: None, lambda self, v: None))
+    with pytest.raises(StoreError) as e:
+        env.store.note_forwarded_revocation(it)
+    assert e.value.code == "store.busy"
+
+
+def test_an_oversized_item_is_refused_before_any_signature_work(ws, monkeypatch):  # M17
+    env, _device, sig_pub = ws
+    big = item(env.owner, sig_pub)  # built with the real signatures, then made too big
+    big["device_cert"]["o"]["label_sealed"] = "A" * 20000
+    for name in ("check_cert", "verify_cert", "verify_revocation"):
+        monkeypatch.setattr(certs, name, lambda *a, **k: pytest.fail("signature work ran"))
+    assert env.store.note_forwarded_revocation(big) == "unverifiable"
+
+
+def test_pair_standings_reads_the_state_under_the_store_lock(ws, monkeypatch):  # M23
+    env, device, _sig = ws
+    entered = []
+    real = env.store._locked  # noqa: SLF001
+
+    def spy():
+        entered.append(1)
+        return real()
+
+    monkeypatch.setattr(env.store, "_locked", spy)
+    env.store.pair_standings([(device, "p_" + crypto.person_id(env.owner.pk_pub).hex(), "lost")])
+    assert entered
+
+
+def test_the_overflow_alone_makes_the_status_not_ok_and_names_it(state):  # M40
+    note = relayr4.held_attention("X", [], {"overflow": 3})
+    assert note is not None and "overflowed (3 pairs" in note["what"] and note["fix"] == relayr4.FIX_OVERFLOW
+
+
+def test_actionable_rows_do_not_use_up_the_non_actionable_budget(state, monkeypatch):
+    monkeypatch.setattr(up, "NONACTIONABLE_MAX", 2)
+    items = [_it(dev=f"{i:032x}", person=f"{i:032x}") for i in range(3)]
+    c, st, relay, clock, _ = _fill(state, items)
+    c.step()  # three actionable rows: more than the non-actionable budget, which they must not count against
+    relay.pages[None] = ([_it(dev=A, person=P1)], pos(1), False)
+    st.kind[("d_" + A, "p_" + P1)] = "unknown"
+    clock.ms += up.FULL_EVERY_MS
+    c.step()
+    assert rows(c)[(A, P1)]["state"] == "unknown" and c.load()[0]["overflow"] == 0
+
+
+def test_an_item_the_store_calls_held_but_judging_calls_settled_makes_no_row(state):
+    relay = Relay(state, {None: ([_it()], pos(1), False)})
+    c, _, alarms = make(state, relay, lambda i: "held", judge=lambda pairs: ["settled"] * len(pairs))
+    c.step()
+    assert rows(c) == {} and alarms == []

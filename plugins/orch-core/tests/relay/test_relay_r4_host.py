@@ -37,7 +37,7 @@ def test_host_status_relay_shows_held_evidence_with_what_to_do(served):  # noqa:
     assert rel["held_evidence"] == [] and rel["attention"] == []
     _write_held(svc, [HELD])
     rel = relayhook.status(svc)
-    assert rel["held_evidence"] == [HELD]
+    assert rel["held_evidence"] == [{**HELD, "actionable": True}]
     (note,) = rel["attention"]
     assert f"d_{'ab' * 16}" in note["what"] and "compromised" in note["what"] and "not published" in note["what"]
     assert "device.revoked" in note["fix"] and "#572" in note["fix"]
@@ -53,7 +53,7 @@ def test_orch_host_status_names_held_evidence_as_a_problem(served):  # noqa: F81
     _reserve(served)
     _write_held(svc, [HELD])
     got = host_status._relay(svc.state_dir, served.wid, UID)  # noqa: SLF001
-    assert got["held"] == [HELD]
+    assert got["held"] == [{**HELD, "actionable": True}]
     rep = {
         "state_dir": "s", "service": None, "host": {"answers": True, "control": "c"}, "here": None, "problems": [],
         "ok": True,

@@ -52,7 +52,11 @@ FIX_UNVERIFIABLE = (
 )
 FIX_REBUILDING = "wait: the held list is being rebuilt by a full read from the relay; it is complete when this clears"
 FIX_STALE = "check the relay link (orch host relay status): the unpublished scans keep failing or are older than 2 days"
-FIX_OVERFLOW = "the held ledger is full (the relay's ever-device quota): an owner reset is needed"
+FIX_OVERFLOW = (
+    "the held ledger, one person's share of it or its non-actionable budget is full: further pairs are counted, not "
+    "listed; rows clear only when the workspace state settles them (an owner signs the stronger device.revoked, or a "
+    "restore carries the revocation); there is no reset command yet"
+)
 
 
 def stronger(new: str, old: str) -> bool:
@@ -167,4 +171,5 @@ def held_attention(
         age = ledger.get("age_s")
         parts.append("the unpublished scan is stale" + (f" (last complete scan {age // 3600} h ago)" if age else ""))
         fixes.append(FIX_STALE)
-    return {"what": f"{prefix}: " + "; ".join(parts), "fix": "; and ".join(fixes)}
+    actionable = any(p.get("state") in ("revoke", "stronger") for p in pairs)
+    return {"what": f"{prefix}: " + "; ".join(parts), "fix": "; and ".join(fixes), "actionable": actionable}

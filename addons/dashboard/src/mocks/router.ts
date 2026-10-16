@@ -605,6 +605,7 @@ export function buildRouter(): MockRouter {
     s.reset(dataset, true)
     return ok({ ok: true })
   })
+  r.add('GET', '/api/host', () => ok({}))
   r.add('GET', '/api/dev/dataset', (s) => ok({ dataset: s.dataset }))
   r.add('POST', '/api/dev/relay/:ws', (s, c) => {
     const res = relaySim(s, c.params.ws, c.body as RelaySimRequest | null)

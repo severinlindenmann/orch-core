@@ -411,15 +411,12 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
         person = ((entry.get("peers") or {}).get(str(os.getuid())) or {}).get("person")
         if not person:
             raise HostError("human_only", "this UID is not mapped to a person in this workspace")
-        directory = human.keys_dir(state, wid)
-        if not (directory / human.KEY_FILE).is_file():
-            raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
         target = Target(wid, host_uid, workspace_socket(env, state, host_uid, wid), "person", state, entry)
         link = [_connect(target)]
         idem = new_idem()
         name = Path(str(entry.get("root") or wid)).name
         try:
-            backend = human.open_backend(directory)
+            backend = _device_backend(state, wid)
             device = device_ref(backend.public_key(human.KEY_ID))
             signer.run(
                 _durable(target, link, idem), "relay.pair_device", {"offer_id": offer_id}, backend=backend,
@@ -464,16 +461,24 @@ def sign_genesis_pin(
     return call("host.relay_genesis_pin_submit", {"workspace_id": workspace_id, "pin": pin})
 
 
+def _device_backend(state: Path, wid: str) -> Any:
+    """The device key's backend by the one lookup every signing path shares (``ops.human.device_backend``)."""
+    from orch.ops import human
+    from orch.ops.errors import OrchError
+
+    try:
+        return human.device_backend(state, wid)
+    except OrchError as exc:
+        raise HostError(exc.code, exc.message) from None
+
+
 def _genesis_pin_run(
     call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path
 ) -> dict:
     from orch.ops import human
 
     wid = entry["workspace_id"]
-    directory = human.keys_dir(state, wid)
-    if not (directory / human.KEY_FILE).is_file():
-        raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
-    backend = human.open_backend(directory)
+    backend = _device_backend(state, wid)
     name = Path(str(entry.get("root") or wid)).name
     return sign_genesis_pin(call, wid, backend=backend, key_id=human.KEY_ID, name=name, confirm=human.review_prompt)
 

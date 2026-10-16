@@ -685,15 +685,12 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
         raise OrchError("invalid.input", f"a file you sign is at most {INLINE_MAX} bytes")
     wire = {n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} or None
     wid = target.workspace_id
-    directory = human.keys_dir(target.state, wid)
-    if not (directory / human.KEY_FILE).is_file():
-        raise OrchError("custody.no_key", "this machine holds no device key of yours for this workspace")
+    backend = human.device_backend(target.state, wid)  # the one key lookup; before connecting
     name = Path(str(entry.get("root") or wid)).name
     conn = _connect(target)
     idem = new_idem()
     link = [conn]
     try:
-        backend = human.open_backend(directory)
         device = device_ref(backend.public_key(human.KEY_ID))
         if dry_run:
             doc = conn.call(

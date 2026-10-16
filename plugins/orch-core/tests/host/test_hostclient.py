@@ -670,4 +670,27 @@ def test_every_signing_path_uses_one_device_key_lookup(tmp_path, monkeypatch):
     conv = object()
     monkeypatch.setattr(select, "read_selection", lambda s, w: {"custody": "convenience", "transition": None})
     monkeypatch.setattr(select, "device_backend", lambda s, w: (conv, None))
-    assert ops_human.device_backend(tmp_path, wid) is conv
+    assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv
+
+
+def test_a_key_in_convenience_custody_is_refused_outside_the_hosted_path(tmp_path, monkeypatch):
+    """Direct mode and the genesis pin / device pairing are passphrase-only; only the hosted CLI path (the host checks
+    the flag) may use the convenience backend."""
+    import pytest
+
+    from orch.custody import select
+    from orch.host import paircli
+    from orch.host.errors import HostError
+    from orch.ops.errors import OrchError
+
+    wid = "ab" * 16
+    conv = object()
+    monkeypatch.setattr(select, "read_selection", lambda s, w: {"custody": "convenience", "transition": None})
+    monkeypatch.setattr(select, "device_backend", lambda s, w: (conv, None))
+    with pytest.raises(OrchError) as e:
+        ops_human.device_backend(tmp_path, wid)  # what direct-mode Human.backend calls
+    assert e.value.code == "custody.no_key" and "one-click custody" in e.value.message and e.value.hint
+    with pytest.raises(HostError) as h:
+        paircli._device_backend(tmp_path, wid)  # genesis pin and pair_device
+    assert h.value.code == "custody.no_key"
+    assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv  # hosted CLI path

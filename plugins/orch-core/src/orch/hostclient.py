@@ -685,7 +685,7 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
         raise OrchError("invalid.input", f"a file you sign is at most {INLINE_MAX} bytes")
     wire = {n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} or None
     wid = target.workspace_id
-    backend = human.device_backend(target.state, wid)  # the one key lookup; before connecting
+    backend = human.device_backend(target.state, wid, convenience=True)  # the one key lookup; before connecting
     name = Path(str(entry.get("root") or wid)).name
     conn = _connect(target)
     idem = new_idem()

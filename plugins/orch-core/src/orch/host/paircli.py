@@ -461,15 +461,15 @@ def sign_genesis_pin(
     return call("host.relay_genesis_pin_submit", {"workspace_id": workspace_id, "pin": pin})
 
 
-def _device_backend(state: Path, wid: str) -> Any:
+def _device_backend(state: Path, wid: str, *, convenience: bool = False) -> Any:
     """The device key's backend by the one lookup every signing path shares (``ops.human.device_backend``)."""
     from orch.ops import human
     from orch.ops.errors import OrchError
 
     try:
-        return human.device_backend(state, wid)
+        return human.device_backend(state, wid, convenience=convenience)
     except OrchError as exc:
-        raise HostError(exc.code, exc.message) from None
+        raise HostError(exc.code, f"{exc.message}; {exc.hint}" if exc.hint else exc.message) from None
 
 
 def _genesis_pin_run(
@@ -478,7 +478,7 @@ def _genesis_pin_run(
     from orch.ops import human
 
     wid = entry["workspace_id"]
-    backend = _device_backend(state, wid)
+    backend = _device_backend(state, wid)  # passphrase custody only: the passphrase follows the typed word
     name = Path(str(entry.get("root") or wid)).name
     return sign_genesis_pin(call, wid, backend=backend, key_id=human.KEY_ID, name=name, confirm=human.review_prompt)
 
@@ -553,7 +553,7 @@ def _primary_set_args(state: Path, entry: Mapping[str, Any], args: Any) -> tuple
         try:
             owner = owner_pk_from_workspace(state, entry)
         except _Fail as exc:
-            raise HostError(exc.code, exc.message) from None
+            raise HostError(exc.code, f"{exc.message}; {exc.hint}" if exc.hint else exc.message) from None
         if o.get("person_id") != crypto.person_id(owner).hex():
             raise HostError("invalid.input", "the stored certificate is not for the workspace owner's person")
         _link_origin_check(state, entry)

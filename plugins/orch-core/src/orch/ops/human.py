@@ -71,11 +71,13 @@ def open_backend(directory: Path) -> Backend:
 NO_KEY = "this machine holds no device key of yours for this workspace"
 
 
-def device_backend(state_dir: Path, workspace_id: str) -> Backend:
+def device_backend(state_dir: Path, workspace_id: str, *, convenience: bool = False) -> Backend:
     """The one lookup of this person's device key for a workspace, for every signing path (the CLI's human ops, the
     pairing and genesis-pin commands, the hosted ``Human``). The key is where ``orch init`` put it (:func:`keys_dir`,
     the passphrase backend) unless the person moved it to convenience custody (``custody.select``), in which case the
-    passphrase file is gone and the selection names the backend. Refuses with ``custody.no_key`` when there is none."""
+    passphrase file is gone and the selection names the backend. Only the hosted path (``convenience=True``: the host
+    checks the flag at prepare, bind and submit) may use that backend; direct mode and the genesis pin are
+    passphrase-only and refuse a key in one-click custody. Refuses with ``custody.no_key`` when there is none."""
     from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
     from orch.custody.select import device_backend as resolve
     from orch.custody.select import read_selection
@@ -83,6 +85,12 @@ def device_backend(state_dir: Path, workspace_id: str) -> Backend:
     try:
         sel = read_selection(state_dir, workspace_id)
         if sel is not None and (sel["custody"] == "convenience" or sel["transition"] is not None):
+            if not convenience:
+                raise OrchError(
+                    "custody.no_key",
+                    f"{NO_KEY} that this command may use: the key is in one-click custody",
+                    hint="use the dashboard or `orch host register`, or `orch keys custody passphrase --in-place`",
+                )
             return resolve(state_dir, workspace_id)[0]
     except KeyNotFound:
         raise OrchError("custody.no_key", NO_KEY) from None

@@ -88,10 +88,24 @@ STANDINGS = ("settled", "stronger", "revoke", "other", "unknown")  # Store.pair_
 _POSITION = re.compile(r"[A-Za-z0-9_-]{1,512}")  # an opaque b64u position, put into a query string unescaped
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _SIG = re.compile(r"[0-9a-f]{64}")
+#: relay codes this module handles or can name; any other relay text reaches an alarm/status detail only as "other"
+KNOWN_CODES = frozenset({
+    "cursor_ahead", "rate_limited", "malformed", "bad_request", "unauthorized", "forbidden", "not_found", "conflict",
+    "unavailable", "internal", "not_holder", "fenced", "too_large",
+})  # fmt: skip
 _HEX16 = re.compile(r"[0-9a-f]{16}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _REASONS = ("compromised", "lost", "retired")  # the revokeReason enum; any other text is shown as "unknown"
 _ROW_KEYS = {"device_id", "person_id", "need", "ver", "digest", "at_ms", "state"}
+
+
+def safe_code(code: object) -> str:
+    """A relay refusal code as it may appear in an alarm or status detail: a member of ``KNOWN_CODES`` or ``other``."""
+    return code if type(code) is str and code in KNOWN_CODES else "other"
+
+
+def safe_status(status: object) -> int:
+    return status if type(status) is int and 100 <= status <= 599 else 0
 
 
 def _position(value: object) -> str:
@@ -645,9 +659,9 @@ class UnpublishedConsumer:
             return
         self._failed(st, led)
         if e.status == 429:
-            self._backoff("unpublished_rate_limited", str(e.code), float(e.retry_after or RATE_LIMIT_S))
+            self._backoff("unpublished_rate_limited", safe_code(e.code), float(e.retry_after or RATE_LIMIT_S))
             return
-        self._backoff("unpublished_refused", f"{e.status} {e.code}", BACKOFF_S)
+        self._backoff("unpublished_refused", f"{safe_status(e.status)} {safe_code(e.code)}", BACKOFF_S)
 
     def _backoff(self, code: str, detail: str, seconds: float) -> None:
         self._not_before = self._mono() + max(1.0, seconds)

@@ -1873,3 +1873,42 @@ def test_the_quiet_person_cap_does_not_count_that_persons_actionable_rows(state,
     clock.ms += up.FULL_EVERY_MS
     c.step()
     assert rows(c)[(A, P2)]["state"] == "unknown" and c.load()[0]["person_overflow"] == {}
+
+
+JUNK = "\x1b[2J" + "x" * 300
+
+
+@pytest.mark.parametrize("status", [429, 500, 400])
+def test_a_relay_refusal_code_reaches_the_alarm_only_as_a_known_code_or_other(state, status):
+    relay = Relay(state)
+    relay.fail[GET] = RelayRefused(status, JUNK, retry_after=5)
+    c, _, _, alarms = fake(state, relay)
+    c.step()
+    code, detail = alarms[0]
+    assert "\x1b" not in detail and "xxx" not in detail and detail.split()[-1] == "other"
+    assert up.safe_code("unavailable") == "unavailable" and up.safe_code(JUNK) == "other" and up.safe_code(5) == "other"
+    assert up.safe_status(JUNK) == 0 and up.safe_status(429) == 429
+
+
+def test_no_alarm_or_status_detail_is_built_from_a_raw_relay_string():
+    import ast
+    import inspect
+
+    from orch.host import relayr4
+
+    for mod in (up, relayr4):
+        tree = ast.parse(inspect.getsource(mod))
+        for n in ast.walk(tree):
+            if (
+                isinstance(n, ast.Attribute)
+                and n.attr == "code"
+                and isinstance(n.value, ast.Name)
+                and n.value.id == "e"
+            ):
+                parent_src = ast.unparse(n)
+                assert parent_src == "e.code"
+        src = inspect.getsource(mod)
+        for line in src.splitlines():
+            if "_backoff(" in line or "self._alarm(" in line:
+                assert "e.code" not in line.replace("safe_code(e.code)", ""), line
+                assert "str(e" not in line, line

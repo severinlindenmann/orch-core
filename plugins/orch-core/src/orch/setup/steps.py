@@ -288,6 +288,7 @@ class Creator:
         self._shown = False  # the passphrase was shown on the terminal (once)
         self._typed = False  # the person typed it in Finish: never shown back
         self._custody_done = False
+        self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
     # -- the public entry
     def execute(self) -> None:
@@ -325,7 +326,13 @@ class Creator:
         the conversion is done (a signing mismatch, a host error, Ctrl-C, an internal error) leaves the only device key
         under it, so it is shown ONCE on the terminal before it is wiped. Residual: SIGKILL/SIGHUP of the setup process
         cannot run this (R6 notes); the recovery code is then the way back to the person key."""
-        if self.mode == "new" and self.profile["method"] == "click" and self.wid is not None and not self._custody_done:
+        # _genesis_started, not wid: an unknown bootstrap outcome keeps the device key and it may still land
+        if (
+            self.mode == "new"
+            and self.profile["method"] == "click"
+            and self._genesis_started
+            and not self._custody_done
+        ):
             with contextlib.suppress(Exception):
                 self._show_passphrase_once()
 
@@ -382,6 +389,7 @@ class Creator:
             self.run.set(s, "doing")
         self._passphrase = self.secrets.passphrase()
         code = self.secrets.code()
+        self._genesis_started = True
         try:
             g = self.ports.genesis(root=self.root, profile=self.profile, passphrase=self._passphrase, code=code)
         finally:

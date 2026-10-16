@@ -290,11 +290,15 @@ def test_high1_ctrl_c_after_the_genesis_in_click_mode_shows_the_passphrase_once(
     _once_on_the_tty_only(f, ports, p)
 
 
-def test_high1_a_failure_before_the_genesis_shows_nothing_and_a_terminal_run_never_does(tmp):
+def test_high1_an_unknown_genesis_outcome_in_click_mode_shows_the_passphrase_once(tmp):
+    """The bootstrap may still land after an unknown outcome (the device key is kept): the passphrase must be shown."""
     ports = FakePorts()
-    ports.fail_genesis = SetupError("host.unavailable", "no orch host answers", 500)
+    ports.fail_genesis = SetupError("host.unknown", "the host did not answer", 500)
     f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
-    assert not any(ports.passphrase_seen in t for t in ports.terminal.shown)
+    _once_on_the_tty_only(f, ports, p)
+
+
+def test_high1_a_terminal_run_never_shows_the_passphrase_on_failure(tmp):
     ports = FakePorts()
     ports.fail_submit = 1
     f, ports, p, _ = run_ok(tmp, PROFILE, ports=ports)  # terminal method: the person already has the passphrase

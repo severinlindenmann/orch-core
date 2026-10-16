@@ -226,3 +226,24 @@ def test_the_pair_thread_attaches_the_session_and_returns_to_dormant_on_stop(ser
     assert isinstance(engine.membership, UnavailableMembership) and not engine.membership.ready()
     with pytest.raises(Exception):  # noqa: B017 - the dormant routes answer retry
         engine.routes.put_device("ab" * 16, {})
+
+
+def test_past_the_deadline_an_unlanded_intent_settles_failed_under_the_store_lock(served, human, linked, monkeypatch):
+    engine, runner, mem, owner = linked
+    h, phone, cert = _certified(served, engine, owner)
+    prepared = human.prepare("relay.pair_device", {"offer_id": h.offer_id})
+    signed = human.sign(prepared)
+    # the intent is recorded and the host dies before the append (the append is refused here)
+    monkeypatch.setattr(served.service.store, "append", lambda *a, **k: (_ for _ in ()).throw(OSError("crash")))
+    monkeypatch.setattr(relaypair.R6PairDeviceSource, "refused", lambda self, a, e: None)
+    res = human.submit_res(prepared["request"]["id"], signed.events)  # the simulated crash: an internal error
+    assert not res.get("ok")
+    monkeypatch.undo()
+    monkeypatch.setattr(relaypair.HostPairing, "offer_blocked", lambda self: None)
+    rec = engine.store.get(h.offer_id)
+    assert rec["intent"] is not None and rec["state"] == "cert_pending"
+    later = rec["phone_deadline_ms"] + 1
+    monkeypatch.setattr(engine, "now_ms", lambda: later)
+    engine.tick()
+    assert engine.store.get(h.offer_id)["state"] == "failed"
+    assert served.service.store.state.workspace.devices.get("d_" + phone.device_id) is None

@@ -235,6 +235,14 @@ class HostPairing:
             return None
         return {"n": held["o"]["n"], "hash": canon.checkpoint_hash(held["o"])}
 
+    def settle(self, fn: Callable[[Callable[[Any], bool]], Any]) -> Any:
+        """``fn(landed)`` under the store lock: no submit is between its precommit and its append meanwhile."""
+        store = self.service.store
+        if store is None:
+            return None
+        with store.locked():
+            return fn(lambda intent: _landed(self.service, intent))
+
 
 class _NoRelay:
     """The dormant engine's relay: every route is ``retry`` (nothing leaves while no worker runs)."""

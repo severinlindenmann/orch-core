@@ -9332,6 +9332,27 @@ before anything acts on the new state. **Fail closed at open:** `quarantine()` t
 corrupt record into a terminal `failed` record with no secret (alarm `pairing_state_corrupt`, a `needs` item), and
 clears an unreadable `outstanding.json`; an unreadable record blocks a new offer until then.
 
+**Opus review of #588 (16 Oct 2026, CHANGES; fixed).**
+- **Step 9 is exclusive (item 1, DECIDED).** Once the allocation intent is recorded, no tick, cancel, relay answer
+  or deadline may end or change the offer: `_commit` refuses every edge out of `confirmed`/`cert_pending` and every
+  field change but the intent's own unless the write carries the host-settlement token (`SETTLEMENT_EDGES`: to
+  `allocated` or `failed`), and `allocated` always needs it. The settlement paths are `committed` (→ `allocated`),
+  `refused` (→ `failed`), the open-time `recover`, and, past the phone's deadline, the tick's `settle`, which runs
+  through `PairHost.settle` **under the store lock** (no submit can be between its precommit and its append) and
+  settles by the log: the intent's event landed → `allocated`, else `failed` (a later resubmit fails precommit and
+  appends nothing). `cancel` refuses `relay.pair_closed` meanwhile.
+- **A verified certificate in hand wins over the relay (item 2):** no poll, and a relay `expired` or rejection is
+  ignored; only the host's deadline or settlement applies.
+- **An equal-repeat precommit runs the step-9 state and deadline checks first (item 3).**
+- **`recover` goes on past a failing offer (item 4)**: alarm `pairing_recovery_failed` and a `needs` item. A
+  re-admitted device whose write-once `devices/<id>.json` names the same identity (device, person, certificate,
+  scopes) keeps the stored record; other content is alarmed `pairing_device_conflict`, never overwritten, and the
+  offer fails with a `needs` item (the F1 device is removed by the human).
+- **An offer without `decide` is refused at step 1 (item 5, DECIDED)**: the phone ceiling is look+decide and answers
+  need decide (§11A.14), so the primary is never asked for a look-only phone certificate.
+- **An approved record becomes a tombstone after 7 days (item 6)**: `is_live` turns false and the signer's gate
+  closes for that offer. `OfferHandle` also refuses `copy`/`deepcopy`.
+
 **Judgement calls (fail closed).**
 - J-R6c-1 **The answers side file is keyed by `(device, rid)`** with the request's digest (as R2's rid store): the
   corpus case `pair_resend_then_other_key` sends another device's request under an answered `rid`. Other bytes under
@@ -9353,7 +9374,7 @@ clears an unreadable `outstanding.json`; an unreadable record blocks a new offer
   `pairing_cert_conflict`, `pairing_device_refused`, `pairing_publication_refused`, `pairing_publication_mismatch`,
   `pairing_baseline_missing`, `pairing_baseline_quota`, `pairing_state_corrupt`, `relay_misbehaving`.
 - J-R6c-6 **`devices/<id>.json` carries `scopes` and `event_id`** (the reviewed allocation's), and `paired_ms` is the
-  intent's time, so a roll-forward rewrites the identical write-once record.
+  intent's time, so a roll-forward rewrites the identical write-once record (a re-admission: Opus item 4 above).
 - J-R6c-7 **The step-9 code**: the SAS on 7a, `cert_code` of the verified stored challenge on 7b (`relay.pair_cert`
   may hand the challenge with the certificate, Opus L4). No challenge recorded: `facts` refuses.
 - J-R6c-8 **The baseline** is the host's held checkpoint (`HostPins.held()`, `canon.checkpoint_hash`), or the

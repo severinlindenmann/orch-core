@@ -91,6 +91,13 @@ class FakeHost:
     def checkpoint(self):
         return self.cp
 
+    #: the host's view of the log for the recorded intent (the store lock is the caller's in production)
+    landed_fn: Callable[[Any], bool] = staticmethod(lambda intent: False)
+
+    def settle(self, fn):
+        self.settled = getattr(self, "settled", 0) + 1
+        return fn(self.landed_fn)
+
 
 class FakeRelay:
     def __init__(self) -> None:

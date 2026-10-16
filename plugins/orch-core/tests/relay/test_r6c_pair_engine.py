@@ -715,7 +715,7 @@ def _seeded(kit, state, **over):
                   "dk_kx_pub": crypto.b64u(phone.kx_pub), "attempt": "ab" * 16, "label": "x", "cert": None,
                   "decl": None, "decl_who": None, "gated": True},
         request={"request_id": "cd" * 16, "signed": {}, "expires_ms": kit.clock.ms + 10 * MIN, "posted": True},
-        intent={"event_id": "E"}, event_id="E", publication={"list_seq": 1, "epoch": 1, "list_hash": None},
+        intent=None, event_id="E", publication={"list_seq": 1, "epoch": 1, "list_hash": None},
         baseline={"n": 1, "hash": "sha256:" + "00" * 32}, card_seq=1,
     )  # fmt: skip
     rec.update({**base, **over})
@@ -733,6 +733,12 @@ def test_every_edge_outside_the_table_is_refused(tmp_path, frm, to):
         if to == frm:
             return
         if to in P.EDGES[frm]:
+            if to == "allocated":  # only the host's settlement allocates, and it needs the intent's event
+                rec = k.engine._commit(rec, None, intent={"event_id": "E"})
+                with pytest.raises(P.IllegalTransition):
+                    k.engine._commit(rec, to)
+                assert k.engine._commit(rec, to, settle=P._SETTLE)["state"] == to
+                return
             assert k.engine._commit(rec, to)["state"] == to
         else:
             with pytest.raises(P.IllegalTransition):
@@ -1204,3 +1210,160 @@ def test_a_rejection_signed_by_another_key_is_never_relayed(kit):
     kit.clock.ms += 10_000
     kit.engine.tick()
     assert kit.rec(h.offer_id)["state"] == "cert_pending" and kit.rec(h.offer_id)["rejection"] is None
+
+
+# -- Opus review of #588: step 9 is exclusive once the intent is recorded ----------------------------------------------
+
+
+def intent_held(kit):
+    h, phone, cert = certified(kit)
+    a = alloc_of(kit, h, phone, cert)
+    kit.engine.precommit(a, landed=lambda i: False)
+    return h, phone, cert, a
+
+
+def test_the_tick_never_expires_an_offer_whose_intent_is_recorded(kit):
+    h, phone, cert, a = intent_held(kit)
+    kit.clock.ms = kit.rec(h.offer_id)["phone_deadline_ms"] - 100_000  # inside the 2-minute step-9 margin
+    kit.engine.tick()
+    assert kit.rec(h.offer_id)["state"] == "cert_pending"
+    kit.engine.committed(a)  # the host's settlement still lands
+    assert kit.rec(h.offer_id)["state"] == "allocated" and kit.store.device(phone.device_id) is not None
+
+
+def test_cancel_is_refused_once_the_intent_is_recorded(kit):
+    h, phone, cert, a = intent_held(kit)
+    with pytest.raises(PairRefused) as e:
+        kit.engine.cancel(h.offer_id)
+    assert e.value.code == "relay.pair_closed" and kit.rec(h.offer_id)["state"] == "cert_pending"
+    kit.engine.committed(a)
+    assert kit.rec(h.offer_id)["state"] == "allocated"
+
+
+@pytest.mark.parametrize("relay_state", ["expired", "rejected"])
+def test_a_relay_answer_never_ends_an_offer_with_a_cert_in_hand(kit, relay_state):
+    h, phone, cert = certified(kit)
+    req = kit.rec(h.offer_id)["request"]
+    from .pairkit import make_rejection
+
+    rej = make_rejection(req["signed"]["o"]) if relay_state == "rejected" else None
+    kit.relay.request_state = {"state": relay_state, "challenge": None, "cert": None, "rejection": rej}
+    kit.engine.notice([req["request_id"]])
+    kit.clock.ms += 10_000
+    kit.engine.tick()
+    rec = kit.rec(h.offer_id)
+    assert rec["state"] == "cert_pending" and rec["cert"] == cert  # an unauthenticated relay state never overrides
+
+
+def test_a_relay_expired_during_step_9_leaves_the_host_settlement(kit):
+    h, phone, cert, a = intent_held(kit)
+    req = kit.rec(h.offer_id)["request"]
+    kit.relay.request_state = {"state": "expired", "challenge": None, "cert": None, "rejection": None}
+    kit.engine.notice([req["request_id"]])
+    kit.engine.tick()
+    kit.engine.committed(a)
+    assert kit.rec(h.offer_id)["state"] == "allocated"
+
+
+@pytest.mark.parametrize("to", ["expired", "failed", "cancelled", "rejected", "allocated"])
+def test_with_an_intent_only_the_host_settlement_may_move_the_offer(kit, to):
+    h, phone, cert, a = intent_held(kit)
+    rec = kit.rec(h.offer_id)
+    with pytest.raises(P.IllegalTransition):
+        kit.engine._commit(rec, to, event_id=a["event_id"])
+    with pytest.raises(P.IllegalTransition):
+        kit.engine._commit(rec, None, cert=None)
+    assert kit.rec(h.offer_id)["state"] == "cert_pending"
+
+
+@pytest.mark.parametrize("landed", [True, False])
+def test_past_the_deadline_the_tick_settles_through_the_host_by_the_log(kit, landed):
+    h, phone, cert, a = intent_held(kit)
+    kit.host.landed_fn = lambda intent: landed and intent["event_id"] == a["event_id"]
+    kit.clock.ms = kit.rec(h.offer_id)["phone_deadline_ms"] + 1
+    kit.engine.tick()
+    assert kit.host.settled == 1
+    rec = kit.rec(h.offer_id)
+    if landed:
+        assert rec["state"] == "allocated" and kit.store.device(phone.device_id) is not None
+    else:
+        assert rec["state"] == "failed" and rec["reason"] == "allocation:not_landed"
+        with pytest.raises(PairRefused):  # a late resubmit of the old request cannot land any more
+            kit.engine.precommit(a, landed=lambda i: False)
+
+
+def test_an_equal_repeat_precommit_still_checks_the_state_and_the_deadline(kit):
+    h, phone, cert, a = intent_held(kit)
+    kit.engine.precommit(a, landed=lambda i: False)  # inside the window: accepted
+    kit.clock.ms = kit.rec(h.offer_id)["phone_deadline_ms"] - 100_000
+    with pytest.raises(PairRefused):
+        kit.engine.precommit(a, landed=lambda i: False)
+
+
+def test_recover_goes_on_after_a_failing_offer_and_raises_a_needs_item(kit, monkeypatch):
+    h, phone, cert, a = intent_held(kit)
+    rec = kit.rec(h.offer_id)
+    other = "ee" * 16
+    kit.store.put({**rec, "offer_id": other, "intent": {**rec["intent"], "offer_id": other}})
+    real = kit.engine._device_record
+
+    def flaky(r, alloc):
+        if r["offer_id"] == h.offer_id:
+            raise OSError("disk")
+        return real(r, alloc)
+
+    monkeypatch.setattr(kit.engine, "_device_record", flaky)
+    assert kit.engine.recover(lambda i: True) == [other]
+    assert "pairing_recovery_failed" in kit.store.alarms()["alarms"]
+    assert any(n["offer_id"] == h.offer_id for n in kit.store.alarms()["needs"])
+
+
+def test_a_readmitted_device_with_an_equal_record_keeps_the_old_record(kit):
+    h, phone, cert, a = intent_held(kit)
+    kit.store.write_device(
+        {"v": 1, "device_id": phone.device_id, "person_id": OWNER, "cert": cert, "label": "Severin's iPhone",
+         "offer_id": "aa" * 16, "paired_ms": 1, "decl_digest": None, "scopes": ["look", "decide"],
+         "event_id": "01JOLDOLDOLDOLDOLDOLDOLDOL"}
+    )  # fmt: skip
+    kit.engine.committed(a)
+    assert kit.rec(h.offer_id)["state"] == "allocated"
+    assert kit.store.device(phone.device_id)["offer_id"] == "aa" * 16  # never overwritten
+
+
+def test_a_device_record_of_other_content_is_alarmed_never_overwritten(kit):
+    h, phone, cert, a = intent_held(kit)
+    other = make_cert(phone, scopes=("look", "decide"))
+    old = {"v": 1, "device_id": phone.device_id, "person_id": OWNER, "cert": other,
+           "label": "old", "offer_id": "aa" * 16, "paired_ms": 1, "decl_digest": None, "scopes": ["look"],
+           "event_id": "01JOLDOLDOLDOLDOLDOLDOLDOL"}  # fmt: skip
+    kit.store.write_device(old)
+    kit.engine.committed(a)
+    assert kit.store.device(phone.device_id) == old
+    assert kit.rec(h.offer_id)["state"] == "failed"
+    assert "pairing_device_conflict" in kit.store.alarms()["alarms"]
+    assert kit.membership.additions == [] and kit.store.alarms()["needs"]
+
+
+def test_an_offer_without_decide_is_refused_at_step_1(kit):
+    with pytest.raises(PairRefused) as e:
+        kit.engine.offer(("look",))
+    assert e.value.code == "invalid.input" and kit.store.offer_ids() == []
+
+
+def test_an_approved_record_becomes_a_tombstone_after_7_days_and_the_signers_gate_closes(kit):
+    h, phone, cert = approve(kit)
+    assert kit.engine.is_live(h.offer_id)
+    kit.clock.ms += 7 * 86_400_000 + 1
+    kit.engine.tick()
+    assert kit.rec(h.offer_id)["tombstone"] is True
+    assert not kit.engine.is_live(h.offer_id)
+    assert kit.engine.receive(*phone.status(ts=kit.clock.ms)) == "drop:no_key"
+
+
+def test_the_handle_refuses_copy_and_deepcopy(kit):
+    import copy
+
+    h, _ = offer(kit)
+    for fn in (copy.copy, copy.deepcopy):
+        with pytest.raises(TypeError):
+            fn(h)

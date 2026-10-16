@@ -193,6 +193,11 @@ class PairHost(Protocol):
         """R1's verified held checkpoint ``{n, hash}`` (step 11), or ``None``."""
         ...
 
+    def settle(self, fn: Callable[[Callable[[Mapping[str, Any]], bool]], Any]) -> Any:
+        """Run ``fn(landed)`` under the store lock, ``landed(intent)`` telling whether the intent's event is in the
+        log (by its id and digest): no submit can be between its precommit and its append meanwhile."""
+        ...
+
 
 class PairRelay(Protocol):
     """The relay routes of pairing. Each raises :class:`PairRelayError` unless the relay answered 2xx."""
@@ -298,6 +303,12 @@ class OfferHandle:
         return f"OfferHandle(offer_id={self.offer_id!r}, state={self.state!r}, expires_ms={self.expires_ms})"
 
     __str__ = __repr__
+
+    def __copy__(self) -> OfferHandle:
+        raise TypeError("an OfferHandle is never copied: the link exists once")
+
+    def __deepcopy__(self, memo: Any) -> OfferHandle:
+        raise TypeError("an OfferHandle is never copied: the link exists once")
 
 
 @dataclass(frozen=True)
@@ -416,6 +427,16 @@ class StaleRecord(Exception):  # noqa: N818 - a verdict: the record moved on sin
 class IllegalTransition(Exception):  # noqa: N818 - a verdict on a transition
     """An edge not in :data:`EDGES`, a guard that does not hold, or a field a state may not change."""
 
+
+#: the host's settlement of step 9 (Opus review of #588, item 1): with an allocation intent recorded, only a write
+#: carrying this token may move the offer (committed -> allocated, refused/not landed -> failed); ``allocated``
+#: always needs it. Module-private: the settlement paths are :meth:`PairEngine.committed`, :meth:`refused`,
+#: :meth:`recover` and the tick's settlement through the host's store lock.
+_SETTLE = object()
+#: the settlement edges (each needs ``_SETTLE``)
+SETTLEMENT_EDGES = frozenset({("confirmed", "allocated"), ("cert_pending", "allocated"), ("confirmed", "failed"),
+                              ("cert_pending", "failed")})  # fmt: skip
+_HELD_FIELDS = frozenset({"intent", "intent_ms", "second_key"})
 
 #: every allowed edge of the offer record (11A.15.6); anything else is refused
 EDGES: dict[str, frozenset[str]] = {
@@ -554,7 +575,9 @@ class PairEngine:
         mine = crypto.b64u(crypto.dk_hash(crypto.unb64u(c["dk_sig_pub"]), crypto.unb64u(c["dk_kx_pub"])))
         return (c["attempt"], c["device_id"], mine) == (attempt, device_id, dk_hash)
 
-    def _commit(self, rec: Mapping[str, Any], to: str | None = None, **changes: Any) -> dict[str, Any]:
+    def _commit(
+        self, rec: Mapping[str, Any], to: str | None = None, *, settle: object = None, **changes: Any
+    ) -> dict[str, Any]:
         """**The one durable write of an offer record** (every transition and every field update goes through it).
 
         Under the pairing lock: the record is re-read and must still carry the version ``rec`` was read at
@@ -575,7 +598,17 @@ class PairEngine:
                 raise StaleRecord(rec["offer_id"])
             frm = cur["state"]
             new = {**cur, **changes}
-            if to is not None and to != frm:
+            moving = to is not None and to != frm
+            # step 9 is exclusive (Opus review of #588, item 1): once the allocation intent is recorded, no tick,
+            # cancel, relay answer or deadline may end or change the offer; only the host's settlement can
+            held = cur.get("intent") is not None and frm in ("confirmed", "cert_pending")
+            if moving and to == "allocated" and settle is not _SETTLE:
+                raise IllegalTransition("allocated only by the host's settlement of step 9")
+            if held and moving and (settle is not _SETTLE or (frm, to) not in SETTLEMENT_EDGES):
+                raise IllegalTransition(f"{frm} -> {to}: the allocation intent is recorded; only the host settles it")
+            if held and not moving and set(changes) - _HELD_FIELDS:
+                raise IllegalTransition("the allocation intent is recorded: the offer's fields stay as reviewed")
+            if moving:
                 if to not in EDGES.get(frm, ()):
                     raise IllegalTransition(f"{frm} -> {to}")
                 new["state"] = to
@@ -639,6 +672,9 @@ class PairEngine:
     def _move(self, rec: Mapping[str, Any], to: str | None, **changes: Any) -> dict[str, Any]:
         return self._commit(rec, to, **changes)
 
+    def _settle_move(self, rec: Mapping[str, Any], to: str, **changes: Any) -> dict[str, Any]:
+        return self._commit(rec, to, settle=_SETTLE, **changes)
+
     def _live_offer(self) -> str | None:
         """The live offer or the outstanding request that blocks a new offer (Q6), or ``None``."""
         for oid in self.store.offer_ids():
@@ -665,6 +701,7 @@ class PairEngine:
             not scopes
             or not all(type(s) is str for s in scopes)
             or list(scopes) != [s for s in PAIR_SCOPES if s in scopes]
+            or "decide" not in scopes  # the phone ceiling is look+decide; answers need decide (Opus #588 item 5)
         ):
             raise PairRefused("invalid.input", "scopes: a non-empty subset of look, decide (operate and type are "
                                                "refused for a phone in v1.7)")  # fmt: skip
@@ -748,6 +785,8 @@ class PairEngine:
         rec = self._get_or_refuse(offer_id)
         if rec["state"] in ("allocated", "published", "approved"):
             raise PairRefused("relay.pair_closed", "the device is allocated: use abandon, or remove the device")
+        if rec.get("intent") is not None and rec["state"] not in TERMINAL:
+            raise PairRefused("relay.pair_closed", "the allocation is being recorded: it settles on its own")
         if rec["state"] in TERMINAL:
             return rec["state"]
         return self._move(rec, "cancelled", reason="cancelled", cancelled_from=rec["state"])["state"]
@@ -1072,6 +1111,8 @@ class PairEngine:
                 self._poll_request(rec)
 
     def _poll_request(self, rec: dict[str, Any]) -> dict[str, Any]:
+        if rec.get("cert") is not None:  # a verified cert in hand: the relay's unauthenticated state is moot (#588 2)
+            return rec
         req = rec["request"]
         self._last_poll[rec["offer_id"]] = self.now_ms()
         try:
@@ -1106,6 +1147,8 @@ class PairEngine:
         return self._move(rec, None, challenge=canon.loads_strict(canon.dumps(signed)))
 
     def _rejection_in_hand(self, rec: dict[str, Any], signed: Any) -> dict[str, Any]:
+        if rec.get("cert") is not None:
+            return rec
         try:
             certreq.check_cert_rejection(signed, self.ctx.owner_pk_pub, rec["request"]["signed"]["o"])
         except (Refused, ValueError, TypeError, KeyError):
@@ -1190,10 +1233,7 @@ class PairEngine:
         second ``device.added`` of one device anyway."""
         alloc = _intent(alloc)
         with self.store.lock:
-            rec = self._get(alloc["offer_id"])
-            if rec is not None and rec.get("intent") == alloc:
-                return
-            rec = self._step9(rec)
+            rec = self._step9(self._get(alloc["offer_id"]))  # state and deadline first, an equal repeat too (#588 3)
             c = rec["consumed"]
             if (
                 alloc["attempt"] != c["attempt"]
@@ -1203,6 +1243,8 @@ class PairEngine:
             ):
                 raise PairRefused("relay.pair_closed", "the allocation is not this offer's attempt, device, "
                                                        "certificate or scopes")  # fmt: skip
+            if rec.get("intent") == alloc:
+                return  # the equal repeat of a roll-forward, within a valid step-9 state
             if rec.get("intent") is not None and landed(rec["intent"]):
                 raise PairRefused("relay.pair_closed", "another allocation of this offer is in the log")
             self._move(rec, None, intent=alloc, intent_ms=self.now_ms())
@@ -1220,11 +1262,9 @@ class PairEngine:
                 return
             if rec["state"] not in ("confirmed", "cert_pending"):
                 raise PairRefused("relay.pair_closed", f"the offer is {rec['state']}")
-            self._device_record(rec, alloc)
-            rec = self._move(rec, "allocated", event_id=alloc["event_id"], allocated_ms=self.now_ms())
-            if rec.get("request") is not None:
-                self.store.clear_outstanding(rec["request"]["request_id"])
-        self.post(lambda: self.publish(alloc["offer_id"]))
+            rec = self._allocate(rec, alloc)
+        if rec["state"] == "allocated":
+            self.post(lambda: self.publish(alloc["offer_id"]))
 
     def refused(self, alloc: Mapping[str, Any], reason: str) -> None:
         """Nothing was appended after an accepted ``precommit``: the offer ends ``failed`` (short ``rejected``)."""
@@ -1233,7 +1273,7 @@ class PairEngine:
             rec = self._get(alloc["offer_id"])
             if rec is None or rec.get("intent") != alloc or rec["state"] not in ("confirmed", "cert_pending"):
                 return
-            self._move(rec, "failed", reason=f"allocation:{reason}"[:120])
+            self._settle_move(rec, "failed", reason=f"allocation:{reason}"[:120])
 
     def adopt_existing(self, offer_id: str, alloc: Mapping[str, Any]) -> None:
         """ "Already in F1" (orch-f1 S3): the host found this exact device, keys and certificate in F1, valid; the
@@ -1257,27 +1297,65 @@ class PairEngine:
         self.quarantine()
         out = []
         for oid in self.store.offer_ids():
-            try:
+            try:  # one failing offer never stops the others (#588 item 4)
                 rec = self._get(oid)
-            except PairStoreError:
-                continue
-            if rec is None or rec.get("intent") is None or rec["state"] not in ("confirmed", "cert_pending"):
-                continue
-            if landed(rec["intent"]):
-                with self.store.lock:
-                    self._device_record(rec, rec["intent"])
-                    self._move(rec, "allocated", event_id=rec["intent"]["event_id"], allocated_ms=self.now_ms())
-                out.append(oid)
+                if rec is None or rec.get("intent") is None or rec["state"] not in ("confirmed", "cert_pending"):
+                    continue
+                if landed(rec["intent"]):
+                    with self.store.lock:
+                        if self._allocate(rec, rec["intent"])["state"] == "allocated":
+                            out.append(oid)
+            except Exception as e:  # noqa: BLE001 - alarmed with a needs item; the next open retries
+                log.error("pairing: recovery of an offer failed (%s)", type(e).__name__)
+                self._alarm("pairing_recovery_failed", oid)
+                self._need(oid, "a pairing could not be recovered at start: look at orch host status")
         return out
 
-    def _device_record(self, rec: Mapping[str, Any], alloc: Mapping[str, Any]) -> None:
+    def settle(self, offer_id: str, landed: Callable[[Mapping[str, Any]], bool]) -> str | None:
+        """The settlement of a recorded intent past the phone's deadline, run by the tick **through the host's store
+        lock** (``PairHost.settle``), so no submit is between its precommit and its append: the intent's event in the
+        log → ``allocated``; not in the log → ``failed`` (a later resubmit then fails precommit and appends
+        nothing)."""
+        with self.store.lock:
+            rec = self._get(offer_id)
+            if rec is None or rec.get("intent") is None or rec["state"] not in ("confirmed", "cert_pending"):
+                return None
+            if landed(rec["intent"]):
+                return self._allocate(rec, rec["intent"])["state"]
+            return self._settle_move(rec, "failed", reason="allocation:not_landed")["state"]
+
+    _IDENTITY = ("device_id", "person_id", "cert", "scopes")
+
+    def _allocate(self, rec: dict[str, Any], alloc: Mapping[str, Any]) -> dict[str, Any]:
+        """(vi) then (vii) with the settlement token. ``devices/<id>.json`` is write-once: a re-admitted device whose
+        stored record names the same identity (device, person, certificate, scopes) keeps it; any other content is
+        alarmed, never overwritten, and the offer fails (the F1 device stays: a needs item asks to remove it)."""
+        try:
+            self._device_record(rec, alloc)
+        except PairStoreError:
+            held = self.store.device(rec["consumed"]["device_id"])
+            if held is None:
+                raise
+            mine = self._device_doc(rec, alloc)
+            if any(held.get(k) != mine[k] for k in self._IDENTITY):
+                self._alarm("pairing_device_conflict", rec["offer_id"])
+                self._need(rec["offer_id"], f"pairing of {rec['consumed']['label']} conflicts with an earlier "
+                                            "record of the same device: remove the device")  # fmt: skip
+                return self._settle_move(rec, "failed", reason="device_conflict")
+        rec = self._settle_move(rec, "allocated", event_id=alloc["event_id"], allocated_ms=self.now_ms())
+        if rec.get("request") is not None:
+            self.store.clear_outstanding(rec["request"]["request_id"])
+        return rec
+
+    def _device_doc(self, rec: Mapping[str, Any], alloc: Mapping[str, Any]) -> dict[str, Any]:
         c = rec["consumed"]
-        self.store.write_device(
-            {"v": 1, "device_id": c["device_id"], "person_id": self.ctx.owner_person_id, "cert": rec["cert"],
-             "label": c["label"], "offer_id": rec["offer_id"], "paired_ms": int(rec.get("intent_ms") or 0),
-             "decl_digest": alloc.get("decl_digest"), "scopes": list(alloc["scopes"]),
-             "event_id": alloc["event_id"]}
-        )  # fmt: skip
+        return {"v": 1, "device_id": c["device_id"], "person_id": self.ctx.owner_person_id, "cert": rec["cert"],
+                "label": c["label"], "offer_id": rec["offer_id"], "paired_ms": int(rec.get("intent_ms") or 0),
+                "decl_digest": alloc.get("decl_digest"), "scopes": list(alloc["scopes"]),
+                "event_id": alloc["event_id"]}  # fmt: skip
+
+    def _device_record(self, rec: Mapping[str, Any], alloc: Mapping[str, Any]) -> None:
+        self.store.write_device(self._device_doc(rec, alloc))
 
     # -- step 10: publication; step 11: the baseline; step 12: approved --------------------------------------------
 
@@ -1371,6 +1449,10 @@ class PairEngine:
             try:
                 if s == "open" and now >= int(rec["expires_ms"]):
                     self._move(rec, "expired", reason="offer_expired")
+                elif s in ("confirmed", "cert_pending") and rec.get("intent") is not None:
+                    # step 9 is the host's: past the deadline the tick settles it under the store lock, by the log
+                    if dl is not None and now > int(dl):
+                        self.host.settle(lambda landed, o=oid: self.settle(o, landed))
                 elif (
                     s in ("pending", "confirmed", "cert_pending")
                     and dl is not None
@@ -1415,16 +1497,14 @@ class PairEngine:
 
     def _tail(self, rec: dict[str, Any], now: int) -> None:
         end = int(rec.get("terminal_ms") or rec.get("approved_ms") or 0)
-        if rec["state"] == "approved":
-            return  # the pin release and the "never connected" item need R2's first verified request (R6c-2)
-        if rec.get("secret") is not None and now > end + TAIL_MS:
+        if rec["state"] != "approved" and rec.get("secret") is not None and now > end + TAIL_MS:
             self._move(rec, None, secret=None, sas_nonce=None)
             self.store.remove_answers(rec["offer_id"])
         elif now > end + TOMBSTONE_MS:
             c = rec.get("consumed") or {}
             with self.store.lock:  # the tombstone replaces the record: compare-and-set too
                 cur = self._get(rec["offer_id"])
-                if cur is None or cur.get("ver", 0) != rec.get("ver", 0) or cur["state"] not in TERMINAL:
+                if cur is None or cur.get("ver", 0) != rec.get("ver", 0) or cur["state"] not in TERMINAL | {"approved"}:
                     raise StaleRecord(rec["offer_id"])
                 tomb = {"v": 1, "offer_id": rec["offer_id"], "state": rec["state"], "device_id": c.get("device_id"),
                         "tombstone": True, "ver": int(cur.get("ver", 0)) + 1}  # fmt: skip

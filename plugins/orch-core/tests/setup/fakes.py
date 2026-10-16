@@ -30,6 +30,11 @@ class FakeTerminal:
         self.asked.append(prompt)
         return self.answers.pop(0) if self.answers else ""
 
+    def ask_secret(self, prompt: str) -> str:
+        self.asked.append(prompt)
+        self.secret_asked = getattr(self, "secret_asked", 0) + 1
+        return self.secrets.pop(0) if getattr(self, "secrets", None) else ""
+
     def wait(self, prompt: str) -> None:
         self.asked.append(prompt)
 

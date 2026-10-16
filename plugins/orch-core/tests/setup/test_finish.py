@@ -273,3 +273,49 @@ def test_unreadable_facts_refuse_the_launch(tmp):
         f.launch(str(tmp.work))
     assert e.value.code == "setup.facts_unreadable"
     assert fx  # module imported
+
+
+def test_finish_moves_a_passphrase_key_to_one_click_by_asking_the_passphrase_on_the_terminal(tmp):
+    """Regression (found by the real e2e): Finish with a pending conversion has no generated passphrase in memory; it
+    used to die on an assert. The person types it on the terminal (echo off); a failure never shows it back."""
+    ports = FakePorts(FakeTerminal([]))
+    ports.terminal.secrets = ["the-typed-passphrase"]
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, ports, box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    ports.terminal.answers[:] = [" ".join(rv["fingerprint"])]
+    ports.expect(f.review.plan)
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
+    f.thread.join(10)
+    p = progress(f, out["run_id"])
+    n = names(ports)
+    assert p["done"] is True and ports.terminal.secret_asked == 1
+    assert n.index("stage") < n.index("finish_conversion") and "genesis" not in n
+
+
+def test_finish_conversion_failure_never_shows_the_typed_passphrase_back(tmp):
+    ports = FakePorts(FakeTerminal([]))
+    ports.terminal.secrets = ["the-typed-passphrase"]
+    ports.fail_stage = 2
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, ports, box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    ports.terminal.answers[:] = [" ".join(rv["fingerprint"])]
+    ports.expect(f.review.plan)
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
+    f.thread.join(10)
+    p = progress(f, out["run_id"])
+    assert p["error"]["code"] == "custody.conversion_failed" and p["error"]["finishable"] is True
+    assert not any("the-typed-passphrase" in t for t in ports.terminal.shown)

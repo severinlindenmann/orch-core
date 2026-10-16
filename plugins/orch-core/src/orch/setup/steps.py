@@ -512,9 +512,24 @@ class Creator:
     def _custody(self) -> None:
         if self.profile["method"] != "click" or self.run.status("custody") is None:
             return
-        assert self.wid is not None and self._passphrase is not None
+        assert self.wid is not None
         wid, prefix = self.wid, self.profile["prefix"]
         self.run.set("custody", "doing")
+        typed = False
+        if self._passphrase is None:
+            # Finish setup (e.g. after a failed conversion): this process never held the passphrase. The person types
+            # it on the setup terminal only, with echo off; it is dropped when the run ends like the generated one.
+            try:
+                self._passphrase = self.ports.terminal.ask_secret(
+                    "\nYour device passphrase (to move the key to one-click custody): "
+                )
+            except Exception:  # noqa: BLE001 - no terminal: nothing is moved, the key stays as it is
+                self.run.set("custody", "failed")
+                self.run.add_retry("custody")
+                raise SetupError(
+                    "tty.unavailable", "no terminal to ask the passphrase on; the key was not moved", 409
+                ) from None
+            typed = True
         last: Exception | None = None
         for _attempt in (1, 2):  # retry in-process once
             staged = None
@@ -539,6 +554,10 @@ class Creator:
         del last
         self.run.set("custody", "failed")
         self.run.add_retry("custody")
+        if typed:  # the person typed it just now: it is not shown back
+            raise SetupError(
+                "custody.conversion_failed", "the key could not be moved to one-click custody; it stays as it was", 500
+            )
         try:
             self.ports.terminal.show(
                 "\n=== orch setup: your device passphrase ===\n"

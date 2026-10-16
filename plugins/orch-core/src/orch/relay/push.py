@@ -78,7 +78,7 @@ _FALLBACK_LABEL = "New question"
 #: B10 Part B: the phone-approval hint's push. The generic wake: a fixed label, the hint's opaque id, nothing else
 HINT_LOG = "phone.hint"
 HINT_LABEL = "Needs your approval"
-HINT_KIND = "phone.request"
+HINT_KIND = "ticket.update"  # a protocol kind (the phone's set is closed); the id is the hint's, the label fixed
 #: ``hints(after)`` -> ``(highest counter seen, [open hint dicts with a counter above after])`` (the host's; it reads
 #: the hint file and the log under the store lock the planner already holds)
 HintSource = Callable[[int], tuple[int, list[dict[str, Any]]]]
@@ -221,7 +221,11 @@ class Planner:
             return 0
         cur = self.ob.cursor(HINT_LOG)
         after = cur[0] if cur else 0
-        top, fresh = self.hints(after)
+        try:
+            top, fresh = self.hints(after)
+        except Exception as e:  # noqa: BLE001 - a bad hint file never stops question pushes (fail closed for hints)
+            log.warning("phone hints unreadable: %s", type(e).__name__)
+            return 0
         if top <= after:
             return 0
         new = [

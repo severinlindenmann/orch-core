@@ -454,7 +454,7 @@ def test_the_hint_push_is_a_generic_wake_with_exact_payload_bytes(human, served,
     planner = Planner(served.service.store, ob, hints=lambda n: phonehints.open_after(served.service, n))
     assert _on_worker(served, lambda: planner.run(2_000)) >= 1
     (it,) = [i for i in ob.open_intents(HINT_LOG)]
-    assert (it.kind, it.id, it.label, it.priority) == ("phone.request", hid, "Needs your approval", "high")
+    assert (it.kind, it.id, it.label, it.priority) == ("ticket.update", hid, "Needs your approval", "high")
     assert it.narrow == frozenset({owner.ref}) and it.ticket == uid
     # nothing of the ticket is in the intent
     assert "Secret title" not in repr(it) and key not in repr(it)
@@ -463,7 +463,7 @@ def test_the_hint_push_is_a_generic_wake_with_exact_payload_bytes(human, served,
     assert set(payload) == {"kind", "id", "label", "ts_ms"}
     assert len(payload["label"]) == cpush.MAX_LABEL and payload["label"].rstrip(" ") == HINT_LABEL
     assert canon.dumps(payload) == (
-        b'{"id":"' + hid.encode() + b'","kind":"phone.request","label":"' + HINT_LABEL.encode()
+        b'{"id":"' + hid.encode() + b'","kind":"ticket.update","label":"' + HINT_LABEL.encode()
         + b" " * (80 - len(HINT_LABEL)) + b'","ts_ms":12345}'
     )  # fmt: skip
     assert cpush._check_payload(payload, cpush.HOST_PUSH_KINDS, padded=True) == payload  # noqa: SLF001

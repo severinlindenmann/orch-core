@@ -44,7 +44,7 @@ def test_constants_match_the_vectors():
     assert c["max_bytes"] == push.MAX_PUSH
     assert c["max_age_ms"] == push.MAX_AGE_MS
     assert tuple(c["kinds"]) == push.PUSH_KINDS
-    assert set(push.HOST_PUSH_KINDS) == {"question", "question.closed", "drop.new"}  # D2
+    assert set(push.HOST_PUSH_KINDS) == {"question", "question.closed", "drop.new", "ticket.update"}  # D2 + B10 Part B
     assert set(push.HOST_PUSH_KINDS) < set(push.PUSH_KINDS)
 
 
@@ -145,7 +145,6 @@ def test_padding_rule():
     [
         dict(kind="join"),
         dict(kind="peer.ticket"),
-        dict(kind="ticket.update"),  # deferred out of H13 (Q2)
         dict(kind="exec"),
         dict(id=""),
         dict(id="x" * 129),

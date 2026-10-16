@@ -4439,7 +4439,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     unsigned host-local hints (`phone.request`, `phone.cancel`, `phone.status`, column P only; derived state; 10 minutes;
     one open per gate, 5 per person), the column-R reads `phone.requests` and `gate.input`, the relay write ops `approve`
     and `changes` (`gate.approved` / `gate.changes_requested`, scope `decide`; gates `requirements` and `plan` only, `op.not_allowed`
-    for the rest), `gate.stale` as retry class `C-review`, the push kind `phone.request` (a generic wake, no ticket text).
+    for the rest), `gate.stale` as retry class `C-review`, the push kind `ticket.update` (a generic wake with the hint's id, no ticket text).
     No F1, hash or error-code change; the model judges the phone's decision as any person event (device validity and
     generation at the append).
 
@@ -10161,9 +10161,10 @@ Wire contract of record: the phone (orch-mobile) and the dashboard code against 
   (C-auto), `event.bad_base`. `gate.stale` is a new entry of `RETRY`: `C-review` (re-open, re-review, re-sign). The dev
   gate's convenience answer stays `question.answered` only. `whoami.relay.ops` lists `answer`, `approve`, `changes`,
   `new_ticket`; the R2 vectors carry the four new cases.
-- **Push** (`phone.request`, a new member of `PUSH_KINDS` and `HOST_PUSH_KINDS`). The planner reads the hint file through
+- **Push** (kind `ticket.update`, a protocol kind the host now seals, added to `HOST_PUSH_KINDS`; the phone's set is closed, so no
+  new kind). The planner reads the hint file through
   a cursor `phone.hint` (the hint counter) and plans one intent per new open hint, narrowed to the hint's person and
-  the ticket's visibility, deadline = the hint's expiry. The sealed payload is exactly `{kind "phone.request", id "ph_<ULID>",
+  the ticket's visibility, deadline = the hint's expiry. The sealed payload is exactly `{kind "ticket.update", id "ph_<ULID>",
   label "Needs your approval" padded to 80 code points, ts_ms}`: no ref, gate, title or count. The existing budgets apply
   (one per id per 60 s, 6 per 10 min per device). The push is a wake; `phone.requests` is the truth.
 - **Labelling for the phone** (normative, wording only): ticket key, title, `gate_gen`, the approver and policy summary

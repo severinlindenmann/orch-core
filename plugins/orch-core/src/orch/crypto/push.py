@@ -12,8 +12,8 @@ Pure functions. The builder never holds a signing key: the caller (``_PushSealer
 from ``RelaySigner.push`` over :func:`push_signed_bytes` and passes it in, with ``K_push`` of the snapshot's epoch.
 
 * **Kinds.** :data:`PUSH_KINDS` is the protocol's set (the opener's); the host seals only :data:`HOST_PUSH_KINDS`
-  (D2: ``question``, ``question.closed``, ``drop.new``; ``ticket.update`` deferred, ``join`` and ``peer.ticket``
-  never).
+  (D2: ``question``, ``question.closed``, ``drop.new``; B10 Part B adds ``ticket.update`` for the phone-approval
+  hint; ``join`` and ``peer.ticket`` never).
 * **Label.** A fixed point of ``clean_label``, at most 80 code points, not ending in a space, then padded with U+0020
   to exactly 80 code points (11A.16.2 "Label padding"; the NSE trims trailing spaces), so every label has one length.
 * **``ts_ms``** is passed in (the caller's ``max(now_ms, push_ts.last + 1)``, Q-H3); an integer in ``[0, 2^53)``.
@@ -54,8 +54,9 @@ __all__ = [
     "seal_push",
 ]
 
-PUSH_KINDS = ("question", "question.closed", "ticket.update", "drop.new", "peer.ticket", "join", "phone.request")
-HOST_PUSH_KINDS = ("question", "question.closed", "drop.new", "phone.request")
+PUSH_KINDS = ("question", "question.closed", "ticket.update", "drop.new", "peer.ticket", "join")
+#: B10 Part B: ``ticket.update`` is the phone-approval wake ("something needs you"), sent only for a phone request hint
+HOST_PUSH_KINDS = ("question", "question.closed", "drop.new", "ticket.update")
 MAX_PUSH = 3072
 MAX_LABEL = 80
 MAX_ID_BYTES = 128

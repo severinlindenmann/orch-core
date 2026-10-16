@@ -7,7 +7,7 @@
     "cli": "orch grant",
     "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
     "who": "human",
-    "usage": "orch grant [--hours N] [--days N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]",
+    "usage": "orch grant [--hours N] [--days N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--extend GRANT] [--runner] [--dry-run]",
     "pre": [
       "workspace_exists",
       "role_allows",
@@ -15,7 +15,8 @@
       "text_clean"
     ],
     "emits": [
-      "grant.issued"
+      "grant.issued",
+      "grant.revoked"
     ],
     "input": {
       "type": "object",
@@ -54,6 +55,12 @@
           "type": "string",
           "description": "short label",
           "x-metavar": "TEXT"
+        },
+        "extend": {
+          "type": "string",
+          "description": "revoke this runner grant of yours together with the new one (with --runner)",
+          "pattern": "^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "x-metavar": "GRANT"
         },
         "runner": {
           "type": "boolean",

@@ -14,6 +14,7 @@ idem, expiry) is synced to disk, and before a signature leaves the signer the re
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -61,6 +62,8 @@ HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "
 #: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
 #: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
 READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
+
+GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 class Budget:
@@ -538,7 +541,7 @@ class ClickSigner:
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
         and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
-        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner"}
+        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner", "extend"}
         if inner.get("runner", True) is not True:
             raise ClickError("invalid.input", "a deposit grant is a runner grant")
         hours, scope = inner.get("hours", 8), inner.get("scope", "workable")
@@ -551,7 +554,12 @@ class ClickSigner:
         if not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
         # runner:true makes the op itself a runner grant (label runner, at most 12 h, verbs agent, no ORCH_GRANT hint)
-        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        if "extend" in inner:  # B8: the grant this one replaces; the op checks it is yours and live
+            if not (isinstance(inner["extend"], str) and GRANT_ID.fullmatch(inner["extend"])):
+                raise ClickError("invalid.input", "extend is a grant id")
+            out["extend"] = inner["extend"]
+        return out
 
     def _deposited(
         self, entry: dict[str, Any], op: str, rid: str, res: dict[str, Any], secret: str | None = None

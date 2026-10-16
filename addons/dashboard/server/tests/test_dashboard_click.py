@@ -1563,7 +1563,7 @@ def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client,
 @pytest.mark.parametrize(
     "body",
     [
-        runner_grant(hours=13),
+        runner_grant(hours=169),
         runner_grant(hours=0),
         runner_grant(hours="8"),
         runner_grant(scope="mine"),
@@ -1692,6 +1692,17 @@ def test_expected_admits_only_the_callers_runner_grant():
     assert not check([{**good, "extra": 1}])  # review I2: no field beyond the grant.issued shape
     twelve = expected(RunnerGrant(action="runner_grant", hours=12, scope="all"), me)
     assert twelve([{**good, "hours": 12, "scope": "all"}]) and not twelve([{**good, "hours": 13, "scope": "all"}])
+    # B8 Extend: the new runner grant, then the revoke of exactly the named grant ("extended"), both by the caller
+    old = "gr_" + "0" * 26
+    ext = expected(RunnerGrant(action="runner_grant", hours=72, scope="all", extend=old), me)
+    actor = good["actor"]
+    revoke = {"type": "grant.revoked", "grant": old, "reason": "extended", "actor": actor}
+    new = {**good, "hours": 72, "scope": "all"}
+    assert ext([new, revoke])
+    assert not ext([new])  # the revoke leg is part of what is shown
+    assert not ext([new, {**revoke, "grant": "gr_" + "1" * 26}])
+    assert not ext([new, {**revoke, "reason": "other"}])
+    assert not ext([revoke, new])
 
 
 # -- the click-to-sign switch (section 0.8.6 item 3a) ----------------------------------------------------------------

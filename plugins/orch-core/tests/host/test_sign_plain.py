@@ -393,6 +393,17 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
 
 
+def test_b8_lengths_read_as_days_and_hours_in_the_headline_and_the_settings_note(human, served):
+    g = {**sample("grant.issued"), "hours": 72}
+    c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    assert c["headline"].startswith("Give agents access for 3 days (")
+    assert "for 3 days," in " ".join(c["notes"])
+    assert signcontent.span(8) == "8 hours" and signcontent.span(24) == "1 day" and signcontent.span(168) == "7 days"
+    event = {**sample("settings.changed"), "set": {"grant_hours": 168}}
+    c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
+    assert any("up to 7 days" in n for n in c["notes"])
+
+
 def test_a_before_the_host_alone_vouches_for_is_labelled(human, served):
     s = human.prepare("set", {"ref": human.ticket("T")[1], "pairs": ["priority=high"]})
     (row,) = build(s)["fields_changed"]

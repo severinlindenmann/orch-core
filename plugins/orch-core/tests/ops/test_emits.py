@@ -8,7 +8,7 @@ import json
 import orch.ops as ops
 from orch.model import emits
 
-DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
+DIGEST_V1 = "01ccface9a9524cf50c0b6286550a34c0fe8d1d66891140ee1c66a25a44d6a2e"
 HUMAN_ONLY_V1 = "63726a5fa56ebeabd06dbfc4f5b8a81d88c512c1544dc99e602b815ae58c7676"
 
 

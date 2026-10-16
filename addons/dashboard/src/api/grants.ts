@@ -51,3 +51,28 @@ export function grantLabel(g: Pick<GrantInfo, 'scope' | 'until'>, name: string, 
   const sameDay = new Date(now).toISOString().slice(0, 10) === g.until.slice(0, 10)
   return `${name}'s grant (${SCOPE_WORDS[g.scope] ?? g.scope} · until ${sameDay ? fmtClock(g.until) : fmtDateTime(g.until)})`
 }
+
+/** B8 (owner decision D): the lengths the settings control offers, in hours: 8 h · 1 day · 3 days · 7 days. */
+export const ACCESS_LENGTHS: ReadonlyArray<{ hours: number; label: string }> = [
+  { hours: 8, label: '8 h' },
+  { hours: 24, label: '1 day' },
+  { hours: 72, label: '3 days' },
+  { hours: 168, label: '7 days' },
+]
+
+/** A length as people say it: whole days as "3 days", else "N h". */
+export const accessLength = (hours: number): string =>
+  hours >= 24 && hours % 24 === 0 ? `${hours / 24} day${hours === 24 ? '' : 's'}` : `${hours} h`
+
+/**
+ * The reminder before an agent grant ends: shown when under 24 h remain, or, for a grant shorter than a day, when under 25% of
+ * its length remains. Display only: the end time is the signed `until`, and the host enforces it.
+ */
+export function accessReminder(g: Pick<GrantInfo, 'issued_at' | 'until'>, now: number): boolean {
+  const end = Date.parse(g.until)
+  const start = Date.parse(g.issued_at)
+  if (!Number.isFinite(end) || !Number.isFinite(start) || end <= now) return false
+  const total = end - start
+  const left = end - now
+  return total >= 24 * 3_600_000 ? left < 24 * 3_600_000 : left < total * 0.25
+}

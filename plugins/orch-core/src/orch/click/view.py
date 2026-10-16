@@ -49,18 +49,29 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
 
 def deposit_checks(prepared: Mapping[str, Any]) -> None:
     """The one exception to "``grant`` is terminal-only" (v1.6, D-P2-27): exactly one ``grant.issued`` with
-    ``label:"runner"``, ``verbs:"agent"`` and 1 to 12 hours. Anything else is ``terminal_only``."""
+    ``label:"runner"``, ``verbs:"agent"`` and 1 to 168 hours,
+    optionally followed by the ``grant.revoked`` of the one it replaces (Extend). Anything else is ``terminal_only``."""
     events = prepared.get("events")
     ok = (
         prepared.get("op") == "grant"
         and isinstance(events, list)
-        and len(events) == 1
+        and len(events) in (1, 2)
         and isinstance(events[0], Mapping)
         and events[0].get("type") == "grant.issued"
         and events[0].get("label") == "runner"
         and events[0].get("verbs") == "agent"
         and type(events[0].get("hours")) is int
         and 1 <= events[0]["hours"] <= DEPOSIT_MAX_HOURS
+        # B8 Extend: the second event, if any, is the revoke of the grant being replaced (shown in full in the review)
+        and (
+            len(events) == 1
+            or (
+                isinstance(events[1], Mapping)
+                and events[1].get("type") == "grant.revoked"
+                and isinstance(events[1].get("grant"), str)
+                and events[1]["grant"] != events[0].get("grant")
+            )
+        )
     )
     if not ok:
         raise refused("terminal_only", "only a runner grant of at most 12 hours is handed to the runner by a click")

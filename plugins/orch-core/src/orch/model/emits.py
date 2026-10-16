@@ -45,7 +45,9 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "ask": frozenset({"question.asked"}),
     "claim": frozenset({"claim.taken"}),
     "close": frozenset({"ticket.closed"}),
-    "grant": frozenset({"grant.issued"}),
+    # B8: Extend emits the revoke of the replaced runner grant with the new one. ``grant`` is human-only, so no verb
+    # ever covers either type: no replay verdict can change (the digest pin in tests/ops/test_emits.py is re-pinned)
+    "grant": frozenset({"grant.issued", "grant.revoked"}),
     "grant.revoke": frozenset({"grant.revoked"}),
     "handoff": frozenset({"claim.released", "handoff.written"}),
     "import.v1": frozenset(

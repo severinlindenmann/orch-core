@@ -338,6 +338,8 @@ class RunnerGrant(Action):
     action: Literal["runner_grant"]
     hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS; the host holds the workspace cap
     scope: Literal["all", "workable"] = "workable"
+    #: B8 Extend: the runner grant this one replaces (one request, one signature, typed word); the signer revokes it
+    extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
 PrepareBody = Annotated[
@@ -415,7 +417,9 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
-            return "grant", {"hours": action.hours, "scope": action.scope}
+            return "grant", {"hours": action.hours, "scope": action.scope} | (
+                {"extend": action.extend} if action.extend else {}
+            )
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -456,8 +460,28 @@ def expected(action: Action, person: str | None = None):
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
-            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (at most 168 h; the host applies the setting), and
-            # the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
+            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (the host applies
+            # the workspace setting), and the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
+            if action.extend:  # B8: the new grant, then the revoke of exactly the one named (nothing else, no reason)
+                return lambda ev: (
+                    len(ev) == 2
+                    and ev[0].get("type") == "grant.issued"
+                    and ev[0].get("label") == "runner"
+                    and ev[0].get("verbs") == "agent"
+                    and ev[0].get("hours") == action.hours
+                    and ev[0].get("scope") == action.scope
+                    and set(ev[0]) <= GRANT_ISSUED_KEYS
+                    and ev[1].get("type") == "grant.revoked"
+                    and ev[1].get("grant") == action.extend
+                    and ev[1].get("reason") == "extended"
+                    and person is not None
+                    and all(
+                        isinstance(e.get("actor"), dict)
+                        and e["actor"].get("kind") == "person"
+                        and e["actor"].get("id") == person
+                        for e in ev
+                    )
+                )
             return lambda ev: (
                 one(ev, "grant.issued", label="runner", verbs="agent", hours=action.hours, scope=action.scope)
                 # Review I2: exactly the grant.issued payload (plus the envelope), nothing a future field could add.

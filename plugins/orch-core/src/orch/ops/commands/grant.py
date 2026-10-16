@@ -70,7 +70,15 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     }
     if args.get("label"):
         event["label"] = h.call.text(args["label"], one_line=True, what="label")
+    old = args.get("extend")
+    if old is not None:  # B8: Extend = the new runner grant and the revoke of the old one, one prepared request
+        person, _ = h.who()
+        was = h.store.state.workspace.grants.get(old)
+        if not args.get("runner") or was is None or was.label != "runner" or was.person != person or was.revoked:
+            raise OrchError("invalid.input", "--extend replaces your own live runner grant (with --runner)")
     done = h.run(event, "workspace", f"issue grant {grant_id} for {hours} h")
+    if old is not None:  # judged with the first leg by human.submit (judge_events): both land or neither does
+        h.run({"type": "grant.revoked", "grant": old, "reason": "extended"}, "workspace", f"revoke grant {old}")
     lines: list[str] = []
     if ctx.prepare is not None and ctx.prepare.dry_run:  # as below: a dry run made no grant
         return h.workspace_result(None, {"scope": event["scope"]}, None, ["no grant was made"])
@@ -120,12 +128,15 @@ OP = operation(
         "scope": E("what it covers", "all", "workable", default="workable"),
         "verbs": S("agent, or operation names comma separated", default="agent", **{"x-metavar": "VERBS"}),
         "label": S("short label", **{"x-metavar": "TEXT"}),
-        "runner": B(
-            "hand the secret to the runner here instead of showing it (at most the grant_hours setting)"
+        "extend": S(
+            "revoke this runner grant of yours together with the new one (with --runner)",
+            pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            **{"x-metavar": "GRANT"},
         ),
+        "runner": B("hand the secret to the runner here instead of showing it (at most the grant_hours setting)"),
     },
     pre=("workspace_exists", "role_allows", "user_presence", "text_clean"),
-    emits=("grant.issued",),
+    emits=("grant.issued", "grant.revoked"),
     text="ok grant.issued[ {grant}][ until={until}]\nnext: {next}",
     data=obj({"grant": STR, "until": STR, "scope": STR}, optional=("grant", "until")),
     errors=(err("role.denied"), err("parse.text")),

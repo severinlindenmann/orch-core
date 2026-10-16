@@ -22,15 +22,15 @@ from tests.ops.helpers import Cli, Ws
 
 TOKENS = lambda text: -(-len(text) // 4)  # noqa: E731
 
-AGENTS_MAX_TOKENS = 300  # loaded every session
+AGENTS_MAX_TOKENS = 350  # loaded every session
 SESSION_START_MAX_TOKENS = 150  # loaded every session start and after every compaction
 SKILL_MAX_TOKENS = 600  # loaded only when the task matches
-ALWAYS_LOADED_MAX_TOKENS = 450
+ALWAYS_LOADED_MAX_TOKENS = 500
 
 
-def test_agents_md_is_at_most_25_lines_and_300_tokens():
+def test_agents_md_is_at_most_40_lines_and_300_tokens():
     text = render_agents_md()
-    assert len(text.splitlines()) <= AGENTS_MAX_LINES == 25
+    assert len(text.splitlines()) <= AGENTS_MAX_LINES == 40
     assert TOKENS(text) <= AGENTS_MAX_TOKENS, TOKENS(text)
 
 

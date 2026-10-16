@@ -4416,6 +4416,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and the model refuses a person event
     made a way it excludes (`sign.method`, by the state at the event's position).
 
+71. **B7: skills in `.agents/skills`, `AGENTS.md` block, `CLAUDE.md` imports, structured `AGENTS.orch.md` (owner decisions
+    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch init` and `orch instructions sync`
+    write the skills to `.agents/skills/<name>/` (canonical) and always a generated copy in `.claude/skills` (never
+    deleted). `AGENTS.md` gets one `<!-- orch:begin -->`..`<!-- orch:end -->` block, `CLAUDE.md` the lines `@AGENTS.md` and
+    `@AGENTS.orch.md`; the old pointer line is migrated. A skill folder without a sidecar is the user's unless it is the
+    shipped text. The pointer files are checked before anything is written; a `CLAUDE.md` linked to `AGENTS.md` is skipped.
+    `AGENTS.orch.md` has headings and up to 40 lines; `INSTRUCTIONS_REV` is 2, so `orch status` says `run orch
+    instructions sync`. No wire, hash, F1 or error-code change.
+
 ---
 
 ## 1. Process model

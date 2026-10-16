@@ -128,6 +128,7 @@ def test_with_the_gate_open_a_missing_r6_seam_fails_the_start_and_leaves_nothing
     monkeypatch.setattr(relay_worker, "R6_READY", True)
     svc = served.service
     _reserve(served)
+    svc.relay_starter = relayhook.make_starter(object(), relayhook.Seams())  # (serve installs the real seams, B1)
     assert svc.relay_start() == "none"
     assert svc.relay_reason == "start_failed: SeamMissing"
     StateDir(relayhook.relay_state_path(svc)).close()  # not left locked

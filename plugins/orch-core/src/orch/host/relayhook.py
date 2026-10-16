@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import os
 import re
@@ -46,8 +47,10 @@ if TYPE_CHECKING:
     from .workspace import WorkspaceService
 
 __all__ = [
+    "SEAMS",
     "Seams",
     "convenience_block",
+    "install_seams",
     "link_step1",
     "make_starter",
     "relay_state_path",
@@ -90,6 +93,30 @@ class Seams:
 
 #: the seams the host uses (frozen: R3, R4 and R6 replace it with ``dataclasses.replace`` when they land)
 SEAMS = Seams()
+
+
+def install_seams() -> Seams:
+    """Land the production seams at host start (B1; ``Host.serve`` calls it before the first starter is built):
+    ``r6`` = :func:`relayr6.r6`, ``link_source`` = :func:`relayr6.link_source`, ``publisher`` =
+    :func:`relayr3.publisher`, ``unpublished`` = :func:`relayr4.unpublished`. A seam already set (a test's) is
+    kept, and calling it again changes nothing. The R6 gate (``relay_worker.R6_READY``) is a separate switch: with it
+    closed no worker starts whatever the seams are. Also sets the R6b membership seam,
+    :data:`orch.host.relaypair.MEMBERSHIP`, when it is unset."""
+    global SEAMS
+    from . import relayr3, relayr4, relayr6
+
+    SEAMS = dataclasses.replace(
+        SEAMS,
+        r6=SEAMS.r6 or relayr6.r6,
+        publisher=SEAMS.publisher or relayr3.publisher,
+        unpublished=SEAMS.unpublished or relayr4.unpublished,
+        link_source=SEAMS.link_source or relayr6.link_source,
+    )
+    from . import relaypair, relayr6b
+
+    if relaypair.MEMBERSHIP is None:
+        relaypair.MEMBERSHIP = relayr6b.membership
+    return SEAMS
 
 
 # -- the per-process slots of the 8-per-host cap ----------------------------------------------------------------------
@@ -303,7 +330,7 @@ def start_worker(
         worker = relay_worker.RelayWorker(
             workspace_id=ws, state=state, session=session, submit=service.submit, alarms=alarms, stop_event=stop,
             link_state=lambda: _link_state(state), precheck=lambda: convenience_block(service),
-            first_link=run_first_link, on_ended=release,
+            first_link=run_first_link, on_ended=release, conn=conn,
         )  # fmt: skip
         holder["w"] = worker
         worker.publisher = _conform(seams.publisher(service, worker), relay_worker.Publisher, "publisher")
@@ -320,7 +347,7 @@ def start_worker(
             job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms, convenience_gate=lambda: gated(service),
         )  # fmt: skip
         # R6c: the pair thread (11A.15.2 "Threads"), started and stopped with the bridge loop; its own connection
-        pairing = relaypair.start_thread(service, session, conn)
+        pairing = relaypair.start_thread(service, session, conn, worker=worker)
         worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws, pairing=pairing), rids)
         service.relay = worker  # before the start thread exists (review R1); the caller holds relay_lock
         worker.start()
@@ -358,6 +385,11 @@ class _LinkSteps:
         return self.source.genesis()
 
     def publish(self, session: Any, directory: Any) -> None:
+        # the card was accepted by now (R1: PUT card precedes login, hold, genesis and this step): R6a's source moves
+        # its pending card to accepted (11A.15.5; a source without the hook, a test fake, has nothing to move)
+        accepted = getattr(self.source, "card_accepted", None)
+        if callable(accepted):
+            accepted()
         self.worker.publisher.publish_first(session, directory)
 
     def mark_linked(self) -> None:

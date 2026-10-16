@@ -2,7 +2,8 @@
 
 * :func:`r6` ``(service) -> (EpochKeySource, R6View)``: R6's key store (``hosts/<ws>/membership/``), checked before
   the worker starts (H7: an unsafe store raises :class:`MembershipUnsafe`, alarm ``membership_state_unsafe``), and
-  an ``R6View`` that serves nothing until R6b's verified committed list exists (fail closed: R2 then has no members).
+  the real ``R6View`` (R6b, :func:`orch.host.relayr6b.view`: the host's own committed list, re-verified at load; it
+  serves nothing while no list is committed or the list does not verify: fail closed, R2 then has no members).
 * :func:`link_source` ``(service)``: the first card (WXK/CK custody, signed by an R6 ``RelaySigner`` whose ledger is
   ``membership/sign-ledger.json``), ``PK`` and the delegation from the workspace's own genesis (``check_genesis``),
   and the convenience check of 11A.6 before anything is drawn. ``genesis()`` refuses until the person path exists.
@@ -79,13 +80,6 @@ def close(service: Any) -> None:
         mk.close()
 
 
-class _NoView:
-    """R6b replaces this with the verified committed list (11A.15.2 ``R6View``). Until then: no members."""
-
-    def member_list(self) -> None:
-        return None
-
-
 def _rebuild_gate(service: Any, mk: Any) -> None:
     """The relay gate invariant at start (round 3): a loss of standing the running store could not report (a crash
     between its state change and the durable gate write, a change made while no R6 hook was installed) is found
@@ -146,7 +140,9 @@ def r6(service: Any) -> tuple[Any, Any]:
     if service.store is None:
         raise MembershipUnsafe("no store to hook")
     R6Gate(mk).install(lambda: service.store, rebuild=lambda: _rebuild_gate(service, mk))
-    return mk, _NoView()
+    from .relayr6b import view
+
+    return mk, view(service, mk)
 
 
 def _convenience_block(service: Any) -> str | None:

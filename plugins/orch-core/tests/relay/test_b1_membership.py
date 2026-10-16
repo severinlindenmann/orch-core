@@ -4,6 +4,7 @@ grant store, with a scripted relay in place of the network (the step is driven d
 from __future__ import annotations
 
 import random
+import time
 from pathlib import Path
 from typing import Any
 
@@ -474,3 +475,129 @@ def test_a_superseded_exposure_keeps_every_holder_of_every_body_it_granted(tmp_p
     assert head["exposed"] is None and head["excluded"][b]["reason"] == "revoked"
     assert {*head["burned"]["list_seqs"]} == {2, 3}
     mk.close()
+
+
+# -- fix round (Opus review of B1-H) ---------------------------------------------------------------------
+
+
+def _ok(n, body):
+    return {"list_seq": body["member_list"]["o"]["list_seq"], "epoch": body["member_list"]["o"]["epoch"]}
+
+
+def test_m1_an_addition_after_an_abandoned_rotation_publishes_at_a_new_epoch_not_below_the_highest_signed(rig):
+    d1, d2 = rig.add("o1"), rig.add("o2")
+    rig.pub._step()  # noqa: SLF001 - both at epoch 1
+    rig.ok.discard(d2.id)
+    rig.session.script = lambda n, body: (_ for _ in ()).throw(RelayRefused(503, None))
+    rig.pub._step()  # noqa: SLF001 - rotation to epoch 2 exposed, 503
+    assert rig.mk.head()["exposed"]["epoch"] == 2
+    rig.ok.add(d2.id)
+    rig.pub._step()  # noqa: SLF001 - plan None: epoch 2 is abandoned
+    assert rig.mk.head()["exposed"] is None and rig.mk.current_epoch() == 1
+    d3 = rig.add("o3")
+    rig.session.script = _ok
+    rig.pub._step()  # noqa: SLF001
+    ml = memberlist.check_member_list(_body(rig)["member_list"], WSK_PUB, WS)
+    assert ml.epoch > 2 and sorted(m.device_id for m in ml.members) == sorted([d1.id, d2.id, d3.id])
+    assert rig.mk.current_epoch() == ml.epoch and rig.events.committed[-1][0] == "o3"
+
+
+def test_m1_the_plan_rotates_whenever_ehw_is_above_the_committed_epoch():
+    head = _head(committed=_committed(["a" * 32]))
+    head["committed"]["epoch"] = 1
+    assert plan_publication(head, ["a" * 32, "b" * 32], 1) == Plan(False, ("a" * 32, "b" * 32))
+    assert plan_publication(head, ["a" * 32, "b" * 32], 2) == Plan(True, ("a" * 32, "b" * 32))
+    assert plan_publication(head, ["a" * 32], 2) is None
+
+
+def test_m2_a_crash_between_signing_a_grant_and_keeping_it_does_not_stall_the_device(rig, monkeypatch):
+    rig.add("o1")
+    rig.pub._step()  # noqa: SLF001
+    d2 = rig.add("o2")
+    real = rig.grants.keep
+    boom = {"n": 0}
+
+    def crash(epoch, device, signed):
+        boom["n"] += 1
+        if boom["n"] == 1:
+            raise OSError("crash after the signature")
+        return real(epoch, device, signed)
+
+    monkeypatch.setattr(rig.grants, "keep", crash)
+    with pytest.raises(OSError):
+        rig.pub._step()  # noqa: SLF001
+    assert rig.grants.get(1, d2.id) is None and rig.grants.get_unsigned(1, d2.id) is not None
+    rig.pub._step()  # noqa: SLF001
+    assert rig.events.committed[-1][0] == "o2"
+    assert {g["o"]["device_id"] for g in _body(rig)["grants"]} == {m for m in rig.mk.head()["holders"]["1"]}
+
+
+def test_m3_the_card_key_wraps_are_persisted_write_once_per_card_seq_and_device(rig):
+    _accept_card(rig.mk)
+    d1 = rig.add("o1")
+    rig.session.script = lambda n, body: (_ for _ in ()).throw(RelayRefused(503, None))
+    rig.pub._step()  # noqa: SLF001
+    first = _body(rig)["card_key_wraps"]["wraps"][0]["sealed"]
+    assert rig.grants.get_wrap(1, d1.id) == first
+    rig.ok.discard(d1.id)
+    rig.pub._step()  # noqa: SLF001 - supersedes the exposed body (empty rotation)
+    rig.ok.add(d1.id)
+    rig.pub._step()  # noqa: SLF001 - abandons it again
+    rig.pub._step()  # noqa: SLF001 - a new exposure for d1 re-uses the stored wrap, not a new sealing
+    assert _body(rig)["card_key_wraps"]["wraps"][0]["sealed"] == first
+
+
+@pytest.mark.parametrize("code", ["stale_card", "wrap_conflict"])
+def test_m3_a_card_container_refusal_resends_the_same_list_and_grants_without_the_wraps(rig, code):
+    _accept_card(rig.mk)
+    rig.add("o1")
+
+    def script(n, body):
+        if "card_key_wraps" in body:
+            raise RelayRefused(409, code)
+        return _ok(n, body)
+
+    rig.session.script = script
+    rig.pub._step()  # noqa: SLF001 - refused: the next send drops the wraps
+    assert rig.events.committed == [] and rig.mk.head()["exposed"] is not None
+    rig.pub._step()  # noqa: SLF001
+    assert "card_key_wraps" not in _body(rig) and rig.events.committed[0][0] == "o1"
+    first, second = (canon.loads_strict(c[1]) for c in rig.session.calls[:2])
+    assert first["member_list"] == second["member_list"] and first["grants"] == second["grants"]
+
+
+def test_l1_a_failing_device_store_is_membership_local_with_a_backoff_not_the_end_of_the_thread(rig):
+    rig.add("o1")
+
+    def broken(ids):
+        raise RuntimeError("corrupt devices/<id>.json")
+
+    rig.pub._standing = broken  # noqa: SLF001
+    rig.pub.start()
+    try:
+        for _ in range(250):
+            if "membership_local" in rig.alarms.codes():
+                break
+            time.sleep(0.02)
+        assert "membership_local" in rig.alarms.codes()
+        assert rig.errors == [] and rig.pub._thread.is_alive()  # noqa: SLF001
+    finally:
+        rig.pub.stop()
+        rig.pub.join(2)
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "abandons"),
+    [(401, "unauthenticated", False), (401, "session_expired", False), (400, "weird", False),
+     (409, "stale_list", True), (401, "bad_signature", True), (403, "cert_expired", True)],
+)  # fmt: skip
+def test_l3_only_the_listed_content_and_divergence_codes_abandon(rig, status, code, abandons):
+    rig.add("o1")
+    rig.session.script = lambda n, body: (_ for _ in ()).throw(RelayRefused(status, code))
+    rig.pub._step()  # noqa: SLF001
+    head = rig.mk.head()
+    if abandons:
+        assert head["exposed"] is None and head["excluded"] and rig.events.refused
+    else:
+        assert head["exposed"] is not None and not head["excluded"] and rig.events.refused == []
+        assert head["burned"]["list_seqs"] == []

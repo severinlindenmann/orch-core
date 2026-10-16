@@ -9788,7 +9788,14 @@ stored) is how an owner client supplies it.
   committed is answered at once). Transient (transport, 5xx, `rate_limited`, malformed 2xx): the exact bytes again
   after a backoff and a scheduled `GET members`. A content or divergence refusal: `abandon` (burn), the devices that
   body added into `excluded`, `on_refused`, H8 count, next plan rotates; never retried. `quota_exceeded`: the same plus
-  `membership_quota` and `ready()` false. `stale_card`/`wrap_conflict`: held with `membership_card_refused`. Fence or
+  `membership_quota` and `ready()` false. Only the §7.2/§7.3 content codes abandon (`ABANDON_CODES`); an auth answer or an
+  unknown code backs off with the same bytes (`membership_refused_other`). `stale_card`/`wrap_conflict`: alarm
+  `membership_card_refused`, then the SAME list and grants are resent without `card_key_wraps` (a send-time variant, the
+  exposed body is unchanged); the wraps are persisted write-once per `(card_seq, device)` (`w<seq>-<device>.json`,
+  §19.7) and reused on every re-exposure. The unsigned grant (sealed bytes) is persisted write-once (`u<e>-<device>.json`)
+  BEFORE it is signed, so a crash before `grants.keep` re-signs the same bytes (the signer returns the recorded
+  signature). A plan whose `EHW` is above the committed epoch is a rotation (H4), never an addition at `e_c`. A failing
+  device store or standing job is `membership_local` with a backoff, not the end of the worker. Fence or
   session error: the thread ends and stops the worker.
 - *H7.* `reconcile()` reads `GET members` (verified under the WSK by R1's `Directory`) and calls `recover_h7` when the
   relay holds a list above `LHW`/`EHW` or another body at a `list_seq` this host exposed. It runs at thread start when

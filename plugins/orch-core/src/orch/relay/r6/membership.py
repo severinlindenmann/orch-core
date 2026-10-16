@@ -74,6 +74,13 @@ ROTATION_STUCK_MS = 600_000  # §11 H8: an uncommitted rotation older than 10 mi
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 #: container-only refusals (nothing is burned): the card number or a wrap, not the list
 CONTAINER_REFUSALS = frozenset({"stale_card", "wrap_conflict"})
+#: the §7.2/§7.3 content and divergence refusals of ``PUT membership`` (and the permanent quota): the body is abandoned.
+#: Anything else (an auth answer after a re-login, an unknown code) is transient: the same bytes after a backoff.
+ABANDON_CODES = frozenset({
+    "malformed", "bad_signature", "other_workspace", "other_person", "bad_epoch", "stale_list", "rotation_required",
+    "wk_commit_changed", "missing_grant", "grant_conflict", "revoked", "scope_exceeded", "not_eligible",
+    "not_for_this_device", "cert_expired", "quota_exceeded",
+})  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -85,8 +92,10 @@ class Plan:
     devices: tuple[str, ...]
 
 
-def plan_publication(head: Mapping[str, Any], eligible: Sequence[str]) -> Plan | None:
-    """The publication that moves the committed list to the wanted one, or ``None`` (pure; 11A.15.4)."""
+def plan_publication(head: Mapping[str, Any], eligible: Sequence[str], ehw: int = 0) -> Plan | None:
+    """The publication that moves the committed list to the wanted one, or ``None`` (pure; 11A.15.4). ``ehw`` is the
+    epoch high-water mark: above the committed epoch (an abandoned or burned rotation) a change is a rotation, never
+    an addition at ``e_c`` (H4: the signer refuses an epoch below the highest signed one)."""
     gate = head["gate"]
     gated = {r["device"] for r in gate["reasons"]} if gate else set()
     want = set(eligible) - set(head["excluded"]) - gated
@@ -99,7 +108,7 @@ def plan_publication(head: Mapping[str, Any], eligible: Sequence[str]) -> Plan |
         return Plan(True, tuple(sorted(want)))
     if want == cur:
         return None
-    return Plan(False, tuple(sorted(want)))
+    return Plan(ehw > committed["epoch"], tuple(sorted(want)))
 
 
 class GrantStore:
@@ -127,6 +136,50 @@ class GrantStore:
         if type(obj) is not dict:
             raise StateError("grant shape")
         return obj
+
+    def get_unsigned(self, epoch: int, device: str) -> dict[str, Any] | None:
+        """The unsigned grant object (sealed bytes included) persisted before signing (``u<epoch>-<device>.json``)."""
+        raw = self._d.read("u" + self._name(epoch, device)[1:])
+        if raw is None:
+            return None
+        obj = canon.loads_strict(raw)
+        if type(obj) is not dict:
+            raise StateError("grant shape")
+        return obj
+
+    def keep_unsigned(self, epoch: int, device: str, go: Mapping[str, Any]) -> dict[str, Any]:
+        """Claim the unsigned grant write-once; the stored one wins (Ed25519 is deterministic, and the signer's ledger
+        returns the recorded signature for exactly these bytes)."""
+        name = "u" + self._name(epoch, device)[1:]
+        if self._d.claim(name, canon.dumps(dict(go))):
+            return dict(go)
+        held = self.get_unsigned(epoch, device)
+        assert held is not None
+        return held
+
+    def get_wrap(self, card_seq: int, device: str) -> str | None:
+        raw = self._d.read(self._wrap_name(card_seq, device))
+        if raw is None:
+            return None
+        obj = canon.loads_strict(raw)
+        if type(obj) is not dict or type(obj.get("sealed")) is not str:
+            raise StateError("wrap shape")
+        return obj["sealed"]
+
+    def keep_wrap(self, card_seq: int, device: str, sealed: str) -> str:
+        """Claim the card-key wrap of ``(card_seq, device)`` write-once (§19.7: persisted before it is sent; different
+        bytes for the pair are ``wrap_conflict``); the stored one wins."""
+        if self._d.claim(self._wrap_name(card_seq, device), canon.dumps({"sealed": sealed})):
+            return sealed
+        held = self.get_wrap(card_seq, device)
+        assert held is not None
+        return held
+
+    @staticmethod
+    def _wrap_name(card_seq: int, device: str) -> str:
+        if type(card_seq) is not int or card_seq < 1 or not _HEX32.fullmatch(device):
+            raise StateError("wrap name")
+        return f"w{card_seq}-{device}.json"
 
     def keep(self, epoch: int, device: str, signed: Mapping[str, Any]) -> dict[str, Any]:
         """Claim ``signed``; if another claim won (a crash after the claim), the stored one is returned."""
@@ -189,6 +242,7 @@ class MembershipPublisher:
         self._quota_full = False
         self._first_send: dict[int, int] = {}  # list_seq -> first send ms (H8's 10-minute alarm)
         self._alarmed: set[str] = set()
+        self._no_wraps: set[int] = set()  # list_seqs whose card_key_wraps the relay refused: sent without them
         self.error: BaseException | None = None
 
     # -- the MembershipQueue the pair thread sees ------------------------------------------------------------------
@@ -309,7 +363,7 @@ class MembershipPublisher:
         head = keys.head()
         eligible = self._eligible()
         self._answer_known(head, eligible)
-        plan = plan_publication(head, eligible)
+        plan = plan_publication(head, eligible, keys.high_water()[1])
         ex = head["exposed"]
         if ex is not None and (plan is None or not self._same(ex, plan)):
             keys.abandon()  # a change supersedes the exposed body (H4): its list_seq (and epoch) burn
@@ -331,9 +385,20 @@ class MembershipPublisher:
                 self._keys.exclude(device, reason)
 
     def _eligible(self) -> list[str]:
-        ids = self._device_ids()
-        ok = self._standing(ids) if ids else set()
+        ids = self._local(self._device_ids)
+        ok = self._local(self._standing, ids) if ids else set()
         return sorted(d for d in ids if d in ok)
+
+    @staticmethod
+    def _local(fn: Callable[..., Any], *args: Any) -> Any:
+        """A host-supplied input (device store, standing job) that fails is a local fault: ``membership_local`` and a
+        backoff, never the end of the worker. Session, fence and transport errors pass through."""
+        try:
+            return fn(*args)
+        except (SessionError, TransportError, RedirectRefused):
+            raise
+        except Exception as e:  # noqa: BLE001 - PairStoreError, HostError, a failed worker job
+            raise StateError(f"host input failed: {type(e).__name__}") from None
 
     def _answer_known(self, head: Mapping[str, Any], eligible: Sequence[str]) -> None:
         """An offer whose device is already in the committed list is answered at once (a repost after a crash); one
@@ -352,7 +417,7 @@ class MembershipPublisher:
 
     def _pending_device(self, device: str) -> bool:
         """The device record does not exist yet (the allocation commits it before the post, so this is rare)."""
-        return self._device(device) is None
+        return self._local(self._device, device) is None
 
     def _tell_committed(self, offer: str, device: str, committed: Mapping[str, Any]) -> None:
         with self._lock:
@@ -394,7 +459,7 @@ class MembershipPublisher:
         else:
             assert committed is not None
             epoch, commit = ec, committed["wk_commit"]
-        recs = {d: self._device(d) for d in plan.devices}
+        recs = {d: self._local(self._device, d) for d in plan.devices}
         entries = []
         for d, rec in recs.items():
             if not isinstance(rec, Mapping) or rec.get("person_id") != self._owner:
@@ -422,9 +487,11 @@ class MembershipPublisher:
         held = self._grants.get(epoch, device)
         if held is not None:
             return held  # reused byte for byte: the signer ledger and the relay both compare the exact grant
-        kx = crypto.unb64u(rec["cert"]["o"]["dk_kx_pub"], crypto.PUB_LEN)
-        sealed = self._keys.sealed_wk(epoch, kx, device)
-        go = memberlist.wk_grant_o(self.ws, device, epoch, sealed)
+        go = self._grants.get_unsigned(epoch, device)
+        if go is None:  # sealed once, persisted BEFORE signing: a crash after the signature re-signs these bytes
+            kx = crypto.unb64u(rec["cert"]["o"]["dk_kx_pub"], crypto.PUB_LEN)
+            sealed = self._keys.sealed_wk(epoch, kx, device)
+            go = self._grants.keep_unsigned(epoch, device, memberlist.wk_grant_o(self.ws, device, epoch, sealed))
         signed = {"o": go, "sig": self._signer.wk_grant(go, signed_list=o)}
         return self._grants.keep(epoch, device, signed)
 
@@ -435,7 +502,10 @@ class MembershipPublisher:
         out = []
         for d in new:
             kx = crypto.unb64u(recs[d]["cert"]["o"]["dk_kx_pub"], crypto.PUB_LEN)
-            out.append({"device_id": d, "sealed": crypto.b64u(self._keys.card_key_wrap(seq, kx, d))})
+            sealed = self._grants.get_wrap(seq, d)
+            if sealed is None:
+                sealed = self._grants.keep_wrap(seq, d, crypto.b64u(self._keys.card_key_wrap(seq, kx, d)))
+            out.append({"device_id": d, "sealed": sealed})
         return {"card_seq": seq, "wraps": out}
 
     # -- send and outcomes (H3/H4) -----------------------------------------------------------------------------------
@@ -443,6 +513,8 @@ class MembershipPublisher:
     def _send(self, ex: Mapping[str, Any], head: Mapping[str, Any]) -> float:
         body = crypto.unb64u(ex["body"])
         seq, epoch = ex["list_seq"], ex["epoch"]
+        if seq in self._no_wraps:
+            body = self._without_wraps(body)
         now = self._now_ms()
         first = self._first_send.setdefault(seq, now)
         if ex["new_epoch"] is not None and now - first > ROTATION_STUCK_MS:
@@ -489,13 +561,27 @@ class MembershipPublisher:
             return delay(self._failures - 1, e.retry_after, self._rng)
         if e.code in CONTAINER_REFUSALS:
             self._alarm("membership_card_refused", f"{e.status} {e.code}")
+            if ex["list_seq"] not in self._no_wraps and b"card_key_wraps" in crypto.unb64u(ex["body"]):
+                self._no_wraps.add(ex["list_seq"])  # same list and grants, no wraps: never the same refused bytes again
+                return 0.0
             self._failures += 1
             return delay(self._failures - 1, e.retry_after, self._rng)
         if e.status == 404:  # an unknown route or workspace is not a verdict on the list
             self._alarm("membership_refused_404", "")
             self._failures += 1
             return delay(self._failures - 1, e.retry_after, self._rng)
+        if e.code not in ABANDON_CODES:  # unauthenticated, expired session after a re-login, an unknown answer
+            self._alarm("membership_refused_other", f"{e.status} {e.code}")
+            self._reconcile_due = True
+            self._failures += 1
+            return delay(self._failures - 1, e.retry_after, self._rng)
         return self._content_refusal(e, ex, head)
+
+    @staticmethod
+    def _without_wraps(body: bytes) -> bytes:
+        obj = canon.loads_strict(body)
+        obj.pop("card_key_wraps", None)
+        return canon.dumps(obj)
 
     def _content_refusal(self, e: RelayRefused, ex: Mapping[str, Any], head: Mapping[str, Any]) -> float:
         """H4: burn the list_seq (and the epoch it introduced) and never retry the body; the devices it newly added

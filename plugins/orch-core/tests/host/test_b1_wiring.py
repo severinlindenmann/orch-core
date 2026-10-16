@@ -92,8 +92,10 @@ def test_install_seams_sets_all_four_and_the_membership_seam_once_and_keeps_what
     assert relayhook.install_seams().publisher is mine and relaypair.MEMBERSHIP == "mine"
 
 
-def test_the_r6_gate_stays_closed_whatever_the_seams_are():
-    assert relay_worker.R6_READY is False
+def test_the_r6_gate_is_open_in_the_code_and_a_closed_gate_still_refuses(monkeypatch):
+    assert relay_worker.R6_READY is True and relay_worker.r6_ready() is True
+    monkeypatch.setattr(relay_worker, "R6_READY", False)
+    assert relay_worker.r6_ready() is False
 
 
 # -- the first card ---------------------------------------------------------------------------------------------------

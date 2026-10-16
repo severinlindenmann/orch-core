@@ -92,6 +92,13 @@ def make_facts(served, *, level: int | None = None, path: str = "7b", **kw) -> t
 
 
 @pytest.fixture
+def closed_gate(monkeypatch):
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # these tests are about the closed gate
+
+
+@pytest.fixture
 def pairing(served):
     facts, phone = make_facts(served)
     src = Source(served, facts)
@@ -166,7 +173,7 @@ def test_the_request_names_only_the_offer(served, human, pairing):
     assert err(human.prepare_res("relay.pair_device", {"offer_id": "f" * 32})) == "not_found"  # the source's refusal
 
 
-def test_without_a_relay_pairing_the_op_is_unsupported(served, human):
+def test_without_a_relay_pairing_the_op_is_unsupported(closed_gate, served, human):
     assert err(human.prepare_res("relay.pair_device", {"offer_id": OFFER})) == "op.unsupported"
 
 

@@ -77,6 +77,9 @@ def test_an_unreachable_relay_links_nothing(lab):
 
 
 def test_the_cli_link_reserves_asks_for_the_pin_then_starts_and_reports_where_it_stopped(lab, relay, monkeypatch):
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     with lab.host() as h, h.client() as c:
         wid = _register(lab, c)
         call = _call(c)

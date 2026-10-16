@@ -321,9 +321,10 @@ def test_a_fenced_worker_is_reported_failed_and_stops_cleanly(served, loopback):
     assert _wait(lambda: sim.polls >= 1)
     gen, until = sim.holders[served.wid]
     sim.holders[served.wid] = (gen + 1, until)  # another holder took over
-    assert _wait(lambda: relayhook.status(svc)["worker"] == "failed")
+    # "failed" is recorded before the worker thread has finished ending (``alive`` is cleared last): wait for both
+    assert _wait(lambda: (r := relayhook.status(svc))["worker"] == "failed" and r["alive"] is False)
     rel = relayhook.status(svc)
-    assert rel["reason"] == "Fenced" and rel["alive"] is False
+    assert rel["reason"] == "Fenced"
     assert svc.relay_start() == "none"  # the failed worker stays in place: stop, then start (operator)
     assert svc.relay_stop() == "stopped" and not _relay_threads(served.wid[:8])
 

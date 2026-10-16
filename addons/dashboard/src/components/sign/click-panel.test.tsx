@@ -50,11 +50,13 @@ afterEach(() => {
 })
 
 describe('the sign panel shows only the signer’s View', () => {
-  it('puts the verbatim risk line first, then the View’s fields', () => {
+  it('shows a One-click badge and keeps technical fields in collapsed Details', () => {
     mount(answer({ artifacts: 'unseen', checks: [{ repo: 'code', clean: true, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
     const panel = screen.getByTestId('click-panel')
-    expect(panel.firstElementChild).toBe(screen.getByTestId('click-risk'))
-    expect(screen.getByTestId('click-risk').textContent).toBe(CLICK_RISK)
+    expect(screen.getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(panel.querySelector('details')).not.toHaveAttribute('open')
+    fireEvent.focus(screen.getByRole('button', { name: 'One-click' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent(CLICK_RISK)
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
     expect(panel).toHaveTextContent('approve')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('id a94c935c')
@@ -319,4 +321,36 @@ describe('the other buttons', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: /terminal/ })).toBeNull()
   })
+})
+
+it('renders structured content while retaining the full lines in Details', () => {
+  mount(answer({ content: { headline: 'Approve requirements', sections: [{ id: 'requirements', title: 'Requirements', text: 'Do the thing' }], acceptance: [{ id: 'AC1', text: 'It works' }], tasks: [{ n: 2, id: 'T-3', title: 'Check it', verify: ['npm test'] }], fields_changed: [{ field: 'title', before: 'Old', after: 'New', before_note: 'per host, not signed' }] } }))
+  expect(screen.getByText('Do the thing')).toBeVisible()
+  expect(screen.getByText('It works')).toBeVisible()
+  expect(screen.getByText('npm test')).toBeVisible()
+  expect(screen.getByText('per host, not signed')).toBeVisible()
+  expect(screen.getByTestId('click-lines').closest('details')).not.toHaveAttribute('open')
+})
+
+it('keeps custody and warnings visible with structured content and technical details collapsed', () => {
+  mount(answer({ content: { headline: 'Approve', notes: ['Review this'] }, artifacts: 'unseen',
+    checks: [{ repo: 'dirty-repo', clean: false, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
+  expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByTestId('click-custody')).toBeVisible()
+  expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+  expect(screen.getByText('dirty-repo', { selector: 'p *' }).closest('p')).toBeVisible()
+  expect(screen.getByTestId('click-artifacts')).toBeVisible()
+  expect(screen.getByTestId('click-fingerprint')).not.toBeVisible()
+  expect(screen.getByTestId('click-lines')).not.toBeVisible()
+})
+
+it('shows the full terminal lines when structured content is absent', () => {
+  mount(answer({ lines: ['Fallback first line', 'Fallback second line'] }))
+  expect(screen.getByText('Fallback first line')).toBeVisible()
+  expect(screen.getByText('Fallback second line')).toBeVisible()
+})
+
+it('makes the badge risk text available inline on small touch screens', () => {
+  mount()
+  expect(screen.getByText(CLICK_RISK)).toHaveClass('sm:hidden')
 })

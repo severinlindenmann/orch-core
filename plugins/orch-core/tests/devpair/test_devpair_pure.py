@@ -80,8 +80,10 @@ def test_main_refuses_without_touching_anything(dp, scratch, monkeypatch):
 def test_json_fd_must_be_a_pipe_or_socket(dp, scratch, monkeypatch):
     f = scratch / "plain"
     fd = os.open(f, os.O_WRONLY | os.O_CREAT, 0o600)
+    closed = os.dup(fd)
+    os.close(closed)  # a number that was open a moment ago and is not now (a fixed 99 may be a live pipe under load)
     try:
-        for bad in (fd, 1, 99):
+        for bad in (fd, 1, closed):
             argv = [
                 "up",
                 "--root",

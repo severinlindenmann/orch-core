@@ -44,6 +44,7 @@ export const queries = {
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
   /** Reduced workspace settings of a real host (M4). */
+  signDefault: (ws: string) => queryOptions({ queryKey: ['sign-default', ws], queryFn: () => api.getSignDefault(ws), retry: false }),
   hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
   roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
   /** H12d-2: reader levels and `required_reader` (Settings → Devices). */

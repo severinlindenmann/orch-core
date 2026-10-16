@@ -11,6 +11,7 @@ import pytest
 
 from orch.ops.base import Context
 from orch.ops.caps import Capabilities, CapabilityDenied, Files, NotARegularFile
+from tests._fds import open_fds_on, tree_identities
 
 
 @pytest.fixture
@@ -295,25 +296,27 @@ def test_denied_and_non_regular_messages_are_words_not_none(tree):
 
 def test_root_fds_are_released(tree):
     root, _ = tree
+    ids = tree_identities(root)  # only descriptors that name the root's own tree count, nothing else in the process
 
     def fds() -> int:
-        return len(os.listdir("/dev/fd"))
+        return open_fds_on(ids)
 
-    before = fds()
+    assert fds() == 0
     for _ in range(200):
         Capabilities.host((root,))  # dropped at once: the finalizer closes
     gc.collect()
-    assert fds() <= before + 2
-    before = fds()
+    assert fds() == 0
     held = [Files.host((root,)) for _ in range(5)]
-    assert fds() == before + 5
+    assert fds() == 5
     for f in held:
         f.close()
         f.close()  # idempotent
+    assert fds() == 0
     with Files.host((root,)) as f:
         assert f.read_text(root / "a" / "f.txt") == "inside"
+        assert fds() == 1
     gc.collect()
-    assert fds() <= before + 2
+    assert fds() == 0
 
 
 def test_hard_links_are_refused_and_never_truncated(tree):

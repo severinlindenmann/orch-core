@@ -33,7 +33,7 @@ from typing import Any
 
 from ..http import Transport, TransportError
 from ..retry import RelayRefused
-from ..session import RelayMisbehaving, Session
+from ..session import LoginHeldOff, RelayMisbehaving, Session
 from .pair import PairRelayError
 
 __all__ = ["DEADLINE_S", "SessionPairRelay"]
@@ -70,7 +70,7 @@ class SessionPairRelay:
             return self._s.call(method, path, route, deadline_s=DEADLINE_S, transport=self._transport(), **kw)
         except TransportError:
             raise PairRelayError("retry") from None
-        except RelayMisbehaving:
+        except (RelayMisbehaving, LoginHeldOff):  # a login hold-off is transient (as publish.py)
             raise PairRelayError("retry") from None
         except RelayRefused as e:
             kind = refusals.get((e.status, e.code)) or refusals.get((e.status, None))

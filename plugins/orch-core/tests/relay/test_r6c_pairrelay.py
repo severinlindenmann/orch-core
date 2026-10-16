@@ -158,3 +158,18 @@ def test_a_transport_failure_is_retry(relay):
     with pytest.raises(PairRelayError) as e:
         p.put_device(r["path"].rsplit("/", 1)[1], r["json"]["cert"])
     assert e.value.kind == "retry"
+
+
+def test_a_login_holdoff_is_a_retry_for_the_pair_thread_not_its_end():
+    import types
+
+    from orch.relay.r6.pairrelay import PairRelayError, SessionPairRelay
+    from orch.relay.session import LoginHeldOff
+
+    def call(*a, **kw):
+        raise LoginHeldOff("held")
+
+    p = SessionPairRelay(types.SimpleNamespace(call=call), "ab" * 16)  # type: ignore[arg-type]
+    with pytest.raises(PairRelayError) as e:
+        p.post_answer("cd" * 16, "ef" * 16, b"x")
+    assert e.value.kind == "retry"

@@ -52,7 +52,7 @@ from orch.identity.pairdevice import PHONE_SCOPES, PairDeviceFacts, PairDeviceIn
 from .. import wire
 from ..sign import RelaySigner, SignerRefused
 from ..state import StateError
-from .pairstore import PairStore, PairStoreError
+from .pairstore import ANSWER_LIFE_MS, PairStore, PairStoreError
 
 __all__ = [
     "LIVE",
@@ -92,6 +92,8 @@ TOMBSTONE_MS = 7 * 86_400_000  # the record shrinks to a tombstone after 7 days 
 WINDOW_MS = 300_000  # ±300 s (proto §8.3 step 3.4)
 REFUSALS_PER_MIN = 5  # each offer's own refusal budget (in memory; past it, silence)
 SAS_TRIES = 3  # typed SAS attempts per offer (N3c)
+REPOSTS_PER_TICK = 4
+REPOST_EVERY_MS = 2_000  # a stored answer whose POST failed is posted again at most this often
 POLL_EVERY_MS = 10_000  # GET cert-requests/{id} fallback, at most every 10 s
 BASELINE_RETRY_MS = 30_000
 #: any other failed baseline POST (the relay does not hold the host's held checkpoint yet because the publisher has not
@@ -527,6 +529,7 @@ class PairEngine:
         self.now_ms, self.post, self._draw = now_ms, post, draw
         self._budget: dict[str, collections.deque[int]] = {}
         self._last_poll: dict[str, int] = {}
+        self._reposted: dict[tuple[str, str, str], int] = {}
         self._retry_at: dict[str, int] = {}
         self.dropped = 0  # silent drops (unknown offer, bad tag, budget, overflow), counted (alarm pairing_dropped)
         self._dropped_flushed = 0
@@ -932,7 +935,8 @@ class PairEngine:
         if stored is not None:
             if stored.get("digest") != _digest(envelope):
                 return self._drop("rid_conflict")  # other bytes under an answered rid: the relay keeps one answer
-            self._post(offer_id, rid, crypto.unb64u(stored["env"]))  # an identical resend: byte for byte (Opus L1)
+            # an identical resend: byte for byte (Opus L1)
+            self._post(offer_id, rid, crypto.unb64u(stored["env"]), h.device.hex())
             return "replay"
         self._req_digest = _digest(envelope)
         try:
@@ -1071,13 +1075,49 @@ class PairEngine:
             if stored is None:
                 raise
             env = crypto.unb64u(stored["env"])
-        self._post(rec["offer_id"], rid, env)
+        self._post(rec["offer_id"], rid, env, dev)
 
-    def _post(self, offer_id: str, rid: str, env: bytes) -> None:
+    def _post(self, offer_id: str, rid: str, env: bytes, device: str | None = None) -> bool:
+        """POST an answer; False only for a transient failure (it stays unposted, and the tick posts the stored bytes
+        again, :meth:`_repost`; a phone resend replays the same bytes too)."""
+        key = (offer_id, device or "", rid)
         try:
             self.routes.post_answer(offer_id, rid, env)
         except PairRelayError as e:
-            log.info("pairing: answer POST %s", e.kind)  # the device resends; the rid replays these bytes
+            log.info("pairing: answer POST %s", e.kind)
+            if e.kind == "retry":
+                self._reposted[key] = self.now_ms()
+                return False
+            # refused for good: never retried
+        if device is not None:
+            self.store.mark_answer_posted(offer_id, device, rid)  # may raise: the throttle key stays then
+        self._reposted.pop(key, None)
+        return True
+
+    def _repost(self, now: int) -> None:
+        """Re-POST stored answers whose POST failed transiently, until the relay takes them or their rid lifetime
+        (:data:`ANSWER_LIFE_MS`) ends: the phone's resend is not what an answer depends on. At most
+        :data:`REPOSTS_PER_TICK` per tick, and none after the first transient failure of a tick (the relay is
+        failing: the pair thread's other work, SAS, cancel and approve, is not made to wait behind more POSTs)."""
+        done = 0
+        for oid in self.store.offer_ids():
+            try:
+                pending = [a for a in self.store.answers(oid) if a.get("posted") is False]
+            except PairStoreError:
+                continue
+            for a in pending:
+                key = (oid, a["device"], a["rid"])
+                if now - int(a.get("at_ms", 0)) >= ANSWER_LIFE_MS:
+                    self._reposted.pop(key, None)
+                    continue
+                if now - self._reposted.get(key, 0) < REPOST_EVERY_MS:
+                    continue
+                if done >= REPOSTS_PER_TICK:
+                    return
+                self._reposted[key] = now  # before the POST: whatever happens, the next try is REPOST_EVERY_MS away
+                done += 1
+                if not self._post(oid, a["rid"], crypto.unb64u(a["env"]), a["device"]):
+                    return
 
     # -- 7b: the cert request; 7c: the challenge; 7d: the cert or the rejection ------------------------------------
 
@@ -1522,6 +1562,10 @@ class PairEngine:
         out = self.store.outstanding()
         if out is not None and now > int(out["expires_ms"]) + OUTSTANDING_GRACE_MS:
             self.store.clear_outstanding(out["request_id"])
+        try:
+            self._repost(now)
+        except (OSError, StateError, PairStoreError, ValueError, KeyError) as e:  # never ends the tick
+            log.error("pairing: re-posting a stored answer failed (%s); retried later", type(e).__name__)
         self._flush_dropped(now)
 
     def _flush_dropped(self, now: int) -> None:
@@ -1703,8 +1747,10 @@ class PairThread:
             kind, fn, extra = job
             try:
                 if kind == "tick":
-                    self.engine.tick()
-                    next_tick = time.monotonic() + TICK_S
+                    try:
+                        self.engine.tick()
+                    finally:  # a tick that raised is not run again at once: no unthrottled loop
+                        next_tick = time.monotonic() + TICK_S
                 elif kind == "item":
                     n, env, rid, device = fn
                     try:

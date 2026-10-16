@@ -94,7 +94,7 @@ class Transport(Protocol):
         body: bytes | None,
         deadline_s: float,
         cap: int,
-    ) -> Response: ...
+    ) -> Response: ...  # a transport may also take ``resend_ok: bool = True`` (RelayConn does)
 
     def shutdown(self) -> None: ...
 
@@ -108,6 +108,18 @@ def tls_context(ca_file: str | None, *, factory: Callable[..., ssl.SSLContext] =
     if ctx.minimum_version < ssl.TLSVersion.TLSv1_2:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     return ctx
+
+
+IDLE_REUSE_S = 3.0  # a kept connection idle longer is not reused: the relay (uvicorn) closes an idle one after 5 s
+
+
+class _Stale(Exception):
+    """Internal: a reused connection failed before any response byte (the peer had closed it)."""
+
+
+def _send_reset(e: BaseException) -> bool:
+    """A failure while WRITING the request to a kept connection the peer had closed."""
+    return isinstance(e, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
 
 
 class RelayConn:
@@ -149,6 +161,7 @@ class RelayConn:
         self._fired = threading.Event()  # the current call's watchdog has fired
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
+        self._last_used = 0.0  # when the last response was fully read (the idle clock of the kept connection)
 
     def __repr__(self) -> str:
         return f"RelayConn({self.origin})"
@@ -327,6 +340,7 @@ class RelayConn:
         body: bytes | None,
         deadline_s: float,
         cap: int,
+        resend_ok: bool = True,
     ) -> Response:
         if method not in ("GET", "POST", "PUT", "DELETE") or not _TARGET.fullmatch(target):
             raise TransportError("request", route)
@@ -334,7 +348,7 @@ class RelayConn:
             if not _HEADER_NAME.fullmatch(k) or type(v) is not str or not _HEADER_VALUE.fullmatch(v):
                 raise TransportError("request", route)
         with self._call_lock:
-            return self._request(method, target, route, headers, body, deadline_s, cap)
+            return self._request(method, target, route, headers, body, deadline_s, cap, resend_ok)
 
     def _remaining(self, deadline: float, route: str) -> float:
         left = deadline - self._mono()
@@ -342,9 +356,27 @@ class RelayConn:
             raise TransportError("deadline", route)
         return left
 
-    def _request(self, method, target, route, headers, body, deadline_s, cap) -> Response:
+    def _request(self, method, target, route, headers, body, deadline_s, cap, resend_ok=True) -> Response:
+        """One call. A kept connection the relay has probably closed is never trusted (stale keep-alive, the relay
+        closes an idle one after a few seconds): idle longer than :data:`IDLE_REUSE_S`, it is dropped before sending
+        (proactive). A reused connection the peer had closed is reopened and the same bytes sent once more within the
+        same deadline (reactive) only when (1) the failure came while WRITING the request (EPIPE / reset before it was
+        fully sent), or (2) the request was fully sent and the answer is ``RemoteDisconnected`` (a clean EOF with an
+        empty status line, the relay's idle FIN). Any other failure after the request was sent (a reset, a partial
+        status line or header block) is never resent: the relay may have processed it. ``resend_ok`` false (the
+        holder acquire, probe and takeover, the login challenge and login: not idempotent) never resends."""
         t0 = self._mono()
         deadline = t0 + deadline_s
+        if self._conn is not None and t0 - self._last_used > IDLE_REUSE_S:
+            self.close()
+        reused = self._conn is not None and resend_ok
+        try:
+            return self._attempt(method, target, route, headers, body, deadline, cap, t0, reused=reused)
+        except _Stale:
+            pass  # only raised for a reused connection, which is closed by now: the next attempt opens a new one
+        return self._attempt(method, target, route, headers, body, deadline, cap, t0, reused=False)
+
+    def _attempt(self, method, target, route, headers, body, deadline, cap, t0, *, reused: bool = False) -> Response:
         if self._shut.is_set():
             raise TransportError("shutdown", route)
         self._deadline = deadline
@@ -361,6 +393,7 @@ class RelayConn:
         watchdog = threading.Timer(left, expire)
         watchdog.daemon = True
         watchdog.start()
+        sent = False
         try:
             if self._conn is None:
                 self._conn = self._open(left)
@@ -374,6 +407,7 @@ class RelayConn:
             if body is not None:
                 conn.putheader("Content-Length", str(len(body)))
             conn.endheaders(body)
+            sent = True
             resp = conn.getresponse()
             status = resp.status
             hdrs: dict[str, str] = {}
@@ -397,9 +431,16 @@ class RelayConn:
             raise
         except (OSError, http.client.HTTPException, ValueError) as e:
             self.close()
+            if (
+                reused
+                and (isinstance(e, http.client.RemoteDisconnected) if sent else _send_reset(e))
+                and not (fired.is_set() or self._shut.is_set() or self._mono() >= deadline)
+            ):
+                raise _Stale from None
             raise TransportError(self._kind(e, deadline, fired), route) from None
         finally:
             watchdog.cancel()
+        self._last_used = self._mono()
         log.info("relay %s status=%d bytes=%d ms=%d", route, status, len(data), int((self._mono() - t0) * 1000))
         return Response(status, hdrs, data)
 

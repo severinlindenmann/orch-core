@@ -75,7 +75,7 @@ from .http import Transport, TransportError
 from .keys import BridgeKeys, KeyMissing, Member, R6View, SealRefused
 from .retry import RelayRefused
 from .rids import Rid, RidStore, seq_accept
-from .session import Fenced, Session, SessionError
+from .session import Fenced, LoginHeldOff, Session, SessionError
 from .sign import RelaySigner, SignerRefused
 
 __all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult", "WorkerStop"]
@@ -108,6 +108,9 @@ SEEN_POLL_PAUSE_S = 0.25  # a poll that returned only already-queued items waits
 POST_DEADLINE_S, POST_CAP = 30.0, 16 * 1024
 RENEW_EVERY_S = 15.0
 AUX_HOLD_DEADLINE_S = 10.0
+RENEW_BACKOFF_S = 5.0  # a refused renewal (no Retry-After) is tried again after this
+RENEW_MAX_BACKOFF_S = 15.0  # never later: the lease is 40 s and a renewal is due every 15 s
+AUX_TICK_S = 1.0  # the aux thread's cadence: a failed renewal is tried again at the next tick, until the lease lapses
 JOBS = 2
 HANDOFF_S = 0.25  # the responder's and job threads' queue wait: they see stop() within this
 REPLAY_EVERY_MS, REPLAY_MAX, REPLAY_TRACKED = 10_000, 8, 4096
@@ -1006,6 +1009,7 @@ class BridgeLoop:
         self._threads: list[threading.Thread] = []
         self._conns: list[Transport] = []
         self._last_poll = 0.0
+        self._renew_not_before = 0.0
         self._highest = 0
         self._started = False
         self._failures = 0
@@ -1124,7 +1128,7 @@ class BridgeLoop:
                     "GET /v2/workspaces/{ws}/host/poll", holder=True, cap=POLL_CAP, deadline_s=POLL_DEADLINE_S,
                     keys={"items", "notices", "next"}, transport=conn,
                 )  # fmt: skip
-            except (TransportError, RelayRefused) as e:
+            except (TransportError, RelayRefused, LoginHeldOff) as e:  # a login hold-off is transient (as publish.py)
                 log.info("relay poll failed: %s", type(e).__name__)
                 self._stop.wait(1.0)
                 continue
@@ -1224,10 +1228,10 @@ class BridgeLoop:
 
     def _aux_main(self) -> None:
         last_sweep = 0.0
-        while not self._stop.wait(1.0):
+        conn = self._new_conn()  # the renewal's own connection: never queued behind another thread's call (11A.7)
+        while not self._stop.wait(AUX_TICK_S):
             if self._mono() - self._last_poll >= RENEW_EVERY_S:
-                self.session.hold(deadline_s=AUX_HOLD_DEADLINE_S)
-                self._last_poll = self._mono()
+                self._renew_lease(conn)
             if self._mono() - last_sweep >= 60.0:
                 last_sweep = self._mono()
                 self._aux_step("sweep", self.bridge.sweep)
@@ -1235,6 +1239,37 @@ class BridgeLoop:
             self._aux_step("flush", self.bridge.flush)
             for what, fn in list(self.aux_steps):
                 self._aux_step(what, fn)
+
+    def _renew_lease(self, conn: Transport) -> None:
+        """Renew the holder lease; a transport failure or a relay refusal other than ``fenced`` never ends the aux
+        thread. The renewal is idempotent (``{gen, take_over: false}``), so a failed attempt is retried at once on a
+        fresh connection (a failed request closes its connection; the relay closes an idle keep-alive after a few
+        seconds, so the first request after 15 s of silence on a reused connection can fail), then at every tick
+        until the lease would lapse. ``Fenced`` (and any other ``SessionError``) still stops the worker."""
+        if self._mono() < self._renew_not_before:
+            return
+        for attempt in (1, 2):
+            try:
+                self.session.renew(deadline_s=AUX_HOLD_DEADLINE_S, transport=conn)
+            except TransportError as e:
+                if self._stop.is_set():
+                    return
+                if attempt == 2:
+                    self._item_failed("renew", e)
+                continue  # at once, once more: the failed request closed the connection, the next one opens a new one
+            except (RelayRefused, LoginHeldOff) as e:
+                # the relay's own answer (5xx, 429 with Retry-After) or a login hold-off (60 s after a bad signature,
+                # transient like publish.py's renewal): not hammered; tried again after its Retry-After (else
+                # RENEW_BACKOFF_S), never later than the lease margin allows
+                if not self._stop.is_set():
+                    self._item_failed("renew", e)
+                    after = e.retry_after if isinstance(e, RelayRefused) else None
+                    delay = float(after) if type(after) is int and after > 0 else RENEW_BACKOFF_S
+                    self._renew_not_before = self._mono() + min(delay, RENEW_MAX_BACKOFF_S)
+                return
+            self._last_poll = self._mono()
+            self._renew_not_before = 0.0
+            return
 
     def _aux_step(self, what: str, fn: Callable[[], None]) -> None:
         """One aux step; an exception is logged (bounded) and the aux thread goes on: lease renewal never stops for
@@ -1280,8 +1315,8 @@ class BridgeLoop:
                         deadline_s=POST_DEADLINE_S, keys=set(), transport=conn,
                     )  # fmt: skip
                     return "posted"
-                except TransportError:
-                    return "retry"
+                except (TransportError, LoginHeldOff):
+                    return "retry"  # a login hold-off is transient: the same bytes again later (11A.7 backoff)
                 except RelayRefused as e:
                     return classify_post(e)
 

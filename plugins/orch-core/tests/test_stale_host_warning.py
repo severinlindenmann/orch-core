@@ -14,7 +14,7 @@ def test_older_or_unreporting_host_warns_with_the_fix():
         hostclient._SEEN.update(connected=True, release=theirs)
         w = hostclient.stale_host_warning()
         assert w and w.startswith("the orch host runs an older release (") and f"than this CLI ({code_digest()})" in w
-        assert w.endswith("run `orch host enable`") and "\n" not in w
+        assert w.endswith("run `orch host enable` (it restarts the host on the new release)") and "\n" not in w
 
 
 def test_no_host_answered_no_warning():

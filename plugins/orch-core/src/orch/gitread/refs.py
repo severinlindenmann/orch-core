@@ -4,9 +4,12 @@
 * ``HEAD`` must be exactly ``ref: refs/heads/<branch>\\n``.
 * The repository is refused (:class:`~orch.gitread.errors.Unavailable`) when a loose ref is itself a symref (or a
   symlink; the one exception, skipped and never followed, is git clone's ``refs/remotes/<remote>/HEAD``), when two
-  ref names differ only in ASCII case (in either store or across them: on a case-insensitive file system they are one
-  file, so which one git reads depends on the machine), when a loose ref or a
+  ref names differ only in ASCII case or Unicode normalisation (in either store or across them: on a case-insensitive
+  or normalising file system they are one file, so which one git reads depends on the machine), when a loose ref or a
   ``packed-refs`` line cannot be parsed, or when ``packed-refs`` names one ref twice.
+* Ref names are bytes, read as UTF-8 and checked by git's rules (:func:`check_refname`, #561's validator): a
+  non-ASCII branch (``übung``, ``日本語``) is an ordinary branch; a name that is not UTF-8 or that the rules refuse is
+  never resolved ("unknown", #583).
 * Loose files whose names git would not accept as refs (``*.lock``, a leading dot, ...) are skipped, as git skips
   them. ``refs/replace/`` is never used for lookups.
 """
@@ -14,26 +17,55 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from . import limits
 from .errors import Unavailable
 from .fs import Dir
 
-__all__ = ["RefStore", "check_refname", "read_head", "read_head_any"]
+__all__ = ["RefStore", "branch_ok", "check_refname", "read_head", "read_head_any"]
 
-_BAD_CHARS = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+#: never in a ref name (git's ref rules, check-ref-format): ``..``, ``@{``, ``//``, ``: \ ~ ^ ? * [`` and whitespace
+_REF_BAD = re.compile(r"\.\.|@\{|//|[:\\~^?*\[]|\s")
+#: the longest full ref name the reader accepts (a branch name is at most 255 bytes, :func:`branch_ok`)
+REFNAME_MAX = 1024
+
+
+def branch_ok(name: str, max_bytes: int = 255) -> bool:
+    """git's ref rules for a branch name (any non-control Unicode): no leading ``-``, no ``..``, ``@{``, ``//``,
+    ``: \\ ~ ^ ? * [``, whitespace or control character, no component starting with ``.`` or ending in ``.lock``,
+    no trailing ``/`` or ``.``, not ``@``. Deliberately stricter than git: any Unicode whitespace (not only ASCII)
+    is refused, and the name is at most ``max_bytes`` bytes (255 for a branch name).
+
+    #561's revision validator (``orch.gitsafe._branch_ok``), moved here unchanged when #565 left no revision operand in
+    :data:`orch.gitsafe.OPS`: it is now the one place these rules live, used by every ref name the reader reads or is
+    asked for (:func:`check_refname`). A name that was not valid UTF-8 (decoded with ``surrogateescape``) carries
+    surrogates and is refused here (category ``Cs``)."""
+    return (
+        bool(name)
+        and not name.startswith("-")
+        and _REF_BAD.search(name) is None
+        and not any(unicodedata.category(c) in ("Cc", "Cs") for c in name)
+        and not any(part.startswith(".") or part.endswith(".lock") or not part for part in name.split("/"))
+        and not name.endswith(("/", "."))
+        and name != "@"
+        and len(name.encode("utf-8", "surrogatepass")) <= max_bytes
+    )
 
 
 def check_refname(name: str) -> bool:
-    """git's ``check_refname_format`` for a full name (at least two components), without ``--allow-onelevel``."""
-    if not name or not name.isascii() or name.endswith("/") or name.endswith(".") or name == "@":
+    """A full ref name (at least two components, no ``--allow-onelevel``) by git's rules, Unicode allowed
+    (:func:`branch_ok`, #561's validator; #583: a non-ASCII branch is a branch, not "unknown"); its branch part
+    (after ``refs/heads/``) at most 255 bytes, the whole name at most :data:`REFNAME_MAX`."""
+    if len(name.split("/")) < 2 or not branch_ok(name, REFNAME_MAX):
         return False
-    if ".." in name or "@{" in name or _BAD_CHARS.search(name):
-        return False
-    parts = name.split("/")
-    if len(parts) < 2:
-        return False
-    return all(p and not p.startswith(".") and not p.endswith(".lock") for p in parts)
+    return not name.startswith("refs/heads/") or branch_ok(name[len("refs/heads/") :])
+
+
+def _utf8(raw: bytes) -> str:
+    """A ref name's bytes as text: UTF-8, with ``surrogateescape`` for bytes that are not (which
+    :func:`check_refname` then refuses: the name is unknown, never a crash and never another name)."""
+    return raw.decode("utf-8", errors="surrogateescape")
 
 
 def read_head(gitdir: Dir) -> str:
@@ -42,7 +74,7 @@ def read_head(gitdir: Dir) -> str:
     m = re.fullmatch(rb"ref: (refs/heads/[^\n]+)\n", data)
     if not m:
         raise Unavailable("HEAD is not 'ref: refs/heads/<branch>'")
-    name = m.group(1).decode("ascii", errors="replace")
+    name = _utf8(m.group(1))
     if not check_refname(name):
         raise Unavailable("HEAD names an invalid branch")
     return name
@@ -69,7 +101,7 @@ def _remote_head(full: str, data: bytes) -> bool:
     m = re.fullmatch(rb"ref: (refs/remotes/[^\n]+)\n", data)
     if not m:
         return False
-    target = m.group(1).decode("ascii", errors="replace")
+    target = _utf8(m.group(1))
     return target.startswith(f"refs/remotes/{parts[2]}/") and target != full and check_refname(target)
 
 
@@ -91,7 +123,7 @@ class RefStore:
             self._parse_packed(raw)
         seen: dict[str, str] = {}
         for name in (*self.loose, *self.packed):
-            low = name.lower()
+            low = unicodedata.normalize("NFC", name).lower()  # one file on a folding/normalising file system
             other = seen.setdefault(low, name)
             if other != name:
                 raise Unavailable(f"the refs {other!r} and {name!r} differ only in case")
@@ -137,7 +169,7 @@ class RefStore:
                 last = None  # one peeled line per ref
                 continue
             hexid, sp, name_b = line.partition(b" ")
-            name = name_b.decode("ascii", errors="replace")
+            name = _utf8(name_b)
             if not sp or not self._hex.fullmatch(hexid) or not check_refname(name):
                 raise Unavailable(f"packed-refs line {i + 1} cannot be parsed")
             if name in self.packed:

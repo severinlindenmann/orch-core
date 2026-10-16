@@ -642,17 +642,16 @@ def test_refusal_names_the_readers_reason_only_for_a_repository(world, tmp_path)
     assert w.fired() == set()
 
 
-def test_a_branch_name_the_reader_refuses_is_unknown_never_another_branch(world):
-    """#565 behaviour change: orch's reader takes ASCII ref names only (git's rules otherwise; a Unicode name could be
-    two files on a normalising file system), so a Unicode branch is "cannot be observed" in direct mode, as in host
-    mode. An ASCII name with git's other allowed characters works."""
+def test_a_unicode_branch_name_works_in_the_reader(world):
+    """#561's decision, kept by #583: a non-ASCII branch is an ordinary branch (ref names are UTF-8 bytes, checked by
+    #561's own validator, now ``orch.gitread.refs.branch_ok``)."""
     w = world
     repo = make_repo(w, "r")
-    w.git(repo, "branch", "a.b_c+d@e")
-    assert READER.commit(repo, "refs/heads/a.b_c+d@e") == observe.head(repo)
-    w.git(repo, "branch", "übung")
-    with pytest.raises(Unavailable):
-        READER.commit(repo, "refs/heads/übung")
+    for name in ("übung", "feat/Ärger-ß", "日本語/ブランチ", "a.b_c+d@e"):
+        w.git(repo, "branch", name)
+        assert READER.commit(repo, f"refs/heads/{name}") == observe.head(repo), name
+    with pytest.raises(Unavailable):  # a name git's rules refuse is never resolved
+        READER.commit(repo, "refs/heads/a..b")
 
 
 def test_the_too_old_message_says_what_is_needed(monkeypatch):

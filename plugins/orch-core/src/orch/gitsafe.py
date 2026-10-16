@@ -73,7 +73,9 @@ prune``)                                                (and the worktree) plus 
                                                         RACE NOTE (#565, at the spawn): ``remove`` always ``--force``
                                                         after orch's own clean check (git's ``status`` never runs);
                                                         ``prune`` checks out nothing; ``add``'s checkout is the open
-                                                        residual (a smudge filter added in the window runs)
+                                                        tier-A residual (a column-G ``worktree.create`` runs a
+                                                        smudge filter an agent committed to the repo config; the
+                                                        UID is the boundary, D-P2-31; fix tracked in #584)
 ``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
                                                         records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
                                                         on top of :func:`exec_risk` (#541); out of #565's scope

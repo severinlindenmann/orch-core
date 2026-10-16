@@ -281,3 +281,53 @@ def test_no_repository_at_all(tmp_path):
     with pytest.raises(Unavailable, match="not a git working copy"):
         READER.tree_check(tmp_path / "plain")
     shutil.rmtree(tmp_path / "plain")
+
+
+# -- #583: non-ASCII branch names (#561's decision): loose and packed, as HEAD and as merge base targets
+
+UNICODE_BRANCHES = ["übung", "feat/Ärger-ß", "日本語/ブランチ"]
+
+
+@pytest.mark.parametrize("packed", [False, True], ids=["loose", "packed"])
+@pytest.mark.parametrize("name", UNICODE_BRANCHES)
+def test_a_unicode_branch_as_head_and_as_merge_base_target(make_repo, name, packed):
+    r = base(make_repo)
+    fork = r.sha("HEAD")
+    r.git("checkout", "-q", "-b", name)
+    r.write("a.txt", "on the unicode branch\n")
+    tip = r.commit("unicode work")
+    r.git("checkout", "-q", "main")
+    r.write("main.txt", "main moves on\n")
+    main = r.commit("main work")
+    r.git("checkout", "-q", name)  # HEAD is the unicode branch
+    if packed:
+        r.git("pack-refs", "--all")
+        assert not (r.gitdir / "refs" / "heads" / name).exists()
+        assert name.encode() in (r.gitdir / "packed-refs").read_bytes()
+    assert agree(r) == set()  # HEAD names the unicode branch: read, clean
+    ref, sha = READER.head(r.path)
+    assert (ref, sha) == (f"refs/heads/{name}", tip) == (r.git("symbolic-ref", "HEAD"), r.sha("HEAD"))
+    r.write("a.txt", "dirty\n")
+    assert agree(r) == {"a.txt"}
+    # as the head of a review against main, and as the default branch (the merge base target)
+    got = READER.diff(r.path, branch=name, default_branch="main")
+    assert (got["base_sha"], got["head_sha"]) == (r.git("merge-base", name, "main"), tip) == (fork, tip)
+    r.git("checkout", "-q", "-f", "main")
+    got = READER.diff(r.path, branch="main", default_branch=name)
+    assert (got["base_sha"], got["head_sha"]) == (fork, main)
+
+
+def test_a_ref_name_that_is_not_utf8_or_breaks_the_rules_is_unknown_never_a_crash(make_repo):
+    r = base(make_repo)
+    head = r.sha("HEAD")
+    (r.gitdir / "packed-refs").write_bytes(b"# pack-refs with: peeled fully-peeled sorted \n"
+                                           + head.encode() + b" refs/heads/bad\xff\xfe\n")  # fmt: skip
+    with pytest.raises(Unavailable):
+        READER.commit(r.path, "refs/heads/main")
+    (r.gitdir / "packed-refs").write_bytes(head.encode() + b" refs/heads/a..b\n")
+    with pytest.raises(Unavailable):
+        READER.commit(r.path, "refs/heads/main")
+    (r.gitdir / "packed-refs").unlink()
+    (r.gitdir / "HEAD").write_bytes(b"ref: refs/heads/\xc3\x28\n")  # HEAD names a branch that is not UTF-8
+    with pytest.raises(Unavailable):
+        READER.tree_check(r.path, r.env)

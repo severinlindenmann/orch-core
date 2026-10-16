@@ -4253,28 +4253,30 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told; the
     dashboard's Changes tab shows hunk headers without function context, and a diff git cannot produce as "Diff
     unavailable". No op, code, wire, hash or schema change.
-62. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number
-    may be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the
-    caller spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git`
-    file) could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through
-    `orch.gitread.local.READER` (`LocalGitReader`), orch's own reader in-process, as host mode's reader children
-    always did: discovery from a path, `HEAD` (a detached one too), refs, the identity, the clean check (`tree.check`'s
-    reader over the whole repository from its top, with the person's global ignore file read as data), `orch
-    worktree`'s checks, direct D58 and the dashboard dev host's diff. `gitsafe.OPS` keeps only `check --staged`'s
-    `staged_raw` and `staged_blob`; `observe.git`/`lookup`, `wtgit.read_git`/`tree_dirty`, `gitsafe.submodules` and
-    `person_entries` are gone. The two git-process families left keep the gate and carry a race note at the call
-    site: `wtgit.run_git` (`worktree remove` now **always** runs `--force`, after orch's own clean check, so git's
-    own `status` never runs; `prune` checks out nothing; `add`'s checkout is the one open residual: a smudge filter
-    added to the declared repository's config inside the window runs once, as the person) and `check --staged` (no
-    work-tree contents, inside the person's own `git commit`). gitread now skips git clone's `refs/remotes/<r>/HEAD`
-    symref (never followed; any other loose symref still refuses the repository, F7). **Behaviour changes:** direct
-    mode reads what the reader reads: a repository with an extension it does not support (`worktreeConfig`,
-    `refStorage`, `partialClone`, ...), a split or sparse index, objects only in an alternate, or a non-ASCII branch
-    name is "cannot be told" (`None`, `observe.unavailable`, "diff unavailable"), never clean; a repository whose own
-    config names a program is read (the config is data), no longer refused; `core.autocrlf`/`core.eol` are not
-    applied (the raw bytes are hashed: only ever dirtier); dirty lines are `why: path` (`modified`, `untracked`,
-    `deleted`, `type`, `flag`); the dev host's diff shows a rename as a deletion and an addition. No op, code, wire,
-    hash or schema change.
+62. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
+    be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the caller
+    spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file)
+    could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through
+    `orch.gitread.local.READER` (`LocalGitReader`), orch's own reader in-process, as host mode's reader children always
+    did: discovery from a path, `HEAD` (a detached one too), refs, the identity, the clean check (`tree.check`'s reader
+    over the whole repository from its top, with the person's global ignore file read as data), `orch worktree`'s
+    checks, direct D58 and the dashboard dev host's diff. `gitsafe.OPS` keeps only `check --staged`'s `staged_raw` and
+    `staged_blob`; `observe.git`/`lookup`, `wtgit.read_git`/`tree_dirty`, `gitsafe.submodules` and `person_entries` are
+    gone. The two git-process families left keep the gate and carry a race note at the call site: `wtgit.run_git`
+    (`worktree remove` now **always** runs `--force`, after orch's own clean check, so git's own `status` never runs;
+    `prune` checks out nothing; `add`'s checkout is the one open residual, tier A: an agent that commits a repo config
+    in its worktree, then a column-G `worktree.create` runs its smudge filter; the UID is the boundary in tier A
+    (D-P2-31); fix tracked in #584) and `check --staged` (no work-tree contents, inside the person's own `git commit`).
+    gitread now skips git clone's `refs/remotes/<r>/HEAD` symref (never followed; any other loose symref still refuses
+    the repository, F7), and reads ref names as UTF-8, checked by #561's validator (moved to
+    `orch.gitread.refs.branch_ok`), so a non-ASCII branch reads in both modes. **Behaviour changes:** direct mode reads
+    what the reader reads: a repository with an extension it does not support (`worktreeConfig`, `refStorage`,
+    `partialClone`, ...), a split or sparse index, objects only in an alternate, or a ref name that is not UTF-8 or that
+    git's rules refuse is "cannot be told" (`None`, `observe.unavailable`, "diff unavailable"), never clean; a
+    repository whose own config names a program is read (the config is data), no longer refused;
+    `core.autocrlf`/`core.eol` are not applied (the raw bytes are hashed: only ever dirtier); dirty lines are `why:
+    path` (`modified`, `untracked`, `deleted`, `type`, `flag`); the dev host's diff shows a rename as a deletion and an
+    addition. No op, code, wire, hash or schema change.
 
 ---
 
@@ -4679,7 +4681,9 @@ UID. P2 adds no keychain.**
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.
   - **Refs (F7).**
-    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`.
+    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`. Ref names are
+      UTF-8 and follow git's rules (#561's validator, `gitread.refs.branch_ok`; #583): a non-ASCII branch is read, a
+      name that is not UTF-8 or that the rules refuse is never resolved.
     - A loose ref that is itself a symref, a ref name differing only in case from another ref in either store, or an
       unparsable `packed-refs` line makes the repo observe.unavailable. The one exception (#565): git clone's
       `refs/remotes/<remote>/HEAD` naming a branch of the same remote is skipped, never followed (orch resolves only
@@ -11404,7 +11408,7 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |
-    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would. **Race note (#565):** `remove` always runs `--force`, after orch's own clean check (the host's `tree.check`, or `LocalGitReader` in direct mode; only a person's force skips it), so git's own `status` never runs; `prune` checks out nothing; **`add`'s checkout is the open residual**: a smudge filter added to the declared repository's config inside the window would run once, as the person (an agent that commits in its worktree can write that config, the commondir) |
+    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would. **Race note (#565):** `remove` always runs `--force`, after orch's own clean check (the host's `tree.check`, or `LocalGitReader` in direct mode; only a person's force skips it), so git's own `status` never runs; `prune` checks out nothing; **`add`'s checkout is the open residual (tier A):** an agent that commits a repo config in its worktree, then a column-G `worktree.create` runs its smudge filter; the UID is the boundary in tier A (D-P2-31); fix tracked in #584 |
     | `gitread/*` (host mode's reader children) | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git

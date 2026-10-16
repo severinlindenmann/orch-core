@@ -325,14 +325,12 @@ def run_git(
         # * remove: always `--force` (git_argv), after orch's own clean check with the reader (no git process), so
         #   git's own `status` never runs and no clean filter is read; `remove --force` checks out nothing.
         # * prune: reads only <repo>/.git/worktrees; no checkout, no status, no filter.
-        # * add: NOT closed (residual, #565). A checkout runs the smudge filters configuration names at that moment,
-        #   by design (the person's LFS, selected by the tree's own .gitattributes, so attributes cannot be switched
-        #   off either), and filters cannot be disabled by command-scope config. A filter added to the declared
-        #   repo's config inside the window would run once, as the person. A linked worktree's commondir IS the
-        #   declared repo's .git, so an agent that can commit in its worktree can write that config, and an agent
-        #   session (column G) may ask the host for `worktree.create` on its own ticket. NOT accepted silently: named
-        #   in §12.7 and in #565's PR as the one open residual for a decision (the gate still refuses a config that
-        #   already names a filter; the window is from the gate to git reading its config).
+        # * add: NOT closed (residual, #565). TIER-A NOTE: an agent that commits a repo config in its worktree,
+        #   then a column-G worktree.create runs its smudge filter; the UID is the boundary in tier A (D-P2-31); fix
+        #   tracked in #584. (A checkout runs the smudge filters configuration names when git reads it, by design:
+        #   the person's LFS, selected by the tree's own .gitattributes; filters cannot be disabled by command-scope
+        #   config. A linked worktree's commondir is the declared repo's .git, so its config is the agent's to write,
+        #   and the gate's approval does not bind what git reads later.)
         out = _spawn(argv, own, timeout, log, op)
         if conf.fd >= 0:
             conf.after(op)

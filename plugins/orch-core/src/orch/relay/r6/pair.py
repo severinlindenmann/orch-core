@@ -51,6 +51,7 @@ from orch.identity.pairdevice import PHONE_SCOPES, PairDeviceFacts, PairDeviceIn
 
 from .. import wire
 from ..sign import RelaySigner, SignerRefused
+from ..state import StateError
 from .pairstore import PairStore, PairStoreError
 
 __all__ = [
@@ -531,7 +532,7 @@ class PairEngine:
         """The signer's ``pair_live`` callback: a non-terminal offer, or a terminal one within its 10-minute tail
         that still holds ``S``."""
         try:
-            rec = self.store.get(offer_id)
+            rec = self._get(offer_id)
         except PairStoreError:
             return False
         if rec is None or rec.get("tombstone") or rec.get("secret") is None:
@@ -544,7 +545,7 @@ class PairEngine:
         """The signer's ``pair_binding`` callback (11A.15.7 ``cert_request``): the offer is confirmed on path 7b,
         consumed by exactly this attempt, device and key pair."""
         try:
-            rec = self.store.get(offer_id)
+            rec = self._get(offer_id)
         except PairStoreError:
             return False
         c = (rec or {}).get("consumed")
@@ -563,9 +564,13 @@ class PairEngine:
         record (no state is skipped: no ``pending`` without the step-4 gate, no ``confirmed`` without the typed
         SAS, no ``allocated`` without a certificate and an intent, nothing forward past the phone's deadline). A
         same-state write may change only the fields :data:`FIELDS` lists for that state, and never a field
-        :data:`ONCE` holds once set. The new version is the old plus one."""
+        :data:`ONCE` holds once set. The new version is the old plus one.
+
+        **Durable first** (no state drift): the engine holds no offer state in memory; the record returned is the
+        one on disk. A write that fails raises out of here before anything acts on the new state (no answer, no
+        POST, no hook), and the offer stays in its last durable state at its old version."""
         with self.store.lock:
-            cur = self.store.get(rec["offer_id"])
+            cur = self._get(rec["offer_id"])
             if cur is None or cur.get("tombstone") or cur.get("ver", 0) != rec.get("ver", 0):
                 raise StaleRecord(rec["offer_id"])
             frm = cur["state"]
@@ -590,6 +595,47 @@ class PairEngine:
             self.store.put(new)
             return new
 
+    def _get(self, offer_id: str) -> dict[str, Any] | None:
+        """The durable record, the only source of an offer's state (the engine keeps no offer state in memory: every
+        decision re-reads it, and :meth:`_commit` writes before it returns). A record whose state is not one of
+        :data:`STATES`, or whose version is not an integer, is refused like an unreadable one (PairStoreError): fail
+        closed, never a permissive default."""
+        rec = self.store.get(offer_id)
+        if rec is None or rec.get("tombstone"):
+            return rec
+        if rec.get("state") not in STATES or type(rec.get("ver", 0)) is not int:
+            raise PairStoreError("offer record of an unknown state or version")
+        return rec
+
+    def quarantine(self) -> list[str]:
+        """At open, before either R6 thread starts: every unreadable, unknown or corrupt offer record becomes a
+        terminal ``failed`` record with no secret (fail closed: never ``open``, never a live state), alarmed
+        ``pairing_state_corrupt`` with a ``needs`` item. An outstanding request that is unreadable is cleared (the
+        relay's own one-request rule and its expiry still hold). Returns the offers quarantined."""
+        out = []
+        for oid in self.store.offer_ids():
+            try:
+                self._get(oid)
+                continue
+            except PairStoreError:
+                pass
+            with self.store.lock:
+                self.store.put({
+                    "v": 1, "offer_id": oid, "state": "failed", "reason": "corrupt", "secret": None,
+                    "sas_nonce": None, "consumed": None, "path": None, "terminal_ms": self.now_ms(), "corrupt": True,
+                    "scopes": [], "expires_ms": 0, "sas_ok": False, "ver": 1 << 20,
+                })  # fmt: skip
+            self._alarm("pairing_state_corrupt", oid)
+            self._need(oid, "a pairing record was unreadable and was ended: if a device was being added, remove it")
+            out.append(oid)
+        try:
+            self.store.outstanding()
+        except PairStoreError:
+            with self.store.lock:
+                self.store.clear_outstanding_unchecked()
+            self._alarm("pairing_state_corrupt", "outstanding")
+        return out
+
     def _move(self, rec: Mapping[str, Any], to: str | None, **changes: Any) -> dict[str, Any]:
         return self._commit(rec, to, **changes)
 
@@ -597,7 +643,7 @@ class PairEngine:
         """The live offer or the outstanding request that blocks a new offer (Q6), or ``None``."""
         for oid in self.store.offer_ids():
             try:
-                rec = self.store.get(oid)
+                rec = self._get(oid)
             except PairStoreError:
                 return oid  # an unreadable record blocks (fail closed)
             if rec is not None and rec["state"] in LIVE:
@@ -725,7 +771,7 @@ class PairEngine:
         rows = []
         for oid in self.store.offer_ids():
             try:
-                rec = self.store.get(oid)
+                rec = self._get(oid)
             except PairStoreError:
                 continue
             if rec is None:
@@ -769,7 +815,7 @@ class PairEngine:
         if not _hex32(offer_id):
             raise PairRefused("invalid.input", "offer: 32 lower-case hex")
         try:
-            rec = self.store.get(offer_id)
+            rec = self._get(offer_id)
         except PairStoreError as e:
             raise PairRefused("workspace.unavailable", str(e)) from None
         if rec is None or rec.get("tombstone"):
@@ -802,7 +848,7 @@ class PairEngine:
             return self._drop("not_pairing")
         offer_id = h.stream.hex()
         try:
-            rec = self.store.get(offer_id)
+            rec = self._get(offer_id)
         except (PairStoreError, ValueError):
             return self._drop("no_key")
         if rec is None or rec.get("tombstone") or rec.get("secret") is None:
@@ -1008,13 +1054,17 @@ class PairEngine:
             if e.kind == "expired":
                 self.store.clear_outstanding(req["request_id"])
                 return self._move(rec, "expired", reason="request_expired")
+            if e.kind == "refused":  # a definite refusal (not_eligible, other_person, ...): this request is dead
+                self._alarm("pairing_request_refused", rec["offer_id"])
+                self.store.clear_outstanding(req["request_id"])
+                return self._move(rec, "failed", reason="request_refused")
             return rec  # transient: the same bytes on the next tick
         return self._move(rec, None, request={**req, "posted": True})
 
     def notice(self, request_ids: list[str]) -> None:
         """A ``notices.cert_requests`` wake from R2's poll: read each request this workspace holds now."""
         for oid in self.store.offer_ids():
-            rec = self.store.get(oid)
+            rec = self._get(oid)
             if rec and rec["state"] == "cert_pending" and (rec.get("request") or {}).get("request_id") in request_ids:
                 self._poll_request(rec)
 
@@ -1111,7 +1161,7 @@ class PairEngine:
             raise PairRefused("relay.pair_closed", "no such offer")
         if not self.membership.ready():
             raise PairRefused("relay.pair_closed", "the membership publisher is not running; nothing is allocated")
-        rec = self._step9(self.store.get(offer_id))
+        rec = self._step9(self._get(offer_id))
         c = rec["consumed"]
         if rec["path"] == "7a":
             code = pairing.sas(self.ctx.workspace_id, offer_id, _pub(rec, "dk_sig_pub"), _pub(rec, "dk_kx_pub"),
@@ -1137,7 +1187,7 @@ class PairEngine:
         second ``device.added`` of one device anyway."""
         alloc = _intent(alloc)
         with self.store.lock:
-            rec = self.store.get(alloc["offer_id"])
+            rec = self._get(alloc["offer_id"])
             if rec is not None and rec.get("intent") == alloc:
                 return
             rec = self._step9(rec)
@@ -1159,7 +1209,7 @@ class PairEngine:
         line's ``event_digest`` before calling."""
         alloc = _intent(alloc)
         with self.store.lock:
-            rec = self.store.get(alloc["offer_id"])
+            rec = self._get(alloc["offer_id"])
             if rec is None or rec.get("intent") != alloc:
                 raise PairRefused("relay.pair_closed", "no allocation intent for this event")
             if rec["state"] in ("allocated", "published", "approved") and rec.get("event_id") == alloc["event_id"]:
@@ -1177,7 +1227,7 @@ class PairEngine:
         """Nothing was appended after an accepted ``precommit``: the offer ends ``failed`` (short ``rejected``)."""
         alloc = _intent(alloc)
         with self.store.lock:
-            rec = self.store.get(alloc["offer_id"])
+            rec = self._get(alloc["offer_id"])
             if rec is None or rec.get("intent") != alloc or rec["state"] not in ("confirmed", "cert_pending"):
                 return
             self._move(rec, "failed", reason=f"allocation:{reason}"[:120])
@@ -1187,7 +1237,7 @@ class PairEngine:
         intent names the existing event and the allocation completes without a second append."""
         alloc = _intent(alloc)
         with self.store.lock:
-            rec = self._step9(self.store.get(offer_id))
+            rec = self._step9(self._get(offer_id))
             if (
                 alloc.get("cert_digest") != cert_digest(rec["cert"])
                 or alloc.get("device") != "d_" + rec["consumed"]["device_id"]
@@ -1199,11 +1249,13 @@ class PairEngine:
     def recover(self, landed: Callable[[Mapping[str, Any]], bool]) -> list[str]:
         """At open, before either R6 thread starts: an offer whose intent's event is in the log (``landed`` matches
         by the intent's event id and digest, never by "same cert, same device") is rolled forward (``devices/`` and
-        ``allocated``). Returns the offers rolled forward."""
+        ``allocated``), through the transition table like every other write. Corrupt records are quarantined first
+        (:meth:`quarantine`). Returns the offers rolled forward."""
+        self.quarantine()
         out = []
         for oid in self.store.offer_ids():
             try:
-                rec = self.store.get(oid)
+                rec = self._get(oid)
             except PairStoreError:
                 continue
             if rec is None or rec.get("intent") is None or rec["state"] not in ("confirmed", "cert_pending"):
@@ -1227,7 +1279,7 @@ class PairEngine:
     # -- step 10: publication; step 11: the baseline; step 12: approved --------------------------------------------
 
     def publish(self, offer_id: str) -> None:
-        rec = self.store.get(offer_id)
+        rec = self._get(offer_id)
         if rec is None or rec["state"] != "allocated":
             return
         device = rec["consumed"]["device_id"]
@@ -1235,10 +1287,11 @@ class PairEngine:
             try:
                 self.relay.put_device(device, rec["cert"])
             except PairRelayError as e:
-                if e.kind == "cert_conflict":
-                    self._alarm("pairing_cert_conflict", offer_id)
-                    rec = self._move(rec, "failed", reason="cert_conflict")
-                    self._exclude(rec, "cert_conflict")
+                if e.kind in ("cert_conflict", "refused"):  # definite: the device never becomes relay-reachable
+                    self._alarm("pairing_cert_conflict" if e.kind == "cert_conflict" else "pairing_device_refused",
+                                offer_id)  # fmt: skip
+                    rec = self._move(rec, "failed", reason=e.kind)
+                    self._exclude(rec, e.kind)
                 return  # transient: the next tick
             rec = self._move(rec, None, device_put=True)
         if not rec.get("addition_posted"):
@@ -1248,7 +1301,7 @@ class PairEngine:
             self._move(rec, None, addition_posted=True)
 
     def membership_committed(self, offer_id: str, publication: Mapping[str, Any]) -> None:
-        rec = self.store.get(offer_id)
+        rec = self._get(offer_id)
         if rec is None or rec["state"] != "allocated":
             return
         adds = publication.get("adds")
@@ -1262,7 +1315,7 @@ class PairEngine:
         self.baseline(offer_id)
 
     def membership_refused(self, offer_id: str, reason: str) -> None:
-        rec = self.store.get(offer_id)
+        rec = self._get(offer_id)
         if rec is None or rec["state"] != "allocated":
             return
         label = rec["consumed"]["label"]
@@ -1271,7 +1324,7 @@ class PairEngine:
         self._move(rec, "failed", reason=f"publication:{reason}"[:120])
 
     def baseline(self, offer_id: str) -> None:
-        rec = self.store.get(offer_id)
+        rec = self._get(offer_id)
         if rec is None or rec["state"] != "allocated" or rec.get("publication") is None:
             return
         now = self.now_ms()
@@ -1305,7 +1358,7 @@ class PairEngine:
         now = self.now_ms()
         for oid in self.store.offer_ids():
             try:
-                rec = self.store.get(oid)
+                rec = self._get(oid)
             except PairStoreError:
                 continue
             if rec is None or rec.get("tombstone"):
@@ -1349,6 +1402,10 @@ class PairEngine:
                 continue  # another event wrote it first: the next tick re-reads
             except IllegalTransition as e:
                 log.error("pairing: refused transition in the tick: %s", e)
+            except (OSError, StateError) as e:  # a failed write: the offer stays in its last durable state
+                log.error(
+                    "pairing: a durable write failed in the tick (%s); retried at the next tick", type(e).__name__
+                )
         out = self.store.outstanding()
         if out is not None and now > int(out["expires_ms"]) + OUTSTANDING_GRACE_MS:
             self.store.clear_outstanding(out["request_id"])
@@ -1363,7 +1420,7 @@ class PairEngine:
         elif now > end + TOMBSTONE_MS:
             c = rec.get("consumed") or {}
             with self.store.lock:  # the tombstone replaces the record: compare-and-set too
-                cur = self.store.get(rec["offer_id"])
+                cur = self._get(rec["offer_id"])
                 if cur is None or cur.get("ver", 0) != rec.get("ver", 0) or cur["state"] not in TERMINAL:
                     raise StaleRecord(rec["offer_id"])
                 tomb = {"v": 1, "offer_id": rec["offer_id"], "state": rec["state"], "device_id": c.get("device_id"),

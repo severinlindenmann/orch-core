@@ -166,6 +166,11 @@ class PairStore:
                  "offer_id": _check_id(offer_id, "offer_id"), "expires_ms": int(expires_ms)},
             )  # fmt: skip
 
+    def clear_outstanding_unchecked(self) -> None:
+        """Remove ``outstanding.json`` whatever it holds (only the load-time quarantine of an unreadable one)."""
+        with self.lock:
+            self._dir.remove(_OUTSTANDING)
+
     def clear_outstanding(self, request_id: str | None = None) -> None:
         """Clear it (only if it names ``request_id`` when one is given)."""
         with self.lock:

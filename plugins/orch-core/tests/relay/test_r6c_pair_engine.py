@@ -890,3 +890,212 @@ def test_a_crash_at_each_allocation_step_recovers_with_no_skipped_state(tmp_path
         assert k2.rec(h.offer_id)["state"] == "approved"
     finally:
         k2.close()
+
+
+# -- durable first, fail closed (orch-07: "fail-open state drift") -----------------------------------------------------
+
+
+class _Boom(OSError):
+    pass
+
+
+def _failing_put(kit, monkeypatch, *, after: int):
+    """``store.put`` fails on its ``after``-th call from now (a disk error at that write)."""
+    real = kit.store.put
+    calls = {"n": 0}
+
+    def put(rec):
+        calls["n"] += 1
+        if calls["n"] == after:
+            raise _Boom("injected write failure")
+        return real(rec)
+
+    monkeypatch.setattr(kit.store, "put", put)
+    return calls
+
+
+def test_a_failed_consumption_write_sends_nothing_and_keeps_the_offer_open(kit, monkeypatch):
+    h, phone = offer(kit)
+    _failing_put(kit, monkeypatch, after=1)
+    before = kit.rec(h.offer_id)
+    with pytest.raises(_Boom):
+        send(kit, phone)
+    assert kit.relay.answers == []  # no pending answer for a consumption that is not durable
+    after = kit.rec(h.offer_id)
+    assert after == before and after["state"] == "open"
+    monkeypatch.undo()
+    assert send(kit, phone)[0] == "answer:pending"  # the device resends; the offer is consumed now
+
+
+@pytest.mark.parametrize(
+    "step",
+    ["sas_confirm", "cert_request", "challenge", "cert", "intent", "allocated", "device_put", "publication",
+     "published", "cancel", "expire"],
+)  # fmt: skip
+def test_an_injected_write_failure_at_each_transition_leaves_the_last_durable_state(kit, monkeypatch, step):
+    def at(prepare, act):
+        prepare_out = prepare()
+        rec = kit.rec(prepare_out[0].offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        with pytest.raises(_Boom):
+            act(prepare_out)
+        monkeypatch.undo()
+        assert kit.rec(rec["offer_id"]) == rec  # unchanged: state, version and every field
+
+    if step == "sas_confirm":
+        at(lambda: consumed(kit), lambda o: kit.engine.answer(o[0].offer_id, code_of(kit, o[0], o[1]), True))
+    elif step == "cert_request":
+
+        def prep():
+            h, phone = consumed(kit)
+            return h, phone
+
+        def act(o):
+            kit.engine._answer_sas(o[0].offer_id, code_of(kit, o[0], o[1]), True)
+
+        # the confirmed write succeeds, the cert_pending write fails: confirmed stays, nothing was POSTed
+        h, phone = prep()
+        real = kit.store.put
+
+        def put(rec):
+            if rec["state"] == "cert_pending":
+                raise _Boom("x")
+            return real(rec)
+
+        monkeypatch.setattr(kit.store, "put", put)
+        with pytest.raises(_Boom):
+            act((h, phone))
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id)["state"] == "confirmed" and kit.relay.requests == []
+        assert kit.store.outstanding() is None
+    elif step == "challenge":
+        h, phone = confirmed_7b(kit)
+        req = kit.relay.requests[-1]
+        kit.relay.request_state = {"state": "challenged", "challenge": make_challenge(req["o"], phone), "cert": None,
+                                   "rejection": None}  # fmt: skip
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        kit.clock.ms += 10_000
+        kit.engine.tick()  # the tick logs and goes on
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec
+    elif step == "cert":
+        h, phone, req, ch = challenged(kit)
+        kit.relay.request_state = {"state": "signed", "challenge": ch, "cert": make_cert(phone), "rejection": None}
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        kit.clock.ms += 10_000
+        kit.engine.tick()
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec and kit.store.outstanding() is not None
+    elif step == "intent":
+        h, phone, cert = certified(kit)
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        with pytest.raises(_Boom):
+            kit.engine.precommit(alloc_of(kit, h, phone, cert), landed=lambda i: False)
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec
+    elif step == "allocated":
+        h, phone, cert = certified(kit)
+        a = alloc_of(kit, h, phone, cert)
+        kit.engine.precommit(a, landed=lambda i: False)
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        with pytest.raises(_Boom):
+            kit.engine.committed(a)
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec and kit.runner.jobs == []  # no publication job for a non-durable state
+        kit.engine.committed(a)  # the roll-forward completes it
+        assert kit.rec(h.offer_id)["state"] == "allocated"
+    elif step == "device_put":
+        h, phone, cert, a = allocated(kit)
+        kit.runner.jobs.clear()
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        with pytest.raises(_Boom):
+            kit.engine.publish(h.offer_id)
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec and kit.membership.additions == []
+    elif step == "publication":
+        h, phone, cert, a = allocated(kit)
+        kit.runner.run()
+        rec = kit.rec(h.offer_id)
+        _failing_put(kit, monkeypatch, after=1)
+        with pytest.raises(_Boom):
+            kit.engine.membership_committed(h.offer_id, {"list_seq": 4, "epoch": 3, "adds": [phone.device_id]})
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec and kit.relay.baselines == []
+    elif step == "published":
+        h, phone, cert, a = allocated(kit)
+        kit.runner.run()
+        real = kit.store.put
+
+        def put(rec):
+            if rec["state"] == "published":
+                raise _Boom("x")
+            return real(rec)
+
+        monkeypatch.setattr(kit.store, "put", put)
+        with pytest.raises(_Boom):
+            kit.engine.membership_committed(h.offer_id, {"list_seq": 4, "epoch": 3, "adds": [phone.device_id]})
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id)["state"] == "allocated"  # never approved without a durable published
+        assert kit.engine.receive(*phone.status(ts=kit.clock.ms)) == "answer:cert_pending"
+    elif step == "cancel":
+        at(lambda: consumed(kit), lambda o: kit.engine._cancel(o[0].offer_id))
+    elif step == "expire":
+        h, phone = consumed(kit)
+        rec = kit.rec(h.offer_id)
+        kit.clock.ms += 10 * MIN + 1
+        _failing_put(kit, monkeypatch, after=1)
+        kit.engine.tick()
+        monkeypatch.undo()
+        assert kit.rec(h.offer_id) == rec  # still pending on disk; the next tick expires it
+        kit.engine.tick()
+        assert kit.rec(h.offer_id)["state"] == "expired"
+
+
+def test_a_corrupt_record_at_start_is_quarantined_as_failed_never_open(tmp_path):
+    k = Kit(tmp_path)
+    h, phone = offer(k)
+    path = tmp_path / "membership" / "pairing" / f"{h.offer_id}.json"
+    path.write_bytes(b"{not json")
+    k.close()
+    k2 = Kit(tmp_path, clock=k.clock)
+    try:
+        with pytest.raises(PairRefused):
+            k2.engine.offer()  # an unreadable record blocks a new offer until it is quarantined (fail closed)
+        assert k2.engine.recover(lambda i: False) == []
+        rec = k2.rec(h.offer_id)
+        assert rec["state"] == "failed" and rec["corrupt"] is True and rec["secret"] is None
+        assert "pairing_state_corrupt" in k2.store.alarms()["alarms"] and k2.store.alarms()["needs"]
+        assert send(k2, phone)[0] == "drop:no_key"
+        k2.engine.offer()  # quarantined: no longer live
+    finally:
+        k2.close()
+
+
+@pytest.mark.parametrize("bad", [{"state": "weird"}, {"state": "open", "ver": "1"}, {"v": 2}, {"state": None}])
+def test_an_unknown_state_or_shape_is_refused_everywhere_and_quarantined(tmp_path, bad):
+    k = Kit(tmp_path)
+    try:
+        h, phone = offer(k)
+        rec = {**k.rec(h.offer_id), **bad}
+        (tmp_path / "membership" / "pairing" / f"{h.offer_id}.json").write_text(__import__("json").dumps(rec))
+        assert send(k, phone)[0] in ("drop:no_key",)
+        assert not k.engine.is_live(h.offer_id)
+        with pytest.raises(PairRefused):
+            k.engine.offer()
+        with pytest.raises(PairRefused):
+            k.engine.cancel(h.offer_id)
+        k.engine.recover(lambda i: False)
+        assert k.rec(h.offer_id)["state"] == "failed"
+    finally:
+        k.close()
+
+
+def test_an_unreadable_outstanding_request_is_cleared_and_alarmed(kit):
+    (kit.store.root / "pairing" / "outstanding.json").write_bytes(b"[]")
+    kit.engine.recover(lambda i: False)
+    assert kit.store.outstanding() is None and "pairing_state_corrupt" in kit.store.alarms()["alarms"]

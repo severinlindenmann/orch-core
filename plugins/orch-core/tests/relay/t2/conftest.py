@@ -25,13 +25,13 @@ class _Budget:
     """A hard per-test limit on ITIMER_REAL; an outer alarm already armed (``perl -e 'alarm N'``) keeps its remaining
     time and handler afterwards."""
 
-    def __init__(self, budget: float = TEST_BUDGET_S) -> None:
-        self.budget = budget
+    def __init__(self, budget: float | None = None) -> None:
+        self.budget = budget  # None: the module's TEST_BUDGET_S, read when the test starts (tests patch it)
 
     def __enter__(self) -> _Budget:
         self.t0 = time.monotonic()
         self.old_handler = signal.signal(signal.SIGALRM, _over_budget)
-        self.old_left, _ = signal.setitimer(signal.ITIMER_REAL, self.budget)
+        self.old_left, _ = signal.setitimer(signal.ITIMER_REAL, TEST_BUDGET_S if self.budget is None else self.budget)
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -50,7 +50,7 @@ def relay(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFacto
     data = tmp_path_factory.mktemp("relay-data")
     rp: RelayProcess = start_relay(d, data, request.param)
     try:
-        with _Budget(float(long.args[0]) if long is not None else TEST_BUDGET_S):
+        with _Budget(float(long.args[0]) if long is not None else None):
             yield rp
     finally:
         while OPEN_CONNS:  # this test's keep-alive connections first: the relay then has none to wait for

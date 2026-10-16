@@ -25,10 +25,13 @@ class _Budget:
     """A hard per-test limit on ITIMER_REAL; an outer alarm already armed (``perl -e 'alarm N'``) keeps its remaining
     time and handler afterwards."""
 
+    def __init__(self, budget: float = TEST_BUDGET_S) -> None:
+        self.budget = budget
+
     def __enter__(self) -> _Budget:
         self.t0 = time.monotonic()
         self.old_handler = signal.signal(signal.SIGALRM, _over_budget)
-        self.old_left, _ = signal.setitimer(signal.ITIMER_REAL, TEST_BUDGET_S)
+        self.old_left, _ = signal.setitimer(signal.ITIMER_REAL, self.budget)
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -40,11 +43,14 @@ class _Budget:
 
 @pytest.fixture(params=LIMITS, ids=["cap4MiB", "cap16MiB-default"])
 def relay(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory):
+    long = request.node.get_closest_marker("t2_long")  # @pytest.mark.t2_long(seconds): a test that must idle in real time
+    if long is not None and request.param is not None:
+        pytest.skip("a real-time idle test runs once, against the relay's default cap")
     d = relay_dir()
     data = tmp_path_factory.mktemp("relay-data")
     rp: RelayProcess = start_relay(d, data, request.param)
     try:
-        with _Budget():
+        with _Budget(float(long.args[0]) if long is not None else TEST_BUDGET_S):
             yield rp
     finally:
         while OPEN_CONNS:  # this test's keep-alive connections first: the relay then has none to wait for

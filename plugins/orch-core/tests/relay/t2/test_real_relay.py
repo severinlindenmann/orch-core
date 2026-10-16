@@ -8,6 +8,7 @@ Every test gets its own relay process (fresh data directory, fresh rate windows)
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -261,3 +262,34 @@ def test_the_relay_ends_when_the_process_that_started_it_dies(tmp_path):
     d = relay_dir()
     (tmp_path / "data").mkdir()
     orphan_test(["relay", str(tmp_path / "data"), str(d), "5"], tmp_path)
+
+
+@pytest.mark.slow
+@pytest.mark.t2_long(150)
+def test_an_idle_linked_host_keeps_its_lease_and_its_aux_thread_for_two_lease_periods(bridged):
+    """Bug: the aux thread's renewal (15 s into an idle long-poll) met the relay's closed idle keep-alive
+    (``TransportError: protocol``), the thread died and the 40 s lease lapsed. The relay's lease is fixed at 40 s, so
+    this idles 2 periods + margin in real time."""
+    side, _phone, _epoch = bridged
+    renewed: list[int] = []
+    real = side.sess.renew
+
+    def counting(**kw):
+        got = real(**kw)
+        renewed.append(got.gen)
+        return got
+
+    side.sess.renew = counting  # type: ignore[method-assign]
+    side.start()
+    aux = f"orch-relay-aux-{side.loop.id8}"
+    time.sleep(2 * 40 + 12)
+    assert side.loop.error is None, side.loop.error
+    assert not side.sess.fenced
+    assert any(t.name == aux and t.is_alive() for t in threading.enumerate()), "the aux thread died"
+    assert len(renewed) >= 3, renewed  # one renewal per 15 s of poll silence
+    other = session(side.relay)  # a second client probing for the lease: a live lease is never stolen
+    with pytest.raises(RelayRefused) as e:
+        other.call("POST", f"/v2/workspaces/{other.workspace_id}/host/hold", "POST /v2/workspaces/{ws}/host/hold",
+                   body={"gen": None, "take_over": False}, keys={"gen", "lease_s", "cursor"})  # fmt: skip
+    assert e.value.code == "holder_conflict"
+    assert side.loop.error is None

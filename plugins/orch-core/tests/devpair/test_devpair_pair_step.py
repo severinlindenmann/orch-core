@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from argparse import Namespace
 from types import SimpleNamespace
 
@@ -144,9 +143,26 @@ def test_pair_step_rejects_when_the_compare_code_is_wrong(dp, scratch, monkeypat
 
 def test_pair_step_without_a_code_rejects_the_sas(dp, scratch, monkeypatch):
     ctx, owner, call, sas_out, fifo = setup(dp, scratch, monkeypatch)
-    fifo.get = lambda offer, phase, timeout, sleep=time.sleep: None  # nobody typed anything
+    monkeypatch.setattr(dp, "SAS_WAIT_S", 0.5)  # nobody types anything
     try:
         dp.step_pair(ctx)
     finally:
         fifo.close()
     assert sas_out.read_text() == ""  # an empty line is the CLI's "reject"
+
+
+def test_a_failing_owner_cancels_the_offer(dp, scratch, monkeypatch):
+    ctx, owner, call, sas_out, fifo = setup(dp, scratch, monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("relay down")
+
+    owner.serve_request = boom
+    wfd = os.open(ctx.root / "codes", os.O_WRONLY | os.O_NONBLOCK)
+    os.write(wfd, f"{OFFER} sas SASSAS\n".encode())
+    try:
+        assert dp.step_pair(ctx) == 1
+    finally:
+        os.close(wfd)
+        fifo.close()
+    assert [c[0] for c in call.calls if c[0] != "host.relay_pair_list"] == ["host.relay_pair_cancel"]

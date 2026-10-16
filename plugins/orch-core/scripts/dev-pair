@@ -33,7 +33,6 @@ import contextlib
 import errno
 import json
 import os
-import pty
 import re
 import secrets
 import select
@@ -43,6 +42,7 @@ import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -55,6 +55,7 @@ LOCAL_RELAY = "local"
 DEV_RELAY = "https://relay.dev.severin.io"
 SOCKET_LIMIT = 100  # orch.host.listener.SOCKET_PATH_LIMIT
 KILL_GRACE_S = 10.0
+SAS_WAIT_S = 600.0  # how long the SAS prompt waits for a code before it rejects
 RUN_MODE = 0o711  # the host checks its run directory for exactly this (orch.host.listener)
 MAX_PUBLICATION = 4 * 1024 * 1024
 ORIGIN_ALLOW = (re.compile(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}"), re.compile(r"http://localhost:[1-9][0-9]{0,4}"),
@@ -170,7 +171,7 @@ RELAY_PASS = ("UV_CACHE_DIR", "UV_PYTHON", "UV_PYTHON_INSTALL_DIR", "UV_PYTHON_P
 def relay_env(root: str | os.PathLike[str], path: str, port: int, instance: str, parent: Mapping[str, str],
               cap: int = MAX_PUBLICATION) -> dict[str, str]:  # fmt: skip
     """The relay child's allow-list: the pinned PATH, a sandbox ``HOME``, ``uv``'s cache and interpreter settings from
-    the parent (read-only caches, no secrets) and the relay's own variables."""
+    the parent (uv writes its cache and the relay checkout's .venv there; no secrets) and the relay's own variables."""
     env = {"PATH": path, "HOME": f"{root}/home", "LANG": "C.UTF-8", "TMPDIR": f"{root}/tmp"}
     env.update({k: parent[k] for k in RELAY_PASS if k in parent})
     env.update({
@@ -306,13 +307,31 @@ def _devsandbox() -> Any:
 # -- recorded processes ----------------------------------------------------------------------------------------------
 
 
-def _run(cmd: Sequence[str], timeout: float = 10.0) -> str | None:
+def _run(cmd: Sequence[str], timeout: float = 10.0, *, any_status: bool = False) -> str | None:
     try:
         r = subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout, check=False,
                            env={"PATH": "/usr/sbin:/usr/bin:/bin:/sbin", "LC_ALL": "C", "LANG": "C"})  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return r.stdout if r.returncode == 0 else None
+    return r.stdout if r.returncode == 0 or (any_status and r.stdout) else None
+
+
+def _darwin_cwd(pid: int) -> str | None:
+    """The working directory through libproc (``proc_pidinfo(PROC_PIDVNODEPATHINFO)``): no subprocess, so no flaky
+    ``lsof``. ``None`` off macOS or when the call fails."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = ctypes.create_string_buffer(2352)  # two vnode_info_path: (152-byte vnode_info + 1024-byte path) each
+        if lib.proc_pidinfo(pid, 9, 0, buf, 2352) != 2352:
+            return None
+        path = buf.raw[152 : 152 + 1024].split(b"\0")[0].decode("utf-8", "replace")
+        return os.path.realpath(path) if path.startswith("/") else None
+    except (OSError, AttributeError):
+        return None
 
 
 def proc_identity(pid: int) -> dict[str, Any] | None:
@@ -330,10 +349,15 @@ def proc_identity(pid: int) -> dict[str, Any] | None:
         comm = _run(["ps", "-p", str(pid), "-o", "comm="])
         exe = os.path.realpath(comm.strip()) if comm and comm.strip().startswith("/") else (comm or "").strip() or None
     if cwd is None:
-        out = _run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"])
-        if out:
-            names = [ln[1:] for ln in out.splitlines() if ln.startswith("n")]
-            cwd = os.path.realpath(names[0]) if names else None
+        cwd = _darwin_cwd(pid)
+    if cwd is None:
+        for _ in range(6):  # lsof sometimes answers without the name for a moment
+            out = _run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], any_status=True)  # exits 1 on warnings
+            names = [ln[1:] for ln in (out or "").splitlines() if ln.startswith("n")]
+            if names:
+                cwd = os.path.realpath(names[0])
+                break
+            time.sleep(0.15)
     if exe is None or cwd is None:
         return None
     return {"pid": pid, "start": start.strip(), "exe": exe, "cwd": cwd}
@@ -378,8 +402,21 @@ def validate_record(
     return record_mismatch(rec, root, inspect) is None
 
 
+def stable_identity(pid: int, *, tries: int = 30, pause: float = 0.1) -> dict[str, Any] | None:
+    """The identity once two samples agree: right after ``Popen`` a child may still be the pre-exec image (another
+    executable), and recording that would later read as "not ours"."""
+    last = proc_identity(pid)
+    for _ in range(tries):
+        time.sleep(pause)
+        now = proc_identity(pid)
+        if now is not None and now == last:
+            return now
+        last = now
+    return last
+
+
 def record_process(root: str | os.PathLike[str], role: str, pid: int) -> dict[str, Any]:
-    ident = proc_identity(pid)
+    ident = stable_identity(pid)
     if ident is None:
         raise Refused(f"cannot record the {role} process {pid} (no identity): stopping")
     rec = {"role": role, **ident}
@@ -409,17 +446,40 @@ def descendants(pid: int) -> list[int]:
 def stop_recorded(records: Sequence[Mapping[str, Any]], root: str | os.PathLike[str], *,
                   grace: float = KILL_GRACE_S, inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
                   kill: Callable[[int, int], None] = os.kill, sleep: Callable[[float], None] = time.sleep,
-                  log: Callable[[str], None] = lambda s: None) -> dict[str, str]:  # fmt: skip
+                  log: Callable[[str], None] = lambda s: None,
+                  exists: Callable[[int], bool] | None = None) -> dict[str, str]:  # fmt: skip
     """Signal **only** recorded processes, each re-validated immediately before the signal: SIGTERM, then SIGKILL after
     ``grace`` seconds if it is still the same process. Returns ``{role:pid -> outcome}``."""
     out: dict[str, str] = {}
+
+    def alive(pid: int) -> bool:
+        if exists is not None:
+            return exists(pid)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+
     for rec in reversed(list(records)):
         tag = f"{rec.get('role')}:{rec.get('pid')}"
         if type(rec.get("pid")) is not int or rec["pid"] <= 1:
             out[tag] = "invalid"
             continue
-        if inspect(rec["pid"]) is None:
-            out[tag] = "gone"
+        ident = inspect(rec["pid"])
+        for _ in range(3):  # a transient ps/lsof failure is not "gone"
+            if ident is not None:
+                break
+            sleep(0.2)
+            ident = inspect(rec["pid"])
+        if ident is None:
+            if alive(rec["pid"]):
+                out[tag] = "unidentified"  # it exists but cannot be inspected: never assumed gone
+                log(f"{tag}: the process exists but cannot be identified; check it by hand")
+            else:
+                out[tag] = "gone"
             continue
         why = record_mismatch(rec, root, inspect)
         for _ in range(3):  # a momentary unreadable answer from ps/lsof must not leave our process running
@@ -444,7 +504,11 @@ def stop_recorded(records: Sequence[Mapping[str, Any]], root: str | os.PathLike[
             continue
         with contextlib.suppress(ProcessLookupError):
             kill(rec["pid"], signal.SIGKILL)
-        out[tag] = "killed"
+        for _ in range(20):  # a moment for the pid to vanish
+            if not alive(rec["pid"]):
+                break
+            sleep(0.1)
+        out[tag] = "killed" if not alive(rec["pid"]) else "stuck"
     return out
 
 
@@ -499,6 +563,10 @@ def down(root_arg: str, *, keep: bool = False, grace: float = KILL_GRACE_S, out:
         results = stop_recorded(records, path, grace=grace, inspect=inspect, log=out)
         for tag, what in results.items():
             out(f"dev-pair: {tag}: {what}")
+        bad = sorted(t for t, w in results.items() if w not in ("gone", "terminated", "killed"))
+        if bad:
+            out(f"dev-pair: not every recorded process is stopped ({', '.join(bad)}): the sandbox is kept at {path}")
+            return 1
         if keep:
             out(f"dev-pair: processes stopped, sandbox kept at {path}")
             return 0
@@ -506,15 +574,19 @@ def down(root_arg: str, *, keep: bool = False, grace: float = KILL_GRACE_S, out:
         unknown = sorted(n for n in os.listdir(fd) if n not in known)
         if unknown:
             raise Refused(f"the root holds entries dev-pair did not create ({', '.join(unknown[:5])}): nothing deleted")
-        remove_tree(fd, st.st_dev)
-        parent = os.open(path.parent, _DIR)
         try:
-            now = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
-            if (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino):
-                raise Refused("the root was replaced before it was removed; nothing more was done")
-            os.rmdir(path.name, dir_fd=parent)
-        finally:
-            os.close(parent)
+            remove_tree(fd, st.st_dev)
+            parent = os.open(path.parent, _DIR)
+            try:
+                now = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                if (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino):
+                    raise Refused("the root was replaced before it was removed; nothing more was done")
+                os.rmdir(path.name, dir_fd=parent)
+            finally:
+                os.close(parent)
+        except OSError as exc:
+            out(f"dev-pair: could not remove the sandbox ({exc.strerror or type(exc).__name__}); it is kept at {path}")
+            return 1
         out(f"dev-pair: sandbox removed ({path})")
         return 0
     finally:
@@ -537,8 +609,11 @@ class CodeFifo:
             raise Refused("--expect-code-from: not a FIFO of this user")
         self.fd, self.buf, self.dropped = fd, b"", 0
         self.pending: list[tuple[str, str, str]] = []
+        self.lock = threading.Lock()
+        self.stop = threading.Event()  # ends a waiting get() (the owner's thread) when the pairing is over
 
     def close(self) -> None:
+        self.stop.set()
         with contextlib.suppress(OSError):
             os.close(self.fd)
 
@@ -562,6 +637,10 @@ class CodeFifo:
                 self.pending.append(parsed)
 
     def take(self, offer_id: str, phase: str) -> str | None:
+        with self.lock:
+            return self._take(offer_id, phase)
+
+    def _take(self, offer_id: str, phase: str) -> str | None:
         self._pump()
         keep: list[tuple[str, str, str]] = []
         found: str | None = None
@@ -578,6 +657,8 @@ class CodeFifo:
     def get(self, offer_id: str, phase: str, timeout: float, sleep: Callable[[float], None] = time.sleep) -> str | None:
         end = time.monotonic() + timeout
         while True:
+            if self.stop.is_set():
+                return None
             code = self.take(offer_id, phase)
             if code is not None or time.monotonic() >= end:
                 return code
@@ -617,15 +698,21 @@ def run_pty(argv: Sequence[str], *, env: Mapping[str, str], cwd: str | os.PathLi
     prompts through ``responders``. **The transcript is captured privately** (returned in memory, never echoed or
     logged, also on failure). ``idle`` runs every ~0.2 s; ``watch`` descriptors (the ``--json-fd`` pipe) are read and
     handed to ``on_watch``. The child is our direct child: on a timeout it is killed by its pid before reaping."""
-    for fd in pass_fds:
-        os.set_inheritable(fd, True)
-    pid, master = pty.fork()
-    if pid == 0:  # the child: only exec or die
-        try:
-            os.chdir(cwd)
-            os.execve(argv[0], list(argv), dict(env))
-        except BaseException:  # noqa: BLE001
-            os._exit(127)
+    master, slave = os.openpty()
+    # No fork of this (possibly threaded) process: Popen starts a new session and the wrapper makes the pty the
+    # controlling terminal (TIOCSCTTY on fd 0) before it execs the real command.
+    wrapper = (
+        "import fcntl, os, sys, termios\n"
+        "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+        "os.execve(sys.argv[1], sys.argv[1:], dict(os.environ))\n"
+    )
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", wrapper, *argv], cwd=cwd, env=dict(env), stdin=slave, stdout=slave, stderr=slave,
+            start_new_session=True, pass_fds=tuple(pass_fds),
+        )  # fmt: skip
+    finally:
+        os.close(slave)
     buf = bytearray()
     scan_from = 0
     end = time.monotonic() + timeout
@@ -659,9 +746,15 @@ def run_pty(argv: Sequence[str], *, env: Mapping[str, str], cwd: str | os.PathLi
                     break
             if idle is not None:
                 idle()
-            done, st = os.waitpid(pid, os.WNOHANG)
-            if done:
-                status = st
+            rc = proc.poll()
+            if rc is not None:
+                status = rc
+                for wfd in watch:  # whatever the child wrote before it exited
+                    while on_watch is not None and select.select([wfd], [], [], 0)[0]:
+                        chunk = os.read(wfd, 4096)
+                        if not chunk:
+                            break
+                        on_watch(wfd, chunk)
                 with contextlib.suppress(OSError):
                     while select.select([master], [], [], 0)[0]:
                         more = os.read(master, 4096)
@@ -674,14 +767,13 @@ def run_pty(argv: Sequence[str], *, env: Mapping[str, str], cwd: str | os.PathLi
     except BaseException:
         if status is None:
             with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
-            with contextlib.suppress(ChildProcessError):
-                os.waitpid(pid, 0)
+                proc.kill()
+            proc.wait()
         raise
     finally:
         with contextlib.suppress(OSError):
             os.close(master)
-    return (os.waitstatus_to_exitcode(status) if status is not None else -1), buf
+    return (status if status is not None else -1), buf
 
 
 # -- the steps -------------------------------------------------------------------------------------
@@ -1063,24 +1155,53 @@ def step_pair(ctx: Ctx) -> int:
         offer = state["offer"]
         if offer is None:
             return None
-        return need("sas", offer, "type the 6 characters the phone shows (the pairing code), empty to reject: ") or ""
+        if ctx.fifo is None:  # a person at this terminal: the prompt itself waits for them
+            return human_code("type the 6 characters the phone shows (the pairing code), empty to reject: ") or ""
+        state.setdefault("sas_deadline", time.monotonic() + SAS_WAIT_S)
+        code = ctx.fifo.take(offer, "sas")  # polled in slices: the terminal keeps being drained meanwhile
+        if code is None and time.monotonic() < state["sas_deadline"]:
+            return None
+        return code or ""
 
     def cert_read(label: str, scopes: str) -> str | None:
         return need("cert_code", state["offer"], f"primary: [{label}] wants {scopes}; the phone's compare code: ")
 
+    def cancel() -> None:
+        with contextlib.suppress(Exception):
+            call("host.relay_pair_cancel", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"]})
+
+    def serve(request_id: str) -> None:
+        try:
+            state["result"] = owner.serve_request(request_id, ctx.workspace_id, ctx.root / "state", cert_read,
+                                                  wait_s=300)  # fmt: skip
+        except BaseException as exc:  # noqa: BLE001 - reported by idle(), which cancels the offer
+            state["result"] = exc
+
     def idle() -> None:
+        worker = state.get("worker")
+        if worker is not None:  # the owner works in a thread; this loop keeps draining the terminal
+            if worker.is_alive():
+                return
+            worker.join()
+            state["worker"] = None
+            got = state.pop("result", None)
+            if got is None or isinstance(got, BaseException):
+                print(f"dev-pair: the primary step failed ({type(got).__name__}); cancelling the offer",
+                      file=sys.stderr)  # fmt: skip
+                cancel()
+            elif got.cert is not None:
+                call("host.relay_pair_cert", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"],
+                                              "cert": got.cert})  # fmt: skip
+            else:
+                cancel()
+            return
         if state["state"] == "cert_pending" and not state["served"] and state["offer"]:
             offers = call("host.relay_pair_list", {"workspace_id": ctx.workspace_id})["offers"]
             mine = next((o for o in offers if o["offer_id"] == state["offer"]), None)
             if mine and mine.get("outstanding_request"):
                 state["served"] = True
-                got = owner.serve_request(mine["outstanding_request"], ctx.workspace_id, ctx.root / "state",
-                                          cert_read, wait_s=300)  # fmt: skip
-                if got.cert is not None:
-                    call("host.relay_pair_cert", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"],
-                                                  "cert": got.cert})  # fmt: skip
-                else:
-                    call("host.relay_pair_cancel", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"]})
+                state["worker"] = threading.Thread(target=serve, args=(mine["outstanding_request"],), daemon=True)
+                state["worker"].start()
 
     responders = [
         Responder(re.compile(r"type the 6 characters the phone shows \(empty: reject\): "), sas),
@@ -1092,6 +1213,10 @@ def step_pair(ctx: Ctx) -> int:
         rc, _ = run_pty(argv, env=ctx.env(), cwd=ctx.ws_dir, responders=responders, timeout=900, pass_fds=(w_json,),
                         watch=(r_json,), on_watch=on_json, idle=idle)  # fmt: skip
     finally:
+        if ctx.fifo is not None:
+            ctx.fifo.stop.set()  # the owner's thread must not read a descriptor number another file may reuse
+        if state.get("worker") is not None:
+            state["worker"].join(5)
         os.close(w_json)
         os.close(r_json)
         owner.close()
@@ -1127,13 +1252,26 @@ def up(args: argparse.Namespace) -> int:
     if args.expect_code_from:
         check_fifo(args.expect_code_from, root)
     sb = create_root(root)
+
+    def on_signal(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt  # the same teardown as Ctrl-C
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
     ctx = Ctx(sb=sb, args=args, path_env=path_env, py=py, uv=uv)
     try:
         for name in TOP_ENTRIES:
             sb.mkdir(name, RUN_MODE if name == "run" else 0o700)
         fifo_name = Path(args.expect_code_from).name if args.expect_code_from else None
         manifest_update(
-            root, entries=[*TOP_ENTRIES, "pair.json", "primary-cert.json", *([fifo_name] if fifo_name else [])]
+            root,
+            entries=[
+                *TOP_ENTRIES,
+                "pair.json",
+                "primary-cert.json",
+                "primary-cert.json.tmp",
+                *([fifo_name] if fifo_name else []),
+            ],
         )
         if fifo_name:
             os.mkfifo(fifo_name, 0o600, dir_fd=sb.fd)
@@ -1173,8 +1311,11 @@ def up(args: argparse.Namespace) -> int:
             ctx.fifo.close()
         msg = str(exc) if isinstance(exc, Refused) else type(exc).__name__
         print(f"dev-pair: failed ({msg}); tearing down what was started", file=sys.stderr)
-        with contextlib.suppress(Exception):
+        try:
             down(str(root), keep=False, out=lambda s: print(s, file=sys.stderr))
+        except Exception as dexc:  # noqa: BLE001 - never hidden: the person must know what is left
+            print(f"dev-pair: teardown of {root} failed ({type(dexc).__name__}: {dexc}); check it by hand",
+                  file=sys.stderr)  # fmt: skip
         sb.close()
         if isinstance(exc, (Refused, KeyboardInterrupt)):
             return 1 if isinstance(exc, Refused) else 130

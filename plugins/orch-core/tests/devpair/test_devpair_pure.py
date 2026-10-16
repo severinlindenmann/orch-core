@@ -283,7 +283,11 @@ def test_stale_and_wrong_phase_codes_are_not_typed(dp, scratch):
 
 
 def spawn(root: Path, code: str = "import time; time.sleep(60)") -> subprocess.Popen:
-    return subprocess.Popen([sys.executable, "-c", code], cwd=root, stdin=subprocess.DEVNULL)
+    proc = subprocess.Popen([sys.executable, "-c", code], cwd=root, stdin=subprocess.DEVNULL)
+    import dev_pair  # the module the fixture loaded
+
+    dev_pair.stable_identity(proc.pid)  # past the pre-exec image
+    return proc
 
 
 def test_a_recorded_process_validates_and_a_reused_pid_does_not(dp, scratch):
@@ -291,11 +295,11 @@ def test_a_recorded_process_validates_and_a_reused_pid_does_not(dp, scratch):
     root.mkdir(mode=0o700)
     p = spawn(root)
     try:
-        ident = dp.proc_identity(p.pid)
+        ident = dp.stable_identity(p.pid)
         assert ident is not None
         rec = {"role": "t", **ident}
         real = os.path.realpath(root)
-        assert dp.validate_record(rec, real)
+        assert dp.record_mismatch(rec, real) is None, (dp.proc_identity(p.pid), rec)
         assert not dp.validate_record({**rec, "start": "Thu Jan  1 00:00:00 1970"}, real)  # another birth: PID reuse
         assert not dp.validate_record({**rec, "exe": "/bin/sleep"}, real)
         assert not dp.validate_record(rec, scratch / "other")  # working directory not inside the root
@@ -338,7 +342,15 @@ def test_down_signals_term_then_kill_and_only_validated_processes(dp, scratch):
         {"role": "dead", "pid": 4004, "start": "s", "exe": "/x/d", "cwd": root},
         {"role": "bad", "pid": "x"},
     ]
-    out = dp.stop_recorded(recs, root, grace=0.2, inspect=inspect, kill=kill, sleep=lambda s: time.sleep(0.02))
+    out = dp.stop_recorded(
+        recs,
+        root,
+        grace=0.2,
+        inspect=inspect,
+        kill=kill,
+        sleep=lambda s: time.sleep(0.02),
+        exists=lambda pid: pid in procs,
+    )
     assert out == {"bad:x": "invalid", "dead:4004": "gone", "old:4003": "not-ours", "host:4002": "killed",
                    "relay:4001": "terminated"}  # fmt: skip
     assert sent == [(4002, signal.SIGTERM), (4002, signal.SIGKILL), (4001, signal.SIGTERM)]  # reverse start order
@@ -353,8 +365,8 @@ def test_stop_recorded_ends_real_processes(dp, scratch):
     try:
         time.sleep(0.5)  # let the stubborn one install its handler
         recs = [
-            {"role": "polite", **dp.proc_identity(polite.pid)},
-            {"role": "stubborn", **dp.proc_identity(stubborn.pid)},
+            {"role": "polite", **dp.stable_identity(polite.pid)},
+            {"role": "stubborn", **dp.stable_identity(stubborn.pid)},
         ]
         reap = lambda s: (polite.poll(), stubborn.poll(), time.sleep(0.05))  # noqa: E731
         out = dp.stop_recorded(recs, os.path.realpath(root), grace=1.0, sleep=reap)
@@ -382,7 +394,7 @@ def test_down_removes_the_root_and_stops_what_it_recorded(dp, scratch):
     sb = built(dp, scratch)
     p = spawn(sb.path)
     try:
-        dp.manifest_add(sb.path, "processes", {"role": "host", **dp.proc_identity(p.pid)})
+        dp.manifest_add(sb.path, "processes", {"role": "host", **dp.stable_identity(p.pid)})
         (sb.path / "home" / "deep").mkdir()
         (sb.path / "home" / "deep" / "f").write_text("data")
         (sb.path / "state" / "link").symlink_to("/etc/hosts")  # a link is removed, never followed
@@ -403,7 +415,7 @@ def test_down_keep_stops_processes_and_keeps_the_root(dp, scratch):
     sb = built(dp, scratch)
     p = spawn(sb.path)
     try:
-        dp.manifest_add(sb.path, "processes", {"role": "host", **dp.proc_identity(p.pid)})
+        dp.manifest_add(sb.path, "processes", {"role": "host", **dp.stable_identity(p.pid)})
         assert dp.down(str(sb.path), keep=True, grace=2.0, out=lambda s: None) == 0
         assert sb.path.exists() and (sb.path / "secrets" / "passphrase").exists()
         assert p.wait(5) == -signal.SIGTERM
@@ -422,7 +434,7 @@ def test_down_with_a_copied_manifest_deletes_nothing(dp, scratch):
     (other / dp.MANIFEST).write_bytes((real.path / dp.MANIFEST).read_bytes())  # forged: copied from another root
     os.chmod(other / dp.MANIFEST, 0o600)
     try:
-        dp.manifest_add(real.path, "processes", {"role": "host", **dp.proc_identity(p.pid)})
+        dp.manifest_add(real.path, "processes", {"role": "host", **dp.stable_identity(p.pid)})
         (other / dp.MANIFEST).write_bytes((real.path / dp.MANIFEST).read_bytes())
         with pytest.raises(dp.Refused, match="manifest"):
             dp.down(str(other), out=lambda s: None)
@@ -532,3 +544,53 @@ def test_pty_driver_reports_the_exit_code_and_passes_a_descriptor(dp, scratch):
     os.close(r)
     os.close(w)
     assert rc == 3 and b"".join(got) == b'{"state": "open"}\n'
+
+
+def test_a_transient_inspect_failure_is_not_gone(dp, scratch):
+    root = os.path.realpath(scratch)
+    ident = {"pid": 5001, "start": "s", "exe": "/x/h", "cwd": root}
+    calls = {"n": 0}
+
+    def flaky(pid):
+        calls["n"] += 1
+        return None if calls["n"] <= 2 else ident  # ps/lsof fails twice, then answers
+
+    sent = []
+    rec = {"role": "host", "pid": 5001, "start": "s", "exe": "/x/h", "cwd": root}
+
+    def kill(pid, sig):
+        sent.append(sig)
+        ident_dead[0] = True
+
+    ident_dead = [False]
+    out = dp.stop_recorded([rec], root, grace=0.1, inspect=lambda p: None if ident_dead[0] else flaky(p), kill=kill,
+                           sleep=lambda s: None, exists=lambda p: not ident_dead[0])  # fmt: skip
+    assert out == {"host:5001": "terminated"} and sent == [signal.SIGTERM]
+    # never inspectable but the pid exists: not gone, nothing signalled
+    out = dp.stop_recorded([rec], root, inspect=lambda p: None, kill=lambda p, s: sent.append(99),
+                           sleep=lambda s: None, exists=lambda p: True)  # fmt: skip
+    assert out == {"host:5001": "unidentified"} and 99 not in sent
+
+
+def test_down_keeps_the_root_when_a_record_is_not_stopped(dp, scratch):
+    sb = built(dp, scratch)
+    dp.manifest_add(
+        sb.path, "processes", {"role": "host", "pid": os.getpid(), "start": "other", "exe": "/x", "cwd": "/"}
+    )
+    lines = []
+    assert dp.down(str(sb.path), grace=0.1, out=lines.append, inspect=dp.proc_identity) == 1
+    assert (sb.path / "secrets" / "passphrase").exists() and any("kept" in ln for ln in lines)
+    sb.close()
+
+
+def test_down_reports_a_removal_error_instead_of_a_traceback(dp, scratch, monkeypatch):
+    sb = built(dp, scratch)
+
+    def boom(*a, **k):
+        raise OSError(66, "Directory not empty")
+
+    monkeypatch.setattr(dp, "remove_tree", boom)
+    lines = []
+    assert dp.down(str(sb.path), out=lines.append) == 1
+    assert any("could not remove" in ln for ln in lines) and sb.path.exists()
+    sb.close()

@@ -55,6 +55,7 @@ __all__ = ["OwnerRefusedError", "PairOutcome", "PrimaryKeys", "SandboxOwner"]
 SECRETS = "secrets"
 SIG_FILE, KX_FILE = "primary-sig.key", "primary-kx.key"
 CERT_FILE = "primary-cert.json"
+CERT_FILE_TMP = "primary-cert.json.tmp"  # a name dev-pair lists in the manifest
 LABEL = "orch dev sandbox primary"
 _SCALAR = re.compile(r"[0-9a-f]{64}")
 _CODE = re.compile(r"[A-Z2-7]{6}")
@@ -223,7 +224,7 @@ class SandboxOwner:
 
     def write_cert(self, cert: dict[str, Any]) -> Path:
         path = self.root / CERT_FILE
-        tmp = self.root / f".{CERT_FILE}.{os.getpid()}"
+        tmp = self.root / CERT_FILE_TMP
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             os.write(fd, canon.dumps(cert))

@@ -545,7 +545,9 @@ class HostGitReader:
             args["ext"] = ext
         return _check_diff(self._call(path, "diff", args, principal, wall), max_bytes)
 
-    def tree_check(self, path: str | os.PathLike[str], name: str, principal: str | None = None) -> dict[str, Any]:
+    def tree_check(
+        self, path: str | os.PathLike[str], name: str, principal: str | None = None, *, removal: bool = False
+    ) -> dict[str, Any]:
         """``TreeCheckResult`` for the declared working copy at ``path`` (repo ``name``). Raises
         :class:`Unavailable` when no clean answer can be established (callers fail closed)."""
         from . import treejob
@@ -553,7 +555,7 @@ class HostGitReader:
         if not self.tree_checks:
             raise Unavailable("the clean-tree check needs the worker, which this workspace does not have yet")
         job = treejob.job_input(name, self._pins(path))
-        return treejob.run_child(self.pool, principal or self.principal, job)
+        return treejob.run_child(self.pool, principal or self.principal, job, removal=removal)
 
 
 def _id(pin: Any) -> tuple[int, int]:

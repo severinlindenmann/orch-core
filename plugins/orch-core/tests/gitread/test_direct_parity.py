@@ -57,8 +57,16 @@ def reader(r, where: Path | None = None) -> set[str]:
     return {base64.b64decode(c["path_b64"]).decode() for c in got["changed"]}
 
 
+@pytest.fixture(autouse=True)
+def _sure(sure_ignores):
+    """Every case here compares with git on equal terms: a case-sensitive file system as the policy sees it, and
+    ``core.ignorecase=false`` (set by :func:`agree`). The default configuration, where the reader deliberately applies
+    no ignore rule, is :func:`test_with_gits_default_ignorecase_the_reader_applies_no_ignore_rule`."""
+
+
 def agree(r, where: Path | None = None) -> set[str]:
     """Both answers, normalised; asserts they agree and returns the paths."""
+    r.git("config", "core.ignorecase", "false")
     mine = reader(r, where)  # first: the reader never writes the index, git might (it does not: no optional locks)
     theirs = plain_git(r, where)
     dirs = sorted(p for p in theirs if p.endswith("/"))
@@ -331,3 +339,17 @@ def test_a_ref_name_that_is_not_utf8_or_breaks_the_rules_is_unknown_never_a_cras
     (r.gitdir / "HEAD").write_bytes(b"ref: refs/heads/\xc3\x28\n")  # HEAD names a branch that is not UTF-8
     with pytest.raises(Unavailable):
         READER.tree_check(r.path, r.env)
+
+
+def test_with_gits_default_ignorecase_the_reader_applies_no_ignore_rule(make_repo):
+    """#583 round 3, deliberately dirtier than git: with ``core.ignorecase=true`` (git's default on macOS) the
+    reader cannot match as git does, so it applies no ignore rule at all: every ignored file counts as untracked."""
+    r = base(make_repo)
+    r.git("config", "core.ignorecase", "true")
+    r.write("debug.log", "x\n")
+    r.write("build/out.o", "x\n")
+    r.write("u.txt", "x\n")
+    theirs, mine = plain_git(r), reader(r)
+    assert theirs == {"u.txt"} and mine == {"u.txt", "debug.log", "build/out.o"}
+    got = READER.tree_check(r.path, r.env)
+    assert got["ignore_rules"].startswith("none: core.ignorecase")

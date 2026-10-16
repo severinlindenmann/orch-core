@@ -90,3 +90,18 @@ def git_version() -> tuple[int, ...]:
     out = subprocess.run([GIT, "version"], capture_output=True, text=True, check=True).stdout
     nums = out.split()[2].split(".")
     return tuple(int("".join(ch for ch in n if ch.isdigit()) or 0) for n in nums[:3])
+
+
+@pytest.fixture
+def sure_ignores(monkeypatch):
+    """For tests of ignore MATCHING against git (#583 round 3): the policy's file-system probe answers
+    "case-sensitive", as on Linux. Each such test also sets ``core.ignorecase=false`` in its repository, so git matches
+    case-sensitively too and the two are compared on equal terms. The real probe and the "none applies" outcomes are
+    tested in ``test_ignore_policy.py``."""
+    from orch.gitread import ignorepolicy
+
+    monkeypatch.setattr(ignorepolicy, "_case_insensitive", lambda worktree: False)
+
+
+def case_sensitive(r) -> None:
+    r.git("config", "core.ignorecase", "false")

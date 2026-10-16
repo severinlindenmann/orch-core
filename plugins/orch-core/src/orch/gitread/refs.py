@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import unicodedata
 
 from . import limits
@@ -116,6 +118,7 @@ class RefStore:
 
     def __init__(self, commondir: Dir, hexlen: int) -> None:
         self.hexlen = hexlen
+        self._commondir = commondir  # open for the Repo's lifetime: the file-system probe of resolve()
         self.loose: dict[str, str] = {}
         self.packed: dict[str, str] = {}
         #: skipped loose symrefs (git clone's refs/remotes/<r>/HEAD): never followed, never answered (#583, L3)
@@ -208,4 +211,21 @@ class RefStore:
         alias = self._folded.get(_fold(name))
         if alias is not None:  # git may open that file under this name (differential 2): unknown, never "no such ref"
             raise Unavailable(f"the ref {name!r} differs from the loose ref {alias!r} only in case or normalisation")
+        if self._fs_finds(name):
+            # #583 round 3 (Opus delta L2): the listing named no such file, yet the file system opens one under this
+            # name (APFS folds case and Unicode forms that no fold here reproduces exactly). git opens that file, so
+            # only a byte-exact match against the listing is an answer; anything the file system adds is unknown.
+            raise Unavailable(f"the ref {name!r} is not byte-exact against the refs directory")
         return self.packed.get(name)
+
+    def _fs_finds(self, name: str) -> bool:
+        """Whether the file system finds an entry at ``name`` below the commondir (an ``lstat``, nothing opened)."""
+        try:
+            st = os.stat(name, dir_fd=self._commondir.fd, follow_symlinks=False)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError:
+            return True  # cannot tell: treat as found (unknown)
+        except ValueError:
+            return True  # a name the OS cannot even take (an embedded NUL): unknown
+        return not stat.S_ISDIR(st.st_mode)  # a directory is no ref to git either: it reads packed-refs then

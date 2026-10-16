@@ -104,38 +104,52 @@ def _class(pat: bytes, i: int) -> tuple[bytes, int] | None:
             items.append(("r", ch, ch))
             prev = ch
         p += 1
-    table = bytearray(256)
-    for c in range(256):
-        hit = False
-        for it in items:
-            if it[0] == "r":
-                hit = it[1] <= c <= it[2]  # type: ignore[operator]
-            else:
-                hit = bool(_cc(it[1], c))  # type: ignore[arg-type]
-            if hit:
-                break
-        table[c] = 1 if (hit != negated and c != _SLASH) else 0
-    return bytes(table), p + 1
+    # O(members + 256) (#583 round 3, Opus delta M2: the per-byte scan of every member was quadratic): each range is
+    # one slice, each POSIX class one precomputed table
+    hit = bytearray(256)
+    for it in items:
+        if it[0] == "r":
+            lo, hi = it[1], it[2]  # type: ignore[misc]
+            if lo <= hi:
+                hit[lo : hi + 1] = b"\x01" * (hi - lo + 1)
+        else:
+            cls = _CLASSES[it[1]]  # type: ignore[index]
+            for c in range(256):
+                if cls[c]:
+                    hit[c] = 1
+    table = bytes(1 if (bool(hit[c]) != negated and c != _SLASH) else 0 for c in range(256))
+    return table, p + 1
+
+
+_CLASSES = {
+    name: bytes(1 if _cc(name, c) else 0 for c in range(256))
+    for name in (b"alnum", b"alpha", b"blank", b"cntrl", b"digit", b"graph", b"lower", b"print", b"punct", b"space",
+                 b"upper", b"xdigit")
+}  # fmt: skip
 
 
 class Budget:
-    """Work allowed for one direct-mode tree check: a wall-clock deadline, looked at every few thousand steps.
-    Past it: :class:`Unavailable` (unknown, never clean)."""
+    """Work allowed for one direct-mode tree check: a wall-clock deadline. :meth:`check` reads the clock (per
+    pattern, per directory, per ignore file); :meth:`spend` reads it once ``STEP`` units of work have passed (#583
+    round 3: per pattern and per directory, not every 4096 units). Past it: :class:`Unavailable` (unknown)."""
 
     __slots__ = ("deadline", "left")
 
-    STEP = 4096
+    STEP = 256
 
     def __init__(self, seconds: float) -> None:
         self.deadline = time.monotonic() + seconds
         self.left = self.STEP
 
+    def check(self) -> None:
+        if time.monotonic() > self.deadline:
+            raise Unavailable("the working tree took too long to check (the reader's time limit)")
+
     def spend(self, n: int = 1) -> None:
         self.left -= n
         if self.left <= 0:
             self.left = self.STEP
-            if time.monotonic() > self.deadline:
-                raise Unavailable("the working tree took too long to check (the reader's time limit)")
+            self.check()
 
 
 class Glob:
@@ -196,7 +210,7 @@ class Glob:
         return n in states
 
 
-def compile_glob(pat: bytes) -> Glob | None:
+def compile_glob(pat: bytes, budget: Budget | None = None) -> Glob | None:
     """The pattern (one ``.gitignore`` line, its ``!``, trailing ``/`` and leading ``/`` already removed) compiled,
     or ``None`` when git's wildmatch would match nothing with it."""
     toks: list[tuple[int, object]] = []
@@ -221,6 +235,8 @@ def compile_glob(pat: bytes) -> Glob | None:
             toks.append((_ONE, None))
             i += 1
         elif c == 0x5B:  # "["
+            if budget is not None:
+                budget.spend(256)  # a class costs its table (#583 round 3, C)
             got = _class(pat, i)
             if got is None:
                 return None

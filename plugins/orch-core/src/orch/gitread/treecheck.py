@@ -46,17 +46,16 @@ from typing import Any
 from . import limits
 from .errors import Unavailable
 from .fs import Dir
+from .ignorepolicy import IgnorePolicy, Ignores
 from .repo import Repo, canon_mode
-from .wildmatch import Budget, Glob, compile_glob
+from .wildmatch import Budget
 
-__all__ = ["MAX_CHANGED", "MAX_DEPTH", "check", "parse_index", "parse_ignore"]
+__all__ = ["MAX_CHANGED", "MAX_DEPTH", "check", "parse_index"]
 
 #: entries in ``changed`` (section 0.8.2: ``{0..200}``); the walk stops at one more and says ``more``
 MAX_CHANGED = 200
 #: directory levels walked (each holds an fd; the child has 64)
 MAX_DEPTH = 32
-#: a ``.gitignore`` or ``info/exclude`` larger than this is not read (nothing it says is ignored: conservative)
-IGNORE_MAX = 1 << 20
 #: raw path bytes returned per entry (section 0.8.2: ``path`` is at most 4096)
 PATH_BYTES = 4096
 
@@ -234,84 +233,7 @@ def parse_index(data: bytes, algo: str) -> list[Entry]:
     return out
 
 
-# -- ignore patterns (gitignore(5))
-
-
-class Pattern:
-    __slots__ = ("base", "glob", "negate", "dir_only", "anchored")
-
-    def __init__(self, base: bytes, glob: Glob, negate: bool, dir_only: bool, anchored: bool) -> None:
-        self.base = base
-        self.glob = glob
-        self.negate = negate
-        self.dir_only = dir_only
-        self.anchored = anchored
-
-    def match(self, path: bytes, is_dir: bool, budget: Budget | None = None) -> bool:
-        if self.dir_only and not is_dir:
-            return False
-        if self.base:
-            if not path.startswith(self.base + b"/"):
-                return False
-            path = path[len(self.base) + 1 :]
-        if not self.anchored:
-            path = path.rsplit(b"/", 1)[-1]
-        return self.glob.match(path, budget)
-
-
-def parse_ignore(data: bytes, base: bytes) -> list[Pattern]:
-    """The patterns of one ignore file whose directory is ``base`` (``b""``: the worktree root)."""
-    out: list[Pattern] = []
-    for line in data.split(b"\n"):
-        if line.endswith(b"\r"):
-            line = line[:-1]
-        while line.endswith(b" ") and not line.endswith(b"\\ "):
-            line = line[:-1]
-        if not line or line.startswith(b"#"):
-            continue
-        negate = line.startswith(b"!")
-        if negate:
-            line = line[1:]
-        dir_only = line.endswith(b"/")
-        if dir_only:
-            line = line[:-1]
-        if not line:
-            continue
-        anchored = b"/" in line
-        if line.startswith(b"/"):
-            line = line[1:]
-        glob = compile_glob(line)  # git's wildmatch, no backtracking (#583, M1); None: git matches nothing with it
-        if glob is not None:
-            out.append(Pattern(base, glob, negate, dir_only, anchored))
-    return out
-
-
-class _Ignores:
-    def __init__(self, budget: Budget | None = None) -> None:
-        self.levels: list[list[Pattern]] = []
-        self.budget = budget
-
-    def ignored(self, path: bytes, is_dir: bool) -> bool:
-        """The last matching pattern decides; deeper files win over shallower ones, ``info/exclude`` is lowest."""
-        budget = self.budget
-        for pats in reversed(self.levels):
-            for p in reversed(pats):
-                if budget is not None:
-                    budget.spend()
-                if p.match(path, is_dir, budget):
-                    return not p.negate
-        return False
-
-
-def _read_ignore(d: Dir, rel: str) -> bytes | None:
-    """An ignore file, or ``None``: absent, not a regular file (a symlink, a FIFO), too large or unreadable. ``None``
-    ignores nothing, so a file that cannot be read only ever makes the answer dirtier."""
-    try:
-        if d.kind(rel) != "file":
-            return None
-        return d.read(rel, IGNORE_MAX)
-    except Unavailable:
-        return None
+# -- ignore patterns: orch.gitread.ignorepolicy is the one place that decides and applies them (#583 round 3)
 
 
 # -- the check
@@ -324,17 +246,24 @@ class _Check:
         worktree: Dir,
         *,
         detached_ok: bool = False,
-        excludes: bytes | None = None,
+        policy: IgnorePolicy | None = None,
         budget: Budget | None = None,
+        removal: bool = False,
     ) -> None:
         self.repo = repo
+        #: a removal check (#583 round 3, A): no ignore rule at all, untracked directories reported whole, with sizes
+        self.removal = removal
+        #: ``(bytes, files)`` of each untracked directory reported whole (removal checks)
+        self.sizes: dict[bytes, tuple[int, int]] = {}
+        #: every untracked path with its size, mtime and mode (removal checks): the set a discard may delete
+        self.fp = hashlib.sha256()
         #: direct mode (#583, M1/L5): the work allowed (a deadline); the host's child has its own wall clock
         self.budget = budget
         self.worktree = worktree
         #: direct mode (#565): a detached ``HEAD`` is compared like a branch (``head_ref`` ``None``); host mode refuses
         self.detached_ok = detached_ok
-        #: direct mode (#565): the person's global ignore file, read as data by the caller (lowest precedence)
-        self.excludes = excludes
+        #: which ignore rules apply (orch.gitread.ignorepolicy, the one place that decides); built in run()
+        self.policy = policy
         self.algo = repo.algo
         self.changed: dict[bytes, str] = {}
         self.walked = 0
@@ -526,13 +455,11 @@ class _Check:
         if self._hash_file(d, name, st) != e.oid:
             self.note(e.path, "modified")
 
-    def walk(self, d: Dir, rel: bytes, ignores: _Ignores, inside_ignored: bool, depth: int) -> None:
+    def walk(self, d: Dir, rel: bytes, parent: Ignores, inside_ignored: bool, depth: int) -> None:
         if depth > MAX_DEPTH:
             raise Unavailable(f"the working tree is deeper than {MAX_DEPTH} directories")
-        data = _read_ignore(d, ".gitignore")
-        pushed = data is not None
-        if pushed:
-            ignores.levels.append(parse_ignore(data, rel))  # type: ignore[arg-type]
+        assert self.policy is not None
+        ignores, pushed = self.policy.directory(d, rel, parent)  # the policy reads and judges the .gitignore
         try:
             try:
                 with os.scandir(d.fd) as it:
@@ -541,11 +468,7 @@ class _Check:
                 why = errno.errorcode.get(e.errno or 0, "error")
                 raise Unavailable(f"a directory of the working tree cannot be listed ({why})") from None
             for name in names:
-                self.walked += 1
-                if self.budget is not None:
-                    self.budget.spend()
-                if self.walked > limits.WALK_ENTRIES:
-                    raise Unavailable(f"the working tree has more than {limits.WALK_ENTRIES} entries")
+                self._count()
                 bname = os.fsencode(name)
                 if not rel and bname == b".git":
                     continue
@@ -574,10 +497,14 @@ class _Check:
                 if inside_ignored or ignores.ignored(path, is_dir):
                     continue
                 if not is_dir:
-                    self.note(path, "untracked")
+                    self._untracked(path, st)
                     continue
                 sub = d.sub(name)
                 try:
+                    if self.removal:  # the whole directory is one entry, with its size (node_modules, .venv)
+                        self.sizes[path + b"/"] = self._measure(sub, path, depth + 1)
+                        self.note(path + b"/", "untracked")
+                        continue
                     if sub.kind(".git") is not None:  # a nested repository: git shows the directory, untracked
                         self.note(path + b"/", "untracked")
                         continue
@@ -587,6 +514,52 @@ class _Check:
         finally:
             if pushed:
                 ignores.levels.pop()
+
+    def _count(self) -> None:
+        self.walked += 1
+        if self.budget is not None:
+            self.budget.spend()
+        if self.walked > limits.WALK_ENTRIES:
+            raise Unavailable(f"the working tree has more than {limits.WALK_ENTRIES} entries")
+
+    def _untracked(self, path: bytes, st: os.stat_result) -> None:
+        if self.removal:
+            self.fp.update(b"%s\0%d\0%d\0%o\n" % (path, st.st_size, st.st_mtime_ns, st.st_mode))
+        self.note(path, "untracked")
+
+    def _measure(self, d: Dir, rel: bytes, depth: int) -> tuple[int, int]:
+        """``(bytes, files)`` below an untracked directory (removal checks), every entry also in :attr:`fp`;
+        symlinks are counted, never followed."""
+        if depth > MAX_DEPTH:
+            raise Unavailable(f"the working tree is deeper than {MAX_DEPTH} directories")
+        if self.budget is not None:
+            self.budget.check()
+        total = files = 0
+        try:
+            with os.scandir(d.fd) as it:
+                names = sorted(entry.name for entry in it)
+        except OSError:
+            raise Unavailable("a directory of the working tree cannot be listed") from None
+        for name in names:
+            self._count()
+            path = rel + b"/" + os.fsencode(name)
+            try:
+                st = os.stat(name, dir_fd=d.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                raise Unavailable("a path of the working tree cannot be read") from None
+            self.fp.update(b"%s\0%d\0%d\0%o\n" % (path, st.st_size, st.st_mtime_ns, st.st_mode))
+            if stat.S_ISDIR(st.st_mode):
+                sub = d.sub(name)
+                try:
+                    b, f = self._measure(sub, path, depth + 1)
+                finally:
+                    sub.close()
+                total, files = total + b, files + f
+            else:
+                total, files = total + st.st_size, files + 1
+        return total, files
 
     def _index_sets(self, entries: list[Entry]) -> None:
         self.tracked = {e.path for e in entries}
@@ -603,13 +576,14 @@ class _Check:
                 self.dirs.add(p)
 
     def _walk_all(self) -> None:
-        ignores = _Ignores(self.budget)
-        if self.excludes is not None:  # git's order: core.excludesFile, then info/exclude, then .gitignore files
-            ignores.levels.append(parse_ignore(self.excludes, b""))
-        exclude = _read_ignore(self.repo.commondir, "info/exclude")
-        if exclude is not None:
-            ignores.levels.append(parse_ignore(exclude, b""))
-        self.walk(self.worktree, b"", ignores, False, 0)
+        if self.policy is None:  # the host's child: the person's configuration cannot be read here
+            self.policy = (
+                IgnorePolicy.removal(self.budget)
+                if self.removal
+                else IgnorePolicy.status(self.repo, self.worktree, None, self.budget)
+            )
+        # git's order: core.excludesFile, then info/exclude, then .gitignore files, as far as the policy is certain
+        self.walk(self.worktree, b"", self.policy.top(self.repo.commondir), False, 0)
         for p in self.files:
             if p not in self.seen:
                 self.note(p, "deleted")
@@ -629,7 +603,7 @@ class _Check:
         changed = sorted(self.changed.items())
         if len(changed) > MAX_CHANGED:
             changed, more = changed[:MAX_CHANGED], True
-        return {
+        out: dict[str, Any] = {
             "head": self.head,
             "head_ref": self.head_ref,
             "changed": [
@@ -638,6 +612,16 @@ class _Check:
             ],
             "more": more,
         }
+        if self.removal:  # what blocks a removal, with sizes, and the fingerprint of the whole untracked set
+            out["sizes"] = [
+                {"path_b64": base64.b64encode(p[:PATH_BYTES]).decode("ascii"), "bytes": b, "files": f}
+                for p, (b, f) in sorted(self.sizes.items())
+            ]
+            out["fingerprint"] = self.fp.hexdigest()
+            out["ignore_rules"] = "none (a removal never depends on ignore rules)"
+        elif self.policy is not None:
+            out["ignore_rules"] = "applied" if self.policy.why is None else f"none: {self.policy.why}"
+        return out
 
 
 def check(
@@ -645,10 +629,11 @@ def check(
     worktree: Dir,
     *,
     detached_ok: bool = False,
-    excludes: bytes | None = None,
+    policy: IgnorePolicy | None = None,
     budget: Budget | None = None,
+    removal: bool = False,
 ) -> dict[str, Any]:
     """The raw ``tree.check`` answer for the repository ``repo`` whose pinned working copy is ``worktree``.
     ``detached_ok`` and ``excludes``: direct mode only (:mod:`orch.gitread.local`, #565); the host's ``tree_check``
     request passes neither (a detached ``HEAD`` is unknown there, and no file outside the pins is read)."""
-    return _Check(repo, worktree, detached_ok=detached_ok, excludes=excludes, budget=budget).run()
+    return _Check(repo, worktree, detached_ok=detached_ok, policy=policy, budget=budget, removal=removal).run()

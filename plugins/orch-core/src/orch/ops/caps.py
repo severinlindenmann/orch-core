@@ -512,7 +512,7 @@ class Git:
 
         return observe.dirty(path)
 
-    def tree_check(self, path: Path, name: str | None = None) -> dict[str, Any] | None:
+    def tree_check(self, path: Path, name: str | None = None, *, removal: bool = False) -> dict[str, Any] | None:
         """Host mode only: the ``TreeCheckResult`` of ``path``, or ``None`` when no clean answer can be established
         (fail closed). Never a git process (F2)."""
         self._need()
@@ -522,6 +522,8 @@ class Git:
 
         label = name if name is not None else path.name  # never cut: job_input refuses over 64 (unknown)
         try:
+            if removal:
+                return self.reader.tree_check(path, label, principal=self.principal, removal=True)
             return self.reader.tree_check(path, label, principal=self.principal)
         except Unavailable:
             return None

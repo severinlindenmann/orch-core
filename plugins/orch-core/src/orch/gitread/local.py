@@ -24,10 +24,11 @@ from typing import Any
 
 from . import ops
 from .errors import Unavailable
+from .ignorepolicy import IgnorePolicy, PersonIgnore
 from .pinning import pin_repo
 from .repo import Repo
 
-__all__ = ["READER", "LocalGitReader", "diff", "discover", "observe", "person_excludes", "tree_check"]
+__all__ = ["READER", "LocalGitReader", "diff", "discover", "observe", "person_ignore", "tree_check"]
 
 
 def _roots(path: str | os.PathLike[str], roots: list[str] | None) -> tuple[str, list[str] | None]:
@@ -113,78 +114,88 @@ SYSTEM_CONFIGS = (
 
 
 class _Unsure(Exception):
-    """The person's configuration might set ``core.excludesFile`` in a way this reader does not follow."""
+    """The person's configuration cannot be read with certainty."""
 
 
-def _excludes_setting(path: str) -> str | None:
-    """``core.excludesFile`` as the config file at ``path`` sets it (the last value; ``""`` when set empty), ``None``
-    when it does not. Raises :class:`_Unsure` when the file exists but cannot be read or parsed, or has an
-    ``include``/``includeIf`` section (git follows those; this reader does not)."""
+_FALSE = {"false", "no", "off", "0"}
+_TRUE = {"true", "yes", "on", "1"}
+
+
+def _read_person_config(path: str, facts: dict[str, Any]) -> None:
+    """One config file git reads for the person: ``core.excludesFile`` (last value; ``""`` when set empty) and
+    ``core.ignorecase`` into ``facts``. Raises :class:`_Unsure` when the file exists but cannot be read or parsed,
+    has an ``include``/``includeIf`` section (git follows those; this reader does not) or a non-boolean
+    ``ignorecase``."""
     from .config import parse
 
     if not os.path.lexists(path):
-        return None
+        return
     data = _read_small(path, EXCLUDES_MAX)
     if data is None:
-        raise _Unsure
+        raise _Unsure(f"{path} cannot be read")
     try:
         entries = parse(data)
     except Unavailable:
-        raise _Unsure from None
-    value: str | None = None
+        raise _Unsure(f"{path} cannot be parsed") from None
     for section, sub, key, v in entries:
         if section in ("include", "includeif"):
-            raise _Unsure
+            raise _Unsure(f"{path} has an include")
         if section == "core" and sub is None and key == "excludesfile":
-            value = v if v is not None else ""
-    return value
+            facts["excludes"] = v if v is not None else ""
+        if section == "core" and sub is None and key == "ignorecase":
+            val = "true" if v is None else v.strip().lower()
+            if val not in _TRUE | _FALSE:
+                raise _Unsure(f"{path} sets core.ignorecase to a value that is not a plain boolean")
+            facts["ignorecase"] = val in _TRUE
 
 
-def person_excludes(env: Mapping[str, str]) -> bytes | None:
-    """The person's global ignore patterns, read as data (#565; before, git's ``status`` read them as a person key).
+def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
+    """What git would take from the person's configuration for ignore matching, as far as this reader can be sure
+    (#583 round 3, B; the decision itself is :class:`orch.gitread.ignorepolicy.IgnorePolicy`'s).
 
-    git takes ``core.excludesFile`` from the system, then the global configuration (``$XDG_CONFIG_HOME/git/config``,
-    then ``~/.gitconfig``, or ``$GIT_CONFIG_GLOBAL``), the last value winning, includes followed; without one it uses
-    ``$XDG_CONFIG_HOME/git/ignore``; an empty value means no global ignore file. This reader parses those files with
-    its own strict parser and **fails toward "nothing ignored"** (#583, Opus M2): when any of them has an ``include``
-    or ``includeIf`` section, cannot be read or parsed, when the value is empty, relative or unreadable, or when the
-    environment passes configuration (``GIT_CONFIG_PARAMETERS``, ``GIT_CONFIG_COUNT``), it returns ``None``, so more
-    files count as untracked (dirtier), never fewer. The default file is used only when no file could have set the
-    key. Residual: a system config at a build prefix not in :data:`SYSTEM_CONFIGS` is not seen."""
+    git reads the system file (unless ``GIT_CONFIG_NOSYSTEM``), then ``$XDG_CONFIG_HOME/git/config`` and
+    ``~/.gitconfig`` (or ``$GIT_CONFIG_GLOBAL``), the last value winning, includes followed. **Not known** (no ignore
+    rule applies at all) when: ``HOME`` or ``XDG_CONFIG_HOME`` is not absolute; the environment passes configuration
+    or points elsewhere (any ``GIT_CONFIG_*`` but ``GIT_CONFIG_GLOBAL``, and ``GIT_CONFIG_NOSYSTEM`` unless exactly
+    ``1``); any of those files exists but cannot be read or parsed, or has an include. ``ignorecase``: any of them
+    sets ``core.ignorecase`` true. ``excludes``: the file git uses as ``core.excludesFile`` (its default
+    ``$XDG_CONFIG_HOME/git/ignore`` only when none is set), ``None`` when none, empty, relative or unreadable (the
+    lowest source: dropping it is only ever dirtier). Residual: a system config at a build prefix not in
+    :data:`SYSTEM_CONFIGS`."""
     home = env.get("HOME") or ""
     if not home.startswith("/"):
-        return None
-    if env.get("GIT_CONFIG_PARAMETERS") or env.get("GIT_CONFIG_COUNT"):
-        return None
-    xdg = env.get("XDG_CONFIG_HOME") or ""
-    xdg = xdg if xdg.startswith("/") else os.path.join(home, ".config")
-    files: list[str] = []
-    if not env.get("GIT_CONFIG_NOSYSTEM"):
-        system = env.get("GIT_CONFIG_SYSTEM")
-        files += [system] if system else list(SYSTEM_CONFIGS)
+        return PersonIgnore(False, why="HOME is not an absolute path")
+    for k in env:
+        if k.startswith("GIT_CONFIG") and k not in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"):
+            return PersonIgnore(False, why=f"{k} is set: git's configuration comes from the environment")
+    nosystem = env.get("GIT_CONFIG_NOSYSTEM")
+    if nosystem is not None and nosystem != "1":
+        return PersonIgnore(False, why="GIT_CONFIG_NOSYSTEM is set to a value other than 1")
+    xdg = env.get("XDG_CONFIG_HOME")
+    if xdg is not None and xdg != "" and not xdg.startswith("/"):
+        return PersonIgnore(False, why="XDG_CONFIG_HOME is not an absolute path")
+    xdg = xdg or os.path.join(home, ".config")
+    files: list[str] = [] if nosystem == "1" else list(SYSTEM_CONFIGS)
     glob_ = env.get("GIT_CONFIG_GLOBAL")
     files += [glob_] if glob_ else [os.path.join(xdg, "git", "config"), os.path.join(home, ".gitconfig")]
-    value: str | None = None
+    facts: dict[str, Any] = {"excludes": None, "ignorecase": False}
     try:
         for cfg in files:
-            if cfg == os.devnull:
-                continue
-            got = _excludes_setting(cfg)
-            if got is not None:
-                value = got
-    except _Unsure:
-        return None
+            if cfg != os.devnull:
+                _read_person_config(cfg, facts)
+    except _Unsure as exc:
+        return PersonIgnore(False, why=f"the person's git config is not certain ({exc})")
+    value = facts["excludes"]
     if value is None:
-        path = os.path.join(xdg, "git", "ignore")
+        path: str | None = os.path.join(xdg, "git", "ignore")
     elif value.startswith("~/"):
         path = os.path.join(home, value[2:])
     elif value.startswith("/"):
         path = value
     else:
-        return None  # empty (no global file), "~user/" or relative to git's working directory: nothing ignored
-    if value is not None and not os.path.lexists(path):
-        return None
-    return _read_small(path, EXCLUDES_MAX)
+        path = None  # empty (no global file), "~user/" or relative to git's working directory
+    data = _read_small(path, EXCLUDES_MAX) if path is not None and os.path.lexists(path) else None
+    return PersonIgnore(True, bool(facts["ignorecase"]), data)
 
 
 #: the work one direct-mode tree check may take (the host's reader child has ``limits.WALL_SECONDS`` too)
@@ -247,11 +258,18 @@ class LocalGitReader:
         return canon.canonical_repo_identity(urls[0] if len(urls) == 1 else "", name)
 
     def tree_check(
-        self, path: str | os.PathLike[str], env: Mapping[str, str] | None = None, *, pins: Any = None
+        self,
+        path: str | os.PathLike[str],
+        env: Mapping[str, str] | None = None,
+        *,
+        pins: Any = None,
+        removal: bool = False,
     ) -> dict[str, Any]:
         """The raw ``tree.check`` answer (:mod:`orch.gitread.treecheck`) for the repository ``path`` is in, from its
         top: a detached ``HEAD`` is compared like a branch, and the person's global ignore file (``env``'s ``HOME``,
-        :func:`person_excludes`) is honoured. ``HEAD`` (``head``, ``head_ref``) and the tree come from this one read.
+        :func:`person_ignore`, as :class:`~orch.gitread.ignorepolicy.IgnorePolicy` decides) is honoured. ``removal``:
+        the check a worktree removal needs (no ignore rule at all, untracked directories whole with sizes, and the
+        ``fingerprint`` of the untracked set). ``HEAD`` (``head``, ``head_ref``) and the tree come from this one read.
         ``pins``: read exactly these :class:`~orch.gitread.fs.RepoPins` (a registered worktree) instead of finding the
         repository from ``path`` again. Bounded by :data:`SECONDS` of work (#583: direct mode has no child wall
         clock); past it the answer is unknown."""
@@ -261,11 +279,16 @@ class LocalGitReader:
 
         if pins is None:
             _top, pins = self._open(path)
-        excludes = person_excludes(env if env is not None else os.environ)
+        person = person_ignore(env if env is not None else os.environ)
+        budget = Budget(SECONDS)
         with Repo(pins) as repo:
             worktree = open_pin(pins.worktree)
             try:
-                return treecheck.check(repo, worktree, detached_ok=True, excludes=excludes, budget=Budget(SECONDS))
+                if removal:
+                    policy = IgnorePolicy.removal(budget)
+                else:
+                    policy = IgnorePolicy.status(repo, worktree, person, budget)
+                return treecheck.check(repo, worktree, detached_ok=True, policy=policy, budget=budget, removal=removal)
             finally:
                 worktree.close()
 

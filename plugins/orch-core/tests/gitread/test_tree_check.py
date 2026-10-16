@@ -14,7 +14,7 @@ from orch.gitread import limits, local, treecheck, treejob
 from orch.gitread.client import HostGitReader, PinStore, ReaderPool
 from orch.gitread.errors import Unavailable
 
-from .conftest import git_version
+from .conftest import case_sensitive, git_version
 
 
 def changed(r, **kw):
@@ -58,6 +58,8 @@ def test_a_clean_tree_is_clean_and_every_kind_of_change_is_seen(make_repo, fmt):
     os.unlink(r.path / "link")
     os.symlink("d", r.path / "link")
     got, more = changed(r)
+    # host mode's child cannot read the person's git config, so it applies no ignore rule (#583 round 3,
+    # orch.gitread.ignorepolicy): the ignored files count too, dirtier than git, never cleaner
     assert (
         got
         == {
@@ -66,11 +68,13 @@ def test_a_clean_tree_is_clean_and_every_kind_of_change_is_seen(make_repo, fmt):
             "x.sh": "modified",
             "new.txt": "untracked",
             "keep.log": "untracked",
+            "debug.log": "untracked",
+            "build/out/o.bin": "untracked",
             "link": "modified",
         }
         and not more
     )
-    assert set(got) == git_status(r)
+    assert set(got) - git_status(r) == {"debug.log", "build/out/o.bin"}
 
 
 def test_staged_changes_count_even_when_the_worktree_matches_the_index(make_repo):
@@ -114,8 +118,10 @@ def test_a_fifo_at_a_tracked_path_is_a_type_change_and_never_blocks(make_repo):
     assert got == {"a.txt": "type", "untracked-fifo": "untracked"}
 
 
-def test_ignore_rules_follow_gitignore(make_repo):
+def test_ignore_rules_follow_gitignore(make_repo, sure_ignores):
+    """Matching, where the policy is sure (direct mode, a case-sensitive file system, core.ignorecase false)."""
     r = make_repo()
+    case_sensitive(r)
     r.write("t.txt", "t\n")
     r.write(".gitignore", "/root-only\n*.tmp\ndocs/**/gen\n**/cache/\n\\#hash\n trailing  \n")
     r.write("sub/.gitignore", "local\n!*.tmp\n")
@@ -139,7 +145,11 @@ def test_ignore_rules_follow_gitignore(make_repo):
         "[x",
     ):
         r.write(p, "x\n")
-    got, _ = changed(r)
+    import base64
+
+    from orch.gitread.local import READER
+
+    got = {base64.b64decode(c["path_b64"]).decode() for c in READER.tree_check(r.path, r.env)["changed"]}
     assert set(got) == git_status(r)
     assert {"sub/root-only", "sub/y.tmp", "cache", "local", "[x"} <= set(got)
     assert not {"root-only", "x.tmp", "docs/a/b/gen", "docs/gen", "z/cache/f", "#hash", "excluded"} & set(got)
@@ -529,7 +539,9 @@ def test_a_tracked_file_matching_an_ignore_pattern_is_still_compared(make_repo):
     r.write("build/tracked.txt", "edited\n")
     r.write("traced.log", "edited\n")
     r.write("build/untracked.txt", "ignored\n")
-    assert changed(r)[0] == {"build/tracked.txt": "modified", "traced.log": "modified"}
+    # host mode applies no ignore rule (#583 round 3): the ignored untracked file counts too, the tracked ones compare
+    want = {"build/tracked.txt": "modified", "traced.log": "modified", "build/untracked.txt": "untracked"}
+    assert changed(r)[0] == want
 
 
 def test_sparse_checkout_is_dirty_and_a_sparse_index_unknown(make_repo):

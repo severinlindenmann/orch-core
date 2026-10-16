@@ -98,7 +98,10 @@ class FakeWorker:
 # -- the hook, dormant ------------------------------------------------------------------------------------------------
 
 
-def test_the_hook_is_dormant_behind_the_r6_gate_and_status_says_why(served):  # noqa: F811
+def test_the_hook_is_dormant_behind_the_r6_gate_and_status_says_why(served, monkeypatch):  # noqa: F811
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     svc = served.service
     assert svc.relay is None and svc.relay_reason == "not_linked"
     c = served.client()
@@ -117,7 +120,10 @@ def test_the_hook_is_dormant_behind_the_r6_gate_and_status_says_why(served):  # 
     assert not _relay_threads(served.wid[:8])
 
 
-def test_start_worker_refuses_the_closed_gate_even_when_called_directly(served):  # noqa: F811
+def test_start_worker_refuses_the_closed_gate_even_when_called_directly(served, monkeypatch):  # noqa: F811
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     _reserve(served)
     with pytest.raises(relay_worker.SeamMissing, match="r6_not_ready"):
         relayhook.start_worker(served.service, object(), relayhook.Seams())
@@ -487,6 +493,9 @@ def test_unlink_is_refused_while_a_stuck_worker_runs(served):  # noqa: F811
 
 
 def test_orch_host_status_names_the_dormant_relay_worker(served, monkeypatch):  # noqa: F811
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     from orch.host import status as host_status
 
     svc = served.service
@@ -1051,8 +1060,11 @@ def test_a_reservation_is_refused_while_an_unlink_is_pending(served):  # noqa: F
     assert e.value.code == "lock.busy" and "unlink_pending" in e.value.message and not link.exists()
 
 
-def test_a_stale_intent_for_another_link_is_discarded_with_an_alarm_never_acted_on(served):  # noqa: F811
+def test_a_stale_intent_for_another_link_is_discarded_with_an_alarm_never_acted_on(served, monkeypatch):  # noqa: F811
     """L1: an intent bound to another ``linked_at`` never renames or stops the current link."""
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     from orch.host.custody import read_json
 
     svc = served.service

@@ -810,6 +810,7 @@ def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path, monkeypatch):
 
     state = _state(tmp_path)
     _link(state, WS)
+    monkeypatch.setattr(relay_worker, "R6_READY", False)
     assert relaylink.may_start(state, WS, UID) is False  # R5: the R6 gate (11A.1) keeps every start dormant
     assert relaylink.start_blocker(state, WS, UID) == relay_worker.R6_GATE_REASON
     monkeypatch.setattr(relay_worker, "R6_READY", True)

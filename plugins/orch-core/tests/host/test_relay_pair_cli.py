@@ -686,3 +686,70 @@ def test_json_fd_must_be_a_pipe_or_a_socket_never_0_to_2_or_a_file(host, tmp_pat
     assert rc != 0 and "invalid.input" in text and engine.list_offers() == []  # refused before any offer
     if which == "file":
         assert (tmp_path / "link.txt").read_text() == ""
+
+
+# -- B1b: the QR block and its erasure (11A.15.23, L3/L4) ---------------------------------------------------
+
+
+class TtyOut(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def _offer_then_cancel(host, out, **kw):
+    lab, h, wid, service, engine, owner, primary = host
+    relaypair.primary_set(service, primary.cert(scopes=("look",)), "Mac")
+    polls = {"n": 0}
+
+    def sleep(_t):
+        polls["n"] += 1
+        if polls["n"] == 2:
+            engine.cancel(engine.list_offers()[0].offer_id)
+
+    return paircli.main(ns(workspace=wid, no_qr=False, **kw), {}, out, state=lab.state, control=h.host.control_path,
+                        sleep=sleep, primary=lambda *a: None)  # fmt: skip
+
+
+def test_the_terminal_gets_a_qr_of_the_native_link_and_the_link_lines_leave_the_screen(host, monkeypatch):
+    import segno
+
+    monkeypatch.setattr(paircli, "_width", lambda: 100)
+    out = TtyOut()
+    assert _offer_then_cancel(host, out) == 3
+    text = out.getvalue()
+    link = next(ln for ln in text.splitlines() if ln.startswith("link: "))[len("link: ") :]
+    assert link.startswith("orch://pair?relay=")
+    block, _, rest = text.partition("state: open\n")
+    buf = io.StringIO()
+    segno.make(link, error="m").terminal(out=buf, compact=True)
+    assert buf.getvalue() in block and "valid 10 min, single use; anyone who sees this can pair" in block
+    assert paircli.FALLBACK in block
+    rows = paircli._rows(block, 100)
+    assert f"\x1b[{rows + 1}A\x1b[J" in rest and "\x1b[3J" not in text and "\x1b[2J" not in text
+    assert "removed from the screen" in rest and "state: cancelled" in rest
+
+
+def test_no_erase_when_stdout_is_not_a_terminal_and_none_with_no_qr_flag_off(host):
+    out = io.StringIO()
+    assert _offer_then_cancel(host, out) == 3
+    assert "\x1b[" not in out.getvalue() and "link: orch://" in out.getvalue()
+
+
+def test_the_qr_library_missing_still_shows_the_link(host, monkeypatch):
+    monkeypatch.setattr(paircli, "_qr", lambda link: None)
+    out = io.StringIO()
+    _offer_then_cancel(host, out)
+    assert "QR library is missing" in out.getvalue() and "link: orch://" in out.getvalue()
+
+
+def test_erase_rows_count_wrapped_lines():
+    assert paircli._rows("a\n" + "b" * 250 + "\n", 80) == 1 + 4
+    assert paircli._rows("", 80) == 0
+
+
+def test_attach_erases_exactly_when_the_offer_leaves_open():
+    s = Script([("open", False), ("open", False), ("pending", False), ("rejected", False)])
+    calls, out = [], io.StringIO()
+    paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "", step9=lambda o: None, sleep=lambda t: None,
+                   erase=lambda: calls.append(out.getvalue().count("state:")))  # fmt: skip
+    assert calls == [1]  # once, after "state: open" and before "state: pending"

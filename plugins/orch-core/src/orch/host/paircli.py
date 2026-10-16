@@ -72,6 +72,33 @@ def _link(value: object) -> str:
 
 
 POLL_S = 1.0
+LINK_NOTICE = "valid 10 min, single use; anyone who sees this can pair. It leaves the screen once the phone connects."
+
+
+def _is_tty(out: TextIO) -> bool:
+    try:
+        return bool(out.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def _width() -> int:
+    import shutil
+
+    return max(20, shutil.get_terminal_size((80, 24)).columns)
+
+
+def _rows(text: str, width: int) -> int:
+    """Terminal rows ``text`` takes at ``width`` columns (a long line wraps); QR half-blocks count one cell each."""
+    return sum(max(1, -(-len(line) // width)) for line in text.split("\n")[:-1])
+
+
+def _erase(out: TextIO, rows: int) -> None:
+    """Move up ``rows`` rows and clear to the end of the screen (``ESC[nA`` ``ESC[J``). Never ``ESC[3J``: the
+    scrollback is the terminal's, not ours (best effort, stated in the owner note)."""
+    out.write(f"\x1b[{rows}A\x1b[J")
+    out.write("the pairing link was removed from the screen (your terminal's scrollback may still hold it)\n")
+    out.flush()
 FALLBACK = "fallback: your relay operator's page can read it"
 
 
@@ -106,8 +133,11 @@ def _caller(client: Any) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
 
 
 def _qr(link: str) -> str | None:
+    """The link as a Unicode half-block QR (``segno``, a hard dependency of orch-core, pinned in the lock; in memory
+    only). ``None`` only when the import fails (a broken install): the caller says so and the link text is still
+    shown."""
     try:
-        import segno  # type: ignore[import-not-found]  # optional: orch[qr]
+        import segno  # type: ignore[import-not-found]
     except ImportError:
         return None
     import io
@@ -150,6 +180,7 @@ def attach(
     sleep: Callable[[float], None] = time.sleep,
     max_polls: int | None = None,
     primary: Callable[[str, str, Mapping[str, Any]], Any] | None = None,
+    erase: Callable[[], None] | None = None,
 ) -> int:
     """The attached part (11A.15.9): one line per state; the typed SAS; the primary's step (``primary`` inline, else
     the external primary's wait); step 9 once the certificate is in hand; progress to ``approved``. Returns the exit
@@ -165,13 +196,18 @@ def attach(
     primary_done = False
     sas_bad = 0
     polls = 0
+    was_open = False
     while True:
         offer = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
         state = _word(offer.get("state"), STATES)
         scopes = ", ".join(_word(x, frozenset({"look", "decide"})) for x in offer.get("scopes") or [])
         label = safe(offer.get("label"))
         if state != last:
+            if was_open and erase is not None:
+                erase()  # L3: the QR and both link lines leave the screen once the phone has used the link
+                was_open = False
             last = state
+            was_open = state == "open"
             out.write(f"state: {state}\n")
             out.flush()
             if emit is not None:
@@ -681,6 +717,7 @@ def main(
                 raise HostError("invalid.input", "orch host relay pair [list|cancel|abandon]")
             inline = (args.primary or "inline") != "external"
             emit = None
+            erase = None
             if as_json:
                 sink = _json_sink(getattr(args, "json_fd", None), out)
 
@@ -705,12 +742,22 @@ def main(
                           "native_link": link["native"], "expires_ms": offer["expires_ms"]})  # fmt: skip
                 else:
                     exp = offer.get("expires_ms")
-                    out.write(f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n")
                     qr = None if args.no_qr else _qr(link["native"])
-                    out.write(qr if qr else ("" if args.no_qr else "install orch[qr] for a QR\n"))
-                    out.write(f"link: {link['native']}\n")
-                    out.write(f"{FALLBACK}: {link['https']}\n")
+                    text = f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n"
+                    if qr:
+                        text += qr
+                    elif not args.no_qr:
+                        text += "no QR (the QR library is missing from this install); use the link below\n"
+                    text += f"link: {link['native']}\n"
+                    text += f"{FALLBACK}: {link['https']}\n"
+                    text += LINK_NOTICE + "\n"
+                    out.write(text)
                     out.flush()
+                    if _is_tty(out):
+                        rows = _rows(text, _width())
+
+                        def erase(out: TextIO = out, rows: int = rows) -> None:
+                            _erase(out, rows + 1)  # + the "state: open" line printed after the block
                 del link
             driver = _guarded(step9 or _step9(env, state, entry))
             inline_primary = None
@@ -718,7 +765,7 @@ def main(
                 timed = ask_timed or ((lambda p, t: _tty_ask(p, t)) if ask is _tty_ask else (lambda p, _t: ask(p)))
                 inline_primary = primary or _inline_driver(env, state, entry, out, timed)
             return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep,
-                          primary=inline_primary)  # fmt: skip
+                          primary=inline_primary, erase=erase)  # fmt: skip
     except _Refused as exc:  # the host's refusal, JSON-encoded (ASCII: every control character escaped)
         out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True, ensure_ascii=True))
         out.write("\n")

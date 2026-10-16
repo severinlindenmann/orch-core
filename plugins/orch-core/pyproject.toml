@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
     "jsonschema>=4.26.0",
+    "segno>=1.6.6",
 ]
 
 [project.scripts]

@@ -35,6 +35,7 @@ __all__ = [
     "finish_convenience",
     "forget",
     "read_selection",
+    "setup_backend",
     "stage_convenience",
     "status",
     "undo_staged",
@@ -396,3 +397,16 @@ def status(state_dir: Path, workspace_id: str) -> dict[str, Any]:
         except CustodyError as exc:
             return {"custody": "passphrase", "device": None, "gen": 0, "problem": str(exc)[:200]}
     return {"custody": "none", "device": None, "gen": None}
+
+
+def setup_backend(directory: str | Path, passphrase: str) -> Any:
+    """The passphrase backend over ``directory`` for ``orch setup``'s own process, and nobody else's: a full backend
+    (it signs, and unlocks one batch) whose passphrase prompt is answered with ``passphrase`` instead of the terminal.
+    The passphrase is the one the setup process generated in memory itself for this run (never text from a browser or
+    an argument); the only caller is ``orch.setup.steps`` (an AST test pins
+    that, like :meth:`PassphraseBackend.answering`)."""
+    from .passphrase import PassphraseBackend
+
+    if not isinstance(passphrase, str) or not passphrase:
+        raise CustodyError("setup needs the passphrase it generated")
+    return PassphraseBackend.generated(directory, passphrase)

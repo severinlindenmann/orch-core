@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets as _secrets
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
-from .steps import Secrets
+from .steps import STEP_LABELS, Creator, Run, Secrets
 
 __all__ = ["Env", "SetupFlow"]
 
@@ -45,6 +46,11 @@ class Env:
     manifest_bytes: Callable[[str], bytes] = lambda name: _builtin_manifest(name)
     #: Finish setup: the facts of the registered workspace (read inside store.locked())
     read_facts: Callable[[Any], facts_mod.Facts] | None = None
+    #: the real or a fake :class:`orch.setup.steps.Ports`
+    ports: Callable[[], Any] | None = None
+    #: where "Open the workspace" goes after Finish (the dashboard route of the workspace)
+    workspace_url: Callable[[str], str] = lambda wid: "/"
+    clock: Callable[[], float] = time.time
 
 
 @dataclass
@@ -67,9 +73,12 @@ class SetupFlow:
         self.profile: dict[str, Any] | None = None
         self.secrets: Secrets | None = None
         self.review: Any = None
-        self.run: Any = None
+        self.run: Run | None = None
         self.error: dict[str, Any] | None = None
         self._running = False
+        self._closed = False
+        self.cancel_event = threading.Event()
+        self.thread: threading.Thread | None = None
 
     # ---------------------------------------------------------------------------------------------- server protocol
     @property
@@ -78,7 +87,8 @@ class SetupFlow:
 
     @property
     def finished(self) -> bool:
-        return self.phase in ("done", "cancelled")
+        """The session is over: cancelled, or the person pressed Finish (``done`` alone keeps the page working)."""
+        return self.phase == "cancelled" or self._closed
 
     def launch(self, directory: str) -> None:
         with self.lock:
@@ -122,6 +132,9 @@ class SetupFlow:
             ("POST", "secrets/reveal"): self._reveal,
             ("POST", "secrets/confirm"): self._confirm,
             ("POST", "review"): self._post_review,
+            ("POST", "create"): self._create,
+            ("GET", "progress"): self._progress,
+            ("POST", "finish"): self._finish,
             ("POST", "cancel"): self._cancel,
         }
 
@@ -228,6 +241,96 @@ class SetupFlow:
         rid = "rv_" + _secrets.token_hex(8)
         self.review = _Review(rid, plan)
         return plan.view(rid)
+
+    # -- create: the run (R1 digest, R2 word), then the sequence in a worker thread
+    def _create(self, body: Any) -> dict[str, Any]:
+        if self.review is None or self.phase != "review":
+            raise SetupError("review.changed", "there is no review to create from; review again", 409)
+        if not isinstance(body, dict):
+            raise SetupError("invalid.input", "create takes review_id and digest", 400)
+        plan = self.review.plan
+        if body.get("review_id") != self.review.id or body.get("digest") != plan.digest:
+            raise SetupError("review.changed", "the review changed; read it again", 409)
+        if plan.typed_word is not None and body.get("typed_word") != plan.typed_word:
+            raise SetupError("typed_word.required", "type the word shown to continue", 403)
+        if self.mode == "new" and not (self.secrets and self.secrets.confirmed):
+            raise SetupError("secrets.not_confirmed", "confirm the recovery code first", 409)
+        if self.mode == "finish":  # R7: the facts are read again; a different answer than the review's is a new review
+            assert self.facts is not None and self.e.read_facts is not None and self.profile is not None
+            fresh = self.e.read_facts(self.entry)
+            if facts_mod.missing_items(fresh, self.profile, self.addons) != facts_mod.missing_items(
+                self.facts, self.profile, self.addons
+            ):
+                raise SetupError("review.changed", "the workspace changed since the review; review again", 409)
+        assert self.profile is not None and self.root is not None
+        ids = self._step_ids(plan)
+        run = Run("run_" + _secrets.token_hex(6), [(i, STEP_LABELS.get(i, i)) for i in ids])
+        self.run = run
+        ports = self.e.ports() if self.e.ports else None
+        if ports is None:
+            raise SetupError("setup.no_ports", "setup cannot reach the host", 500)
+        wid = self.entry["workspace_id"] if self.mode == "finish" else None
+        creator = Creator(
+            ports,
+            plan=plan,
+            profile=self.profile,
+            root=self.root,
+            secrets=self.secrets,
+            run=run,
+            mode=self.mode,
+            wid=wid,
+            clock=self.e.clock,
+            cancelled=self.cancel_event,
+            manifest_bytes=self.e.manifest_bytes,
+        )
+        self.phase = "confirming" if plan.tty_confirm else "running"
+        self._running = True
+        self.thread = threading.Thread(target=self._work, args=(creator,), name="orch-setup-run")
+        self.thread.start()
+        return {"run_id": run.id}
+
+    def _step_ids(self, plan: review_mod.Plan) -> list[str]:
+        ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]
+        if any(f["id"] == "runner" for f in plan.flags):
+            ids.append("runner")
+        ids += [i.id for i in plan.items if i.id != "runner_grant"]
+        if any(i.id == "runner_grant" for i in plan.items):
+            ids.append("runner_grant")
+        if self.profile and self.profile["method"] == "click":
+            ids += ["flags", "custody"]
+        return ids
+
+    def _work(self, creator: Creator) -> None:
+        try:
+            creator.execute()
+        finally:
+            with self.lock:
+                self._running = False
+                if self.phase != "cancelled":
+                    self.phase = "done" if creator.run.done else "failed"
+                    if creator.run.done:
+                        self.error = None
+
+    def _progress(self, query: Any) -> dict[str, Any]:
+        if self.run is None or query.get("run_id") != self.run.id:
+            raise SetupError("setup.run_unknown", "no such run", 404)
+        out = self.run.view()
+        if self.phase in ("confirming", "running") and not self.run.waiting_tty:
+            self.phase = "running"
+        elif self.run.waiting_tty:
+            self.phase = "confirming"
+        return out
+
+    def _finish(self, _body: Any) -> dict[str, Any]:
+        if self.phase != "done" or self.run is None or self.run.workspace is None and self.mode == "new":
+            raise SetupError("setup.phase", "setup is not finished", 409)
+        wid = (self.run.workspace or {}).get("id") or (self.entry or {}).get("workspace_id", "")
+        self._closed = True
+        return {"url": self.e.workspace_url(wid)}
+
+    def cancel_run(self) -> None:
+        """Ctrl-C on the setup terminal: the run stops between steps (a conversion in flight is undone)."""
+        self.cancel_event.set()
 
     # -- secrets
     def _reveal(self, _body: Any) -> dict[str, Any]:

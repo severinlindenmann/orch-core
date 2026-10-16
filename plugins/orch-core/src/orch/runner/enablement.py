@@ -15,6 +15,7 @@ File: ``<state>/host/dashboard-execution.json`` (0600, host UID), ``{"v":1, "wor
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ __all__ = [
     "set_enabled",
     "set_terminals",
     "state_of",
+    "wait_connected",
 ]
 
 #: the decided card line (tie-break D-P2-31): workspace card, Start dialog and terminal header
@@ -116,3 +118,26 @@ def set_terminals(state_dir: Path, workspace_id: str, on: bool, uid: int, *, tex
         entry["terminals_text"] = text
     write_private(flag_path(state_dir), doc)
     return doc
+
+
+def wait_connected(
+    probe: Callable[[], bool],
+    timeout: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    interval: float = 0.5,
+) -> bool:
+    """Whether the runner has said hello within ``timeout`` seconds: ``probe`` (``whoami.runner.connected`` on the
+    person's workspace connection) is asked until it answers true. A probe that raises counts as "not yet". Used by
+    ``orch setup`` before it signs a runner grant it could not deposit (B9 R4)."""
+    deadline = clock() + timeout
+    while True:
+        try:
+            if probe():
+                return True
+        except Exception:  # noqa: BLE001 - the host or the runner is still coming up
+            pass
+        if clock() >= deadline:
+            return False
+        sleep(interval)

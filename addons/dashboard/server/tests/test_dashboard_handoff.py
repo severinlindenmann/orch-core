@@ -114,6 +114,8 @@ def test_each_action_prepares_a_request_from_the_hosts_material(ready, action, e
     assert got["material"]["review"][0]["type"] == event
     assert len(got["fingerprint"]) == 12 and got["review_digest"].startswith("sha256:")
     assert got["events"][0]["actor"]["device"] is None and "sig" not in got["events"][0]
+    # B6: the plain view is a sibling of the hashed material, derived from it (the digest above still recomputes)
+    assert got["headline"] and got["content"]["headline"] == got["headline"] and "content" not in got["material"]
     # Nothing was written: preparing signs and appends nothing.
     before = rich[0].store.head_seq(rich[1]["First"])
     assert rich[0].store.head_seq(rich[1]["First"]) == before

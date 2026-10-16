@@ -168,6 +168,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="NAME=PATH",
         help="compare the request's artifact NAME with your local file PATH before you sign",
     )
+    p.add_argument("--details", action="store_true", help="show the full review (hashes, ids) before the question")
     p.add_argument("--json", action="store_true")
     return p
 
@@ -315,6 +316,8 @@ def main(
             raise HostError("human_only", "orch sign is a person's command; an agent never signs")
         code = normalise_code(args.code)
         files = _read_files(args.file)
+        if args.details:  # B6: the full review first; the plain view and `d` otherwise (signer.plain reads it)
+            os.environ["ORCH_SIGN_DETAILS"] = "1"
         state = args.state.resolve() if args.state is not None else state_dir(env)
         uid = os.getuid()
         entries = _own_workspaces(state, uid, args.workspace)

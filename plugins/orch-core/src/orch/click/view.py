@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
-from orch.host import signer
+from orch.host import signcontent, signer
 
 from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, RISK, op_class, refused
 
@@ -128,8 +128,11 @@ def build(
         {"repo": signer._clean(c["repo"]), "clean": True, "attested_by": "worker", "at": signer._clean(c["at"])}
         for c in prepared.get("checks") or []
     ]
+    content = signcontent.build(body)  # B6 (owner decision E): additive; `lines` stays the full review
     view = {
         "risk": RISK,
+        "headline": canon.clean(content["headline"]),
+        "content": signcontent.clean_tree(content),
         "op": prepared["op"],
         "workspace": {
             "id": prepared["workspace_id"],

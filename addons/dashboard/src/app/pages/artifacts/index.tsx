@@ -98,9 +98,17 @@ export function ArtifactsPage() {
   useEffect(() => {
     if (!current) setSaid('')
   }, [current])
+  const focusFrame = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current)
+  }, [])
   const closePane = () => {
     close()
-    requestAnimationFrame(() => restore.current?.focus())
+    if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current)
+    focusFrame.current = requestAnimationFrame(() => {
+      focusFrame.current = undefined
+      restore.current?.focus()
+    })
   }
   // The pane can also go without Close (its artifact left the results): focus inside it would fall to the page body,
   // so it goes back to the item's Preview button, or the results heading.

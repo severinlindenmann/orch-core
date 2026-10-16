@@ -131,7 +131,7 @@ class Direct:
             try:
                 self._store = Store.open(self.root, expected_workspace_id=self.wid, host=None,
                                          host_state_dir=self.state, load="lazy", guard=self.guard,
-                                         config=self.config)  # fmt: skip
+                                         config=self.config, ident=self.ident)  # fmt: skip
             except StoreError as exc:
                 raise WtError(exc.code, exc.detail or exc.code) from None
             except OrchError as exc:

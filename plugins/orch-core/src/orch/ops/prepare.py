@@ -57,6 +57,9 @@ class Capture:
     #: H12d-2 (§0.8.6 item 9.4): the readers the request admits, verified at prepare (``member.add --reader-decl``):
     #: ``{device, person, decl, source, reader, level, digest}``; not signed, not in ``material`` (an argument)
     readers: list[dict[str, Any]] = field(default_factory=list)
+    #: H12c-e: ``relay.pair_device``'s facts from R6 (:class:`orch.identity.pairdevice.PairDeviceFacts`), set by the
+    #: host before the handler runs; the material of the request is built from them (kind ``relay.pair_device``)
+    pair: Any = None
 
     @property
     def actor(self) -> dict[str, Any]:

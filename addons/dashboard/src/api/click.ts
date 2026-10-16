@@ -12,6 +12,27 @@ export const CLICK_RISK = 'Convenience signing: agents running as you, or anythi
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
 export const ARM_MS = 1000
 
+/** A word op (grant, policy, members) signs once the person has held Sign down this long, instead of typing the word. */
+export const HOLD_MS = 1500
+
+/** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
+export interface ClickCard {
+  custody: 'convenience' | 'passphrase' | 'none'
+  enabled: boolean
+  available: boolean
+  problem?: string
+  switchable?: boolean
+  /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
+  device?: string
+}
+
+/**
+ * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` carries
+ * nothing and only turns the flag off. The dashboard never chooses a passphrase: moving the key back is a terminal
+ * command (`orch keys custody passphrase --in-place`).
+ */
+export type ClickSwitch = { on: true; passphrase: string } | { on: false }
+
 export interface ClickPrepared {
   request_id: string
   expires_at: string

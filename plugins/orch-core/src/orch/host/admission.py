@@ -90,13 +90,16 @@ def device_standing(store: Any, person_id: str, device_id: str) -> Literal["ok",
     (existing F1 behaviour, bounded by the 11A.4 hold-off and ``readers reset``): the standing is ``"ok"`` again. Only
     a revocation survives a restore (it is put back by the ``restore`` event), so a **lost phone must be REVOKED**,
     not just removed."""
+    from orch.store.store import device_standing_ok
+
     with store.locked():
         state = store.state
         view = state.workspace.devices.get(device_id)
         if view is not None:
             if view.person != person_id:
                 return "unknown"
-            return "removed" if view.removed or view.revoked else "ok"
+            # R6a round 5: the "ok" decision is THE one standing function the relay gate uses (no second copy)
+            return "ok" if device_standing_ok(state, device_id, person_id) else "removed"
         if (device_id, person_id) in state.revocation_evidence():
             return "removed"
         return "unknown"

@@ -21,7 +21,7 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
@@ -72,6 +72,29 @@ DEPOSIT_REASONS = (
 ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
+
+Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+
+
+class CustodyBody(BaseModel):
+    """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's CURRENT passphrase: the proof the key
+    is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` carries nothing:
+    it only turns the flag off, and the dashboard never chooses a passphrase (Opus H2), so a `passphrase` with `off`
+    is invalid input, refused before the signer is called. Never logged or echoed (the validation handler answers a
+    bare `invalid.input`)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    passphrase: Passphrase | None = None
+
+    @model_validator(mode="after")
+    def _proof_only_to_switch_on(self):
+        if self.on and self.passphrase is None:
+            raise ValueError("on needs the passphrase")
+        if not self.on and "passphrase" in self.model_fields_set:
+            raise ValueError("off takes no passphrase")
+        return self
+
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
 ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
@@ -202,12 +225,32 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/click/status")
     def status(ws: str = Depends(workspace)):
         gateway.enabled(ws)
-        return adapters.click_card(signer.status().get(ws)) or {
+        card = adapters.click_card(signer.status().get(ws)) or {
             "custody": "none",
             "enabled": False,
             "available": False,
             "problem": "no_signer",
         }
+        return {**card, "switchable": signer.switchable()}
+
+    def owner(ws: str) -> bool:
+        me = app.state.person_of(ws)
+        return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
+
+    @app.post("/api/w/{ws}/click/custody")
+    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+        """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
+        (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
+        if not signer.switchable():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
+        if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
+            row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
+        else:  # off: the flag only, never a re-key (moving the key back is `orch keys custody passphrase --in-place`)
+            row = signer.call("custody_off", {"workspace_id": ws})
+        return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):

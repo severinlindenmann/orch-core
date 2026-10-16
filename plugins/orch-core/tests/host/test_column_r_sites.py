@@ -37,7 +37,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend._context"): (2, "R carries no grant: the context's grant is None"),
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),
     ("dispatch.py", "RegistryBackend.status"): (2, "unreachable (host.status is not an R op); would be N's answer"),
-    ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
+    ("dispatch.py", "RegistryBackend.whoami"): (4, "R gets no runner info (P and G only) and the relay caps (R only)"),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
     ("reads_ws.py", "reader_list"): (
@@ -66,8 +66,9 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
         "R without a relay identity is refused first; a socket recompute answering R is refused",
     ),
     ("workspace.py", "Call._authorize_relay"): (
-        6,
-        "R only with a relay identity, a relay peer of its person and the R column from relay_columns",
+        8,
+        "R only with a relay identity, a relay peer of its person and the R column from relay_columns; in R every op "
+        "but reader.declare is bound to the device's current rd (H12d-3)",
     ),
     ("workspace.py", "StatusBackend.run"): (2, "unreachable (host.status is not an R op); would be N's answer"),
     ("workspace.py", "WorkspaceGate._column"): (6, "socket only: resolve() raises for a relay peer"),

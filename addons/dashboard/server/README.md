@@ -17,7 +17,7 @@ The real host lists `human.*` ops without the `human/1` cap and serves no `diff`
 
 ## Install and build
 
-From the checkout (Node 24, uv, Python 3.11+):
+From the checkout (Node 24, uv, Python 3.14+):
 
 ```sh
 cd addons/dashboard
@@ -80,6 +80,8 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    uv run orch-dashboard open /w/DEMO/tickets
    # Stop through the checked control socket:
    uv run orch-dashboard --stop
+   # Stop, wait until the old server has let go of its control socket, open a new one (after an update):
+   uv run orch-dashboard restart
    ```
 
    `serve` runs in the foreground if preferred. `open` starts or locates one server per OS
@@ -158,10 +160,19 @@ reflect submitted bodies. The launcher disables access logs. No request body exc
 The launcher opens a private 0600 HTML redirect file inside an owned 0700
 `$XDG_RUNTIME_DIR/orch-dashboard` directory when `$XDG_RUNTIME_DIR` already exists as a real 0700 directory
 you own (it is never created), otherwise the 0700 dashboard state
-folder. Startup removes owned regular `launch-*.html` files older than 60 seconds from both
+folder. Startup removes owned regular `launch-*.html` files older than 30 seconds (a code's life) from both
 locations; it does not follow symlinks. Browser process arguments contain only its file URL, never the launch code.
 The server picks the directory and returns it to the launcher in the `launch` reply, so both agree.
-The server deletes the redirect after a successful exchange or after 60 seconds.
+The server invalidates the code and deletes the redirect once, the moment the code is redeemed or when it expires
+(30 seconds), whichever comes first. The launcher writes no redirect past the code's expiry, and deletes it at once
+when no browser can be opened. The page replaces itself (`location.replace`) and the dashboard redeems the code (which
+deletes the file) and scrubs the fragment before anything else runs. A `file://` page cannot delete itself; a later
+copy of it holds a dead code. ctl.sock cannot tell an agent of your UID from you: an agent with its own socket client
+still gets a code (accepted in tier A, D-P2-31).
+
+`orch dashboard` and `orch-dashboard` (`open`, `launch`, `serve`, also `python -m orch_dashboard`) refuse with
+`human_only` (exit 3) when `ORCH_GRANT` or `ORCH_SESSION` is set and non-empty: a dashboard session acts as the person.
+Only `stop` passes. In tier A this is a speed bump, not a boundary (an agent runs as your UID).
 Failed exchanges share a per-minute budget; a valid code always bypasses that budget.
 
 ## Live updates and contract v1.3.2

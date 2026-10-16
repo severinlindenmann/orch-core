@@ -10,14 +10,17 @@ R6 is a security dependency of R2, not a fixture (11A.1): R2 is tested against a
 * **G1, the seal gate** (orch-52 / R6 design #473): every chunk is sealed inside :meth:`BridgeKeys.sealing`, which
   holds the seal lock and takes ONE snapshot of the seal state (:class:`SealState`: the committed epoch, the rotation
   gate, the epoch a ``stale_epoch`` names). The caller seals AND commits the replayable bytes (T2 or the refusal
-  record) inside that span; R6 raises the gate or commits a rotation inside :meth:`BridgeKeys.serialised` (the same
-  lock), so a gate is never raised between the check and the commit. :meth:`_Sealer.seal_response` (data) refuses
-  any epoch but the snapshot's committed one, and any epoch while the gate is up. :meth:`_Sealer.seal_refusal` is the
-  only path under an old, burned or gated epoch: it builds the plaintext ITSELF with
-  :func:`orch.relay.framing.refusal_meta` (the closed field sets), so no caller can seal arbitrary plaintext there;
-  under a burned epoch (above the committed one, :meth:`EpochKeySource.refusal_key`) only ``stale_epoch``. The sealer
-  class is private and its constructor takes a module-private token: only :meth:`BridgeKeys.sealing` builds one, with
-  the snapshot it took itself (a test pins that by AST; review D2-7).
+  record) inside that span; R6 raises the gate or moves the committed epoch in memory under the same lock
+  (:meth:`BridgeKeys.serialised`), so a gate is never raised between the check and the commit. **R6a:** the seal
+  lock is the source's own (``EpochKeySource.seal_snapshot``/``serialised``, R6's ``MembershipKeys``), not this
+  module's, so R6's store hook (``R6Gate.raise_for``) and every seal take ONE lock (11A.15.2).
+  :meth:`_Sealer.seal_response` (data) refuses any epoch but the snapshot's committed one, and any epoch while the
+  gate is up. :meth:`_Sealer.seal_refusal` is the only path under an old, burned or gated epoch: it builds the
+  plaintext ITSELF with :func:`orch.relay.framing.refusal_meta` (the closed field sets), so no caller can seal
+  arbitrary plaintext there; under a burned epoch (above the committed one, :meth:`EpochKeySource.refusal_key`, or
+  below it, :meth:`EpochKeySource.is_burned`, R6a round 2) only ``stale_epoch``. The sealer class is private
+  and its constructor takes a module-private token: only :meth:`BridgeKeys.sealing` builds one, with the snapshot
+  it took itself (a test pins that by AST; review D2-7).
 * **Lock order** (11A.5, review D2-4): the workspace store lock first, then the seal lock, then the RidStore lock
   (innermost; it never calls out). Inside a :meth:`BridgeKeys.sealing` span the bridge takes only the RidStore lock
   and SQLite; it never takes the store lock and never calls ``job()``. No :class:`EpochKeySource` method
@@ -32,7 +35,6 @@ from __future__ import annotations
 
 import contextlib
 import secrets
-import threading
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -81,6 +83,22 @@ class EpochKeySource(Protocol):
         ``stale_epoch``; ``None`` for every other epoch."""
         ...
 
+    def seal_snapshot(self) -> contextlib.AbstractContextManager[SealState]:
+        """R6's seal lock, held for one seal, and ONE :class:`SealState` taken under it (11A.15.2 ``seal_snapshot``;
+        R6a). The lock is R6's, not this module's: R6's gate (``R6Gate.raise_for``, called by the store inside its
+        own lock) takes the same lock, so a snapshot is never older than the gate."""
+        ...
+
+    def serialised(self) -> contextlib.AbstractContextManager[None]:
+        """R6's seal lock alone (R6 updates its in-memory seal state under it; it never calls a writer method inside
+        it, R6a round 2)."""
+        ...
+
+    def is_burned(self, epoch: int) -> bool:
+        """``epoch`` is burned (an abandoned exposure or an orphan key), below the committed epoch too: proto §7.2 H4,
+        nothing but ``stale_epoch`` is ever sealed under it (R6a round 2)."""
+        ...
+
 
 @dataclass(frozen=True)
 class Member:
@@ -111,7 +129,6 @@ class BridgeKeys:
         if type(workspace) is not bytes or len(workspace) != 16:
             raise ValueError("workspace id")
         self._source, self._ws = source, workspace
-        self._lock = threading.RLock()
 
     @property
     def current(self) -> int:
@@ -122,8 +139,14 @@ class BridgeKeys:
         return type(epoch) is int and 1 <= epoch <= self.current and self._source.wk(epoch) is not None
 
     def burned(self, epoch: int) -> bool:
-        """A burned epoch above the committed one: opened only to answer its signed ``stale_epoch`` (C5, G2b)."""
-        return type(epoch) is int and epoch > self.current and self._source.refusal_key(epoch) is not None
+        """A burned epoch: above the committed one, opened only to answer its signed ``stale_epoch`` (C5, G2b); at
+        or below it (R6a round 2), served as an old epoch but, as above, only ``stale_epoch`` is sealed under it
+        (proto §7.2 H4)."""
+        if type(epoch) is not int or epoch < 1:
+            return False
+        if epoch > self.current:
+            return self._source.refusal_key(epoch) is not None
+        return self._source.is_burned(epoch)
 
     def holds(self, epoch: int) -> bool:
         """For the signer (:class:`orch.relay.sign.EpochKeys`): served or burned (G2b: a burned key counts as held)."""
@@ -151,16 +174,20 @@ class BridgeKeys:
 
     @contextlib.contextmanager
     def serialised(self) -> Iterator[None]:
-        """R6 raises the rotation gate and commits a rotation inside this span (the seal lock), never between a
-        :meth:`sealing` snapshot and the commit of the bytes sealed under it."""
-        with self._lock:
+        """The seal lock (the source's): no seal snapshot is taken while it is held. R6 updates its in-memory seal
+        state (gate, committed epoch) under it, after its own durable write; it never calls a writer method inside
+        it (R6a round 2: one lock order, store, R6 writer, seal, RidStore)."""
+        with self._source.serialised():
             yield
 
     @contextlib.contextmanager
     def sealing(self, signer: RelaySigner) -> Iterator[_Sealer]:
-        """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it."""
-        with self._lock:
-            yield _Sealer(_TOKEN, self, signer, self._source.seal_state(), self._wk)
+        """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it. Both
+        come from the source (R6a): the one seal lock is R6's, shared with its gate."""
+        with self._source.seal_snapshot() as state:
+            if type(state) is not SealState:
+                raise TypeError("seal_snapshot must yield a SealState")
+            yield _Sealer(_TOKEN, self, signer, state, self._wk)
 
 
 class _Sealer:

@@ -86,6 +86,7 @@ class DirectLink:
                     load="lazy",
                     guard=DirectGuard(self.state, self.workspace_id),
                     config=self.config,
+                    ident=self.ident,
                 )
             except StoreError as exc:
                 raise RecordsError(exc.code, exc.detail or exc.code, exit_=3) from None

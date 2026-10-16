@@ -134,20 +134,76 @@ class FileRecords(MemoryRecords):
       only means the retry runs the handler again, and the store answers it with the first append.
     """
 
-    def __init__(self, directory: str | os.PathLike[str]) -> None:
+    def __init__(self, directory: str | os.PathLike[str], *, fs: Any = None) -> None:
+        """``fs``: the workspace's pinned root (:class:`orch.store.rootfs.RootFS`, or a zero-argument callable that
+        returns it, opened on first use): every open, read and write of the records then goes through it, ``O_NOFOLLOW``
+        on every component (#564). ``None`` (a directory outside a workspace, the tests): by path, as before."""
         super().__init__()
         self.directory = Path(directory)
         from orch.store.lock import FileLock  # lazy: `orch --help` does not need the store
 
-        self._flock = FileLock(self.directory / ".lock")
+        self._fs_src = fs
+        self._fs_obj: Any = None
+        if fs is None:
+            self._flock = FileLock(self.directory / ".lock")
+        else:
+            self._flock = FileLock(self.directory / ".lock", opener=self._lock_open, verify=self._lock_same)
+
+    def _fs(self) -> Any:
+        if self._fs_obj is None and self._fs_src is not None:
+            self._fs_obj = self._fs_src() if callable(self._fs_src) else self._fs_src
+        return self._fs_obj
+
+    def _refuse(self, what: str) -> Exception:
+        from orch.ops.errors import OrchError
+
+        return OrchError("internal", f"the session records: {what}")
+
+    def _lock_open(self) -> int:
+        from orch.store import StoreError
+
+        fs = self._fs()
+        fs.revalidate()
+        try:
+            return fs.open(self.directory / ".lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+        except StoreError as e:
+            raise self._refuse(e.detail) from None
+        except OSError as e:  # a symlink (ELOOP), a FIFO or a directory: never followed, never opened
+            raise self._refuse(f".lock cannot be opened safely ({e.strerror or type(e).__name__})") from None
+
+    def _lock_same(self, fd: int) -> bool:
+        try:
+            a, b = os.fstat(fd), self._fs().lstat(self.directory / ".lock")
+        except Exception:  # noqa: BLE001 - any doubt: not the same file
+            return False
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
     def _path(self, session: str) -> Path:
         return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] + ".json")
 
-    def _get(self, session: str) -> dict[str, Any]:
+    def _read(self, session: str) -> bytes | None:
+        """The record's bytes, ``None`` when there is none. Below the pinned root: a symlink, a FIFO or anything that
+        is not a regular file there **fails closed** (never read as an empty record)."""
+        fs = self._fs()
+        if fs is None:
+            try:
+                return self._path(session).read_bytes()
+            except FileNotFoundError:
+                return None
+        from orch.store import StoreError
+
+        p = self._path(session)
         try:
-            raw = self._path(session).read_bytes()
-        except FileNotFoundError:
+            raw = fs.read_or_none(p)
+            if raw is None and fs.lexists(p):
+                raise self._refuse(f"{p.name} is not a regular file")
+        except StoreError as e:
+            raise self._refuse(e.detail) from None
+        return raw
+
+    def _get(self, session: str) -> dict[str, Any]:
+        raw = self._read(session)
+        if raw is None:
             return _empty()
         try:
             st = json.loads(raw)
@@ -162,9 +218,19 @@ class FileRecords(MemoryRecords):
         return st
 
     def _save(self, session: str, state: dict[str, Any]) -> None:
-        from orch.store.fsio import write_atomic
+        fs = self._fs()
+        data = json.dumps(state).encode("utf-8")
+        if fs is None:
+            from orch.store.fsio import write_atomic
 
-        write_atomic(self._path(session), json.dumps(state).encode("utf-8"), mode=0o600)
+            write_atomic(self._path(session), data, mode=0o600)
+            return
+        from orch.store import StoreError
+
+        try:
+            fs.write_atomic(self._path(session), data, mode=0o600)
+        except StoreError as e:
+            raise self._refuse(e.detail) from None
 
     # one lock around each read-modify-write of the base class
     def refused(self, *a: Any, **k: Any) -> int:

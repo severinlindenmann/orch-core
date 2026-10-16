@@ -73,6 +73,8 @@ SPAWN_TIMEOUT = 10.0
 DRAIN_SECONDS = 2.0
 KILL_WAIT = 2.0
 STOP_GRACE = 10.0
+#: how long close() waits for the I/O thread before leaving the release of its fds to the thread itself
+JOIN_SECONDS = 5.0
 SCAN_SECONDS = 2.0
 #: an ended run's ring is kept 1 h, for at most 64 ended runs (§9.1)
 KEEP_RING_SECONDS = 3600.0
@@ -330,6 +332,12 @@ class Supervisor:
         self._sel.register(self._wake_r, selectors.EVENT_READ, None)
         self._thread: threading.Thread | None = None
         self._closing = False
+        #: set by :meth:`close`: no spawn after it, and the wake pipe is -1 once released (never touched again)
+        self._closed = False
+        #: under ``lock``: the I/O thread has ended; close() deferred the release to it; the release happened
+        self._io_done = False
+        self._release_deferred = False
+        self._released = False
 
     # -- life cycle
     def open(self) -> list[dict[str, Any]]:
@@ -367,14 +375,41 @@ class Supervisor:
                     self.cgroups.remove(cg)
 
     def close(self, *, stop_runs: bool = False, grace: float = STOP_GRACE) -> None:
-        if stop_runs:
-            for run in list(self.live):
-                self.stop(run, grace=grace)
-        self._closing = True
-        self._wake()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
+        """Stop the I/O thread and release the PTYs, the selector, the wake pipe and ``runner.lock``, each once.
+
+        Spawns are fenced first: one in progress finishes and is part of the ``stop_runs`` snapshot, later ones are
+        refused. When the I/O thread outlives :data:`JOIN_SECONDS`, nothing it may still use is closed under it: the
+        thread releases everything itself as it ends, ``runner.lock`` last, so no other runner starts before."""
+        with self._spawn_lock:
+            self._closed = True
+            with self.lock:
+                runs = list(self.live) if stop_runs else []
+        try:
+            for run in runs:
+                try:
+                    self.stop(run, grace=grace)
+                except Exception:  # noqa: BLE001 - one run (pruned, or a failed stop) never keeps close() half done
+                    LOG.exception("run %s: stop at close failed", run)
+        finally:
+            self._closing = True
+            self._wake()
+            if self._thread is not None:
+                self._thread.join(timeout=JOIN_SECONDS)
         with self.lock:
+            if self._thread is not None and not self._io_done:
+                if not self._release_deferred:
+                    self._release_deferred = True
+                    LOG.error("runner I/O thread still running after close: it releases its fds when it ends")
+                return
+        self._release()
+
+    def _release(self) -> None:
+        """Close every fd the I/O thread uses, then ``runner.lock``: exactly once, from close() or the ending thread.
+        Each attribute is cleared before its number is closed, so nothing touches a reused number afterwards."""
+        with self.lock:
+            if self._released:
+                return
+            self._released = True
             for live in self.live.values():
                 if not live.pty_closed:
                     live.pty_closed = True
@@ -382,21 +417,30 @@ class Supervisor:
                         os.close(live.master)
                     except OSError:
                         pass
-        self._sel.close()
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
-        for fd in (self._wake_r, self._wake_w):
+            with contextlib.suppress(OSError):
+                self._sel.close()
+            wake, (self._wake_r, self._wake_w) = (self._wake_r, self._wake_w), (-1, -1)
+            lock_fd, self._lock_fd = self._lock_fd, None
+        for fd in wake:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        if lock_fd is not None:
             try:
-                os.close(fd)
+                os.close(lock_fd)
             except OSError:
-                pass
+                LOG.error("runner.lock could not be released (fd %d)", lock_fd, exc_info=True)
 
     def _wake(self) -> None:
-        try:
-            os.write(self._wake_w, b"x")
-        except OSError:
-            pass
+        with self.lock:  # never a write to a released (and perhaps reused) number
+            if self._wake_w < 0:
+                return
+            try:
+                os.write(self._wake_w, b"x")
+            except OSError:
+                pass
 
     def _emit(self, kind: str, run: str, payload: dict[str, Any]) -> None:
         if self.on_event is not None:
@@ -411,6 +455,8 @@ class Supervisor:
         nothing. Raises :class:`SpawnError` (``launch.cwd_changed``, ``harness.not_found``, ``run.spawn_failed``)."""
         spec.check()
         with self._spawn_lock:
+            if self._closed:
+                raise SpawnError("run.spawn_failed", "the runner is closed", "complete")
             have = self.table.get(spec.run)
             if have is not None:
                 return self._summary(spec.run, have) | {"duplicate": True}
@@ -975,12 +1021,19 @@ class Supervisor:
         """The I/O thread. Every step is guarded: an unexpected error is logged, the run it concerns is recorded with
         ``cleanup: "unknown"`` (when it has none yet), and supervision goes on. The thread never dies silently."""
         next_scan = time.monotonic() + self.scan_interval
-        while not self._closing:
-            try:
-                next_scan = self._step(next_scan)
-            except Exception:  # noqa: BLE001 - never a dead I/O thread
-                LOG.exception("runner I/O step failed")
-                time.sleep(0.1)
+        try:
+            while not self._closing:
+                try:
+                    next_scan = self._step(next_scan)
+                except Exception:  # noqa: BLE001 - never a dead I/O thread
+                    LOG.exception("runner I/O step failed")
+                    time.sleep(0.1)
+        finally:
+            with self.lock:  # the same lock close() decides under: exactly one of the two releases
+                self._io_done = True
+                deferred = self._release_deferred
+            if deferred:
+                self._release()
 
     def _guard(self, live: Live, what: str, fn: Callable[[], Any]) -> None:
         try:
@@ -998,8 +1051,11 @@ class Supervisor:
             events = []
         for key, _ in events:
             if key.data is None:
+                fd = self._wake_r
+                if fd < 0 or self._closing:  # released, or about to be: never read a reused number
+                    continue
                 try:
-                    while os.read(self._wake_r, 4096):
+                    while os.read(fd, 4096):
                         pass
                 except BlockingIOError:
                     pass

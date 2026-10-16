@@ -135,9 +135,11 @@ def test_matrix_r_is_read_and_device_signed_and_no_other_column_has_device_signe
 
 def test_column_r_serves_only_its_closed_op_list():
     r = resolve_relay(True)
-    for op in sorted(columns.RELAY_OPS - {"relay.submit"}):
+    for op in sorted(columns.RELAY_OPS - columns.DEVICE_SIGNED_OPS):
         assert refusal(r, "read", op) is None, op
     assert refusal(r, "device_signed", "relay.submit") is None
+    assert refusal(r, "device_signed", "reader.declare") is None  # H12d-3
+    assert refusal(r, "person_write", "reader.declare") == "op.not_allowed"  # never as the socket's kind
     # the kind alone never serves R: an op must be named and listed
     assert refusal(r, "read") == "op.not_allowed"
     assert refusal(r, "read", None) == "op.not_allowed"
@@ -172,8 +174,9 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
         "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
     }  # fmt: skip
-    assert columns.RELAY_OPS == frozenset(reads | host | {"whoami", "outcome.get", "relay.submit"})
-    assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit"})
+    own = {"whoami", "outcome.get", "relay.submit", "reader.declare"}  # reader.declare: H12d-3, the device's own
+    assert columns.RELAY_OPS == frozenset(reads | host | own)
+    assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit", "reader.declare"})
 
 
 def test_no_socket_op_has_kind_device_signed_and_relay_submit_is_not_served_on_the_socket():
@@ -189,9 +192,29 @@ def test_no_socket_op_has_kind_device_signed_and_relay_submit_is_not_served_on_t
 # --- Call.authorize, principal(), principal_of() --------------------------------------------------------------------
 
 
+class _NoConvenienceStore:
+    """H12d-3: what ``check_rd`` asks of the store (no convenience history: rd is not required)."""
+
+    state = object()
+    state_dir = None
+
+    def merged_events(self) -> list:
+        return []
+
+    @contextlib.contextmanager
+    def locked(self):
+        yield
+
+    def revision(self) -> tuple:
+        return ((), ())
+
+
 class WsService:
     def __init__(self, workspace_id: str = WS) -> None:
         self.workspace_id = workspace_id
+        self.state_dir = Path("/nonexistent-h12d3-state")
+        self.host_uid = UID
+        self.store = _NoConvenienceStore()
 
 
 def relay_call(
@@ -781,11 +804,15 @@ def test_host_limit_is_in_the_catalog():
 # --- orch host relay stop: the persistent stop marker ----------------------------------------------------------------
 
 
-def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path):
+def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path, monkeypatch):
     from orch.host import relaylink
+    from orch.relay import worker as relay_worker
 
     state = _state(tmp_path)
     _link(state, WS)
+    assert relaylink.may_start(state, WS, UID) is False  # R5: the R6 gate (11A.1) keeps every start dormant
+    assert relaylink.start_blocker(state, WS, UID) == relay_worker.R6_GATE_REASON
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
     assert relaylink.may_start(state, WS, UID) is True
     relaylink.mark_stopped(state, WS, UID)
     path = relaylink.stopped_path(state, WS)
@@ -924,10 +951,13 @@ def _service(tmp_path: Path) -> Any:
     return WorkspaceService(entry, state, UID)
 
 
-def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path):
+def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path, monkeypatch):
     import threading
 
     from orch.host import relaylink
+    from orch.relay import worker as relay_worker
+
+    monkeypatch.setattr(relay_worker, "R6_READY", True)  # R5's gate open: this tests H12a's start/stop ordering
 
     svc = _service(tmp_path)
     _link(svc.state_dir, WS)
@@ -1174,3 +1204,52 @@ def test_store_relay_link_with_the_host_guard_refuses_cap_convenience_and_an_exi
         env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
     assert sexc.value.code == "relay.link_exists"
     env.store.close()
+
+
+def _unlink_cli_env(tmp_path, run):
+    from orch.host import relaylink
+    from orch.host.custody import write_private
+    from orch.host.registry import registry_path
+
+    state = _state(tmp_path)
+    reg = registry_path(state)
+    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
+    _link(state, WS)
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(run)}
+    return state, env, relaylink.link_path(state, WS)
+
+
+def test_the_cli_relay_unlink_is_refused_to_an_agent_and_needs_the_host(tmp_path):
+    """R5 review R2 (C1, C2): ``orch host relay unlink`` is a person's decision (refused under ``ORCH_GRANT`` before
+    anything is touched), and the rename needs the store lock, so with no host it is refused, never done locally."""
+    import io
+
+    from orch.host.cli import main
+
+    run = _short_run()
+    state, env, link = _unlink_cli_env(tmp_path, run)
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env={**env, "ORCH_GRANT": "g"},
+                out=out)  # fmt: skip
+    assert code != 0 and "an agent never runs orch host relay unlink" in out.getvalue() and link.exists()
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    assert code != 0 and "unlink runs through the host" in out.getvalue()
+    assert link.exists() and not list(link.parent.glob("unlinked-*"))
+    run.rmdir()
+
+
+def test_the_cli_relay_unlink_with_an_unreachable_host_unlinks_nothing(tmp_path):
+    import io
+
+    from orch.host.cli import main
+
+    state, env, link = _unlink_cli_env(tmp_path, tmp_path / ("r" * 120))
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    doc = json.loads(out.getvalue().splitlines()[-1])
+    assert (
+        code == 9 and doc["error"]["code"] == "host.unavailable" and "nothing was unlinked" in doc["error"]["message"]
+    )
+    assert link.exists() and not list(link.parent.glob("unlinked-*"))

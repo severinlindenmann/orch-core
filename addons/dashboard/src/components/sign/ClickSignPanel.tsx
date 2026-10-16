@@ -1,13 +1,14 @@
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. The risk line comes first. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
+// A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
+// not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
+// item 0); the hold keeps the gesture deliberate. Every other op signs on one click.
 import { Loader2, ShieldAlert } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { CLICK_RISK, HOLD_MS, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
@@ -44,14 +45,13 @@ interface Props {
 
 export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws }: Props) {
   const { view, view_digest: digest } = answer
-  // A new View (a new digest) is a new confirmation: the timer, the typed word and any half-begun press start over.
+  // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
   return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} />
 }
 
 function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const activation = useActivation(armed)
-  const [word, setWord] = useState('')
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (waitUntil <= Date.now()) return
@@ -60,11 +60,15 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   }, [waitUntil])
   const waiting = waitUntil > now
   const needsWord = view.confirm.kind === 'word'
-  const can = armed && !signing && !waiting && (!needsWord || word.length > 0)
+  const can = armed && !signing && !waiting
+  const hold = useHold(can, () => {
+    if (view.confirm.kind === 'word') onSign(view.confirm.word)
+  })
   const go = () => {
     if (!activation.take() || !can) return
-    onSign(needsWord ? word : undefined)
+    onSign(undefined)
   }
+  const hintId = useId()
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       <RiskLine text={view.risk} />
@@ -116,24 +120,9 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
         </p>
       )}
       {view.confirm.kind === 'word' && (
-        <div className="space-y-1.5">
-          <Label htmlFor="click-word">
-            To confirm, type <Raw>{view.confirm.word}</Raw>
-          </Label>
-          <Input
-            id="click-word"
-            value={word}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(e) => setWord(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.repeat) return
-              e.preventDefault()
-              activation.begin(e)
-              go()
-            }}
-          />
-        </div>
+        <p id={hintId} data-testid="click-hold-hint" className="text-[13px] text-text">
+          Hold Sign to confirm <Raw>{view.confirm.word}</Raw>
+        </p>
       )}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -141,25 +130,126 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            disabled={!can}
-            aria-busy={signing}
-            onPointerDown={activation.begin}
-            onKeyDown={activation.begin}
-            onClick={go}
-            title={armed ? undefined : 'Sign turns on after the review has been on screen for a moment'}
-          >
-            {signing ? (
-              <>
-                <Loader2 className="size-4 animate-spin" aria-hidden /> Signing…
-              </>
-            ) : (
-              'Sign'
-            )}
-          </Button>
+          {needsWord ? (
+            <>
+              <Button
+                type="button"
+                disabled={!can}
+                aria-busy={signing}
+                aria-describedby={hintId}
+                className="relative overflow-hidden"
+                {...hold.handlers}
+                title={armed ? undefined : 'Sign turns on after the review has been on screen for a moment'}
+              >
+                {/* The fill: visual only (the progressbar below speaks); no animation for reduced motion, the hold still counts. */}
+                <span
+                  aria-hidden
+                  data-testid="click-hold-fill"
+                  className="pointer-events-none absolute inset-y-0 left-0 bg-white/25 motion-safe:transition-[width] motion-safe:duration-100 motion-safe:ease-linear motion-reduce:hidden"
+                  style={{ width: `${hold.progress}%` }}
+                />
+                {signing ? (
+                  <>
+                    <Loader2 className="relative size-4 animate-spin" aria-hidden /> Signing…
+                  </>
+                ) : (
+                  <span className="relative">Hold to sign</span>
+                )}
+              </Button>
+              {hold.holding && (
+                <span role="progressbar" aria-label="Hold to sign" aria-valuemin={0} aria-valuemax={100} aria-valuenow={hold.progress} className="sr-only">
+                  {hold.progress}%
+                </span>
+              )}
+            </>
+          ) : (
+            <Button
+              type="button"
+              disabled={!can}
+              aria-busy={signing}
+              onPointerDown={activation.begin}
+              onKeyDown={activation.begin}
+              onClick={go}
+              title={armed ? undefined : 'Sign turns on after the review has been on screen for a moment'}
+            >
+              {signing ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden /> Signing…
+                </>
+              ) : (
+                'Sign'
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </section>
   )
+}
+
+/**
+ * Press and hold for HOLD_MS: pointer down (primary button) or Space/Enter down (not an auto-repeat) starts it, and
+ * only while `can` (armed, not signing, not waiting), so a press that began before arming never counts. Release, leaving
+ * the button, a cancelled pointer, blur or `can` turning off end it early. `done` fires once per completed hold.
+ */
+function useHold(can: boolean, done: () => void) {
+  const [progress, setProgress] = useState(0)
+  const [holding, setHolding] = useState(false)
+  const timers = useRef<{ end?: ReturnType<typeof setTimeout>; tick?: ReturnType<typeof setInterval> }>({})
+  const active = useRef(false)
+  const doneRef = useRef(done)
+  useEffect(() => {
+    doneRef.current = done
+  })
+  const stop = () => {
+    clearTimeout(timers.current.end)
+    clearInterval(timers.current.tick)
+    timers.current = {}
+    active.current = false
+    setHolding(false)
+    setProgress(0)
+  }
+  const start = () => {
+    if (!can || active.current) return
+    active.current = true
+    setHolding(true)
+    const began = Date.now()
+    timers.current.tick = setInterval(() => setProgress(Math.min(99, Math.floor(((Date.now() - began) / HOLD_MS) * 100))), 100)
+    timers.current.end = setTimeout(() => {
+      stop()
+      doneRef.current()
+    }, HOLD_MS)
+  }
+  // Disarmed (blur, hidden page), signing or rate-limited mid-hold: the hold is gone, not paused.
+  useEffect(() => {
+    if (!can && active.current) stop()
+  }, [can])
+  useEffect(() => () => {
+    clearTimeout(timers.current.end)
+    clearInterval(timers.current.tick)
+  }, [])
+  const isKey = (e: KeyboardEvent) => e.key === ' ' || e.key === 'Enter'
+  return {
+    progress,
+    holding,
+    handlers: {
+      onPointerDown: (e: PointerEvent) => {
+        if (e.button === 0) start()
+      },
+      onPointerUp: stop,
+      onPointerLeave: stop,
+      onPointerCancel: stop,
+      onBlur: stop,
+      onKeyDown: (e: KeyboardEvent) => {
+        if (!isKey(e)) return
+        e.preventDefault() // no click from Enter, no scroll from Space
+        if (!e.repeat) start()
+      },
+      onKeyUp: (e: KeyboardEvent) => {
+        if (!isKey(e)) return
+        e.preventDefault()
+        stop()
+      },
+    },
+  }
 }

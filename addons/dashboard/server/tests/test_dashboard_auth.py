@@ -1,4 +1,5 @@
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -171,7 +172,7 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
 
     class Timer:
         def __init__(self, delay, fn):
-            assert delay == 60
+            assert delay == 30  # the redirect file lives exactly as long as its code (#542 item 3)
             self.fn = fn
             timers.append(self)
 
@@ -270,10 +271,17 @@ def test_launcher_uses_server_redirect_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "other"))
     opened = []
     monkeypatch.setattr(
-        launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code", "redirect": str(server)}
+        launcher,
+        "control",
+        lambda *_: {
+            "port": PORT,
+            "code": "demo-not-a-real-code",
+            "redirect": str(server),
+            "expires_at": time.time() + 30,
+        },
     )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
-    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)
     launcher.open_dashboard()
     assert len(list(server.glob("launch-*.html"))) == 1 and opened[0].startswith(server.as_uri())
 

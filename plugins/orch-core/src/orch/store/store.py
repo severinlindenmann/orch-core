@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import calendar
 import contextlib
+import copy
 import hashlib
 import json
 import logging
 import os
 import re
-import shutil
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -62,23 +62,65 @@ from orch.model import (
 from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
-from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none, replace, tail_bytes, write_atomic
-from .index import Index
+from .fsio import NotRegularFile, fsync_dir, loads, open_regular, read_or_none, write_atomic
+from .index import Index, StaleIndex
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
-from .outbox import Outbox, OutboxEntry, Segment, make_entry, parse_entry
+from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
+from .rootfs import RootFS
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
+
+
+def _lock_opener(fs: RootFS) -> Callable[[], int]:
+    """The workspace lock's opener (#564): the cached directory fds are revalidated **first**, so the lock is opened
+    in the ``.state`` every operation of this lock period then uses. A FIFO or anything else that is not a regular
+    file there is ``validation.path``. Bound to ``fs``, not to the store: no reference cycle through the lock."""
+
+    def opener() -> int:
+        fs.revalidate()
+        try:
+            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+        except (NotRegularFile, IsADirectoryError):
+            raise StoreError("validation.path", ".state/lock is not a regular file") from None
+
+    return opener
+
+
+def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
+    """After the ``flock``: the locked file is still ``.state/lock`` below the (revalidated) pinned ``.state``
+    (``fstat`` of the fd against an ``lstat`` of the name). Otherwise :class:`FileLock` retries once, then refuses."""
+
+    def verify(fd: int) -> bool:
+        fs.revalidate()
+        try:
+            a, b = os.fstat(fd), fs.lstat(".state/lock")
+        except (OSError, StoreError):
+            return False
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+    return verify
+
+
+def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
+    """:func:`~orch.store.logs.stat_sig` of an ``lstat`` result (a symlink has its own signature)."""
+    if _S_ISLNK(st.st_mode):
+        return (-1, -1, -1, -1)
+    return (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
 _KEY_NUM = re.compile(r"[A-Z][A-Z0-9]{0,15}-([0-9]+)")
 _HOST_FIELDS = ("seq", "at", "prev", "ws_seq", "host_sig")
 _EMPTY = canon.section_hash("")
 _PLACEHOLDER_SIG = "A" * 85 + "A"
 _TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
 _ZERO_ACC = "sha256:" + "0" * 64
+RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (64 MiB at 74 bytes a head, P3-D20)
+RELAY_CACHE_BYTES = 16 << 20  # the one cached branch, raw digests (64 bytes a head: about 262 000 heads at most)
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
 MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
@@ -228,8 +270,11 @@ class Store:
         workspace_name: str | None,
         lock_timeout: float | None,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
+        fs: RootFS | None = None,
     ) -> None:
         self.root = root
+        #: the pinned root (#516): every file under the workspace is reached through it, never by path
+        self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
         #: Host mode (H4a1): called as ``append_check(log, event)`` right before a caller's event (any actor but the
         #: host) is committed, after its id is final; it raises :class:`StoreError` to refuse. The host uses it to make
@@ -240,6 +285,13 @@ class Store:
         #: subscription journal). ``None``: no hook (direct mode).
         self.before_append: Callable[[], None] | None = None
         self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
+        #: R6a (11A.15.2) THE RELAY GATE INVARIANT: a device whose F1 standing goes from ``ok`` to not ``ok``, by any
+        #: means (an append of any event type, a restore, a foreign append or a recovered pending append that a reload
+        #: picks up), raises R6's seal gate before the store lock is released. Enforced in one place: the ``_state``
+        #: setter (:meth:`_gate_lost_standing`), the only way the model state changes; a ``held`` forwarded
+        #: revocation (``HostPins``, not model state) calls the same :meth:`_raise_relay_gate`. Set by
+        #: ``R6Gate.install``; the host's journal never replaces it; :meth:`close` clears it (R6 is then gated).
+        self.relay_gate: Callable[[str, str], None] | None = None
         #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
         #: finish): the host's cheap foreign-append signal (F11)
         self.outside_changes = 0
@@ -253,14 +305,19 @@ class Store:
         self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
         #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
-        self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
-        self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
-        self._index = Index(self.state_dir / "index.sqlite")
+        self._relay_branch: tuple[tuple[Any, ...], bytes, bytes] | None = None  # R3 paging (raw digests)
+        self._relay_ancestry: dict[tuple[Any, ...], bool] = {}  # R3 classify: (older, newer, Store.revision())
+        self._lock = FileLock(
+            self.state_dir / "lock", timeout=lock_timeout, opener=_lock_opener(self.fs), verify=_lock_verify(self.fs)
+        )
+        self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id, self.fs)
+        self._index = Index(self.state_dir / "index.sqlite", self.fs)
         self.reports: list[Report] = []
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
-        self._state: State | None = None
+        self._state_v: State | None = None
+        self._relay_pregated: State | None = None  # _commit's new state whose losses were gated before its write
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
         self._genesis_event: dict[str, Any] | None = None
@@ -311,6 +368,7 @@ class Store:
         lock_timeout: float | None = LOCK_TIMEOUT,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         config: bytes | None = None,
+        ident: tuple[int, int] | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -327,33 +385,41 @@ class Store:
         CLI passes :class:`orch.host.ownership.DirectGuard` (D-P2-18), which holds the ownership lock shared and
         answers ``host.required`` for a workspace the host has adopted. ``config``: the ``config.json`` bytes the
         caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
-        them instead of reading the file by path again.
+        them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
+        it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
+        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516).
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         root = Path(path)
-        store = cls(
-            root,
-            workspace_id=expected_workspace_id,
-            expected_genesis=expected_genesis,
-            host=host,
-            host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
-            verifier=_default_verifier(),
-            clock=clock,
-            workspace_name=workspace_name,
-            lock_timeout=lock_timeout,
-            guard=guard,
-        )
-        store._open(load == "all", config)
+        fs = RootFS.at(root, ident=ident, create=ident is None)
+        try:
+            store = cls(
+                root,
+                workspace_id=expected_workspace_id,
+                expected_genesis=expected_genesis,
+                host=host,
+                host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
+                verifier=_default_verifier(),
+                clock=clock,
+                workspace_name=workspace_name,
+                lock_timeout=lock_timeout,
+                guard=guard,
+                fs=fs,
+            )
+            store._open(load == "all", config)
+        except BaseException:
+            fs.close()
+            raise
         return store
 
     def _open(self, eager: bool, config: bytes | None = None) -> None:
         for d in ("events", "tickets", ".state"):
-            if os.path.islink(self.root / d):
+            if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")
-            (self.root / d).mkdir(parents=True, exist_ok=True)
+            self.fs.mkdir(d)
         self._known_config = config
         try:
             self._open_checked(eager)
@@ -363,7 +429,7 @@ class Store:
     def _config_json(self) -> bytes | None:
         """``config.json`` as it is now: the caller's bytes while opening (until the store installs a new one), else
         read below the root."""
-        return self._known_config if self._known_config is not None else read_or_none(self.root / "config.json")
+        return self._known_config if self._known_config is not None else self.fs.read_or_none("config.json")
 
     def _open_checked(self, eager: bool) -> None:
         cfg = self._config_json()
@@ -375,7 +441,7 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._guard(), self._lock:
-            check_state_dirs(self.root)
+            check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
             self._scan_dirs()
@@ -391,10 +457,64 @@ class Store:
                 self._after_open_heal(eager)
             self._maybe_index()
 
+    @property
+    def _state(self) -> State | None:
+        return self._state_v
+
+    @_state.setter
+    def _state(self, new: State | None) -> None:
+        """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
+        here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
+        old, self._state_v = self._state_v, new
+        pregated, self._relay_pregated = self._relay_pregated, None
+        if self.relay_gate is not None and old is not None and new is not None and old is not new:
+            if new is not pregated:  # _commit raised it already, before the event became durable
+                self._gate_lost_standing(old, new)
+
+    @staticmethod
+    def _standing_ok(state: State, device: str) -> bool:
+        return device_standing_ok(state, device)
+
+    def lock_held(self) -> bool:
+        """This thread holds the store lock now (inside :meth:`locked`). R6's stale gate-reason prune requires it: it
+        judges a state snapshot that must not change before its compare-and-swap write (store, then R6's writer)."""
+        return self._lock.held_by_me()
+
+    def _gate_lost_standing(self, old: State, new: State) -> None:
+        for device in list(old.workspace.devices):
+            if self._standing_ok(old, device) and not self._standing_ok(new, device):
+                self._raise_relay_gate(device, "f1_standing")
+
+    def _raise_relay_gate(self, device: str, reason: str) -> None:
+        """Call ``relay_gate`` with the 32-hex id (``""``, every device, for an unparseable one). R6 raises its
+        in-memory gate before anything can fail; an error here is logged (by class) and never undoes the store's
+        state change."""
+        gate = self.relay_gate
+        if gate is None:
+            return
+        ok = (
+            type(device) is str
+            and len(device) == 34
+            and device.startswith("d_")
+            and all(c in "0123456789abcdef" for c in device[2:])
+        )
+        try:
+            gate(device[2:] if ok else "", reason)
+        except Exception as exc:  # noqa: BLE001 - the state change stands; R6's in-memory gate is already up
+            _log.error("relay gate raise failed (%s)", type(exc).__name__)
+            try:
+                gate("", "h7")  # once more with arguments R6 always accepts, so the raise is durable if it can be
+            except Exception as exc2:  # noqa: BLE001
+                _log.error("relay gate fallback failed (%s)", type(exc2).__name__)
+
     def close(self) -> None:
+        self.relay_gate = None  # a closed store's hook is gone: R6 (bound to the live store) is gated
         self._index.close()
         if self._pins is not None:
             self._pins.close()
+        self.fs.drop_cache()  # the cached directory fds; a later use (a closed store is still usable) reopens them
+        # the root fd stays open: a closed store is still usable (it re-reads what changed); it is released with the
+        # store (RootFS's finalizer), one fd per store
 
     def refresh(self) -> None:
         """Take the lock and re-read what changed on disk since the last call: what a long-lived caller does before it
@@ -422,6 +542,18 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    def revision(self) -> tuple[Any, ...]:
+        """A value that stays equal exactly while no log changed (H12d-3, #555 review F1): the read heads ``(log, seq,
+        offset)`` of every log this store holds, after the lock re-read what changed on disk, and the stat signature
+        ``(size, inode, mtime_ns, ctime_ns)`` of every ticket log file (``_scan_dirs``: one stat per ticket), so an
+        append by this store or another writer, a new ticket log and a cut tail each change it. For a caller that
+        caches a judgement over the whole history (``Store.state`` is a new object at every read)."""
+        with self._locked():
+            self._scan_dirs()
+            heads = tuple(sorted((log, info.seq, info.offset) for log, info in self._logs.items()))
+            files = tuple(sorted((uid, hint.sig) for uid, hint in self._hints.items()))
+            return heads, files
 
     def replay_context(self) -> Any:
         """The model context this store replays with (its verifier and both pins), for a caller that replays the same
@@ -574,7 +706,7 @@ class Store:
             out = []
             for uid in sorted(self._exists):
                 for name in ("ticket.json", "body.md"):
-                    raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
+                    raw = self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
                     if raw and want in raw.decode("utf-8", "ignore").lower():
                         out.append(uid)
                         break
@@ -603,6 +735,13 @@ class Store:
     def genesis(self) -> str | None:
         assert self._state is not None
         return self._state.workspace.genesis
+
+    def genesis_event(self) -> dict[str, Any] | None:
+        """A copy of the loaded ``workspace.created`` event (R6a: the owner's ``PK`` and the delegation for the first
+        card come from it, re-checked by the caller with ``identity.members.check_genesis``), or ``None``."""
+        if self._genesis_event is None:
+            return None
+        return copy.deepcopy(self._genesis_event)
 
     @property
     def diverged(self) -> Mapping[str, Divergence]:
@@ -652,18 +791,9 @@ class Store:
         tdir = self.root / "tickets"
         seen: dict[str, _Hint] = {}
         sizes: dict[str, int] = {}
-        try:
-            entries = list(os.scandir(tdir))
-        except FileNotFoundError:
-            entries = []
-        for ent in entries:
-            uid = ent.name
-            if not _ULID.fullmatch(uid) or ent.is_symlink():
-                continue
-            try:  # one lstat per ticket
-                st = os.lstat(ent.path + "/events.jsonl")
-            except OSError:
-                continue
+        names = [n for n in self.fs.listdir_or_empty("tickets") if _ULID.fullmatch(n)]
+        sigs = self.fs.leaf_stats("tickets", names, "events.jsonl")  # one lstat pair per ticket, below the pinned root
+        for uid, st in sigs.items():
             if _S_ISLNK(st.st_mode):
                 continue
             sig = (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
@@ -672,12 +802,12 @@ class Store:
             if old is not None and old.sig == sig:
                 seen[uid] = old
                 continue
-            path = Path(ent.path) / "events.jsonl"
+            path = tdir / uid / "events.jsonl"
             key = created = None
             if old is not None and old.ino == sig[1]:
                 key, created = old.key, old.created_at
             else:
-                first = first_line(path)
+                first = first_line(path, self.fs)
                 try:
                     f = loads(first) if first else {}
                     if isinstance(f, dict) and f.get("type") == "ticket.created":
@@ -709,7 +839,7 @@ class Store:
             hit = self._last_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 pos = None
-                line = last_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                line = last_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"), self.fs)
                 try:
                     e = canon.parse_event_line(line) if line else None
                     if (
@@ -756,7 +886,7 @@ class Store:
         self._scan_dirs()  # who exists now (a stat per ticket); a reload is not the hot path
         self._logs = {WORKSPACE: LogInfo(WORKSPACE, self._path_of(WORKSPACE))}
         self._read_errors = {}
-        ws_events = read_new_lines(self._logs[WORKSPACE])
+        ws_events = read_new_lines(self._logs[WORKSPACE], fs=self.fs)
         tickets: dict[str, list[dict[str, Any]]] = {}
         todo = sorted(u for u in self._loaded if u in self._exists)
         while todo:
@@ -765,7 +895,7 @@ class Store:
                 continue
             self._spend_load()
             info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
-            tickets[uid] = read_new_lines(info)
+            tickets[uid] = read_new_lines(info, fs=self.fs)
             self._logs[uid] = info
             refs = self._read_refs(tickets[uid])
             if not refs:
@@ -813,7 +943,7 @@ class Store:
                 self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
-            applied = loads(read_or_none(self.state_dir / "applied") or b"{}")
+            applied = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
             self._applied_n = int(applied.get("n", 0))
         except (ValueError, TypeError, AttributeError):
             self._applied_n = 0
@@ -845,7 +975,7 @@ class Store:
 
     def _sizes_now(self) -> dict[str, int]:
         sizes = dict(self._sizes)
-        ws = stat_sig(self._path_of(WORKSPACE))
+        ws = stat_sig(self._path_of(WORKSPACE), self.fs)
         sizes[WORKSPACE] = ws[0] if ws else 0
         return sizes
 
@@ -857,8 +987,15 @@ class Store:
     def _fresh(self) -> bool:
         """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
         every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
-        for info in self._logs.values():
-            if stat_sig(info.path) != info_sig(info):
+        ws = self._logs.get(WORKSPACE)
+        if ws is not None and stat_sig(ws.path, self.fs) != info_sig(ws):
+            return False
+        tickets = [u for u in self._logs if u != WORKSPACE]
+        sigs = self.fs.leaf_stats("tickets", tickets, "events.jsonl") if tickets else {}
+        for uid in tickets:
+            st = sigs.get(uid)
+            have = None if st is None else _sig_of(st)
+            if have != info_sig(self._logs[uid]):
                 return False
         return True
 
@@ -880,7 +1017,11 @@ class Store:
         try:
             yield
         except LoadBudgetExceeded:
+            # rolls back to the state before the span (never a newer one, so a raised relay gate stays raised); the
+            # relay hook is NOT rolled back: a hook cleared or set meanwhile (close, R6Gate.install) stands (R6a)
+            gate = self.relay_gate
             self.__dict__.update(saved)
+            self.relay_gate = gate
             raise
         finally:
             self._load_budget = saved["_load_budget"]
@@ -921,7 +1062,10 @@ class Store:
         not, every ticket is loaded and it is rebuilt."""
         with self._locked():
             ws = self._state.workspace if self._state else None
+            if self._index_ok and self._index.stale():
+                self._index_ok = False  # another store saved it (or it was closed): reload and check it again
             if ws is not None and ws.genesis is not None and not self._index_ok:
+                self._scan_dirs()  # tickets another store created since (the index file may already list them)
                 if self._index.is_current(self._sizes_now(), self.workspace_id, ws.genesis):
                     self._index_ok = True
                 else:
@@ -959,7 +1103,7 @@ class Store:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._guard(), self._lock:
-            check_state_dirs(self.root)
+            check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
@@ -991,9 +1135,9 @@ class Store:
         event is deleted; a torn prefix of its line is cut off the log; a manifest whose line is the last line of its
         log (and that ``.state/applied`` does not name yet) is returned, to be finished once the log is replayed."""
         pdir = self.state_dir / "pending"
-        if not pdir.is_dir():
+        if not self.fs.is_dir(pdir):
             return []
-        found = sorted(pdir.iterdir())
+        found = [pdir / n for n in sorted(self.fs.listdir(pdir))]
         if not found:
             return []  # the common case costs one directory listing
         out: list[tuple[Path, dict[str, Any]]] = []
@@ -1001,16 +1145,15 @@ class Store:
             m = self._recover_one(d)
             if m is not None:
                 out.append((d, m))
-        tdir = self.root / "tickets"
-        for p in tdir.iterdir() if tdir.is_dir() else []:  # a ticket directory whose event never landed
-            with contextlib.suppress(OSError):
-                if p.is_dir() and not p.is_symlink() and not (p / "events.jsonl").exists() and not any(p.iterdir()):
-                    p.rmdir()
+        for n in self.fs.listdir_or_empty("tickets"):  # a ticket directory whose event never landed
+            with contextlib.suppress(OSError, StoreError):
+                if self.fs.is_dir(f"tickets/{n}") and not self.fs.listdir(f"tickets/{n}"):
+                    self.fs.rmdir(f"tickets/{n}")  # rmdir refuses a non-empty one: no events.jsonl in it
         return out
 
     def _recover_one(self, d: Path) -> dict[str, Any] | None:
         try:
-            m = loads(read_or_none(d / "manifest.json", 2_000_000) or b"")
+            m = loads(self.fs.read_or_none(d / "manifest.json", 2_000_000) or b"")
             line = m["line"].encode("utf-8")
             log = m["log"]
             path = self._path_of(log)
@@ -1019,29 +1162,32 @@ class Store:
             if e.get("id") != m["id"] or e.get("seq") != m["seq"] or not isinstance(m["files"], list):
                 raise ValueError("the manifest does not describe its own event")
         except (OSError, ValueError, KeyError, StoreError, TypeError, canon.HashError):
-            shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
+            self.fs.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
             return None
-        size, tail = tail_bytes(path, len(line) + 1)
+        size, tail = self.fs.tail_bytes(path, len(line) + 1)
         if tail.endswith(line):
             applied = self._read_applied()
             if applied.get("id") == m["id"]:
-                shutil.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
+                self.fs.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
                 return None  # `.state/applied` does not name)
             self._needs_reload = True
             return m
         for k in range(min(len(line) - 1, size), 0, -1):  # a torn prefix of our own line: cut it off
             if tail[-k:] == line[:k] and (size == k or tail[-k - 1] == 0x0A):
-                with open(path, "r+b") as f:
-                    f.truncate(size - k)
-                    os.fsync(f.fileno())
+                fd = self.fs.open(path, os.O_RDWR)
+                try:
+                    os.ftruncate(fd, size - k)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
                 self._needs_reload = True
                 break
-        shutil.rmtree(d, ignore_errors=True)
+        self.fs.rmtree(d, ignore_errors=True)
         return None
 
     def _read_applied(self) -> dict[str, Any]:
         try:
-            a = loads(read_or_none(self.state_dir / "applied") or b"{}")
+            a = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
             return a if isinstance(a, dict) else {}
         except ValueError:
             return {}
@@ -1062,14 +1208,14 @@ class Store:
             )
             if not ok:  # the log up to that line did not verify: nothing to finish
                 self._report("store.torn_write", f"event {m['id']} is not in the verified part of {log}", log)
-                shutil.rmtree(d, ignore_errors=True)
+                self.fs.rmtree(d, ignore_errors=True)
                 continue
             self._finish_applied_checkpoint()
             torn = self._install(m, d, check=self._expected_bytes)
             for rel in torn:
                 self._torn.add(rel)
                 self._report("store.torn_write", f"{rel} did not survive the crash of event {m['id']}", log)
-            shutil.rmtree(d, ignore_errors=True)
+            self.fs.rmtree(d, ignore_errors=True)
 
     def _expected_bytes(self, rel: str, data: bytes) -> bool:
         """Is ``data`` what the replayed log says the file ``rel`` holds (recovery only)?"""
@@ -1106,21 +1252,20 @@ class Store:
             if f["to"] == "config.json":
                 self._known_config = None  # from here on the file is the store's own
             dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
-            data = read_or_none(src, 256 * 1024 * 1024)
+            data = self.fs.read_or_none(src, 256 * 1024 * 1024)
             if data is not None and _sha(data) == f["sha256"] and (check is None or check(f["to"], data)):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                replace(src, dest)
-                fsync_dir(dest.parent)
+                self.fs.replace(src, dest)
+                self.fs.fsync_dir(dest.parent)
             else:
-                now = read_or_none(dest)
+                now = self.fs.read_or_none(dest)
                 if now is None or _sha(now) != f["sha256"] or (check is not None and not check(f["to"], now)):
                     torn.append(f["to"])
         uid = m.get("body_copy")
         if uid:
             check_uid(uid)
-            body = read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
+            body = self.fs.read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
             if body is not None and f"tickets/{uid}/body.md" not in torn:
-                write_atomic(self.state_dir / "body" / f"{uid}.md", body)
+                self.fs.write_atomic(self.state_dir / "body" / f"{uid}.md", body)
         if m.get("outbox") is not None:
             self._install_outbox(m, d, recovering=check is not None)
         self._write_applied(m["id"], m["log"], m["seq"])
@@ -1140,7 +1285,7 @@ class Store:
                 "the next host open finishes it (open with the host state dir)",
             )
         pending = d / "outbox"
-        data = None if pending.is_symlink() else read_or_none(pending, 16 * 1024 * 1024)
+        data = self.fs.read_or_none(pending, 16 * 1024 * 1024)  # a symlink reads as absent
         try:
             if data is None or _sha(data) != m["outbox"]:
                 raise StoreError("store.torn_write", "the pending outbox entry is missing or changed")
@@ -1203,7 +1348,7 @@ class Store:
     def _write_applied(self, event_id: str, log: str, seq: int) -> None:
         self._applied_n += 1
         raw = canon.cj_checked({"id": event_id, "log": log, "n": self._applied_n, "seq": seq}) + b"\n"
-        write_atomic(self.state_dir / "applied", raw)
+        self.fs.write_atomic(self.state_dir / "applied", raw)
 
     # ------------------------------------------------------------------ reading projections
 
@@ -1219,7 +1364,7 @@ class Store:
 
     def ticket_json(self, uid: str) -> bytes | None:
         """The ``ticket.json`` on disk (None if there is none)."""
-        return read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
+        return self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
 
     def body_sections(self, uid: str) -> dict[str, str]:
         """The section texts of the ticket's ``body.md`` as on disk, **checked against the log**: every section's hash
@@ -1232,7 +1377,7 @@ class Store:
     def _body_sections(self, uid: str) -> dict[str, str]:
         assert self._state is not None
         view = self._state.tickets[uid]
-        raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
+        raw = self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
         if raw is None:
             texts: dict[str, str] = {}
         else:
@@ -1254,7 +1399,7 @@ class Store:
         for key in (*self._verified_keys(), *self._key_uid, *(t.key for t in self._state.tickets.values())):
             m = _KEY_NUM.fullmatch(key)
             best = max(best, int(m.group(1)) if m else 0)
-        for line in (read_or_none(self.root / "keys.jsonl") or b"").splitlines():
+        for line in (self.fs.read_or_none("keys.jsonl") or b"").splitlines():
             with contextlib.suppress(ValueError, KeyError, TypeError):
                 m = _KEY_NUM.fullmatch(loads(line)["key"])
                 best = max(best, int(m.group(1)) if m else 0)
@@ -1276,7 +1421,7 @@ class Store:
             hit = self._created_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 hit = None
-                line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"), self.fs)
                 try:
                     e = canon.parse_event_line(line) if line else None
                     if (
@@ -1676,22 +1821,31 @@ class Store:
         info = self._logs.get(log)
         path = self._path_of(log)
         wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
-        if stat_sig(wsi.path) != info_sig(wsi):
+        if stat_sig(wsi.path, self.fs) != info_sig(wsi):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the workspace log changed on disk while the store held the lock")
-        if stat_sig(path) != info_sig(info):
+        if stat_sig(path, self.fs) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
+        # R6a round 4 (F-A): the relay gate goes up BEFORE the event can become durable, so no failure after the commit
+        # point (``_finish``, ``append_durable`` after its write) releases the lock with a lost standing ungated. The
+        # setter does not raise it twice. A write that fails before the commit point leaves a durable gate reason for
+        # a device that keeps its standing (fail closed); only the live-store prune (``relayr6._rebuild_gate``, R6b's
+        # planning: ``MembershipKeys.prune_stale_reasons``) or a real removal ends it, never a rotation that lists it.
+        if self.relay_gate is not None:
+            self._gate_lost_standing(old_state, new_state)
+            self._relay_pregated = new_state
         try:
             if ev["type"] == "restore":
                 transition = self._stage_transition(ev, log, old_state)
                 if linked:
                     outbox = make_entry(transition["T"], restore=_restore_evidence(transition)).to_bytes()
             manifest = self._write_pending(ev, log, line, writes, outbox=outbox)
-            append_durable(path, line, commit=True)  # the commit
+            self.fs.append_durable(path, line, commit=True)  # the commit
             self._finish(manifest, ev, log, line)
         except BaseException:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
+            self._relay_pregated = None  # the reload diffs (and gates) again; never skip a later state for this one
             raise
         self._state = new_state
         try:
@@ -1906,10 +2060,10 @@ class Store:
         """Step 2 of the write order. ``outbox`` is the relay outbox entry of this append (H12b): it rides in the
         pending directory, so the commit (the log line) decides it with the event: neither or both."""
         pdir = self.state_dir / "pending" / ev["id"]
-        pdir.mkdir(parents=True, exist_ok=True)
+        self.fs.mkdir(pdir)
         files = []
         for n, w in enumerate(writes):
-            fd = os.open(pdir / str(n), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = self.fs.open(pdir / str(n), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(w.data)
                 f.flush()
@@ -1925,16 +2079,17 @@ class Store:
             "body_copy": next((w.body_copy for w in writes if w.body_copy), None),
         }
         if outbox is not None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(pdir / "outbox")  # a retried event id: start clean, never write through a link
-            fd = os.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            self.fs.unlink(pdir / "outbox", missing_ok=True)  # a retried event id: start clean, never through a link
+            fd = self.fs.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(outbox)
                 f.flush()
                 os.fsync(f.fileno())
             manifest["outbox"] = _sha(outbox)
-        write_atomic(pdir / "manifest.json", json.dumps(manifest, separators=(",", ":")).encode("utf-8"), mode=0o600)
-        fsync_dir(pdir.parent)
+        self.fs.write_atomic(
+            pdir / "manifest.json", json.dumps(manifest, separators=(",", ":")).encode("utf-8"), mode=0o600
+        )
+        self.fs.fsync_dir(pdir.parent)
         return manifest
 
     def _finish(self, manifest: dict[str, Any], ev: dict[str, Any], log: str, line: bytes) -> None:
@@ -1942,7 +2097,7 @@ class Store:
         torn = self._install(manifest, pdir)
         if torn:  # we just wrote them: this is a disk fault, not a crash
             raise StoreError("store.torn_write", f"could not install {', '.join(torn)}")
-        shutil.rmtree(pdir, ignore_errors=True)
+        self.fs.rmtree(pdir, ignore_errors=True)
         info = self._logs.setdefault(log, LogInfo(log, self._path_of(log)))
         info.starts.append(info.offset)
         info.offset += len(line)
@@ -1950,7 +2105,7 @@ class Store:
         info.seq = ev["seq"]
         info.accs.append(canon.log_acc(info.acc, canon.event_head(ev)))
         info.heads.append(canon.event_head(ev))
-        sig = stat_sig(info.path)
+        sig = stat_sig(info.path, self.fs)
         info.ino = sig[1] if sig else None
         info.seen_times = (sig[2], sig[3]) if sig else (0, 0)
         if log != WORKSPACE:
@@ -1999,6 +2154,8 @@ class Store:
         if new.workspace.genesis is not None and self._index_ok:
             try:
                 self._index.update(new, self._logs, [log], changed, self._sizes_now() | {log: self._logs[log].offset})
+            except StaleIndex:  # another store saved it since: re-checked (reloaded or rebuilt) at the next use
+                self._index_ok = False
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
                 self._index.drop()
                 self._index_ok = False
@@ -2213,7 +2370,7 @@ class Store:
 
     def _read_intent(self, idem: str) -> dict[str, Any] | None:
         try:
-            rec = loads(read_or_none(self._intent_path(idem)) or b"null")
+            rec = loads(self.fs.read_or_none(self._intent_path(idem)) or b"null")
         except ValueError:
             return None
         if isinstance(rec, dict) and isinstance(rec.get("log"), str) and isinstance(rec.get("id"), str):
@@ -2276,8 +2433,8 @@ class Store:
             return None
         needle = b'"id":"' + event_id.encode() + b'"'
         try:
-            fd = open_nofollow(self._path_of(log), os.O_RDONLY)
-        except OSError:
+            fd = self.fs.open(self._path_of(log), os.O_RDONLY)
+        except (OSError, StoreError):
             return None
         with os.fdopen(fd, "rb") as f:  # line by line, at most one line's limit at a time
             for i in range(1, info.seq + 1):
@@ -2297,7 +2454,7 @@ class Store:
         if first > last:
             return []
         info = self._logs[log]
-        fd = open_nofollow(self._path_of(log), os.O_RDONLY)
+        fd = self.fs.open(self._path_of(log), os.O_RDONLY)
         out = []
         with os.fdopen(fd, "rb") as f:
             for seq in range(first, last + 1):
@@ -2306,11 +2463,13 @@ class Store:
         return out
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
-        write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)
+        self.fs.write_atomic(
+            self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600
+        )
 
     def _idem_done(self, idem: str, log: str, ev: dict[str, Any]) -> None:
         rec = {"log": log, "id": ev["id"], "seq": ev["seq"], "head": canon.event_head(ev)}
-        write_atomic(self._intent_path(idem), json.dumps(rec).encode("utf-8"), mode=0o600, durable=False)
+        self.fs.write_atomic(self._intent_path(idem), json.dumps(rec).encode("utf-8"), mode=0o600, durable=False)
 
     # ------------------------------------------------------------------ external edits (§5.8)
 
@@ -2388,7 +2547,7 @@ class Store:
             ("keys.jsonl", "keys_mismatch", lambda: self._keys_bytes()),
         ):
             want = produce()
-            if (self._config_json() if path == "config.json" else read_or_none(self.root / path)) == want:
+            if (self._config_json() if path == "config.json" else self.fs.read_or_none(path)) == want:
                 continue
             self._torn.discard(path)
             out.append(
@@ -2405,7 +2564,7 @@ class Store:
         self._bad_projection.pop(uid, None)
         tpath = f"tickets/{uid}/ticket.json"
         want = self._ticket_bytes(uid)
-        have = read_or_none(self.root / tpath)
+        have = self.fs.read_or_none(tpath)
         if have != want:
             cause = "projection_mismatch" if tpath in self._torn else "external_edit"
             self._torn.discard(tpath)
@@ -2433,7 +2592,7 @@ class Store:
 
     def _copy_texts(self, uid: str, view: Any) -> dict[str, str] | None:
         """The host's copy of the installed body.md, only if its section hashes are the log's (§5.5)."""
-        raw = read_or_none(self.state_dir / "body" / f"{uid}.md")
+        raw = self.fs.read_or_none(self.state_dir / "body" / f"{uid}.md")
         if raw is None:
             return None
         try:
@@ -2453,7 +2612,7 @@ class Store:
     def _heal_body(self, uid: str, view: Any) -> list[dict[str, Any]]:
         assert self._state is not None
         bpath = f"tickets/{uid}/body.md"
-        raw = read_or_none(self.root / bpath)
+        raw = self.fs.read_or_none(bpath)
         torn = bpath in self._torn
         if raw is None:
             texts: dict[str, str] | None = {}
@@ -2529,10 +2688,10 @@ class Store:
         d = self.state_dir / "rejected"
         stem = f"{uid}-{self._now().replace(':', '')}"
         p, n = d / f"{stem}.md", 0
-        while os.path.lexists(p):
+        while self.fs.lexists(p):
             n += 1
             p = d / f"{stem}.{n}.md"
-        write_atomic(p, raw, mode=0o600)
+        self.fs.write_atomic(p, raw, mode=0o600)
         self._report(
             "store.rejected_body", f"body.md was not a body; the file is kept as .state/rejected/{p.name}", uid
         )
@@ -2595,12 +2754,11 @@ class Store:
                 if abandoned is None or candidate["seq"] > abandoned["seq"]:
                     abandoned = candidate
         decisions: list[str] = []
-        for p in (
-            sorted((self.state_dir / "abandoned").glob(f"{log}-*.jsonl"))
-            if (self.state_dir / "abandoned").is_dir()
-            else []
-        ):
-            for line in p.read_bytes().splitlines():
+        ab = self.state_dir / "abandoned"
+        for n in sorted(self.fs.listdir_or_empty(ab)):
+            if not (n.startswith(f"{log}-") and n.endswith(".jsonl")):
+                continue
+            for line in (self.fs.read_or_none(ab / n, None) or b"").splitlines():
                 with contextlib.suppress(canon.HashError, KeyError):
                     e = canon.parse_event_line(line + b"\n")
                     if e["actor"]["kind"] == "person":  # §5.10: every person-signed event of the given-up part
@@ -2638,20 +2796,20 @@ class Store:
         with self._locked():
             self._ensure({log} if log != WORKSPACE else set())
             path = self._path_of(log)
-            raw = read_or_none(path, None) or b""  # an owner's explicit repair: the whole file
+            raw = self.fs.read_or_none(path, None) or b""  # an owner's explicit repair: the whole file
             lines = raw.splitlines(keepends=True)
             if from_seq >= len(lines):
                 return 0
             keep, cut = b"".join(lines[:from_seq]), b"".join(lines[from_seq:])
             self._mark_cut_convenience(cut)  # #441: before the events leave the merged view (fail closed)
             ab = self.state_dir / "abandoned"
-            ab.mkdir(parents=True, exist_ok=True)
+            self.fs.mkdir(ab)
             target, n = ab / f"{log}-{from_seq + 1}.jsonl", 0
-            while os.path.lexists(target):  # an earlier archive is never overwritten
+            while self.fs.lexists(target):  # an earlier archive is never overwritten
                 n += 1
                 target = ab / f"{log}-{from_seq + 1}.{n}.jsonl"
-            write_atomic(target, cut, mode=0o600)
-            write_atomic(path, keep, mode=0o644)
+            self.fs.write_atomic(target, cut, mode=0o600)
+            self.fs.write_atomic(path, keep, mode=0o644)
             self._needs_reload = True
             self._load()
             return len(lines) - from_seq
@@ -2699,7 +2857,7 @@ class Store:
         if cp is None:
             if (
                 self._checkpoints.ticket_uids()
-                or any((self._checkpoints.dir / "abandoned").glob("workspace-*.json"))
+                or self._checkpoints.abandoned_workspace()
                 or (self._pins and any((self._pins.dir / "transitions").glob("*.json")))
             ):
                 raise StoreError(
@@ -2933,6 +3091,259 @@ class Store:
             if entry.n != n or entry.hash != hash:
                 raise StoreError("outbox.mismatch", f"outbox entry {n} holds another checkpoint")
             return self._outbox.delete(n)
+
+    # ------------------------------------------------------------------ R3's reads (the relay publisher, §11A.5)
+
+    def relay_segment(
+        self,
+        log: str,
+        after: Mapping[str, Any],
+        upto: Mapping[str, Any],
+        *,
+        skip: int = 0,
+        limit: int | None = None,
+    ) -> Segment:
+        """Heads of ``log`` between two checkpoint entries, for one staging page of R3 (§11A.5).
+
+        ``after`` is ``{seq, acc}`` (and ``head`` when ``seq`` > 0; ``seq`` 0 with the zero accumulator for a log the
+        relay does not hold yet) and ``upto`` is ``{seq, head, acc}``. The path is the current log when both are points
+        of it (O(1) per call: the accumulators are known), else the recorded ancestry (``heads.sqlite``: an abandoned
+        branch, for a republication across an accepted restore), checked whole: exactly ``upto.seq - after.seq`` heads
+        folding from ``after.acc`` to ``upto.acc`` and ending at ``upto.head``. Returns the part ``skip`` heads in, at
+        most ``limit`` heads, with the accumulator before it. Takes the lock. Refuses ``validation.relay`` for a
+        malformed range or a branch above :data:`RELAY_BRANCH_MAX`, ``chain.broken`` for an unreadable or unverified
+        log, ``chain.diverged`` when no verified path joins the two entries. One verified branch is cached, so paging
+        through it costs one walk.
+
+        Not side-effect-free: taking the lock runs the store's recovery (pending appends, a catch-up journal) and may
+        load and replay ticket logs, which can write projections; call it as a worker job like every store method.
+
+        Accepted limit (orch-52 round 6, issue #562): a branch above ``RELAY_CACHE_BYTES`` (about 262 000 heads) is not
+        cached, so each of its pages walks and folds it whole (bounded by ``RELAY_BRANCH_MAX``); bounded paging for
+        huge abandoned branches is #562."""
+        try:
+            a_seq, a_acc = after["seq"], after["acc"]
+            u_seq, u_head, u_acc = upto["seq"], upto["head"], upto["acc"]
+        except (KeyError, TypeError):
+            raise StoreError("validation.relay", "a relay segment joins two log entries") from None
+        if (
+            type(a_seq) is not int
+            or type(u_seq) is not int
+            or not 0 <= a_seq <= u_seq
+            or type(skip) is not int
+            or not 0 <= skip <= u_seq - a_seq
+            or (limit is not None and (type(limit) is not int or limit < 1))
+        ):
+            raise StoreError("validation.relay", "a relay segment is a range between two entries of one log")
+        span = u_seq - a_seq - skip
+        take = span if limit is None else min(limit, span)
+        with self._locked():
+            if log != WORKSPACE:
+                check_uid(log)
+                self._ensure({log})
+            if log in self._read_errors or log in self._unverified:
+                raise StoreError("chain.broken", f"{log}: unreadable or unverified; nothing is published")
+            info = self._logs.get(log)
+
+            def point(seq: int, acc: object, head: object) -> bool:
+                if info is None:
+                    return seq == 0 and acc == _ZERO_ACC
+                if seq == 0:
+                    return acc == _ZERO_ACC
+                return seq <= info.seq and info.accs[seq - 1] == acc and info.heads[seq - 1] == head
+
+            if point(a_seq, a_acc, after.get("head")) and point(u_seq, u_acc, u_head):
+                assert info is not None or u_seq == 0
+                start = a_seq + skip
+                acc = (info.accs[start - 1] if start else _ZERO_ACC) if info is not None else _ZERO_ACC
+                heads = tuple(info.heads[start : start + take]) if info is not None else ()
+                return Segment(log, start, acc, heads)
+            from .checkpoints import _extension
+
+            if u_seq - a_seq > RELAY_BRANCH_MAX:  # review round 2, P2: the walk is bounded by the largest set
+                raise StoreError("validation.relay", f"{log}: a branch of {u_seq - a_seq} heads is above the bound")
+            key = (log, a_seq, a_acc, u_seq, u_head, u_acc)
+            cached = self._relay_branch
+            if cached is None or cached[0] != key:
+                self._relay_branch = None
+                old = {"seq": a_seq, "head": after.get("head"), "acc": a_acc}
+                walked = [] if u_seq == a_seq else (self._pins.branch(u_head, a_seq) if self._pins else None)
+                if walked is None or not _extension(old, {"seq": u_seq, "head": u_head, "acc": u_acc}, walked):
+                    raise StoreError("chain.diverged", f"{log}: no verified path between the two entries")
+                raw_heads = b"".join(bytes.fromhex(h[7:]) for h in walked)
+                raw_accs = bytearray(bytes.fromhex(a_acc[7:]))
+                acc = a_acc
+                for head in walked:
+                    acc = canon.log_acc(acc, head)
+                    raw_accs += bytes.fromhex(acc[7:])
+                del walked
+                cached = (key, raw_heads, bytes(raw_accs))
+                # review delta 2, F3: one verified branch is kept as raw 32-byte digests (64 bytes a head), only while
+                # it fits RELAY_CACHE_BYTES, so paging is a slice, not a second walk and fold under the lock
+                if len(raw_heads) + len(raw_accs) <= RELAY_CACHE_BYTES:
+                    self._relay_branch = cached
+            _, raw_heads, raw_accs = cached
+            end = skip + take
+            if end == u_seq - a_seq:
+                self._relay_branch = None  # the run's last page: released (F3)
+            heads = tuple("sha256:" + raw_heads[i * 32 : i * 32 + 32].hex() for i in range(skip, end))
+            return Segment(log, a_seq + skip, "sha256:" + raw_accs[skip * 32 : skip * 32 + 32].hex(), heads)
+
+    def relay_position(self, checkpoint: Mapping[str, Any] | None) -> RelayPosition:
+        """Classify the relay's held checkpoint H (already verified by R1's reader) against this host, for R3's
+        startup classification (§11A.5): whether the current logs contain it, the host's numbering high-water mark,
+        the newest local workspace checkpoint, and whether H is an abandoned workspace checkpoint. Takes the lock and
+        loads every ticket log. Refuses ``checkpoint.prefix_invalid`` for an H that is not this workspace's WSK
+        checkpoint; reads ``abandoned/`` through pinned directory fds (a symlinked component is ``validation.path``).
+
+        Not side-effect-free: the lock runs recovery and loading every ticket log may write projections."""
+        with self._locked():
+            if self._pins is None or self._outbox is None:
+                raise StoreError("validation.host_state", "the relay position needs the host state dir")
+            self._scan_dirs()
+            self._ensure(set(self._exists))
+            held = self._pins.held()
+            mine = [cp for cp in (held, self._checkpoints.workspace()) if cp and "o" in cp]
+            numbering = max(
+                [self._checkpoints.highest_n(), self._pins.high_n(), self._outbox.max_n()]
+                + [cp["o"]["n"] for cp in mine]
+            )
+            newest = max(mine, key=lambda cp: cp["o"]["n"], default=None)
+            current = {"n": newest["o"]["n"], "hash": canon.checkpoint_hash(newest["o"])} if newest else None
+            if checkpoint is None:
+                return RelayPosition(True, numbering, current, False)
+            o = self._relay_checkpoint(checkpoint)
+            contained = True
+            for log, entry in {WORKSPACE: o["workspace_log"], **o["tickets"]}.items():
+                info = self._logs.get(log)
+                seq = entry["seq"]
+                if (
+                    info is None
+                    or log in self._read_errors
+                    or not 1 <= seq <= info.seq
+                    or info.heads[seq - 1] != entry["head"]
+                    or info.accs[seq - 1] != entry["acc"]
+                ):
+                    contained = False
+                    break
+            abandoned = False
+            if not contained:
+                h = canon.checkpoint_hash(o)
+                with contextlib.closing(self._abandoned_workspace_checkpoints()) as found:
+                    for raw in found:
+                        try:
+                            cp = loads(raw)
+                            abandoned = canon.checkpoint_hash(cp["o"]) == h
+                        except (ValueError, KeyError, TypeError, canon.HashError):
+                            continue
+                        if abandoned:
+                            break
+            return RelayPosition(contained, numbering, current, abandoned)
+
+    def _abandoned_workspace_checkpoints(self) -> Iterator[bytes]:
+        """The bytes of each ``.state/checkpoints/abandoned/workspace-*.json``, read below the store's pinned root
+        (:class:`~orch.store.rootfs.RootFS`, #516): every directory component ``O_DIRECTORY | O_NOFOLLOW`` from the
+        root fd, each file opened relative to its directory with :func:`~orch.store.fsio.open_regular` (``O_NOFOLLOW |
+        O_NONBLOCK``, a regular file only; review round 2, P1): a symlinked component anywhere on the path is refused
+        (``validation.path``), never followed outside the store; a missing one means none. At most 4 MiB per file.
+        The root is the directory the store opened, wherever it is now: a symlink later put at its path is never
+        followed."""
+        rel = self._checkpoints.dir / "abandoned"
+        self.fs.revalidate()  # a cached .state fd counts only while the name still names it
+        try:
+            cm = self.fs.dir(rel)  # the store's pinned root (#516): every component O_NOFOLLOW from its fd
+            dfd = cm.__enter__()
+        except FileNotFoundError:
+            return  # no abandoned checkpoints
+        except NotADirectoryError:  # a component that is not a directory (a symlink is validation.path already)
+            raise StoreError("validation.path", f"{rel.name}: a component is a symlink or not a directory") from None
+        except OSError:
+            raise StoreError("validation.path", f"{rel.name}: a component cannot be opened as a directory") from None
+        try:
+            for name in sorted(os.listdir(dfd)):
+                if not (name.startswith("workspace-") and name.endswith(".json")):
+                    continue
+                try:  # O_NOFOLLOW | O_NONBLOCK, a regular file only: a FIFO never blocks the store lock
+                    ffd = open_regular(name, os.O_RDONLY, dir_fd=dfd)
+                except OSError:
+                    continue  # a symlinked or non-regular entry is not evidence
+                try:
+                    if os.fstat(ffd).st_size > 4 << 20:
+                        continue
+                    chunks, size = [], 0
+                    while piece := os.read(ffd, 1 << 16):
+                        size += len(piece)
+                        if size > 4 << 20:
+                            break
+                        chunks.append(piece)
+                    else:
+                        yield b"".join(chunks)
+                finally:
+                    os.close(ffd)
+        finally:
+            cm.__exit__(None, None, None)
+
+    def relay_ancestor(self, older: Mapping[str, Any], newer: Mapping[str, Any]) -> bool:
+        """Whether checkpoint ``older`` is ``newer`` or an ancestor of it: every log of ``older`` is in ``newer`` at or
+        past its ``seq``, with a verified path between (the current log, or the recorded ancestry of an abandoned
+        branch). R3 uses it to explain a relay H that a restore abandoned (§11A.5). Takes the lock (which runs recovery:
+        not side-effect-free). A walk above :data:`RELAY_BRANCH_MAX` heads is refused ``validation.relay``."""
+
+        with self._locked():
+            if self._pins is None:
+                return False
+            a, b = self._relay_checkpoint(older), self._relay_checkpoint(newer)
+            # review delta 2, F3: classify() asks this at every step; the answer can change only when the history
+            # changes, so the key holds Store.revision() (H12d-3: every read head and every ticket-log file's stat
+            # signature): an append by another Store instance, a reloaded branch of the same length or a cut tail all
+            # change it (orch-52 round 6; a sum of seqs did not). At most 256 answers are kept.
+            key = (canon.checkpoint_hash(a), canon.checkpoint_hash(b), self.revision())
+            known = self._relay_ancestry.get(key)
+            if known is not None:
+                return known
+            answer = self._ancestor(a, b)
+            if len(self._relay_ancestry) >= 256:
+                self._relay_ancestry.clear()
+            self._relay_ancestry[key] = answer
+            return answer
+
+    def _ancestor(self, a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+        from .checkpoints import _extension
+
+        assert self._pins is not None
+        new = {WORKSPACE: b["workspace_log"], **b["tickets"]}
+        for log, eo in {WORKSPACE: a["workspace_log"], **a["tickets"]}.items():
+            en = new.get(log)
+            if en is None or en["seq"] < eo["seq"]:
+                return False
+            if en["seq"] - eo["seq"] > RELAY_BRANCH_MAX:  # review round 2, P2: a bounded walk, refused above it
+                raise StoreError("validation.relay", f"{log}: an ancestry walk above the bound")
+            if en["seq"] == eo["seq"]:
+                if en != eo:
+                    return False
+                continue
+            path = self._pins.branch(en["head"], eo["seq"])
+            if path is None or not _extension(eo, en, path):
+                return False
+        return True
+
+    def _relay_checkpoint(self, cp: Mapping[str, Any]) -> dict[str, Any]:
+        from .checkpoints import verify_object
+
+        wsk = self._wsk_pub()
+        try:
+            ok = (
+                wsk is not None
+                and verify_object(wsk, cp)
+                and cp["o"]["kind"] == "workspace_checkpoint"
+                and cp["o"]["workspace_id"] == self.workspace_id
+                and cp["o"]["genesis"] == self._pin
+            )
+        except (KeyError, TypeError):
+            ok = False
+        if not ok:
+            raise StoreError("checkpoint.prefix_invalid", "not a checkpoint of this workspace's key")
+        return cp["o"]
 
     def _recover_catchup(self) -> None:
         """Finish a catch-up replacement whose journal was committed (§11A.5 step 4): before anything numbers a
@@ -3225,7 +3636,19 @@ class Store:
             if not kept:
                 _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
                 return "dropped"
+            if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
+                self._raise_relay_gate(device, "held_evidence")
             return result
+
+
+def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:
+    """THE F1 standing ``ok`` (R6a round 5, one implementation): ``device`` (``d_<hex>``) is known, belongs to
+    ``person`` (``p_<hex>``) when one is given, and is neither removed (also by ``member.removed``) nor revoked (also
+    by a restore's revocations). Certificate expiry is not part of it. Used by the store's relay-gate chokepoint
+    (the ``_state`` setter), R6's rebuild and prune (``relayr6._rebuild_gate``) and ``host.admission.device_standing``
+    (R2's per-request standing), so no two of them can disagree."""
+    view = state.workspace.devices.get(device)
+    return view is not None and (person is None or view.person == person) and not view.removed and not view.revoked
 
 
 def _restore_evidence(transition: Mapping[str, Any]) -> dict[str, Any]:

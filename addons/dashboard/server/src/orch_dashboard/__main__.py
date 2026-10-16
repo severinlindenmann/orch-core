@@ -18,15 +18,43 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import uvicorn
 
 from .app import create_app
-from .auth import Auth
+from .auth import CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
+
+#: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
+GRACE = 3
+#: seconds `restart` waits for the old server to free its control socket
+RESTART_WAIT = 10.0
+AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+# Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
+# covers the gap between the server's monotonic timer and the wall clock both sides read.
+EXPIRY_MARGIN = 1
+
+
+class AgentRefused(RuntimeError):
+    """``human_only``: the dashboard acts as the person, so it never opens or serves under an agent's environment."""
+
+    def __init__(self):
+        super().__init__(
+            "human_only: the dashboard is a person's; an agent never opens it "
+            "(unset ORCH_GRANT and ORCH_SESSION in your own terminal)"
+        )
+
+
+def refuse_agent(environ=None):
+    """Refuse (#542 item 1) when ORCH_GRANT or ORCH_SESSION is set and non-empty: the same code, exit and message
+    as core's ``orch dashboard`` (and ``orch sign``'s ``human_only``). A speed bump in tier A (same UID), not a
+    boundary."""
+    environ = os.environ if environ is None else environ
+    if any(environ.get(name) for name in AGENT_ENV):
+        raise AgentRefused()
 
 
 @contextmanager
@@ -56,12 +84,20 @@ def locked(directory_fd):
 
 
 def control(path, command):
+    """One request on ctl.sock. ``launch`` mints a code, so it refuses under an agent's environment first (#542 item 1;
+    the socket itself cannot tell an agent of the same UID from the person: the accepted tier-A residual)."""
+    if command == "launch":
+        refuse_agent()
+        asked = time.time()  # the mint is later: asked + CODE_TTL never outlives the code
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(2)
         sock.connect(str(path))
         check_uid(sock, os.getuid())
         sock.sendall(encode({"command": command}))
-        return receive(sock)
+        reply = receive(sock)
+    if command == "launch" and isinstance(reply, dict) and "expires_at" not in reply:
+        reply["expires_at"] = asked + CODE_TTL  # an older server: a conservative bound
+    return reply
 
 
 def stale_socket(path):
@@ -107,11 +143,12 @@ def sweep_redirects(directory, now=None):
     now = time.time() if now is None else now
     for path in directory.glob("launch-*.html"):
         st = path.lstat()
-        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= 60:
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= CODE_TTL:
             path.unlink(missing_ok=True)
 
 
 def serve(lock_held=False):
+    refuse_agent()
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
@@ -144,6 +181,8 @@ def _serve(directory, lock_fd=None):
         ws="websockets",
         ws_max_size=65536,
         ws_per_message_deflate=False,
+        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
+        timeout_graceful_shutdown=GRACE,
     )
     server = uvicorn.Server(config)
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -153,6 +192,10 @@ def _serve(directory, lock_fd=None):
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
+    # Linux hands a removed socket's inode number to the next one: its change time tells them apart.
+    st = ctl_path.lstat()
+    ctl_id = (st.st_ino, st.st_ctime_ns)
+    retired = threading.Event()
     ctl.listen(8)
     ctl.settimeout(0.5)
     if lock_fd is not None:
@@ -176,8 +219,23 @@ def _serve(directory, lock_fd=None):
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        # Free the control socket now, not after the shutdown: until then a launcher would connect
+                        # to a server that no longer answers (and time out) instead of starting a new one.
+                        retire()
+                        break
                 except Exception:
                     pass  # never log the launch payload
+
+    def retire():
+        """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
+        if retired.is_set():
+            return
+        retired.set()
+        ctl.close()
+        with suppress(OSError):
+            st = ctl_path.lstat()
+            if stat.S_ISSOCK(st.st_mode) and (st.st_ino, st.st_ctime_ns) == ctl_id:
+                ctl_path.unlink()
 
     thread = threading.Thread(target=ipc, daemon=True)
     thread.start()
@@ -185,10 +243,9 @@ def _serve(directory, lock_fd=None):
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
-        ctl.close()
+        retire()
         thread.join(timeout=3)
         listener.close()
-        ctl_path.unlink(missing_ok=True)
 
 
 def safe_path(value):
@@ -221,6 +278,7 @@ def verify_probe(launch, fetch=None):
 
 
 def open_dashboard(path="/", print_url=False):
+    refuse_agent()  # before anything is started or minted
     path = safe_path(path)
     if print_url and not sys.stdout.isatty():
         raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
@@ -278,6 +336,11 @@ def open_dashboard(path="/", print_url=False):
     else:
         directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)
         redirect = Auth(directory=directory).redirect_path(launch["code"])
+    # The server's timer invalidates the code and unlinks its file at `expires_at`. A launcher paused past it must not
+    # write (or keep) a file afterwards: the code in it would be dead, but nothing would delete it before a restart.
+    expires_at = float(launch.get("expires_at", 0))
+    if time.time() >= expires_at - EXPIRY_MARGIN:
+        raise RuntimeError("the launch code expired before the browser could be opened; run it again")
     with private_directory(directory, parents=False) as directory_fd:
         fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
         try:
@@ -288,10 +351,47 @@ def open_dashboard(path="/", print_url=False):
                     f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
                     f"<script>location.replace({json.dumps(url)});</script>"
                 )
-            webbrowser.open(redirect.resolve().as_uri())
+            if time.time() >= expires_at - EXPIRY_MARGIN:  # paused between the check and the write
+                raise RuntimeError("the launch code expired before the browser could be opened; run it again")
+            # Only the file's path goes to the browser's argv, never the code: argv is readable by every UID (ps).
+            if not webbrowser.open(redirect.resolve().as_uri()):
+                raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
         except BaseException:
             redirect.unlink(missing_ok=True)
             raise
+
+
+def _free(path) -> bool:
+    """Is the control socket free for a new server: gone, or no one accepts on it?"""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        try:
+            sock.connect(str(path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def restart_dashboard(path="/", print_url=False, wait=RESTART_WAIT):
+    """`orch-dashboard restart`: stop the running server (if any), wait until it has let go of its control socket,
+    then open a new one. A server that does not answer `stop` (an older, hung one) is named, not killed."""
+    ctl = state_dir() / "dashboard" / "ctl.sock"
+    try:
+        control(ctl, "stop")
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass  # none running: just open
+    except TimeoutError:
+        raise RuntimeError(
+            "a dashboard is running but does not answer; find it with `pgrep -fl orch_dashboard` and stop it with kill"
+        ) from None
+    deadline = time.monotonic() + wait
+    while not _free(ctl):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("the running dashboard did not stop in time; try again in a moment")
+        time.sleep(0.1)
+    open_dashboard(path, print_url=print_url)
 
 
 def main():
@@ -300,19 +400,26 @@ def main():
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
+    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
+        if not (args.stop or args.command == "stop"):
+            refuse_agent()  # stop passes: it mints nothing and only ends the person's own server
         if args.command == "serve" and not args.stop:
             return serve(args.launcher_lock)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
+        elif args.command == "restart":
+            restart_dashboard(args.path, print_url=args.print_url)
         else:
             open_dashboard(args.path, print_url=args.print_url)
+    except AgentRefused as exc:
+        print(f"orch-dashboard: {exc}", file=sys.stderr)
+        return 3
     except RunDirectoryError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -196,7 +196,7 @@ class HostLink:
             self.send({"t": "hello", "proto": [1], "client": "orch-dashboard/0.1.0", "caps": CAPS, "ops": OPS})
             w = receive(sock)
             if w.get("t") == "fatal":
-                raise HostError(w["error"])
+                raise HostError(w.get("error"))
             if w.get("t") != "welcome" or w.get("proto") != 1:
                 raise fail("host.version_mismatch", exit=1)
             if (
@@ -331,12 +331,12 @@ class HostLink:
                         continue
                     if frame.get("t") == "fatal":
                         self.close()
-                        raise HostError(frame["error"])
+                        raise HostError(frame.get("error"))
                     if frame.get("t") != "res" or frame.get("id") != rid:
                         self.close()
                         raise fail("frame.invalid", exit=6)
                     if frame.get("ok") is not True:
-                        raise HostError(frame["error"], frame["exit"])
+                        raise HostError(frame.get("error"), frame.get("exit"))  # both checked by HostError
                     return frame["result"]["data"]
             except (OSError, EOFError):
                 self.close()
@@ -363,7 +363,7 @@ class HostLink:
                 frame = receive(self.sock)
                 if frame.get("t") == "fatal":
                     self.close()
-                    raise HostError(frame["error"])
+                    raise HostError(frame.get("error"))
                 if frame.get("t") != "evt":
                     self.close()
                     raise fail("frame.invalid", exit=6)

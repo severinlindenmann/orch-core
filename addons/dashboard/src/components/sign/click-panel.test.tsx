@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
 import { ClickSignPanel } from './ClickSignPanel'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
@@ -31,6 +31,8 @@ function mount(a = answer(), props: Partial<React.ComponentProps<typeof ClickSig
 }
 
 const sign = () => screen.getByRole('button', { name: 'Sign' })
+const holdSign = () => screen.getByRole('button', { name: 'Hold to sign' })
+const wait = (ms: number) => act(() => void vi.advanceTimersByTime(ms))
 const arm = () => act(() => void vi.advanceTimersByTime(ARM_MS + 10))
 /** A press that begins armed: pointer down, then click (what a person's click is). */
 const press = (el: HTMLElement) => {
@@ -167,15 +169,18 @@ describe('Sign is armed by presentation', () => {
     expect(onSign).toHaveBeenCalledTimes(2)
   })
 
-  it('a new View resets the confirmation: disabled again, the typed word gone', () => {
+  it('a new View resets the confirmation: disabled again, a half-done hold gone', () => {
     const word = { kind: 'word', word: 'p_abc' } as const
-    const { again } = mount(answer({ confirm: word }))
+    const { onSign, again } = mount(answer({ confirm: word }))
     arm()
-    fireEvent.change(screen.getByLabelText(/To confirm, type/), { target: { value: 'p_abc' } })
-    expect(sign()).toBeEnabled()
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 200)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument()
     again(answer({ confirm: word, lines: ['changed'] }, 'sha256:' + 'b'.repeat(64)))
-    expect(sign()).toBeDisabled()
-    expect(screen.getByLabelText(/To confirm, type/)).toHaveValue('')
+    expect(holdSign()).toBeDisabled()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+    wait(HOLD_MS * 2) // the old hold's remaining time passes (and the new View arms): nothing signs
+    expect(onSign).not.toHaveBeenCalled()
   })
 
   it('is off while signing and while a rate limit runs', () => {
@@ -190,15 +195,119 @@ describe('Sign is armed by presentation', () => {
 })
 
 describe('a word op', () => {
-  it('shows the word the View asks for and sends exactly what was typed', () => {
-    const { onSign } = mount(answer({ confirm: { kind: 'word', word: 'DEMO~a94c935c/POLICY' } }))
-    expect(screen.getByLabelText(/To confirm, type/)).toBeInTheDocument()
-    expect(screen.getByTestId('click-panel')).toHaveTextContent('DEMO~a94c935c/POLICY')
+  const WORD = 'DEMO~a94c935c/POLICY'
+  const mountWord = () => mount(answer({ confirm: { kind: 'word', word: WORD } }))
+
+  it('shows the word in a hint the button points at, and has no field to type in', () => {
+    mountWord()
+    const hint = screen.getByTestId('click-hold-hint')
+    expect(hint).toHaveTextContent(`Hold Sign to confirm ${WORD}`)
+    expect(holdSign()).toHaveAttribute('aria-describedby', hint.id)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+  })
+
+  it('a short press does not sign, and neither does a click', () => {
+    const { onSign } = mountWord()
     arm()
-    expect(sign()).toBeDisabled() // nothing typed
-    fireEvent.change(screen.getByLabelText(/To confirm, type/), { target: { value: '  demo~a94c935c/policy ' } })
-    press(sign())
-    expect(onSign).toHaveBeenCalledWith('  demo~a94c935c/policy ') // not trimmed, not corrected
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 100)
+    fireEvent.pointerUp(holdSign())
+    fireEvent.click(holdSign())
+    wait(HOLD_MS * 2)
+    expect(onSign).not.toHaveBeenCalled()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('a full hold signs exactly once, with the View’s word, and shows its progress meanwhile', () => {
+    const { onSign } = mountWord()
+    arm()
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS / 2)
+    const bar = screen.getByRole('progressbar')
+    expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(40)
+    expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100)
+    wait(HOLD_MS / 2)
+    expect(onSign).toHaveBeenCalledTimes(1)
+    expect(onSign).toHaveBeenCalledWith(WORD)
+    wait(HOLD_MS * 2) // still held down: no second signature
+    fireEvent.pointerUp(holdSign())
+    fireEvent.click(holdSign())
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
+
+  it('releasing early, then holding again, signs (the new hold starts from zero)', () => {
+    const { onSign } = mountWord()
+    arm()
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 300)
+    fireEvent.pointerLeave(holdSign())
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 100)
+    expect(onSign).not.toHaveBeenCalled() // not the sum of both holds
+    wait(100)
+    expect(onSign).toHaveBeenCalledTimes(1)
+    expect(onSign).toHaveBeenCalledWith(WORD)
+  })
+
+  it('pointer cancel, blur and a secondary button do not sign', () => {
+    const { onSign } = mountWord()
+    arm()
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 100)
+    fireEvent.pointerCancel(holdSign())
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 100)
+    fireEvent.blur(holdSign())
+    fireEvent.pointerDown(holdSign(), { button: 2 })
+    wait(HOLD_MS * 2)
+    expect(onSign).not.toHaveBeenCalled()
+  })
+
+  it('holds by keyboard: Space down starts it, auto-repeats neither restart nor finish it early, key up cancels', () => {
+    const { onSign } = mountWord()
+    arm()
+    fireEvent.keyDown(holdSign(), { key: ' ' })
+    for (let i = 0; i < 10; i++) {
+      wait(100)
+      fireEvent.keyDown(holdSign(), { key: ' ', repeat: true })
+    }
+    fireEvent.keyUp(holdSign(), { key: ' ' }) // released at 1000 ms
+    wait(HOLD_MS)
+    expect(onSign).not.toHaveBeenCalled()
+    fireEvent.keyDown(holdSign(), { key: ' ' })
+    wait(HOLD_MS - 500)
+    fireEvent.keyDown(holdSign(), { key: ' ', repeat: true }) // a repeat does not restart the clock
+    wait(500)
+    expect(onSign).toHaveBeenCalledTimes(1)
+    expect(onSign).toHaveBeenCalledWith(WORD)
+    fireEvent.keyUp(holdSign(), { key: ' ' })
+    fireEvent.keyDown(holdSign(), { key: 'Enter', repeat: true }) // a held key since the last hold starts nothing
+    wait(HOLD_MS * 2)
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
+
+  it('a hold that began before arming does not sign, even held well past it', () => {
+    const { onSign } = mountWord()
+    fireEvent.pointerDown(holdSign()) // disabled: React drops it
+    fireEvent.keyDown(holdSign(), { key: ' ' })
+    wait(ARM_MS + HOLD_MS * 2)
+    expect(holdSign()).toBeEnabled()
+    expect(onSign).not.toHaveBeenCalled()
+    fireEvent.keyDown(holdSign(), { key: ' ', repeat: true }) // the key held since before arming
+    wait(HOLD_MS * 2)
+    expect(onSign).not.toHaveBeenCalled()
+  })
+
+  it('a hold is dropped when the window loses focus mid-hold', () => {
+    const { onSign } = mountWord()
+    arm()
+    fireEvent.pointerDown(holdSign())
+    wait(HOLD_MS - 100)
+    act(() => void window.dispatchEvent(new Event('blur')))
+    act(() => void window.dispatchEvent(new Event('focus')))
+    wait(ARM_MS + HOLD_MS)
+    expect(onSign).not.toHaveBeenCalled()
   })
 })
 

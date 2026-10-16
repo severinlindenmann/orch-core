@@ -45,8 +45,21 @@ def home(tmp_path, monkeypatch):
     return path
 
 
+def pinned_env() -> dict[str, str]:
+    """The environment of this test's own git calls: HOME and the global config file pinned to the private HOME, the
+    system config off, so nothing here passes or fails by the developer's ``~/.gitconfig`` (#541)."""
+    home = os.environ["ORCH_RECORDS_TEST_HOME"]
+    return {
+        "HOME": home,
+        "PATH": os.environ["PATH"],
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.path.join(home, ".gitconfig"),
+        "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+    }
+
+
 def git(cwd, *args, env=None, check=True) -> str:
-    e = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"}
+    e = pinned_env()
     e["LANG"] = "C"
     e.update(env or {})
     res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, env=e, check=False)
@@ -62,7 +75,7 @@ class Env:
         self.w = w
         self.root = Path(w.lab.root)
         self.home = home
-        self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"]}
+        self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "XDG_CONFIG_HOME": str(self.home / ".config")}
         self.tips = rtool.ValidatedTips(tmp_path / "state" / "records.json")
         self.client = w.client()
         self.tmp = tmp_path
@@ -149,7 +162,7 @@ def test_the_real_index_is_untouched_when_it_differs(r):
     r.commit()
     staged = subprocess.run(
         ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"staged by the person\n", capture_output=True,
-        env={"HOME": str(r.home), "PATH": os.environ["PATH"]}, check=True,
+        env=pinned_env(), check=True,
     ).stdout.decode().strip()  # fmt: skip
     git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
     index = r.root / ".git" / "index"
@@ -470,8 +483,7 @@ def _forge_convenience_commit(
 ) -> str:
     """A records commit whose ``path`` carries ``line`` beyond what the store has (for an event log: a log file outside
     the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
-    env = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1",
-           "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}  # fmt: skip
+    env = {**pinned_env(), "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}
     have = b"" if replace else git(r.root, "show", f"HEAD:{path}", check=False).encode()
     data = (have + b"\n" if have else b"") + line.encode() + b"\n"
     blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
@@ -749,6 +761,169 @@ def test_finding1_global_config_is_frozen_between_check_and_push(r):
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
 
 
+# --- #541: of the person's global config, local calls see an allow-list only ----------------------------------------
+
+_QUIET = {"GIT_CONFIG_GLOBAL": os.devnull}  # this test's own git calls once the hostile config is in place
+
+#: programs a hostile ``~/.gitconfig`` makes plain git run for the operations the records tool performs (the positive
+#: control below shows each one fires): ``core.fsmonitor`` (update-index, write-tree, diff-tree, diff-index),
+#: ``core.hooksPath`` (reference-transaction on fast-import/update-ref; pre-push, and pre-receive/update/post-update on
+#: a file:// remote's side), ``core.alternateRefsCommand`` (the receiving side of a push). Left out because the records
+#: tool's operations never trigger them, even in plain git: filters (clean/smudge/process: no checkout, no add),
+#: ``diff.external``/``diff.<d>.command``/textconv (only raw diffs), merge drivers (no merge), aliases (fixed argv),
+#: ``core.pager``/``core.editor`` (no tty, ``-F -``) and ``gpg.program`` (``commit-tree`` does not sign by config).
+_VECTORS = ("fsmonitor", "reference-transaction", "pre-push", "alternate-refs")
+_HOOKS = ("reference-transaction", "pre-push", "pre-receive", "update", "post-update", "post-index-change")
+
+
+def _hostile_gitconfig(r) -> Path:
+    """Append to the private ``~/.gitconfig`` a program for every vector the records tool's operations can reach, each
+    a link named after its vector to one script that appends that name to the returned marker; plus
+    ``i18n.commitEncoding``, which would change the tool's own commits."""
+    marker = r.tmp / "f541-marker"
+    bin_ = r.tmp / "f541-bin"
+    bin_.mkdir()
+    evil = bin_ / "evil"
+    evil.write_text(f'#!/bin/sh\nbasename "$0" >> "{marker}"\nexit 0\n')
+    evil.chmod(0o755)
+    hooks = r.tmp / "f541-hooks"
+    hooks.mkdir()
+    for name in (*_HOOKS, "fsmonitor", "alternate-refs"):
+        ((hooks if name in _HOOKS else bin_) / name).symlink_to(evil)
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(
+            f"[core]\n\thooksPath = {hooks}\n\tfsmonitor = {bin_ / 'fsmonitor'}\n"
+            f"\talternateRefsCommand = {bin_ / 'alternate-refs'}\n[i18n]\n\tcommitEncoding = ISO-8859-1\n"
+        )
+    return marker
+
+
+def _fired(marker: Path) -> set[str]:
+    return set(marker.read_text().split()) if marker.exists() else set()
+
+
+def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
+    """``Git.env`` is the one place: a local call gets ``user.*`` and ``url.*.(push)insteadOf`` of the person's global
+    config, a call in the transport repo only the authentication and transport subset, nothing else (keys that name
+    a program or change a read included, whether or not the tool's operations would run them today)."""
+    r.init()
+    git(r.root, "remote", "add", "origin", r.bare())
+    _hostile_gitconfig(r)
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(
+            "[core]\n\tattributesFile = /nonexistent/f541\n\tpager = f541\n\teditor = f541\n"
+            '[filter "f541"]\n\tclean = f541\n\tsmudge = f541\n\tprocess = f541\n'
+            '[diff]\n\texternal = f541\n[diff "f541"]\n\ttextconv = f541\n[merge "f541"]\n\tdriver = f541\n'
+            "[gpg]\n\tprogram = f541\n[commit]\n\tgpgSign = true\n[alias]\n\tf541 = !f541\n"
+            '[url "file:///nonexistent/f541/"]\n\tinsteadOf = https://f541.invalid/\n'
+            "[credential]\n\thelper = f541-helper\n[http]\n\tsslVerify = true\n"
+        )
+    repo = r.repo()
+
+    def keys(env):
+        return {env[f"GIT_CONFIG_KEY_{i}"].lower() for i in range(int(env["GIT_CONFIG_COUNT"]))}
+
+    def local_ok(key):  # a system gitconfig of the machine may add allow-listed keys: subset, not equality
+        return key in ("user.name", "user.email") or (key.startswith("url.") and key.endswith(("insteadof",)))
+
+    def net_ok(key):
+        return key.startswith(("credential.", "http.", "ssh.")) or key == "core.sshcommand"
+
+    local = keys(repo.env())
+    assert all(local_ok(k) for k in local), local
+    assert {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"} <= local, local
+    seen = repo.out("config", "--list").lower()
+    for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile=/nonexistent", "core.alternaterefscommand",
+                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.commitencoding=iso", "credential.",
+                "http.", "core.fsmonitor=/"):  # fmt: skip
+        assert bad not in seen, bad
+    assert "core.hookspath=/dev/null" in seen and f"core.hookspath={r.tmp}" not in seen
+    with repo.transport() as net:
+        for env in (net.env(network=True), net.env()):  # never url.* in the transport repo, network or not
+            assert all(net_ok(k) for k in keys(env)) and {"credential.helper", "http.sslverify"} <= keys(env)
+    assert "core.attributesfile=/dev/null" in seen  # not even git's default $XDG_CONFIG_HOME/git/attributes
+
+
+def test_541_the_repos_own_commit_encoding_never_changes_a_records_commit(r):
+    """``i18n.commitEncoding`` is allowed in the repo's own config (it runs nothing), but the records tool pins UTF-8:
+    its commits stay records-only and the next push is not refused."""
+    r.init()
+    first = r.commit()["commit"]
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+    git(r.root, "config", "--local", "i18n.commitEncoding", "ISO-8859-1")
+    r.push(initial=True)
+    r.w.ticket("one")
+    second = r.commit()["commit"]
+    assert "encoding " not in git(r.root, "cat-file", "commit", second)
+    assert r.push()["from"] == first
+
+
+def test_541_init_copies_no_template_at_all(r):
+    """``records init`` runs ``git init --template=`` like the transport repo: no sample hooks, nothing of a template
+    directory; the tool writes ``info/exclude`` itself."""
+    r.init()
+    assert not (r.root / ".git" / "hooks").exists()
+    assert (r.root / ".git" / "info" / "exclude").read_text().startswith("# orch records")
+
+
+def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit_nor_the_ff_check(r):
+    r.init()
+    first = r.commit()["commit"]  # R
+    url = r.bare()
+    bare = url[len("file://") :]
+    git(r.root, "remote", "add", "origin", url)
+    r.push(initial=True)
+    marker = _hostile_gitconfig(r)
+    # positive control: plain git under the same HOME runs every vector for the records tool's own operations
+    ctl, ctl_remote = r.tmp / "f541-ctl", r.tmp / "f541-ctl.git"
+    git(r.tmp, "init", "-q", "--bare", "-b", "main", str(ctl_remote), env=_QUIET)
+    git(r.tmp, "init", "-q", "-b", "main", str(ctl), env=_QUIET)
+    (r.tmp / "f541-blob").write_text("x\n")
+    blob = git(ctl, "hash-object", "-w", str(r.tmp / "f541-blob"))
+    git(ctl, "update-index", "--add", "--cacheinfo", f"100644,{blob},x.txt")
+    tree = git(ctl, "write-tree")
+    commit = git(ctl, "commit-tree", "--no-gpg-sign", tree, "-m", "control")
+    assert "\nencoding ISO-8859-1\n" in git(ctl, "cat-file", "commit", commit)
+    git(ctl, "update-ref", "refs/heads/main", commit)
+    git(ctl, "push", "-q", f"file://{ctl_remote}", "main")
+    assert _fired(marker) >= set(_VECTORS), _fired(marker)
+    marker.unlink()
+    # the records tool under that config: nothing runs, its commits and the fast-forward check are unchanged
+    r.w.ticket("one")
+    t = r.commit()["commit"]  # T, child of R
+    assert "encoding " not in git(r.root, "cat-file", "commit", t, env=_QUIET)
+    assert r.push()["from"] == first  # a fast-forward is still one
+    assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
+    git(r.root, "update-ref", "refs/heads/main", first, t, env=_QUIET)  # back to R, then a sibling S of T
+    git(r.root, "read-tree", first, env=_QUIET)
+    r.w.ticket("two")
+    s = r.commit()["commit"]
+    assert git(r.root, "rev-parse", f"{s}^", env=_QUIET) == first
+    with pytest.raises(RecordsError) as e:
+        r.push()
+    assert e.value.code == "records.push_rejected" and "never a non-fast-forward" in e.value.message
+    assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
+    code, out = r.cli("status")  # its diff-index runs under the hostile config too
+    assert code == 0 and out["detail"]["status"]["local"] == {"repo": {"state": "ok"}, "url": url}, out
+    assert _fired(marker) == set()
+
+
+def test_541_init_reads_no_template_or_other_config_of_the_person(r):
+    """``orch records init`` runs ``git init`` with the system and global config off: a person's ``init.templateDir``
+    (hooks, a ``config`` file) is never copied into the records repo."""
+    tpl = r.tmp / "f541-template"
+    (tpl / "hooks").mkdir(parents=True)
+    (tpl / "f541-from-template").write_text("x\n")
+    (tpl / "config").write_text("[core]\n\tfsmonitor = /nonexistent/f541\n")
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(f"[init]\n\ttemplateDir = {tpl}\n")
+    r.init()
+    assert not (r.root / ".git" / "f541-from-template").exists()
+    assert "f541" not in (r.root / ".git" / "config").read_text()
+    r.commit()
+
+
 def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
     r.init()
     r.commit()
@@ -924,7 +1099,7 @@ def _forge_commit_graph(repo_root: Path, child: str, fake_parent: str) -> None:
     subprocess.run(
         ["git", "-c", "commitGraph.generationVersion=1", "commit-graph", "write", "--stdin-commits"],
         cwd=repo_root, input="\n".join(commits).encode(), capture_output=True, check=True,
-        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+        env=pinned_env(),
     )  # fmt: skip
     path = repo_root / ".git" / "objects" / "info" / "commit-graph"
     data = bytearray(path.read_bytes())
@@ -966,7 +1141,7 @@ def test_opus2_a_forged_commit_graph_never_lets_a_non_fast_forward_through(r):
     # the forgery works on plain git: with the graph, T looks like an ancestor of S
     plain = subprocess.run(
         ["git", "merge-base", "--is-ancestor", t, s], cwd=r.root, capture_output=True, check=False,
-        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+        env=pinned_env(),
     )  # fmt: skip
     assert plain.returncode == 0
     with pytest.raises(RecordsError) as e:

@@ -26,11 +26,12 @@ R1_FIXTURES = {
     "members": "test_session (WSK signature and workspace; field set is R6)",
     "checkpoint_get": "test_session (success verified; 404, 410)",
     "genesis": "test_coverage (success; local pin check vs relay refusals)",
+    "relay_info": "test_relay_info (H12d-3: link step 1 and every R1 login, orch-v2-host §0.8.6 item 9.8)",
 }
 NOT_R1 = {
-    "accounts": "owner client (P3-D3/D34): needs a device key the host does not hold (11A.5 step 2, 11A.12)",
-    "device_put": "owner client: PK-signed certificate upload (P3-D5); the host never registers devices",
-    "device_get": "R6 (pairing, member certificates)",
+    "accounts": "owner client (P3-D3/D34; orch.relay_owner, tests/relay_owner/test_client.py)",
+    "device_put": "owner client: PK-signed certificate upload (P3-D5; tests/relay_owner/test_client.py)",
+    "device_get": "R6; the owner client reads it too (tests/relay_owner/test_client.py)",
     "revocations_post": "owner client (PK-signed revocation)",
     "revocation_get": "R4/R6 (revocation evidence)",
     "revocation_feed": "R4/R6",
@@ -41,10 +42,10 @@ NOT_R1 = {
     "pair_device_post": "device side",
     "pair_host_post": "R6 (pairing answers)",
     "pair_poll": "R6",
-    "cert_challenge": "owner client",
-    "cert_rejection": "owner client",
+    "cert_challenge": "owner client (tests/relay_owner/test_client.py)",
+    "cert_rejection": "owner client (tests/relay_owner/test_client.py)",
     "cert_request_get": "R6",
-    "cert_requests_poll": "R6",
+    "cert_requests_poll": "owner client (tests/relay_owner/test_client.py)",
     "cert_requests_post": "R6",
     "card_key": "device side (card-key wraps)",
     "card_keys": "R6 (card-key wraps)",
@@ -59,7 +60,12 @@ NOT_R1 = {
     "transitions": "devices and R3",
     "unpublished_get": "R4",
     "unpublished_ack": "R4",
-    "relay_info": "H12d-3 (GET /v2/relay-info at link step 1 and every R1 login, orch-v2-host §0.8.6 item 9.8)",
+    "drop_put": "H13b-2 (the uploader); the ODU2 frame itself is H13-0's (tests/crypto/test_drop.py, upload_frame)",
+    "drop_list": "H13b-1 (the Drop thread's mirror)",
+    "drop_descriptors": "H13b-1",
+    "drop_descriptor_get": "H13b-1 and H13b-2 (read-back after a lost answer)",
+    "drop_wraps_get": "H13b-1",
+    "drop_blob_get": "H13b-1 (downloads)",
 }
 R1_SECTIONS = {
     "relay_auth": "test_wire (signed bytes, every case's signature layer), test_sign, test_adversarial",
@@ -89,8 +95,8 @@ NOT_R1_SECTIONS = {
     "question_hash": "canon tests",
     "decisions": "not served in v1.7 (11A.11)",
     "revocation_op": "owner client",
-    "push": "not in v1.7 host scope",
-    "drop": "Drop (later phase)",
+    "push": "H13-0 builders (tests/crypto/test_h13_push.py); the push worker is H13a",
+    "drop": "H13-0 builders (tests/crypto/test_h13_drop.py); the Drop thread is H13b",
     "ws_envelopes": "ws-to-ws (later phase)",
     "publish": "orch-publish (not the relay client)",
     "p3": "relay-side state machine cases; R2/R3/R6 consume the host-relevant ones",
@@ -101,7 +107,7 @@ NOT_R1_SECTIONS = {
     "checkpoints_g4": "R3",
     "unpublished": "R4",
     "reader_decl": "identity tests (tests/identity/test_reader_decl.py: decls, pair_meta gates); the pair meta and "
-    "rd in the request meta are H12d-3 with R6",
+    "rd in the request meta: tests/identity/test_pair_gate.py (pair_meta gates), tests/relay/test_relay_rd.py (H12d-3)",
 }
 TOP_LEVEL = {"encodings": "test_wire (strict_parse, b64u)", "labels": "tests/crypto", "constants": "test_wire (bridge)"}
 

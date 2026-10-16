@@ -1,11 +1,18 @@
 """Hardened git for the records tool (D-P2-33, #254's rules as ruled by the tie-break).
 
-**Frozen configuration.** The person's system and global configuration (credential helpers, ``url.*`` rewrites, ssh
-settings) is read **once**, with includes expanded, when the repo is opened; every later call runs with
-``GIT_CONFIG_NOSYSTEM=1``, ``GIT_CONFIG_GLOBAL=/dev/null`` and those entries passed as command-scope configuration, so
-an edit of ``~/.gitconfig`` between the check and the push changes nothing. The repo's own (local and worktree)
-configuration is checked against the shared allow-list of :mod:`orch.gitsafe` and then a stricter deny-list
-(:func:`check_local`), and its digest is checked again right before the push.
+**Frozen configuration.** The person's system and global configuration is read **once**, with includes expanded,
+when the repo is opened; every later call runs with ``GIT_CONFIG_NOSYSTEM=1``, ``GIT_CONFIG_GLOBAL=/dev/null`` and an
+**allow-list** of those entries passed as command-scope configuration (:func:`person_config`, the one place, #541), so
+an edit of ``~/.gitconfig`` between the check and the push changes nothing, and nothing else of it reaches git: a local
+call keeps ``user.name``/``user.email`` and the ``url.<base>.insteadOf``/``pushInsteadOf`` rewrites (they resolve the
+push URL, which the export check then sees), a network call only authentication and transport settings
+(``credential.*``, ``http.*``, ``ssh.*``, ``core.sshCommand``; the helper and the ssh command name programs by design).
+No filter, ``core.attributesFile``, ``diff.external``, ``core.alternateRefsCommand``, pager, editor, alias, gpg or
+encoding setting of the person's reaches the records tool's commits or its fast-forward checks.
+
+The repo's own (local and worktree) configuration is checked against the shared allow-list of
+:mod:`orch.gitsafe` and then a stricter deny-list (:func:`check_local`), and its digest is checked again right before
+the push.
 
 **One destination.** The effective push URL is resolved once by git itself (``git remote get-url --push`` under the
 frozen configuration: ``pushurl``, ``insteadOf`` and ``pushInsteadOf`` applied) and must be exactly one URL. The
@@ -18,7 +25,8 @@ alternates included (finding 2).
 
 Every call: argv only, no shell, stdin closed unless input is given, ``LANG=C``, ``GIT_TERMINAL_PROMPT=0``,
 ``GIT_NO_REPLACE_OBJECTS=1``, ``GIT_ALLOW_PROTOCOL`` (https and ssh), hooks off (``core.hooksPath=/dev/null``),
-``core.fsmonitor=false``, ssh in batch mode when no ssh command is configured, and a timeout (10 s local, 20 s network).
+``core.fsmonitor=false``, ``core.attributesFile=/dev/null``, ``i18n.commitEncoding=UTF-8``, ssh in batch mode
+when no ssh command is configured, and a timeout (10 s local, 20 s network).
 """
 
 from __future__ import annotations
@@ -36,7 +44,10 @@ from pathlib import Path
 
 from . import RecordsError
 
-__all__ = ["ALLOWED_PROTOCOLS", "HARDEN", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact", "url_problem"]
+__all__ = [
+    "ALLOWED_PROTOCOLS", "HARDEN", "EMPTY_TREE", "Git", "check_local", "open_repo", "person_config", "redact",
+    "url_problem",
+]  # fmt: skip
 
 ALLOWED_PROTOCOLS = "https:ssh"
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -51,12 +62,18 @@ _HARDEN = (
     "-c", "maintenance.auto=false",
     "-c", "core.commitGraph=false",  # a forged commit-graph could lie about ancestry (Opus #430 finding 2)
     "-c", "fetch.writeCommitGraph=false",
+    "-c", "core.attributesFile=/dev/null",  # not even git's default $XDG_CONFIG_HOME/git/attributes (#541)
+    "-c", "i18n.commitEncoding=UTF-8",  # the repo's own config may set it (it runs nothing): commits stay records-only
 )  # fmt: skip
+HARDEN = _HARDEN
 #: the only sections of the person's frozen configuration a network call keeps: authentication and transport
 #: settings. Never ``url.*`` or ``remote.*`` (they would redirect the literal URL, Opus #430 finding 1).
-HARDEN = _HARDEN
 _NETWORK_SECTIONS = frozenset({"credential", "http", "ssh"})
 _NETWORK_KEYS = frozenset({"core.sshcommand"})
+#: the only keys of the person's frozen configuration a local call keeps (#541). ``user.*`` is inert data (a records
+#: commit sets ``GIT_AUTHOR_*``/``GIT_COMMITTER_*``); the ``url.<base>.*`` rewrites below only resolve the push URL.
+_LOCAL_KEYS = frozenset({"user.name", "user.email"})
+_LOCAL_URL_NAMES = frozenset({"insteadof", "pushinsteadof"})
 #: sections the repo's own configuration may not set at all (#254 rounds 3 and 4, D-P2-33)
 _DENY_SECTIONS = frozenset({"url", "http", "credential", "protocol", "filter", "include", "includeif", "lfs"})
 _DENY_KEYS = frozenset(
@@ -123,6 +140,25 @@ def _split_key(key: str) -> tuple[str, str | None, str]:
     section, _, rest = key.partition(".")
     sub, _, name = rest.rpartition(".")
     return section.lower(), (sub or None), name.lower()
+
+
+def person_config(entries: Sequence[tuple[str, str]], *, network: bool) -> list[tuple[str, str]]:
+    """The one place that decides which of the person's (system and global) configuration entries a records git call
+    sees (#541): an allow-list, never a deny-list, so a key a future git adds stays out. ``network``: a call in the
+    transport repo (only authentication and transport settings); otherwise a local call (``user.name``,
+    ``user.email``, ``url.<base>.insteadOf`` and ``url.<base>.pushInsteadOf``)."""
+    out: list[tuple[str, str]] = []
+    for key, value in entries:
+        section, sub, name = _split_key(key)
+        if network:
+            ok = section in _NETWORK_SECTIONS or key.lower() in _NETWORK_KEYS
+        elif section == "url":
+            ok = sub is not None and name in _LOCAL_URL_NAMES
+        else:
+            ok = sub is None and f"{section}.{name}" in _LOCAL_KEYS
+        if ok:
+            out.append((key, value))
+    return out
 
 
 def check_local(entries: Sequence[tuple[str, str, str]], remote: str | None) -> None:
@@ -219,16 +255,15 @@ class Git:
             fd = os.open(info / "alternates", os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as fh:
                 fh.write(os.path.realpath(self.git_dir / "objects") + "\n")
-            frozen = [
-                (k, v) for k, v in self.frozen if _split_key(k)[0] in _NETWORK_SECTIONS or k.lower() in _NETWORK_KEYS
-            ]
+            frozen = person_config(self.frozen, network=True)
             yield Git(net, net, self.protocols, dict(self.base_env), frozen, bare=True, deadline=self.deadline)
 
     # -- running
     def env(self, *, network: bool = False, index: Path | None = None) -> dict[str, str]:
         if network and not self.bare:
             raise RecordsError("internal", "a network call runs only in the transport repo")
-        entries = list(self.frozen)
+        # every call in the transport repo, network or not, sees the transport subset only (never ``url.*``)
+        entries = person_config(self.frozen, network=network or self.bare)
         env = dict(self.base_env)
         env.update(
             GIT_DIR=str(self.git_dir),
@@ -420,11 +455,9 @@ def open_repo(
     )
     if probe.returncode != 0:
         raise RecordsError("records.git_failed", "git config --list failed in the records repo")
-    repo.frozen = [
-        (k, v)
-        for scope, k, v in _parse_config(probe.stdout)
-        if scope not in ("local", "worktree", "command") and _split_key(k)[0] not in ("include", "includeif")
-    ]
+    person = [(k, v) for scope, k, v in _parse_config(probe.stdout) if scope not in ("local", "worktree", "command")]
+    allowed = {*person_config(person, network=False), *person_config(person, network=True)}
+    repo.frozen = [e for e in person if e in allowed]  # nothing outside the allow-lists is even kept
     top = repo.out("rev-parse", "--show-toplevel")
     if os.path.realpath(top) != str(root):
         raise RecordsError("records.not_dedicated", "the record root is not the top of its records repo")

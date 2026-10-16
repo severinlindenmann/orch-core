@@ -110,6 +110,20 @@ def tls_context(ca_file: str | None, *, factory: Callable[..., ssl.SSLContext] =
     return ctx
 
 
+IDLE_REUSE_S = 3.0  # a kept connection idle longer is not reused: the relay (uvicorn) closes an idle one after 5 s
+
+
+class _Stale(Exception):
+    """Internal: a reused connection failed before any response byte (the peer had closed it)."""
+
+
+def _stale(e: BaseException) -> bool:
+    """A failure that says the peer closed the kept connection before answering."""
+    if isinstance(e, http.client.BadStatusLine):  # RemoteDisconnected is one: an empty status line
+        return not e.line or e.line == "''" or isinstance(e, http.client.RemoteDisconnected)
+    return isinstance(e, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
+
+
 class RelayConn:
     """One keep-alive connection to the relay origin, used by one thread at a time."""
 
@@ -149,6 +163,7 @@ class RelayConn:
         self._fired = threading.Event()  # the current call's watchdog has fired
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
+        self._last_used = 0.0  # when the last response was fully read (the idle clock of the kept connection)
 
     def __repr__(self) -> str:
         return f"RelayConn({self.origin})"
@@ -343,8 +358,23 @@ class RelayConn:
         return left
 
     def _request(self, method, target, route, headers, body, deadline_s, cap) -> Response:
+        """One call. A kept connection the relay has probably closed is never trusted (stale keep-alive, the relay
+        closes an idle one after a few seconds): idle longer than :data:`IDLE_REUSE_S`, it is dropped before sending
+        (proactive); and one that fails on reuse before any response byte (the peer closed it, nothing was answered)
+        is reopened and the same bytes sent once more within the same deadline (reactive). Every relay call is
+        same-bytes idempotent (a login challenge at worst answers 401, which the session re-logs-in on)."""
         t0 = self._mono()
         deadline = t0 + deadline_s
+        if self._conn is not None and t0 - self._last_used > IDLE_REUSE_S:
+            self.close()
+        reused = self._conn is not None
+        try:
+            return self._attempt(method, target, route, headers, body, deadline, cap, t0, reused=reused)
+        except _Stale:
+            pass  # only raised for a reused connection, which is closed by now: the next attempt opens a new one
+        return self._attempt(method, target, route, headers, body, deadline, cap, t0, reused=False)
+
+    def _attempt(self, method, target, route, headers, body, deadline, cap, t0, *, reused: bool = False) -> Response:
         if self._shut.is_set():
             raise TransportError("shutdown", route)
         self._deadline = deadline
@@ -361,6 +391,7 @@ class RelayConn:
         watchdog = threading.Timer(left, expire)
         watchdog.daemon = True
         watchdog.start()
+        answered = False
         try:
             if self._conn is None:
                 self._conn = self._open(left)
@@ -375,6 +406,7 @@ class RelayConn:
                 conn.putheader("Content-Length", str(len(body)))
             conn.endheaders(body)
             resp = conn.getresponse()
+            answered = True
             status = resp.status
             hdrs: dict[str, str] = {}
             for k, v in resp.getheaders():
@@ -397,9 +429,12 @@ class RelayConn:
             raise
         except (OSError, http.client.HTTPException, ValueError) as e:
             self.close()
+            if reused and not answered and _stale(e) and not (fired.is_set() or self._shut.is_set() or self._mono() >= deadline):
+                raise _Stale from None
             raise TransportError(self._kind(e, deadline, fired), route) from None
         finally:
             watchdog.cancel()
+        self._last_used = self._mono()
         log.info("relay %s status=%d bytes=%d ms=%d", route, status, len(data), int((self._mono() - t0) * 1000))
         return Response(status, hdrs, data)
 

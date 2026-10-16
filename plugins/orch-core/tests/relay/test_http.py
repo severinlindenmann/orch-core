@@ -824,3 +824,107 @@ def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
     assert tried == [dead]
     assert len(installed) == 1  # the loop stopped at the error itself: no socket was even made for the second address
     assert not _accepted(listener)
+
+
+# -- a kept connection the relay has closed (uvicorn closes an idle keep-alive after 5 s) -----------------------------
+
+
+class _ClosingServer:
+    """Answers each request on a connection with a keep-alive 200, then closes that connection ``close_after`` seconds
+    later (0: at once, the client sees a dead connection on its next request); counts connections and requests."""
+
+    def __init__(self) -> None:
+        import socket
+
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(8)
+        self.conns = 0
+        self.requests = 0
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def origin(self) -> str:
+        return f"http://127.0.0.1:{self.srv.getsockname()[1]}"
+
+    def _run(self) -> None:
+        while True:
+            try:
+                s, _ = self.srv.accept()
+            except OSError:
+                return
+            self.conns += 1
+            threading.Thread(target=self._serve, args=(s,), daemon=True).start()
+
+    def _serve(self, s) -> None:
+        buf = b""
+        try:
+            while b"\r\n\r\n" not in buf:
+                d = s.recv(4096)
+                if not d:
+                    return
+                buf += d
+            self.requests += 1
+            s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}")
+        finally:
+            s.close()  # no `Connection: close` was announced: the client believes the connection is alive
+
+    def close(self) -> None:
+        self.srv.close()
+
+
+def test_a_connection_idle_past_the_reuse_limit_is_replaced_before_sending():
+    srv = _ClosingServer()
+    clock = [0.0]
+    c = http.RelayConn(srv.origin(), mono=lambda: clock[0])
+    try:
+        assert call(c).status == 200
+        clock[0] += http.IDLE_REUSE_S + 0.5  # proactive: the connection is dropped without trying it
+        assert call(c).status == 200
+        assert srv.conns == 2 and srv.requests == 2
+    finally:
+        c.close()
+        srv.close()
+
+
+def test_a_reused_connection_the_peer_closed_is_reopened_and_resent_once_within_the_deadline():
+    srv = _ClosingServer()
+    clock = [0.0]
+    c = http.RelayConn(srv.origin(), mono=lambda: clock[0])
+    try:
+        assert call(c).status == 200
+        time.sleep(0.2)  # the server has closed its end; the clock says the connection is fresh (reactive path)
+        assert call(c).status == 200
+        assert srv.conns == 2 and srv.requests == 2
+    finally:
+        c.close()
+        srv.close()
+
+
+def test_a_fresh_connection_that_fails_is_not_retried():
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    seen = []
+
+    def run() -> None:
+        while True:
+            try:
+                s, _ = srv.accept()
+            except OSError:
+                return
+            seen.append(1)
+            s.recv(4096)
+            s.close()  # no answer at all, on a connection that was never reused
+
+    threading.Thread(target=run, daemon=True).start()
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        with pytest.raises(http.TransportError):
+            call(c)
+        assert len(seen) == 1
+    finally:
+        c.close()
+        srv.close()

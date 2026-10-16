@@ -1,3 +1,4 @@
+import { GRANT_MAX_HOURS } from './grants'
 // Reduced workspace settings (M4, #306): the types the server serves (`server/src/orch_dashboard/adapters/settings.py`)
 // and the pure rules the page shares. A field the host did not send is `null` (unknown), never a default of ours.
 import type { Role } from './types'
@@ -57,7 +58,7 @@ export interface HostSettings {
 }
 
 export const DURATIONS = [
-  { key: 'grant_hours', label: 'Agent grant length', unit: 'hours', min: 1, max: 24 },
+  { key: 'grant_hours', label: 'Agent grant length', unit: 'hours', min: 1, max: GRANT_MAX_HOURS },
   { key: 'claim_ttl_min', label: 'Claim lasts without activity', unit: 'minutes', min: 15, max: 1440 },
   { key: 'lease_ttl_min', label: 'Task lease lasts without activity', unit: 'minutes', min: 5, max: 1440 },
 ] as const

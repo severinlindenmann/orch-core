@@ -12,7 +12,7 @@ import { mergeRunItems, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { EXECUTION_LINE } from './executionLine'
-import { StartAgentDialog } from './StartAgentDialog'
+import { RunnerGrantCard, StartAgentDialog } from './StartAgentDialog'
 
 const WS = 'a'.repeat(32)
 const T = { timeout: 5000 }
@@ -43,6 +43,7 @@ const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer
 
 let s: Record<string, ReturnType<typeof vi.spyOn>>
 beforeEach(() => {
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168 }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
   s = {
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
     start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
@@ -343,4 +344,26 @@ describe('the live stream', () => {
     mergeRunItems(qc, WS, [{ t: 'runner', grant: null }])
     expect((qc.getQueryData(['runner', WS]) as { runner: Runner }).runner.grant).toBeNull()
   })
+})
+
+
+it('Extend preserves the runner scope and posts its id with the selected length', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all' }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  expect(screen.getByText('Agents that are running now stop; new agents use the extended access.')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('option', { name: '7 days' })).toBeInTheDocument())
+  fireEvent.change(screen.getByLabelText('Length'), { target: { value: '168' } })
+  expect(screen.getByLabelText('Tickets')).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Extend access' }))
+  await waitFor(() => expect(s.prepare).toHaveBeenCalled())
+  expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'all', extend: GRANT })
+})
+
+it.each([4, 12, 500])('caps runner lengths at workspace hours %s and 168', async (limit) => {
+  vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: limit }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  s.preview.mockResolvedValue(noGrant())
+  mount()
+  await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+  const select = screen.getByLabelText('Length') as HTMLSelectElement
+  expect([...select.options].every(o => Number(o.value) <= Math.min(limit, 168))).toBe(true)
+  expect(Number(select.value)).toBeLessThanOrEqual(Math.min(limit, 168))
 })

@@ -36,9 +36,8 @@ it('a hand-off refused with sign.convenience_readers says the reason in plain wo
       : undefined
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
-  await user.clear(input)
-  await user.type(input, '12')
+  const input = await screen.findByRole('button', { name: '1 day' }, T)
+  await user.click(input)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   const end = await within(dialog).findByText(READERS_SENTENCE.reader_too_old, {}, T)

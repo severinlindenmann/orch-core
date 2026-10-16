@@ -18,13 +18,17 @@ Method             Checks before signing                                        
 ``wk_grant``       (R6a) exact field set, the link's workspace, an epoch with a recorded          ``sig_wk_grant``
                    ``wk_commit``, the sealed key's length, the device in the list signed at
                    ``list_seq``; never other bytes for ``(device, epoch)``
-``pair_answer``    (R6c) ORB2 direction 2, **epoch 0**, the link's workspace, ``stream`` an offer  ``sig_bridge``
-                   R6 holds live (non-terminal or within its 10-minute tail: the ``pair_live``
-                   callback, not an import of R6 state), the whole envelope within 64 KiB
+``pair_answer``    (R6c) ORB2 direction 2, **epoch 0**, exactly one chunk (``seq`` 0, flags      ``sig_bridge``
+                   ``LAST`` or ``LAST|REFUSAL``, never ``STREAM``), the link's workspace,
+                   ``stream`` an offer R6 holds live (non-terminal or within its 10-minute tail:
+                   the ``pair_live`` callback, not an import of R6 state), the whole envelope
+                   within 64 KiB
 ``cert_request``   (R6c) exact field set, the link's workspace, ``person_id`` the pinned owner,  ``sig_cert_request``
                    ``primary_device_id`` the verified ``primary.json``'s (``primary_device``
-                   callback, re-verified at every call), ``expires_ms - created_ms <= 600 000``;
-                   never other bytes for one ``request_id`` (ledger ``("cert_request", id)``)
+                   callback, re-verified at every call), ``expires_ms - created_ms <= 600 000``,
+                   and the clear binding (``offer_id``, ``attempt``, ``device_id``,
+                   ``dk_hash``) exactly the pairing R6 holds at that step (``pair_binding``
+                   callback); never other bytes for one ``request_id`` (ledger)
 =================  ==========================================================================  ==================
 
 The key comes in as a :class:`WorkspaceKey`, a structural interface (``public_key``, ``sign(payload)``) that
@@ -165,8 +169,8 @@ class RelaySigner:
     """Purpose-specific WSK signatures for the relay client (11A.2)."""
 
     __slots__ = (
-        "_burned", "_epochs", "_last_card_seq", "_ledger", "_lock", "_owner", "_pair_live", "_primary", "_pub",
-        "_sign_bytes", "link",
+        "_burned", "_epochs", "_last_card_seq", "_ledger", "_lock", "_owner", "_pair_binding", "_pair_live",
+        "_primary", "_pub", "_sign_bytes", "link",
     )  # fmt: skip
 
     def __init__(
@@ -181,6 +185,7 @@ class RelaySigner:
         owner_person_id: str | None = None,
         primary_device: Callable[[], str | None] | None = None,
         pair_live: Callable[[str], bool] | None = None,
+        pair_binding: Callable[[str, str, str, str], bool] | None = None,
     ) -> None:
         if type(last_card_seq) is not int or last_card_seq < 0:
             raise SignerRefused("last card_seq")
@@ -193,6 +198,7 @@ class RelaySigner:
         self._owner = owner_person_id
         self._primary = primary_device
         self._pair_live = pair_live
+        self._pair_binding = pair_binding
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -409,6 +415,10 @@ class RelaySigner:
             raise SignerRefused("ORB2 header") from None
         if h.direction != 2 or h.epoch != 0:
             raise SignerRefused("not an epoch-0 answer header")
+        # an epoch-0 answer is exactly one chunk (the phone accepts only these flags, proto §8.3 step 4): never a
+        # stream frame, never a later index, so a signed answer cannot be replayed as part of another exchange
+        if h.seq != 0 or h.flags not in (wire.FLAG_LAST, wire.FLAG_LAST | wire.FLAG_REFUSAL):
+            raise SignerRefused("a pair answer is one chunk: seq 0, LAST or LAST|REFUSAL")
         if not wire.ct_equal(h.workspace, bytes.fromhex(self.link.workspace_id)):
             raise SignerRefused("header workspace")
         if type(body) is not bytes or len(body) < wire.TAG_LEN:
@@ -444,6 +454,13 @@ class RelaySigner:
             raise SignerRefused("cert request times")
         if expires - created > _CERT_PENDING_MS:
             raise SignerRefused("cert request longer than 10 minutes")
+        # the clear binding (G3b) names exactly the pairing R6 holds at step 7b: this offer, consumed by this attempt
+        # of this device with these keys (the wk_grant sibling binds its device to the signed list the same way)
+        bound = (o["offer_id"], o["attempt"], o["device_id"], o["dk_hash"])
+        if not all(type(v) is str for v in bound):
+            raise SignerRefused("cert request binding")
+        if self._pair_binding is None or self._pair_binding(*bound) is not True:
+            raise SignerRefused("the binding is not a pairing R6 holds at the cert request")
         try:
             body = canon.dumps(dict(o))
         except canon.JcsError:

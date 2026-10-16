@@ -572,6 +572,18 @@ class Store:
                 return None
             return info.heads[seq - 1]
 
+    def log_seq(self, log: str) -> int | None:
+        """The head ``seq`` of ``log`` as loaded, or ``None`` when the log cannot be read right now (not held, or a
+        read error): the planner tells "unreadable, try later" from "shorter than my cursor" with it. Loads the
+        ticket."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or log in self._read_errors:
+                return None
+            return int(info.seq)
+
     def events_after(self, log: str, after: int, limit: int = 256) -> list[tuple[dict[str, Any], str]]:
         """``(event, head)`` for the events of ``log`` with ``seq`` above ``after``, at most ``limit``, oldest first;
         ``head`` is the event's hash as the chain has it. Read-only; loads the ticket (replayed and verified)."""

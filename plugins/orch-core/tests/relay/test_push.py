@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -128,7 +129,6 @@ def test_a_sent_intent_of_an_abandoned_branch_stays_sent(kit):
     kit.advance(1)
     kit.answer("Q1", "yes")
     kit.plan()
-    kit.now += ID_INTERVAL_MS  # one push per id per minute
     kit.thread.step()
     old = intents(kit)[-1]
     assert (old.kind, old.state) == ("question.closed", "sent")
@@ -313,22 +313,49 @@ def test_a_stale_epoch_followed_by_success_sends_the_new_epoch(kit):
     assert done.state == "sent" and done.epoch == 2 and kit.open(done.outer, 2)["id"] == it.id
 
 
-def test_404_drops_open_intents_and_probes_hourly(kit):
-    sealed_one(kit)
-    kit.session.script = [refused(404, "not_found"), None]
+def test_404_delays_intents_and_probes_after_60s_then_backs_off(kit):
+    it = sealed_one(kit)
+    kit.session.script = [refused(404, "not_found"), refused(404, "not_found"), None]
     kit.thread.step()
-    assert kit.thread.state == "off_at_relay" and [i.reason for i in intents(kit)] == ["off_at_relay"]
-    assert [i.label for i in intents(kit)] == [""]  # dropped: no label kept
+    assert kit.thread.state == "off_at_relay"
+    held = kit.ob.get(it.key)
+    assert held.state == "sealed" and held.label != "" and held.next_ms == kit.now + 60_000  # kept, not dropped
     kit.advance(1)
     kit.ask("Q2", "next?")
     kit.plan()
     kit.thread.step()
-    assert len(kit.session.calls) == 1  # no probe inside the hour
-    assert intents(kit)[-1].reason == "off_at_relay"
-    kit.advance(3601)
-    kit.ask("Q3", "again?")
+    assert len(kit.session.calls) == 1  # no probe inside the first 60 s; the new intent is sealed and waits
+    kit.advance(60)
     kit.thread.step()
-    assert len(kit.session.calls) == 2 and kit.thread.state == "on"  # the probe succeeded
+    assert len(kit.session.calls) == 2 and kit.thread.state == "off_at_relay"  # probe 2: 404 again
+    assert kit.thread._off_until_ms == kit.now + 120_000  # noqa: SLF001 - backed off
+    kit.advance(121)
+    kit.thread.step()
+    kit.thread.step()
+    assert kit.thread.state == "on" and kit.ob.get(it.key).state == "sent"  # delayed, then delivered within the TTL
+
+
+def test_404_probe_interval_caps_at_an_hour(kit):
+    sealed_one(kit)
+    kit.session.script = [refused(404, "not_found")]
+    for _ in range(12):
+        kit.advance(3601)
+        kit.thread.step()
+    assert kit.thread._probe_ms == 3_600_000  # noqa: SLF001
+
+
+def test_a_relink_reprobes_at_once(kit):
+    it = sealed_one(kit)
+    kit.session.script = [refused(404, "not_found"), None]
+    kit.thread.step()
+    assert len(kit.session.calls) == 1 and kit.thread.state == "off_at_relay"
+    kit.session.gen = 2  # a new link (take-over)
+    kit.thread.step()
+    assert kit.thread.state == "on" and kit.ob.get(it.key).state == "sent" and len(kit.session.calls) == 2
+
+
+def test_a_fresh_thread_probes_at_once(kit):
+    assert kit.thread._off_until_ms == 0  # noqa: SLF001 - a worker (re)start begins with push on
 
 
 def test_fenced_stops_the_thread_and_keeps_the_intent(kit):
@@ -499,3 +526,154 @@ def test_the_thread_plans_seals_and_sends_on_a_wake(kit):
     kit.thread.stop()
     assert kit.thread.join(5) and kit.session.calls and kit.session.calls[0]["holder"] is True
     assert PLAN_EVERY_S == 30.0
+
+
+# -- the fix round ----------------------------------------------------------------------------------------------------
+
+
+def test_a_non_session_error_alarms_and_retries_without_stopping_the_thread(kit):
+    import time
+
+    calls = []
+    real = kit.thread.planner.run
+
+    def flaky(now_ms):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real(now_ms)
+
+    kit.thread.planner.run = flaky
+    stopped = []
+    kit.thread._on_error = stopped.append  # noqa: SLF001
+    kit.thread.start()
+    kit.ask()
+    kit.thread.wake()
+    deadline = time.time() + 15
+    while not kit.session.calls and time.time() < deadline:
+        time.sleep(0.02)
+        kit.thread.wake()
+    kit.thread.stop()
+    assert kit.thread.join(5)
+    assert "push_error" in kit.alarms.codes() and not stopped and kit.session.calls  # retried, then sent
+
+
+def test_a_session_error_stops_the_thread(kit):
+    import time
+
+    from orch.relay.session import SessionError
+
+    kit.thread.planner.run = lambda now_ms: (_ for _ in ()).throw(SessionError("auth"))
+    stopped = []
+    kit.thread._on_error = stopped.append  # noqa: SLF001
+    kit.thread.start()
+    kit.thread.wake()
+    deadline = time.time() + 10
+    while not stopped and time.time() < deadline:
+        time.sleep(0.02)
+    assert len(stopped) == 1 and isinstance(stopped[0], SessionError)
+    kit.thread.join(5)
+
+
+def test_an_unreadable_log_is_retried_not_treated_as_rewritten(kit):
+    kit.ask()
+    kit.plan()
+    (it,) = intents(kit)
+    kit.advance(1)
+    kit.ask("Q2", "more?")
+    store = kit.store
+    real_head, real_seq = store.head_at, store.log_seq
+    store.head_at = lambda log, seq: None  # a transient read error
+    store.log_seq = lambda log: None
+    try:
+        kit.plan()
+        assert kit.ob.get(it.key).state == "planned" and len(intents(kit)) == 1  # nothing invalidated or planned
+    finally:
+        store.head_at, store.log_seq = real_head, real_seq
+    kit.plan()
+    assert len(intents(kit)) == 2 and kit.ob.get(it.key).state in ("planned", "merged")
+
+
+def test_the_closed_push_is_exempt_from_the_id_interval_and_the_budget(kit):
+    ref, _ = kit.env.add_device()
+    kit.view.add(kit.env.owner.ref, ref)
+    kit.ask()
+    kit.plan()
+    kit.thread.step()
+    assert len(kit.session.calls) == 1
+    kit.advance(1)
+    kit.answer("Q1", "yes")
+    kit.plan()
+    kit.thread.step()  # no ID_INTERVAL_MS wait: the stale "New question" is replaced promptly
+    assert len(kit.session.calls) == 2 and kit.session.calls[1]["body"]["priority"] == "high"
+
+
+def test_the_id_interval_applies_between_pushes_of_the_same_kind_only(kit):
+    from orch.relay import push as rp
+
+    ref, _ = kit.env.add_device()
+    kit.view.add(kit.env.owner.ref, ref)
+    kit.ask()
+    kit.plan()
+    kit.thread.step()
+    kit.advance(1)
+    kit.ask("Q1", "again?")  # same kind, same id: waits
+    kit.plan()
+    kit.thread.step()
+    assert len(kit.session.calls) == 1
+    key = intents(kit)[-1].key
+    kit.now += rp.ID_INTERVAL_MS
+    kit.thread.step()
+    assert kit.ob.get(key).state == "sent"
+
+
+def test_the_closed_push_does_not_use_the_device_budget(kit):
+    ref, _ = kit.env.add_device()
+    kit.view.add(kit.env.owner.ref, ref)
+    for i in range(DEVICE_BUDGET):
+        kit.ask(f"Q{i + 1}", f"q{i}?")
+        kit.plan()
+        kit.thread.step()
+        kit.advance(1)
+    assert len(kit.session.calls) == DEVICE_BUDGET
+    kit.answer("Q1", "yes")
+    kit.plan()
+    kit.thread.step()
+    assert len(kit.session.calls) == DEVICE_BUDGET + 1  # the closed one is not over budget
+
+
+def test_seal_step_loops_past_an_all_dropped_batch(kit):
+    from orch.relay.push import SEAL_BATCH
+
+    for i in range(SEAL_BATCH):
+        kit.ask(f"Q{i + 1}", f"d{i}?")
+    kit.plan()
+    kit.view.members.clear()  # no audience: the first batch is dropped whole
+    drops = [i for i in intents(kit, "planned")]
+    assert len(drops) == SEAL_BATCH
+    kit.view.add(kit.env.owner.ref, kit.env.owner.device)
+    from orch.relay.push import seal_step
+
+    # make the first 32 undeliverable by deadline, then add a good one behind them
+    for it in drops:
+        kit.ob._db.execute("UPDATE push_intent SET deadline_ms=? WHERE key=?", (kit.now - 1, it.key))  # noqa: SLF001
+    kit.advance(1)
+    kit.ask("Q99", "good?")
+    kit.plan()
+    kit.thread.step()
+    states = [i.state for i in intents(kit)]
+    assert states.count("dropped") == SEAL_BATCH and states[-1] in ("sealed", "sent") and not kit.ob.planned()
+    assert seal_step(kit.thread, kit.now) == 0
+
+
+def test_a_newer_outbox_schema_is_refused_with_a_clear_error(tmp_path):
+    from orch.relay.state import StateDir
+
+    sd = StateDir(tmp_path / "st")
+    ob = outbound.OutboundStore(sd, instance_id="i" * 32, now_ms=1)
+    assert ob._db.execute("PRAGMA user_version").fetchone()[0] == outbound.SCHEMA_VERSION  # noqa: SLF001
+    ob._db.execute(f"PRAGMA user_version={outbound.SCHEMA_VERSION + 1}")  # noqa: SLF001
+    ob.close()
+    with pytest.raises(outbound.OutboxVersionError, match="outbound_schema_newer"):
+        outbound.OutboundStore(sd, instance_id="i" * 32, now_ms=1)
+    sd.close()

@@ -26,7 +26,7 @@ __all__ = ["push"]
 
 def push(service: Any, worker: Any, keys: Any, signer: Any, view: Any) -> Any:
     """R5's ``push`` seam (``SEAMS.push``)."""
-    from orch.relay.outbound import OutboundStore
+    from orch.relay.outbound import OutboundStore, OutboxVersionError
     from orch.relay.push import PushThread
     from orch.relay.state import FileHolderStore
     from orch.store.store import device_standing_ok
@@ -44,7 +44,11 @@ def push(service: Any, worker: Any, keys: Any, signer: Any, view: Any) -> Any:
         worker.alarm("relay_push_stopped", type(exc).__name__)
         worker.stop()
 
-    ob = OutboundStore(worker.state, instance_id=FileHolderStore(worker.state).instance_id(), now_ms=now_ms())
+    try:
+        ob = OutboundStore(worker.state, instance_id=FileHolderStore(worker.state).instance_id(), now_ms=now_ms())
+    except OutboxVersionError as e:
+        worker.alarm("push_outbox_schema_newer", str(e))
+        raise
     if ob.restored:
         worker.alarm("push_outbox_restarted", "the state directory is another instance: no old push is sent")
     return PushThread(

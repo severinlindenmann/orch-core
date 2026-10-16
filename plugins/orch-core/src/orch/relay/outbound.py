@@ -41,6 +41,8 @@ __all__ = [
     "DB",
     "FINAL",
     "PUSH_TS_KEEP_MS",
+    "SCHEMA_VERSION",
+    "OutboxVersionError",
     "Intent",
     "NewIntent",
     "OutboundStore",
@@ -49,6 +51,7 @@ __all__ = [
 ]
 
 DB = "outbound.sqlite"
+SCHEMA_VERSION = 1  # PRAGMA user_version; a database written by a NEWER version is refused on open
 FINAL = ("sent", "dropped", "failed", "merged", "invalidated")
 PUSH_TS_KEEP_MS = 25 * 3600 * 1000
 
@@ -73,6 +76,10 @@ _COLS = (
     "key, log, seq, event_hash, kind, id, ticket, narrow, exclude, label, priority, deadline_ms, state, targets, "
     "auth_gen, outer, epoch, ts_ms, sealed_ms, attempts, reseals, next_ms, sent_ms, accepted, reason, created_ms"
 )
+
+
+class OutboxVersionError(StateError):
+    """``outbound.sqlite`` was written by a newer orch (its ``user_version`` is above :data:`SCHEMA_VERSION`)."""
 
 
 def intent_key(log: str, seq: int, event_hash: str, kind: str, id_: str) -> str:
@@ -189,7 +196,14 @@ class OutboundStore:
                 held, now = os.fstat(fd), os.stat(state.file_path(name), follow_symlinks=False)
                 if (held.st_dev, held.st_ino) != (now.st_dev, now.st_ino):
                     raise StateError(f"relay_state_unsafe: {name} changed under the checked open")
+            have = int(self._db.execute("PRAGMA user_version").fetchone()[0])
+            if have > SCHEMA_VERSION:
+                raise OutboxVersionError(
+                    f"outbound_schema_newer: {DB} has schema version {have}, this orch knows {SCHEMA_VERSION}"
+                )
             self._db.executescript(_SCHEMA)
+            if have < SCHEMA_VERSION:
+                self._db.execute(f"PRAGMA user_version={int(SCHEMA_VERSION)}")
             self._init_meta(instance_id, now_ms)
         except BaseException:
             self.close()
@@ -326,13 +340,14 @@ class OutboundStore:
         with self._lock:
             return {s: n for s, n in self._db.execute("SELECT state, COUNT(*) FROM push_intent GROUP BY state")}
 
-    def sent_since(self, since_ms: int) -> list[tuple[str, int, tuple[str, ...]]]:
-        """``(id, sent_ms, targets)`` of the intents sent at or after ``since_ms`` (the host budgets, 11A.16.4)."""
+    def sent_since(self, since_ms: int) -> list[tuple[str, str, int, tuple[str, ...]]]:
+        """``(id, kind, sent_ms, targets)`` of the intents sent at or after ``since_ms`` (host budgets)."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, sent_ms, targets FROM push_intent WHERE sent_ms IS NOT NULL AND sent_ms>=?", (since_ms,)
+                "SELECT id, kind, sent_ms, targets FROM push_intent WHERE sent_ms IS NOT NULL AND sent_ms>=?",
+                (since_ms,),
             ).fetchall()
-            return [(r[0], r[1], tuple(json.loads(r[2] or "[]"))) for r in rows]
+            return [(r[0], r[1], r[2], tuple(json.loads(r[3] or "[]"))) for r in rows]
 
     def ts_last(self, id_: str) -> int | None:
         with self._lock:
@@ -423,6 +438,15 @@ class OutboundStore:
                 "UPDATE push_intent SET state='dropped', reason=?, label='' WHERE state IN ('planned','sealed')",
                 (reason,),
             ).rowcount
+
+        with self._lock:
+            return int(_atomic(self._db, body))
+
+    def release_waiting(self, reason: str) -> int:
+        """Sealed intents delayed with ``reason`` (404: off at the relay) become due now."""
+
+        def body(db: sqlite3.Connection) -> int:
+            return db.execute("UPDATE push_intent SET next_ms=0 WHERE state='sealed' AND reason=?", (reason,)).rowcount
 
         with self._lock:
             return int(_atomic(self._db, body))

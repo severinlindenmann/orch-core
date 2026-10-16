@@ -25,7 +25,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from orch import canon
 from orch.crypto import push as cpush
-from orch.relay import push as host_push
 from tests.host.dispatch_helpers import SESSION, ok
 from tests.host.human_helpers import Human
 from tests.relay.phone import PhoneError
@@ -145,8 +144,6 @@ def _opened(w, fake: FakeApns, n: int, token: bytes, what: str) -> list[dict]:
 
 def test_a_question_and_its_answer_reach_the_fake_apns(push_relay: RelayProcess, tmp_path, monkeypatch):
     fake: FakeApns = push_relay.fake  # type: ignore[attr-defined]
-    # the host sends one push per question id per minute (ID_INTERVAL_MS); the closed push would wait out the minute
-    monkeypatch.setattr(host_push, "ID_INTERVAL_MS", 1500)
     with paired_world(push_relay, tmp_path, monkeypatch) as w:
         token = secrets.token_bytes(32)
         got = w.net.push_register(secrets.token_hex(16), token)

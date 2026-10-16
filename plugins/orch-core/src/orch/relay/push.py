@@ -66,7 +66,8 @@ DEVICE_BUDGET = (
 DEVICE_BUDGET_WINDOW_MS = 600_000
 ID_INTERVAL_MS = 60_000  # one push per id per minute
 PLAN_EVERY_S = 30.0  # the planner runs at least this often (and on every append)
-PROBE_EVERY_MS = 3_600_000  # push off at the relay (404): probe at most hourly
+PROBE_FIRST_MS = 60_000  # push off at the relay (404): probe again after 60 s, then back off ...
+PROBE_EVERY_MS = 3_600_000  # ... up to hourly (and at once on every relay (re)link or worker start)
 PLAN_LIMIT = 256
 SKEW_S = 60  # a log whose mtime is older than the fence by more than this cannot hold a post-fence event
 BACKOFF_MAX_S = 60.0
@@ -90,6 +91,8 @@ class PushStore(Protocol):
     def events_after(self, log: str, after: int, limit: int = ...) -> list[tuple[dict[str, Any], str]]: ...
 
     def head_at(self, log: str, seq: int) -> str | None: ...
+
+    def log_seq(self, log: str) -> int | None: ...
 
     def seq_before(self, log: str, at_epoch: int) -> int: ...
 
@@ -183,8 +186,12 @@ class Planner:
                     seq0 = store.seq_before(log_name, start_s)
                     cur = (seq0, store.head_at(log_name, seq0))
                     ob.plan(log_name, cur[0], cur[1])
-                elif store.head_at(log_name, cur[0]) != cur[1]:
-                    cur = self._rewritten(log_name, start_s)
+                else:
+                    got = store.head_at(log_name, cur[0])
+                    if got != cur[1]:
+                        if got is None and store.log_seq(log_name) is None:
+                            continue  # unreadable right now (a read error): retry later, never "rewritten"
+                        cur = self._rewritten(log_name, start_s)
                 seq, head = cur
                 while True:
                     evs = store.events_after(log_name, seq, PLAN_LIMIT)
@@ -235,8 +242,9 @@ def _audience(ctx: _Ctx, it: Intent) -> list[str]:
 
 
 def seal_step(ctx: _Ctx, now_ms: int) -> int:
-    """Seal up to 32 ``planned`` intents (a worker job). Returns the number sealed. A snapshot that is not sealable
-    (the rotation gate is up) leaves them ``planned``: the thread runs this again."""
+    """Seal up to 32 ``planned`` intents (a worker job). Returns the number of rows handled (sealed, dropped or
+    failed; 0 when none is planned or the snapshot is not sealable: the caller loops until 0). A snapshot that is not
+    sealable (the rotation gate is up) leaves them ``planned``: the thread runs this again."""
     with ctx.store.locked():
         batch = ctx.ob.planned(SEAL_BATCH)
         if not batch:
@@ -253,7 +261,7 @@ def seal_step(ctx: _Ctx, now_ms: int) -> int:
                 continue
             todo.append((it, targets))
         if not todo:
-            return 0
+            return len(batch)  # all dropped: they were handled, the loop goes on to the next batch
         out: list[tuple[str, bytes, int, int, Sequence[str], int]] = []
         last: dict[str, int] = {}
         with ctx.keys.push_sealing(ctx.signer) as sealer:
@@ -271,7 +279,7 @@ def seal_step(ctx: _Ctx, now_ms: int) -> int:
                 last[it.id] = ts
                 out.append((it.key, outer, epoch, ts, targets, auth_gen))
             ctx.ob.seal(out, now_ms)  # persisted inside the seal span, before any send (D6)
-        return len(out)
+        return len(batch)  # every row of the batch left "planned" (sealed, dropped or failed)
 
 
 def dispatch_step(ctx: _Ctx, key: str, now_ms: int, *, off_until_ms: int = 0) -> tuple[str, Any]:
@@ -285,24 +293,28 @@ def dispatch_step(ctx: _Ctx, key: str, now_ms: int, *, off_until_ms: int = 0) ->
             ctx.ob.drop(key, "deadline")
             return "skip", "deadline"
         if off_until_ms and now_ms < off_until_ms:
-            ctx.ob.drop(key, "off_at_relay")
-            return "skip", "off_at_relay"
+            return "wait", off_until_ms  # push is off at this relay: delayed (kept) until the next probe or deadline
         targets = _audience(ctx, it)
         if not targets:
             ctx.ob.drop(key, "no_target")
             return "skip", "no_target"
-        recent = ctx.ob.sent_since(now_ms - DEVICE_BUDGET_WINDOW_MS)
-        again = max((t for i, t, _ in recent if i == it.id), default=None)
-        if again is not None and now_ms < again + ID_INTERVAL_MS:
-            return "wait", again + ID_INTERVAL_MS
-        used: dict[str, int] = {}
-        for _, _, devices in recent:
-            for d in devices:
-                used[d] = used.get(d, 0) + 1
-        targets = [d for d in targets if used.get(d, 0) < DEVICE_BUDGET]
-        if not targets:
-            ctx.ob.drop(key, "over_budget")  # the phone reconciles when it opens
-            return "skip", "over_budget"
+        if it.kind != "question.closed":
+            # a closed push replaces a stale "New question" at once: exempt from both the per-id interval and the
+            # per-device budget (and not counted in it); the interval applies between pushes of the SAME kind
+            recent = ctx.ob.sent_since(now_ms - DEVICE_BUDGET_WINDOW_MS)
+            again = max((t for i, k, t, _ in recent if i == it.id and k == it.kind), default=None)
+            if again is not None and now_ms < again + ID_INTERVAL_MS:
+                return "wait", again + ID_INTERVAL_MS
+            used: dict[str, int] = {}
+            for _, k, _, devices in recent:
+                if k == "question.closed":
+                    continue
+                for d in devices:
+                    used[d] = used.get(d, 0) + 1
+            targets = [d for d in targets if used.get(d, 0) < DEVICE_BUDGET]
+            if not targets:
+                ctx.ob.drop(key, "over_budget")  # the phone reconciles when it opens
+                return "skip", "over_budget"
         ctx.ob.record_targets(key, targets, ctx.store.auth_gen)
         return "send", (targets, max(1, min(TTL_S, (it.deadline_ms - now_ms) // 1000)))
 
@@ -345,6 +357,8 @@ class PushThread:
         self._closed = False
         self._last_plan_ms = 0
         self._off_until_ms = 0
+        self._probe_ms = PROBE_FIRST_MS
+        self._seen_gen: int | None = None
         self._pruned_ms = 0
         self.state = "on"  # "off_at_relay" after a 404
         self.error: BaseException | None = None
@@ -386,6 +400,12 @@ class PushThread:
             self._closed = True
             self.ob.close()
 
+    def reprobe(self) -> None:
+        """The relay was (re)linked: probe push again at once (a relay that said 404 may have turned it on)."""
+        self._off_until_ms, self._probe_ms = 0, PROBE_FIRST_MS
+        self.ob.release_waiting("off_at_relay")
+        self.wake()
+
     def wake(self) -> None:
         """The store committed an event: plan now, not at the next 30 s check."""
         self._woken = True
@@ -406,13 +426,23 @@ class PushThread:
         try:
             while not self._stop.is_set() and self._session.gen is None:
                 self._stop.wait(1.0)  # the start fence: nothing before this holder's own host/hold
+            errors = 0
             while not self._stop.is_set():
-                wait = self.step()
+                try:
+                    wait = self.step()
+                    errors = 0
+                except (WorkerStopped, SessionError):  # Fenced is a SessionError: the session's path
+                    raise
+                except Exception as e:  # noqa: BLE001 - push is auxiliary: alarm and retry, never end the thread
+                    errors += 1
+                    wait = min(BACKOFF_MAX_S, 2.0 ** min(errors, 10))
+                    log.error("relay push step failed: %s", type(e).__name__)
+                    self.alarm("push_error", type(e).__name__)
                 self._wake.wait(wait)
                 self._wake.clear()
         except WorkerStopped:
             pass
-        except Exception as e:  # noqa: BLE001 - a fence or session error (or a bug): the thread ends, R5 is told
+        except Exception as e:  # noqa: BLE001 - a fence or session error: the thread ends, R5 is told
             if not self._stop.is_set():
                 self.error = e
                 log.error("relay push thread stopped: %s", type(e).__name__)
@@ -434,11 +464,16 @@ class PushThread:
         now = self._now()
         if self._stop.is_set():
             return 1.0
+        gen = self._session.gen
+        if gen != self._seen_gen:
+            if self._seen_gen is not None and self._off_until_ms:
+                self.reprobe()  # a new link (take-over, relink): probe now
+            self._seen_gen = gen
         if self._woken or now - self._last_plan_ms >= PLAN_EVERY_S * 1000 or self._last_plan_ms == 0:
             self._woken, self._last_plan_ms = False, now
             self._job(lambda: self.planner.run(self._now()))
         while self._job(lambda: seal_step(self, self._now())):
-            pass
+            pass  # until no planned row remains (a batch that was all dropped counts as handled)
         wait = PLAN_EVERY_S
         for it in self.ob.sealed():
             if self._stop.is_set():
@@ -494,7 +529,7 @@ class PushThread:
             return 1.0
         except (TransportError, RelayMisbehaving, SessionError) as e:
             return self._backoff(it, type(e).__name__, None)
-        self.state = "on"
+        self.state, self._off_until_ms, self._probe_ms = "on", 0, PROBE_FIRST_MS
         self.ob.sent(key, accepted, self._now())
         return None
 
@@ -506,10 +541,13 @@ class PushThread:
     def _refused(self, it: Intent, e: RelayRefused) -> float | None:
         if e.status == 404:
             self.state = "off_at_relay"
-            self._off_until_ms = self._now() + PROBE_EVERY_MS
-            n = self.ob.drop_open("off_at_relay")
-            log.info("relay push is off at this relay (404); %d intents dropped", n)
-            return None
+            self._off_until_ms = self._now() + self._probe_ms
+            self._probe_ms = min(self._probe_ms * 2, PROBE_EVERY_MS)
+            self.ob.retry(it.key, self._off_until_ms, "off_at_relay")  # kept: delayed until the next probe
+            log.info(
+                "relay push is off at this relay (404); next probe in %d s", (self._off_until_ms - self._now()) // 1000
+            )
+            return max(0.05, (self._off_until_ms - self._now()) / 1000)
         if e.status == 409 and e.code == "stale_epoch":
             n = self.ob.reseal(it.key, "stale_epoch")
             if n is not None and n > MAX_RESEALS:

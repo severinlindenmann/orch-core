@@ -199,7 +199,7 @@ class SettingsSet(Action):
     """`settings.set {set:{grant_hours?, claim_ttl_min?, lease_ttl_min?}}`; `repos` is refused (the Repos addon)."""
 
     action: Literal["settings_set"]
-    grant_hours: Annotated[int, Field(ge=1, le=24)] | None = None
+    grant_hours: Annotated[int, Field(ge=1, le=168)] | None = None  # core GRANT_MAX_HOURS (cross-checked by a test)
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
     #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
@@ -336,7 +336,7 @@ class RunnerGrant(Action):
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 
     action: Literal["runner_grant"]
-    hours: Annotated[int, Field(ge=1, le=12)] = 8
+    hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS; the host holds the workspace cap
     scope: Literal["all", "workable"] = "workable"
 
 
@@ -456,14 +456,14 @@ def expected(action: Action, person: str | None = None):
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
-            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (at most 12 h), and
+            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (at most 168 h; the host applies the setting), and
             # the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
             return lambda ev: (
                 one(ev, "grant.issued", label="runner", verbs="agent", hours=action.hours, scope=action.scope)
                 # Review I2: exactly the grant.issued payload (plus the envelope), nothing a future field could add.
                 and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and type(ev[0].get("hours")) is int
-                and 1 <= ev[0]["hours"] <= 12
+                and 1 <= ev[0]["hours"] <= 168
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"

@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch.model.types import GRANT_MAX_HOURS
+
 from .auth import Redactor
 from .custody import ensure_private_dir, read_json, write_private
 from .errors import HostError
@@ -54,8 +56,9 @@ LOG = logging.getLogger(__name__)
 GRANT_OPS: dict[str, int] = {"grant.deposit": 1, "grant.deposit_status": 1, "grant.forget": 1}
 #: a runner grant needs this much time left to be deposited (§12.4.2) or used for a launch
 MIN_LEFT = 15 * 60
-#: a runner grant lasts at most 12 hours (D-P2-27)
-MAX_HOURS = 12
+#: a runner grant lasts at most the workspace ``grant_hours`` setting, never more than this (D-P2-27, B8: was a fixed
+#: 12 hours). The model accepts an owner's longer grant regardless; this cap is host admission only
+MAX_HOURS = GRANT_MAX_HOURS
 FILE = "runner-grants.json"
 KEEP_DEPOSITS = 256
 WATCH_SECONDS = 1.0
@@ -485,8 +488,9 @@ def _deposit_plan(call: Call, hub: RunnerHub, deposit_id: str) -> dict[str, Any]
     if view.verbs != "agent":
         raise HostError("grant.verbs", 'a runner grant covers verbs "agent"')
     issued, expires = _epoch(view.issued_at), _epoch(view.expires_at)
-    if issued is None or expires is None or expires - issued > MAX_HOURS * 3600:
-        raise HostError("op.not_allowed", f"a runner grant lasts at most {MAX_HOURS} hours")
+    cap = min(service.store.state.workspace.settings["grant_hours"], MAX_HOURS)  # on the state read now (B8)
+    if issued is None or expires is None or expires - issued > cap * 3600:
+        raise HostError("op.not_allowed", f"a runner grant lasts at most {cap} hours (the workspace setting)")
     if expires - now < MIN_LEFT:
         raise HostError("grant.expiring", "the grant has less than 15 minutes left; issue a new one")
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:

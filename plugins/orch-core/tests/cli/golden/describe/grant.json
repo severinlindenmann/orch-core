@@ -7,7 +7,7 @@
     "cli": "orch grant",
     "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
     "who": "human",
-    "usage": "orch grant [--hours N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]",
+    "usage": "orch grant [--hours N] [--days N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]",
     "pre": [
       "workspace_exists",
       "role_allows",
@@ -23,10 +23,16 @@
       "properties": {
         "hours": {
           "type": "integer",
-          "description": "length in whole hours (1 to 24)",
+          "description": "length in whole hours (1 to 168)",
           "minimum": 1,
-          "maximum": 24,
-          "default": 8,
+          "maximum": 168,
+          "x-metavar": "N"
+        },
+        "days": {
+          "type": "integer",
+          "description": "length in whole days (1 to 7); instead of --hours",
+          "minimum": 1,
+          "maximum": 7,
           "x-metavar": "N"
         },
         "scope": {
@@ -51,7 +57,7 @@
         },
         "runner": {
           "type": "boolean",
-          "description": "hand the secret to the orch runner on this machine instead of showing it (label runner, 12 h max)"
+          "description": "hand the secret to the runner here instead of showing it (at most the grant_hours setting)"
         }
       },
       "required": [],

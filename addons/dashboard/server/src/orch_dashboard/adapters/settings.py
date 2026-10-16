@@ -18,7 +18,7 @@ from ..text import hidden
 from .shell import safe_name
 
 GATES = ("requirements", "plan", "verify", "code")
-DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
+DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")

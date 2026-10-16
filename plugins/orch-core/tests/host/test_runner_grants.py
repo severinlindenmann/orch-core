@@ -112,6 +112,20 @@ def test_only_a_runner_labelled_agent_grant_of_at_most_12_hours_can_be_deposited
     assert w.runner.grants.report() == []
 
 
+def test_the_runner_cap_is_the_workspace_setting_and_is_read_at_admission(ready):
+    """B8: min(grant_hours, 168), read on the state at deposit time (the model takes an owner's 168 h)."""
+    w = ready
+    c = w.conn()
+    w.person_event("settings.changed", **{"set": {"grant_hours": 168}})
+    week = issue(w, hours=168)
+    assert ok(deposit(c, week))["data"]["deposit"] == "confirmed"
+    day = issue(w, hours=24)
+    w.person_event("settings.changed", **{"set": {"grant_hours": 12}})  # lowered after the grant was issued
+    res = deposit(c, day)
+    assert err(res) == "op.not_allowed" and "12 hours" in str(res)  # existing grants stay valid; the runner refuses
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(week)]
+
+
 def test_a_grant_with_under_15_minutes_left_is_refused(ready):
     w = ready
     c = w.conn()

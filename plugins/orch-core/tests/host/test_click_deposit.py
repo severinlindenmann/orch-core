@@ -71,7 +71,8 @@ def test_deposit_needs_dashboard_execution_and_at_most_12_hours_and_no_other_lab
     served, click, _, _ = world
     refused(lambda: click.prepare("grant", {"hours": 8}, deposit=True), "human.click_refused", "terminal_only")
     execution(served)
-    refused(lambda: click.prepare("grant", {"hours": 13}, deposit=True), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("grant", {"hours": 169}, deposit=True), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("grant", {"hours": 9}, deposit=True), "invalid.input")  # B8: above the setting (8)
     for bad in ({"label": "mine"}, {"verbs": "log"}, {"hours": "8"}, {"extra": 1}):
         refused(lambda bad=bad: click.prepare("grant", {"hours": 8, **bad}, deposit=True), "invalid.input")
 
@@ -182,11 +183,11 @@ def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():
         views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "x", "hours": 8,
                                                          "verbs": "agent"}]})  # fmt: skip
     assert getattr(e.value, "reason", None) == "terminal_only"
-    for bad in ({"hours": 13}, {"verbs": ["log"]}, {"label": None}):
+    for bad in ({"hours": 169}, {"verbs": ["log"]}, {"label": None}):
         ev = {"type": "grant.issued", "label": "runner", "hours": 8, "verbs": "agent", **bad}
         with pytest.raises(ClickError):
             views.deposit_checks({"op": "grant", "events": [ev]})
-    views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 12,
+    views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 168,
                                                      "verbs": "agent"}]})  # fmt: skip
 
 

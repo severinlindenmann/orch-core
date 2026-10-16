@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from orch.identity import new_grant, new_ulid
+from orch.model.types import GRANT_MAX_HOURS
 from orch.ops import human
 from orch.ops._dsl import STR, B, E, I, S, err, obj, operation
 from orch.ops.base import Context, Result
@@ -32,14 +33,25 @@ def _verbs(raw: str) -> str | list[str]:
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The grant secret is made here, hashed into the event, and shown once on the person's own terminal after the
     append. It is in no result, no record, no log and no file; only ``secret_hash`` is stored (F1 10.1, N4)."""
-    hours = args.get("hours", 8)
+    if args.get("days") is not None:  # B8: --days N is 24 N hours
+        if args.get("hours") is not None:
+            raise OrchError("invalid.input", "--days and --hours are alternatives; give one")
+        hours = args["days"] * 24
+    else:
+        hours = args.get("hours", 8)
+    if not 1 <= hours <= GRANT_MAX_HOURS:
+        raise OrchError("invalid.input", f"a grant lasts 1 to {GRANT_MAX_HOURS} hours (7 days)")
+    h = Human(ctx, "grant")
     if args.get("runner"):  # H11c (D-P2-27): a runner grant, handed to the orch runner instead of being printed
         if ctx.prepare is None:
             raise OrchError("invalid.input", "--runner hands the grant to the orch runner, which needs the orch host")
-        if hours > 12 or args.get("verbs", "agent") != "agent" or args.get("label", "runner") != "runner":
-            raise OrchError("invalid.input", "a runner grant lasts at most 12 hours, covers verbs agent, label runner")
+        cap = min(h.store.state.workspace.settings["grant_hours"], GRANT_MAX_HOURS)
+        if hours > cap or args.get("verbs", "agent") != "agent" or args.get("label", "runner") != "runner":
+            raise OrchError(
+                "invalid.input",
+                f"a runner grant lasts at most {cap} hours (the workspace setting), verbs agent, label runner",
+            )
         args = {**args, "label": "runner"}
-    h = Human(ctx, "grant")
     issued = ctx.now()
     if ctx.prepare is not None:  # human.prepare: the signing client draws the secret, never the preparer (F1, D-P2-16)
         grant_id, value, secret_hash = "gr_" + new_ulid(int(issued * 1000)), None, None
@@ -103,12 +115,13 @@ OP = operation(
     "Issue a standing grant for agents; the secret is printed once, on your terminal.",
     who="human",
     props={
-        "hours": I("length in whole hours (1 to 24)", minimum=1, maximum=24, default=8, **{"x-metavar": "N"}),
+        "hours": I("length in whole hours (1 to 168)", minimum=1, maximum=GRANT_MAX_HOURS, **{"x-metavar": "N"}),
+        "days": I("length in whole days (1 to 7); instead of --hours", minimum=1, maximum=7, **{"x-metavar": "N"}),
         "scope": E("what it covers", "all", "workable", default="workable"),
         "verbs": S("agent, or operation names comma separated", default="agent", **{"x-metavar": "VERBS"}),
         "label": S("short label", **{"x-metavar": "TEXT"}),
         "runner": B(
-            "hand the secret to the orch runner on this machine instead of showing it (label runner, 12 h max)"
+            "hand the secret to the runner here instead of showing it (at most the grant_hours setting)"
         ),
     },
     pre=("workspace_exists", "role_allows", "user_presence", "text_clean"),

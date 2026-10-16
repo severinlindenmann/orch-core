@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets as _secrets
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -9,10 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from . import facts as facts_mod
+from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
 from .steps import Secrets
 
 __all__ = ["Env", "SetupFlow"]
+
+
+def _builtin_manifest(name: str) -> bytes:
+    from orch.addons import builtin
+
+    return builtin.manifest_bytes(name)
 
 
 @dataclass
@@ -33,8 +41,16 @@ class Env:
     relay: Callable[[], dict[str, bool]] = lambda: {"available": False, "enabled": False}
     #: name/prefix check for reserved prefixes (SBX): raises an OrchError-like on refusal
     reserved: Callable[[Path, str, str], None] = lambda root, prefix, name: None
+    #: the bytes of a built-in add-on's manifest (the same bytes `orch addon manifest` writes)
+    manifest_bytes: Callable[[str], bytes] = lambda name: _builtin_manifest(name)
     #: Finish setup: the facts of the registered workspace (read inside store.locked())
     read_facts: Callable[[Any], facts_mod.Facts] | None = None
+
+
+@dataclass
+class _Review:
+    id: str
+    plan: review_mod.Plan
 
 
 class SetupFlow:
@@ -105,6 +121,7 @@ class SetupFlow:
             ("POST", "profile"): self._post_profile,
             ("POST", "secrets/reveal"): self._reveal,
             ("POST", "secrets/confirm"): self._confirm,
+            ("POST", "review"): self._post_review,
             ("POST", "cancel"): self._cancel,
         }
 
@@ -194,6 +211,23 @@ class SetupFlow:
                 self._drop_secrets()
             self.phase = "secrets" if not (self.secrets and self.secrets.confirmed) else "review"
         return {"ok": True}
+
+    # -- review (R1): rendered in core from the profile; the digest binds what `create` may run
+    def _post_review(self, _body: Any) -> dict[str, Any]:
+        if self.profile is None or self.phase != "review":
+            raise SetupError("setup.phase", "the review comes after the profile and the secrets", 409)
+        if self.mode == "new" and not (self.secrets and self.secrets.confirmed):
+            raise SetupError("secrets.not_confirmed", "confirm the recovery code first", 409)
+        missing = None
+        if self.mode == "finish":
+            assert self.facts is not None
+            missing = facts_mod.missing_items(self.facts, self.profile, self.addons)
+        plan = review_mod.plan(
+            self.profile, self.dir, self.addons, self.facts, manifest_bytes=self.e.manifest_bytes, missing=missing
+        )
+        rid = "rv_" + _secrets.token_hex(8)
+        self.review = _Review(rid, plan)
+        return plan.view(rid)
 
     # -- secrets
     def _reveal(self, _body: Any) -> dict[str, Any]:

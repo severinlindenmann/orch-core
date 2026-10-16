@@ -24,9 +24,9 @@ running as root, under ``ORCH_GRANT``, with a host already listening on the root
 prevention, not containment**: same-UID code can forge it.
 
 ``ask`` and ``check-answer`` are the end-to-end helpers (batch B3): ``ask`` plays the agent in a running sandbox (the
-host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and a free-text ``orch ask``) and
+host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and an ``orch ask`` with the one option ``e2e_ok_<N>``) and
 prints ``{"ticket", "question", "nonce"}``; ``check-answer`` reads the sandbox workspace's own event logs until a
-``question.answered`` with the text ``e2e-ok-<N>`` for that question, signed by a paired device that is neither the
+``question.answered`` with the option ``e2e_ok_<N>`` for that question, signed by a paired device that is neither the
 owner's nor the primary's. Both print JSON on stdout and never a secret (the grant stays in this process).
 
 The owner's side (account, primary certificate, cert-request queue) and the reference phone are the test tree's
@@ -1333,7 +1333,7 @@ def up(args: argparse.Namespace) -> int:
 
 # -- ask / check-answer (the end-to-end helpers; the pure parts are unit-tested) ---------------------------------------
 
-NONCE = re.compile(r"[A-Za-z0-9]{4,32}")
+NONCE = re.compile(r"[a-z0-9]{4,32}")
 _ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _GRANT = re.compile(r"ORCH_GRANT=(\S+)")
 _QID = re.compile(r"Q[0-9]+")
@@ -1341,7 +1341,7 @@ _QID = re.compile(r"Q[0-9]+")
 
 def check_nonce(nonce: str) -> str:
     if type(nonce) is not str or not NONCE.fullmatch(nonce):
-        raise Refused("--nonce: 4 to 32 letters or digits")
+        raise Refused("--nonce: 4 to 32 lowercase letters or digits")
     return nonce
 
 
@@ -1357,9 +1357,14 @@ def parse_grant(transcript: bytes | bytearray | str) -> str | None:
     return m.group(1) if m else None
 
 
+def answer_key(nonce: str) -> str:
+    """The one option of the question (a token: lowercase, digits, underscores; the phone taps it)."""
+    return f"e2e_ok_{nonce}"
+
+
 def asked_text(nonce: str) -> str:
     """The free-text question the phone looks for: it contains the nonce."""
-    return f"e2e {nonce}: type the answer e2e-ok-{nonce}"
+    return f"e2e {nonce}: pick {answer_key(nonce)}"
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -1401,13 +1406,24 @@ def find_question(ticket_events: Sequence[Mapping[str, Any]], nonce: str) -> str
 def find_answer(
     ticket_events: Sequence[Mapping[str, Any]], qid: str, nonce: str, phones: set[str]
 ) -> dict[str, Any] | None:
-    """The ``question.answered`` for ``qid`` whose text is ``e2e-ok-<nonce>`` and whose actor is a person signing with
+    """The ``question.answered`` for ``qid`` whose option is ``e2e_ok_<nonce>`` and whose actor is a person signing with
     one of the paired ``phones`` (never the owner's or the primary's device), or ``None``."""
     for e in ticket_events:
         a = e.get("actor") or {}
-        if (e.get("type") == "question.answered" and e.get("question") == qid and e.get("text") == f"e2e-ok-{nonce}"
-                and a.get("kind") == "person" and a.get("device") in phones):  # fmt: skip
-            return {"question": qid, "text": e["text"], "device": a["device"], "person": a.get("id"), "at": e.get("at")}
+        if (
+            e.get("type") == "question.answered"
+            and e.get("question") == qid
+            and answer_key(nonce) in (e.get("option"), e.get("text"))
+            and a.get("kind") == "person"
+            and a.get("device") in phones
+        ):
+            return {
+                "question": qid,
+                "option": answer_key(nonce),
+                "device": a["device"],
+                "person": a.get("id"),
+                "at": e.get("at"),
+            }
     return None
 
 
@@ -1479,7 +1495,10 @@ def _agent(ctx: Ctx, grant: str, session: str, *argv: str) -> dict[str, Any]:
         doc = {}
     if r.returncode != 0 or not isinstance(doc, dict) or not doc.get("ok"):
         code = ((doc.get("error") or {}).get("code") if isinstance(doc, dict) else None) or ""
-        raise Refused(f"orch {argv[0]} failed (exit {r.returncode}{', ' + code if code else ''})")
+        msg = re.sub(
+            r"[^\x20-\x7e]", "?", str((doc.get("error") or {}).get("message", "")) if isinstance(doc, dict) else ""
+        )
+        raise Refused(f"orch {argv[0]} failed (exit {r.returncode}{', ' + code if code else ''}): {msg[:160]}")
     return doc
 
 
@@ -1501,7 +1520,19 @@ def ask(args: argparse.Namespace) -> int:
         key = made.get("key")
         if not isinstance(key, str):
             raise Refused("orch new returned no ticket key")
-        asked = _agent(ctx, grant, session, "ask", asked_text(nonce), "--ref", key)
+        asked = _agent(
+            ctx,
+            grant,
+            session,
+            "ask",
+            asked_text(nonce),
+            "--ref",
+            key,
+            "--options",
+            answer_key(nonce),
+            "--rec",
+            answer_key(nonce),
+        )
         m = _QID.search(json.dumps(asked.get("data", {})))
         if m is None:
             raise Refused("orch ask returned no question id")

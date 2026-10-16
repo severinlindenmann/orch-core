@@ -25,8 +25,11 @@ def asked(text=f"e2e {N}: type the answer e2e-ok-{N}", qid="Q1"):
               actor={"kind": "agent", "id": "orch-cli"})  # fmt: skip
 
 
-def answered(device=PHONE, text=f"e2e-ok-{N}", qid="Q1"):
-    return ev("question.answered", question=qid, text=text, actor=person(device), at="2026-10-16T10:00:00Z")
+def answered(device=PHONE, option=f"e2e_ok_{N}", qid="Q1", text=None):
+    extra = {} if text is None else {"text": text}
+    return ev(
+        "question.answered", question=qid, option=option, actor=person(device), at="2026-10-16T10:00:00Z", **extra
+    )
 
 
 WS = [
@@ -36,12 +39,12 @@ WS = [
 ]
 
 
-@pytest.mark.parametrize("n", ["ab12cd34", "A1b2", "x" * 32])
+@pytest.mark.parametrize("n", ["ab12cd34", "x" * 32])
 def test_nonce_accepts(dp, n):
     assert dp.check_nonce(n) == n
 
 
-@pytest.mark.parametrize("n", ["", "abc", "a b c d", "x" * 33, "a;rm", "é" * 5, None, 5])
+@pytest.mark.parametrize("n", ["", "A1b2cd", "abc", "a b c d", "x" * 33, "a;rm", "é" * 5, None, 5])
 def test_nonce_refuses(dp, n):
     with pytest.raises(dp.Refused):
         dp.check_nonce(n)
@@ -83,17 +86,18 @@ def test_find_question_by_nonce(dp):
         (answered(device=PRIMARY), False),  # the primary's own signature is not the phone's
         (answered(device=OWNER), False),
         (answered(device="d_" + "9" * 32), False),  # a device that was never added
-        (answered(text="e2e-ok-other"), False),
-        (answered(text=None), False),
+        (answered(option="e2e_ok_other"), False),
+        (answered(option=None, text=f"e2e_ok_{N}"), True),
+        (answered(option=None), False),
         (answered(qid="Q2"), False),
-        (ev("question.answered", question="Q1", text=f"e2e-ok-{N}", actor={"kind": "agent", "id": "x"}), False),
+        (ev("question.answered", question="Q1", text=f"e2e_ok_{N}", actor={"kind": "agent", "id": "x"}), False),
     ],
 )
 def test_find_answer(dp, event, found):
     hit = dp.find_answer([asked(), event], "Q1", N, {PHONE})
     assert (hit is not None) is found
     if found:
-        assert hit["device"] == PHONE and hit["text"] == f"e2e-ok-{N}"
+        assert hit["device"] == PHONE and hit["option"] == f"e2e_ok_{N}"
 
 
 def write_log(path, events):

@@ -57,6 +57,14 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("sessions.py", "record"): (2, "R records no session (G only)"),
     ("terms.py", "serve"): (1, "unreachable (term.* are not R ops)"),
     ("runnergrants.py", "_deposit_plan"): (2, "unreachable (grant.deposit is no R op; G only)"),
+    ("phonehints.py", "serve"): (
+        2,
+        "unreachable (phone.request and phone.cancel are not R ops): refused unless column P",
+    ),
+    ("reads_phone.py", "_person"): (
+        4,
+        "R as P for phone.requests only (the viewer's own open hints); phone.status is column P only",
+    ),
     ("visibility.py", "Viewer.manager"): (1, "R as P: an owner's or maintainer's device is a manager"),
     ("visibility.py", "Viewer.needs_person"): (2, "R as P: its own person, another one only as an owner"),
     ("visibility.py", "Viewer.of"): (3, "R as P: owner and role from the device's person"),

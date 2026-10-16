@@ -4445,6 +4445,14 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     first: refused up front, naming the devices, while a reader is below level 1 (the B9 setup profile does the same
     when B9 lands). No wire, hash, F1 or schema change; no new error code (the reason `pair_device` is no longer emitted).
 
+75. **B10 Part B: approve requirements and plan on the phone (phase 1; owner decision F of 16 Oct 2026; §11A.15.24):**
+    unsigned host-local hints (`phone.request`, `phone.cancel`, `phone.status`, column P only; derived state; 10 minutes;
+    one open per gate, 5 per person), the column-R reads `phone.requests` and `gate.input`, the relay write ops `approve`
+    and `changes` (`gate.approved` / `gate.changes_requested`, scope `decide`; gates `requirements` and `plan` only, `op.not_allowed`
+    for the rest), `gate.stale` as retry class `C-review`, the push kind `ticket.update` (a generic wake with the hint's id, no ticket text).
+    No F1, hash or error-code change; the model judges the phone's decision as any person event (device validity and
+    generation at the append).
+
 ---
 
 ## 1. Process model
@@ -10145,6 +10153,61 @@ relay (no manifest, no dev-pair, no `owner.py`): `orch init`, host, account, lin
 three times (rejection, the phone is refused), a kill at the recovery prompt then `--resume` to `approved` with the phone's
 column-R read, a wrong recovery code three times (nothing signed, offer cancelled), and the 409 join of a second
 install. The run takes about 20 s.
+
+#### 11A.15.24 As built in B10 Part B (17 Oct 2026; approve requirements and plan on the phone, phase 1)
+
+Wire contract of record: the phone (orch-mobile) and the dashboard code against this section. Phase 1 covers the gates
+`requirements` and `plan`; `code` and `verdict.given` (they carry the host-stamped `source_sha`) are phase 2.
+
+- **The hint** (`orch.host.phonehints`). A host-local, UNSIGNED note "this person was asked, from the Mac, to decide
+  this gate at this generation". It is not in the log and carries no authority: a phone signs a normal device-signed
+  event that the model judges as any other. Stored in `<state>/hosts/<ws>/phone-hints.json` (0600):
+  `{id "ph_<ULID>", n, person, uid, gate, gate_gen, base_seq, created, expires (created + 600 s), cancelled}`. The state a
+  reader sees, `open | done | cancelled | expired | stale`, is DERIVED from the log on every read: `done` is a decision of
+  the same person on that gate at that generation appended after the hint (any device, any way), so a signature already in
+  flight still lands after a cancel or an expiry. An unreadable or unparsable file is an error, never an empty list.
+- **Ops for the person at the Mac** (column P only; `person_write` / `person_read`, so a grant (ORCH_GRANT) and no-person
+  get `op.not_allowed`). `phone.request {ref, gate, gate_gen}` (an idem, as every host write): `gate` is `requirements` or
+  `plan` (`invalid.input`), the ticket is visible, the gate applies, the caller may decide it (`gate.not_eligible`),
+  `gate_gen` is current (`gate.stale`), `sign_methods` allows `phone` (`op.not_allowed`), fewer than 5 other open hints
+  (`rate.limited`); one open hint per (ticket, gate, person): the same generation answers the existing hint with
+  `duplicate: true`, another generation makes the old one `stale` and a new one. Result: `{id, ref, uid, gate, gate_gen,
+  created_at, expires_at, state, duplicate, phones}`; `phones` counts the person's current devices whose certificate is
+  look + decide only (the phone profile). `phone.cancel {id}`, `phone.status {id?}`. The dashboard learns the outcome from
+  its `ticket:<ref>` subscription and `phone.status` (`outcome {kind, seq, event_id, at}`).
+- **Column R reads** (scope `look`; added to `RELAY_OPS` and the closed table `OPS`). `phone.requests {}`: the viewer's own
+  open hints on tickets the viewer may see, `{requests:[{id, uid, ref, title, gate, gate_gen, created_at, expires_at}],
+  now}`; `ref`, `title` and `gate_gen` are the host's word. `gate.input {ref, gate}` (columns P and R): `{ref (uid), gate,
+  gen, hash, policy_hash, input}` with `input` the gate-hash input G (ticket format 5.7) exactly as the host hashes it.
+  The phone recomputes `section_hash` of each section text of `ticket.get` against `G.sections`, then `gate_hash(G)`
+  against `hash`; a mismatch is not signed. G holds `uid` and `workspace_id`, so the hash covers the ticket identity (two
+  tickets with the same text hash differently) and a hint cannot redirect a signature to another ticket.
+- **Signing** (relay ops `approve` -> `gate.approved`, `changes` -> `gate.changes_requested`, scope `decide`, idem = event
+  id). The phone builds the event itself: `{v 2, id, type, actor, auth "secure-enclave-unlocked", hash_v 1, roster_v,
+  based_on (ticket.get doc.head.head), gate, gate_gen, hash, policy_hash [, text]}`, no `source_sha`, no host-stamped
+  field. Refusals, in order: the lock-free P1 to P7 (`op.not_allowed` for any gate but `requirements` or `plan`, checked
+  again under the store lock so a recovered write meets it, and for `auth: convenience`; `validation.event` for a
+  `source_sha`); then the model at the append: `device.invalid` (the signing device removed, revoked or expired AT THE
+  APPEND: a signature made before a revoke and submitted after is refused), `gate.stale` (`gate_gen`, `policy_hash` or
+  `hash` not current; a gate that moved to g+1 refuses an event held at g even when the content hash has since reverted),
+  `gate.not_eligible`, `gate.not_applicable`, `gate.no_eligible`, `gate.status`, `gate.incomplete`, `members.stale`
+  (C-auto), `event.bad_base`. `gate.stale` is a new entry of `RETRY`: `C-review` (re-open, re-review, re-sign). The dev
+  gate's convenience answer stays `question.answered` only. `whoami.relay.ops` lists `answer`, `approve`, `changes`,
+  `new_ticket`; the R2 vectors carry the four new cases.
+- **Push** (kind `ticket.update`, a protocol kind the host now seals, added to `HOST_PUSH_KINDS`; the phone's set is closed, so no
+  new kind). The planner reads the hint file through
+  a cursor `phone.hint` (the hint counter) and plans one intent per new open hint, narrowed to the hint's person and
+  the ticket's visibility, deadline = the hint's expiry. The sealed payload is exactly `{kind "ticket.update", id "ph_<ULID>",
+  label "Needs your approval" padded to 80 code points, ts_ms}`: no ref, gate, title or count. The existing budgets apply
+  (one per id per 60 s, 6 per 10 min per device). The push is a wake; `phone.requests` is the truth.
+- **Labelling for the phone** (normative, wording only): ticket key, title, `gate_gen`, the approver and policy summary
+  and the request origin are "per host, not signed"; the origin line is "Requested from your Mac (not verified)". Sections,
+  acceptance and tasks are shown as content because the phone checked their hashes; any non-empty key of G outside
+  `sections`, `fields.ticket_type|size|acceptance`, `tasks` sends the phone to the full review. No strength wording
+  ("secure", "safe", "verified by Face ID"). The phone shows no `auth` label on decisions in phase 1
+  (`READER_VIEWS_1` covers answers only).
+- **Not built (follow-ups):** an unsent push is not withdrawn when its hint is cancelled (the phone's list is the
+  truth); a CLI wrapper of `phone.request`; `code` and `verdict.given` (phase 2); a mobile e2e through a real relay.
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

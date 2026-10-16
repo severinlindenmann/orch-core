@@ -7,8 +7,8 @@ At step 9 the CLI attached to the offer (or ``orch sign CODE`` for a dashboard-c
    as ``WorkspaceService.pair_device``) for the offer's verified facts (:meth:`PairDeviceSource.facts`), builds
    ``device.added {device, cert}`` and the material of kind ``relay.pair_device`` from them
    (:mod:`orch.identity.pairdevice`), admits the phone's pair declaration as its reader (``source:"pair"``) and judges
-   the event with the model. ``auth:"convenience"`` is allowed (B10: WORD class, the typed word; the flag and the readers rule
-   still apply through ``convenience.check`` and invariant I).
+   the event with the model. ``auth:"convenience"`` is allowed (B10: WORD class, the typed word; the flag and the
+   readers rule still apply through ``convenience.check`` and invariant I).
 2. The terminal signer checks and renders the material (:func:`orch.host.signer.check`, :func:`render`), the person
    types the confirmation word (the device id's last eight hex), and the device key signs.
 3. ``human.submit``. Under the store lock, in the one critical section of the append choke point

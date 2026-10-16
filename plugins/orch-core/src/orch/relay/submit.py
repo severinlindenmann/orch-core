@@ -39,7 +39,19 @@ from orch.canon.hashing import HashError
 from .framing import OPS, Identity, Refusal
 from .rids import Rid, RidStore
 
-__all__ = ["AUTH", "EVENTS", "check_events", "check_schema", "make_relay_fields", "recover", "recover_one", "result"]
+__all__ = [
+    "AUTH",
+    "EVENTS",
+    "GATE_TYPES",
+    "PHASE1_GATES",
+    "check_events",
+    "check_phase1",
+    "check_schema",
+    "make_relay_fields",
+    "recover",
+    "recover_one",
+    "result",
+]
 
 log = logging.getLogger("orch.relay.submit")
 
@@ -47,7 +59,13 @@ log = logging.getLogger("orch.relay.submit")
 EVENTS: Mapping[str, tuple[str, str]] = {
     "new_ticket": ("ticket.created", "decide"),
     "answer": ("question.answered", "decide"),
+    "approve": ("gate.approved", "decide"),
+    "changes": ("gate.changes_requested", "decide"),
 }
+#: B10 Part B phase 1: the gates a phone may decide. ``code`` and ``verdict.given`` carry the host-stamped
+#: ``source_sha`` (phase 2); a gate decision on any other gate is ``op.not_allowed`` here and again at the host.
+PHASE1_GATES = frozenset({"requirements", "plan"})
+GATE_TYPES = frozenset({"gate.approved", "gate.changes_requested"})
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _HOST_FIELDS = frozenset({"seq", "at", "prev", "ws_seq", "host_sig", "source_sha"})
 #: P3: the host stamp a submitted event is probed with (never sent, never stored): the schema checks the rest
@@ -92,6 +110,7 @@ def check_events(
     if ev.get("type") != table[0]:
         raise Refusal("forbidden_scope")
     check_schema(ev)
+    check_phase1(ev)
     if ev.get("actor") != {"kind": "person", "id": identity.person_id, "device": identity.device_id}:
         raise Refusal("op.not_allowed")
     auth = ev.get("auth")
@@ -116,6 +135,13 @@ def check_events(
     if not crypto.verify(dk_sig_pub, sig, signed):
         raise Refusal("sig.invalid")
     return log_id, [dict(ev)]
+
+
+def check_phase1(ev: Mapping[str, Any]) -> None:
+    """B10 Part B phase 1: a gate decision is for ``requirements`` and ``plan`` only (``op.not_allowed``). Called by
+    :func:`check_events` and again by the host inside the store lock, so a recovered write meets it too."""
+    if ev.get("type") in GATE_TYPES and ev.get("gate") not in PHASE1_GATES:
+        raise Refusal("op.not_allowed")
 
 
 def _verified(ev: Mapping[str, Any], identity: Identity, log_id: str, dk_sig_pub: bytes) -> bool:

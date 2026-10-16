@@ -55,6 +55,9 @@ class Killed(BaseException):  # noqa: N818 - a BaseException so the pty driver k
 class Responder:
     pattern: re.Pattern[str]
     fn: Callable[[re.Match[str]], str | None]
+    #: the answer goes out only after the prompt has been the last output for this long: the review prompt flushes the
+    #: terminal's input right after it writes the prompt (`tcflush`, on purpose), so an answer sent at once is dropped
+    quiet: float = 0.0
 
 
 def run_pty(
@@ -90,6 +93,7 @@ def run_pty(
     os.close(slave)
     buf = bytearray()
     scan = 0
+    last_output = time.monotonic()
     end = time.monotonic() + timeout
     status = None
     try:
@@ -104,6 +108,8 @@ def run_pty(
                             raise
                         data = b""
                     buf += data
+                    if data:
+                        last_output = time.monotonic()
                     if observe is not None and data:
                         observe(ANSI.sub("", data.decode("utf-8", "replace")).replace("\r", ""))
                 elif on_watch is not None:
@@ -112,6 +118,8 @@ def run_pty(
             for r in responders() if callable(responders) else responders:
                 m = re.search(r.pattern.pattern + r"\Z", tail, r.pattern.flags)
                 if m is not None:
+                    if time.monotonic() - last_output < r.quiet:
+                        break  # the prompt is on screen, but the program may not be reading yet: look again
                     reply = r.fn(m)
                     if reply is not None:
                         os.write(master, reply.encode() + b"\n")
@@ -200,7 +208,8 @@ class Install:
     def review(self) -> Responder:
         return Responder(
             re.compile(r"Type (\S+) and Enter to continue to the passphrase; anything else stops: "),
-            lambda m: m.group(1),  # the pattern is the whole prompt line: the answer goes out when it is complete
+            lambda m: m.group(1),
+            quiet=0.3,
         )
 
     def passphrases(self, primary: str | None = None) -> list[Responder]:

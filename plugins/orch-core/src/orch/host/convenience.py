@@ -104,11 +104,26 @@ def _methods(service: Any) -> Any:
     return service.store.state.workspace.settings.get("sign_methods")
 
 
+def _click_custody(service: Any) -> bool:
+    """B6 (Opus round 2): one-click signing is possible here when the flag is on OR the person's key still sits in
+    convenience custody (the dashboard's "Turn off" leaves it there). Fails closed: an unreadable selection counts."""
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+        return True
+    from orch.custody import select
+
+    try:
+        sel = select.read_selection(service.state_dir, service.workspace_id)
+    except Exception:  # noqa: BLE001 - fail closed on an unreadable or invalid selection
+        return True
+    # a custody transition in progress (either direction) counts too: the convenience copy may already exist
+    return sel is not None and (sel.get("custody") == "convenience" or sel.get("transition") is not None)
+
+
 def refuse_click_removal(service: Any, op: str, events: list[dict[str, Any]]) -> None:
     """B6 (Opus round 1, HIGH-2): a ``settings.set`` that takes ``click`` out of ``sign_methods`` is refused while
     click-to-sign is on here: the owner's key is in convenience custody and the terminal path is closed (one signing
     path per workspace), so the change would lock the honest signer out. The fix is named."""
-    if op != "settings.set" or not enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if op != "settings.set" or not _click_custody(service):
         return
     for ev in events:
         methods = (ev.get("set") or {}).get("sign_methods")
@@ -128,11 +143,7 @@ def refuse_excluded_click_custody(service: Any) -> HostError | None:
     lands from this machine's person path while the workspace's ``sign_methods`` leaves ``click`` out. The custody
     decides, not the self-declared label. (With the flag off, only the key's own custody protects it: see §0.8.6.)"""
     methods = _methods(service)
-    if (
-        methods is not None
-        and "click" not in methods
-        and enabled(service.state_dir, service.workspace_id, service.host_uid)
-    ):
+    if methods is not None and "click" not in methods and _click_custody(service):
         return unavailable("disabled", [])
     return None
 

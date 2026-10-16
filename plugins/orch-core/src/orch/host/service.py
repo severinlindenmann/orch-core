@@ -55,6 +55,17 @@ from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, WorkspaceGate, WorkspaceService
 
+
+def _release_id() -> str:
+    """The digest of this host's code (B5b): the CLI warns when it differs from its own."""
+    from .release import code_digest
+
+    try:
+        return code_digest()
+    except OSError:
+        return "unknown"
+
+
 LOG = logging.getLogger(__name__)
 #: how often retention runs in a host that stays up (§0.7)
 SWEEP_SECONDS = 3600.0
@@ -418,6 +429,7 @@ class Host:
         welcome = {
             "host": HOST_NAME,
             "workspace": {"id": entry.workspace_id, "prefix": entry.prefix[:10] or "?"},
+            "release": _release_id(),
             "tier": entry.tier,
             "caps": list(backend.caps),
             "ops": dict(backend.ops),

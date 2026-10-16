@@ -1,6 +1,6 @@
 """``orch runner …``: the machine switch, the runner service and the runner process itself.
 
-* ``orch runner enable --workspace W [--no-terminals] [--dev] [--replace]`` (person, own terminal only): shows the
+* ``orch runner enable [--workspace W] [--no-terminals] [--dev] [--replace]`` (person, own terminal only): shows the
   risk, requires typing the workspace prefix, records the switch (D-P2-31) and installs and starts the runner unit
   (D-P2-24) like ``orch host enable``.
 * ``orch runner disable --workspace W``: switches dashboard execution off (the service stays; it starts nothing for
@@ -61,18 +61,18 @@ def _parser() -> argparse.ArgumentParser:
             "and drop ORCH_GRANT, so it can turn this on too."
         ),
     )
-    en.add_argument("--workspace", required=True, help="workspace id or prefix")
+    en.add_argument("--workspace", help="workspace id or prefix (default: the workspace of the current directory)")
     en.add_argument("--no-terminals", action="store_true", help="hide terminals (does not make agents safe)")
     en.add_argument("--replace", action="store_true", help="replace a runner service installed for another setup")
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
     en.add_argument("--state", type=Path)
     en.add_argument("--run", type=Path)
     dis = sub.add_parser("disable", help="turn dashboard execution off for a workspace")
-    dis.add_argument("--workspace", required=True)
+    dis.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
     dis.add_argument("--state", type=Path)
     term = sub.add_parser("terminals", help="turn terminals on or off for a workspace with dashboard execution on")
     term.add_argument("switch", choices=["on", "off"])
-    term.add_argument("--workspace", required=True)
+    term.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
     term.add_argument("--state", type=Path)
     st = sub.add_parser("status")
     st.add_argument("--state", type=Path)
@@ -100,10 +100,24 @@ def _state(given: Path | None, env: Mapping[str, str]) -> Path:
     return given.resolve() if given is not None else state_dir(env)
 
 
-def _workspace(state: Path, uid: int, wanted: str) -> tuple[str, str]:
+def _cwd_workspace_id(env: Mapping[str, str]) -> str:
+    """The id of the workspace the current directory (or ``ORCH_WORKSPACE``) is in, as every other command finds it."""
+    from orch import discovery
+
+    explicit = env.get("ORCH_WORKSPACE")
+    found = discovery.locate(explicit or os.getcwd(), explicit=bool(explicit), v1=False)
+    wid = ((found.config if found is not None else None) or {}).get("workspace", {}).get("id")
+    if not isinstance(wid, str):
+        raise HostError("invalid.input", "name the workspace (--workspace ID or PREFIX): this directory is in none")
+    return wid
+
+
+def _workspace(state: Path, uid: int, wanted: str | None, env: Mapping[str, str] | None = None) -> tuple[str, str]:
     from orch.host.custody import read_json
     from orch.host.registry import registry_path
 
+    if wanted is None:
+        wanted = _cwd_workspace_id(os.environ if env is None else env)
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
     match = [w for w in reg.get("workspaces") or [] if wanted in (w.get("workspace_id"), w.get("prefix"))]
     if len(match) != 1:
@@ -131,7 +145,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
         return _fail("human_only", "dashboard execution is a person's decision; an agent never turns it on", 3)
     uid = os.getuid()
     state = _state(args.state, env)
-    wid, prefix = _workspace(state, uid, args.workspace)
+    wid, prefix = _workspace(state, uid, args.workspace, env)
     run_dir = svc.run_dir_for(state, args.run, env)
     try:
         unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
@@ -205,7 +219,7 @@ def terminals(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any
         return _fail("human_only", "terminals are a person's decision; an agent never turns them on", 3)
     uid = os.getuid()
     state = _state(args.state, env)
-    wid, prefix = _workspace(state, uid, args.workspace)
+    wid, prefix = _workspace(state, uid, args.workspace, env)
     on = args.switch == "on"
     text = ""
     if on:
@@ -298,7 +312,7 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return 0 if doc.get("ok") else int(doc.get("exit", 1))
         if args.cmd == "disable":
             state = _state(args.state, env)
-            wid, _ = _workspace(state, os.getuid(), args.workspace)
+            wid, _ = _workspace(state, os.getuid(), args.workspace, env)
             enablement.set_enabled(state, wid, False, os.getuid())
             _write(out, {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}})
             return 0

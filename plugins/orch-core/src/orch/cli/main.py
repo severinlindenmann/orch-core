@@ -257,7 +257,10 @@ def main(
         from orch.cli.dashboard import main as dashboard_main
 
         return dashboard_main(args[1:], env=env, err=err)
-    if args[:2] == ["addon", "manifest"]:  # the manifests shipped in the package (orch.addons.builtin): offline, no store
+    if args[:2] == [
+        "addon",
+        "manifest",
+    ]:  # the manifests shipped in the package (orch.addons.builtin): offline, no store
         from orch.addons.builtin import main as manifest_main
 
         return manifest_main(args[2:], out=out, err=err)
@@ -359,7 +362,12 @@ def main(
         target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
         if target is not None:
             hosted = True
-            res = run_hosted(parsed, ctx, target)
+            hostclient.forget_host()
+            try:
+                res = run_hosted(parsed, ctx, target)
+            finally:
+                if (stale := hostclient.stale_host_warning()) is not None:
+                    err.write(stale + "\n")
         else:
             res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent

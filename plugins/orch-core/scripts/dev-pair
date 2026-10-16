@@ -834,13 +834,13 @@ def step_init(ctx: Ctx, prefix: str, name: str) -> None:
     code confirmed with three of its words; both kept in ``secrets/`` (0600), the transcript never shown."""
     state: dict[str, Any] = {"passphrase": None, "code": None}
     phrase = re.compile(r"Your generated passphrase:\s*\n\s*\n\s+(.+?)\s*\n")
-    code_re = re.compile(r"shown now, once\.\s*\n\s*\n((?:[a-z]+ ){23}[a-z]+)\s*\n")
+    code_re = re.compile(r"shown now, once\.\s*\n\s*\n((?: *\d+ [a-z]+(?: +\d+ [a-z]+)*\n){4})")
 
     def sniff(text: str) -> None:
         if state["passphrase"] is None and (m := phrase.search(text)):
             state["passphrase"] = m.group(1).strip()
         if m2 := code_re.search(text):
-            state["code"] = m2.group(1)
+            state["code"] = " ".join(re.findall(r"\d+ ([a-z]+)", m2.group(1)))
 
     def word(m: re.Match[str]) -> str | None:
         words = (state["code"] or "").split()

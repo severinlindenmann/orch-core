@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import stat
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,6 +52,8 @@ __all__ = ["CONTROL_OPS", "ControlGate", "ControlOps", "KEY_TTL_SECONDS", "WSK_M
 
 KEY_TTL_SECONDS = 3600
 WSK_MARKER = "wsk_create.json"
+log = logging.getLogger(__name__)
+
 _ROOT_FILES = ("config.json", "keys.jsonl", "events", "tickets", ".state")
 
 _WS = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
@@ -615,15 +618,16 @@ class ControlOps:
                 self.intents.abandon(intent)  # nothing was created: the same key may run again
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
-            self.intents.update(intent, validated=True)
+            self.intents.update(intent, validated=True, validated_at=int(time.time()))
             return self._run_bootstrap(intent, root, peers, backend)
 
     def _check_new_root(self, root: str) -> None:
         check_tree(Path(root), self.host_uid)
         if not stat.S_ISDIR(os.lstat(root).st_mode):
             raise unsafe(f"{root}: not a directory")
-        if os.listdir(root):
-            raise HostError("invalid.input", f"{root} is not empty")
+        taken = sorted({*os.listdir(root)} & {*_ROOT_FILES, ".orch"})
+        if taken:  # an existing project is fine; a directory that already holds store names is not (rollback owns them)
+            raise HostError("invalid.input", f"{root} already holds orch files ({', '.join(taken)})")
 
     def _validate_bootstrap(self, args: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], Any]:
         """Every check that needs no change on disk; returns (peers, the key backend)."""
@@ -708,6 +712,7 @@ class ControlOps:
                 load="lazy",
             )
             try:
+                self.intents.update(intent, created=self._fingerprint(root))  # what this bootstrap made (dev, inode)
                 store.append(event, log="workspace")
             finally:
                 store.close()
@@ -720,7 +725,9 @@ class ControlOps:
                 raise _unknown() from None
             if not landed:
                 if not self._foreign_root(root, workspace_id, event["id"]):
-                    self._clean_root(root)  # the root was empty when validated: only store-made names go
+                    self._clean_root(
+                        root, intent.record.get("created"), intent.record.get("validated_at")
+                    )  # only what we made
                 error = HostError(exc.code, exc.detail or exc.code) if isinstance(exc, StoreError) else None
                 self.intents.fail(intent, error or HostError("internal", "host.bootstrap failed"))
                 if error is not None:
@@ -796,16 +803,44 @@ class ControlOps:
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
-    def _clean_root(root: str) -> None:
-        """Remove what the store created in a new root; never anything else, and never the root itself (bootstrap
-        did not create it: it is the person's own empty directory)."""
+    def _fingerprint(root: str) -> dict[str, list[int]]:
+        """``name -> [dev, inode]`` of every store name in ``root`` right now (directories, not links)."""
+        out: dict[str, list[int]] = {}
+        for name in _ROOT_FILES:
+            with contextlib.suppress(OSError):
+                st = os.lstat(os.path.join(root, name))
+                if stat.S_ISDIR(st.st_mode):
+                    out[name] = [st.st_dev, st.st_ino]
+        return out
+
+    @staticmethod
+    def _clean_root(root: str, created: Any = None, since: Any = None) -> None:
+        """Remove what this bootstrap made in the root, and nothing else (the root may be a person's project).
+        A directory goes only if it still has the recorded (dev, inode); ``config.json`` / ``keys.jsonl`` go only if
+        they are regular files the host's append made (changed since ``validated_at``). Anything else is left alone."""
+        created = created if isinstance(created, dict) else {}
         for name in _ROOT_FILES:
             path = Path(root) / name
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                rec = created.get(name)
+                if rec == [st.st_dev, st.st_ino]:
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    log.warning("host.bootstrap rollback left %s: not made by this bootstrap", path)
+            elif (
+                stat.S_ISREG(st.st_mode)
+                and name in ("config.json", "keys.jsonl")
+                and isinstance(since, int)
+                and st.st_ctime >= since
+            ):
                 with contextlib.suppress(OSError):
                     path.unlink()
+            else:
+                log.warning("host.bootstrap rollback left %s: not made by this bootstrap", path)
 
     # -- host.outcome
     def outcome(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -881,7 +916,9 @@ class ControlOps:
         registered = self.host.registry.get(workspace_id) is not None or self.host.registry.by_root(root) is not None
         if not registered:
             if not self._foreign_root(root, workspace_id, event["id"]):
-                self._clean_root(root)  # the person's own directory stays, empty again
+                self._clean_root(
+                    root, intent.record.get("created"), intent.record.get("validated_at")
+                )  # only what we made
             pins = HostPins(self.state_dir, workspace_id)
             try:
                 pinned = (directory / "genesis").exists() or pins.genesis() is not None

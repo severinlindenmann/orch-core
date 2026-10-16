@@ -21,7 +21,7 @@ from orch.ops import workspace_init as wi
 from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.store import BackendSigner, Store
-from tests.instructions.conftest import OWN, init_ctx
+from tests.instructions.conftest import _BLOCKS, OWN, init_ctx
 
 ARGS = {"prefix": "DEMO", "name": "Severin"}
 SESSION = "s_01J9ZP0000000000000000000S"
@@ -80,7 +80,7 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
 
 def test_recovery_code_is_shown_once_on_the_terminal_and_nowhere_else(where, term, passphrases):
     res = run_init(where)
-    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 1
+    assert len(_BLOCKS.findall(term.text)) == 1
     code = term.code
     check_recovery_code(code)  # 24 valid BIP-39 words with a good checksum
     # the code is the person key: its person id is the owner of the genesis
@@ -126,7 +126,7 @@ def test_a_passphrase_that_differs_the_second_time_is_not_taken(where, term, pas
         run_init(where)
     assert e.value.code == "invalid.input" and "nothing was created" in e.value.message
     assert tree(where["root"]) == set() and not (where["state"] / "hosts").exists()
-    assert not re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)  # no code was shown yet
+    assert not _BLOCKS.findall(term.text)  # no code was shown yet
 
 
 def test_a_wrong_recovery_word_shows_the_code_again_and_three_failures_abort(where, term, passphrases):
@@ -135,7 +135,7 @@ def test_a_wrong_recovery_word_shows_the_code_again_and_three_failures_abort(whe
         run_init(where)
     assert "not confirmed" in e.value.message and "void" in e.value.message
     assert tree(where["root"]) == set() and term.cleared == 1
-    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 3
+    assert len(_BLOCKS.findall(term.text)) == 3
 
 
 def test_the_log_replays_clean_and_check_says_so(where, term, passphrases):

@@ -9,6 +9,7 @@ import os
 import stat
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -320,9 +321,9 @@ def test_bootstrap_refusals(lab, tmp_path):
         created = ok(c.call("host.wsk_create"))["data"]
         args = bootstrap_args(lab, created, root, owner)
         assert err(c.call("host.bootstrap", {**args, "workspace_id": "e" * 32}, idem=new_idem())) == "not_found"
-        (root / "x").write_text("x")
+        (root / "tickets").write_text("x")
         assert err(c.call("host.bootstrap", args, idem=new_idem())) == "invalid.input"
-        (root / "x").unlink()
+        (root / "tickets").unlink()
         other = Person()
         bad_peer = {**args, "peers": {str(UID): {"class": "person", "person": other.ref}}}
         assert err(c.call("host.bootstrap", bad_peer, idem=new_idem())) == "op.not_allowed"
@@ -560,3 +561,13 @@ def test_a_client_connects_only_to_the_trusted_control_socket(lab):
     with lab.host() as h:
         with pytest.raises(Exception):  # noqa: B017 - the pin names another host UID
             ControlClient(h.host.control_path, host_uid=UID + 1)
+
+
+def test_register_works_in_a_project_that_already_has_files(lab):
+    """Plain `orch init` in an existing project, then `orch host register .`: the project's own files do not matter."""
+    (Path(lab.root) / "README.md").write_text("project")
+    (Path(lab.root) / "src").mkdir()
+    (Path(lab.root) / "src" / "a.py").write_text("x")
+    with lab.host() as h, h.client() as c:
+        ok(lab.register(c, new_idem()))
+    assert (Path(lab.root) / "README.md").read_text() == "project"

@@ -378,3 +378,91 @@ def test_terminal_a_client_without_sessions_refuses(human, served, tmp_path):
             show_secret=lambda t: None,
             idem=new_idem(),
         )
+
+
+# --- the invariants, one by one --------------------------------------------------------------------------------------
+
+
+def test_the_first_event_may_carry_no_key_the_intent_does_not_say(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    first = rig.first()
+    bad = copy.deepcopy(first)
+    bad["events"][0]["priority"] = "urgent"  # a host that smuggles a field into the created event
+    with pytest.raises(signer.SignerRefused):
+        human.check(bad)
+    # even with the review recomputed to match (a host that is consistent with itself), the intent decides
+    import orch.host.review as review
+
+    bad["material"]["review"] = [review.of(e, bad["material"]) for e in bad["events"]]
+    digest = review.review_digest(bad["material"])
+    bad["review_digest"], bad["fingerprint"] = digest, review.fingerprint(digest, bad["events"], "new")
+    with pytest.raises(signer.SignerRefused, match="changed while signing"):
+        human.check(bad)
+    assert human.backend.payloads == []
+
+
+def test_the_host_rechecks_the_chain_inside_the_lock_at_submit(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    first = rig.first()
+    out = Driver(rig.port, rig.sessions, workspace_id=rig.wid, person=rig.person, intent=rig.intent)
+    # step 0 by hand, then step 1 prepared and signed, then a foreign event lands before the submit
+    events0 = human.sign(first).events
+    ok(human.submit_res(first["request"]["id"], events0))
+    rec_head = ok(human.c.req("ticket.get", {"ref": first["material"]["ticket"]["key"]}))["data"]["doc"]["head"]["head"]
+    key = first["material"]["ticket"]["key"]
+    meta = {"step": 1, "of": 4, "digest": out.digest, "prev": events0[0]["id"]}
+    op, args = sequence.step_args(rig.intent, 1, key)
+    p1 = rig.prepare(op, args, meta)
+    assert p1["events"][0]["based_on"] == rec_head
+    signed = human.sign(p1).events
+    human.agent("log", {"ref": key, "message": "foreign"})
+    res = human.submit_res(p1["request"]["id"], signed)
+    assert res["error"]["code"] == "human.request_mismatch"
+    assert "changed while signing" in res["error"]["message"]
+
+
+def test_an_expired_session_is_not_resumed(human, tmp_path):
+    clock = [1_000_000]
+    rig = Rig(human, tmp_path)
+    rig.sessions = Sessions(tmp_path / "state", wall=lambda: clock[0])
+    d = rig.driver()
+    rec = d.sessions.begin(rig.wid, rig.person, d.digest, d.total)
+    assert d.resumable() is not None
+    clock[0] += int(sequence.TTL) + 1
+    assert d.resumable() is None and rig.sessions.get(rig.wid, d.digest) is None
+    assert rec["expires"] - rec["created"] == int(sequence.TTL)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"title": "one\nline"},
+        {"title": "x" * 201},
+        {"title": "bell\x07"},
+        {"sections": {"summary": "text\x1b[31m"}},
+        {"sections": {"summary": "\nleading line feed"}},
+        {"sections": {"summary": "crlf\r\nline"}},
+        {"sections": {"nonsense": "x"}},
+        {"set": {"labels": ["b", "a"]}},
+        {"set": {"priority": "medium"}},
+        {"set": {"parent": "not a key"}},
+        {"kind": "something_else"},
+    ],
+)
+def test_the_intent_is_refused_unless_every_line_is_clean(change):
+    with pytest.raises(sequence.SequenceInvalid):
+        sequence.validate_intent(intent_of(**change))
+
+
+def test_the_terminal_review_shows_a_newline_in_a_text_only_as_marked_lines(human, served, tmp_path):
+    from tests.host.test_handoff import Shown
+
+    intent = intent_of(title="A title", sections={"summary": "line one\nline two\n\nline four"})
+    rig = Rig(human, tmp_path, intent)
+    p = handoff_first(rig)
+    shown = Shown(answer=False)
+    with pytest.raises(signer.SignerRefused):
+        terminal(rig, served, shown, p["request"]["code"])
+    plain = shown.plain[0]
+    assert "  | line one" in plain and "  | line two" in plain and "  | line four" in plain
+    assert "\x1b" not in plain and "\r" not in plain

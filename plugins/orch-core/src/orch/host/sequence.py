@@ -818,6 +818,11 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
             notes.append(f"Replaces the whole current text of: {names}.")
+        for aid, text in intent.get("acceptance", {}).get("edit", {}).items():
+            was = next((a["text"] for a in intent["acceptance"]["was"] if a["id"] == aid), "")
+            notes.append(f"{signcontent.one(aid)}: {signcontent.one(was)} -> {signcontent.one(text)}")
+        if "owner" in intent.get("people", {}):
+            notes.append("The owner is set last. After that you may no longer be able to change this ticket yourself.")
         notes.append(
             "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
             "stops and nothing more is signed."
@@ -903,7 +908,10 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
             lines += ["| " + clean(line) for line in intent["sections"][sid]["text"].split("\n")]
         ac = intent.get("acceptance")
         if ac:
-            lines += [f"acceptance {clean(a)} changes to: {clean(one(t))}" for a, t in ac["edit"].items()]
+            old = {x["id"]: x["text"] for x in ac["was"]}
+            lines += [
+                f"acceptance {clean(a)}: {clean(one(old.get(a, '')))} -> {clean(one(t))}" for a, t in ac["edit"].items()
+            ]
             lines += [f"acceptance added: {clean(one(t))}" for t in ac["add"]]
         for role, ch in (intent.get("people") or {}).items():
             lines += [f"{clean(role)} add: {clean(who)}" for who in ch["add"]]

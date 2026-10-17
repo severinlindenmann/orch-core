@@ -57,7 +57,7 @@ def _sequence_word(prepared: Mapping[str, Any]) -> bool:
     if not isinstance(seq, Mapping):
         return False
     try:
-        return sequence.confirm_kind(sequence.validate_intent(seq.get("intent"))) != "click"
+        return sequence.confirm_kind(sequence.validate_intent(seq.get("intent"))) == "word"
     except sequence.SequenceInvalid:
         raise refused("check_failed", "the sequence is not one this signer knows") from None
 

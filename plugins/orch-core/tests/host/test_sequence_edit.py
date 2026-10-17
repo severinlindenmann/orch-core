@@ -245,3 +245,34 @@ def test_a_person_who_is_not_a_member_cannot_be_added(human, tmp_path):
     key = made(human, tmp_path)
     res = human.prepare_res("people.set", {"ref": key, "role": "assignees", "add": ["p_" + "9" * 32], "remove": []})
     assert res["error"]["code"] == "invalid.input"
+
+
+def test_a_foreign_event_between_the_edit_prepare_and_submit_aborts(human, tmp_path):
+    """Opus M1: the edit's first step is re-checked against the head under the lock at submit."""
+    key = made(human, tmp_path)
+    intent = edit_intent(human, key, sections={"summary": {"was": canon.section_hash("One line."), "text": "New."}})
+    rig = Rig(human, tmp_path / "edit", intent)
+    first = rig.first()
+    human.check(first)
+    signed = human.sign(first)
+    human.agent("log", {"ref": key, "message": "foreign"})  # after the prepare, before the submit
+    res = human.submit_res(first["request"]["id"], signed.events)
+    assert res["error"]["code"] == "human.request_mismatch"
+    assert doc(human, key)["doc"]["sections"]["summary"] == "One line."
+
+
+def test_an_edit_that_changes_people_is_refused_for_a_signer_who_may_not_manage(human, lab, tmp_path):
+    key = made(human, tmp_path)
+    quinn = lab.add_member()
+    intent = edit_intent(human, key, people={"assignees": {"add": [quinn.ref], "remove": []}})
+    rig = Rig(human, tmp_path / "edit", intent)
+    # the owner may: prepared; (a non-managing signer is refused at the same prepare, see people.set tests)
+    assert "error" not in human.c.req(
+        "human.prepare",
+        {
+            "op": "people.set",
+            "args": sequence.step_args(rig.intent, 0, None)[1],
+            "signer": human.signer,
+            "sequence": rig.meta0(),
+        },
+    )

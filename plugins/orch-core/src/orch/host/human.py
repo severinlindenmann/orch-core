@@ -528,6 +528,13 @@ class HumanOps:
             )
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and checked["intent"].get("people"):
+            from orch.model import claims
+
+            core = store.state._core
+            view = store.ticket(checked["intent"]["ticket"]["key"])
+            if view is None or not claims.may_manage(core.ws, core.tickets[view.uid], person):
+                raise HostError("role.denied", "people are for the ticket owner, owners and maintainers")
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and not dry_run:
             # an edit starts on the ticket and at the head the person reviewed (also checked by the signer)
             want = checked["intent"]["ticket"]
@@ -929,7 +936,13 @@ class HumanOps:
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
             if record["op"] == pairdevice.OP:
                 pairdevice.check_entries(record["prepared"], record.get("readers") or [])
+            from . import sequence
+
             meta = record.get("sequence")
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.EDIT:
+                # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
+                if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
+                    raise HostError("human.request_mismatch", sequence.CHANGED)
             if meta is not None and meta["step"] > 0:
                 # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
                 # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)

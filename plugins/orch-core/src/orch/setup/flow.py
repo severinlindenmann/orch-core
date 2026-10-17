@@ -460,12 +460,16 @@ def default_env(environ: Mapping[str, str]) -> Env:
     )
 
 
-USAGE = "usage: orch setup   (run it in the folder you want to make a workspace; it opens the setup page)\n"
+USAGE = "usage: orch setup [--no-browser]   (run it in the folder you want to make a workspace; it opens the page)\n"
 
 
-def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
-    """Open the dashboard on ``/setup``. The launch code is NOT in the path or in any argument: it is in the 0600 file
-    ``<state>/setup/setup.code`` that the dashboard server reads and deletes, and claims with its own port."""
+def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> bool:
+    """Open the dashboard on ``/setup`` and print the same single-use link to ``err`` (the person's terminal). The
+    launch code is NOT in any argument or in the environment of a child: the launcher returns the link over a pipe
+    (``--emit-url-fd``, a number only), and it opens the browser through its own 0600 redirect file, never with the
+    code in the browser's argv. ``no_browser`` prints the link only. The code the dashboard server reads is in the 0600
+    file ``<state>/setup/setup.code``, which it deletes when it claims."""
+    import os
     import subprocess
 
     from orch.cli.dashboard import find_entry_point
@@ -473,18 +477,32 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) 
     cmd = find_entry_point(environ, err)
     if cmd is None:
         return False
+    read_fd, write_fd = os.pipe()
     try:
-        res = subprocess.run(
-            [*cmd, "open", "/setup"],
-            env=dict(environ),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+        try:
+            res = subprocess.run(
+                [*cmd, "open", "/setup", "--emit-url-fd", str(write_fd), *(["--no-browser"] if no_browser else [])],
+                env=dict(environ),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+                check=False,
+                pass_fds=(write_fd,),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        finally:
+            os.close(write_fd)
+        if res.returncode != 0:
+            return False
+        with os.fdopen(read_fd, "rb", closefd=False) as pipe:
+            line = pipe.read(4097).decode("utf-8", "replace").strip()
+    finally:
+        os.close(read_fd)
+    if not line.startswith("http://127.0.0.1:") or "\n" in line or "?" in line or "#launch=" not in line:
         return False
-    return res.returncode == 0
+    err.write(f"Open this link in your browser (single use, 5 minutes): {line}\n")
+    return True
 
 
 def main(
@@ -509,7 +527,8 @@ def main(
     from .server import SetupServer
     from .steps import set_no_core_dumps
 
-    if argv:
+    no_browser = argv == ["--no-browser"]
+    if argv and not no_browser:
         err.write(USAGE)
         return 2
     if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
@@ -540,8 +559,14 @@ def main(
     err.write(
         f"orch setup: {flow.dir} ({'finishing an existing workspace' if flow.mode == 'finish' else 'new workspace'})\n"
     )
-    if (open_browser or _open_browser)(env, err, launch):
-        err.write("orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n")
+    opener = open_browser or _open_browser
+    opened = opener(env, err, launch, no_browser=True) if no_browser else opener(env, err, launch)
+    if opened:
+        err.write(
+            "orch setup: use the link above; this terminal stays with it (Ctrl-C cancels)\n"
+            if no_browser
+            else "orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n"
+        )
     else:
         err.write("orch setup: could not open the dashboard; install it (pip install orch-dashboard) and run again\n")
         server.stop()

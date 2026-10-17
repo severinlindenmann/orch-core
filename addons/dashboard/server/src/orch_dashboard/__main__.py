@@ -24,7 +24,7 @@ from pathlib import Path
 import uvicorn
 
 from .app import create_app
-from .auth import CODE_TTL, Auth
+from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
@@ -96,7 +96,7 @@ def control(path, command, kind=None):
         sock.sendall(encode({"command": command, **({"kind": kind} if kind else {})}))
         reply = receive(sock)
     if command == "launch" and isinstance(reply, dict) and "expires_at" not in reply:
-        reply["expires_at"] = asked + CODE_TTL  # an older server: a conservative bound
+        reply["expires_at"] = asked + (SETUP_CODE_TTL if kind == "setup" else CODE_TTL)  # an older server: a bound
     return reply
 
 
@@ -143,7 +143,9 @@ def sweep_redirects(directory, now=None):
     now = time.time() if now is None else now
     for path in directory.glob("launch-*.html"):
         st = path.lstat()
-        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= CODE_TTL:
+        if (
+            stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= SETUP_CODE_TTL
+        ):  # the longest code life: a live setup file stays
             path.unlink(missing_ok=True)
 
 
@@ -279,10 +281,25 @@ def verify_probe(launch, fetch=None):
         raise RuntimeError("dashboard port ownership proof failed; browser was not opened")
 
 
-def open_dashboard(path="/", print_url=False):
+def check_url_fd(fd):
+    """The caller's pipe/socket for the code-bearing URL: not argv, not the environment, not a file. Anything else
+    (a tty, a regular file) is refused, so the code cannot land in a log through a wrong fd."""
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        mode = 0
+    if fd < 3 or not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+        raise RuntimeError("--emit-url-fd needs an open pipe")
+
+
+def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False):
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
     kind = "setup" if path == "/setup" else None  # setup's nonce opens no normal session
+    if emit_url_fd is not None:
+        check_url_fd(emit_url_fd)  # before anything is started or minted
+    if no_browser and emit_url_fd is None:
+        raise RuntimeError("--no-browser needs --emit-url-fd")
     if print_url and not sys.stdout.isatty():
         raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
     run_dir(state_dir())
@@ -326,6 +343,10 @@ def open_dashboard(path="/", print_url=False):
         print("Single-use dashboard link; expires in 30 s.")
         print(url)
         return
+    if emit_url_fd is not None:
+        os.write(emit_url_fd, (url + "\n").encode())
+        if no_browser:
+            return
     # Write exactly the file the server recorded for this code, so its exchange and timer delete that same path.
     if launch.get("redirect_file"):
         redirect = Path(launch["redirect_file"])
@@ -358,6 +379,9 @@ def open_dashboard(path="/", print_url=False):
                 raise RuntimeError("the launch code expired before the browser could be opened; run it again")
             # Only the file's path goes to the browser's argv, never the code: argv is readable by every UID (ps).
             if not webbrowser.open(redirect.resolve().as_uri()):
+                if emit_url_fd is not None:  # the caller already has the link: no browser is not a failure
+                    redirect.unlink(missing_ok=True)
+                    return
                 raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
         except BaseException:
             redirect.unlink(missing_ok=True)
@@ -406,6 +430,8 @@ def main():
     parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
+    parser.add_argument("--emit-url-fd", type=int, help=argparse.SUPPRESS)  # the caller's pipe gets the URL
+    parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -419,7 +445,9 @@ def main():
         elif args.command == "restart":
             restart_dashboard(args.path, print_url=args.print_url)
         else:
-            open_dashboard(args.path, print_url=args.print_url)
+            open_dashboard(
+                args.path, print_url=args.print_url, emit_url_fd=args.emit_url_fd, no_browser=args.no_browser
+            )
     except AgentRefused as exc:
         print(f"orch-dashboard: {exc}", file=sys.stderr)
         return 3

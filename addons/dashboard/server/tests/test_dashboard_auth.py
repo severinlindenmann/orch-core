@@ -413,3 +413,54 @@ def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, mo
     page = auth.files[issued["code"]].read_text()
     assert "launch=" + issued["code"] in page and "to=%2Fsetup" in page
     assert auth.exchange(issued["code"])[0] is None and auth.exchange_setup(issued["code"]) is True
+
+
+def test_setup_nonce_lives_five_minutes_and_is_single_use_while_login_stays_30s():
+    from orch_dashboard.auth import CODE_TTL, SETUP_CODE_TTL
+
+    assert (CODE_TTL, SETUP_CODE_TTL) == (30, 300)
+    now = [1000.0]
+    auth = Auth(clock=lambda: now[0])
+    login = auth.launch(PORT)
+    setup = auth.launch(PORT, setup=True)
+    assert setup["expires_at"] - 1000 == 300 and login["expires_at"] - 1000 == 30
+    now[0] += 31
+    assert auth.exchange(login["code"])[1] == 401  # a normal link is dead after 30 s
+    now[0] += 250  # 281 s: the setup nonce is alive
+    assert auth.exchange_setup(setup["code"]) is True
+    assert auth.exchange_setup(setup["code"]) is False  # single use: a second browser is refused
+    late = auth.launch(PORT, setup=True)
+    now[0] += 301
+    assert auth.exchange_setup(late["code"]) is False
+
+
+def test_emit_url_fd_writes_to_a_pipe_only_and_no_browser_opens_nothing(tmp_path, monkeypatch, capsys):
+    import os
+
+    from orch_dashboard import __main__ as launcher
+
+    now = [time.time()]
+    (tmp_path / "dashboard").mkdir(mode=0o700)
+    auth = Auth(clock=lambda: now[0], directory=tmp_path / "dashboard")
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", lambda d, f: type("T", (), {"start": lambda s: None})())
+    issued = auth.launch(PORT, setup=True)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "control", lambda *a: issued)
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    opened = []
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda u: opened.append(u) or True)
+    r, w = os.pipe()
+    try:
+        launcher.open_dashboard("/setup", emit_url_fd=w, no_browser=True)
+        line = os.read(r, 4096).decode()
+        assert line == f"http://127.0.0.1:{PORT}/#launch={issued['code']}&to=%2Fsetup\n"
+        assert opened == [] and not list((tmp_path / "dashboard").glob("launch-*.html"))
+        launcher.open_dashboard("/setup", emit_url_fd=w)  # with a browser: the argument is only the redirect file
+        os.read(r, 4096)
+        assert len(opened) == 1 and opened[0].startswith("file://") and issued["code"] not in opened[0]
+    finally:
+        os.close(r)
+        os.close(w)
+    with pytest.raises(RuntimeError):  # a tty / regular file is not a place for the code
+        launcher.open_dashboard("/setup", emit_url_fd=1)
+    assert issued["code"] not in capsys.readouterr().out

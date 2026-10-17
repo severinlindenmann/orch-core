@@ -70,10 +70,18 @@ def test_claim_is_single_use_and_second_browser_refused(srv):
     assert any("second browser" in x for x in srv.events)
 
 
-def test_code_expires_after_30_seconds(srv):
+def test_code_is_alive_at_299_seconds_and_single_use(srv):
+    path = str(srv.path)
+    _, alive, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    srv.clock_obj.t += 299
+    assert call(path, "POST", "/claim", {"code": alive["code"], "port": 8765})[0] == 200
+    assert call(path, "POST", "/claim", {"code": alive["code"], "port": 8765})[0] == 409  # single use: a second browser is refused
+
+
+def test_code_expires_after_5_minutes(srv):
     path = str(srv.path)
     _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
-    srv.clock_obj.t += 31
+    srv.clock_obj.t += 301
     st, e, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 403 and e["error"]["code"] == "setup.code_invalid"
 
@@ -172,7 +180,7 @@ def test_the_code_goes_to_a_0600_file_not_a_url(srv):
 def test_code_file_is_removed_on_expiry_wrong_tries_stop_and_a_new_launch(srv):
     path = str(srv.path)
     call(path, "POST", "/launch", {"dir": srv.workdir})
-    srv.clock_obj.t += 31
+    srv.clock_obj.t += 301
     srv.check_idle()
     assert not srv.code_path.exists()
     call(path, "POST", "/launch", {"dir": srv.workdir})
@@ -205,7 +213,44 @@ def test_a_launch_that_named_a_port_only_claims_with_that_port(srv):
     assert call(path, "POST", "/claim", {"code": out["code"], "port": 9000})[0] == 200
 
 
-def test_the_opener_puts_no_code_in_the_path_or_the_arguments(monkeypatch):
+def _fake_run(seen, url, rc=0):
+    import os
+    import subprocess
+
+    def run(argv, **kw):
+        seen.setdefault("calls", []).append((argv, kw.get("env")))
+        fd = int(argv[argv.index("--emit-url-fd") + 1])
+        assert kw["pass_fds"] == (fd,)
+        if rc == 0:
+            os.write(fd, (url + "\n").encode())
+        return subprocess.CompletedProcess(argv, rc)
+
+    return run
+
+
+def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monkeypatch):
+    import io
+    import subprocess
+
+    from orch.cli import dashboard as dash
+    from orch.setup import flow as flow_mod
+
+    seen = {}
+    url = "http://127.0.0.1:8123/#launch=SECRETCODE&to=%2Fsetup"
+    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    monkeypatch.setattr(subprocess, "run", _fake_run(seen, url))
+    err = io.StringIO()
+    assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": "SECRETCODE"})
+    ((argv, env),) = seen["calls"]
+    assert argv[:3] == ["orch-dashboard", "open", "/setup"] and "--no-browser" not in argv
+    assert "SECRETCODE" not in repr(argv) and "SECRETCODE" not in repr(env)
+    lines = err.getvalue().splitlines()
+    assert lines == [f"Open this link in your browser (single use, 5 minutes): {url}"]
+    assert "#launch=" in lines[0] and "?" not in lines[0]
+
+
+def test_no_browser_passes_the_flag_and_still_prints_the_link(monkeypatch):
+    import io
     import subprocess
 
     from orch.cli import dashboard as dash
@@ -213,12 +258,22 @@ def test_the_opener_puts_no_code_in_the_path_or_the_arguments(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    monkeypatch.setattr(subprocess, "run", _fake_run(seen, "http://127.0.0.1:8123/#launch=C&to=%2Fsetup"))
+    err = io.StringIO()
+    assert flow_mod._open_browser({}, err, {}, no_browser=True)
+    assert "--no-browser" in seen["calls"][0][0] and "C&to" not in repr(seen["calls"][0][0])
+    assert err.getvalue().count("Open this link") == 1
 
-    def run(argv, **kw):
-        seen["argv"], seen["env"] = argv, kw.get("env")
-        return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr(subprocess, "run", run)
-    assert flow_mod._open_browser({"PATH": "/usr/bin"}, None, {"setup_id": "su_1", "code": "SECRETCODE"})
-    assert seen["argv"] == ["orch-dashboard", "open", "/setup"]
-    assert "SECRETCODE" not in repr(seen)
+def test_a_launcher_that_fails_or_returns_a_bad_line_prints_nothing(monkeypatch):
+    import io
+    import subprocess
+
+    from orch.cli import dashboard as dash
+    from orch.setup import flow as flow_mod
+
+    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    for run in (_fake_run({}, "", rc=1), _fake_run({}, "http://127.0.0.1:1/?launch=x#launch=y")):
+        monkeypatch.setattr(subprocess, "run", run)
+        err = io.StringIO()
+        assert flow_mod._open_browser({}, err, {}) is False and err.getvalue() == ""

@@ -566,9 +566,9 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
     agent = intent["agent"]
     if agent is not None:
         t = time.time() if now is None else now
-        until = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t + agent["hours"] * 3600))
+        until = time.strftime("%a %d %b %H:%M %Z", time.localtime(t + agent["hours"] * 3600))  # this computer's time
         out.append(
-            f"Agents may work on all workable tickets, not only this one, until about {until} "
+            f"Agents may work on any ticket they are allowed to work on, not only this one, until about {until} "
             f"({span(agent['hours'])}). Typed word: GRANT. The grant is signed last; its secret goes to your orch "
             "runner or your own terminal, never to the dashboard."
         )

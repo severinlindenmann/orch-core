@@ -104,6 +104,12 @@ function RealStartAgentItem({ ticket, onStart }: { ticket: TicketDocument; onSta
   )
 }
 
+/** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
+export function turnReason(why: string): string {
+  const text = why.trim()
+  return text ? ` · ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
+}
+
 export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
@@ -279,7 +285,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <StatusChip status={ticket.status} landing={ticket.landing} />
         <span className="text-[13px] text-text-muted">
-          Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span> · {ticket.turn.why.charAt(0).toLowerCase() + ticket.turn.why.slice(1)}
+          Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
         </span>
         {shown.map((l) => (
           <Pill key={l}>

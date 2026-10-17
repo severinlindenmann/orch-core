@@ -494,7 +494,7 @@ def test_emit_url_fd_writes_to_a_pipe_only_and_no_browser_opens_nothing(tmp_path
         monkeypatch.setattr(launcher.webbrowser, "open", lambda u: False)  # a browser that cannot open
         launcher.open_dashboard("/setup", emit_url_fd=w)
         assert os.read(r, 4096).decode().endswith("\nno-browser\n")
-        assert not Path(issued2["redirect_file"]).exists()  # a failed open leaves no code on disk
+        assert not __import__("pathlib").Path(issued2["redirect_file"]).exists()  # a failed open leaves no code on disk
     finally:
         os.close(r)
         os.close(w)

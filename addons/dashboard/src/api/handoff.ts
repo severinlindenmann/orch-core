@@ -35,6 +35,8 @@ export type HandoffAction =
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
+  /** The runner grant, signed in the terminal where one click is not used (`orch sign` hands the secret to the runner). */
+  | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
   /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
   | { action: 'pair_device'; offer: string }
 

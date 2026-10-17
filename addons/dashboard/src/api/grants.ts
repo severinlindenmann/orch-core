@@ -76,3 +76,15 @@ export function accessReminder(g: Pick<GrantInfo, 'issued_at' | 'until'>, now: n
   const left = end - now
   return total >= 24 * 3_600_000 ? left < 24 * 3_600_000 : left < total * 0.25
 }
+
+/**
+ * The lengths a runner grant or an Extend offers (hours): 8 h, 1, 3 and 7 days, capped at the workspace maximum
+ * (`grant_hours`). An Extend never shortens the access it replaces, so lengths shorter than `remainingMs` are hidden.
+ * A workspace that allows less than 8 h offers its own maximum.
+ */
+export function runnerLengths(cap: number, remainingMs = 0): Array<readonly [number, string]> {
+  const all: Array<readonly [number, string]> = [[8, '8 hours'], [24, '1 day'], [72, '3 days'], [168, '7 days']]
+  const within = all.filter(([h]) => h <= cap)
+  const offered = within.length > 0 ? within : [[cap, `${cap} ${cap === 1 ? 'hour' : 'hours'}`] as const]
+  return offered.filter(([h]) => h * 3_600_000 >= remainingMs)
+}

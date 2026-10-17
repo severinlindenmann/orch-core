@@ -18,6 +18,7 @@ import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 import { openTicketPanel } from '@/test/ticketPanels'
+import { nowMs } from '@/lib/time'
 
 const T = { timeout: 8000 }
 type User = ReturnType<typeof renderApp>['user']
@@ -749,7 +750,9 @@ describe('start agent', () => {
     const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
     const { RunnerGrantCard, StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
     const WS = 'b'.repeat(32)
-    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 8 }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 8, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
     const display = "codex 'work on DEMO-7'‮"
     vi.spyOn(agentsApi, 'preview').mockResolvedValue({
       spec: 'e'.repeat(64), ticket: 'DEMO-7', display, display_hidden: false, cwd: { kind: 'workspace' }, cwd_path: '/w/demo', cwd_path_hidden: false,
@@ -764,7 +767,7 @@ describe('start agent', () => {
       auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
     render(<QueryClientProvider client={new QueryClient()}>{extend
-      ? <RunnerGrantCard ws={WS} runner={{ enabled: true, connected: true, terminals: false, grant: null }} loading={false} blocked={null} extend={{ id: 'gr_old', scope: 'workable' }} onChanged={() => {}} />
+      ? <RunnerGrantCard ws={WS} runner={{ enabled: true, connected: true, terminals: false, grant: null }} loading={false} blocked={null} extend={{ id: 'gr_old', scope: 'workable', until: new Date(nowMs() + 5 * 36e5).toISOString() }} onChanged={() => {}} />
       : <StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} />}</QueryClientProvider>)
     if (!extend) {
       const shown = await screen.findByTestId('agent-preview', {}, T)

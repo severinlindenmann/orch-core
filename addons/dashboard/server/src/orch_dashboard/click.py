@@ -21,7 +21,7 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
@@ -97,7 +97,8 @@ class CustodyBody(BaseModel):
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
-ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
+# The runner grant is a click request, or a terminal hand-off with `runner` set by this server, never by the browser.
+ClickBody = PrepareBody
 
 
 def deposit_view_ok(view: dict, ws: str) -> bool:

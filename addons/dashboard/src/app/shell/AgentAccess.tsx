@@ -13,7 +13,7 @@ import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 
 /** Runner state is authoritative for access on this machine; grant.list supplies signed start times and terminal grants. */
-export function AgentAccess({ ws }: { ws: string }) {
+export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** Dev layout preview only: start in the stopped state. */ previewStopped?: boolean }) {
   const me = useMe(ws)
   const runner = useQuery({ ...runnerQuery(ws), refetchInterval: 15_000 })
   const grants = useQuery(queries.hostGrants(ws, true))
@@ -21,6 +21,7 @@ export function AgentAccess({ ws }: { ws: string }) {
   const [now, setNow] = useState(nowMs)
   const [extend, setExtend] = useState(false)
   const [attempted, setAttempted] = useState(false)
+  const [stoppedHere, setStoppedHere] = useState(previewStopped)
   const [askStop, setAskStop] = useState(false)
   const [queue, setQueue] = useState<string[]>([])
   const [done, setDone] = useState(0)
@@ -29,7 +30,7 @@ export function AgentAccess({ ws }: { ws: string }) {
   useEffect(() => { const timer = setInterval(() => setNow(nowMs()), 30_000); return () => clearInterval(timer) }, [])
   const grant = runner.data?.runner?.grant
   const live = grant && Date.parse(grant.until) > now ? grant : null
-  const stopped = attempted && runner.isSuccess && !runner.isFetching && !live
+  const stopped = (attempted || stoppedHere) && runner.isSuccess && !runner.isFetching && !live
   const signed = grants.data?.find(g => g.id === live?.id && g.person === me.data?.person)
   const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }) }
   // The API exposes deposit status, but no deposit retry. Start again opens a fresh signing flow.
@@ -53,11 +54,11 @@ export function AgentAccess({ ws }: { ws: string }) {
   if (!live && !stopped && !extend && !askStop && !partial && queue.length === 0) return null
   return <div className="agent-access flex min-w-0 items-center gap-2 text-xs">
     <div className="flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-surface px-3 py-1" role="group" aria-label="Agent access">
-      {partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button><span className="text-text-muted">Signs new agent access</span></> : live ? <>
+      {partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button></> : live ? <>
         <KeyRound className="size-3.5 shrink-0" aria-hidden /><span className="whitespace-nowrap"><span className="agent-access-detail">Agents can work for you until </span><time dateTime={live.until} title={fmtExact(live.until)}>{fmtSlot(live.until)}</time></span>
         <span>·</span><Button size="xs" variant="ghost" aria-label="Extend agent access" onClick={() => setExtend(true)}>Extend</Button>
       </> : <span>Checking agent access…</span>}
-      {!partial && (live || stopped) && <><span>·</span><Button size="xs" variant="ghost" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button></>}
+      {!partial && live && <><span>·</span><Button size="xs" variant="ghost" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button></>}
     </div>
     {live && signed && accessReminder({ issued_at: signed.issued_at, until: live.until }, now) && <div role="status" className="agent-access-reminder flex min-w-0 items-center gap-1 whitespace-nowrap text-warning">Agent access ends at {fmtClock(live.until)} · <Button size="xs" variant="ghost" aria-label="Extend agent access from reminder" onClick={() => setExtend(true)}>Extend</Button></div>}
     {extend && <Dialog open onOpenChange={open => { if (!open) setExtend(false) }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{stopped ? 'Restore agent access' : 'Extend agent access'}</DialogTitle><DialogDescription>Choose how long agents may keep working for you, then review and sign. Agents that are running now stop; new agents use the extended access.</DialogDescription></DialogHeader>
@@ -71,7 +72,7 @@ export function AgentAccess({ ws }: { ws: string }) {
         if (phase !== 'unknown' && phase !== 'attempt_open') interrupted()
         return
       }
-      if (done + 1 === queue.length) { setQueue([]); setAttempted(false) } else setDone(done + 1)
+      if (done + 1 === queue.length) { setQueue([]); setAttempted(false); setStoppedHere(true) } else setDone(done + 1)
       refresh()
     }} onInterrupted={interrupted} onClose={interrupted} />}
   </div>

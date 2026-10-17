@@ -73,7 +73,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="topbar flex min-h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4">
+    <header className="topbar flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-bg px-4 py-1">
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
         {header.breadcrumb}
         <span className="truncate font-medium text-text" data-testid="topbar-title">
@@ -83,8 +83,8 @@ export function Topbar() {
       <DevBadge />
       <div className="flex-1" />
  {!isRealHost() && (
-      <div className="flex items-center gap-1">
-        <Badge variant="outline" className="gap-1 border-border pr-1 font-normal text-text-muted">
+      <div className="flex max-w-full items-center gap-1">
+        <Badge variant="outline" className="h-auto max-w-full flex-wrap gap-1 border-border pr-1 font-normal text-text-muted">
           <span data-testid="demo-mode">{mode === 'busy' ? 'Demo data · Busy day' : 'Demo data'}</span>
           <span role="group" aria-label="Demo dataset" className="inline-flex overflow-hidden rounded-sm border border-border">
             {(['normal', 'busy'] as const).map((d) => (

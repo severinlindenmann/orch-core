@@ -16,7 +16,7 @@ import './setup.css'
 const voidCopy =
   'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
 const expiredCopy =
-  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). A new session shows new secret words and a new recovery code.'
+  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new secret words and a new recovery code.'
 /** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
 export function reasonOf(e: unknown): string {
   if (e instanceof SetupError) return e.code

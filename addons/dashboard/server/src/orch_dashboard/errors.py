@@ -228,6 +228,7 @@ CLICK_REFUSALS = (
     "uncertain",
     "already_signed",
     "record_unavailable",
+    "stopped",
     "disabled",
 )
 #: the top-level `reason`, closed per code: the click signer carries the convenience reasons there (the same sets as

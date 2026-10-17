@@ -613,10 +613,15 @@ class ClickSigner:
             out = driver.run(stored)
         except sequence.Aborted as exc:
             self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
-            where = f" {exc.landed} of {exc.total} signatures landed; the ticket stays a draft." if exc.landed else ""
-            if "host did not confirm" in exc.reason:
-                raise refused("uncertain", f"{exc.reason}.{where}") from None
-            raise refused("check_failed", f"{exc.reason}.{where}") from None
+            where = ""
+            if exc.landed:
+                try:
+                    held = self.sessions.get(wid, driver.digest)
+                except sequence.SessionError:
+                    held = None
+                name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
+                where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+            raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:
             raise refused("record_unavailable", f"{exc}; nothing more is signed") from None
         last = out["results"][-1]

@@ -69,7 +69,8 @@ def test_a_foreign_event_in_between_ends_the_sequence_and_leaves_a_draft(click, 
         return res
 
     click.tamper = tamper
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "check_failed")
+    err_ = refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "stopped")
+    assert "1 of 4 signatures landed" in err_.message and "DEMO-" in err_.message
     assert click.signatures == 1  # only the ticket itself was signed
     assert ok(served.client().req("ticket.get", {"ref": state["key"]}))["data"]["doc"]["title"] == "Add a sequence"
 
@@ -88,7 +89,8 @@ def test_a_lost_answer_resumes_with_the_exact_bytes_and_no_second_ticket(click, 
         return res
 
     click.tamper = tamper
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "uncertain")
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "stopped")
+    click.signer.cancel({"workspace_id": served.wid, "request_id": p["request_id"]})  # "Start again" cancels the old one
     assert click.signatures == 2
     click.tamper = None
     # the person asks again (a fresh request of the same intent): the session is resumed, no second ticket is made

@@ -125,3 +125,16 @@ describe('a ticket and its text on one review (terminal)', () => {
     expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
   })
 })
+
+describe('a click sequence that stopped part way', () => {
+  it('is said in the signer\'s words, never as "nothing was signed"', async () => {
+    const { clickProblem } = await import('@/api/click')
+    const { ApiError } = await import('@/api/types')
+    const p = clickProblem(new ApiError(409, { code: 'human.click_refused', message: 'the ticket changed while signing, review again. 2 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
+    expect(p.title).toBe('Signing stopped part way')
+    expect(p.body).toContain('2 of 5 signatures landed')
+    expect(p.body).toContain('DEMO-0044')
+    expect(p.body).not.toContain('Nothing was signed')
+    expect(p.next).toBe('prepare')
+  })
+})

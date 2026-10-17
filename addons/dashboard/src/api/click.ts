@@ -184,6 +184,8 @@ export function clickProblem(e: unknown): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
+      // B11: a sequence (one review, N signatures) that stopped after some signatures: say what landed (core's words)
+      if (e.reason === 'stopped') return { title: 'Signing stopped part way', body: `${e.message} Start again to continue: what is signed is never signed twice.`, next: 'prepare' }
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!

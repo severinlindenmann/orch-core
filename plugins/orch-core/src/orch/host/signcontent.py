@@ -70,6 +70,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "member.added": frozenset({"person", "name", "role", "pk_pub", "device_cert"}),
     "member.removed": frozenset({"person"}),
     "role.changed": frozenset({"person", "role"}),
+    "people.changed": frozenset({"role", "add", "remove"}),
     "policy.changed": frozenset({"gates"}),
     "question.answered": frozenset({"question", "option", "text"}),
     "question.asked": frozenset({"qid", "question"}),
@@ -486,6 +487,18 @@ def _event(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
         return "Change the workspace settings"
+    if typ == "people.changed":
+        role = _s(ev.get("role"))
+        add, remove = ev.get("add") or [], ev.get("remove") or []
+        if not isinstance(add, list) or not isinstance(remove, list):
+            raise PlainUnavailable("people.changed lists are not lists")
+        for verb, people in (("add", add), ("remove", remove)):
+            for i, who in enumerate(people, 1):  # one row per person: the dashboard labels a lone person id by name
+                _row(out, f"{role}: {verb}" + (f" {i}/{len(people)}" if len(people) > 1 else ""), one(who))
+        who = ", ".join(one(x) for x in add) or ", ".join(one(x) for x in remove)
+        if role == "owner":
+            return f"Make {who} the owner of {ref}"
+        return f"{'Add' if add else 'Remove'} {who} as {role[:-1] if role.endswith('s') else role} of {ref}"
     if typ == "policy.changed":
         for gate, p in sorted((ev.get("gates") or {}).items()):
             _row(out, f"rule for {gate}", policy_words(p))

@@ -528,6 +528,13 @@ class HumanOps:
             )
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and not dry_run:
+            # an edit starts on the ticket and at the head the person reviewed (also checked by the signer)
+            want = checked["intent"]["ticket"]
+            view = store.ticket(want["key"])
+            seq = store.log_seq(want["uid"]) if view is not None and view.uid == want["uid"] else None
+            if seq is None or store.head_at(want["uid"], seq) != checked["intent"]["head"]:
+                raise HostError("human.request_mismatch", sequence.CHANGED)
         if checked["step"] > 0 and not dry_run:
             view = store.ticket(checked["ticket"])
             if (

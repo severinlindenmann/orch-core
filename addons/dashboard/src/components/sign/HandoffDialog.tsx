@@ -255,12 +255,12 @@ export function HandoffDialog(p: HandoffDialogProps) {
           )}
           <DialogDescription>
             {(click.view?.view.content || run.request?.content) ? 'Review what you’re approving.' : clickOpen
-              ? 'Signed with your key by core’s signing helper, only after you press Sign. An agent or an addon cannot prepare this request.'
+              ? 'Only you can approve this. Agents cannot.'
               : phase === 'idle'
                 ? method === 'click'
-                  ? 'Sign here with one click. Core prepares the request and its signing helper signs it.'
-                  : method === 'phone' ? 'Review and approve on your phone.' : 'You sign in your terminal. This dashboard prepares the request and never signs.'
-                : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
+                  ? 'Approve with one click.'
+                  : method === 'phone' ? 'Review and approve on your phone.' : 'Approve in your terminal. This page only shows the request.'
+                : 'Approve in your terminal. Only you can approve this. Agents cannot.'}
           </DialogDescription>
         </DialogHeader>
 

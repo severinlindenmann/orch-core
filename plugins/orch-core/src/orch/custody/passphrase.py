@@ -301,8 +301,9 @@ def tty_passphrase_provider(request: PassphraseRequest) -> str:
         if request.kind in ("unlock", "batch") and compact:
             # A plain review was just shown on this terminal (B11-P6, finding 24): one line instead of the technical
             # block. `d` is never a valid passphrase (too short), so it is safe to take it as the question.
-            # N13: the hint sits on the prompt line itself (one line, no separate "Press d" above it)
-            first = _read_secret(r, w, "\nPassphrase (d = technical details): " if hint else "\nPassphrase: ")
+            # N13: the hint is shown only where `d` works here (not after the details were already read); the prompt
+            # keeps ending in "Passphrase: " (the dev-pair and e2e terminal drivers answer that text)
+            first = _read_secret(r, w, "\nPress d for technical details\nPassphrase: " if hint else "\nPassphrase: ")
             while first == "d":
                 first = _read_secret(r, w, render_prompt(request) + "Passphrase: ")
         else:

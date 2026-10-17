@@ -464,7 +464,8 @@ USAGE = "usage: orch setup [--no-browser]   (run it in the folder you want to ma
 
 
 def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> bool:
-    """Open the dashboard on ``/setup`` and print the same single-use link to ``err`` (the person's terminal). The
+    """Open the dashboard on ``/setup`` and show the same single-use link on the person's own terminal (/dev/tty,
+    never ``err``). The
     launch code is NOT in any argument or in the environment of a child: the launcher returns the link over a pipe
     (``--emit-url-fd``, a number only), and it opens the browser through its own 0600 redirect file, never with the
     code in the browser's argv. ``no_browser`` prints the link only. The code the dashboard server reads is in the 0600
@@ -501,7 +502,16 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
         os.close(read_fd)
     if not line.startswith("http://127.0.0.1:") or "\n" in line or "?" in line or "#launch=" not in line:
         return False
-    err.write(f"Open this link in your browser (single use, 5 minutes): {line}\n")
+    # The link carries the single-use code, so it goes to the person's own terminal (/dev/tty) and nowhere else: not
+    # ``err`` or stdout, which can be redirected into a file or a CI log (``orch setup 2>log``).
+    from orch.custody import NoPrompt
+    from orch.ops import workspace_init as wi
+
+    try:
+        wi.TERMINAL.show(f"Open this link in your browser (single use, 5 minutes): {line}\n")
+    except (NoPrompt, OSError):
+        err.write("orch setup: cannot show the link here; run orch setup in your own terminal\n")
+        return not no_browser  # the browser may still have been opened by the launcher
     return True
 
 

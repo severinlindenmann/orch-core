@@ -78,6 +78,11 @@ _KEY = re.compile(r"^[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})$")
 _ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SET_KEYS = ("priority", "size", "labels", "parent")
+#: the order the sections are signed (and read) in: the order of the ticket page
+SECTION_ORDER = (
+    "summary", "context", "requirements", "out_of_scope", "plan", "decisions", "verification", "findings",
+    "current_state",
+)  # fmt: skip
 #: the defaults of a fresh ticket, which the ``base_rev`` of the first edit binds (F1 §5.6): what ``new`` creates
 _DEFAULTS: dict[str, Any] = {"priority": "medium", "size": None, "labels": [], "parent": None}
 
@@ -189,7 +194,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
             if k in sets:
                 pairs.append(f"{k}={','.join(sets[k]) if k == 'labels' else sets[k]}")
         out.append({"op": "set", "args": {"pairs": pairs}})
-    for sid in sorted(intent["sections"]):
+    for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append({"op": "section.set", "args": {"section": sid, "message": intent["sections"][sid]}})
     return out
 
@@ -406,7 +411,7 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
 
     lines = [f"title: {clean(one(intent['title']))}", f"type: {clean(intent['ticket_type'])}"]
     lines += [f"{clean(k)}: {clean(one(v))}" for k, v in intent["set"].items()]
-    for sid in sorted(intent["sections"]):
+    for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         lines.append(f"section {clean(sid)}:")
         lines += ["| " + clean(line) for line in intent["sections"][sid].split("\n")]
     return lines

@@ -21,6 +21,20 @@ export interface SetupState {
   agent_hours: number[]
   relay: { available: boolean; enabled: boolean }
   missing: string[]
+  /** `missing` in words, same order (core's wording; the page shows these, never the ids) */
+  missing_words?: string[]
+  /** Finish setup: what the workspace has now (read-only on the page) */
+  current?: {
+    name: string
+    prefix: string
+    addons: string[]
+    agent_hours: number
+    runner: { enabled: boolean; terminals: boolean }
+    runner_grant: boolean
+    method: 'terminal' | 'click'
+  } | null
+  /** step/item id -> words (`runner_grant`: "Agent access for this Mac's runner") */
+  labels?: Record<string, string>
 }
 export interface Profile {
   name: string

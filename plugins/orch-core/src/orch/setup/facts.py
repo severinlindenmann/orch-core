@@ -66,9 +66,14 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
 
     read = manifest or builtin.manifest_bytes
     texts = {
-        "start-agent": ("Start agents", "Agents can be started from the dashboard and run as you.", True, False),
-        "terminals": ("Terminals", "The dashboard can open a terminal on this machine, as you.", True, True),
-        "worktrees": ("Worktrees", "The dashboard can create git worktrees for tickets.", True, False),
+        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this Mac, as you.", True, False),
+        "terminals": ("Terminals", "Open a terminal on this Mac from the dashboard. It runs as you.", True, True),
+        "worktrees": (
+            "Worktrees",
+            "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
+            True,
+            False,
+        ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []
@@ -92,7 +97,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
         AddonInfo(
             "quick",
             "Quick tasks",
-            "Small one-off tasks (plain tickets; nothing to switch on).",
+            "Small one-off tasks. Always available; there is nothing to switch on.",
             required=False,
             default=True,
             kind="flag",

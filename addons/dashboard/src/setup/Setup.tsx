@@ -51,7 +51,139 @@ function Words({ words }: { words: string[] | null }) {
     </span>
   )
 }
+const pausedCopy = 'Setup paused. The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
 const steps = ['Welcome', 'You', 'Agents may', 'Approval', 'Secret words', 'Review']
+/** Finish setup has two screens: what exists and what to add, then the review. */
+const finishSteps = ['Your workspace', 'Review']
+/** Hours a person can choose, in words. */
+const hoursText = (h: number) => (h === 8 ? '8 hours' : `${h / 24} ${h === 24 ? 'day' : 'days'}`)
+/** The largest choice that is not longer than what the workspace has (never a downgrade, never invalid). */
+const nearestHours = (current: number, choices: number[]) =>
+  [...choices].sort((a, b) => b - a).find((h) => h <= current) ?? choices[0] ?? 8
+const yesNo = (on: boolean) => (on ? 'On' : 'Off')
+type Current = NonNullable<SetupState['current']>
+/** Finish setup (B11 finding 5): what the workspace has is shown as it is; only what is missing can be chosen, and
+ * nothing already on can be switched off or shortened here. */
+function FinishChoices({
+  state,
+  current,
+  profile,
+  update,
+  onContinue,
+}: {
+  state: SetupState
+  current: Current
+  profile: Profile
+  update: (value: Partial<Profile>) => void
+  onContinue: () => void
+}) {
+  const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons.includes(a.id))
+  const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons.includes(a.id))
+  const offersGrant = state.missing.includes('runner_grant')
+  const offersClick = current.method === 'terminal' && state.click_available
+  const hoursFixed = current.agent_hours !== 8
+  const chosen =
+    canAdd.some((a) => profile.addons.includes(a.id)) || profile.agent_grant || (offersClick && profile.method === 'click')
+  const label = (id: string) => state.labels?.[id] ?? 'A setup step'
+  return (
+    <>
+      <p>This workspace already exists. Nothing that is on will be switched off.</p>
+      <h2>Already set up</h2>
+      <dl className="current">
+        <dt>Name</dt>
+        <dd>
+          <Raw>{current.name}</Raw>
+        </dd>
+        <dt>Short name</dt>
+        <dd>
+          <Raw>{current.prefix}</Raw>
+        </dd>
+        <dt>Add-ons on</dt>
+        <dd>{on.map((a) => a.title).join(', ')}</dd>
+        <dt>Agents may work for</dt>
+        <dd>{hoursText(current.agent_hours)}</dd>
+        <dt>Agent execution on this Mac</dt>
+        <dd>{yesNo(current.runner.enabled)}</dd>
+        <dt>Agent access for this Mac’s runner</dt>
+        <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
+        <dt>You approve with</dt>
+        <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
+      </dl>
+      {canAdd.length > 0 || offersGrant || offersClick ? (
+        <>
+          <h2>You can still add</h2>
+          {canAdd.map((a) => (
+            <label className="toggle" key={a.id}>
+              <span>
+                <strong>{a.title}</strong>
+                <small>{a.desc}</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={profile.addons.includes(a.id)}
+                onChange={(e) =>
+                  update({
+                    addons: e.target.checked ? [...profile.addons, a.id] : profile.addons.filter((id) => id !== a.id),
+                  })
+                }
+              />
+            </label>
+          ))}
+          {offersGrant && (
+            <>
+              <label className="toggle">
+                <span>
+                  <strong>{label('runner_grant')}</strong>
+                  <small>The runner is the program on this Mac that starts your agents. Its access key never goes into this page.</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={profile.agent_grant}
+                  onChange={(e) => update({ agent_grant: e.target.checked })}
+                />
+              </label>
+              {profile.agent_grant && !hoursFixed && (
+                <>
+                  <h2>Let agents work for:</h2>
+                  <div className="segments">
+                    {state.agent_hours.map((h) => (
+                      <button key={h} aria-pressed={profile.agent_hours === h} onClick={() => update({ agent_hours: h })}>
+                        {hoursText(h)}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+          {offersClick && (
+            <label className="toggle">
+              <span>
+                <strong>Approve with one click on this computer</strong>
+                <small>Instead of the terminal. You keep your passphrase.</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={profile.method === 'click'}
+                onChange={(e) => update({ method: e.target.checked ? 'click' : 'terminal', relay: false })}
+              />
+            </label>
+          )}
+        </>
+      ) : (
+        <p>Nothing is missing. You can close this page.</p>
+      )}
+      <footer>
+        <button className="primary" disabled={!chosen} onClick={onContinue}>
+          Continue →
+        </button>
+      </footer>
+    </>
+  )
+}
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -76,6 +208,14 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [saved, setSaved] = useState(false)
   const [notice, setNotice] = useState('')
   const [reason, setReason] = useState('')
+  // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
+  const [access, setAccess] = useState<'none' | number>('none')
+  const chooseAccess = (a: 'none' | number) => {
+    setAccess(a)
+    setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, ...(a === 'none' ? { agent_grant: false } : {}) }))
+    setReview(undefined)
+    setTyped('')
+  }
   const heading = useRef<HTMLHeadingElement>(null)
   const lock = useRef(false)
   const confirmed = useRef(false)
@@ -153,9 +293,22 @@ export function Setup({ api }: { api: SetupAPI }) {
         }
         const s = r.s
         try {
-          const addons = s.addons.filter((a) => a.required || a.default).map((a) => a.id)
           setState(s)
-          setProfile((p) => ({ ...p, ...s.suggested, addons }))
+          if (s.mode === 'finish' && s.current) {
+            // Finish setup starts from what the workspace has: nothing is switched off, no time is shortened.
+            const c = s.current
+            setProfile((p) => ({
+              ...p,
+              name: c.name,
+              prefix: c.prefix,
+              addons: s.addons.filter((a) => a.required || (a.kind === 'addon' && c.addons.includes(a.id))).map((a) => a.id),
+              method: c.method,
+              agent_hours: nearestHours(c.agent_hours, s.agent_hours),
+            }))
+          } else {
+            const addons = s.addons.filter((a) => a.required || a.default).map((a) => a.id)
+            setProfile((p) => ({ ...p, ...s.suggested, addons }))
+          }
           if (s.error || s.phase !== 'profile') {
             setEnded(true)
             if (!s.error) setError('Return to the terminal to resume setup safely. Run orch setup again if this page was reloaded.')
@@ -197,6 +350,44 @@ export function Setup({ api }: { api: SetupAPI }) {
       clearTimeout(timer)
     }
   }, [api, run])
+  // The setup in the terminal can end while this page is open (Ctrl-C, closed terminal, "Finish setup later" elsewhere).
+  // Notice within about two seconds, wipe the secret words from the page and say so (B11 finding 4).
+  const progressDone = !!progress?.done
+  useEffect(() => {
+    if (!state || ended || progressDone) return
+    let active = true
+    let failures = 0
+    const timer = setInterval(() => {
+      api.call<SetupState>('state').then(
+        (s) => {
+          failures = 0
+          if (active && (s.phase === 'cancelled' || s.error)) pause()
+        },
+        (e: unknown) => {
+          if (!active) return
+          const code = e instanceof SetupError ? e.code : ''
+          // The setup process is gone (its socket is closed): paused at once. A failed request without an answer
+          // (network) has to repeat once, so a single hiccup does not end a session that is fine.
+          if (['setup.unavailable', 'setup.ended', 'setup.token', 'session.required', 'session.expired'].includes(code)) pause()
+          else if (++failures >= 2) pause()
+        },
+      )
+    }, 1000)
+    function pause() {
+      active = false
+      clearInterval(timer)
+      drop()
+      api.forget()
+      setRun(undefined)
+      setEnded(true)
+      setReason('')
+      setError(pausedCopy)
+    }
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [api, state, ended, progressDone])
   useEffect(() => {
     const hide = () => {
       drop()
@@ -229,10 +420,17 @@ export function Setup({ api }: { api: SetupAPI }) {
   }
   async function confirm() {
     const result = await api.call<{ ok: boolean; attempts_left?: number }>('secrets/confirm', { words })
+    // A wrong attempt keeps the entries that were right and clears only the wrong ones (the words are on this page
+    // anyway). A right one, or the end of the session, clears everything.
+    const typedWords = { ...words }
+    const keep: Record<string, string> = {}
+    if (!result.ok && result.attempts_left !== 0 && secretRef.current)
+      for (const [pos, w] of Object.entries(typedWords))
+        if (w.trim().toLowerCase() === secretRef.current.recovery_words[Number(pos) - 1]) keep[pos] = w
     Object.keys(words).forEach((key) => {
       words[key] = ''
     })
-    setWords({})
+    setWords(keep)
     if (result.ok) {
       confirmed.current = true
       drop()
@@ -266,12 +464,25 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
+  // A typed word is expected whenever the review gives machine access or changes how long agents may work. Core
+  // decides; if it ever omits the word where it is due, the page refuses to continue.
+  const needsWord =
+    !!review &&
+    (profile.agent_grant ||
+      !!review.runner_grant ||
+      (state?.mode === 'finish'
+        ? review.items.some((i) => i.id === 'settings' && i.details.some((d) => d.includes('grant_hours')))
+        : profile.agent_hours > 8))
   const addonTitles = (review?.items ?? []).filter((i) => i.id.startsWith('addon:')).map((i) => i.title)
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
     </button>
   )
+  // The dots carry their names (compact on a phone: only the current one). Finish setup has its own two steps.
+  const finishing = state?.mode === 'finish'
+  const names = finishing ? finishSteps : steps
+  const at = finishing ? (step === 5 ? 1 : 0) : step
   const title = ended
     ? 'Setup paused'
     : run
@@ -299,14 +510,18 @@ export function Setup({ api }: { api: SetupAPI }) {
           orch<span>.</span>
         </strong>
         <nav aria-label="Setup progress">
-          {steps.map((s, i) => (
-            <span
-              key={s}
-              className={i <= step ? 'active' : ''}
-              aria-current={i === step ? 'step' : undefined}
-              aria-label={`${i + 1}. ${s}`}
-            />
-          ))}
+          <ol>
+            {names.map((s, i) => (
+              <li
+                key={s}
+                className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}`}
+                aria-current={i === at ? 'step' : undefined}
+              >
+                <span className="dot" aria-hidden />
+                <span className="name">{s}</span>
+              </li>
+            ))}
+          </ol>
         </nav>
       </header>
       <h1 ref={heading} tabIndex={-1}>
@@ -336,19 +551,17 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </p>
               </div>
               <p>Everything stays on this computer unless you choose to connect your phone.</p>
-              {state.mode === 'finish' && (
-                <>
-                  <p>We will finish only the steps that are still missing.</p>
-                  <ul>
-                    {state.missing.map((id) => (
-                      <li key={id}>
-                        <Raw>{id}</Raw>
-                      </li>
-                    ))}
-                  </ul>
-                </>
+              {state.mode === 'finish' && state.current ? (
+                <FinishChoices
+                  state={state}
+                  current={state.current}
+                  profile={profile}
+                  update={update}
+                  onContinue={() => void act(approveProfile)}
+                />
+              ) : (
+                <footer>{next(1)}</footer>
               )}
-              <footer>{next(1)}</footer>
             </>
           )}
           {step === 1 && (
@@ -361,7 +574,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 Workspace short name
                 <input value={profile.prefix} onChange={(e) => update({ prefix: e.target.value })} />
               </label>
-              <p>Used in ticket names, like TST-0001.</p>
+              <p>Used in ticket names, like {profile.prefix.trim() || 'TST'}-0001.</p>
               <footer>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
@@ -386,16 +599,21 @@ export function Setup({ api }: { api: SetupAPI }) {
               </label>
               {state.addons
                 .filter((a) => a.id !== 'dashboard')
-                .map((a) => (
+                .map((a) =>
+                  a.kind === 'flag' ? (
+                    // Nothing to switch: the text says so and there is no switch (B11 finding 20).
+                    <div className="toggle" key={a.id}>
+                      <span>
+                        <strong>{a.title}</strong>
+                        <small>{a.desc}</small>
+                      </span>
+                      <span className="always">Always on</span>
+                    </div>
+                  ) : (
                   <label className="toggle" key={a.id}>
                     <span>
                       <strong>{a.title}</strong>
                       <small>{a.desc}</small>
-                      {a.capabilities.map((c) => (
-                        <small key={c}>
-                          <Raw>{c}</Raw>
-                        </small>
-                      ))}
                     </span>
                     <input
                       type="checkbox"
@@ -411,7 +629,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                       }
                     />
                   </label>
-                ))}
+                  ),
+                )}
               <footer>
                 <button onClick={() => setStep(1)}>Back</button>
                 {next(3)}
@@ -444,24 +663,34 @@ export function Setup({ api }: { api: SetupAPI }) {
               ))}
               <h2>Let agents work for you for:</h2>
               <div className="segments">
+                <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
+                  No agent access
+                </button>
                 {state.agent_hours.map((h) => (
-                  <button key={h} aria-pressed={profile.agent_hours === h} onClick={() => update({ agent_hours: h })}>
-                    {h === 8 ? '8 hours' : `${h / 24} ${h === 24 ? 'day' : 'days'}`}
+                  <button key={h} aria-pressed={access === h} onClick={() => chooseAccess(h)}>
+                    {hoursText(h)}
                   </button>
                 ))}
               </div>
-              <label className="toggle">
-                <span>
-                  Give this computer’s runner agent access
-                  <small>The access key stays with the runner, never in this page.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={profile.agent_grant}
-                  onChange={(e) => update({ agent_grant: e.target.checked })}
-                />
-              </label>
+              {access === 'none' ? (
+                <p>No agent can work in this workspace until you give access. You can do that later.</p>
+              ) : (
+                <label className="toggle">
+                  <span>
+                    Let this Mac’s agent runner start agents now
+                    <small>
+                      The runner is the program on this Mac that starts your agents. Its access key stays with it and
+                      never goes into this page.
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.agent_grant}
+                    onChange={(e) => update({ agent_grant: e.target.checked })}
+                  />
+                </label>
+              )}
               {state.relay.available && state.relay.enabled && (
                 <>
                   <label className="toggle">
@@ -496,7 +725,6 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 4 && (
             <>
               <p>Keep these somewhere safe. Only you should have them.</p>
-              <p className="warning">{voidCopy}</p>
               {secrets ? (
                 <>
                   {secrets.passphrase && (
@@ -521,6 +749,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <button onClick={() => window.print()}>Print recovery code</button>
                   </div>
                   <p role="status">{notice}</p>
+                  <p className="warning">{voidCopy}</p>
                   <label>
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
                     secret words and recovery code
@@ -560,7 +789,10 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <h2>You are about to approve</h2>
               <ul className="review-summary">
-                <li>Agents may work for you for up to {duration(review.runner_grant?.hours ?? profile.agent_hours)}</li>
+                {(review.runner_grant || (state.mode === 'new' && access !== 'none')) && (
+                  <li>Agents may work for you for up to {duration(review.runner_grant?.hours ?? profile.agent_hours)}</li>
+                )}
+                {state.mode === 'new' && access === 'none' && <li>No agent access</li>}
                 <li>
                   {profile.method === 'click'
                     ? 'You approve in the terminal or with one click on this Mac'
@@ -572,7 +804,6 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </li>
                 )}
               </ul>
-              {state.mode === 'new' && <p className="warning">{voidCopy}</p>}
               {(review.risk || review.flags.some((f) => f.id === 'runner' || f.id === 'terminals')) && (
                 <div className="warning">
                   <p>
@@ -653,7 +884,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <input autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
                 </label>
               )}
-              {(profile.agent_hours > 8 || profile.agent_grant || review.runner_grant) && !review.typed_word && (
+              {needsWord && !review.typed_word && (
                 <p role="alert">A typed confirmation is required. Return to your terminal to restart setup.</p>
               )}
               {terminalReviewMissing && (
@@ -665,7 +896,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   disabled={
                     terminalReviewMissing ||
                     (!!review.typed_word && typed !== review.typed_word) ||
-                    !!((profile.agent_hours > 8 || profile.agent_grant || review.runner_grant) && !review.typed_word)
+                    (needsWord && !review.typed_word)
                   }
                   onClick={() =>
                     void act(async () => {
@@ -696,7 +927,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 yes there.
               </p>
             )}
-          {progress?.waiting && (
+          {progress?.waiting && title !== 'Confirm in your terminal' && (
             <p role="status">
               {progress.waiting === 'waiting for terminal'
                 ? 'Confirm in your terminal'
@@ -728,9 +959,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               {progress.retry.length > 0 && (
                 <p>
                   Still to finish:{' '}
-                  {progress.retry.map((id) => (
-                    <Raw key={id}>{id + ' '}</Raw>
-                  ))}
+                  {progress.retry.map((id) => state?.labels?.[id] ?? 'a setup step').join(', ')}
                 </p>
               )}
               <button

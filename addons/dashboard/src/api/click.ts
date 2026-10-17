@@ -116,7 +116,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
-  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'quick_start', 'details', 'section',
+  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
   'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)

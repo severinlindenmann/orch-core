@@ -44,5 +44,23 @@ export const SECTIONS_BY_TYPE = Object.fromEntries(
   TYPES.map((t, i) => [t, Object.fromEntries(SECTION_ORDER.map((s) => [s, TABLE[s][i]]))]),
 ) as Record<TicketType, Record<SectionName, SectionNeed>>
 
-/** The only sections that must have text at creation. The others marked 'required' are needed before the plan gate. */
+/** The only sections that must have text at creation. Which other section a gate needs: see neededBefore. */
 export const requiredAtCreation = (type: TicketType): SectionName[] => (type === 'epic' ? ['summary', 'requirements'] : ['requirements'])
+
+/**
+ * Which approval needs the section to have text (core `model.gates._REQUIRED`, the rule behind "Add Out of scope and one
+ * acceptance check first"). Context and Out of scope are needed before the REQUIREMENTS gate, the plan and decisions
+ * before the PLAN gate. A section no gate asks for is optional, whatever the table above says about the spec.
+ */
+const GATE_NEEDS: Record<'requirements' | 'plan', Record<TicketType, SectionName[]>> = {
+  requirements: {
+    feature: ['context', 'requirements', 'out_of_scope'],
+    bug: ['context', 'requirements', 'out_of_scope'],
+    chore: ['requirements'],
+    spike: ['context', 'requirements'],
+    epic: ['summary', 'context', 'requirements', 'out_of_scope'],
+  },
+  plan: { feature: ['plan', 'decisions'], bug: ['plan', 'decisions'], chore: ['plan'], spike: ['plan', 'decisions'], epic: ['decisions'] },
+}
+export const neededBefore = (type: TicketType, section: SectionName): 'requirements' | 'plan' | null =>
+  GATE_NEEDS.requirements[type].includes(section) ? 'requirements' : GATE_NEEDS.plan[type].includes(section) ? 'plan' : null

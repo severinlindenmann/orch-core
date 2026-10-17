@@ -259,15 +259,8 @@ class NewTicketSequence(Action):
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
 
 
-class EditSection(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    was: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-    text: SectionText
-
-
 class EditAcceptance(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    was: list[dict[str, str]] = Field(max_length=64)
     edit: dict[Annotated[str, StringConstraints(pattern=r"^AC[1-9][0-9]*$")], Criterion] = Field(
         default_factory=dict, max_length=8
     )
@@ -281,50 +274,73 @@ class PeopleChange(BaseModel):
 
 
 class EditTicket(Action):
-    """B12D (finding N3): an inline edit of an EXISTING ticket on ONE review and ONE confirmation. The browser sends
-    what the page showed (the ticket, its log head, the text and criteria it replaces) and what changes; the signer
-    signs one ordinary event per change and stops if anyone else writes to the ticket meanwhile. This server only
-    relays the intent (core `orch.host.sequence`, kind edit_ticket)."""
+    """B12D (finding N3): an inline edit of an EXISTING ticket on ONE review and ONE confirmation. The page sends what
+    it changes and the `head_seq` of the log it showed. This server reads the ticket, refuses an edit of a ticket that
+    has changed since (`conflict.stale`), and builds the intent from that read (the text and criteria it replaces, the
+    head hash). The signer signs one ordinary event per change and stops if anyone else writes to the ticket meanwhile
+    (core `orch.host.sequence`, kind edit_ticket); this server only relays the intent."""
 
     action: Literal["edit_sequence"]
     key: Key
-    uid: Annotated[str, StringConstraints(pattern=r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
-    type: Literal["feature", "bug", "chore", "spike", "epic"]
-    head: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-    sections: dict[SectionId, EditSection] = Field(default_factory=dict, max_length=10)
+    head_seq: Annotated[int, Field(ge=1)]
+    sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
     acceptance: EditAcceptance | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
 
-    def intent(self) -> dict:
+    def intent(self, data: dict) -> dict:
+        """`data` is the host's `ticket.get` of the ticket, read now."""
+        from orch import canon
         from orch.canon.text import TextError, normalize_text
         from orch.host import sequence
 
+        doc = data.get("doc") or {}
+        head = doc.get("head") or {}
+        if head.get("seq") != self.head_seq:
+            raise fail(
+                "conflict.stale",
+                "This ticket changed after you opened it. Reload it and make your edit again.",
+                exit=5,
+            )
         try:
+            current = {**(doc.get("sections") or {}), "current_state": doc.get("current_state", "")}
             intent: dict = {
                 "v": 1,
                 "kind": "edit_ticket",
-                "ticket": {"key": self.key, "uid": self.uid},
-                "ticket_type": self.type,
-                "head": self.head,
+                "ticket": {"key": doc.get("key"), "uid": doc.get("uid")},
+                "ticket_type": doc.get("type"),
+                "head": head.get("head"),
                 "sections": {
-                    sid: {"was": e.was, "text": normalize_text(e.text).strip("\n")} for sid, e in self.sections.items()
+                    sid: {"was": canon.section_hash(current.get(sid, "")), "text": normalize_text(text).strip("\n")}
+                    for sid, text in self.sections.items()
+                    if normalize_text(text).strip("\n") != current.get(sid, "")
                 },
             }
+            if intent["ticket"]["key"] != self.key:
+                raise sequence.SequenceInvalid("the host answered for another ticket")
             if self.acceptance is not None and (self.acceptance.edit or self.acceptance.add):
                 a = self.acceptance
+                was = [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []]
+                known = {x["id"]: x["text"] for x in was}
+                if set(a.edit) - set(known):
+                    raise sequence.SequenceInvalid("it names a criterion the ticket does not have")
+                edits = {k: normalize_text(v, one_line=True) for k, v in a.edit.items()}
                 intent["acceptance"] = {
-                    "was": [{"id": x.get("id", ""), "text": x.get("text", "")} for x in a.was],
-                    "edit": {k: normalize_text(v, one_line=True) for k, v in a.edit.items()},
-                    "add": [normalize_text(t, one_line=True) for t in a.add],
+                    "was": was,
+                    "edit": {k: v for k, v in edits.items() if v != known[k]},
+                    "add": [normalize_text(t, one_line=True) for t in a.add if t.strip()],
                 }
+                if not intent["acceptance"]["edit"] and not intent["acceptance"]["add"]:
+                    del intent["acceptance"]
             if self.people:
                 intent["people"] = {
                     role: {"add": sorted(set(c.add)), "remove": sorted(set(c.remove))}
                     for role, c in self.people.items()
                     if c.add or c.remove
                 }
+                if not intent["people"]:
+                    del intent["people"]
             return sequence.validate_intent(intent)
-        except (TextError, sequence.SequenceInvalid) as exc:
+        except (TextError, sequence.SequenceInvalid, KeyError, TypeError) as exc:
             raise fail("invalid.input", f"That edit can't be signed: {exc}", exit=1) from None
 
 
@@ -655,10 +671,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case QuickStart():
             intent = action.intent()
             return "new", {"title": intent["title"], "type": "chore"}
-        case EditTicket():
-            from orch.host import sequence
-
-            return sequence.step_args(action.intent(), 0, None)  # the first step of the edit, naming the ticket
+        case EditTicket():  # its op comes from the intent, which needs the ticket as read now: see plan()
+            raise AssertionError("plan() builds an edit's first step")
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels is not None:
@@ -723,8 +737,8 @@ def expected(action: Action, person: str | None = None):
                 person is None or ev[0].get("owner") == person
             )
         case EditTicket():
-            head = action.head  # the first event is chained on the head the page showed (the signer checks it again)
-            return lambda ev: len(ev) == 1 and ev[0].get("based_on") == head
+            # the first event is one ordinary edit (the signer checks it against the intent, head included)
+            return lambda ev: len(ev) == 1 and ev[0].get("type") in ("ticket.updated", "people.changed")
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -810,7 +824,14 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
     labels = list(data["doc"].get("labels", [])) if isinstance(body, AddLabel) and data else None
-    op, args = host_call(body, labels)  # the only place an op name is chosen
+    if isinstance(body, EditTicket):
+        from orch.host import sequence
+
+        edit_intent = body.intent(data)
+        op, args = sequence.step_args(edit_intent, 0, None)  # the first step of the edit, naming the ticket
+    else:
+        edit_intent = None
+        op, args = host_call(body, labels)  # the only place an op name is chosen
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
@@ -826,7 +847,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
         from orch.host import sequence
 
-        intent = body.intent()
+        intent = edit_intent if edit_intent is not None else body.intent()
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": len(sequence.steps(intent)), "digest": digest, "intent": intent}
         base = {"sequence": digest}  # the whole intent is part of the intent's idem

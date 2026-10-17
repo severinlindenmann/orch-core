@@ -99,7 +99,7 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
         </Block>
       )}
       {material.sequence && (
-        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, then each written section)`}>
+        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, each written section, each acceptance criterion and the people)`}>
           <Value value={material.sequence.intent} />
         </Block>
       )}

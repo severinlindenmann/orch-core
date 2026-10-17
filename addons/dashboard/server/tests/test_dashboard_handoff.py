@@ -903,29 +903,25 @@ def test_a_new_ticket_refuses_bad_criteria_and_people(ready, change):
 
 
 def _edit_body(p1, **over):
-    """The edit action of DEMO-0001 the way the page builds it: the uid, the head and the current text it replaces."""
-    from orch import canon
-
+    """The edit action of DEMO-0001 the way the page sends it: what changes and the log head it showed."""
     store = p1.store
     view = store.ticket("DEMO-0001")
-    head = store.head_at(view.uid, store.log_seq(view.uid))
-    was = canon.section_hash(store.body_sections(view.uid).get("summary", ""))
     return {
         "action": "edit_sequence",
         "key": "DEMO-0001",
-        "uid": view.uid,
-        "type": view.type,
-        "head": head,
-        "sections": {"summary": {"was": was, "text": "New text.\r\nTwo"}},
+        "head_seq": store.log_seq(view.uid),
+        "sections": {"summary": "New text.\r\nTwo"},
         **over,
     }
 
 
 def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_calls, p1):
+    from orch import canon
+
     client, token, stub, rich, signing = ready
     body = _edit_body(
         p1,
-        acceptance={"was": [], "edit": {}, "add": ["Second"]},
+        acceptance={"edit": {}, "add": ["Second"]},
         people={"reviewers": {"add": [QUINN], "remove": []}},
     )
     res = post(client, token, stub, body)
@@ -934,39 +930,40 @@ def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_ca
     meta = sent["sequence"]
     assert sent["op"] == "section.set" and sent["args"]["ref"] == "DEMO-0001"
     assert meta["step"] == 0 and meta["of"] == 3  # the section, the criterion, the reviewer
-    assert meta["intent"]["sections"]["summary"]["text"] == "New text.\nTwo"  # CRLF made LF
+    intent = meta["intent"]
+    assert intent["sections"]["summary"]["text"] == "New text.\nTwo"  # CRLF made LF
+    # the text it replaces, the criteria it extends and the head come from the host's read, not from the browser
+    view = p1.store.ticket("DEMO-0001")
+    assert intent["sections"]["summary"]["was"] == canon.section_hash(
+        p1.store.body_sections(view.uid).get("summary", "")
+    )
+    assert intent["ticket"] == {"key": "DEMO-0001", "uid": view.uid}
     got = res.json()
     assert got["content"]["headline"] == "Edit DEMO-0001"
-    assert got["events"][0]["based_on"] == body["head"]
-    # the same edit is the same request; another head is another one
+    assert got["events"][0]["based_on"] == intent["head"]
+    # the same edit is the same request
     assert post(client, token, stub, body).json()["id"] == got["id"]
 
 
-def test_an_edit_on_an_old_head_is_not_shown(ready, p1):
+def test_an_edit_of_a_ticket_that_changed_since_the_page_is_refused(ready, p1):
     client, token, stub, rich, signing = ready
-    res = post(client, token, stub, _edit_body(p1, head="sha256:" + "a" * 64))
-    assert res.status_code >= 400, res.text  # the first event is not chained on the head the page showed
+    body = _edit_body(p1)
+    res = post(client, token, stub, {**body, "head_seq": body["head_seq"] - 1})
+    assert res.status_code >= 400 and "changed after you opened it" in res.text, res.text
 
 
 @pytest.mark.parametrize(
     "change",
     [
-        {"sections": {}, "acceptance": None, "people": None},  # nothing changes
-        {"head": "sha256:xyz"},
+        {"sections": {}},  # nothing changes
+        {"head_seq": 0},
         {"people": {"owner": {"add": [QUINN, "p_" + "8" * 32], "remove": []}}},
+        {"people": {"watchers": {"add": [QUINN], "remove": []}}},
+        {"acceptance": {"edit": {"AC9": "x"}, "add": []}},
         {"surprise": 1},
     ],
 )
-def test_an_edit_refuses_a_bad_intent(ready, change):
+def test_an_edit_refuses_a_bad_intent(ready, p1, change):
     client, token, stub, rich, signing = ready
-    body = {
-        "action": "edit_sequence",
-        "key": "DEMO-0001",
-        "uid": "01M55MH6AH8PHX9D1JQNM8HMFW",
-        "type": "feature",
-        "head": "sha256:" + "a" * 64,
-        "sections": {"summary": {"was": "sha256:" + "b" * 64, "text": "New."}},
-        **change,
-    }
-    res = post(client, token, stub, body)
-    assert res.status_code in (400, 422), res.text
+    res = post(client, token, stub, _edit_body(p1, **change))
+    assert res.status_code in (400, 409, 422), res.text

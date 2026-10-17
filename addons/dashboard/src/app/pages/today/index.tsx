@@ -30,7 +30,7 @@ import { useMandatesPreview } from '../../mandates/shared'
 import { useMe } from '@/app/useMe'
 
 function dateLine(now: string) {
-  return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+  return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`

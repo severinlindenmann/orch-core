@@ -263,3 +263,12 @@ def test_the_builtin_dashboard_manifest_is_the_dashboards_own_file():
     if not own.is_file():
         pytest.skip("not in the monorepo checkout")
     assert builtin.manifest_bytes("dashboard") == own.read_bytes()
+
+
+def test_review_names_the_workspace_it_creates(flow):
+    """B12 N7: short name, person and folder come from core's review (and its digest), not from page state."""
+    out = to_review(flow, PROFILE)
+    ws = out["workspace"]
+    assert ws["prefix"] == PROFILE["prefix"] and ws["name"] == PROFILE["name"] and ws["dir"] == flow.dir
+    assert ws["lines"][0] == f"Workspace {PROFILE['prefix']} for {PROFILE['name']}"
+    assert f"Folder: {flow.dir}" in ws["lines"]

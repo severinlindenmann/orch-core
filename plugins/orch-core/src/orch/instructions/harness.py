@@ -196,15 +196,18 @@ def _claude_is_agents_link(root: Path) -> bool:
         return False
 
 
-def _base(root: Path, store: Path | None, rel: str) -> Path:
-    """Where ``rel`` lives: ``AGENTS.orch.md`` in the store (``.orch``), everything else under the project ``root``."""
-    return store if store is not None and rel == AGENTS_FILE else root
+def _where(root: Path, store: Path | None, rel: str) -> str:
+    """``rel`` as a path below the project ``root``: ``AGENTS.orch.md`` lives in the store (``.orch/AGENTS.orch.md``),
+    everything else at its own place. Every check and write goes through ``root`` and this path, so the link check
+    covers the ``.orch`` component too."""
+    if store is None or rel != AGENTS_FILE or store == root:
+        return rel
+    return f"{store.relative_to(root).as_posix()}/{rel}"
 
 
-def _label(root: Path, store: Path | None, rel: str) -> str:
-    """``rel`` as reported to the person: relative to the project (``.orch/AGENTS.orch.md`` for the store's file)."""
-    base = _base(root, store, rel)
-    return rel if base == root else f"{base.relative_to(root).as_posix()}/{rel}"
+def agents_rel(root: Path, store: Path | None) -> str:
+    """Where ``AGENTS.orch.md`` is, relative to the project ``root``."""
+    return _where(root, store, AGENTS_FILE)
 
 
 def check_targets(root: Path, store: Path | None = None) -> list[str]:
@@ -217,7 +220,7 @@ def check_targets(root: Path, store: Path | None = None) -> list[str]:
         if rel == "CLAUDE.md" and link:
             continue
         try:
-            _check_chain(_base(root, store, rel), rel)
+            _check_chain(root, _where(root, store, rel))
         except UnsafePath as e:
             problems.append(str(e))
     return problems
@@ -322,12 +325,12 @@ def write_workspace_files(
                     kept.append(f"kept {skill_dir} ({reason})")
             if skill_dir in skip_dirs:
                 continue
-        base = _base(root, store, rel)
+        where = _where(root, store, rel)
         if dry_run:
-            if safe_read(base, rel) != text:
-                changed.append(_label(root, store, rel))
-        elif _write(base, rel, text):
-            changed.append(_label(root, store, rel))
+            if safe_read(root, where) != text:
+                changed.append(where)
+        elif _write(root, where, text):
+            changed.append(where)
     for rel, new in (("AGENTS.md", agents_new), ("CLAUDE.md", claude_new)):
         if new is not None:
             _check_chain(root, rel)

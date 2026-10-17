@@ -6,7 +6,7 @@ import { ApiError } from '@/api/types'
 import { DASHBOARD_EXECUTION_LINE, readQuickLimits, writeQuickLimits } from '@/api/quickRecords'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { queryClient } from '@/production/Shell'
-import { DO, MARA, OWNER, READS, TOM, roster, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { DO, MARA, OWNER, READS, TOM, roster, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 // The production app on a fake server that speaks the M6 routes (quick tasks, records, the runner line).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -164,11 +164,14 @@ it('starting on a terminal workspace is ONE hand-off with the whole task: title,
 }, 30000)
 
 it('ticking the box adds the agent access (workable tickets only) to the same request, never on its own', async () => {
+  state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
   expect(screen.getByLabelText('How long agents may work')).toBeDisabled()
-  await user.click(screen.getByRole('checkbox', { name: /Let agents work on workable tickets/ }))
+  await user.click(screen.getByRole('checkbox', { name: /Let agents work on any ticket/ }))
+  // the workspace maximum caps the lengths (the host refuses a longer runner grant): 3 days here, so no 7 days
+  expect(within(screen.getByLabelText('How long agents may work')).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
   await user.selectOptions(screen.getByLabelText('How long agents may work'), '24')
   await user.click(screen.getByRole('button', { name: 'Start task' }))
   await screen.findByRole('dialog', {}, T)

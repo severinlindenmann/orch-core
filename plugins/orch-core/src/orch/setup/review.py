@@ -85,12 +85,16 @@ class Plan:
     rows: list[dict[str, Any]] = field(default_factory=list)
     digest: str = ""
     fingerprint: list[str] | None = None
+    #: what a NEW setup creates (B12 N7): the short name, the person's name and the folder, as the genesis will sign
+    #: them (the very profile values the bootstrap gets); None in Finish setup, where the workspace exists
+    workspace: dict[str, Any] | None = None
 
     def view(self, review_id: str) -> dict[str, Any]:
         return {
             "review_id": review_id,
             "digest": self.digest,
             "fingerprint": self.fingerprint,
+            "workspace": self.workspace,
             "items": self.rows,
             "runner_grant": self.runner_grant,
             "flags": self.flags,
@@ -259,10 +263,30 @@ def plan(
     )
     tty = facts is not None or runner_grant is not None or exec_addon
     p = Plan(items, flags, runner_grant, risk, typed, tty, _canon_profile(profile, directory))
+    if facts is None:
+        p.workspace = _workspace(profile, directory)
     p.rows = _rows(p, profile)
     p.digest = _digest(p)
     p.fingerprint = fingerprint(p.digest) if tty else None
     return p
+
+
+def _workspace(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
+    """The new workspace in words: values come from the profile that core holds and the genesis signs, cleaned by the
+    same rule as every signing review."""
+    prefix, name = _clean(profile["prefix"]), _clean(profile["name"])
+    folder = _clean(directory)
+    return {
+        "prefix": prefix,
+        "name": name,
+        "dir": folder,
+        "lines": [
+            f"Workspace {prefix} for {name}",
+            f"Short name: {prefix}",
+            f"Person: {name}",
+            f"Folder: {folder}",
+        ],
+    }
 
 
 def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
@@ -343,6 +367,7 @@ def _digest(p: Plan) -> str:
             }
             for r in p.rows
         ],
+        "workspace": p.workspace,
         "flags": p.flags,
         "risk": p.risk,
         "typed_word": p.typed_word,

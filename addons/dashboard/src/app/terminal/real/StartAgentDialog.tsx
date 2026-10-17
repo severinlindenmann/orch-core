@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { queries } from '@/api/queries'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
-import { nowMs } from '@/lib/time'
+import { fmtDateTime, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
 
 /** One plain line per mode, shown under the choice. */
@@ -45,10 +45,7 @@ const DEPOSIT_POLL_MS = 2000
 
 const same = (a: AgentArgs, b: AgentArgs) => JSON.stringify(a) === JSON.stringify(b)
 const message = (e: unknown) => (e instanceof ApiError ? e.message : 'The dashboard server did not answer.')
-const clock = (stamp: string) => {
-  const t = Date.parse(stamp)
-  return Number.isNaN(t) ? stamp : new Date(t).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
-}
+const clock = fmtDateTime
 
 /** The form's values as `agent.preview`'s arguments: empty optionals left out; the subagent model is Claude Code's only. */
 function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: string; subagent: string; label: string; worktree: boolean }): AgentArgs {
@@ -251,7 +248,11 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const workspaces = useQuery(queries.workspaces())
   const workspace = workspaces.data?.find(w => w.id === ws)
   // 8 h / 1 / 3 / 7 days, never above the workspace maximum; an Extend never offers less than the access it replaces.
-  const lengths = runnerLengths(grantDefaultHours(workspace), extend ? Date.parse(extend.until) - nowMs() : 0)
+  // The maximum is the SIGNED setting (`settings.grant_hours`, from the host's settings read): the workspace list does not carry it.
+  const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
+  const maxHours = grantDefaultHours({ grant_hours: hostSettings.data?.grant_hours ?? workspace?.grant_hours })
+  const maxKnown = !workspaces.isPending && !hostSettings.isPending // until both answered, the maximum is a guess: show nothing about it
+  const lengths = runnerLengths(maxHours, extend ? Date.parse(extend.until) - nowMs() : 0)
   const [selectedHours, setHours] = useState(8)
   const hours = lengths.some(([h]) => h === selectedHours) ? selectedHours : (lengths[0]?.[0] ?? 0)
   const [scope, setScope] = useState<'workable' | 'all'>(extend?.scope ?? 'workable')
@@ -365,16 +366,16 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       )}
       {extend && <p>Agents that are running now stop; new agents use the extended access.</p>}
       {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
-      {(!grant || extend) && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
-        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows.</p> : <div className="flex flex-wrap items-center gap-2">
+      {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
+        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
             {lengths.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <Label htmlFor="grant-scope" className="text-xs text-text-muted">Tickets</Label>
           <select id="grant-scope" disabled={!!extend} className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
-            <option value="workable">workable</option>
-            <option value="all">all</option>
+            <option value="workable">Tickets you may work on</option>
+            <option value="all">All tickets</option>
           </select>
           <Button size="xs" disabled={!enabled || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
           {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}

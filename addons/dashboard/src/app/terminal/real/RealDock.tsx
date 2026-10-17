@@ -46,7 +46,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const runs = list.data?.runs ?? []
   const shown = runs.filter((r) => r.kind === 'shell' || r.kind === 'agent')
   const [selected, setSelected] = useState<string | null>(null)
-  // The run this mount opened itself: its first attach asks for the lease (write, never take).
+  // The run this mount opened itself: its first attach takes the lease (nobody else can hold a run that was just created).
   const [opened, setOpened] = useState<string | null>(null)
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<{ args: { ticket?: string }; data: TermPreview | null; error: string; idem: string } | null>(null)
@@ -206,16 +206,23 @@ function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data:
         </DialogHeader>
         {!data && !preview?.error && <Skeleton className="h-20" />}
         {data && (
-          <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-            <dt className="text-text-muted">Runs</dt>
-            <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-            <dt className="text-text-muted">In</dt>
-            <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
-            <dt className="text-text-muted">As</dt>
-            <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
-            {data.login_shell && (<><dt className="text-text-muted">Shell</dt><dd>The program is found and started through your login shell; your shell profile runs first and can change what runs.</dd></>)}
-            {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
-          </dl>
+          <div className="space-y-2 text-xs" data-testid="term-preview-lines">
+            <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+              <dt className="text-text-muted">In</dt>
+              <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
+              <dt className="text-text-muted">As</dt>
+              <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
+            </dl>
+            <details data-testid="term-details">
+              <summary className="cursor-pointer text-text-muted">Details</summary>
+              <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+                <dt className="text-text-muted">Runs</dt>
+                <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
+                {data.login_shell && (<><dt className="text-text-muted">Shell</dt><dd>The program is found and started through your login shell; your shell profile runs first and can change what runs.</dd></>)}
+                {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
+              </dl>
+            </details>
+          </div>
         )}
         {data?.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-warning"><Prose inline>{w}</Prose></p>)}
         {data?.blocked && (

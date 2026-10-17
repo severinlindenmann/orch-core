@@ -416,3 +416,31 @@ def _last_id(human, key):
     store.refresh()
     uid = store.ticket(key).uid
     return store.events(uid)[-1]["id"]
+
+
+def test_the_cli_builds_the_same_intent_as_the_form():
+    from orch.host import quickstart
+    from orch.host.errors import HostError
+
+    args = quickstart._parser().parse_args(
+        [
+            "Fix the typo",
+            "--details",
+            "It says teh.",
+            "--step",
+            "Typo gone",
+            "--check",
+            "grep -c teh f",
+            "--agents",
+            "8",
+        ]
+    )
+    intent = quickstart.build_intent(args)
+    assert intent["kind"] == "quick_task" and intent["agent"] == {"hours": 8, "scope": "workable"}
+    assert intent["checks"] == [{"text": "Typo gone", "cmd": "grep -c teh f"}]
+    plain = quickstart.build_intent(quickstart._parser().parse_args(["Water the plants"]))
+    assert plain["checks"] == [{"text": "Water the plants", "cmd": None}] and plain["agent"] is None
+    with pytest.raises(HostError):
+        quickstart.build_intent(quickstart._parser().parse_args(["T", "--check", "cmd only"]))
+    with pytest.raises(HostError):
+        quickstart.build_intent(quickstart._parser().parse_args(["bad\nline"]))

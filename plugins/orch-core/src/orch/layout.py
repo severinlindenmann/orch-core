@@ -32,7 +32,10 @@ __all__ = [
     "StorePin",
     "check_single_store",
     "fresh",
+    "open_state_fd",
+    "state_marker_present",
     "open_store_dir",
+    "store_of",
     "resolve",
 ]
 
@@ -171,3 +174,90 @@ def open_store_dir(
         return os.open(STORE_DIR, _DIR, dir_fd=project_fd)
     except OSError as exc:
         raise LayoutError(f"{STORE_DIR} cannot be opened ({exc.strerror})") from None
+
+
+def open_state_fd(project: str | os.PathLike[str]) -> int | None:
+    """The fd of ``<store>/.state`` of the project, every step ``O_NOFOLLOW`` from the project fd (the store is the
+    project itself in the legacy layout, ``.orch`` in the new one); ``None`` when there is no store or no ``.state``.
+    :class:`LayoutError` when the layout is unusable (two stores, a linked ``.orch``)."""
+    try:
+        pfd = os.open(project, _DIR)
+    except OSError:
+        return None
+    try:
+        found = resolve(pfd, project)
+        if found is None:
+            return None
+        sfd = pfd if found.legacy else open_store_dir(pfd)
+        if sfd is None:
+            return None
+        try:
+            return os.open(".state", _DIR, dir_fd=sfd)
+        except OSError:
+            return None
+        finally:
+            if sfd != pfd:
+                os.close(sfd)
+    finally:
+        os.close(pfd)
+
+
+def store_of(project: str | os.PathLike[str]) -> Path:
+    """The store directory of the project as it is on disk now (``.orch``, or the project itself: legacy, or no store
+    yet). Unusable layout: :class:`LayoutError`. A path, for reading names that carry no authority; anything that
+    must be pinned goes through an fd (:func:`open_state_fd`, ``Store.open``)."""
+    try:
+        pfd = os.open(project, _DIR)
+    except OSError:
+        return Path(project)
+    try:
+        found = resolve(pfd, project)
+    finally:
+        os.close(pfd)
+    return found.store if found is not None else fresh(project).store
+
+
+def state_marker_present(project: str | os.PathLike[str], name: str) -> bool:
+    """A marker file ``name`` in the ``.state`` of the project's store, in any form. Fails closed: ``False`` only when
+    its absence is shown positively (``ENOENT`` on a component or on the file) in BOTH candidate places,
+    ``<project>/.state`` and ``<project>/.orch/.state``, each walked without following a link. Any other answer (a
+    link, a file where a directory belongs, a permission error, two stores) counts as present. A project that does not
+    exist has no marker."""
+    try:
+        pfd = os.open(project, _DIR)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    try:
+        try:
+            resolve(pfd, project)
+        except LayoutError:
+            return True
+        return any(_marked_below(pfd, chain, name) for chain in ((".state",), (STORE_DIR, ".state")))
+    finally:
+        os.close(pfd)
+
+
+def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
+    fds: list[int] = []
+    fd = pfd
+    try:
+        for part in chain:
+            try:
+                fd = os.open(part, _DIR, dir_fd=fd)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return True
+            fds.append(fd)
+        try:
+            os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        return True
+    finally:
+        for item in fds:
+            os.close(item)

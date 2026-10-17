@@ -109,11 +109,17 @@ def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
     return verify
 
 
-def open_store_fs(project: Path, ident: tuple[int, int] | None, pin: StorePin | None) -> tuple[RootFS, Layout]:
+def open_store_fs(
+    project: Path, ident: tuple[int, int] | None, pin: StorePin | None, *, create: bool = False
+) -> tuple[RootFS, Layout]:
     """The pinned store root and the layout of the project directory ``project`` (opened ``O_NOFOLLOW``, checked
     against ``ident``): the layout is resolved from that one fd and, in the new layout, ``.orch`` is opened below it
-    (``O_NOFOLLOW``), never by a path."""
-    pfs = RootFS.at(project, ident=ident, create=ident is None)
+    (``O_NOFOLLOW``), never by a path. ``create`` (a new workspace only, never with ``ident``): the project directory
+    and, when it holds no store and the layout switch says new, ``.orch`` may be made; otherwise nothing is created
+    (a records or read caller can never make a store)."""
+    if create and ident is not None:
+        raise StoreError("validation.path", "a store found by its identity is never created")
+    pfs = RootFS.at(project, ident=ident, create=create)
     keep = False
     try:
         try:
@@ -125,7 +131,7 @@ def open_store_fs(project: Path, ident: tuple[int, int] | None, pin: StorePin | 
                 keep = True
                 return pfs, layout
             sfd = _layout.open_store_dir(pfs.fd)
-            if sfd is None and found is None and _layout.WRITE_NEW:  # a new workspace: made here, owner only
+            if sfd is None and found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only
                 os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
                 sfd = _layout.open_store_dir(pfs.fd)
         except LayoutError as exc:
@@ -452,7 +458,7 @@ class Store:
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         project = Path(path)
-        fs, layout = open_store_fs(project, ident, store_pin)
+        fs, layout = open_store_fs(project, ident, store_pin, create=ident is None)
         root = layout.store
         try:
             store = cls(

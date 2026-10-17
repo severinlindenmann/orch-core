@@ -719,9 +719,12 @@ class RealPorts:
             wi._close(st.client)
         assert st.wid is not None
         try:
+            from orch import layout as layout_mod
             from orch.instructions import write_workspace_files
 
-            write_workspace_files(root)  # as `orch init`: a failure here leaves the workspace in place
+            write_workspace_files(
+                root, store=layout_mod.store_of(root)
+            )  # as `orch init`: a failure here leaves the workspace in place
         except Exception:  # noqa: BLE001
             pass
         pub = factory(wi.person_dir(self.state, st.wid)).public_key("dk")
@@ -740,11 +743,12 @@ class RealPorts:
         return Identity(person, device_ref(backend.public_key("dk")), str(backend.auth))
 
     def install_addon(self, root: Path, name: str, raw: bytes) -> None:
+        from orch import layout as layout_mod
         from orch.addons import builtin
 
         try:
-            builtin.write_manifest(str(root), name, raw)
-        except (OSError, ValueError) as e:
+            builtin.write_manifest(str(layout_mod.store_of(root)), name, raw)
+        except (OSError, ValueError, layout_mod.LayoutError) as e:
             raise SetupError("addon.install", f"cannot write addons/{name} ({type(e).__name__})", 500) from None
 
     # -- the runner (D-P2-31)

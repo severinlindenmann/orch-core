@@ -20,7 +20,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     h = Human(ctx, "addon.grant")
     h.who()
     name = args["name"]
-    root = h.call.ws.require_root()
+    h.call.ws.require_root()
+    root = h.store.layout.store  # addons/ lives in the store
     try:
         directory = install.package_dir(root, name)
     except PackageError as e:

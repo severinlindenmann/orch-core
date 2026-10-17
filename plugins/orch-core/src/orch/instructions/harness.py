@@ -196,8 +196,20 @@ def _claude_is_agents_link(root: Path) -> bool:
         return False
 
 
-def check_targets(root: Path) -> list[str]:
-    """Why the instruction files cannot be written safely into ``root`` (empty when they can)."""
+def _base(root: Path, store: Path | None, rel: str) -> Path:
+    """Where ``rel`` lives: ``AGENTS.orch.md`` in the store (``.orch``), everything else under the project ``root``."""
+    return store if store is not None and rel == AGENTS_FILE else root
+
+
+def _label(root: Path, store: Path | None, rel: str) -> str:
+    """``rel`` as reported to the person: relative to the project (``.orch/AGENTS.orch.md`` for the store's file)."""
+    base = _base(root, store, rel)
+    return rel if base == root else f"{base.relative_to(root).as_posix()}/{rel}"
+
+
+def check_targets(root: Path, store: Path | None = None) -> list[str]:
+    """Why the instruction files cannot be written safely into ``root`` and ``store`` (the directory that holds
+    ``AGENTS.orch.md``; ``None``: ``root``) (empty when they can)."""
     problems = []
     rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files()]
     link = _claude_is_agents_link(root)
@@ -205,7 +217,7 @@ def check_targets(root: Path) -> list[str]:
         if rel == "CLAUDE.md" and link:
             continue
         try:
-            _check_chain(root, rel)
+            _check_chain(_base(root, store, rel), rel)
         except UnsafePath as e:
             problems.append(str(e))
     return problems
@@ -270,6 +282,7 @@ def write_workspace_files(
     owned: Mapping[str, str] | None = None,
     force: bool = False,
     dry_run: bool = False,
+    store: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
     would, with ``dry_run``) and a line for each file left alone and why.
@@ -281,7 +294,8 @@ def write_workspace_files(
     ``.agents/skills`` and, as a generated copy, to ``.claude/skills`` (never deleted). A skill whose sidecar names
     another scope than ``builtin`` is the owner's and is kept; so is one without a sidecar unless its ``SKILL.md`` is
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
-    hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`."""
+    hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
+    directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``."""
     changed: list[str] = []
     kept: list[str] = []
     skip_dirs: set[str] = set()
@@ -308,11 +322,12 @@ def write_workspace_files(
                     kept.append(f"kept {skill_dir} ({reason})")
             if skill_dir in skip_dirs:
                 continue
+        base = _base(root, store, rel)
         if dry_run:
-            if safe_read(root, rel) != text:
-                changed.append(rel)
-        elif _write(root, rel, text):
-            changed.append(rel)
+            if safe_read(base, rel) != text:
+                changed.append(_label(root, store, rel))
+        elif _write(base, rel, text):
+            changed.append(_label(root, store, rel))
     for rel, new in (("AGENTS.md", agents_new), ("CLAUDE.md", claude_new)):
         if new is not None:
             _check_chain(root, rel)

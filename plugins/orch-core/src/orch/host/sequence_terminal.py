@@ -147,8 +147,8 @@ def _port(
         return res if isinstance(res, dict) else {}
 
     def head(key: str) -> dict[str, Any]:
-        doc = call("ticket.get", {"ref": key})["data"]["doc"]
-        return dict(doc["head"])
+        data = call("ticket.get", {"ref": key})["data"]
+        return {**data["doc"]["head"], "tail": (data.get("log") or [None])[-1]}
 
     def cancel(rid: str) -> None:
         call("human.cancel", {"request_id": rid})

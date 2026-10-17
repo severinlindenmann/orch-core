@@ -211,9 +211,9 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
         Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
       </p>
       {request.code ? <CommandLine code={request.code} /> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
-      <p className="text-[11px] text-text-muted">Fingerprint <code data-testid="handoff-fingerprint">{request.fingerprint}</code> · match in Terminal</p>
+      <p className="text-[11px] text-text-muted">The terminal shows the same code: <code data-testid="handoff-fingerprint">{request.fingerprint}</code></p>
       {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
-      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values are stated by the host (see details)</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
       <SignDetails>
       <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
       <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>

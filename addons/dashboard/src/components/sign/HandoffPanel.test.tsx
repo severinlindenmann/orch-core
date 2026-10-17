@@ -14,7 +14,7 @@ it('keeps the confirm word and host caveat visible with technical details collap
   expect(screen.getAllByText(word).find(el => !el.closest('details'))).toBeVisible()
   expect(screen.getByTestId('handoff-command')).toBeVisible()
   expect(screen.getByTestId('handoff-fingerprint')).toBeVisible()
-  expect(screen.getByText('Some values are stated by the host (see details)')).toBeVisible()
+  expect(screen.getByText('Some values come from orch on this Mac (see details)')).toBeVisible()
   expect(screen.getByText('Gate policy (stated by the host, not recomputed)')).not.toBeVisible()
 })
 
@@ -40,7 +40,7 @@ it.each(['policy', 'before', 'derived', 'none'])('only summarizes present host c
     review: [{ event_id: 'event', type: 'ticket.updated', payload: {}, derived: kind === 'derived' ? { key: 'DEMO-1' } : {} }],
   } }), content: { headline: 'Review' } }
   render(<HandoffPanel request={request} />)
-  const note = screen.queryByText('Some values are stated by the host (see details)')
+  const note = screen.queryByText('Some values come from orch on this Mac (see details)')
   if (kind === 'none') expect(note).toBeNull()
   else expect(note).toBeVisible()
 })

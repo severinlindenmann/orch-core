@@ -44,10 +44,14 @@ class Rig:
             check=human.check,
             sign=lambda p: human.sign(p).events,
             submit=self.submit,
-            head=lambda key: ok(human.c.req("ticket.get", {"ref": key}))["data"]["doc"]["head"],
+            head=self.head,
             new_idem=lambda: __import__("orch.host.control_client", fromlist=["x"]).new_idem(),
             cancel=lambda rid: human.c.req("human.cancel", {"request_id": rid}),
         )
+
+    def head(self, key):
+        data = ok(self.h.c.req("ticket.get", {"ref": key}))["data"]
+        return {**data["doc"]["head"], "tail": data["log"][-1]}
 
     def meta0(self):
         return {
@@ -110,7 +114,8 @@ def test_the_first_request_is_one_review_of_every_step(human, tmp_path):
     content = signcontent.build(first, verified=True)
     titles = [s["title"] for s in content["sections"]]
     assert titles == ["Context", "Summary"] or sorted(titles) == ["Context", "Summary"]
-    assert "Create ticket" in content["headline"]
+    assert content["headline"].startswith("Create DEMO-") and ": Add a sequence" in content["headline"]
+    assert content["subline"] == "and its text (2 sections)"
     assert any("4 steps" in n for n in content["notes"])
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Line two" in text and "4 signatures, ONE confirmation" in text
@@ -466,3 +471,60 @@ def test_the_terminal_review_shows_a_newline_in_a_text_only_as_marked_lines(huma
     plain = shown.plain[0]
     assert "  | line one" in plain and "  | line two" in plain and "  | line four" in plain
     assert "\x1b" not in plain and "\r" not in plain
+
+
+def test_a_second_run_of_the_same_review_cannot_begin_while_one_is_live(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    d = rig.driver()
+    d.sessions.begin(rig.wid, rig.person, d.digest, d.total)
+    with pytest.raises(sequence.SessionError, match="in progress"):
+        d.sessions.begin(rig.wid, rig.person, d.digest, d.total)
+
+
+def test_a_resume_with_a_foreign_event_on_top_after_landing_aborts(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    first = rig.first()
+    real = rig.port.head
+
+    def foreign_then_head(key):
+        human.agent("log", {"ref": key, "message": "foreign"})  # lands on top of the step just signed
+        return real(key)
+
+    rig.port.head = foreign_then_head
+    with pytest.raises(Aborted, match="changed while signing") as info:
+        rig.driver().run(first)
+    assert info.value.landed == 1 and not info.value.resumable
+
+
+def test_the_tail_of_the_log_must_be_the_event_that_was_signed(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    first = rig.first()
+    real = rig.port.head
+
+    def lying(key):
+        got = real(key)
+        return {**got, "tail": {**got["tail"], "type": "log.added"}}  # a host that reports another event as the tail
+
+    rig.port.head = lying
+    with pytest.raises(Aborted, match="changed while signing"):
+        rig.driver().run(first)
+
+
+def test_an_unconfirmed_signature_is_resumable_an_aborted_run_is_not(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    first = rig.first()
+
+    def lost(rid, events, idem):
+        raise ConnectionError("lost")
+
+    rig.hooks[1] = lost
+    with pytest.raises(Aborted) as info:
+        rig.driver().run(first)
+    assert info.value.resumable and info.value.landed == 1
+
+
+def test_the_host_refuses_to_bind_a_sequence_to_the_phone(human, tmp_path):
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+    res = human.get(p["request"]["id"], signer={"device": human.person.device, "auth": "secure-enclave"})
+    assert res["error"]["code"] == "invalid.input"

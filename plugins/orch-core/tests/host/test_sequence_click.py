@@ -54,6 +54,17 @@ def test_one_click_shows_the_ticket_and_its_text_and_signs_every_step(click, ser
     assert again["duplicate"] is True and click.signatures == 4
 
 
+def test_a_click_re_asserts_the_confirmation_kind_of_the_stored_intent(click, served, human, monkeypatch):
+    from orch.host import sequence
+
+    _, p = prepare(click)
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    monkeypatch.setattr(sequence, "confirm_kind", lambda intent: "word")
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
+    assert click.signatures == 0
+
+
 def test_a_foreign_event_in_between_ends_the_sequence_and_leaves_a_draft(click, served, human):
     _, p = prepare(click)
     v = click.view(p["request_id"])
@@ -75,7 +86,7 @@ def test_a_foreign_event_in_between_ends_the_sequence_and_leaves_a_draft(click, 
     assert ok(served.client().req("ticket.get", {"ref": state["key"]}))["data"]["doc"]["title"] == "Add a sequence"
 
 
-def test_a_lost_answer_resumes_with_the_exact_bytes_and_no_second_ticket(click, served, human):
+def test_a_lost_answer_is_resumable_but_not_by_a_click(click, served, human):
     _, p = prepare(click)
     v = click.view(p["request_id"])
     click.mono.t += 2
@@ -89,21 +100,20 @@ def test_a_lost_answer_resumes_with_the_exact_bytes_and_no_second_ticket(click, 
         return res
 
     click.tamper = tamper
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "stopped")
-    # "Start again" cancels the old request first
+    stopped = refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "resumable")
+    assert "DEMO-" in stopped.message and "terminal" in stopped.message
     click.signer.cancel({"workspace_id": served.wid, "request_id": p["request_id"]})
     assert click.signatures == 2
     click.tamper = None
-    # the person asks again (a fresh request of the same intent): the session is resumed, no second ticket is made
+    # the same review again: a click never shows "create" again over a half-done ticket
     _, p2 = prepare(click)
     v2 = click.view(p2["request_id"])
     click.mono.t += 2
-    out = click.sign(p2["request_id"], v2["view_digest"])
-    assert click.signatures == 4  # only steps 2 and 3 are new signatures
+    refused(lambda: click.sign(p2["request_id"], v2["view_digest"]), "human.click_refused", "resumable")
+    assert click.signatures == 2
     rows = ok(served.client().req("ticket.query", {}))["data"]
     rows = next(v for v in rows.values() if isinstance(v, list))
-    tickets = [t for t in rows if t["title"] == "Add a sequence"]
-    assert len(tickets) == 1 and out["result"]
+    assert len([t for t in rows if t["title"] == "Add a sequence"]) == 1
 
 
 def test_a_sequence_is_new_and_nothing_else(click, served, human):

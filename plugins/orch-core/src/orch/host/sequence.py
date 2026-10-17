@@ -98,9 +98,11 @@ class SequenceInvalid(ValueError):
 class Aborted(Exception):
     """The sequence ends here: ``reason`` is shown to the person; what landed stays a visible draft."""
 
-    def __init__(self, reason: str, *, landed: int = 0, total: int = 0) -> None:
+    def __init__(self, reason: str, *, landed: int = 0, total: int = 0, resumable: bool = False) -> None:
         super().__init__(reason)
-        self.reason, self.landed, self.total = reason, landed, total
+        #: ``resumable``: the session is still live (a step was signed and sent but not confirmed): the same review
+        #: asked again finishes it; otherwise what landed stays a draft and asking again makes a new ticket
+        self.reason, self.landed, self.total, self.resumable = reason, landed, total, resumable
 
 
 class SessionError(Exception):
@@ -393,15 +395,14 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
-    first = signcontent.build({**prepared, "material": {**prepared["material"], "sequence": None}}, verified=verified)
     count = len(intent["sections"])
-    extra = []
-    if intent["set"]:
-        extra.append("its details")
+    key = prepared["material"]["ticket"]["key"]
+    # one headline for the whole review; the text is a subline (not one clause per signature)
+    content["headline"] = f"Create {signcontent.one(key)}: {signcontent.one(intent['title'])}"
     if count:
-        extra.append(f"{count} written section{'s' if count != 1 else ''}")
-    # one headline for the whole review: the ticket, and what is written into it (not one clause per signature)
-    content["headline"] = first["headline"] + (" and write " + " and ".join(extra) if extra else "")
+        content["subline"] = f"and its text ({count} section{'s' if count != 1 else ''})"
+    elif intent["set"]:
+        content["subline"] = "and its details"
     content.setdefault("notes", []).append(
         f"One confirmation signs all {n} steps, in order ({n} signatures). If the ticket changes meanwhile, "
         "signing stops and what was created stays a draft."
@@ -507,22 +508,34 @@ class Sessions:
 
     def begin(self, workspace_id: str, person: str, digest: str, total: int) -> dict[str, Any]:
         """A fresh session. An old one under the same digest (expired, aborted or complete) is replaced: the person
-        asked again."""
-        now = int(self.wall())
-        return self.put(
-            {
-                "v": 1,
-                "workspace_id": workspace_id,
-                "person": person,
-                "digest": digest,
-                "total": total,
-                "created": now,
-                "expires": now + int(TTL),
-                "ticket": None,
-                "steps": [],
-                "aborted": None,
-            }
-        )
+        asked again. A live unfinished one is not: another run of the same review holds it (the check and the write
+        are one step under an exclusive lock on the session directory)."""
+        import fcntl
+
+        fd = self._dir(workspace_id, create=True)
+        assert fd is not None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            held = self.get(workspace_id, digest)
+            if held is not None and held["aborted"] is None and not _complete(held):
+                raise SessionError("another run of this same review is in progress")
+            now = int(self.wall())
+            return self.put(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "person": person,
+                    "digest": digest,
+                    "total": total,
+                    "created": now,
+                    "expires": now + int(TTL),
+                    "ticket": None,
+                    "steps": [],
+                    "aborted": None,
+                }
+            )
+        finally:
+            os.close(fd)  # closing releases the lock
 
     def prune(self, workspace_id: str) -> None:
         """Remove this workspace's records that expired long ago (best effort; never raises)."""
@@ -544,6 +557,10 @@ class Sessions:
                         continue
             finally:
                 os.close(fd)
+
+
+def _complete(rec: Mapping[str, Any]) -> bool:
+    return len(rec["steps"]) == rec["total"] and all(s["state"] == "landed" for s in rec["steps"])
 
 
 def _validate(rec: Any, workspace_id: str, digest: str) -> None:
@@ -602,7 +619,8 @@ class Port:
     #: ``(request_id, events, idem) -> result`` (``human.submit``)
     submit: Callable[[str, list[dict[str, Any]], str], dict[str, Any]]
     new_idem: Callable[[], str]
-    #: ``ticket key -> {"seq", "head"}``: the log head the host reports now (``ticket.get``'s ``doc.head``)
+    #: ``ticket key -> {"seq", "head", "tail"}``: the log head the host reports now (``ticket.get``'s ``doc.head``) and
+    #: the last entry of its log
     head: Callable[[str], dict[str, Any]]
     cancel: Callable[[str], None] = field(default=lambda rid: None)
     #: reserves the signatures this run may still make (a rate budget); raises to refuse
@@ -635,7 +653,7 @@ class Driver:
         rec = self.sessions.get(self.workspace_id, self.digest)
         if rec is None or rec["aborted"] is not None:
             return None
-        if len(rec["steps"]) == self.total and all(s["state"] == "landed" for s in rec["steps"]):
+        if _complete(rec):
             return None  # complete: the person asked again, a new ticket
         return rec
 
@@ -711,6 +729,7 @@ class Driver:
                         "ask again within 10 minutes to send it again",
                         landed=self._landed(rec),
                         total=self.total,
+                        resumable=True,
                     ) from None
             results.append(res)
             prev_id, prev_head = events[-1]["id"], self._land(rec, k, res)
@@ -729,8 +748,21 @@ class Driver:
                 got = self.port.head(rec["ticket"]["key"])
             except Exception as exc:  # noqa: BLE001
                 raise self._abort(rec, f"the ticket could not be read after step {k + 1} ({_why(exc)})") from None
-            seq = res.get("seq")
-            if type(seq) is not int or got.get("seq") != seq or not isinstance(got.get("head"), str):
+            seq, mine = res.get("seq"), rec["steps"][k]["signed"][-1]
+            tail = got.get("tail")
+            # the tail of the log is the event this signer just signed: its seq, type and actor (read from the log, not
+            # the host's say-so about a head). The head HASH itself cannot be recomputed here: it covers the host's own
+            # stamps and signature, which no read op hands to a person client (follow-up).
+            if (
+                type(seq) is not int
+                or got.get("seq") != seq
+                or not isinstance(got.get("head"), str)
+                or not isinstance(tail, Mapping)
+                or tail.get("seq") != seq
+                or tail.get("type") != mine["type"]
+                or (tail.get("actor") or {}).get("id") != mine["actor"]["id"]
+                or (tail.get("actor") or {}).get("device") != mine["actor"]["device"]
+            ):
                 raise self._abort(rec, CHANGED)
             head = got["head"]
         rec["steps"][k]["head"] = head

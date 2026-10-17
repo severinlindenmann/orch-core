@@ -70,6 +70,7 @@ REFUSALS = (
     "already_signed",
     "record_unavailable",
     "stopped",
+    "resumable",
 )
 #: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
 #: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth

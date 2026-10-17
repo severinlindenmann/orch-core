@@ -254,7 +254,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             </p>
           )}
           <DialogDescription>
-            {(click.view?.view.content || run.request?.content) ? 'Review what you’re approving.' : clickOpen
+            {(click.view?.view.content || run.request?.content) ? (click.view?.view.content?.subline ?? run.request?.content?.subline ?? 'Review what you’re approving.') : clickOpen
               ? 'Only you can approve this. Agents cannot.'
               : phase === 'idle'
                 ? method === 'click'

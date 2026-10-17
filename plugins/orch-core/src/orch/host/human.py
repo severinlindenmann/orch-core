@@ -708,6 +708,9 @@ class HumanOps:
         )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
+        if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
+            # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":

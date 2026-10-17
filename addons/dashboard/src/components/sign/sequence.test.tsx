@@ -33,9 +33,10 @@ function sequenceRequest(): HandoffRequest {
     review_digest: digest,
     fingerprint: fingerprintOf(digest, [event], 'new'),
     gate_hash: null,
-    headline: 'Create ticket DEMO-0044 · Plan the launch and write its details and 2 written sections',
+    headline: 'Create DEMO-0044: Plan the launch',
     content: {
-      headline: 'Create ticket DEMO-0044 · Plan the launch and write its details and 2 written sections',
+      headline: 'Create DEMO-0044: Plan the launch',
+      subline: 'and its text (2 sections)',
       ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
       sections: [
         { id: 'context', title: 'Context', text: 'Line one\nLine two' },
@@ -87,7 +88,9 @@ describe('a ticket and its text on one review (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare).toHaveBeenCalledTimes(1)
     expect(s.prepare.mock.calls[0][1]).toEqual(ACTION)
-    expect(within(dialog).getByRole('heading', { name: /Create ticket DEMO-0044 · Plan the launch/ })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: /Create DEMO-0044: Plan the launch/ })).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('and its text (2 sections)')
+    expect(dialog).toHaveTextContent('The terminal shows the same code:')
     expect(dialog).toHaveTextContent('Why this exists.')
     expect(dialog).toHaveTextContent('Line two')
     expect(dialog).toHaveTextContent('One confirmation signs all 4 steps')
@@ -135,6 +138,15 @@ describe('a click sequence that stopped part way', () => {
     expect(p.body).toContain('2 of 5 signatures landed')
     expect(p.body).toContain('DEMO-0044')
     expect(p.body).not.toContain('Nothing was signed')
-    expect(p.next).toBe('prepare')
+    expect(p.body).toContain('Starting again makes a new ticket')
+    expect(p.next).toBe('open')
+  })
+  it('a half-done run a click cannot resume says where to finish it', async () => {
+    const { clickProblem } = await import('@/api/click')
+    const { ApiError } = await import('@/api/types')
+    const p = clickProblem(new ApiError(409, { code: 'human.click_refused', message: 'DEMO-0044 was started from this review and is not finished. Finish it in your terminal (orch sign) or on the ticket page; nothing is signed here.', retryable: false, reason: 'resumable' }))
+    expect(p.title).toBe('Not finished yet')
+    expect(p.body).toContain('terminal')
+    expect(p.next).toBe('open')
   })
 })

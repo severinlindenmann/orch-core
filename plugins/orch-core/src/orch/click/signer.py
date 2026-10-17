@@ -593,7 +593,8 @@ class ClickSigner:
             return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
 
         def head(key: str) -> dict[str, Any]:
-            return dict(self._call(entry, "ticket.get", {"ref": key})["data"]["doc"]["head"])
+            data = self._call(entry, "ticket.get", {"ref": key})["data"]
+            return {**data["doc"]["head"], "tail": (data.get("log") or [None])[-1]}
 
         def cancel(rid: str) -> None:
             self._call(entry, "human.cancel", {"request_id": rid})
@@ -608,7 +609,21 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
+        if sequence.confirm_kind(intent) != "click":  # re-asserted here: what is signed is what the click may sign
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
         driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent)
+        try:
+            live = driver.resumable()
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing was signed") from None
+        if live is not None:
+            # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
+            raise refused(
+                "resumable",
+                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                "or on the ticket page; nothing is signed here.",
+            )
         try:
             out = driver.run(stored)
         except sequence.Aborted as exc:
@@ -621,6 +636,13 @@ class ClickSigner:
                     held = None
                 name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
                 where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+            if exc.resumable:
+                unfinished = where.replace(" stays a draft", " is not finished")
+                raise refused(
+                    "resumable",
+                    f"The host did not confirm the last signature.{unfinished} "
+                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                ) from None
             raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:
             raise refused("record_unavailable", f"{exc}; nothing more is signed") from None

@@ -227,7 +227,9 @@ function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
   const digest = reviewDigestOf(material)
   const events = [event] as unknown as HandoffEvent[]
   const written = [sections.length ? `${sections.length} written section${sections.length === 1 ? '' : 's'}` : '', Object.keys(sets).length ? 'its details' : ''].filter(Boolean)
-  const headline = `Create ticket ${key} · ${String(action.title)}${written.length ? ` and write ${written.reverse().join(' and ')}` : ''}`
+  const headline = `Create ${key}: ${String(action.title)}`
+  const subline = sections.length ? `and its text (${sections.length} section${sections.length === 1 ? '' : 's'})` : undefined
+  void written
   const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
   return {
     id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
@@ -242,6 +244,7 @@ function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
     headline,
     content: {
       headline,
+      subline,
       ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       fields_changed: [

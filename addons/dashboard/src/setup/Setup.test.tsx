@@ -429,9 +429,7 @@ test('a bootstrap failure on mount shows its reason without fragments', async ()
 
 test('review is a compact plain summary; blanks and "set at signing" lines stay out of the details', async () => {
   const f = fake({ typed: true })
-  const orig = f.api.call.bind(f.api)
   render(<Setup api={f.api} />)
-  void orig
   await approval()
   fireEvent.click(screen.getByRole('button', { name: '3 days' }))
   fireEvent.click(screen.getByLabelText(/Give this computer/))

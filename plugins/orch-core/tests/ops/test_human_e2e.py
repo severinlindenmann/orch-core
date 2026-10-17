@@ -142,7 +142,7 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
         code, out, err, term = person(ws, "approve", gate, "--ref", key)
         assert code == 0, (out, err, term)
         assert out.startswith(f"ok {key} gate.approved {gate} seq=") and f"gate: {gate}" in term
-        assert "type: gate.approved" in term and "auth: passphrase" in term
+        assert "Press d for technical details" in term and "type: gate.approved" not in term  # B11-P6 (finding 24)
         assert (
             "=== orch: read before you sign ===" in term
             and f"--- section {'plan' if gate == 'plan' else 'requirements'} (" in term
@@ -161,7 +161,7 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
     code, out, err, term = person(ws, "verdict", "pass", "--ref", key)
     assert code == 0, (out, err, term)
     assert out.startswith(f"ok {key} verdict.given pass seq=")
-    assert f"source_sha[1].sha: {head}" in term and "outcome: pass" in term
+    assert "Press d for technical details" in term and f"source_sha[1].sha: {head}" not in term
     assert f"source:\r\n| local:proj refs/heads/feat/x {head}" in term and "artifact:\r\n| build.log" in term
 
     # a wrong passphrase on the same terminal writes nothing

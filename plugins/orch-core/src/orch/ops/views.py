@@ -88,6 +88,11 @@ def claim_hint(c: Any) -> str:
     return 'orch new "TITLE"' if complete else "orch next"
 
 
+def human_next_hint(c: Any) -> str:
+    """The ``next:`` line of a person's ``orch status`` with no claim: a person does not claim, so no agent verb."""
+    return "start an agent from the dashboard (orch dashboard); an agent claims a ticket itself"
+
+
 def next_hint(view: Any, session: str | None = None) -> str:
     """The ``next:`` line after a write: ids and commands only, never ticket text."""
     if view.status == "testing":

@@ -159,6 +159,9 @@ def review_prompt(text: str, expect: str) -> bool:
         if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
             shown, details = details, ""
         os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
+        from orch.custody.passphrase import note_plain_review
+
+        note_plain_review()
         import termios
 
         while True:

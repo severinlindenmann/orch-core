@@ -727,3 +727,17 @@ def test_windows_fails_closed_for_human_signing(monkeypatch):
 def test_presence_is_auth_or_none(tmp_path):
     for backend in (pass_backend(tmp_path), FileBackend(tmp_path / "f"), *(get_backend(n, tmp_path) for n in PLANNED)):
         assert backend.presence() == (backend.auth or "none")
+
+
+def test_after_a_plain_review_the_prompt_is_one_line_and_d_shows_the_technical_block(monkeypatch):
+    """B11-P6 (finding 24): the plain review came first; the passphrase step says `Press d`, and `d` prints the block."""
+    written = []
+    monkeypatch.setattr(pp, "_open_tty", lambda: (10, 11, lambda: None))
+    answers = iter(["d", "phrase-ok-1"])
+    monkeypatch.setattr(pp, "_read_secret", lambda r, w, prompt: (written.append(prompt), next(answers))[1])
+    monkeypatch.setitem(pp._PLAIN_REVIEW, "shown", True)
+    req = PassphraseRequest("unlock", "dk", "", "ab" * 16, (("type", "gate.approved"),))
+    assert tty_passphrase_provider(req) == "phrase-ok-1"
+    assert "Press d for technical details" in written[0]
+    assert "sha256:" not in written[0] and "type:" not in written[0] and "key: dk" not in written[0]
+    assert "type: gate.approved" in written[1] and "sha256: " + "ab" * 16 in written[1]  # everything stays reachable

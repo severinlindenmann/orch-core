@@ -104,7 +104,7 @@ def test_half_a_passphrase_and_single_words_are_hidden():
 def test_word_pair_joined_is_hidden():
     s, pw, code = _held()
     w = code.split()
-    for a, b in zip(w, w[1:]):
+    for a, b in zip(w, w[1:], strict=False):
         if len(a + b) >= 6:
             assert redact_reason(f"x {a}{b} y", s.held()) == HIDDEN_REASON
             assert redact_reason(f"x {a}\n{b} y", s.held()) == HIDDEN_REASON

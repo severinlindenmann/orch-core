@@ -66,14 +66,14 @@ describe('Complete details after a signed new ticket', () => {
     expect(onFinish).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Prepare section' }))
     expect(s.prepare).toHaveBeenNthCalledWith(2, 'w_1', { ...SECTION, key: KEY }, 0)
-    await waitFor(() => expect(onFinish).toHaveBeenCalledTimes(1), { timeout: 9000 })
+    await waitFor(() => expect(onFinish).toHaveBeenCalledWith(2), { timeout: 9000 })
     expect(s.postAction).not.toHaveBeenCalled()
   }, 30000)
 
   it('cancel signs nothing, prepares nothing and ends the offer', async () => {
     const { user, onFinish } = mount([DETAILS])
     await user.click(await screen.findByRole('button', { name: 'Cancel' }))
-    expect(onFinish).toHaveBeenCalledTimes(1)
+    expect(onFinish).toHaveBeenCalledWith(0) // cancelled with nothing signed: the caller says what is not saved
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
   })

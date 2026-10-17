@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ARM_MS, CLICK_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ClickSignPanel } from './ClickSignPanel'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
@@ -353,4 +354,20 @@ it('shows the full terminal lines when structured content is absent', () => {
 it('makes the badge risk text available inline on small touch screens', () => {
   mount()
   expect(screen.getByText(CLICK_RISK)).toHaveClass('sm:hidden')
+})
+
+describe('people in the content are named from the View\'s own workspace', () => {
+  const ID = 'p_181d953f12ab34cd56ef78901234abcd'
+  const content = { headline: 'x', fields_changed: [{ field: 'owner', before: null, after: ID }] }
+  function named(dialogWs: string) {
+    const client = new QueryClient()
+    client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }, { id: 'w_other', members: [{ person: ID, name: 'Impostor' }] }])
+    render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={dialogWs} /></QueryClientProvider>)
+    return screen.getByText('owner').parentElement!
+  }
+  it('uses view.workspace, not the dialog\'s workspace', () => {
+    const row = named('w_other')
+    expect(row).toHaveTextContent('owner: — → Severin (p_181d953f12ab…)')
+    expect(row).not.toHaveTextContent('Impostor')
+  })
 })

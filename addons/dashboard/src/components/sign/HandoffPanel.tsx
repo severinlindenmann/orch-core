@@ -201,7 +201,7 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
   const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">
-      {request.content && <SignContent content={request.content} />}
+      {request.content && <SignContent content={request.content} ws={workspace?.id} />}
       <p className="text-[13px] text-text">
         Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
       </p>

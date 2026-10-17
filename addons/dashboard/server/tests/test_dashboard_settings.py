@@ -323,6 +323,34 @@ def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, 
 
 
 @pytest.mark.parametrize(
+    "change",
+    [
+        {"label": "other"},
+        {"hours": 25},
+        {"verbs": "all"},
+        {"scope": "all"},
+        {"extra": 1},
+        {"actor": {"kind": "person", "id": "p_other"}},
+    ],
+)
+def test_a_prepared_runner_grant_that_differs_from_the_request_is_refused(change):
+    """B11-P1: a host-prepared grant.issued with another label, hours, verbs, scope, field or person is never shown."""
+    from orch_dashboard.handoff import RunnerGrant, expected
+
+    good = {
+        "type": "grant.issued",
+        "label": "runner",
+        "verbs": "agent",
+        "hours": 24,
+        "scope": "workable",
+        "actor": {"kind": "person", "id": "p_me"},
+    }
+    check = expected(RunnerGrant(action="runner_grant", hours=24, scope="workable"), "p_me")
+    assert check([good])
+    assert not check([{**good, **change}])
+
+
+@pytest.mark.parametrize(
     "body",
     [
         {"action": "settings_set"},

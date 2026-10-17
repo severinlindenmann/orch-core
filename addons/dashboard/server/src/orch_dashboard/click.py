@@ -97,6 +97,7 @@ class CustodyBody(BaseModel):
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
+# The runner grant is a click request, or a terminal hand-off with `runner` set by this server, never by the browser.
 ClickBody = PrepareBody
 
 

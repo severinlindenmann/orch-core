@@ -331,7 +331,8 @@ class Move(Action):
 
 
 class RunnerGrant(Action):
-    """M7b, the runner grant (D-P2-27): a click request only, never a terminal hand-off of this server. It maps to the
+    """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
+    server, never by the browser. The click path maps to the
     signer's `prepare {op:"grant", args:{hours, scope}, deposit:true}`; the signer itself sets `label:"runner"` and
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 

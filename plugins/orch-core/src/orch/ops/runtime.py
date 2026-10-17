@@ -372,8 +372,14 @@ class Workspace:
         if step in (None, "done", "rolled_back"):
             return
         from orch.host.errors import HostError
-        from orch.host.ownership import OwnershipLock
+        from orch.host.ownership import OwnershipLock, is_registered
 
+        if is_registered(sd, wid):  # the host owns the registry write (set_store): it finishes the move at its start
+            raise OrchError(
+                "host.required",
+                "a store move of this workspace is unfinished; the orch host finishes it when it starts",
+                hint="start the host service",
+            )
         try:
             with OwnershipLock(sd, wid).exclusive(10.0):
                 mg.finish_interrupted(root, state_dir=sd, workspace_id=wid)

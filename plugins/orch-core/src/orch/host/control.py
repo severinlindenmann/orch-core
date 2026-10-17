@@ -524,9 +524,11 @@ class ControlOps:
         self.intents.complete(intent, ok_result({"workspace_id": entry.workspace_id, "migrated": True}))
         return True
 
-    def _refuse_running_work(self, entry: Entry) -> None:
-        """Nothing may be running while the store moves: live agent or runner sessions, open terminals, unexpired job
-        leases, pending sign requests. Each is named; nothing was moved when this refuses (``migrate.refused``)."""
+    def _refuse_running_work(self, entry: Entry, requests: Any) -> None:
+        """Nothing may be running while the store moves: live or starting agent and runner sessions, open terminals,
+        pending sign requests. Called AFTER the workspace is unserved and under ``owner.lock``, so nothing new can
+        start between this check and the move; each problem is named and nothing was moved (``migrate.refused``).
+        ``requests`` is the request store taken before the unserve (the service is gone afterwards)."""
         wid = entry.workspace_id
         work = self.host.runners.running_work(wid)
         problems: list[str] = []
@@ -534,11 +536,6 @@ class ControlOps:
             problems.append(f"{work['runs']} agent or runner session(s) running")
         if work["terminals"]:
             problems.append(f"{work['terminals']} terminal(s) open")
-        leased = self.host.jobs.leased(wid)
-        if leased:
-            problems.append(f"{leased} job lease(s) held")
-        service = self.host.services.get(wid)
-        requests = getattr(service, "requests", None)
         pending = requests.open_count() if requests is not None else 0
         if pending:
             problems.append(f"{pending} sign request(s) pending")
@@ -569,7 +566,8 @@ class ControlOps:
             if exc.code == "migrate.refused":
                 raise
             raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
-        self._refuse_running_work(entry)
+        service = self.host.services.get(wid)
+        requests = getattr(service, "requests", None)  # a handle before the unserve; counted again after it
         served = False
         try:
             check_tree(Path(entry.root), self.host_uid)
@@ -577,6 +575,7 @@ class ControlOps:
                 if live:
                     served = True
                     self.host.unserve_from_thread(wid)  # drains first: a write in flight finishes and is answered
+                self._refuse_running_work(entry, requests)  # unserved and locked: nothing new can start now
                 result = mg.migrate(
                     entry.root,
                     state_dir=self.state_dir,

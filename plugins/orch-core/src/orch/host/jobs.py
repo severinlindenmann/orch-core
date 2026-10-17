@@ -57,15 +57,6 @@ class CompletionStore:
             if record is not None and record.get("state") == "leased":
                 write_private(self.dir / name, {**record, "state": "void", "void_at": int(self.clock())})
 
-    def leased(self, workspace_id: str) -> int:
-        """How many jobs of ``workspace_id`` hold a lease right now."""
-        n = 0
-        for name in os.listdir(self.dir):
-            record = read_json(self.dir / name, self.host_uid) if _ULID.fullmatch(name) else None
-            if record is not None and record.get("state") == "leased" and record.get("workspace_id") == workspace_id:
-                n += 1
-        return n
-
     def _path(self, job: str) -> Path:
         if not _ULID.fullmatch(job):
             raise HostError("worker.lease", "unknown job")

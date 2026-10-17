@@ -439,7 +439,9 @@ class RunnerHub:
             if r.get("workspace_id") == workspace_id and r.get("state") in LIVE
         ]
         terminals = sum(len((self.term_state.get(run) or {}).get("atts") or []) for run in live)
-        return {"runs": len(live), "terminals": terminals}
+        # a start in progress (the launch intent is not a record yet) counts too, whatever workspace it is for
+        unrecorded = [run for run in list(self.starting) if run not in self.store.records]
+        return {"runs": len(live) + len(unrecorded), "terminals": terminals}
 
     # -- state
     @property

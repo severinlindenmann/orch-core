@@ -136,10 +136,6 @@ def test_running_work_is_refused_and_named(lab, monkeypatch) -> None:  # noqa: F
         assert "2 agent or runner session" in res["error"]["message"] and "1 terminal" in res["error"]["message"]
         assert (Path(lab.root) / "config.json").is_file() and not (Path(lab.root) / ".orch").exists()
         monkeypatch.undo()
-        monkeypatch.setattr(type(h.host.jobs), "leased", lambda self, w: 1)
-        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
-        assert res["error"]["code"] == "migrate.refused" and "lease" in res["error"]["message"]
-        monkeypatch.undo()
         service = h.host.services[wid]
         monkeypatch.setattr(type(service.requests), "open_count", lambda self: 3)
         res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
@@ -164,3 +160,66 @@ def test_the_cli_refuses_a_host_that_does_not_list_the_op(lab, monkeypatch) -> N
     with pytest.raises(migrate_cli.MigrateCliError) as exc:
         migrate_cli._via_host({}, Path(lab.state), "a" * 32)  # noqa: SLF001
     assert exc.value.code == "migrate.version_skew" and "orch host install" in (exc.value.hint or "")
+
+
+def test_a_start_arriving_after_the_first_look_is_caught_by_the_check_after_the_unserve(lab, monkeypatch) -> None:  # noqa: F811
+    """The check runs unserved and under owner.lock, so a run that starts between a first look and the move cannot slip
+    past: here it appears right after the unserve, and the migration refuses, serves again and moves nothing."""
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    try:
+        real = h.host.unserve_from_thread
+
+        def unserve_then_a_start(workspace_id: str) -> None:
+            real(workspace_id)
+            h.host.runners.starting["r_late"] = ("spec", None)  # type: ignore[assignment]
+
+        monkeypatch.setattr(h.host, "unserve_from_thread", unserve_then_a_start)
+        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
+        assert res["ok"] is False and res["error"]["code"] == "migrate.refused"
+        assert "1 agent or runner session" in res["error"]["message"]
+        assert (Path(lab.root) / "config.json").is_file() and not (Path(lab.root) / ".orch").exists()
+        assert h.host.services[wid].state != "unavailable"  # served again after the refusal
+    finally:
+        h.host.runners.starting.clear()
+        h.__exit__(None, None, None)
+
+
+def test_a_registered_workspace_with_a_committed_journal_and_no_host_is_host_required_then_the_host_finishes(
+    lab,  # noqa: F811
+) -> None:
+
+    from orch.store import migrate as mg
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    root = Path(lab.root)
+    h.__exit__(None, None, None)  # the host goes down with the workspace still registered
+
+    def stop_at_committed(p: str) -> None:
+        if p == "committed":
+            raise KeyboardInterrupt(p)
+
+    with pytest.raises(KeyboardInterrupt):
+        mg.migrate(root, state_dir=Path(lab.state), workspace_id=wid, fault=stop_at_committed)
+    assert mg.journal_step(Path(lab.state), wid) == "committed"
+    from orch.ops.caps import Files
+    from orch.ops.errors import OrchError
+    from orch.ops.runtime import Workspace
+
+    env = {"ORCH_WORKSPACE": str(root), "ORCH_STATE_DIR": str(lab.state), "HOME": str(lab.tmp)}
+    with pytest.raises(OrchError) as exc:
+        Workspace(env, files=Files.direct()).store  # noqa: B018
+    assert exc.value.code == "host.required"
+    assert mg.journal_step(Path(lab.state), wid) == "committed"  # the direct command did not finish it
+    h2 = lab.host(backend=lambda: backend)
+    h2.__enter__()
+    try:
+        assert ("host.store_migrate", "done") in h2.host.recovered
+        assert h2.host.registry.get(wid).store == ".orch"
+        assert h2.host.services[wid].state != "unavailable"
+    finally:
+        h2.__exit__(None, None, None)

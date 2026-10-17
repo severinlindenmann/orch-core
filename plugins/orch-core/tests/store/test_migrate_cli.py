@@ -132,3 +132,16 @@ def test_a_direct_command_over_an_unfinished_move_finishes_it_then_asks_again(tm
     assert exc.value.code == "retry.later" and "finished" in exc.value.message
     assert mg.journal_step(env.host_state, WS) == "done"
     assert Workspace(e, files=Files.direct()).store is not None
+
+
+def test_a_journal_naming_an_entry_the_migration_never_moves_is_stuck(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    mg.migrate(env.root, state_dir=env.host_state, workspace_id=WS)
+    jp = env.host_state / "hosts" / WS / mg.JOURNAL
+    doc = json.loads(jp.read_text())
+    doc.update(step="moving", names={**doc["names"], "../etc": [1, 2]})
+    jp.write_text(json.dumps(doc))
+    os.chmod(jp, 0o600)
+    with pytest.raises(mg.MigrateError) as exc:
+        mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS)
+    assert exc.value.code == "migrate.stuck"

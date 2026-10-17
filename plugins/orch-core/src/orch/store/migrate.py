@@ -86,7 +86,16 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
         os.close(fd)
     if not isinstance(doc, dict) or doc.get("v") != 1 or doc.get("step") not in _STEPS:
         raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
+    names = doc.get("names") or {}
+    if not isinstance(names, dict) or not set(names) <= set(MOVE_NAMES) or not all(_pair(v) for v in names.values()):
+        raise MigrateError("migrate.stuck", "the migrate journal names an entry the migration does not move")
+    if not all(v is None or _pair(v) for v in (doc.get("tmp"), doc.get("root"))):
+        raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
     return doc
+
+
+def _pair(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 2 and all(type(x) is int for x in value)
 
 
 _STEPS = ("planned", "moving", "committed", "done", "rolled_back")

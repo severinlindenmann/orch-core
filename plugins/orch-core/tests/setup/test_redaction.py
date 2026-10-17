@@ -62,6 +62,8 @@ def test_cut_at_400_never_exposes_part_of_a_secret():
         c._fail(SetupError("x", msg, 500), False)
         assert c.run.error["message"] == HIDDEN_REASON
         for w in code.split():
+            if w in HIDDEN_REASON:  # a random code word that is a piece of the fixed wording ("cause" in "because")
+                continue
             assert w not in c.run.error["message"]
 
 

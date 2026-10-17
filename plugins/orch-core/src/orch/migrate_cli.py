@@ -163,7 +163,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
     try:
         if os.name == "nt":
             raise MigrateCliError("unsupported.platform", "orch migrate needs POSIX filesystem semantics")
-        if env.get("ORCH_GRANT"):
+        if "ORCH_GRANT" in env:
             raise MigrateCliError("op.not_allowed", "an agent never moves a store; this tool is for the person")
         if [a for a in argv if a != "--json"]:
             raise MigrateCliError("invalid.input", _USAGE, 2)

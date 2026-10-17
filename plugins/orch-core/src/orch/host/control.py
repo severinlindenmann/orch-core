@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import stat
 import time
@@ -64,6 +65,32 @@ __all__ = ["CONTROL_OPS", "ControlGate", "ControlOps", "KEY_TTL_SECONDS", "WSK_M
 KEY_TTL_SECONDS = 3600
 WSK_MARKER = "wsk_create.json"
 log = logging.getLogger(__name__)
+
+
+def _store_pin(root: str) -> Any:
+    """What the check saw of the store of ``root`` (the ``.orch`` identity, or legacy), for the open that follows."""
+    from orch.layout import StorePin
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        pfd = os.open(root, flags)
+    except OSError as exc:
+        raise unsafe(f"{root}: {exc.strerror or exc}") from None
+    try:
+        try:
+            found = layout_mod.resolve(pfd, root)
+            sfd = layout_mod.open_store_dir(pfd) if found is not None and not found.legacy else None
+        except LayoutError as exc:
+            raise unsafe(str(exc)) from None
+        if sfd is None:
+            return StorePin(None)
+        try:
+            st = os.fstat(sfd)
+        finally:
+            os.close(sfd)
+        return StorePin((st.st_dev, st.st_ino))
+    finally:
+        os.close(pfd)
 
 
 def _store_dir(root: str) -> Path:
@@ -349,7 +376,13 @@ class ControlOps:
         check_workspace_files(self.state_dir, workspace_id, Path(root), self.host_uid, store=store_name(root))
         try:
             store = Store.open(
-                root, expected_workspace_id=workspace_id, expected_genesis=pin, host_state_dir=None, load="lazy"
+                root,
+                expected_workspace_id=workspace_id,
+                expected_genesis=pin,
+                host_state_dir=None,
+                load="lazy",
+                ident=(info.st_dev, info.st_ino),  # the project and the store directory this check looked at
+                store_pin=_store_pin(root),
             )
         except StoreError as exc:
             raise HostError(exc.code, exc.detail or exc.code) from None
@@ -735,9 +768,12 @@ class ControlOps:
                 clock=self.host.clock,
                 workspace_name=Path(root).name or event.get("prefix"),
                 load="lazy",
+                create=True,
             )
             try:
-                self.intents.update(intent, created=self._fingerprint(root))  # what this bootstrap made (dev, inode)
+                self.intents.update(
+                    intent, created=self._fingerprint(root, store.created_store)
+                )  # what this bootstrap made (dev, inode)
                 store.append(event, log="workspace")
             finally:
                 store.close()
@@ -840,16 +876,20 @@ class ControlOps:
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
-    def _fingerprint(root: str) -> dict[str, list[int]]:
+    def _fingerprint(root: str, made: tuple[int, int] | None = None) -> dict[str, list[int]]:
         """``name -> [dev, inode]`` of what this bootstrap made in ``root`` right now: every store name (directories,
-        not links) in the legacy layout, the ``.orch`` directory itself in the new one (all inside it is ours)."""
+        not links) in the legacy layout; in the new layout only the ``.orch`` directory this bootstrap's own open
+        made (``made``, from ``Store.created_store``), never one that was already there."""
         out: dict[str, list[int]] = {}
         try:
             store = _store_dir(root)
         except LayoutError:
             return out
-        names = _ROOT_FILES if store == Path(root) else (STORE_DIR,)
-        for name in names:
+        if store != Path(root):
+            if made is not None:
+                out[STORE_DIR] = [made[0], made[1]]
+            return out
+        for name in _ROOT_FILES:
             with contextlib.suppress(OSError):
                 st = os.lstat(os.path.join(root, name))
                 if stat.S_ISDIR(st.st_mode):
@@ -863,8 +903,10 @@ class ControlOps:
         they are regular files the host's append made (changed since ``validated_at``). Anything else is left alone.
         In the new layout the ``.orch`` directory goes only if it is the recorded one, whole (it holds only ours)."""
         created = created if isinstance(created, dict) else {}
-        names = (STORE_DIR,) if STORE_DIR in created else _ROOT_FILES
-        for name in names:
+        if STORE_DIR in created:
+            ControlOps._remove_made_store(root, created[STORE_DIR])
+            return
+        for name in _ROOT_FILES:
             path = Path(root) / name
             try:
                 st = os.lstat(path)
@@ -886,6 +928,45 @@ class ControlOps:
                     path.unlink()
             else:
                 log.warning("host.bootstrap rollback left %s: not made by this bootstrap", path)
+
+    @staticmethod
+    def _remove_made_store(root: str, recorded: Any) -> None:
+        """Remove the ``.orch`` this bootstrap made, by fds: open it ``O_NOFOLLOW`` below the project fd, compare its
+        ``(dev, inode)`` with the recorded one, rename it to a unique tombstone, check the tombstone is still that
+        directory, and remove it below the project fd. Anything else there is a person's own and is left alone."""
+        from orch.store.rootfs import rm_at
+
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            pfd = os.open(root, flags)
+        except OSError:
+            return
+        try:
+            try:
+                dfd = os.open(STORE_DIR, flags, dir_fd=pfd)
+            except OSError:
+                return
+            try:
+                st = os.fstat(dfd)
+                if recorded != [st.st_dev, st.st_ino]:
+                    log.warning("host.bootstrap rollback left %s/.orch: not made by this bootstrap", root)
+                    return
+                tomb = f".orch-rollback-{secrets.token_hex(8)}"
+                try:
+                    os.rename(STORE_DIR, tomb, src_dir_fd=pfd, dst_dir_fd=pfd)
+                except OSError:
+                    return
+                moved = os.stat(tomb, dir_fd=pfd, follow_symlinks=False)
+                if (moved.st_dev, moved.st_ino) != (st.st_dev, st.st_ino):
+                    with contextlib.suppress(OSError):  # not what we opened: put it back, touch nothing
+                        os.rename(tomb, STORE_DIR, src_dir_fd=pfd, dst_dir_fd=pfd)
+                    return
+                with contextlib.suppress(OSError):
+                    rm_at(pfd, tomb)
+            finally:
+                os.close(dfd)
+        finally:
+            os.close(pfd)
 
     # -- host.outcome
     def outcome(self, args: dict[str, Any]) -> dict[str, Any]:

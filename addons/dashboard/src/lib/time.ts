@@ -2,9 +2,10 @@
 //  - an event within the last 7 days is relative: "just now", "5 min ago", "3 h ago", "2 days ago";
 //  - older ones (and any absolute time) are "9 Oct 11:36";
 //  - a time in the future (a clock a little ahead) reads "just now", never "in 6 min";
-//  - "UTC" is written only where the exact instant matters (Details, tooltips): fmtExact, "9 Oct 2026 11:36 UTC";
+//  - the zone name is written only where the exact instant matters (Details, tooltips): fmtExact, "9 Oct 2026 11:36 GMT+2";
 //  - deadlines and slots that are a time of day ("until 17:00") use fmtClock.
-// Times are shown in UTC (the host's clock); the suffix is left off everywhere but fmtExact.
+// Every time is shown in the browser's local zone (B12A N1): this file is the only place that turns an instant into text, so the
+// pill, Settings, Grants and the dialogs always agree. The zone name is written only by fmtExact.
 // Pure: no React, no store. "now" is the host's clock (the mock's in this mockup), registered by src/api/client.ts.
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -37,7 +38,7 @@ export function plural(n: number, one: string, many = `${one}s`): string {
 /** "11:36" (a time of day: deadlines, slots, "until 17:00"). */
 export function fmtClock(iso: string): string {
   const d = parse(iso)
-  return d ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` : iso
+  return d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : iso
 }
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -45,13 +46,13 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 /** "Fri 12:00": a slot in the coming week (schedules' next run). */
 export function fmtSlot(iso: string): string {
   const d = parse(iso)
-  return d ? `${DOW[d.getUTCDay()]} ${fmtClock(iso)}` : iso
+  return d ? `${DOW[d.getDay()]} ${fmtClock(iso)}` : iso
 }
 
 /** "9 Oct". */
 export function fmtDay(iso: string): string {
   const d = parse(iso)
-  return d ? `${d.getUTCDate()} ${MON[d.getUTCMonth()]}` : iso
+  return d ? `${d.getDate()} ${MON[d.getMonth()]}` : iso
 }
 
 /** "9 Oct 11:36": an absolute time. */
@@ -60,10 +61,26 @@ export function fmtDateTime(iso: string): string {
   return d ? `${fmtDay(iso)} ${fmtClock(iso)}` : iso
 }
 
-/** "9 Oct 2026 11:36 UTC": the exact instant, for Details, tooltips and what a signature covers ("until …"). */
+/** The browser's zone name at that instant ("UTC", "GMT+2"). */
+function zoneName(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZoneName: 'short' }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** "9 Oct 2026 11:36 GMT+2": the exact instant in the local zone, for Details, tooltips and what a signature covers ("until …"). */
 export function fmtExact(iso: string): string {
   const d = parse(iso)
-  return d ? `${fmtDay(iso)} ${d.getUTCFullYear()} ${fmtClock(iso)} UTC` : iso
+  return d ? `${fmtDay(iso)} ${d.getFullYear()} ${fmtClock(iso)} ${zoneName(d)}`.trimEnd() : iso
+}
+
+/** Whether two instants fall on the same calendar day in the local zone. */
+export function sameLocalDay(a: string | number, b: string | number): boolean {
+  const x = new Date(a)
+  const y = new Date(b)
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate()
 }
 
 /** A duration in words: "45 s", "5 min", "2 h 5 min", "3 days". */

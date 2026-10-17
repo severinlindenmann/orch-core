@@ -64,7 +64,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
         </label>
       </div>
       <p className="text-[13px] text-text-muted">
-        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agents are granted in your terminal; here a grant can only be revoked.
+        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agent access is given from the “Agents can work for you” pill at the top (Extend or Start again) or in your terminal; here you can revoke a grant.
       </p>
       {!grants.data ? (
         <p className="text-[13px] text-text-muted">Reading the grants…</p>

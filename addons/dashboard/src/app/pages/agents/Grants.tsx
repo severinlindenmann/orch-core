@@ -3,7 +3,7 @@ import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Mono, Pill } from '../ticket/shared'
-import { fmtClock, fmtDay, fmtSpan } from '@/lib/time'
+import { fmtClock, fmtDay, fmtSpan, sameLocalDay } from '@/lib/time'
 import { foldedColumns } from '@/lib/columnFold'
 import { useElementWidth } from '@/lib/useElementWidth'
 
@@ -11,7 +11,7 @@ import { useElementWidth } from '@/lib/useElementWidth'
 const TONE = { active: 'brand', expired: 'neutral', revoked: 'danger' } as const
 const hm = (iso: string) => fmtClock(iso)
 /** Today's times are a time of day; other days carry their date ("8 Oct 17:00"). */
-const day = (iso: string, now: number) => (iso.slice(0, 10) === new Date(now).toISOString().slice(0, 10) ? '' : `${fmtDay(iso)} `)
+const day = (iso: string, now: number) => (sameLocalDay(iso, now) ? '' : `${fmtDay(iso)} `)
 
 function countdown(until: string, now: number) {
   return `${fmtSpan(Date.parse(until) - now)} left`

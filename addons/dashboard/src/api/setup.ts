@@ -33,6 +33,8 @@ export interface SetupState {
     runner_grant: boolean
     method: 'terminal' | 'click'
   } | null
+  /** Finish setup on a workspace that lacks nothing: the page offers only "Open dashboard" */
+  complete?: boolean
   /** step/item id -> words (`runner_grant`: "Agent access for this Mac's runner") */
   labels?: Record<string, string>
 }
@@ -54,6 +56,8 @@ export interface Review {
   review_id: string
   digest: string
   fingerprint: string[] | null
+  /** What a new setup creates, from core's review (bound by its digest): never from page state. */
+  workspace?: { prefix: string; name: string; dir: string; lines: string[] } | null
   items: {
     id: string
     title: string
@@ -94,6 +98,23 @@ export class SetupAPI {
   ) {}
   forget() {
     this.token = ''
+  }
+  /** Page left after "ready": tell the setup it is finished (best effort, survives the page going away). */
+  leave() {
+    if (!this.token) return
+    const fetcher = this.fetcher
+    try {
+      void fetcher('/api/setup/finish', {
+        method: 'POST',
+        credentials: 'omit',
+        cache: 'no-store',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-Setup-Token': this.token },
+        body: '{}',
+      }).catch(() => undefined)
+    } catch {
+      /* nothing to do: the setup ends by its idle timeout */
+    }
   }
   async call<T>(path: string, body?: unknown): Promise<T> {
     // Called unbound: `this.fetcher(...)` would run the browser's fetch with `this` = SetupAPI, which real browsers

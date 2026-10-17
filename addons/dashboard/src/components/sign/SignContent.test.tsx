@@ -83,10 +83,10 @@ function withMembers(members: { person: string; name: string }[], fields: { fiel
 const row = (field: string) => screen.getByText(field).parentElement!
 
 it('shows a known member as name WITH short id, the full id and the key line only under Technical details', () => {
-  withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: 'p_unknown99' }])
+  withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: 'p_0badc0de99' }])
   expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d…)')
   expect(row('owner')).not.toHaveTextContent(SEV)
-  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa…) → p_unkn… (unknown person)')
+  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa…) → p_0bad… (unknown person)')
   const details = screen.getByText(/Technical details/).closest('details')!
   expect(details).toHaveTextContent(`Severin (p_181d…) = ${SEV}`)
   expect(details).toHaveTextContent('key per host, not proven')

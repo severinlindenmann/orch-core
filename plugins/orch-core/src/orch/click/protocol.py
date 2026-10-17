@@ -50,8 +50,9 @@ DEPOSIT_RISK = (
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
-#: the dashboard's click-to-sign switch (§0.8.6 item 3a); an older signer has no ``features`` and no switch
-FEATURES = ("custody",)
+#: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
+#: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
+FEATURES = ("custody", "sequence")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -68,6 +69,8 @@ REFUSALS = (
     "uncertain",
     "already_signed",
     "record_unavailable",
+    "stopped",
+    "resumable",
 )
 #: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
 #: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth

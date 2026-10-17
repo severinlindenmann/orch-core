@@ -17,8 +17,9 @@ def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     one; ``(None, None)`` when the ticket links none."""
     linked = list(view.fields["links"]["repos"])
     paths = c.store.state.workspace.repos
-    root = c.ws.require_root()
-    resolved = {n: p for n in linked if (p := observe.repo_path(root, paths, n)) is not None}
+    c.ws.require_root()
+    layout = c.store.layout
+    resolved = {n: p for n in linked if (p := observe.repo_path(layout, paths, n)) is not None}
     here = Path(c.ctx.caps.files.getcwd()).resolve()
     for name, path in resolved.items():
         if here == path or path in here.parents:

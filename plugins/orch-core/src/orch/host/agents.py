@@ -156,7 +156,7 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
 
     def declared(repo: str) -> dict[str, Any] | None:
         git = _git(call)
-        path = git.repo_path(store.root, store.state.workspace.repos, repo) if git is not None else None
+        path = git.repo_path(store.layout, store.state.workspace.repos, repo) if git is not None else None
         if path is None:
             return None
         out.update(cwd={"kind": "repo", "repo": repo}, path=os.fspath(path), create=None)

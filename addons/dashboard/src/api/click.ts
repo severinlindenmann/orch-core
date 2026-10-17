@@ -116,7 +116,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
-  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'details', 'section',
+  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'details', 'section',
   'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
@@ -184,6 +184,10 @@ export function clickProblem(e: unknown): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
+      // B11: a sequence (one review, N signatures) that stopped after some signatures: say what landed (core's words)
+      // aborted: what landed stays a draft and starting again would make a NEW ticket; resumable: only the terminal finishes it
+      if (e.reason === 'stopped') return { title: 'Signing stopped part way', body: `${e.message} Finish it on its page. Starting again makes a new ticket.`, next: 'open' }
+      if (e.reason === 'resumable') return { title: 'Not finished yet', body: e.message, next: 'open' }
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!

@@ -101,6 +101,7 @@ _SCHEMAS = {
             "args": {"type": "object"},
             "signer": _SIGNER,
             "handoff": {"type": "boolean"},
+            "sequence": {"type": "object"},
         },
         "required": ["op", "args"],
         "additionalProperties": False,
@@ -171,6 +172,13 @@ def _validate(op: str, args: Any) -> None:
     if errors:
         where = ".".join(map(str, errors[0].absolute_path))
         raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
+
+
+def _tail_id(store: Any, log: str) -> str | None:
+    """The id of the last event of ``log`` (``None`` for an empty or unknown log): what a sequence's chain compares."""
+    nxt = int(store.peek_stamp(log)["seq"])
+    last = store.events(log, after=max(nxt - 2, 0), limit=2)
+    return str(last[-1]["id"]) if last and nxt > 1 else None
 
 
 def _store_error(exc: Any) -> HostError:
@@ -346,6 +354,7 @@ class HumanOps:
             "signer": args.get("signer"),
             "handoff": bool(args.get("handoff", False)),
             "person": call.viewer,
+            "sequence": args.get("sequence"),
         }
         session = (call.frame.get("auth") or {}).get("session")
         outcomes = service.outcomes
@@ -413,6 +422,8 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        meta = self._sequence(call, name, inner, args, person, store, dry_run)
+        capture.sequence = meta
         if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
             capture.pair = pairdevice.facts_for(service, inner)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
@@ -473,6 +484,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "sequence": meta,
             "result": template,
             "submit": None,
             "outcome": None,
@@ -491,6 +503,37 @@ class HumanOps:
         if intent is not None:
             service.outcomes.commit(intent, view)
         return view
+
+    @staticmethod
+    def _sequence(
+        call: Call, name: str, inner: dict[str, Any], args: dict[str, Any], person: str, store: Any, dry_run: bool
+    ) -> dict[str, Any] | None:
+        """``human.prepare {sequence}`` (batch 11, finding 9): one step of a signer's sequence. The meta is checked
+        whole (:func:`orch.host.sequence.check_meta`); a later step is prepared only on the head the signer's own
+        previous step left (a foreign event in between is ``human.request_mismatch``, the signer's abort)."""
+        meta = args.get("sequence")
+        if meta is None:
+            return None
+        from . import sequence
+
+        if args.get("handoff") and meta.get("step") != 0:
+            raise HostError("invalid.input", "only the first step of a sequence is a hand-off")
+        who = args.get("signer")
+        if who is not None and who.get("auth") not in ("passphrase", "convenience"):
+            # the phone (and a secure enclave) keep separate signatures: no sequence is offered to them
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
+        try:
+            checked = sequence.check_meta(
+                meta, op=name, args=inner, workspace_id=call.service.workspace_id, person=person
+            )
+        except sequence.SequenceInvalid as exc:
+            raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] > 0 and not dry_run:
+            ref = inner.get("ref")
+            view = store.ticket(ref) if isinstance(ref, str) else None
+            if view is None or _tail_id(store, view.uid) != checked["prev"]:
+                raise HostError("human.request_mismatch", sequence.CHANGED)
+        return checked
 
     def _specs(self, operation: Any, frame: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """The inner op's ``files``: inline ``{b64}``, a ``{blob}``, or (only on a retry of a prepare with
@@ -624,6 +667,9 @@ class HumanOps:
                     before.setdefault(key, now)
         if before:
             material["before"] = before
+        seq = getattr(capture, "sequence", None)
+        if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
+            material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
         return material
 
     # -- reading and binding
@@ -662,6 +708,9 @@ class HumanOps:
         )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
+        if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
+            # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
@@ -870,6 +919,13 @@ class HumanOps:
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
             if record["op"] == pairdevice.OP:
                 pairdevice.check_entries(record["prepared"], record.get("readers") or [])
+            meta = record.get("sequence")
+            if meta is not None and meta["step"] > 0:
+                # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
+                # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)
+                log = record["prepared"]["log"]
+                if not (_tail_id(store, log) == meta["prev"] and store.log_head(log) == events[0].get("based_on")):
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
@@ -1059,7 +1115,7 @@ def bound_copy(git: Any, store: Any, log: str, name: str, copies: list[dict[str,
     if not git.enabled or git.reader is None:  # fail closed: no reader means nothing can vouch for any copy
         raise HostError("observe.unavailable", f"{name}: git cannot be read in this workspace now")
     want = next((c for c in copies or [] if c.get("repo") == name and c.get("ticket") == log), None)
-    copy = git.ticket_copy(store.root, store.state.workspace.repos, log, name)
+    copy = git.ticket_copy(store.layout, store.state.workspace.repos, log, name)
     if want is None or copy.binding(log, name) != want:
         raise HostError(
             "observe.unavailable",

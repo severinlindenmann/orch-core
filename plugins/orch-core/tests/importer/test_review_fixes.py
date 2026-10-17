@@ -313,7 +313,8 @@ def test_only_the_importer_unlocks_a_batch():
         if re.search(r"(?<!\bprimary)\.unlocked\(", p.read_text()) or 'getattr(backend, "unlocked"' in p.read_text()
     )
     # B9: ``orch setup`` opens its own generated passphrase once for the reviewed batch (setup/steps.py)
-    assert users == ["ops/import_run.py", "setup/steps.py"]
+    # batch 11: a signer's sequence of signatures opens its own reviewed batch once (host/sequence_terminal.py)
+    assert users == ["host/sequence_terminal.py", "ops/import_run.py", "setup/steps.py"]
 
 
 def test_a_backend_that_cannot_sign_a_batch_has_its_own_code(hws, me, v1, monkeypatch):  # noqa: F811

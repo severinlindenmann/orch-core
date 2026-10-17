@@ -236,7 +236,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         branch = ((view.fields.get("links") or {}).get("branches") or {}).get(repo)
         if not branch:
             raise HostError("worktree.no_branch", f"{view.key} links no branch for {repo}; set links.branches first")
-        declared = git.repo_path(store.root, store.state.workspace.repos, repo)
+        declared = git.repo_path(store.layout, store.state.workspace.repos, repo)
         if declared is None:
             raise HostError("not_found", f"{repo} is not declared in settings.repos")
         dpins = git.reader.pins.get(os.fspath(declared))
@@ -250,7 +250,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         path = worktree_path(os.fspath(declared), service.workspace_id, view.key)
         declared_paths = {
             os.fspath(p) for n in store.state.workspace.repos
-            if (p := git.repo_path(store.root, store.state.workspace.repos, n)) is not None
+            if (p := git.repo_path(store.layout, store.state.workspace.repos, n)) is not None
         }  # fmt: skip
         if path in declared_paths:
             raise HostError("worktree.exists", "the worktree path is a declared repository")
@@ -259,7 +259,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         return plan
     if reg is None:
         raise HostError("worktree.none", f"{view.key} has no worktree for {repo}")
-    declared = git.repo_path(store.root, store.state.workspace.repos, repo)
+    declared = git.repo_path(store.layout, store.state.workspace.repos, repo)
     dpins = git.reader.pins.get(os.fspath(declared)) if declared is not None else None
     if dpins is None:
         raise HostError("observe.unavailable", f"{repo}: the declared repository is not pinned")

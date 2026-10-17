@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon, gitsafe
+from orch.layout import Layout
 
 __all__ = [
     "NoAnswer", "dirty", "git", "head", "lookup", "observe", "porcelain", "refusal", "repo_identity", "repo_path",
@@ -154,10 +155,11 @@ def dirty(path: Path) -> str | None:
     return "\n".join(lines)
 
 
-def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:
-    """The working copy of repo ``name`` (``settings.repos``, absolute or relative to the workspace directory)."""
+def repo_path(layout: Layout, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:
+    """The working copy of repo ``name`` (``settings.repos``, absolute or relative to the PROJECT root; never to the
+    store directory, which takes the layout so a bare root cannot be passed)."""
     p = repos.get(name)
-    return (root / p["path"]).resolve() if p else None
+    return (layout.project / p["path"]).resolve() if p else None
 
 
 def repo_identity(path: Path, name: str) -> str:
@@ -203,7 +205,9 @@ def observe(store: Any, ref: str, problems: list[str] | None = None, backend: An
     wanted = []
     for name in links["repos"]:  # git, with no lock held
         branch = links["branches"].get(name)
-        path = (backend.repo_path if backend is not None else repo_path)(store.root, store.state.workspace.repos, name)
+        path = (backend.repo_path if backend is not None else repo_path)(
+            store.layout, store.state.workspace.repos, name
+        )
         if not branch:
             continue  # the ticket names no branch yet: submit says so itself
         if path is None or not path.is_dir():

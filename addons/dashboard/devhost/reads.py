@@ -897,7 +897,7 @@ def diff(store, views, args):
     sources, files, parts, truncated = [], [], [], False
     for name in wanted:
         branch = links["branches"].get(name)
-        path = observe.repo_path(store.root, store.state.workspace.repos, name)
+        path = observe.repo_path(store.layout, store.state.workspace.repos, name)
         if not branch or path is None or not path.is_dir():
             raise fail("observe.unavailable", f"{name}: no working copy or branch", exit=3)
         identity = observe.repo_identity(path, name)

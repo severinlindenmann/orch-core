@@ -139,6 +139,7 @@ class ClickSigner:
         wall: Callable[[], float] = time.time,
         log: Any = None,
         records: Records | None = None,
+        sessions: Any = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -161,6 +162,10 @@ class ClickSigner:
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
+        from orch.host.sequence import Sessions
+
+        #: the durable sessions of sequences (one review, N signatures; batch 11), beside the sign records
+        self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -353,6 +358,9 @@ class ClickSigner:
         deposit = args.get("deposit", False)
         if type(deposit) is not bool:
             raise ClickError("invalid.input", "deposit is true or false")
+        seq = args.get("sequence")
+        if seq is not None:
+            self._sequence_ok(op, inner, seq, deposit, files)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -367,6 +375,8 @@ class ClickSigner:
         _, sel = self._convenience(entry)
         device = sel["device"]
         body = {"op": op, "args": inner, "signer": {"device": device, "auth": "convenience"}}
+        if seq is not None:
+            body["sequence"] = seq
         prepared = self._call(entry, "human.prepare", body, idem=idem, files=files or None)
         prepared = canon.loads_strict(canon.dumps(prepared["data"]))
         request = prepared.get("request") or {}
@@ -407,6 +417,21 @@ class ClickSigner:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
+
+    @staticmethod
+    def _sequence_ok(op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any) -> None:
+        """A sequence (one review, N signatures, batch 11) is the first step of a New ticket and nothing else; the
+        confirmation of the whole is that of its strongest step, and a terminal step means the terminal."""
+        from orch.host import sequence
+
+        if deposit or files or op != "new" or not isinstance(seq, dict) or seq.get("step") != 0:
+            raise ClickError("invalid.input", "a sequence starts with new, without files or a deposit")
+        try:
+            intent = sequence.validate_intent(seq.get("intent"))
+        except sequence.SequenceInvalid as exc:
+            raise ClickError("invalid.input", f"sequence: {exc}") from None
+        if sequence.confirm_kind(intent) != "click":
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
@@ -499,6 +524,8 @@ class ClickSigner:
             if args.get("word") != expected:
                 raise refused("word", "type the word the review shows")
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
+        if (stored.get("material") or {}).get("sequence") is not None:
+            return self._sign_sequence(entry, approval, backend, sel, stored)
         self.budget.reserve(len(stored["events"]))
         from orch.host import signer as host_signer
 
@@ -537,6 +564,93 @@ class ClickSigner:
             return self._deposited(entry, approval.op, rid, res, secret)
         finally:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
+
+    def _sign_sequence(
+        self, entry: dict[str, Any], approval: Approval, backend: Any, sel: Any, stored: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One click signs every step of a sequence (batch 11): the engine of :mod:`orch.host.sequence`, on this
+        signer's own host connection and its own convenience key. The session record is the durable claim (a step is
+        claimed, then signed, then landed; never signed twice); the checks run HERE, in this process, never in the
+        dashboard server. A sequence that ends early leaves what landed as a visible draft."""
+        from orch.host import sequence
+        from orch.host import signer as host_signer
+
+        wid, person, device = approval.workspace_id, self._person(entry), sel["device"]
+        self._attempted.add((wid, approval.request_id))
+        intent = sequence.validate_intent(stored["material"]["sequence"]["intent"])
+
+        def prepare(op: str, args: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+            body = {"op": op, "args": args, "signer": {"device": device, "auth": "convenience"}, "sequence": meta}
+            return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body)["data"]))
+
+        def check(prepared: dict[str, Any]) -> None:
+            views.check_prepared(prepared, workspace_id=wid, person=person, device=device, files=None)
+
+        def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
+            return host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid).events
+
+        def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
+            return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
+
+        def head(key: str) -> dict[str, Any]:
+            data = self._call(entry, "ticket.get", {"ref": key})["data"]
+            return {**data["doc"]["head"], "tail": (data.get("log") or [None])[-1]}
+
+        def cancel(rid: str) -> None:
+            self._call(entry, "human.cancel", {"request_id": rid})
+
+        port = sequence.Port(
+            prepare=prepare,
+            check=check,
+            sign=sign,
+            submit=submit,
+            new_idem=_new_idem,
+            head=head,
+            cancel=cancel,
+            budget=self.budget.reserve,
+        )
+        if sequence.confirm_kind(intent) != "click":  # re-asserted here: what is signed is what the click may sign
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent)
+        try:
+            live = driver.resumable()
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing was signed") from None
+        if live is not None:
+            # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
+            raise refused(
+                "resumable",
+                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                "or on the ticket page; nothing is signed here.",
+            )
+        try:
+            out = driver.run(stored)
+        except sequence.Aborted as exc:
+            self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
+            where = ""
+            if exc.landed:
+                try:
+                    held = self.sessions.get(wid, driver.digest)
+                except sequence.SessionError:
+                    held = None
+                name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
+                where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+            if exc.resumable:
+                unfinished = where.replace(" stays a draft", " is not finished")
+                raise refused(
+                    "resumable",
+                    f"The host did not confirm the last signature.{unfinished} "
+                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                ) from None
+            raise refused("stopped", f"{exc.reason}.{where}") from None
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing more is signed") from None
+        last = out["results"][-1]
+        approval.signed, approval.idem = ["sequence"], None  # in memory: a repeated sign answers, never re-signs
+        approval.result = last
+        self._note("committed", workspace=wid, request=approval.request_id, op=approval.op, steps=out["landed"])
+        return {"result": last, "duplicate": False}
 
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """A deposit grant's arguments: ``hours`` 1..168 (the workspace grant_hours; default 8) and

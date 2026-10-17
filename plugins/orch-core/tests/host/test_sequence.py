@@ -250,3 +250,131 @@ def test_the_host_refuses_a_later_step_on_a_foreign_head(human, tmp_path):
         },
     )
     assert res["error"]["code"] == "human.request_mismatch"
+
+
+# --- the terminal path: `orch sign CODE` on the first request ------------------------------------------------------
+
+
+def handoff_first(rig):
+    op, args = sequence.step_args(rig.intent, 0, None)
+    res = rig.h.c.req("human.prepare", {"op": op, "args": args, "handoff": True, "sequence": rig.meta0()})
+    return ok(res)["data"]
+
+
+def terminal(rig, served, shown, code, *, backend=None, sessions=None):
+    from orch.host import handoff
+    from orch.host.control_client import new_idem
+    from tests.host.test_handoff import connect
+
+    with connect(served) as conn:
+        return handoff.sign_code(
+            conn.call,
+            code,
+            backend=backend or rig.h.backend,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=rig.person,
+            device=rig.h.person.device,
+            workspace=lambda w: ("Acme", "DEMO") if w == served.wid else None,
+            confirm=shown.confirm,
+            show_secret=shown.secret,
+            idem=new_idem(),
+            sessions=sessions or rig.sessions,
+        )
+
+
+def test_terminal_one_review_one_word_and_one_unlock_sign_every_step(human, served, tmp_path):
+    from tests.host.test_handoff import Shown
+
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+    unlocks = []
+
+    class OpenOnce:  # a custody with a batch unlock: the passphrase is asked once for the whole sequence
+        name, person_capable, auth = "test", True, "passphrase"
+
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            import contextlib
+
+            unlocks.append((action, digest, fields, labels))
+
+            @contextlib.contextmanager
+            def cm():
+                yield lambda payload: human.person.dk_sign(payload)
+
+            return cm()
+
+    shown = Shown()
+    result = terminal(rig, served, shown, p["request"]["code"], backend=OpenOnce())
+    assert result["steps"] == 4 and result["key"]
+    assert len(shown.words) == 1 and len(unlocks) == 1  # one confirmation, one unlock
+    assert "Line two" in shown.plain[0] and "Add a sequence" in shown.plain[0]  # the text is IN the one review
+    assert doc(human, result["key"])["doc"]["priority"] == "high"
+    assert unlocks[0][2][0] == ("signatures", "4")
+
+
+def test_terminal_not_confirmed_signs_nothing(human, served, tmp_path):
+    from tests.host.test_handoff import Shown
+
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+    shown = Shown(answer=False)
+    with pytest.raises(signer.SignerRefused, match="not confirmed"):
+        terminal(rig, served, shown, p["request"]["code"])
+    assert human.backend.payloads == []
+
+
+def test_terminal_a_host_that_shows_another_intent_than_it_prepared_is_refused(human, served, tmp_path):
+    from orch.host import handoff
+    from orch.host.control_client import new_idem
+    from tests.host.test_handoff import Shown
+
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+
+    def call(op, args, idem=None, files=None):
+        res = ok(human.c.req(op, args, idem=idem, files=files))
+        if op == "human.get":  # the review digest covers the intent, so changing it needs the digest changed too
+            res["data"]["material"]["sequence"]["intent"]["sections"]["summary"] = "something else"
+        return res
+
+    shown = Shown()
+    with pytest.raises(signer.SignerRefused):
+        handoff.sign_code(
+            call,
+            p["request"]["code"],
+            backend=human.backend,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=rig.person,
+            device=human.person.device,
+            workspace=lambda w: ("Acme", "DEMO"),
+            confirm=shown.confirm,
+            show_secret=shown.secret,
+            idem=new_idem(),
+            sessions=rig.sessions,
+        )
+    assert shown.plain == [] and human.backend.payloads == []
+
+
+def test_terminal_a_client_without_sessions_refuses(human, served, tmp_path):
+    from orch.host import handoff
+    from orch.host.control_client import new_idem
+    from tests.host.test_handoff import Shown, connect
+
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+    with connect(served) as conn, pytest.raises(signer.SignerRefused, match="cannot sign sequences"):
+        handoff.sign_code(
+            conn.call,
+            p["request"]["code"],
+            backend=human.backend,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=rig.person,
+            device=human.person.device,
+            workspace=lambda w: ("Acme", "DEMO"),
+            confirm=Shown().confirm,
+            show_secret=lambda t: None,
+            idem=new_idem(),
+        )

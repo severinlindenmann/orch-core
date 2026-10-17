@@ -47,6 +47,7 @@ def test_a_second_session_is_refused_and_can_take_over_with_a_reason(ws, cli):
     cli("claim", "1")
     r = other.j("claim", "1")
     assert (r.code, r.err_code) == (4, "claim.held")
+    assert "orch claim DEMO-0001 --takeover --reason TEXT" in r.doc["error"]["message"]  # B11-P6 (finding 36)
     r = other.j("claim", "1", "--takeover")
     assert (r.code, r.err_code) == (5, "invalid.input") and "--reason" in r.doc["error"]["message"]
     r = other.j("claim", "1", "--takeover", "--reason", "the first one stalled")

@@ -159,6 +159,7 @@ def review_prompt(text: str, expect: str) -> bool:
         if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
             shown, details = details, ""
         os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
+        b6_view = bool(details)  # only a B6 review (plain view, full one behind d)
         import termios
 
         while True:
@@ -179,6 +180,10 @@ def review_prompt(text: str, expect: str) -> bool:
                 os.write(fd, ("\n=== details ===\n" + details + prompt).encode())
                 details = ""  # shown once; a second `d` is an answer that stops
                 continue
+            if answer == expect and b6_view:
+                from orch.custody.passphrase import note_plain_review
+
+                note_plain_review()  # one-shot: the next passphrase prompt only, and only after a confirmed review
             return answer == expect
     finally:
         os.close(fd)

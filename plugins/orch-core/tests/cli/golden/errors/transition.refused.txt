@@ -1,1 +1,1 @@
-err transition.refused the ticket status does not allow this · retry:false · next: orch show --section current_state · fix: orch show
+err transition.refused the ticket status does not allow this · retry:false · next: orch show REF · fix: orch show

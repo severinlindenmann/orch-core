@@ -34,7 +34,7 @@ from typing import Any
 
 from orch import canon
 
-__all__ = ["SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
+__all__ = ["DETAILS_ONLY", "SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
 
 class PlainUnavailable(ValueError):
@@ -81,6 +81,12 @@ SHOWN: dict[str, frozenset[str]] = {
     "ticket.moved": frozenset({"from", "to", "reason"}),
     "ticket.reopened": frozenset({"text"}),
     "ticket.updated": frozenset({"set", "sections"}),
+}
+
+#: K4: keys the plain view says in WORDS or leaves to the technical details (``d``, the full review, which carries every
+#: signed key). Only for the ordinary grant (scope ``workable``, verbs ``agent``); any other value shows them as rows.
+DETAILS_ONLY: dict[str, frozenset[str]] = {
+    "grant.issued": frozenset({"grant", "scope", "verbs", "issued_at", "expires_at"}),
 }
 
 #: the keys of a gate input the plain view shows, and the ones that are hashes; of its ``fields``, a task, an
@@ -186,6 +192,54 @@ def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: 
     if note and before is not None:
         row["before_note"] = note
     out.setdefault("fields_changed", []).append(row)
+
+
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def local_time(iso: Any, hours: Any = None) -> str | None:
+    """K4/N1: a signed UTC ``YYYY-MM-DDTHH:MM:SSZ`` in this computer's time with the zone name (``Tue 23:45 CEST``; with
+    the date when it is a week away or more). ``None`` when ``iso`` is not such a time (a placeholder): the caller then
+    keeps the technical wording. English day names on purpose: the same bytes must render the same everywhere."""
+    from datetime import UTC, datetime
+
+    if type(iso) is not str:
+        return None
+    try:
+        when = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).astimezone()
+    except ValueError:
+        return None
+    zone = when.tzname() or "UTC"
+    day = (
+        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 144 else _DAYS[when.weekday()]
+    )
+    return f"{day} {when:%H:%M} {zone}"
+
+
+def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
+    """The grant review. The plain view of the ordinary grant (scope ``workable``, verbs ``agent``) is one sentence;
+    scope, verbs, the grant id and the UTC times are in the technical details (``d``), which carry every signed field.
+    Any other scope or verbs keeps the technical wording and rows: the plain sentence must never claim less than is
+    signed (WYSIWYS)."""
+    hours = ev.get("hours")
+    plain = ev.get("scope") == "workable" and ev.get("verbs") == "agent" and type(hours) is int
+    until = local_time(ev.get("expires_at"), hours) if plain else None
+    _row(out, "who can use it", "agents working for you")
+    if ev.get("label"):
+        _row(out, "label", ev["label"])
+    if not plain or until is None:
+        _row(out, "scope", ev.get("scope"))
+        _row(out, "verbs", ev.get("verbs"))
+        _row(out, "from", ev.get("issued_at"))
+        _row(out, "until", ev.get("expires_at"))
+        _row(out, "grant id", ev.get("grant"))
+        out.setdefault("notes", []).append(
+            f"Agents can act for you for {span(hours)}, as far as the scope and verbs above allow."
+        )
+        return f"Give agents access for {span(hours)} (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
+    out.setdefault("notes", []).append("Scope, verbs, grant id and the exact times (UTC) are in the technical details.")
+    return f"Agents may work on all open tickets for {span(hours)} (until {until}, your time)"
 
 
 def _acceptance(items: Any) -> list[dict[str, Any]]:
@@ -465,19 +519,7 @@ def _event(
             _row(out, "reason", ev["reason"])
         return f"Move {ref} to {_s(ev.get('to'))}"
     if typ == "grant.issued":
-        hours = ev.get("hours")
-        _row(out, "who can use it", "agents working for you")
-        _row(out, "scope", ev.get("scope"))
-        _row(out, "verbs", ev.get("verbs"))
-        if ev.get("label"):
-            _row(out, "label", ev["label"])
-        _row(out, "from", ev.get("issued_at"))
-        _row(out, "until", ev.get("expires_at"))
-        _row(out, "grant id", ev.get("grant"))
-        out.setdefault("notes", []).append(
-            f"Agents can act for you for {span(hours)}, as far as the scope and verbs above allow."
-        )
-        return f"Give agents access for {span(hours)} (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
+        return _grant_issued(ev, out)
     if typ == "grant.revoked":
         _row(out, "grant id", ev.get("grant"))
         if ev.get("reason") == "extended":  # B8: the old half of an Extend

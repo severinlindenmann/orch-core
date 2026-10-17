@@ -719,6 +719,7 @@ class Driver:
         """The step landed: read the head the host reports and require it to be the head of the event this signer just
         signed (its ``seq`` is the submit's), so the next step chains to it. A foreign event already on top aborts."""
         head: str | None = None
+        rec["steps"][k].update(state="landed", head=None)  # it landed: counted, whatever the head read says
         if k < self.total - 1:
             try:
                 got = self.port.head(rec["ticket"]["key"])
@@ -728,7 +729,7 @@ class Driver:
             if type(seq) is not int or got.get("seq") != seq or not isinstance(got.get("head"), str):
                 raise self._abort(rec, CHANGED)
             head = got["head"]
-        rec["steps"][k].update(state="landed", head=head)
+        rec["steps"][k]["head"] = head
         self._save(rec)
         return head
 

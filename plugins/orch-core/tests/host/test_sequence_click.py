@@ -90,7 +90,8 @@ def test_a_lost_answer_resumes_with_the_exact_bytes_and_no_second_ticket(click, 
 
     click.tamper = tamper
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "stopped")
-    click.signer.cancel({"workspace_id": served.wid, "request_id": p["request_id"]})  # "Start again" cancels the old one
+    # "Start again" cancels the old request first
+    click.signer.cancel({"workspace_id": served.wid, "request_id": p["request_id"]})
     assert click.signatures == 2
     click.tamper = None
     # the person asks again (a fresh request of the same intent): the session is resumed, no second ticket is made

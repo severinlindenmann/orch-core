@@ -44,6 +44,7 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             caps=ctx.caps,
             ident=ws.ident,
             config=ws.config_bytes,
+            store_pin=ws.store_pin,
         )
         if store is not None:
             store.close()

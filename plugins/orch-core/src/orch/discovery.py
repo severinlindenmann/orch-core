@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import layout as _layout
-from orch.layout import Layout, LayoutError
+from orch.layout import Layout, LayoutError, StorePin
 
 __all__ = ["CONFIG_LIMIT", "CONFIG_SCHEMA", "Found", "LayoutError", "locate", "read_config", "same_root", "v2_config"]
 
@@ -82,6 +82,8 @@ class Found:
     ident: tuple[int, int] | None = None
     #: v2 found by its fds: project and store (``None``: the legacy layout at ``path``, or found through host ``Files``)
     layout: Layout | None = None
+    #: v2 found by its fds: what the open that follows must find again (``.orch``'s identity; see :class:`StorePin`)
+    store_pin: StorePin | None = None
 
     @property
     def project(self) -> Path:
@@ -185,26 +187,32 @@ def _probe(fd: int, path: Path, *, v2: bool, v1: bool, owned: bool) -> tuple[Fou
     cfg = v2_config(doc) if v2 else None
     ident = (st.st_dev, st.st_ino)
     return (
-        Found(path, False, cfg, raw, ident) if cfg is not None else None,
+        Found(path, False, cfg, raw, ident, None, StorePin(None, owned)) if cfg is not None else None,
         Found(path, True, doc or {}, raw, ident) if v1 and _is_v1(fd, doc) else None,
     )
 
 
 def _store_probe(fd: int, d: Path, *, owned: bool) -> Found | None:
-    """The v2 candidate in ``.orch/`` below the project fd (``O_NOFOLLOW``; something there that is not a real
-    directory is :class:`LayoutError`, never a fall-through). ``owned``: ``.orch`` and its ``config.json`` must be
-    :func:`_private`. ``ident`` is the project's (the walk's fd), the store is pinned later by ``Store.open``."""
-    sfd = _layout.open_store_dir(fd)
+    """The v2 candidate in ``.orch/`` below the project fd (``O_NOFOLLOW``). An entry that is there but not a real
+    directory is :class:`LayoutError`, never a fall-through, except in the implicit walk (``owned``) for an entry that
+    is not the person's own (or in a project that is not their own): that is no candidate and the walk goes on (a
+    stranger's ``.orch`` in a parent directory must not block discovery). ``ident`` is the project's; ``.orch`` is
+    pinned by ``store_pin`` (identity, and ``owned``: ownership checked again on the opened fd)."""
+    if owned and not _private(os.fstat(fd)):
+        return None
+    sfd = _layout.open_store_dir(fd, (lambda st: st.st_uid != _owner()) if owned else None)
     if sfd is None:
         return None
     try:
         got, _ = _probe(sfd, d / _layout.STORE_DIR, v2=True, v1=False, owned=owned)
+        sst = os.fstat(sfd)
     finally:
         os.close(sfd)
     if got is None:
         return None
     st = os.fstat(fd)
-    return Found(d, False, got.config, got.raw, (st.st_dev, st.st_ino), Layout.new_at(d))
+    pin = StorePin((sst.st_dev, sst.st_ino), owned)
+    return Found(d, False, got.config, got.raw, (st.st_dev, st.st_ino), Layout.new_at(d), pin)
 
 
 def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool) -> Found | None:

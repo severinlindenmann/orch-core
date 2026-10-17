@@ -45,6 +45,7 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             caps=ctx.caps,
             ident=ws.ident,
             config=ws.config_bytes,
+            store_pin=ws.store_pin,
         )
         try:
             if args.get("staged") and store is not None:

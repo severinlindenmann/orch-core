@@ -134,3 +134,100 @@ def test_store_open_on_a_legacy_root_keeps_project_equal_store(ws) -> None:
         assert store.layout == Layout.legacy_at(ws.root)
     finally:
         store.close()
+
+
+def _project_with_store(ws, tmp_path: Path) -> tuple[Path, str]:
+    project = tmp_path / "proj"
+    project.mkdir()
+    shutil.copytree(ws.root, project / ".orch", symlinks=True)
+    return project, json.loads((ws.root / "config.json").read_text())["workspace"]["id"]
+
+
+def test_an_inode_swap_of_the_store_dir_between_discovery_and_open_is_refused(ws, tmp_path: Path) -> None:
+    project, wid = _project_with_store(ws, tmp_path)
+    found = discovery.locate(project, explicit=False)
+    assert found is not None and found.store_pin is not None and found.store_pin.ident is not None
+    (project / ".orch").rename(project / ".orch-old")
+    shutil.copytree(project / ".orch-old", project / ".orch", symlinks=True)  # same content, another inode
+    with pytest.raises(StoreError, match="no longer the store directory"):
+        Store.open(project, expected_workspace_id=wid, ident=found.ident, store_pin=found.store_pin)
+    # the very directory that was found opens
+    shutil.rmtree(project / ".orch")
+    (project / ".orch-old").rename(project / ".orch")
+    Store.open(project, expected_workspace_id=wid, ident=found.ident, store_pin=found.store_pin).close()
+
+
+def test_the_store_layout_changing_under_a_found_workspace_is_refused(ws, tmp_path: Path) -> None:
+    project, wid = _project_with_store(ws, tmp_path)
+    found = discovery.locate(project, explicit=False)
+    assert found is not None
+    shutil.move(project / ".orch" / "config.json", project / "config.json")  # now the legacy layout
+    shutil.rmtree(project / ".orch")
+    with pytest.raises(StoreError, match="layout changed"):
+        Store.open(project, expected_workspace_id=wid, ident=found.ident, store_pin=found.store_pin)
+
+
+def test_an_implicit_walk_pin_rechecks_ownership_of_the_opened_store_dir(ws, tmp_path: Path) -> None:
+    project, wid = _project_with_store(ws, tmp_path)
+    found = discovery.locate(project, explicit=False)
+    assert found is not None and found.store_pin is not None and found.store_pin.owned
+    os.chmod(project / ".orch", 0o770)  # group-writable after discovery: same inode, no longer private
+    with pytest.raises(StoreError, match="no longer the store directory"):
+        Store.open(project, expected_workspace_id=wid, ident=found.ident, store_pin=found.store_pin)
+
+
+def test_a_project_that_is_not_private_is_no_candidate_for_a_dot_orch_in_the_walk(tmp_path: Path) -> None:
+    project = tmp_path / "p"
+    _store(project / ".orch")
+    os.chmod(project, 0o777 & ~0o002 | 0o020)  # group-writable project
+    assert discovery.locate(project, explicit=False) is None
+    assert discovery.locate(project, explicit=True) is not None  # an explicit path is the person's choice
+
+
+def test_a_strangers_dot_orch_does_not_block_the_walk_but_the_persons_own_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outer = _store(tmp_path / "outer")
+    inner = outer / "inner"
+    inner.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (inner / ".orch").symlink_to(tmp_path / "elsewhere")  # a link where the walk passes
+    with pytest.raises(LayoutError):
+        discovery.locate(inner, explicit=False)  # ours: fail closed
+    monkeypatch.setattr(discovery, "_owner", lambda: os.getuid() + 1)  # now it is someone else's: skipped, no error
+    assert discovery.locate(inner, explicit=False) is None  # (nothing of "ours" is left; the point is: no raise)
+    with pytest.raises(LayoutError):
+        discovery.locate(inner, explicit=True)  # an explicit lookup still refuses
+
+
+def _served(project: Path) -> bool:
+    from orch.host.service import is_served
+
+    return is_served(project)
+
+
+def test_the_served_marker_lives_in_the_store_and_the_guard_holds_in_both_layouts(ws, tmp_path: Path) -> None:
+    from orch.host.service import SERVED_MARKER, served_marker
+    from orch.records.direct import DirectLink
+
+    project, wid = _project_with_store(ws, tmp_path)
+    assert not _served(project)
+    served_marker(str(project), True, tmp_path)
+    assert (project / ".orch" / ".state" / SERVED_MARKER).exists()
+    assert not (project / ".state").exists()
+    assert _served(project)
+    link = DirectLink(project, wid, tmp_path / "state")
+    from orch.records import RecordsError
+
+    with pytest.raises(RecordsError) as exc:
+        link._open()
+    assert exc.value.code == "host.required"
+    served_marker(str(project), False, tmp_path)
+    assert not _served(project)
+    # a layout that cannot be placed counts as served (fail closed)
+    shutil.move(project / ".orch", tmp_path / "moved")
+    (project / ".orch").symlink_to(tmp_path / "moved")
+    assert _served(project)
+    # legacy layout
+    served_marker(str(ws.root), True, tmp_path)
+    assert _served(ws.root)

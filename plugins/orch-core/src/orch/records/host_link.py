@@ -83,6 +83,7 @@ def resolve(
             raise RecordsError(
                 "records.unsupported", "no host serves this workspace and it is not the one here: run it there"
             )
+        pin = None
         if here_ws is not None and root == here:  # found here: the config discovery read, the root's identity
             from orch.ops.errors import OrchError
 
@@ -91,11 +92,12 @@ def resolve(
             except OrchError as exc:
                 raise RecordsError("records.unsupported", str(exc.message), exit_=3) from None
             cfg, ident, raw = here_ws.config, here_ws.ident, here_ws.config_bytes
+            pin = here_ws.store_pin
         else:  # the auto entry's root: named, not discovered
             cfg = _config(Path(root), Files.direct())
         if ((cfg or {}).get("workspace") or {}).get("id") != wid:
             raise RecordsError("records.unsupported", "the directory is not this workspace")
-        direct = DirectLink(Path(root), wid, state, ident=ident, config=raw)
+        direct = DirectLink(Path(root), wid, state, ident=ident, config=raw, store_pin=pin)
         return Resolved(wid, Path(root), direct, tips, state, "direct", direct.close)
     host_uid = entry.get("host_uid")
     if type(host_uid) is not int:

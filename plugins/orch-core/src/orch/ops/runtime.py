@@ -41,7 +41,7 @@ from typing import Any
 from orch import canon, discovery
 from orch import layout as layout_mod
 from orch.canon.text import TextError, normalize_text
-from orch.layout import Layout, LayoutError
+from orch.layout import Layout, LayoutError, StorePin
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -275,6 +275,11 @@ class Workspace:
         return self.root
 
     @property
+    def store_pin(self) -> StorePin | None:
+        """What discovery saw of the store (``.orch``'s identity, or legacy), for the open that follows."""
+        return self._found.store_pin if self.root is not None and self._found is not None else None
+
+    @property
     def store_dir(self) -> Path | None:
         """The directory that holds ``config.json``, ``tickets/`` and ``.state/`` (``.orch``; legacy: the project)."""
         layout = self.layout
@@ -363,6 +368,7 @@ class Workspace:
             guard=DirectGuard(sd, wid) if self.files.roots is None else None,
             config=self._found.raw if self._found is not None and self._found.raw else None,
             ident=self.ident,  # the root fd is checked against what discovery saw; everything below goes through it
+            store_pin=self.store_pin,
         )
 
 

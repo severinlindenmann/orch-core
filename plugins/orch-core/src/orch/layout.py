@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ __all__ = [
     "WRITE_NEW",
     "Layout",
     "LayoutError",
+    "StorePin",
     "check_single_store",
     "fresh",
     "open_store_dir",
@@ -67,6 +69,21 @@ class Layout:
     def new_at(cls, project: str | os.PathLike[str]) -> Layout:
         p = Path(project)
         return cls(p, p / STORE_DIR, False)
+
+
+@dataclass(frozen=True)
+class StorePin:
+    """What discovery saw of the store, for the open that follows: ``ident`` the ``(st_dev, st_ino)`` of ``.orch``
+    (``None``: the legacy layout, the store is the project), ``owned``: the walk was implicit, so the opened store
+    directory must again be the current user's and not group/other-writable (checked on the opened fd)."""
+
+    ident: tuple[int, int] | None
+    owned: bool = False
+
+
+def is_private(st: os.stat_result) -> bool:
+    """Owned by the current user and writable by no one else."""
+    return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
 
 
 def check_single_store(*, legacy: bool, new: bool) -> None:
@@ -121,16 +138,19 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     return Layout.legacy_at(project) if legacy else None
 
 
-def open_store_dir(project_fd: int) -> int | None:
+def open_store_dir(project_fd: int, skip: Callable[[os.stat_result], bool] | None = None) -> int | None:
     """The fd of ``.orch`` below the project fd (``O_NOFOLLOW``), or ``None`` when there is no ``.orch``. Anything that
     is there but not a real directory (a symlink, a file) is :class:`LayoutError`: it never falls through to the legacy
-    layout (design §5)."""
+    layout (design §5). ``skip(lstat)`` true: not looked at, ``None`` (the implicit walk ignores what is not the
+    person's own)."""
     try:
         st = os.stat(STORE_DIR, dir_fd=project_fd, follow_symlinks=False)
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise LayoutError(f"{STORE_DIR} cannot be examined ({exc.strerror})") from None
+    if skip is not None and skip(st):
+        return None
     if not stat.S_ISDIR(st.st_mode):
         raise LayoutError(f"{STORE_DIR} is not a real directory (a link or a file); refusing to use this project")
     try:

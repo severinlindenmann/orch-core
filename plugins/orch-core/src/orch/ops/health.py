@@ -26,6 +26,7 @@ from subprocess import DEVNULL, SubprocessError
 from typing import Any
 
 from orch import canon, gitsafe
+from orch.layout import StorePin
 from orch.ops.caps import Capabilities, CapabilityDenied, Files
 from orch.store import Store, StoreError
 from orch.store import render as store_render
@@ -73,6 +74,7 @@ def _open(
     findings: list[Finding],
     ident: tuple[int, int] | None = None,
     config: bytes | None = None,
+    store_pin: StorePin | None = None,
 ) -> InspectStore | None:
     pins = HostPins(state_dir, wid)
     try:
@@ -90,6 +92,7 @@ def _open(
             load="all",
             ident=ident,  # the root discovery found, by its fd: every read below goes through it (#516)
             config=config,  # the config.json bytes discovery checked, not a second read by path
+            store_pin=store_pin,
         )
     except StoreError as e:
         findings.append(Finding("error", "workspace", e.code, e.detail))
@@ -139,6 +142,7 @@ def inspect(
     sees: Callable[[Any], bool] | None = None,
     ident: tuple[int, int] | None = None,
     config: bytes | None = None,
+    store_pin: StorePin | None = None,
 ) -> tuple[list[Finding], Store | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
     (checkpoint presence, pins, index, repositories, orphan keys).
@@ -159,7 +163,7 @@ def inspect(
         store.load_all()
     else:
         assert state_dir is not None
-        s = _open(root, wid, state_dir, out, ident, config)
+        s = _open(root, wid, state_dir, out, ident, config, store_pin)
     if s is None:
         return out, None
     # direct mode reads the workspace through the store's pinned root; host mode through the host's Files

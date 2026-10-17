@@ -53,7 +53,6 @@ ops/import_run.py 1
 ops/runtime.py 13
 ops/workspace_init.py 6
 records/__init__.py 15
-records/direct.py 1
 records/tool.py 3
 relay/publish.py 1
 relay/submit.py 3
@@ -63,4 +62,3 @@ setup/flow.py 4
 setup/protocol.py 6
 setup/review.py 6
 setup/steps.py 2
-worktree_cli.py 1

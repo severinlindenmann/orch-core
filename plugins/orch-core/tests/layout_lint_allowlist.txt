@@ -8,7 +8,6 @@ cli/quick.py 2
 click/records.py 6
 click/signer.py 4
 click/view.py 4
-devsandbox.py 3
 discovery.py 2
 host/artifacts.py 1
 host/auth.py 1
@@ -29,7 +28,6 @@ host/records.py 4
 host/relaybuild.py 1
 host/relayentry.py 1
 host/review.py 1
-host/service.py 1
 host/signcontent.py 3
 host/signer.py 14
 hostclient.py 2

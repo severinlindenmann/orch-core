@@ -91,30 +91,7 @@ SERVED_MARKER = "host-served"
 
 
 def _state_fd(project: str | os.PathLike[str]) -> int | None:
-    """The fd of ``.state`` of the STORE of the project (``.orch/.state`` in the new layout, ``.state`` in the legacy
-    one), every step ``O_NOFOLLOW`` from the project fd; ``None`` when there is none. :class:`LayoutError` when the
-    layout is unusable (two stores, a linked ``.orch``)."""
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        pfd = os.open(project, flags)
-    except OSError:
-        return None
-    try:
-        found = layout_mod.resolve(pfd, project)
-        if found is None:
-            return None
-        sfd = pfd if found.legacy else layout_mod.open_store_dir(pfd)
-        if sfd is None:
-            return None
-        try:
-            return os.open(".state", flags, dir_fd=sfd)
-        except OSError:
-            return None
-        finally:
-            if sfd != pfd:
-                os.close(sfd)
-    finally:
-        os.close(pfd)
+    return layout_mod.open_state_fd(project)
 
 
 def is_served(project: str | os.PathLike[str]) -> bool:

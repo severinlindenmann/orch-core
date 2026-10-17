@@ -242,6 +242,16 @@ def check_workspace_files(
             raise unsafe(f"{base}: the registered store directory is missing")
         if not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022:
             raise unsafe(f"{base}: writable by another principal")
+        try:  # the ACL (macOS) and the owner, on the opened directory itself, as for every component of the root path
+            dfd = os.open(base, _FLAGS)
+        except OSError as exc:
+            raise unsafe(f"{base}: {exc.strerror or exc}") from None
+        try:
+            if os.fstat(dfd).st_uid != host_uid:
+                raise unsafe(f"{base}: not owned by the host UID {host_uid}")
+            _check_component(dfd, base, host_uid, last=True)
+        finally:
+            os.close(dfd)
     for name in ("events", "tickets", ".state"):
         item = _lstat_owned(base / name, host_uid)
         if item is not None and (not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022):

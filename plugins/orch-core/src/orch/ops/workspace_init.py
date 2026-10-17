@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon, crypto
+from orch import layout as layout_mod
 from orch.custody import Backend, CustodyError, FileBackend, NoPrompt, get_backend
 from orch.custody.strength import check_strength, generate_passphrase
 from orch.identity import (
@@ -197,7 +198,10 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
             "orch init needs your own terminal (/dev/tty): no passphrase can be asked",
             "run orch init in a terminal",
         )
-    problems = check_targets(root)
+    try:
+        problems = check_targets(root, layout_mod.store_of(root))
+    except layout_mod.LayoutError as e:
+        raise _refuse("invalid.input", f"nothing was created: {e}", "remove or rename the .orch entry") from None
     if problems:
         raise _refuse("invalid.input", "nothing was created: " + "; ".join(problems[:3]), "remove the symbolic link")
 
@@ -887,10 +891,10 @@ def _finish(root, sd, wid, key_line, prefix, owner_name, person, seq) -> Result:
         key_line,
     ]
     try:
-        written, kept = write_workspace_files(root)
+        written, kept = write_workspace_files(root, store=layout_mod.store_of(root))
         lines.append("wrote " + ", ".join(written) if written else "instructions are current")
         lines += kept
-    except (UnsafePath, OSError, UnicodeDecodeError) as e:
+    except (UnsafePath, OSError, UnicodeDecodeError, layout_mod.LayoutError) as e:
         lines.append(
             f"WORKSPACE CREATED, but the instruction files were not written: {e}. "
             "Fix that, then run orch instructions sync (add the AGENTS.md / CLAUDE.md lines by hand)"

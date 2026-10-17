@@ -33,6 +33,9 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch import layout as layout_mod
+from orch.layout import STORE_DIR, LayoutError
+
 from . import devmode, frames
 from .custody import (
     check_tree,
@@ -61,6 +64,12 @@ __all__ = ["CONTROL_OPS", "ControlGate", "ControlOps", "KEY_TTL_SECONDS", "WSK_M
 KEY_TTL_SECONDS = 3600
 WSK_MARKER = "wsk_create.json"
 log = logging.getLogger(__name__)
+
+
+def _store_dir(root: str) -> Path:
+    """The store directory of the project ``root`` as it is on disk now (:func:`orch.layout.store_of`)."""
+    return layout_mod.store_of(root)
+
 
 _ROOT_FILES = ("config.json", "keys.jsonl", "events", "tickets", ".state")
 
@@ -309,8 +318,9 @@ class ControlOps:
                     continue
 
     # -- host.register
-    def _inspect(self, root: str) -> tuple[str, str, Any, dict[str, Any]]:
-        """Check a root for registration; returns (workspace id, prefix, workspace view, verified genesis)."""
+    def _inspect(self, root: str) -> tuple[str, str, Any, dict[str, Any], str | None]:
+        """Check a root for registration; returns (workspace id, prefix, workspace view, verified genesis, store): the
+        store (``".orch"``; ``None``: legacy) is that of the store this check opened, and must be the one on disk."""
         from orch.ops.caps import Files
         from orch.ops.runtime import _config
         from orch.store import Store, StoreError
@@ -350,7 +360,10 @@ class ControlOps:
             genesis = store.genesis_event()
             if genesis is None:
                 raise HostError("trust.genesis_mismatch", "the workspace has no verified genesis")
-            return workspace_id, ws.prefix, ws, genesis
+            opened = None if store.layout.legacy else STORE_DIR
+            if opened != store_name(root):
+                raise HostError("custody.unsafe_mode", "the store layout changed while the workspace was inspected")
+            return workspace_id, ws.prefix, ws, genesis, opened
         finally:
             store.close()
 
@@ -395,7 +408,7 @@ class ControlOps:
                 raise HostError("host.busy", f"{root} is already registered")
             if self.host.bootstrapping_root(root):
                 raise HostError("host.busy", f"{root} is being bootstrapped")
-            workspace_id, prefix, ws, genesis = self._inspect(root)
+            workspace_id, prefix, ws, genesis, store_kind = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
             view = devmode.View(
@@ -414,7 +427,7 @@ class ControlOps:
                 person_valid=lambda person: person_ok(ws, person, now),
             )
             self.intents.update(intent, workspace_id=workspace_id)
-            entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers)
+            entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers, store=store_kind)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
                 self._import_readers(workspace_id, root)  # H12d-2: after admission, under the store lock
                 admit(self.host, entry, view)  # the one choke point (§11A.17.3 R5)
@@ -762,7 +775,15 @@ class ControlOps:
         with contextlib.suppress(FileNotFoundError):
             (self._hosts(workspace_id) / WSK_MARKER).unlink()
         if self.host.registry.get(workspace_id) is None:
-            entry = Entry(workspace_id, str(event["prefix"]), root, self.host_uid, group_name(workspace_id), peers)
+            entry = Entry(
+                workspace_id,
+                str(event["prefix"]),
+                root,
+                self.host_uid,
+                group_name(workspace_id),
+                peers,
+                store=store_name(root),  # as on disk: the bootstrap's own Store.open made it
+            )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
                 admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
@@ -775,13 +796,13 @@ class ControlOps:
         an empty or torn line, another event), ``None`` when the log cannot be read (EIO, EMFILE...): unknown."""
         from orch import canon
 
-        path = Path(root) / "events" / "workspace.jsonl"
+        path = _store_dir(root) / "events" / "workspace.jsonl"
         try:
             with open(path, "rb") as handle:
                 line = handle.readline()
         except FileNotFoundError:
             return False
-        except OSError:
+        except (OSError, LayoutError):
             return None
         try:
             return canon.parse_event_line(line).get("id") == planned_id
@@ -794,7 +815,11 @@ class ControlOps:
         ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
         whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
         Its files are not ours to delete."""
-        path = Path(root) / "config.json"
+        try:
+            store = _store_dir(root)
+        except LayoutError:
+            return True  # a layout we cannot place is not ours to delete
+        path = store / "config.json"
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
@@ -808,7 +833,7 @@ class ControlOps:
             except (ValueError, KeyError, TypeError):
                 return True
         try:
-            with open(Path(root) / "events" / "workspace.jsonl", "rb") as handle:
+            with open(store / "events" / "workspace.jsonl", "rb") as handle:
                 first = json.loads(handle.readline(1 << 20))
         except (OSError, ValueError):
             return False  # no first line, or a torn one: nothing a direct init finished
@@ -816,9 +841,15 @@ class ControlOps:
 
     @staticmethod
     def _fingerprint(root: str) -> dict[str, list[int]]:
-        """``name -> [dev, inode]`` of every store name in ``root`` right now (directories, not links)."""
+        """``name -> [dev, inode]`` of what this bootstrap made in ``root`` right now: every store name (directories,
+        not links) in the legacy layout, the ``.orch`` directory itself in the new one (all inside it is ours)."""
         out: dict[str, list[int]] = {}
-        for name in _ROOT_FILES:
+        try:
+            store = _store_dir(root)
+        except LayoutError:
+            return out
+        names = _ROOT_FILES if store == Path(root) else (STORE_DIR,)
+        for name in names:
             with contextlib.suppress(OSError):
                 st = os.lstat(os.path.join(root, name))
                 if stat.S_ISDIR(st.st_mode):
@@ -829,9 +860,11 @@ class ControlOps:
     def _clean_root(root: str, created: Any = None, since: Any = None) -> None:
         """Remove what this bootstrap made in the root, and nothing else (the root may be a person's project).
         A directory goes only if it still has the recorded (dev, inode); ``config.json`` / ``keys.jsonl`` go only if
-        they are regular files the host's append made (changed since ``validated_at``). Anything else is left alone."""
+        they are regular files the host's append made (changed since ``validated_at``). Anything else is left alone.
+        In the new layout the ``.orch`` directory goes only if it is the recorded one, whole (it holds only ours)."""
         created = created if isinstance(created, dict) else {}
-        for name in _ROOT_FILES:
+        names = (STORE_DIR,) if STORE_DIR in created else _ROOT_FILES
+        for name in names:
             path = Path(root) / name
             try:
                 st = os.lstat(path)

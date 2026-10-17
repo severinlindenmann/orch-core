@@ -51,7 +51,7 @@ function Words({ words }: { words: string[] | null }) {
     </span>
   )
 }
-const pausedCopy = 'Setup paused. The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
+const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
 const steps = ['Welcome', 'You', 'Agents may', 'Approval', 'Secret words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
@@ -954,7 +954,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   : voidCopy}
               </p>
               <p>
-                <Raw>{progress.error.message}</Raw>
+                <Inline>{progress.error.message}</Inline>
               </p>
               {progress.retry.length > 0 && (
                 <p>

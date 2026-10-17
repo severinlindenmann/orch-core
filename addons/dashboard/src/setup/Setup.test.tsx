@@ -596,7 +596,7 @@ test('the progress words are shown, and the unfinished items are named in words'
     const res = await f.fetcher(url, init)
     if (String(url).includes('/progress')) {
       const body = await res.json()
-      return new Response(JSON.stringify({ ...body, retry: ['runner_grant', 'custody'] }))
+      return new Response(JSON.stringify({ ...body, retry: ['runner_grant', 'custody'], error: { ...body.error, message: 'one-click could not be set up because this Mac refused; your workspace uses the terminal for now.' } }))
     }
     return res
   }
@@ -607,6 +607,7 @@ test('the progress words are shown, and the unfinished items are named in words'
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
+  expect(page(container)).toContain('one-click could not be set up because')
   expect(page(container)).toContain("Still to finish: Agent access for this Mac's runner, One-click approval on this Mac")
 })
 
@@ -625,5 +626,5 @@ test('when the terminal setup ends the page notices within 2 seconds, clears the
   expect(container.querySelectorAll('.recovery li')).toHaveLength(0)
   expect(container.textContent).not.toContain('demo-word-')
   expect(container.textContent).not.toContain('demo-not-a-real-passphrase')
-  expect(screen.getByRole('alert')).toHaveTextContent('Setup paused')
+  expect(screen.getByRole('alert')).toHaveTextContent('The setup in your terminal has ended')
 })

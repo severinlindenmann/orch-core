@@ -432,6 +432,7 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     lock = _lock(root)
     host_dir: Path | None = None
     existed_before: set[str] = set()
+    made: list[tuple[int, int]] = []  # the identity of the .orch this call makes
     shown_secrets = False
     try:
         _no_workspace(ctx, root)  # again, now that no other init can be between this check and the files
@@ -443,18 +444,18 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
             wid = secrets.token_hex(16)
             host_dir = sd / "hosts" / wid
             appended, person = _make_keys_and_genesis(
-                ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code
+                ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code, made
             )
     except KeyboardInterrupt:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         raise _refuse("stop", "init cancelled; nothing was created" + _void(shown_secrets)) from None
     except OrchError as e:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         if shown_secrets and "void" not in e.message:
             e.message += _void(shown_secrets)
         raise
     except BaseException:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         raise
     finally:
         with contextlib.suppress(OSError):
@@ -853,7 +854,7 @@ def _signed_genesis(
     return event, person
 
 
-def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code):
+def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code, made=None):
     from orch.store import BackendSigner, Store, StoreError
 
     store = None
@@ -873,6 +874,8 @@ def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, pas
             load="lazy",
             create=True,
         )
+        if made is not None and store.created_store is not None:
+            made.append(store.created_store)
         appended = store.append(event, log="workspace")
     except (CustodyError, Refused, StoreError, OSError, ValueError) as e:
         if store is not None:
@@ -919,10 +922,16 @@ def _failure(e: Exception) -> OrchError:
     return _refuse("invalid.input", f"{type(e).__name__}: {e}; nothing was created", "orch describe init")
 
 
-def _rollback(root: Path, host_dir: Path | None, existed_before: set[str]) -> None:
+def _rollback(
+    root: Path, host_dir: Path | None, existed_before: set[str], made: list[tuple[int, int]] | None = None
+) -> None:
     """Remove what this call created: the key directory and the workspace files that were not there before."""
     if host_dir is not None:
         shutil.rmtree(host_dir, ignore_errors=True)
+    if made:  # the .orch this call made (its identity), by fds: a person's own .orch is never touched
+        from orch.store.rootfs import remove_made_dir
+
+        remove_made_dir(root, layout_mod.STORE_DIR, made[0])
     for n in _WORKSPACE_FILES:
         if n in existed_before:
             continue

@@ -261,3 +261,46 @@ def test_the_link_check_for_agents_orch_md_covers_the_dot_orch_component(tmp_pat
     with pytest.raises(Exception, match="symbolic link"):
         write_workspace_files(p, store=p / ".orch", pointers=False)
     assert not (tmp_path / "elsewhere" / "AGENTS.orch.md").exists()
+
+
+def test_rollback_empties_the_verified_directory_and_rmdirs_an_empty_tombstone(tmp_path: Path) -> None:
+    from orch.store.rootfs import remove_made_dir
+
+    p = _proj(tmp_path)
+    (p / ".orch" / "events").mkdir()
+    (p / ".orch" / "events" / "x").write_text("1")
+    st = os.stat(p / ".orch")
+    assert remove_made_dir(p, ".orch", [st.st_dev, st.st_ino]) is True
+    assert sorted(os.listdir(p)) == []  # no .orch, no tombstone
+    assert remove_made_dir(p, ".orch", [1, 2]) is False
+
+
+def test_a_failed_open_after_its_own_mkdir_removes_the_dot_orch_it_made(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(layout, "WRITE_NEW", True)
+    p = tmp_path / "proj"
+    p.mkdir()
+    monkeypatch.setattr(Store, "_open", lambda self, *a, **k: (_ for _ in ()).throw(StoreError("validation.path", "x")))
+    with pytest.raises(StoreError):
+        Store.open(p, expected_workspace_id="w" * 32, create=True)
+    assert os.listdir(p) == []  # nothing left behind
+
+
+def test_init_rollback_removes_only_the_dot_orch_it_made(tmp_path: Path) -> None:
+    from orch.ops.workspace_init import _rollback
+
+    p = _proj(tmp_path)
+    st = os.stat(p / ".orch")
+    _rollback(p, None, set(), [(st.st_dev, st.st_ino)])
+    assert not (p / ".orch").exists()
+    q = _proj(tmp_path / "q")
+    _rollback(q, None, set(), [])  # an open that made none records none
+    assert (q / ".orch").is_dir()
+    _rollback(q, None, set(), [(1, 2)])
+    assert (q / ".orch" / "config.json").is_file()
+
+
+def test_read_only_opens_never_make_the_project_directory(tmp_path: Path) -> None:
+    missing = tmp_path / "nope"
+    with pytest.raises(OSError):
+        Store.open(missing, expected_workspace_id="w" * 32)
+    assert not missing.exists()

@@ -100,6 +100,7 @@ def check(
     material = prepared["material"]
     events = prepared["events"]
     check_reviews(material, events)
+    _sequence(prepared, workspace_id, person)
     for block in material["review"]:  # derived values are rendered too: they must have their formats
         d = block["derived"]
         if ("cert_device" in d and not _DEVICE.fullmatch(str(d["cert_device"]))) or (
@@ -111,6 +112,31 @@ def check(
         _refuse("review_digest does not match the material")
     if prepared.get("fingerprint") != review.fingerprint(digest, events, prepared["op"]):
         _refuse("the fingerprint does not match")
+
+
+def _sequence(prepared: Mapping[str, Any], workspace_id: str, person: str) -> None:
+    """Batch 11 (finding 9): the first request of a signer's sequence. The intent in the material is the one thing the
+    person reviews; its digest, its step count and the first event are recomputed from it here, so a host cannot show
+    one intent and prepare another."""
+    from . import sequence
+
+    meta = prepared["material"].get("sequence")
+    if meta is None:
+        return
+    try:
+        if not isinstance(meta, dict) or set(meta) != {"digest", "of", "intent"}:
+            _refuse("the sequence material has keys outside its schema")
+        intent = sequence.validate_intent(meta["intent"])
+        plan = sequence.steps(intent)
+        if meta["digest"] != sequence.digest_of(workspace_id, person, intent) or meta["of"] != len(plan):
+            _refuse("the sequence digest or step count is not the intent's")
+        if prepared["op"] != "new" or len(prepared["events"]) != 1:
+            _refuse("a sequence starts with one new")
+        sequence.check_step(intent, 0, prepared, person=person, first=None, prev_head=None)
+    except sequence.SequenceInvalid as exc:
+        _refuse(f"the sequence is not one this signer knows ({exc})")
+    except sequence.Aborted as exc:
+        _refuse(exc.reason)
 
 
 def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
@@ -126,6 +152,7 @@ def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
     _formats(prepared)
     _hashes(prepared, workspace_id)
     check_reviews(prepared["material"], prepared["events"])
+    _sequence(prepared, workspace_id, person)
     if prepared.get("review_digest") != review.review_digest(prepared["material"]):
         _refuse("review_digest does not match the material")
 
@@ -318,7 +345,7 @@ _MATERIAL_KEYS = {
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
     # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
     pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
@@ -586,6 +613,13 @@ def render(
     if artifacts is not None and artifacts not in labels:
         raise ValueError(f"artifacts: {artifacts!r}")
     out = [*header(prepared, workspace), ""]
+    if prepared["material"].get("sequence") is not None:  # one review of every step (batch 11, finding 9)
+        from . import sequence
+
+        out.append(
+            f"=== {int(prepared['material']['sequence']['of'])} signatures, ONE confirmation; all steps below ==="
+        )
+        prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]
     for i, block in enumerate(material["review"], 1):

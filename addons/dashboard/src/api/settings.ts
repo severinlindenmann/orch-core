@@ -58,9 +58,9 @@ export interface HostSettings {
 }
 
 export const DURATIONS = [
-  { key: 'grant_hours', label: 'Agent grant length', unit: 'hours', min: 1, max: GRANT_MAX_HOURS },
-  { key: 'claim_ttl_min', label: 'Claim lasts without activity', unit: 'minutes', min: 15, max: 1440 },
-  { key: 'lease_ttl_min', label: 'Task lease lasts without activity', unit: 'minutes', min: 5, max: 1440 },
+  { key: 'grant_hours', label: 'Agent access length', unit: 'hours', min: 1, max: GRANT_MAX_HOURS, hint: 'The longest a new agent access lasts.' },
+  { key: 'claim_ttl_min', label: 'Ticket reserved for', unit: 'minutes', min: 15, max: 1440, hint: 'When an agent takes a ticket and goes quiet, it is freed for others after this long.' },
+  { key: 'lease_ttl_min', label: 'Single task held for', unit: 'minutes', min: 5, max: 1440, hint: 'When a helper working on one task goes quiet, the task is freed after this long.' },
 ] as const
 export type DurationKey = (typeof DURATIONS)[number]['key']
 
@@ -175,3 +175,13 @@ export function certProblem(raw: string): string | null {
   }
   return null
 }
+
+/** The four device levels, in the words a person uses. */
+export const SCOPE_HELP: Record<string, string> = {
+  look: 'read tickets and the log',
+  decide: 'approve, request changes and answer',
+  operate: 'change members, settings and grants',
+  type: 'type into terminals',
+}
+/** A person or device id without its tail: `p_` and the first 12 hex digits. The full id stays in a tooltip. */
+export const shortId = (id: string): string => (id.length > 16 ? `${id.slice(0, 14)}…` : id)

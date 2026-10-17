@@ -60,10 +60,12 @@ it('polls the host and displays an approval result', async () => {
   vi.mocked(api.phoneStatus).mockResolvedValue({ hints: [{ ...hint, state: 'done', outcome: { kind: 'approved', seq: 1, event_id: 'e', at: hint.created_at } }] })
   await screen.findByText('Approved.', {}, { timeout: 4000 })
 })
-it('keeps phase two phone methods disabled', async () => {
+it('does not offer a phone that is not paired and not requested', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><HandoffDialog ws="ws" title="Approve code" action={{ action: 'approve', key: request.ref, gate: 'code' }} onClose={vi.fn()} /></QueryClientProvider>)
-  expect(await screen.findByRole('button', { name: /Approve on your phone · coming soon/ })).toBeDisabled()
+  await screen.findByRole('dialog')
+  await waitFor(() => expect(api.getHostSettings).toHaveBeenCalled())
+  expect(screen.queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
   expect(api.phoneRequest).not.toHaveBeenCalled()
 })
 it('puts phone under Other ways when terminal is the default', async () => {

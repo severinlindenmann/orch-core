@@ -1,5 +1,6 @@
 import { bootstrapSetup, isSetupPage } from './api/setup'
 import { bootstrap } from './api/bootstrap'
+import './lib/cssom'
 import './styles/tokens.css'
 
 // Setup claims through the server; normal dashboard launch uses its separate bootstrap.

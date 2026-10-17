@@ -11,10 +11,12 @@ export function useSignMethods(ws: string | undefined) {
   const preference = useQuery({ ...queries.signDefault(ws ?? ''), enabled: !!ws, retry: false })
   const unrestricted = settings.data?.sign_methods === null
   const allowed: SignMethod[] | undefined = unrestricted ? ['terminal', 'click', 'phone'] : settings.data?.sign_methods ?? undefined
-  return { allowed, unrestricted, preference: preference.data, loading: !!ws && (settings.isPending || preference.isPending) }
+  return { allowed, unrestricted, preference: preference.data, preferenceFailed: preference.isError, loading: !!ws && (settings.isPending || preference.isPending) }
 }
 export function OtherWays({ allowed, current, onSelect, disabled = false, phoneAvailable = false, phonePhaseOne = false }: { allowed: SignMethod[]; current: SignMethod; onSelect: (method: SignMethod) => void; disabled?: boolean; phoneAvailable?: boolean; phonePhaseOne?: boolean }) {
-  return <details className="text-[13px]"><summary className="cursor-pointer text-text-muted">Other ways <span aria-hidden="true">▾</span></summary><div className="flex flex-wrap gap-2 py-2">{allowed.filter(m => m !== current).map(m => <Button key={m} variant="outline" disabled={disabled || (m === 'phone' && !phoneAvailable)} onClick={() => onSelect(m)}>{methodLabel[m]}{m === 'phone' && !phoneAvailable && (phonePhaseOne ? ' · pair a phone first' : ' · coming soon')}</Button>)}</div></details>
+  const others = allowed.filter(m => m !== current && (m !== 'phone' || phoneAvailable || phonePhaseOne))
+  if (others.length === 0) return null
+  return <details className="text-[13px]"><summary className="cursor-pointer text-text-muted">Other ways <span aria-hidden="true">▾</span></summary><div className="flex flex-wrap gap-2 py-2">{others.map(m => <Button key={m} variant="outline" disabled={disabled || (m === 'phone' && !phoneAvailable)} onClick={() => onSelect(m)}>{methodLabel[m]}{m === 'phone' && !phoneAvailable && ' · pair a phone first'}</Button>)}</div></details>
 }
 export function PhoneWaiting({ hint }: { hint: PhoneHint }) {
   const [now, setNow] = useState(Date.now())

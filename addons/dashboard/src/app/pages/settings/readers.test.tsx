@@ -104,7 +104,7 @@ describe('devices are named by label, never by id', () => {
       </p>,
     )
     const text = document.body.textContent!
-    expect(text).toContain('a device of Mara with no name')
+    expect(text).toContain('Mara’s device (unnamed)')
     expect(text).toContain('a device this page does not know')
     for (const id of [PHONE, LAPTOP]) expect(text).not.toContain(id)
   })

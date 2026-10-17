@@ -91,6 +91,11 @@ class SetupFlow:
         """The session is over: cancelled, or the person pressed Finish (``done`` alone keeps the page working)."""
         return self.phase == "cancelled" or self._closed
 
+    @property
+    def outcome(self) -> str:
+        """``done`` when the workspace was set up and the person pressed Finish, else ``paused``."""
+        return "done" if self._closed and self.run is not None and self.run.done else "paused"
+
     def launch(self, directory: str) -> None:
         with self.lock:
             real, mode = facts_mod.check_dir(
@@ -149,12 +154,14 @@ class SetupFlow:
         if self.facts is not None:
             sug = {"name": self.facts.name, "prefix": self.facts.prefix}
         missing: list[str] = []
+        current: dict[str, Any] | None = None
         if self.mode == "finish" and self.facts is not None:
             missing = (
                 facts.missing_items(self.facts, self.profile, self.addons)
                 if self.profile is not None
                 else facts.all_missing(self.facts, self.addons)
             )
+            current = facts.current(self.facts, self.addons)
         return {
             "phase": self.phase,
             "mode": self.mode,
@@ -168,6 +175,9 @@ class SetupFlow:
             "agent_hours": list(AGENT_HOURS),
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
+            "missing_words": [facts.label(m, self.addons) for m in missing],
+            "current": current,
+            "labels": {k: facts.label(k, self.addons) for k in (*facts.LABELS, *(f"addon:{a}" for a in self.addons))},
             "error": self.error,
         }
 
@@ -269,7 +279,7 @@ class SetupFlow:
                 raise SetupError("review.changed", "the workspace changed since the review; review again", 409)
         assert self.profile is not None and self.root is not None
         ids = self._step_ids(plan)
-        run = Run("run_" + _secrets.token_hex(6), [(i, STEP_LABELS.get(i, i)) for i in ids])
+        run = Run("run_" + _secrets.token_hex(6), [(i, self._step_label(i)) for i in ids])
         self.run = run
         ports = self.e.ports() if self.e.ports else None
         if ports is None:
@@ -293,6 +303,14 @@ class SetupFlow:
         self.thread = threading.Thread(target=self._work, args=(creator,), name="orch-setup-run")
         self.thread.start()
         return {"run_id": run.id}
+
+    def _step_label(self, step_id: str) -> str:
+        """A step in words: the fixed ones by name, an add-on as ``<title> add-on`` (never ``addon:dashboard``)."""
+        if step_id in STEP_LABELS:
+            return STEP_LABELS[step_id]
+        if step_id.startswith("addon:") and step_id[6:] in self.addons:
+            return f"{self.addons[step_id[6:]].title} add-on"
+        return facts_mod.label(step_id, self.addons)
 
     def _step_ids(self, plan: review_mod.Plan) -> list[str]:
         ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]

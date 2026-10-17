@@ -19,9 +19,12 @@ from .protocol import SetupError
 __all__ = [
     "AddonInfo",
     "Facts",
+    "LABELS",
     "all_missing",
     "catalog",
     "check_dir",
+    "current",
+    "label",
     "missing_items",
     "read_facts",
 ]
@@ -63,9 +66,14 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
 
     read = manifest or builtin.manifest_bytes
     texts = {
-        "start-agent": ("Start agents", "Agents can be started from the dashboard and run as you.", True, False),
-        "terminals": ("Terminals", "The dashboard can open a terminal on this machine, as you.", True, True),
-        "worktrees": ("Worktrees", "The dashboard can create git worktrees for tickets.", True, False),
+        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this Mac, as you.", True, False),
+        "terminals": ("Terminals", "Open a terminal on this Mac from the dashboard. It runs as you.", True, True),
+        "worktrees": (
+            "Worktrees",
+            "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
+            True,
+            False,
+        ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []
@@ -89,7 +97,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
         AddonInfo(
             "quick",
             "Quick tasks",
-            "Small one-off tasks (plain tickets; nothing to switch on).",
+            "Small one-off tasks. Always available; there is nothing to switch on.",
             required=False,
             default=True,
             kind="flag",
@@ -99,11 +107,11 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
 
 
 def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
-    """A name and prefix to start from (the user changes them): the login name, and the directory name upper-cased."""
-    name = env.get("USER") or "owner"
+    """A prefix to start from (the user changes it): the directory name upper-cased. The name is left empty: a login
+    name is rarely how a person wants to be called (B11 finding 19)."""
     stem = re.sub(r"[^A-Za-z0-9]", "", directory.name).upper()
     prefix = stem[:6] if re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", stem[:6]) else "WORK"
-    return {"name": name, "prefix": prefix}
+    return {"name": "", "prefix": prefix}
 
 
 def _inside(child: Path, parent: Path) -> bool:
@@ -176,6 +184,8 @@ class Facts:
     addons: frozenset[str] = frozenset()
     #: ``grant_hours`` differs from the default (someone set it)
     grant_hours_set: bool = False
+    #: the workspace's real ``grant_hours`` (Finish setup shows it; it is never lowered by a default)
+    grant_hours: int = 8
     #: any grant issued by this person, even revoked or expired
     grant_issued: bool = False
     #: dashboard execution flag state on this machine
@@ -209,6 +219,7 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
                 addons=addons,
                 grant_hours_set=settings.get("grant_hours", DEFAULT_SETTINGS["grant_hours"])
                 != DEFAULT_SETTINGS["grant_hours"],
+                grant_hours=int(settings.get("grant_hours", DEFAULT_SETTINGS["grant_hours"])),
                 grant_issued=issued,
                 runner_enabled=bool(runner.get("enabled")),
                 terminals_enabled=bool(runner.get("terminals")),
@@ -222,19 +233,45 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
         raise SetupError("setup.facts_unreadable", "the workspace state could not be read", 500) from None
 
 
+#: what a person reads for an item id (B11 finding 6): the ids are the machine's, these are the words
+LABELS = {
+    "runner": "Agent execution on this Mac",
+    "settings": "How long agents may work",
+    "runner_grant": "Agent access for this Mac's runner",
+    "runner_grant_retry": "Agent access for this Mac's runner (the earlier hand-over was not confirmed)",
+    "custody": "One-click approval on this Mac",
+}
+
+
+def label(item_id: str, info: dict[str, AddonInfo]) -> str:
+    if item_id.startswith("addon:"):
+        a = info.get(item_id[6:])
+        return f"{a.title} add-on" if a is not None else "An add-on"
+    return LABELS.get(item_id, "A setup step")
+
+
 def all_missing(facts: Facts, info: dict[str, AddonInfo]) -> list[str]:
     """What a registered workspace lacks before the person has chosen anything (the page's first view of Finish setup):
-    every add-on and switch with no history. The profile then narrows it (:func:`missing_items`)."""
+    the add-ons with no history and the runner's agent access. Never ``custody`` (terminal approval needs no custody
+    step; one-click is a choice the person makes, see :func:`missing_items`) and never ``settings`` (the length of
+    agent access is shown as it is, not as something missing). The profile then narrows it (:func:`missing_items`)."""
     out = [f"addon:{a.id}" for a in info.values() if a.kind == "addon" and a.id not in facts.addons]
-    if not facts.runner_enabled:
-        out.append("runner")
-    if not facts.grant_hours_set:
-        out.append("settings")
     if not facts.grant_issued:
         out.append("runner_grant")
-    if not facts.convenience:
-        out.append("custody")
     return out
+
+
+def current(facts: Facts, info: dict[str, AddonInfo]) -> dict[str, Any]:
+    """The values Finish setup shows read-only (finding 5): what the workspace has, from the same read as the facts."""
+    return {
+        "name": facts.name,
+        "prefix": facts.prefix,
+        "addons_on": [a.id for a in info.values() if a.kind == "addon" and a.id in facts.addons],
+        "agent_hours": facts.grant_hours,
+        "runner": {"enabled": facts.runner_enabled, "terminals": facts.terminals_enabled},
+        "runner_grant": facts.grant_issued,
+        "method": "click" if facts.convenience else "terminal",
+    }
 
 
 def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonInfo]) -> list[str]:

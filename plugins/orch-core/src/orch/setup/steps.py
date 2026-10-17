@@ -229,12 +229,21 @@ class Run:
         self.retry: list[str] = []
         self.workspace: dict[str, str] | None = None
         self.waiting_tty = False
+        #: called with one plain line when a step ends (the setup terminal prints it; B11 finding 25)
+        self.echo: Callable[[str], None] | None = None
 
     def set(self, step: str, status: str) -> None:
+        said = None
         with self._lock:
             for s in self.steps:
                 if s["id"] == step:
+                    changed = s["status"] != status
                     s["status"] = status
+                    if changed and status in ("done", "failed", "skipped"):
+                        said = f"  {ECHO[status]} {s['label']}"
+        if said is not None and self.echo is not None:
+            with contextlib.suppress(Exception):
+                self.echo(said)
 
     def status(self, step: str) -> str | None:
         with self._lock:
@@ -257,6 +266,7 @@ class Run:
             }
 
 
+ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
     "keys": "Making your keys",
     "genesis": "Signing the workspace",
@@ -300,6 +310,7 @@ class Creator:
         self.clock = clock
         self.cancelled = cancelled or threading.Event()
         self.items = list(plan.items)
+        run.echo = self._say
         self._grant_skipped = False
         self._passphrase: str | None = None
         self._shown = False  # the passphrase was shown on the terminal (once)
@@ -307,12 +318,17 @@ class Creator:
         self._custody_done = False
         self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
+    def _say(self, line: str) -> None:
+        """One progress line on the person's own terminal (never a secret: step names only)."""
+        self.ports.terminal.show(line + "\n")
+
     # -- the public entry
     def execute(self) -> None:
         post_genesis = self.mode == "finish"
         try:
             self._tty_confirm()
             self._stop_point()
+            self._say("orch setup: working on it; the page shows the same steps")
             if self.mode == "new":
                 self._genesis()
                 post_genesis = True
@@ -353,16 +369,17 @@ class Creator:
             with contextlib.suppress(Exception):
                 self._show_passphrase_once()
 
-    def _show_passphrase_once(self) -> None:
+    def _show_passphrase_once(self, reason: str = "") -> None:
         if self._shown or self._typed or self._passphrase is None:
             return
         self._shown = True
+        why = f" because {reason}" if reason else ""
         self.ports.terminal.show(
-            "\n=== orch setup: your device passphrase ===\n"
-            "Your key stays under this passphrase (the move to one-click custody did not finish).\n"
+            f"\n=== orch setup: one-click could not be set up{why} ===\n"
+            "Your workspace uses the terminal for now: every approval asks for the passphrase below.\n"
             "Write it down now; it is shown here once and never on the page:\n\n    "
             + self._passphrase
-            + "\n\nRun `orch setup` here again, or `orch keys custody convenience`, to finish.\n"
+            + "\n\nTo try one-click again, run `orch setup` in this folder.\n"
         )
 
     def _stop_point(self) -> None:
@@ -601,22 +618,38 @@ class Creator:
             self.run.set("custody", "done")
             return
         # still failing: the key stays under the passphrase, so the passphrase is shown ONCE, on this terminal only
+        reason = self._reason_words(last)
         del last
         self.run.set("custody", "failed")
         self.run.add_retry("custody")
         if typed:  # the person typed it just now: it is not shown back
             raise SetupError(
-                "custody.conversion_failed", "the key could not be moved to one-click custody; it stays as it was", 500
+                "custody.conversion_failed",
+                f"one-click could not be set up because {reason}; your key stays as it was",
+                500,
             )
         try:
-            self._show_passphrase_once()
+            self._show_passphrase_once(reason)
         except Exception:  # noqa: BLE001 - no terminal: the key is unusable; say so, never print elsewhere
             raise SetupError(
                 "custody.passphrase_lost", "custody conversion failed and no terminal could show the passphrase", 500
             ) from None
         raise SetupError(
-            "custody.conversion_failed", "the key could not be moved to one-click custody; see your terminal", 500
+            "custody.conversion_failed",
+            f"one-click could not be set up because {reason}; your workspace uses the terminal for now. "
+            "Your passphrase is on your terminal: write it down.",
+            500,
         )
+
+    def _reason_words(self, e: Exception | None) -> str:
+        """Why the custody move failed, in one short plain line (cleaned, cut, never the passphrase)."""
+        from orch import canon
+
+        raw = str(getattr(e, "message", None) or e or "").strip()
+        if not raw or (self._passphrase and self._passphrase in raw):
+            return "this Mac refused (" + (type(e).__name__ if e is not None else "unknown") + ")"
+        text = " ".join(canon.clean(raw).split())[:120].rstrip(" .;:")
+        return text[:1].lower() + text[1:]
 
 
 # ======================================================================================================== the real host
@@ -777,6 +810,15 @@ class RealPorts:
         if opener is None:  # convenience custody signs without a factor: one signature at a time
             yield backend
             return
+        # B11 finding 24: the plan was read on the setup page; the terminal says so in a line and keeps the technical
+        # block behind `d` (shared with `orch sign`, see custody.passphrase.note_plain_review).
+        requests = dict(fields).get("requests", "")
+        self.terminal.show(
+            f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page, with one passphrase.\n"
+        )
+        from orch.custody import passphrase as _pp
+
+        _pp.note_plain_review()
         labels = batch_labels()
         with opener("dk", action="orch setup", digest=digest.split(":")[-1][:32], fields=fields, labels=labels) as raw:
             yield _UnlockedBackend(str(backend.auth), raw)

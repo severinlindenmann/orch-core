@@ -126,6 +126,8 @@ def stale_socket(path):
         sock.settimeout(2)
         try:
             sock.connect(str(path))
+        except FileNotFoundError:
+            return  # a stopping server removed it between lstat and connect: already gone
         except OSError as exc:
             if exc.errno != errno.ECONNREFUSED:
                 raise
@@ -413,8 +415,10 @@ def open_dashboard(path="/", print_url=False):
             with os.fdopen(fd, "w") as file:
                 file.write(
                     '<!doctype html><meta name="referrer" content="no-referrer">'
-                    f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
+                    # ONE navigation: the script; the meta refresh only without JavaScript (both at once load the
+                    # page twice, and the second load presents an already spent single-use code)
                     f"<script>location.replace({json.dumps(url)});</script>"
+                    f'<noscript><meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}"></noscript>'
                 )
             if time.time() >= expires_at - EXPIRY_MARGIN:  # paused between the check and the write
                 raise RuntimeError("the launch code expired before the browser could be opened; run it again")

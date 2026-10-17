@@ -227,6 +227,8 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     assert redirect.parent.stat().st_mode & 0o777 == 0o700
     html = redirect.read_text()
     assert issued["code"] in html and "location.replace" in html and 'http-equiv="refresh"' in html
+    # one navigation only: the refresh is a no-JavaScript fallback (two loads would spend the single-use code twice)
+    assert '<noscript><meta http-equiv="refresh"' in html and html.count("http-equiv") == 1
     assert auth.exchange(issued["code"])[1] == 200
     assert not redirect.exists()
     issued = auth.launch(PORT)

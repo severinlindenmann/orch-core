@@ -344,7 +344,10 @@ class Workspace:
                     hint=f"orch import v1 {v1}",
                 )
             raise OrchError(
-                "not_found", "no orch workspace here", hint="cd into your project folder and run orch setup there"
+                "not_found",
+                "no orch workspace here",
+                hint="cd into your project folder and run orch setup there",
+                fix=[],  # N18: setup is for a person; no command for an agent to run (and not `orch describe init`)
             )
         return root
 
@@ -627,7 +630,9 @@ class Projection:
         code = "conflict.section" if path.startswith("body.") else "conflict.field"
         what = path[5:] if path.startswith("body.") else path[len("ticket.") :]
         if noted is None:
-            raise OrchError(code, f"{what} was not read in this session: orch show --section {what}", retryable=True)
+            # only a body section has a `--section`; a field (acceptance, tasks, ...) is read with the whole ticket (N10)
+            how = f"orch show --section {what}" if path.startswith("body.") else f"orch show {self.view.key}"
+            raise OrchError(code, f"{what} was not read in this session: {how}", retryable=True)
         if noted != path_hash(self.view, path):
             raise OrchError(code, f"{what} changed since you read it", retryable=True)
         return noted

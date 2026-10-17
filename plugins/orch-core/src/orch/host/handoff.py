@@ -117,6 +117,7 @@ def sign_code(
     choose: Callable[[str], str] | None = None,
     sessions: Any = None,
     now: Callable[[], float] | None = None,
+    notice: bool = True,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -159,7 +160,7 @@ def sign_code(
             confirm=confirm,
             sessions=sessions,
             new_idem=new_idem,
-            prefix=f"{NOTICE}\n\n",
+            prefix=f"{NOTICE}\n\n" if notice else "",
             deliver=lambda secret, rid: _deliver(call, secret, rid, choose, show_secret),
             **({} if now is None else {"now": now}),
         )
@@ -201,7 +202,7 @@ def sign_code(
         files={n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} if files else None,
         artifacts="checked" if files else "unseen",
         before=before,
-        prefix=f"{NOTICE}\n\n",
+        prefix=f"{NOTICE}\n\n" if notice else "",
         on_secret=on_secret,
     )
 
@@ -364,6 +365,9 @@ def main(
     err = sys.stderr if err is None else err
     args = _parser().parse_args(argv)
     err.write(NOTICE + "\n")
+    # N13: on one terminal the warning is read once (here, before anything else); the review carries it only when
+    # stderr is somewhere else (a pipe, a file), so the person at the terminal still sees it before signing
+    on_tty = bool(getattr(err, "isatty", lambda: False)())
     conn: Connection | None = None
     try:
         if "ORCH_GRANT" in env:
@@ -403,6 +407,7 @@ def main(
             files=files or None,
             choose=human.secret_destination,
             sessions=Sessions(state),
+            notice=not on_tty,
         )
     except sequence.Aborted as exc:
         text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"

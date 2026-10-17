@@ -738,6 +738,6 @@ def test_after_a_plain_review_the_prompt_is_one_line_and_d_shows_the_technical_b
     monkeypatch.setitem(pp._PLAIN_REVIEW, "shown", True)
     req = PassphraseRequest("unlock", "dk", "", "ab" * 16, (("type", "gate.approved"),))
     assert tty_passphrase_provider(req) == "phrase-ok-1"
-    assert "Press d for technical details" in written[0]
+    assert "Passphrase (d = technical details)" in written[0]
     assert "sha256:" not in written[0] and "type:" not in written[0] and "key: dk" not in written[0]
     assert "type: gate.approved" in written[1] and "sha256: " + "ab" * 16 in written[1]  # everything stays reachable

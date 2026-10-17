@@ -29,7 +29,6 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (…<TAIL>)
 in workspace Acme (DEMO)
-ticket DEMO-0001: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Context
   | the context
@@ -40,21 +39,19 @@ Out of scope
 Requirements
   | the requirements
 
-Summary
-  | (empty)
-
 Acceptance criteria
   [ ] AC1  it works
 
-Fields
+Applies under
   type: feature
   rule for this gate: 1 approval from owner; applies to all tickets
+
+Empty, not shown: Summary.
 """
 
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (…<TAIL>)
 in workspace Acme (DEMO)
-ticket DEMO-0002: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Fields
   type: chore
@@ -72,6 +69,8 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
+    assert "not proven" not in text and "(empty)" not in text  # N12/N13: noise stays out of the plain view
+    assert "section summary" in text.details and "Changes" not in text  # ... but the empty section is in the full review
 
 
 def test_the_plain_view_of_a_new_ticket(human, served):

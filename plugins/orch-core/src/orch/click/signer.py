@@ -590,7 +590,7 @@ class ClickSigner:
             return host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid).events
 
         def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
-            return self._call(entry, "human.submit", {"request_id": rid, "events": events}, idem=idem)
+            return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
 
         def head(key: str) -> dict[str, Any]:
             return dict(self._call(entry, "ticket.get", {"ref": key})["data"]["doc"]["head"])

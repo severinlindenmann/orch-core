@@ -100,7 +100,7 @@ def check(
     material = prepared["material"]
     events = prepared["events"]
     check_reviews(material, events)
-    _sequence(prepared, workspace_id, person)
+    _sequence(prepared, events, workspace_id, person)
     for block in material["review"]:  # derived values are rendered too: they must have their formats
         d = block["derived"]
         if ("cert_device" in d and not _DEVICE.fullmatch(str(d["cert_device"]))) or (
@@ -114,7 +114,7 @@ def check(
         _refuse("the fingerprint does not match")
 
 
-def _sequence(prepared: Mapping[str, Any], workspace_id: str, person: str) -> None:
+def _sequence(prepared: Mapping[str, Any], events: list[Any], workspace_id: str, person: str) -> None:
     """Batch 11 (finding 9): the first request of a signer's sequence. The intent in the material is the one thing the
     person reviews; its digest, its step count and the first event are recomputed from it here, so a host cannot show
     one intent and prepare another."""
@@ -130,7 +130,7 @@ def _sequence(prepared: Mapping[str, Any], workspace_id: str, person: str) -> No
         plan = sequence.steps(intent)
         if meta["digest"] != sequence.digest_of(workspace_id, person, intent) or meta["of"] != len(plan):
             _refuse("the sequence digest or step count is not the intent's")
-        if prepared["op"] != "new" or len(prepared["events"]) != 1:
+        if prepared["op"] != "new" or len(events) != 1:
             _refuse("a sequence starts with one new")
         sequence.check_step(intent, 0, prepared, person=person, first=None, prev_head=None)
     except sequence.SequenceInvalid as exc:
@@ -145,14 +145,15 @@ def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
     against the event's ``base_rev``, every review recomputed from the events and the material. Raises
     :class:`SignerRefused`. It vouches for the material; it is not a substitute for :func:`check` before a signature."""
     try:
-        person = prepared["events"][0]["actor"]["id"]  # whose request it is; the signer's own check compares it
+        events = prepared["events"]
+        person = events[0]["actor"]["id"]  # whose request it is; the signer's own check compares it
     except (KeyError, IndexError, TypeError):
         _refuse("the request carries no events")
     _shape(prepared, workspace_id=workspace_id, person=person, device=None, auth=None)
     _formats(prepared)
     _hashes(prepared, workspace_id)
-    check_reviews(prepared["material"], prepared["events"])
-    _sequence(prepared, workspace_id, person)
+    check_reviews(prepared["material"], events)
+    _sequence(prepared, events, workspace_id, person)
     if prepared.get("review_digest") != review.review_digest(prepared["material"]):
         _refuse("review_digest does not match the material")
 

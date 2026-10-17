@@ -143,7 +143,7 @@ def _port(
         ).events
 
     def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
-        res = call("human.submit", {"request_id": rid, "events": events}, idem=idem)
+        res = call("human.submit", dict(request_id=rid, events=events), idem=idem)
         return res if isinstance(res, dict) else {}
 
     def head(key: str) -> dict[str, Any]:

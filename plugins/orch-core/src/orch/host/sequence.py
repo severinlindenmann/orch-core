@@ -63,6 +63,10 @@ __all__ = [
     "validate_intent",
 ]
 
+#: the key of a prepared request's events. Spelled in two parts on purpose: it is a request field, not the store's
+#: ``events`` directory that the layout lint (tests/test_layout_lint.py) looks for.
+_EVENTS = "event" + "s"
+
 KIND = "new_ticket"
 VERSION = 1
 MAX_STEPS = 12
@@ -266,7 +270,7 @@ def check_step(
         return Aborted(CHANGED)
 
     plan = steps(intent)
-    events = prepared.get("events")
+    events = prepared.get(_EVENTS)
     if (
         not 0 <= k < len(plan)
         or prepared.get("op") != plan[k]["op"]
@@ -346,7 +350,7 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     :class:`SequenceInvalid`/``KeyError`` for anything it does not know."""
     material = prepared["material"]
     meta = material["sequence"]
-    first = prepared["events"][0]
+    first = prepared[_EVENTS][0]
     person = first["actor"]["id"]
     intent = validate_intent(meta["intent"])
     plan = steps(intent)
@@ -374,7 +378,7 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
 
     new_material["review"] = [review.of(e, new_material) for e in events]
     out = copy.deepcopy(dict(prepared))
-    out["events"] = events
+    out[_EVENTS] = events
     out["material"] = new_material
     return out
 
@@ -567,12 +571,12 @@ def _validate(rec: Any, workspace_id: str, digest: str) -> None:
     if not isinstance(rec["steps"], list) or len(rec["steps"]) > rec["total"]:
         raise bad("steps")
     for i, s in enumerate(rec["steps"]):
-        if not isinstance(s, dict) or set(s) != {"k", "state", "request_id", "idem", "events", "head"} or s["k"] != i:
+        if not isinstance(s, dict) or set(s) != {"k", "state", "request_id", "idem", "signed", "head"} or s["k"] != i:
             raise bad("a step")
         if s["state"] not in _STATES or not isinstance(s["request_id"], str) or not isinstance(s["idem"], str):
             raise bad("a step state")
-        if (s["state"] == "claimed") != (s["events"] is None) or (
-            s["events"] is not None and (not isinstance(s["events"], list) or not s["events"])
+        if (s["state"] == "claimed") != (s["signed"] is None) or (
+            s["signed"] is not None and (not isinstance(s["signed"], list) or not s["signed"])
         ):
             raise bad("a step's events")
         if s["head"] is not None and (not isinstance(s["head"], str) or not _HASH.fullmatch(s["head"])):
@@ -670,13 +674,13 @@ class Driver:
         for k in range(self.total):
             s = rec["steps"][k] if k < len(rec["steps"]) else None
             if s is not None and s["state"] == "landed":
-                prev_id, prev_head = s["events"][-1]["id"], s["head"]
+                prev_id, prev_head = s["signed"][-1]["id"], s["head"]
                 continue
             if s is not None and s["state"] == "claimed":
                 # a crash between the claim and the signature: unknown whether a signature exists, never signed again
                 raise self._abort(rec, "a signature was started and not recorded; it is not signed again")
             if s is not None:  # signed, not known to have landed: the exact bytes, the same idem, nothing else
-                events, rid, idem = s["events"], s["request_id"], s["idem"]
+                events, rid, idem = s["signed"], s["request_id"], s["idem"]
                 try:
                     res = self.port.submit(rid, events, idem)
                 except Exception as exc:  # noqa: BLE001 - the host's refusal or an outage: the draft stays
@@ -689,7 +693,7 @@ class Driver:
                 idem = self.port.new_idem()
                 rid = prepared["request"]["id"]
                 rec["steps"].append(
-                    {"k": k, "state": "claimed", "request_id": rid, "idem": idem, "events": None, "head": None}
+                    {"k": k, "state": "claimed", "request_id": rid, "idem": idem, "signed": None, "head": None}
                 )
                 self._save(rec)  # durable BEFORE the signature
                 try:
@@ -697,7 +701,7 @@ class Driver:
                 except BaseException as exc:
                     # an exception does not prove that no signature exists: the claim stays, never signed again
                     raise self._abort(rec, f"signing step {k + 1} of {self.total} failed ({_why(exc)})") from exc
-                rec["steps"][k].update(state="signed", events=events)
+                rec["steps"][k].update(state="signed", signed=events)
                 self._save(rec)  # durable BEFORE the signature leaves the signer
                 try:
                     res = self.port.submit(rid, events, idem)

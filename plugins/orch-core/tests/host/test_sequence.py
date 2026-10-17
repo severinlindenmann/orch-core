@@ -180,7 +180,7 @@ def test_crash_after_step_one_resends_the_exact_bytes_and_continues(human, tmp_p
         rig.driver().run(first)
     rec = rig.sessions.get(rig.wid, rig.driver().digest)
     assert [s["state"] for s in rec["steps"]] == ["landed", "signed"]
-    signed_bytes = copy.deepcopy(rec["steps"][1]["events"])
+    signed_bytes = copy.deepcopy(rec["steps"][1]["signed"])
     # the person asks again: a new first request is prepared and cancelled, nothing new is signed for step 0 or 1
     again = rig.first()
     signs_before = len(human.backend.payloads)

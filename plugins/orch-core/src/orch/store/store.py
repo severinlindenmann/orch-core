@@ -109,7 +109,7 @@ def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
     return verify
 
 
-def _open_fs(project: Path, ident: tuple[int, int] | None, pin: StorePin | None) -> tuple[RootFS, Layout]:
+def open_store_fs(project: Path, ident: tuple[int, int] | None, pin: StorePin | None) -> tuple[RootFS, Layout]:
     """The pinned store root and the layout of the project directory ``project`` (opened ``O_NOFOLLOW``, checked
     against ``ident``): the layout is resolved from that one fd and, in the new layout, ``.orch`` is opened below it
     (``O_NOFOLLOW``), never by a path."""
@@ -452,7 +452,7 @@ class Store:
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         project = Path(path)
-        fs, layout = _open_fs(project, ident, store_pin)
+        fs, layout = open_store_fs(project, ident, store_pin)
         root = layout.store
         try:
             store = cls(

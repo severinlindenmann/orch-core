@@ -203,7 +203,7 @@ class WorkspaceService:
             if os.path.realpath(self.entry.root) != self.entry.root:
                 raise HostError("custody.unsafe_mode", f"{self.entry.root} now resolves elsewhere")
             check_tree(Path(self.entry.root), self.host_uid)
-            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid)
+            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid, store=self.entry.store)
             pin = HostPins(self.state_dir, wid).genesis()
             if pin is None:
                 raise HostError("trust.genesis_mismatch", "no genesis pin for this workspace")

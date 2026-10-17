@@ -402,6 +402,24 @@ def test_a_second_init_in_the_same_directory_is_refused_and_deletes_nothing(wher
         os.close(fd)
 
 
+def test_init_names_a_project_file_under_a_store_name_and_writes_nothing(where, term, passphrases):
+    # finding B11-2: a project's own config.json is not "a workspace"; it is named, and nothing is written
+    (where["root"] / "config.json").write_text('{"name": "my-app"}')
+    (where["root"] / "events").mkdir()
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and "workspace already exists" not in e.value.message
+    assert "already has its own config.json, events/" in e.value.message and not term.shown
+    assert sorted(p.name for p in where["root"].iterdir()) == ["config.json", "events"]
+    assert (where["root"] / "config.json").read_text() == '{"name": "my-app"}'
+
+
+def test_a_stale_init_lock_does_not_block_init(where, term, passphrases):
+    (where["root"] / wi.LOCK_DIR).write_text("")  # a crashed init's lock file: the flock decides, not the name
+    run_init(where)
+    assert (where["root"] / "config.json").is_file()
+
+
 def test_the_lock_is_released_after_success_and_after_failure(where, term, passphrases):
     term.wrong_words = True
     with pytest.raises(OrchError):

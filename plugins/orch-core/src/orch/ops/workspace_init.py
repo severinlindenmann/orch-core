@@ -203,10 +203,11 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
 
 
 def _no_workspace(ctx: Context, root: Path) -> None:
-    if find_workspace(ctx.env, root, ctx.caps.files) is not None or any(
-        os.path.lexists(root / n) for n in _WORKSPACE_FILES
-    ):
+    """A workspace found here (or above) by orch's own marker is "already exists"; a project file under a name the
+    store writes is a collision named in words (:mod:`orch.rootclaim`), never "a workspace"."""
+    if find_workspace(ctx.env, root, ctx.caps.files) is not None:
         raise _refuse("invalid.input", "a workspace already exists here", "orch status")
+    _empty_root(root)
 
 
 def _label_key(scalar: bytes) -> bytes:
@@ -556,19 +557,16 @@ def _drop_person(sd: Path, wid: str | None) -> None:
 
 
 def _empty_root(root: Path) -> None:
+    from orch import rootclaim
+
     try:
-        names = os.listdir(root)
+        view = rootclaim.inspect(root)
     except OSError as e:
         raise _refuse("invalid.input", f"cannot list {root}: {e.strerror}") from None
-    from orch.host.control import _ROOT_FILES
-
-    taken = sorted({*names} & {*_ROOT_FILES, ".orch"})
-    if taken:
-        raise _refuse(
-            "invalid.input",
-            f"{root} already holds orch files ({', '.join(taken)}); nothing was created",
-            "if it is already an orch workspace run `orch host register .`",
-        )
+    why = rootclaim.refusal(view, init_lock_ok=True)
+    if why is not None:
+        hint = "if it is already an orch workspace run `orch host register .`" if view.orch else None
+        raise _refuse("invalid.input", f"{root}: {why}; nothing was created", hint)
 
 
 def _ask_outcome(client: Any, idem: str) -> tuple[str, dict[str, Any] | None]:

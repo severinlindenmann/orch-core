@@ -11,6 +11,7 @@ import pytest
 from orch.host import signer as host_signer
 from orch.ops import workspace_init as wi
 from orch.setup import flow as flow_mod
+from orch.setup import server as server_mod
 from orch.setup.flow import SetupFlow
 from orch.setup.protocol import SetupError
 
@@ -281,5 +282,5 @@ def test_k2_a_lost_page_prints_the_notice_and_enter_opens_a_new_link(tmp):
     assert "error" not in result, result
     assert seen["noticed"] and len(seen["opened"]) == 2 and seen["opened"][0] != seen["opened"][1]
     assert result == {"old_refused": True, "new_ok": True}
-    assert err.count("The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop.") == 1
+    assert err.count(server_mod.LOST_LINE) == 1
     assert seen["opened"][0] not in out + err and seen["opened"][1] not in out + err  # codes never on stderr/stdout

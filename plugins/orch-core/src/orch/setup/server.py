@@ -37,7 +37,7 @@ __all__ = ["CODE_SECONDS", "IDLE_SECONDS", "LOST_SECONDS", "LOST_LINE", "SetupSe
 
 CODE_SECONDS = 300.0  # 5 min: the person may copy the printed link elsewhere; still single use
 IDLE_SECONDS = 600.0
-LOST_SECONDS = 5.0  # K2: the page polls /state every second; this long without any request means it was closed or reloaded
+LOST_SECONDS = 5.0  # K2: the page polls /state every second; longer without any request = closed or reloaded
 LOST_LINE = "The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop."
 CODE_TRIES = 5
 _HOST = re.compile(r"(?:127\.0\.0\.1|localhost):([0-9]{1,5})")

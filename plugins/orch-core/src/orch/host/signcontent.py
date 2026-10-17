@@ -211,7 +211,9 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
     except ValueError:
         return None
     zone = when.tzname() or "UTC"
-    day = f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 144 else _DAYS[when.weekday()]
+    day = (
+        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 144 else _DAYS[when.weekday()]
+    )
     return f"{day} {when:%H:%M} {zone}"
 
 

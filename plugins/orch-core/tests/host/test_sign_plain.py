@@ -419,7 +419,12 @@ def restore_tz():
 def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, monkeypatch):
     """The headline says what agents may do and until when, in this computer's time with the zone name; scope, verbs,
     the grant id and the UTC times are not in the plain view (they are in the technical details)."""
-    g = {**sample("grant.issued"), "hours": 24, "issued_at": "2026-10-20T21:45:37Z", "expires_at": "2026-10-21T21:45:37Z"}
+    g = {
+        **sample("grant.issued"),
+        "hours": 24,
+        "issued_at": "2026-10-20T21:45:37Z",
+        "expires_at": "2026-10-21T21:45:37Z",
+    }
     request = {"op": "grant", "events": [g], "material": material_for("grant.issued", g)}
     _tz(monkeypatch, "Europe/Zurich")
     c = build(request)
@@ -437,8 +442,12 @@ def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, mon
     _tz(monkeypatch, "UTC")
     assert build(request)["headline"].endswith("(until Wed 21:45 UTC, your time)")
     long = {**g, "hours": 168, "expires_at": "2026-10-27T21:45:37Z"}
-    assert "(until Tue 27 Oct 22:45 UTC" not in build({**request, "events": [long]})["headline"]  # 22:45 is CET, not UTC
-    assert build({**request, "events": [long]})["headline"].endswith("for 7 days (until Tue 27 Oct 21:45 UTC, your time)")
+    assert (
+        "(until Tue 27 Oct 22:45 UTC" not in build({**request, "events": [long]})["headline"]
+    )  # 22:45 is CET, not UTC
+    assert build({**request, "events": [long]})["headline"].endswith(
+        "for 7 days (until Tue 27 Oct 21:45 UTC, your time)"
+    )
 
 
 def test_k4_other_scopes_and_unknown_times_keep_the_technical_review(restore_tz, monkeypatch):

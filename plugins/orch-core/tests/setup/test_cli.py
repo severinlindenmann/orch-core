@@ -247,7 +247,7 @@ def test_k2_a_lost_page_prints_the_notice_and_enter_opens_a_new_link(tmp):
             if n == 1:
                 seen["old"] = tok
                 assert call(sock, "GET", "/api/setup/state", token=tok)[0] == 200
-                clock["t"] += 6  # the page goes quiet (a reload: the token lived in its memory)
+                clock["t"] += 151  # the tab was killed: silence past 150 s
                 for _ in range(100):  # the watchdog notices
                     if "closed or reloaded" in err.getvalue():
                         break

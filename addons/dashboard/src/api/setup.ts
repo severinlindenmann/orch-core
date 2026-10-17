@@ -116,6 +116,24 @@ export class SetupAPI {
       /* nothing to do: the setup ends by its idle timeout */
     }
   }
+  /** Page is closing or reloading before "ready": tell the setup so the terminal can offer a fresh link. Same token
+   * header as every call (a beacon cannot set it); best effort. Hiding the tab is NOT leaving: only pagehide calls this. */
+  left() {
+    if (!this.token) return
+    const fetcher = this.fetcher
+    try {
+      void fetcher('/api/setup/left', {
+        method: 'POST',
+        credentials: 'omit',
+        cache: 'no-store',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-Setup-Token': this.token },
+        body: '{}',
+      }).catch(() => undefined)
+    } catch {
+      /* the setup notices the silence after 150 s */
+    }
+  }
   async call<T>(path: string, body?: unknown): Promise<T> {
     // Called unbound: `this.fetcher(...)` would run the browser's fetch with `this` = SetupAPI, which real browsers
     // refuse ("Illegal invocation"); a test double never notices.

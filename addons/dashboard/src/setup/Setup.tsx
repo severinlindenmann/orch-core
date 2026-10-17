@@ -444,6 +444,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   useEffect(() => {
     const hide = () => {
       if (readyRef.current) api.leave()
+      else api.left()
       drop()
       api.forget()
     }

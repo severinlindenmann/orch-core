@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from orch.setup.flow import Env, SetupFlow
-from orch.setup.server import SetupServer
+from orch.setup.server import LOST_LINE, SetupServer
 
 from .helpers import call
 
@@ -350,11 +350,20 @@ def test_a_polling_page_is_never_reported_lost(srv):
     assert not srv.lost and "closed or reloaded" not in " ".join(srv.events)
 
 
-def test_a_page_that_stops_polling_for_more_than_5_seconds_is_reported_once(srv):
+def test_a_hidden_background_tab_polling_once_a_minute_is_never_reported_lost(srv):
     path, token, _ = claimed(srv)
-    srv.clock_obj.t += 5
+    # 9 minutes, inside the idle limit: Chrome throttles a hidden tab to one timer a minute (not "left")
+    for _ in range(9):
+        srv.clock_obj.t += 60
+        assert _poll(path, token, srv) == 200
+    assert not srv.lost and not any("closed or reloaded" in e for e in srv.events)
+
+
+def test_150_seconds_of_silence_is_reported_once(srv):
+    path, token, _ = claimed(srv)
+    srv.clock_obj.t += 150
     srv.check_idle()
-    assert not srv.lost  # exactly 5 s is still a slow poll
+    assert not srv.lost  # exactly 150 s is still within the limit
     srv.clock_obj.t += 0.5
     srv.check_idle()
     srv.check_idle()
@@ -365,9 +374,37 @@ def test_a_page_that_stops_polling_for_more_than_5_seconds_is_reported_once(srv)
     assert srv.lost
 
 
+def test_a_leave_beacon_with_the_token_is_reported_at_once_and_once(srv):
+    path, token, _ = claimed(srv)
+    assert call(path, "POST", "/api/setup/left", {}, token=token)[0] == 200
+    assert srv.lost and [e for e in srv.events if "closed or reloaded" in e] == [LOST_LINE]
+    assert call(path, "POST", "/api/setup/left", {}, token=token)[0] in (200, 401, 403)
+    assert [e for e in srv.events if "closed or reloaded" in e] == [LOST_LINE]
+
+
+@pytest.mark.parametrize("kind", ["none", "wrong", "host", "origin"])
+def test_a_leave_beacon_without_a_valid_token_host_or_origin_is_ignored(srv, kind):
+    path, token, _ = claimed(srv)
+    kw = {
+        "none": {},
+        "wrong": {"token": "x" * 43},
+        "host": {"token": token, "host": "evil.example:8765"},
+        "origin": {"token": token, "origin": "http://evil.example"},
+    }[kind]
+    assert call(path, "POST", "/api/setup/left", {}, **kw)[0] in (401, 403)
+    assert not srv.lost and not any("closed or reloaded" in e for e in srv.events)
+
+
+def test_a_leave_beacon_during_a_run_is_ignored(srv):
+    path, token, _ = claimed(srv)
+    srv.flow._running = True
+    assert call(path, "POST", "/api/setup/left", {}, token=token)[0] == 200
+    assert not srv.lost
+
+
 def test_the_page_coming_back_clears_the_notice(srv):
     path, token, _ = claimed(srv)
-    srv.clock_obj.t += 6
+    srv.clock_obj.t += 151
     srv.check_idle()
     assert srv.lost
     assert call(path, "GET", "/api/setup/state", token=token)[0] == 200
@@ -385,7 +422,7 @@ def test_relink_refuses_old_token_and_gives_new_words(srv):
     shown = api("POST", "secrets/reveal", {})[1]
     assert api("POST", "secrets/reveal", {})[0] in (409, 410)  # shown once
     assert srv.relink() is None  # the page is not lost yet
-    srv.clock_obj.t += 6
+    srv.clock_obj.t += 151
     srv.check_idle()
     fresh = srv.relink()
     assert fresh is not None and fresh["code"]
@@ -407,7 +444,7 @@ def test_relink_refuses_old_token_and_gives_new_words(srv):
 
 def test_relink_never_replaces_a_run_in_progress(srv):
     path, token, _ = claimed(srv)
-    srv.clock_obj.t += 6
+    srv.clock_obj.t += 151
     srv.check_idle()
     assert srv.lost
     srv.flow._running = True

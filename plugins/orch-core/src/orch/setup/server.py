@@ -37,7 +37,7 @@ __all__ = ["CODE_SECONDS", "IDLE_SECONDS", "LOST_SECONDS", "LOST_LINE", "SetupSe
 
 CODE_SECONDS = 300.0  # 5 min: the person may copy the printed link elsewhere; still single use
 IDLE_SECONDS = 600.0
-LOST_SECONDS = 5.0  # K2: the page polls /state every second; longer without any request = closed or reloaded
+LOST_SECONDS = 150.0  # K2 fallback for a crashed tab: well above the ~60 s a background tab is throttled to
 LOST_LINE = "The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop."
 CODE_TRIES = 5
 _HOST = re.compile(r"(?:127\.0\.0\.1|localhost):([0-9]{1,5})")
@@ -146,6 +146,15 @@ class SetupServer:
             self.die("idle")
         elif tell:
             self.notify(LOST_LINE)
+
+    def page_left(self) -> None:
+        """K2: the bound page announced that it is closing or reloading (``POST /api/setup/left``, which passed the same
+        Host, Origin and token checks as every browser POST). Hiding a tab is not leaving; a run in progress goes on."""
+        with self._lock:
+            if self.lost or self._token is None or self.ended or self.flow.busy:
+                return
+            self.lost = True
+        self.notify(LOST_LINE)
 
     def relink(self) -> dict[str, Any] | None:
         """K2: the bound browser is gone (closed, reloaded: its token lived only in that page). Mint a NEW single-use
@@ -257,7 +266,7 @@ class SetupServer:
         return {"token": token, "setup_id": self.setup_id}
 
     # ------------------------------------------------------------------------------------------ browser routes
-    def _check_browser(self, method: str, headers: Any, *, passive: bool = False) -> None:
+    def _check_browser(self, method: str, headers: Any, *, passive: bool = False, leaving: bool = False) -> None:
         host = headers.get("Host", "")
         m = _HOST.fullmatch(host)
         if m is None or int(m.group(1)) > 65535 or self.ports is None or host not in self.ports:
@@ -278,7 +287,9 @@ class SetupServer:
             )
             if not ok:
                 raise SetupError("setup.token", "missing or wrong setup token", 401)
-            self._seen, back, self.lost = self.clock(), self.lost, False
+            back = self.lost and not leaving
+            if not leaving:
+                self._seen, self.lost = self.clock(), False
             if not passive:  # the page's own once-a-second GET state must not keep an abandoned session alive
                 self._last = self.clock()
         if back:
@@ -308,7 +319,17 @@ class SetupServer:
                 return 200, {"ok": True}
             if not path.startswith(BROWSER_PREFIX):
                 raise SetupError("setup.not_found", "not found", 404)
-            self._check_browser(method, headers, passive=method == "GET" and path == BROWSER_PREFIX + "state")
+            self._check_browser(
+                method,
+                headers,
+                passive=method == "GET" and path == BROWSER_PREFIX + "state",
+                leaving=path == BROWSER_PREFIX + "left",
+            )
+            if path == BROWSER_PREFIX + "left":  # K2: the page said it is going away (pagehide), with the valid token
+                if method != "POST":
+                    raise SetupError("setup.method", "POST", 405)
+                self.page_left()
+                return 200, {"ok": True}
             status, out = self.flow.dispatch(method, path[len(BROWSER_PREFIX) :], query, body)
             if self.flow.finished:
                 self.die("done")

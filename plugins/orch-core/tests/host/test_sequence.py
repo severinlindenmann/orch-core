@@ -122,6 +122,7 @@ def test_the_first_request_is_one_review_of_every_step(human, tmp_path):
     titles = [s["title"] for s in content["sections"]]
     assert titles == ["Context", "Summary"] or sorted(titles) == ["Context", "Summary"]
     assert content["headline"].startswith("Create DEMO-") and ": Add a sequence" in content["headline"]
+    assert f"(key per host; signed id …{content['ticket']['uid_tail']})" in content["headline"]
     assert content["subline"] == "and its text (2 sections)"
     assert any("4 steps" in n for n in content["notes"])
     text = signer.render(first, lambda w: ("ws", "ORCH"))

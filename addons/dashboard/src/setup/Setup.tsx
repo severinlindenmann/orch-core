@@ -110,12 +110,14 @@ function FinishChoices({
   profile,
   update,
   onContinue,
+  onOpen,
 }: {
   state: SetupState
   current: Current
   profile: Profile
   update: (value: Partial<Profile>) => void
   onContinue: () => void
+  onOpen: () => void
 }) {
   const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons_on.includes(a.id))
   const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons_on.includes(a.id))
@@ -128,7 +130,7 @@ function FinishChoices({
   const label = (id: string) => state.labels?.[id] ?? 'A setup step'
   return (
     <>
-      <p>This workspace already exists. Nothing that is on will be switched off.</p>
+      {!state.complete && <p>This workspace already exists. Nothing that is on will be switched off.</p>}
       <h2>Already set up</h2>
       <dl className="current">
         <dt>Name</dt>
@@ -215,12 +217,18 @@ function FinishChoices({
           )}
         </>
       ) : (
-        <p>Nothing is missing. You can close this page.</p>
+        <p>Nothing is missing.</p>
       )}
       <footer>
-        <button className="primary" disabled={!chosen} onClick={onContinue}>
-          Continue →
-        </button>
+        {state.complete ? (
+          <button className="primary" onClick={onOpen}>
+            Open dashboard →
+          </button>
+        ) : (
+          <button className="primary" disabled={!chosen} onClick={onContinue}>
+            Continue →
+          </button>
+        )}
       </footer>
     </>
   )
@@ -429,8 +437,13 @@ export function Setup({ api }: { api: SetupAPI }) {
       clearInterval(timer)
     }
   }, [api, state, ended, progressDone])
+  // B12 N8: leaving the page after "Your workspace is ready" tells the setup it is finished, so the terminal ends with
+  // one closing line instead of waiting for its idle timeout.
+  const readyRef = useRef(false)
+  readyRef.current = !!progress?.done && !progress.error
   useEffect(() => {
     const hide = () => {
+      if (readyRef.current) api.leave()
       drop()
       api.forget()
     }
@@ -534,7 +547,9 @@ export function Setup({ api }: { api: SetupAPI }) {
           : review?.tty_confirm && !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done')
             ? 'Confirm in your terminal'
             : 'Setting up your workspace'
-      : step === 0
+      : step === 0 && state?.complete
+        ? 'Setup is complete'
+        : step === 0
         ? `${state?.mode === 'finish' ? 'Finish setup' : 'Set up orch'}${state ? ` in ${state.dir_name}` : ''}`
         : [
             '',
@@ -599,6 +614,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   profile={profile}
                   update={update}
                   onContinue={() => void act(approveProfile)}
+                  onOpen={() => void act(finish)}
                 />
               ) : (
                 <footer>{next(1)}</footer>
@@ -828,6 +844,30 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
+              {review.workspace && (
+                <div className="inset review-workspace">
+                  <small>New workspace</small>
+                  <p>
+                    <strong>
+                      <Inline>{review.workspace.lines[0]}</Inline>
+                    </strong>
+                  </p>
+                  <dl className="current">
+                    <dt>Short name</dt>
+                    <dd>
+                      <Raw>{review.workspace.prefix}</Raw>
+                    </dd>
+                    <dt>Person</dt>
+                    <dd>
+                      <Raw>{review.workspace.name}</Raw>
+                    </dd>
+                    <dt>Folder</dt>
+                    <dd>
+                      <Raw>{review.workspace.dir}</Raw>
+                    </dd>
+                  </dl>
+                </div>
+              )}
               <h2>You are about to approve</h2>
               <ul className="review-summary">
                 {summary.lines.map((line, i) => (
@@ -862,6 +902,16 @@ export function Setup({ api }: { api: SetupAPI }) {
               <details className="review-technical" open={summary.unknown || undefined}>
                 <summary>Show technical details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
+                {review.workspace && (
+                  <section className="review-item">
+                    <h3>New workspace</h3>
+                    {review.workspace.lines.map((line, i) => (
+                      <p key={i}>
+                        <Raw>{line}</Raw>
+                      </p>
+                    ))}
+                  </section>
+                )}
                 {review.items.map((item) => (
                   <section className="review-item" key={item.id}>
                     <h3>
@@ -1015,7 +1065,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
         </section>
       )}
-      {!ended && !run && state && (
+      {!ended && !run && state && !state.complete && (
         <button
           className="cancel"
           disabled={busy}

@@ -408,5 +408,7 @@ def test_only_a_confirmed_b6_review_shortens_the_next_passphrase_prompt_once(mon
     # a confirmed B6 review: one line plus `d`, for that one prompt only
     assert _review(monkeypatch, _B6Text("plain\n"), b"DEMO-0001\n") is True
     first = _provider_prompts(monkeypatch)
-    assert "Passphrase (d = technical details)" in first and "Press d" not in first and "type: gate.approved" not in first
+    assert (
+        "Passphrase (d = technical details)" in first and "Press d" not in first and "type: gate.approved" not in first
+    )
     assert "type: gate.approved" in _provider_prompts(monkeypatch)

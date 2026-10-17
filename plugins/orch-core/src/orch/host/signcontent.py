@@ -598,7 +598,6 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
     out = [v(content["headline"])]
     if workspace:
         out.append(f"in workspace {v(workspace)}")
-    ticket = content.get("ticket") or {}
     # N13: the host's word for the key ("per host, not proven") is in the technical details (`d`), not in this view
     out.append("")
     for sec in content.get("sections") or []:
@@ -616,7 +615,9 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
         out.append("")
     if content.get("fields_changed"):
         title = content.get("fields_title")
-        out.append(title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields"))
+        out.append(
+            title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
+        )
         for c in content["fields_changed"]:
             new = "(not set)" if c["after"] is None else v(c["after"])
             if c["before"] is None:

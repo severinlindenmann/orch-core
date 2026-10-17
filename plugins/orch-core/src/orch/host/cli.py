@@ -358,7 +358,9 @@ def human_text(cmd: str, doc: Mapping[str, Any], *, subject: str = "orch host") 
     lines: list[str] = []
     if cmd == "enable":
         if data.get("mode") == "direct":
-            lines.append(f"No per-user service on this platform ({one(data.get('reason'))}); workspaces stay in direct mode.")
+            lines.append(
+                f"No per-user service on this platform ({one(data.get('reason'))}); workspaces stay in direct mode."
+            )
         else:
             lines.append(f"The orch host is running as a {one(data.get('service'))} service.")
             if data.get("changed"):

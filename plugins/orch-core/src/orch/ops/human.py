@@ -185,7 +185,9 @@ def review_prompt(text: str, expect: str) -> bool:
             if answer == expect and b6_view:
                 from orch.custody.passphrase import note_plain_review
 
-                note_plain_review(hint=not seen_details)  # one-shot: the next passphrase prompt only, and only after a confirmed review
+                note_plain_review(
+                    hint=not seen_details
+                )  # one-shot: the next passphrase prompt only, and only after a confirmed review
             return answer == expect
     finally:
         os.close(fd)

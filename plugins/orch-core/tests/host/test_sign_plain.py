@@ -70,7 +70,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
     assert "not proven" not in text and "(empty)" not in text  # N12/N13: noise stays out of the plain view
-    assert "section summary" in text.details and "Changes" not in text  # ... but the empty section is in the full review
+    assert (
+        "section summary" in text.details and "Changes" not in text
+    )  # ... but the empty section is in the full review
 
 
 def test_the_plain_view_of_a_new_ticket(human, served):

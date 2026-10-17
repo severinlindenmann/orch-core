@@ -630,7 +630,7 @@ class Projection:
         code = "conflict.section" if path.startswith("body.") else "conflict.field"
         what = path[5:] if path.startswith("body.") else path[len("ticket.") :]
         if noted is None:
-            # only a body section has a `--section`; a field (acceptance, tasks, ...) is read with the whole ticket (N10)
+            # only a body section has a `--section`; a field (acceptance, ...) is read with the whole ticket (N10)
             how = f"orch show --section {what}" if path.startswith("body.") else f"orch show {self.view.key}"
             raise OrchError(code, f"{what} was not read in this session: {how}", retryable=True)
         if noted != path_hash(self.view, path):

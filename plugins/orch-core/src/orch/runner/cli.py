@@ -140,7 +140,9 @@ def _human(cmd: str, doc: dict[str, Any]) -> str:
     data = doc["result"]["data"]
     wid = " ".join(str(data.get("workspace_id")).split())
     if cmd == "disable":
-        return f"Dashboard execution is off for workspace {wid}. The runner service stays installed but starts nothing.\n"
+        return (
+            f"Dashboard execution is off for workspace {wid}. The runner service stays installed but starts nothing.\n"
+        )
     terms = "on" if data.get("terminals") else "off"
     return f"Dashboard execution is on for workspace {wid} (terminals {terms}).\n"
 

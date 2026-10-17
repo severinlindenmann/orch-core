@@ -8,6 +8,7 @@ import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { BlockProblem, ErrorBoundary } from '@/components/ErrorBoundary'
 import { cn } from '@/lib/utils'
 import { ago, Pill, type TabProps } from './shared'
+import { EditTicket } from './EditTicket'
 import { resolveTicketWidgets, type Segment, type WidgetSpec } from './widgets/parse'
 import { WidgetBlock, type PrototypeOf } from './widgets/WidgetBlock'
 import { queries } from '@/api/queries'
@@ -115,7 +116,7 @@ function SectionBody({ segments, ticket, agentHtml, label, list, maxWidgets, jum
 /** The handoff comes first, then the written sections in spec order. */
 const SHOW_ORDER: SectionKey[] = ['current_state', ...SECTION_ORDER.filter((k) => k !== 'current_state')]
 
-export function Overview({ ticket, jump }: TabProps) {
+export function Overview({ ticket, jump, viewer }: TabProps) {
   const workspaces = useQuery(queries.workspaces())
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   const widgets = useMemo(() => resolveTicketWidgets(ticket.body, { order: SECTION_ORDER, label: (k) => sectionTitle(k as SectionKey, ticket.type) }), [ticket.body, ticket.type])
@@ -126,6 +127,9 @@ export function Overview({ ticket, jump }: TabProps) {
   const handoffAt = ticket.section_history?.current_state?.at(-1)?.at
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <EditTicket ticket={ticket} viewer={viewer} />
+      </div>
       {shown.map((key) => {
         const handoff = key === 'current_state'
         return (

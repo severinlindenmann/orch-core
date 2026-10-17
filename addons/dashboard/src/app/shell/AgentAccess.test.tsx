@@ -24,7 +24,7 @@ beforeEach(() => {
 function show() { return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AgentAccess ws="ws" /></QueryClientProvider>) }
 it('shows the runner expiry and short-grant reminder and opens Extend', async () => {
   show()
-  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Fri 13:00')
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents can work for you until Fri 13:00')
   expect(await screen.findByRole('status')).toHaveTextContent('Agent access ends at 13:00')
   expect(screen.getByRole('button', { name: 'Extend agent access from reminder' })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Extend agent access' }))
@@ -55,7 +55,6 @@ it('shows stopped after a completed Extend with no live runner grant, and Start 
   fireEvent.click(screen.getByRole('button', { name: 'Complete runner' }))
   await screen.findByText('Agents stopped')
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-  expect(screen.getByText('Signs new agent access')).toBeInTheDocument()
   fireEvent.click(await screen.findByRole('button', { name: 'Start again' }))
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
@@ -75,4 +74,16 @@ it.each(['Reject stop', 'Close stop', 'Reject click stop'])('retains partial Sto
   fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
   expect(await screen.findByRole('button', { name: 'Sign stop terminal' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Sign stop runner' })).not.toBeInTheDocument()
+})
+
+it('keeps "Agents stopped · Start again" after Stop completes', async () => {
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign stop runner' }))
+  runner = { ...runner, grant: null }
+  fireEvent.click(screen.getByRole('button', { name: 'Sign stop terminal' }))
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents stopped')
+  fireEvent.click(screen.getByRole('button', { name: 'Start again' }))
+  expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })

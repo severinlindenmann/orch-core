@@ -10,7 +10,7 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Raw } from '../components/sign/visible'
+import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const voidCopy =
@@ -31,6 +31,25 @@ function report(e: unknown): string {
 }
 function clearClipboard() {
   void navigator.clipboard.writeText('').catch(() => {})
+}
+/** Hide the lines that carry no information for a person: blanks and values the host fills in at signing. */
+const shown = (line: string) => line.trim() !== '' && !/:\s*set at signing$/.test(line)
+function duration(hours: number): string {
+  if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
+  return `${hours} hours`
+}
+/** The three fingerprint words: each stays whole, lines break only between words. */
+function Words({ words }: { words: string[] | null }) {
+  return (
+    <span className="words">
+      {(words ?? []).map((w, i) => (
+        <span key={i}>
+          {i > 0 && ' '}
+          <Raw>{w}</Raw>
+        </span>
+      ))}
+    </span>
+  )
 }
 const steps = ['Welcome', 'You', 'Agents may', 'Approval', 'Secret words', 'Review']
 export function Setup({ api }: { api: SetupAPI }) {
@@ -247,6 +266,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
+  const addonTitles = (review?.items ?? []).filter((i) => i.id.startsWith('addon:')).map((i) => i.title)
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -538,71 +558,98 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
-              <p>These are the changes you are approving.</p>
+              <h2>You are about to approve</h2>
+              <ul className="review-summary">
+                <li>Agents may work for you for up to {duration(review.runner_grant?.hours ?? profile.agent_hours)}</li>
+                <li>
+                  {profile.method === 'click'
+                    ? 'You approve in the terminal or with one click on this Mac'
+                    : 'You approve in the terminal'}
+                </li>
+                {addonTitles.length > 0 && (
+                  <li>
+                    Add-ons: <Inline>{addonTitles.join(', ')}</Inline>
+                  </li>
+                )}
+              </ul>
               {state.mode === 'new' && <p className="warning">{voidCopy}</p>}
-              {review.items.map((item) => (
-                <section className="review-item" key={item.id}>
-                  <h2>
-                    <Raw>{item.title}</Raw>
-                  </h2>
-                  {item.lines.map((line, i) => (
-                    <p key={i}>
-                      <Raw>{line}</Raw>
-                    </p>
-                  ))}
-                  {item.note && (
-                    <p>
-                      <Raw>{item.note}</Raw>
-                    </p>
-                  )}
+              {(review.risk || review.flags.some((f) => f.id === 'runner' || f.id === 'terminals')) && (
+                <div className="warning">
+                  <p>
+                    {profile.method === 'click'
+                      ? 'One-click approval and dashboard agents act as you on this Mac.'
+                      : 'Dashboard agents act as you on this Mac.'}{' '}
+                    Only continue on a computer you trust.
+                  </p>
                   <details>
-                    <summary>Details</summary>
-                    {[...item.details, ...item.volatile].map((line, i) => (
+                    <summary>Why?</summary>
+                    {review.risk && (
+                      <p>
+                        <Raw>{review.risk.text}</Raw>
+                      </p>
+                    )}
+                    {review.flags.map((f) => (
+                      <p key={f.id}>
+                        <Raw>{f.text}</Raw>
+                      </p>
+                    ))}
+                  </details>
+                </div>
+              )}
+              <details className="review-technical">
+                <summary>Show technical details</summary>
+                <p>Times and IDs are filled in when you sign.</p>
+                {review.items.map((item) => (
+                  <section className="review-item" key={item.id}>
+                    <h3>
+                      <Raw>{item.title}</Raw>
+                    </h3>
+                    {item.lines.filter(shown).map((line, i) => (
                       <p key={i}>
                         <Raw>{line}</Raw>
                       </p>
                     ))}
-                  </details>
-                </section>
-              ))}
-              <p>
-                Agents may work for{' '}
-                {profile.agent_hours > 8
-                  ? `${profile.agent_hours / 24} ${profile.agent_hours === 24 ? 'day' : 'days'}`
-                  : '8 hours'}
-                .
-              </p>
-              {review.runner_grant && (
-                <section>
-                  <h2>Runner access</h2>
-                  <p>
-                    {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
-                  </p>
-                  <p>{review.runner_grant.holder}</p>
-                </section>
-              )}
-              {review.flags.map((f) => (
-                <p key={f.id}>
-                  <Raw>{f.text}</Raw>
-                </p>
-              ))}
-              {review.risk && (
-                <p className="warning">
-                  <Raw>{review.risk.text}</Raw>
-                </p>
-              )}
+                    {item.note && (
+                      <p>
+                        <Raw>{item.note}</Raw>
+                      </p>
+                    )}
+                    {item.details.filter(shown).map((line, i) => (
+                      <p key={`d${i}`}>
+                        <Raw>{line}</Raw>
+                      </p>
+                    ))}
+                  </section>
+                ))}
+                {review.runner_grant && (
+                  <section className="review-item">
+                    <h3>Runner access</h3>
+                    <p>
+                      {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
+                    </p>
+                    <p>{review.runner_grant.holder}</p>
+                  </section>
+                )}
+              </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>Confirm in your terminal</h2>
-                  <p>Match these three words in the terminal that started setup:</p>
-                  <p>
-                    <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>
-                  </p>
+                  <h2>How to finish</h2>
+                  <ol>
+                    {review.typed_word && (
+                      <li>
+                        Type <Raw>{review.typed_word}</Raw> below and press {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}.
+                      </li>
+                    )}
+                    <li>
+                      Then the terminal that started setup shows three words. If they match <Words words={review.fingerprint} />,
+                      type yes there.
+                    </li>
+                  </ol>
                 </div>
               )}
               {review.typed_word && (
                 <label>
-                  Type <Raw>{review.typed_word}</Raw> to confirm
+                  Type <Raw>{review.typed_word}</Raw> here to confirm
                   <input autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
                 </label>
               )}
@@ -645,7 +692,8 @@ export function Setup({ api }: { api: SetupAPI }) {
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
               <p>
-                Match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw> and confirm in the terminal that started setup.
+                Your terminal now asks you to confirm. If it shows <Words words={review.fingerprint} />, type
+                yes there.
               </p>
             )}
           {progress?.waiting && (

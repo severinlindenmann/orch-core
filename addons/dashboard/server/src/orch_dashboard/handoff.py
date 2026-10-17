@@ -331,7 +331,8 @@ class Move(Action):
 
 
 class RunnerGrant(Action):
-    """M7b, the runner grant (D-P2-27): a click request only, never a terminal hand-off of this server. It maps to the
+    """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
+    server, never by the browser. The click path maps to the
     signer's `prepare {op:"grant", args:{hours, scope}, deposit:true}`; the signer itself sets `label:"runner"` and
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 
@@ -360,7 +361,8 @@ PrepareBody = Annotated[
     | MemberAdd
     | MemberRole
     | MemberRemove
-    | GrantRevoke,
+    | GrantRevoke
+    | RunnerGrant,
     Field(discriminator="action"),
 ]
 
@@ -819,19 +821,26 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             planned = plan(gateway, ws, body)
             op = planned.op
+            # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
+            # which needs `runner` so the signer sets label runner (the click path sets it itself).
+            args = planned.args | ({"runner": True} if isinstance(body, RunnerGrant) else {})
 
             def call(idem: str):
                 return human(
                     ws,
                     "human.prepare",
-                    {"op": op, "args": planned.args, "handoff": True},
+                    {"op": op, "args": args, "handoff": True},
                     idem=idem,
                     files=planned.files,
                 )
 
             prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
             response = adapters.handoff.request(
-                prepared, ws, expect_op=op, expect_key=getattr(body, "key", None), expect_events=expected(body)
+                prepared,
+                ws,
+                expect_op=op,
+                expect_key=getattr(body, "key", None),
+                expect_events=expected(body, planned.person),
             )
         except BaseException:
             handoffs.release(token)

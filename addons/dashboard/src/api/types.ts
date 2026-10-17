@@ -306,6 +306,8 @@ export interface GateStatus {
   /** Real host: the gate waits for a person now / has no approver who can act. `eligible` lists only people who see the ticket. */
   waiting?: boolean
   blocked?: boolean
+  /** Real host: what an approval of requirements or plan still lacks (core's completeness rule), e.g. ["plan"]. */
+  missing?: string[]
   eligible?: string[]
   note?: string
   /** Hash of the gated content as it is now. */

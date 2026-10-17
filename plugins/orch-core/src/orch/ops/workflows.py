@@ -24,11 +24,13 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         ],
     ),
     "refine": (
-        "turn a rough ticket into requirements, acceptance criteria and tasks",
+        "turn a rough ticket into requirements, acceptance criteria, a plan and tasks",
         [
             ("show", "orch show --section requirements"),
             ("section.set", "orch section set requirements --file -"),
             ("ac.add", "orch ac add 'text'"),
+            # B11: the plan gate needs the plan section too (an approval of a gate that lacks it is refused)
+            ("section.set", "orch section set plan --file -"),
             ("task.add", "orch task add 'text' --verify 'cmd' --proves AC1"),
             ("ask", "orch ask 'question' --options a,b --rec a"),
         ],

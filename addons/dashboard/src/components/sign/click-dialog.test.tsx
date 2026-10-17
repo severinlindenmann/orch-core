@@ -485,10 +485,8 @@ it.each([null, ['terminal', 'click', 'phone']])('disables phone approval and use
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
   const { dialog } = await open()
   fireEvent.click(within(dialog).getByText('Other ways'))
-  const phone = within(dialog).getByRole('button', { name: 'Approve on your phone · coming soon' })
-  expect(phone).toBeDisabled()
-  fireEvent.click(phone)
-  expect(within(dialog).queryByText('Waiting for your phone…')).toBeNull()
+  // No phone is paired and none was asked for: Phone is not offered at all (no "coming soon" button).
+  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
   fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
   await within(dialog).findByTestId('handoff-command')
   expect(c.prepare).not.toHaveBeenCalled()
@@ -501,9 +499,10 @@ it('omits One click from Other ways when the signer is unavailable', async () =>
   await mount(PLAN)
   const dialog = await screen.findByRole('dialog')
   await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign in Terminal' })).toBeEnabled())
-  fireEvent.click(within(dialog).getByText('Other ways'))
+  // Nothing usable is left: no click (signer unavailable), no phone (none paired), so no "Other ways" at all.
+  expect(within(dialog).queryByText('Other ways')).toBeNull()
   expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
-  expect(within(dialog).getByRole('button', { name: /Approve on your phone/ })).toBeDisabled()
+  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
 })
 
 it('cancels the click review before switching to a fresh terminal intent', async () => {

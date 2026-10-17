@@ -22,29 +22,38 @@ const sentence = (label: string, p: HostPolicy) => {
   return `${label}: ${p.count} approval${p.count === 1 ? '' : 's'} from ${who.toLowerCase()}${not}, ${where}${p.independent ? ', independent' : ''}.`
 }
 
-function Toggles({ legend, tokens, chosen, disabled, locked, onChange }: { legend: string; tokens: readonly string[]; chosen: string[]; disabled: boolean; locked?: string[]; onChange: (next: string[]) => void }) {
+/** One compact table per gate: a row per kind of person, one column for "may approve" and one for "never", so the
+ * names are written once instead of twice (B11 31). */
+function ApproverMatrix({ label, approvers, not, disabled, locked, onApprovers, onNot }: { label: string; approvers: string[]; not: string[]; disabled: boolean; locked?: string[]; onApprovers: (next: string[]) => void; onNot: (next: string[]) => void }) {
+  const flip = (list: string[], t: string, on: boolean) => (on ? [...list, t] : list.filter((x) => x !== t))
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-1 text-[12px] text-text-muted">{legend}</legend>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {tokens.map((t) => (
-          <label key={t} className="flex items-center gap-1.5 text-[13px]">
-            <input
-              type="checkbox"
-              checked={chosen.includes(t)}
-              disabled={locked?.includes(t)}
-              onChange={(e) => onChange(e.target.checked ? [...chosen, t] : chosen.filter((x) => x !== t))}
-              className="accent-[var(--brand)]"
-            />
-            {TOKEN_LABEL[t as keyof typeof TOKEN_LABEL] ?? t}
-          </label>
-        ))}
-      </div>
+      <table aria-label={`${label}: who may approve`} className="w-full max-w-md text-[13px]">
+        <thead>
+          <tr className="text-left text-[12px] text-text-muted">
+            <th scope="col" className="py-1 pr-3 font-normal">Who</th>
+            <th scope="col" className="px-2 py-1 font-normal">May approve</th>
+            <th scope="col" className="px-2 py-1 font-normal">Never, even if allowed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {APPROVER_TOKENS.map((t) => {
+            const who = TOKEN_LABEL[t as keyof typeof TOKEN_LABEL] ?? t
+            return (
+              <tr key={t} className="border-t border-border">
+                <th scope="row" className="py-1 pr-3 text-left font-normal">{who}</th>
+                <td className="px-2 py-1"><input type="checkbox" aria-label={`${who} may approve`} checked={approvers.includes(t)} onChange={(e) => onApprovers(flip(approvers, t, e.target.checked))} className="accent-[var(--brand)]" /></td>
+                <td className="px-2 py-1"><input type="checkbox" aria-label={`${who} may not approve`} checked={not.includes(t)} disabled={locked?.includes(t)} onChange={(e) => onNot(flip(not, t, e.target.checked))} className="accent-[var(--brand)]" /></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </fieldset>
   )
 }
 
-function GateForm({ gate, current, canEdit, why, ask }: { gate: PolicyGate; current: HostPolicy; canEdit: boolean; why: string | null; ask: ReturnType<typeof useSettingsHandoff>['ask'] }) {
+function GateForm({ gate, current, canEdit, why, ask, alone }: { alone?: boolean; gate: PolicyGate; current: HostPolicy; canEdit: boolean; why: string | null; ask: ReturnType<typeof useSettingsHandoff>['ask'] }) {
   const [draft, setDraft] = useState<HostPolicy | null>(null)
   const p = draft ?? current
   const label = GATE_LABEL[gate]
@@ -57,9 +66,9 @@ function GateForm({ gate, current, canEdit, why, ask }: { gate: PolicyGate; curr
   return (
     <Section title={label}>
       <p className="text-[13px]">{sentence(label, current)}</p>
+      {alone && gate === 'verify' && <p data-testid="gate-alone" className="mt-1 text-[12px] text-text-muted">You are the only member, so you can approve your own work for now. This rule starts to ask for someone else once another person joins.</p>}
       <div className="mt-3 space-y-3">
-        <Toggles legend={`${label}: who may approve`} tokens={APPROVER_TOKENS} chosen={p.approvers} disabled={!canEdit} onChange={(approvers) => patch({ approvers })} />
-        <Toggles legend={`${label}: who may not approve, even if listed above`} tokens={APPROVER_TOKENS} chosen={p.not} disabled={!canEdit} locked={code ? ['assignees'] : []} onChange={(not) => patch({ not })} />
+        <ApproverMatrix label={label} approvers={p.approvers} not={p.not} disabled={!canEdit} locked={code ? ['assignees'] : []} onApprovers={(approvers) => patch({ approvers })} onNot={(not) => patch({ not })} />
         <div className="flex flex-wrap items-end gap-4">
           <div className="space-y-1.5">
             <Label htmlFor={`count-${gate}`}>{label}: approvals needed</Label>
@@ -155,7 +164,7 @@ export function HostGates({ workspace }: { workspace: Workspace }) {
           This host does not say what the gate policies are, so none is shown.
         </p>
       ) : (
-        POLICY_GATES.map((g) => (data.gates?.[g] ? <GateForm key={`${g}-${JSON.stringify(data.gates[g])}`} gate={g} current={data.gates[g]} canEdit={!why} why={why} ask={ask} /> : null))
+        POLICY_GATES.map((g) => (data.gates?.[g] ? <GateForm key={`${g}-${JSON.stringify(data.gates[g])}`} gate={g} current={data.gates[g]} canEdit={!why} why={why} ask={ask} alone={workspace.members.length <= 1} /> : null))
       )}
       {dialog}
     </div>

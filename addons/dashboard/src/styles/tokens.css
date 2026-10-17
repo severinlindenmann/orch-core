@@ -166,7 +166,7 @@
   }
   body {
     @apply bg-bg font-sans text-text antialiased;
-    min-width: 1024px;
+    min-width: 320px;
   }
   code,
   kbd,
@@ -228,8 +228,10 @@
 
 /* Respond to the shell width, including a docked terminal. */
 .topbar { container-type: inline-size; }
-@container (max-width: 1200px) {
+@container (max-width: 760px) {
   .agent-access-detail { display: none; }
+}
+@container (max-width: 1200px) {
   .topbar-search { width: 2rem; justify-content: center; padding-inline: 0; }
   .topbar-search > span, .topbar-search > kbd { display: none; }
 }

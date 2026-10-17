@@ -296,7 +296,7 @@ def test_cli_init_host_refuses_a_non_empty_directory_before_calling_the_host(
     (root / ".orch").mkdir()
     with pytest.raises(OrchError) as e:
         wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
-    assert e.value.code == "invalid.input" and "already holds orch files" in e.value.message
+    assert e.value.code == "invalid.input" and "orch's own .orch" in e.value.message
     assert recording.sent == [] and term.shown == []  # no host call, no secret shown
 
 
@@ -367,6 +367,21 @@ def test_bootstrap_accepts_an_existing_project_and_rollback_keeps_its_files(lab,
         created = ok(c.call("host.wsk_create"))["data"]
         ok(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem()))
     assert (root / "config.json").is_file() and (root / "README.md").read_text() == "mine"
+
+
+def test_bootstrap_refuses_a_project_config_json_by_name_and_never_writes_over_it(lab, tmp_path):
+    # finding B11-2: the host is the durable place of the rule; a project's own config.json is a named collision
+    owner, root = Person(), fresh_root(tmp_path)
+    (root / "config.json").write_text('{"name": "my-app"}')
+    (root / "events").mkdir()
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        res = c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())
+    assert err(res) == "invalid.input"
+    message = res["error"]["message"]
+    assert "already has its own config.json, events/" in message and "orch files" not in message
+    assert sorted(os.listdir(root)) == ["config.json", "events"] and os.listdir(root / "events") == []
+    assert (root / "config.json").read_text() == '{"name": "my-app"}'
 
 
 def test_bootstrap_refuses_a_root_owned_by_another_uid(lab, tmp_path, monkeypatch):

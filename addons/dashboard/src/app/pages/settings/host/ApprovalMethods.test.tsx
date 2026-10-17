@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import { CLICK_RISK } from '@/api/click'
 import { ApprovalMethods } from './ApprovalMethods'
 const ask = vi.fn()
 vi.mock('./useSettingsHandoff', () => ({ useSettingsHandoff: () => ({ ask, dialog: null }) }))
@@ -19,7 +18,7 @@ it('saves allowed methods through the signed settings flow and keeps reserved me
   expect(screen.getByLabelText('Terminal (always)')).toBeDisabled()
   expect(screen.getByLabelText(/Touch ID/)).toBeDisabled()
   expect(screen.getByLabelText(/Security key/)).toBeDisabled()
-  expect(screen.getByTestId('click-risk')).toHaveTextContent(CLICK_RISK)
+  expect(screen.queryByTestId('click-risk')).toBeNull() // the risk line lives on the Sign in the dashboard card only
   fireEvent.click(phone)
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
   expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click'] } }))
@@ -31,25 +30,41 @@ it('saves personal default and fallback without a workspace signature', async ()
   expect(screen.getByLabelText('Phone (Face ID)')).toBeDisabled()
   fireEvent.change(screen.getByLabelText('Default'), { target: { value: 'terminal' } })
   fireEvent.change(screen.getByLabelText('Fallback'), { target: { value: 'click' } })
-  expect(screen.getAllByRole('option', { name: 'Approve on your phone · coming soon' })).toHaveLength(2)
-  for (const option of screen.getAllByRole('option', { name: /Approve on your phone/ })) expect(option).toBeDisabled()
+  expect(screen.queryAllByRole('option', { name: /Approve on your phone/ })).toHaveLength(0) // phone is no personal default yet
   fireEvent.click(screen.getByRole('button', { name: 'Save my preference' }))
   await screen.findByText('Preference saved.')
   expect(put).toHaveBeenCalledWith('w', { method: 'terminal', fallback: 'click' })
   expect(ask).not.toHaveBeenCalled()
 })
-it('is read-only with an explanation when the APIs are absent', async () => {
+it('hides the personal controls and says one line when the host gives no preferences', async () => {
   mount(true, false)
-  await screen.findAllByText(/These controls are read-only/)
-  expect(screen.getByLabelText('Default')).toBeDisabled()
+  await screen.findByText(/Your own way of approving is not available on this host yet/)
+  expect(screen.queryByLabelText('Default')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save my preference' })).toBeNull()
   expect(screen.getByLabelText('One click on this computer')).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Save my preference' })).toBeDisabled()
+})
+
+it('shows the personal controls once the host serves preferences, and none of them before', async () => {
+  mount(true, true)
+  expect(screen.queryByLabelText('Default')).toBeNull() // still loading: no working-looking controls
+  await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
+})
+
+it('does not show Phone as allowed in an unrestricted workspace without a paired phone', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 0 })
+  mount(true, null)
+  await screen.findByText(/No limit is set/)
+  expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
+  expect(screen.getByText('no phone paired yet')).toBeInTheDocument()
+  expect(screen.getByLabelText('One click on this computer')).toBeChecked()
 })
 
 it('treats explicit null as unrestricted and lets the owner set a restriction', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
   mount(true, null)
-  await screen.findByText('All ways allowed (not restricted)')
-  for (const label of ['Terminal (always)', 'One click on this computer', 'Phone (Face ID)']) expect(screen.getByLabelText(label)).toBeChecked()
+  await screen.findByText(/No limit is set/)
+  await waitFor(() => expect(screen.getByLabelText('Phone (Face ID)')).toBeChecked())
+  for (const label of ['Terminal (always)', 'One click on this computer']) expect(screen.getByLabelText(label)).toBeChecked()
   expect(screen.getByLabelText('Default')).toBeEnabled()
   fireEvent.click(screen.getByLabelText('One click on this computer'))
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))

@@ -311,6 +311,45 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     assert world.stub.ws and env.store.state.workspace.settings["grant_hours"] == 8  # nothing was written
 
 
+def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, team, host_calls):
+    """B11-P1: on a terminal-approval workspace the runner grant is a hand-off like any other signature."""
+    env, people, grants = team
+    world = worlds(env.owner.ref)
+    # The dev stub serves no `grant` op (the host does): what matters is the request this server sends.
+    got = handoff(world, {"action": "runner_grant", "hours": 24, "scope": "workable"}, 1)
+    assert got.status_code != 422  # the action is part of the hand-off schema now
+    ops = [(c[1]["op"], c[1]["args"]) for c in host_calls if c[0] == "human.prepare"]
+    assert ops == [("grant", {"hours": 24, "scope": "workable", "runner": True})]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"label": "other"},
+        {"hours": 25},
+        {"verbs": "all"},
+        {"scope": "all"},
+        {"extra": 1},
+        {"actor": {"kind": "person", "id": "p_other"}},
+    ],
+)
+def test_a_prepared_runner_grant_that_differs_from_the_request_is_refused(change):
+    """B11-P1: a host-prepared grant.issued with another label, hours, verbs, scope, field or person is never shown."""
+    from orch_dashboard.handoff import RunnerGrant, expected
+
+    good = {
+        "type": "grant.issued",
+        "label": "runner",
+        "verbs": "agent",
+        "hours": 24,
+        "scope": "workable",
+        "actor": {"kind": "person", "id": "p_me"},
+    }
+    check = expected(RunnerGrant(action="runner_grant", hours=24, scope="workable"), "p_me")
+    assert check([good])
+    assert not check([{**good, **change}])
+
+
 @pytest.mark.parametrize(
     "body",
     [

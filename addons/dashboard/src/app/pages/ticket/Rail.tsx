@@ -247,7 +247,7 @@ export function PropertiesStrip({ ticket, viewer }: { ticket: TicketDocument; vi
   )
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px]">
-      <p data-testid="ticket-properties" className="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden whitespace-nowrap">
+      <p data-testid="ticket-properties" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-0.5">
         <span title={measure.note} className="inline-flex min-w-0">
           {item(measure.label, measure.value ?? (measure.label === 'Points' ? 'not estimated' : 'not set'))}
         </span>

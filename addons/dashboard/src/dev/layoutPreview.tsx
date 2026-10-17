@@ -27,6 +27,8 @@ import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { AgentAccess } from '@/app/shell/AgentAccess'
+import { nowMs } from '@/lib/time'
 import { clickProblem, type ClickCard } from '@/api/click'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
@@ -57,6 +59,9 @@ export const LAYOUT_SCENARIOS = [
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
+  // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
+  'agent-pill',
+  'agent-pill-stopped',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -203,6 +208,14 @@ function request(action: Record<string, unknown>): HandoffRequest {
   const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: t, payload, derived: {} }] }
   const digest = reviewDigestOf(material)
   const op = String(action.action)
+  if (action.action === 'runner_grant') {
+    const grant = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'grant.issued', grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', scope: action.scope, verbs: 'agent', label: 'runner', hours: action.hours, issued_at: '2026-10-17T09:00:00Z', expires_at: '2026-10-18T09:00:00Z' }
+    const { type: gt, v: _v, id: _id, actor: _a, auth: _au, hash_v: _h, roster_v: _r, based_on: _b, ...gp } = grant
+    const gm = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: gt, payload: gp, derived: {} }] }
+    const gd = reviewDigestOf(gm)
+    const ge = [grant] as unknown as HandoffEvent[]
+    return { id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'), code: '7F3K-Q2MA', expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), state: 'prepared', op: 'grant', key: null, fingerprint: fingerprintOf(gd, ge, 'grant'), review_digest: gd, gate_hash: null, material: gm, events: ge, origin: null }
+  }
   return {
     id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
     code: '7F3K-Q2MA',
@@ -479,7 +492,7 @@ function install() {
   const ag = agentsApi as unknown as Record<string, unknown>
   for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : null } })
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })
@@ -554,6 +567,8 @@ export function LayoutPreview({ name }: { name: string }) {
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
+  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped')
+    return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
       <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}

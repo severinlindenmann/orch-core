@@ -149,3 +149,12 @@ def test_host_info_passes_only_the_closed_dev_shape():
         ],
     }
     assert "sandbox" not in host_info({"dev": {"sim_convenience": True, "sandbox": "NOT-HEX"}})["dev"]
+
+
+def test_a_gate_carries_what_an_approval_still_lacks():
+    """B11: core's `missing` reaches the page, which never offers Approve while it lacks anything."""
+    from orch_dashboard.adapters.tickets import _gate
+
+    assert _gate({"state": "open", "missing": ["plan"]}, True)["missing"] == ["plan"]
+    assert _gate({"state": "open", "missing": []}, True)["missing"] == []
+    assert "missing" not in _gate({"state": "open"}, True)

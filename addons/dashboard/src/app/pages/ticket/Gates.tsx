@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronRight, CircleDashed, CircleDot, MessageSquareWarni
 import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { availableActions, GATE_LABEL, policyText } from './actions'
+import { availableActions, GATE_LABEL, lackText, policyText } from './actions'
 import { fmtDay, fmtExact, Mono, presenceLabel, type Viewer } from './shared'
 
 /** The gates this ticket shows: the code review only where it applies (or once it was signed). */
@@ -25,6 +25,7 @@ function stepState(name: GateName, gate: GateStatus, ticket: TicketDocument, min
   if (gate.state === 'approved') return { text: 'Approved', tone: 'success', Icon: CheckCircle2 }
   if (gate.state === 'changes_requested') return { text: 'Changes requested', tone: 'danger', Icon: MessageSquareWarning }
   if (gate.state === 'invalidated') return { text: 'Invalidated', tone: 'warning', Icon: ShieldAlert }
+  if ((name === 'requirements' || name === 'plan') && gate.missing?.length) return { text: lackText(name, gate.missing), tone: 'neutral', Icon: CircleDashed }
   if (mine) return { text: name === 'verify' ? 'Waiting for your verdict' : name === 'code' ? 'Waiting for your review' : 'Waiting for your approval', tone: 'warning', Icon: CircleDot }
   const ready =
     name === 'verify'

@@ -181,6 +181,16 @@
 .setup summary {
   cursor: pointer;
 }
+.setup .review-summary {
+  padding-left: 20px;
+  margin: 8px 0 16px;
+  display: grid;
+  gap: 6px;
+}
+.setup .review-technical h3 {
+  font-size: 14px;
+  margin: 12px 0 4px;
+}
 .setup .progress {
   padding: 0;
   list-style: none;
@@ -298,4 +308,25 @@ body:has(> #root > .setup) {
   display: block;
   color: var(--text-muted);
   margin-top: 0.25rem;
+}
+
+.setup .inset > :first-child,
+.setup .warning > :first-child {
+  margin-top: 0;
+}
+.setup .inset > :last-child,
+.setup .warning > :last-child {
+  margin-bottom: 0;
+}
+.setup .inset ol {
+  list-style: decimal;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}
+
+.setup .words bdi {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }

@@ -176,7 +176,11 @@ def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tm
     human.check(first)
     content = signcontent.build(first, verified=True)
     note = next(n for n in content["notes"] if n.startswith("Agents may work"))
-    assert "any ticket they are allowed to work on, not only this one" in note and "until about" in note and "GRANT" in note
+    assert (
+        "any ticket they are allowed to work on, not only this one" in note
+        and "until about" in note
+        and "GRANT" in note
+    )
     assert signer.confirm_word(first) == "GRANT"
     assert sequence.confirm_kind(rig.intent) == "word"
     out = rig.driver().run(first)
@@ -308,14 +312,11 @@ def _real_passphrase_backend(human, tmp_path):
     return be
 
 
-def test_a_quick_task_with_agent_access_lands_nine_of_nine_through_the_real_passphrase_backend(
-    human, served, tmp_path
-):
-    from tests.host.test_handoff import Shown, connect
-    from tests.host.test_sequence import handoff_first
-
+def test_a_quick_task_with_agent_access_lands_nine_of_nine_through_the_real_passphrase_backend(human, served, tmp_path):
     from orch.host import handoff
     from orch.host.control_client import new_idem
+    from tests.host.test_handoff import Shown, connect
+    from tests.host.test_sequence import handoff_first
 
     rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
     p = handoff_first(rig)
@@ -361,7 +362,12 @@ def test_agent_access_longer_than_the_workspace_maximum_is_refused_at_the_review
     rig = Rig(human, tmp_path, quick(agent={"hours": 72, "scope": "workable"}))  # the workspace allows 8 hours
     res = human.c.req(
         "human.prepare",
-        {"op": "new", "args": sequence.step_args(rig.intent, 0, None)[1], "signer": human.signer, "sequence": rig.meta0()},
+        {
+            "op": "new",
+            "args": sequence.step_args(rig.intent, 0, None)[1],
+            "signer": human.signer,
+            "sequence": rig.meta0(),
+        },
     )
     assert res["error"]["code"] == "invalid.input" and "at most 8 hours" in res["error"]["message"]
     assert not rig.sessions.get(rig.wid, rig.driver().digest)  # nothing was signed

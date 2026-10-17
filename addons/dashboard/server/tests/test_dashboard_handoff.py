@@ -845,9 +845,17 @@ def test_the_agent_access_of_a_quick_task_counts_as_the_last_step_and_is_read_fr
             return ticket if op == "ticket.get" else {"grants": grants}
 
     total = len(sequence.steps(intent))
-    at = lambda **kw: sequence_progress(Gateway(), "w", "DEMO-0001", intent, person="p_me", since="2026-10-17T10:00:00Z", **kw)  # noqa: E731
+
+    def at():
+        return sequence_progress(Gateway(), "w", "DEMO-0001", intent, person="p_me", since="2026-10-17T10:00:00Z")
+
     assert at() == {"done": total - 1, "of": total}  # every ticket step landed; the grant did not: not done
-    good = {"person": "p_me", "label": "runner", "issued_at": "2026-10-17T10:00:05Z", "expires_at": "2026-10-18T10:00:05Z"}
+    good = {
+        "person": "p_me",
+        "label": "runner",
+        "issued_at": "2026-10-17T10:00:05Z",
+        "expires_at": "2026-10-18T10:00:05Z",
+    }
     for bad in (
         {**good, "person": "p_other"},
         {**good, "label": None},
@@ -859,7 +867,8 @@ def test_the_agent_access_of_a_quick_task_counts_as_the_last_step_and_is_read_fr
         assert at() == {"done": total - 1, "of": total}
     grants[:] = [good]
     assert at() == {"done": total, "of": total}
-    assert sequence_progress(Gateway(), "w", "DEMO-0001", intent) == {"done": total - 1, "of": total}  # no person: closed
+    no_person = sequence_progress(Gateway(), "w", "DEMO-0001", intent)
+    assert no_person == {"done": total - 1, "of": total}  # closed
 
 
 QUICK = {
@@ -887,7 +896,8 @@ def test_a_quick_task_is_one_request_one_review_with_the_derived_plan(ready, hos
     assert got["content"]["headline"].startswith("Start task DEMO-")
     ids = sorted(s["id"] for s in got["content"]["sections"])
     assert ids == ["plan", "requirements"]
-    assert any(n.startswith("Agents may work on any ticket they are allowed to work on") for n in got["content"]["notes"])
+    prefix = "Agents may work on any ticket they are allowed to work on"
+    assert any(n.startswith(prefix) for n in got["content"]["notes"])
 
 
 def test_a_quick_task_without_steps_gets_one_check_and_no_grant(ready, host_calls):

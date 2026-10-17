@@ -529,7 +529,9 @@ class HumanOps:
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
         agent = (checked.get("intent") or {}).get("agent") if checked["step"] == 0 else None
-        if agent is not None:  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
+        if (
+            agent is not None
+        ):  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
             from orch.model.types import GRANT_MAX_HOURS
 
             cap = min(store.state.workspace.settings["grant_hours"], GRANT_MAX_HOURS)

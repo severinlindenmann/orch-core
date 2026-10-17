@@ -125,6 +125,10 @@ function fake(
               typed_word: 'GRANT',
               tty_confirm: true,
               runner_grant: { hours: 72, scope: 'tickets', holder: "this machine's runner, never shown" },
+              items: [
+                ...review.items,
+                { id: 'runner_grant', title: 'Agent access held by this machine', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { type: 'grant.issued', hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] },
+              ],
             }
           : {}),
       }
@@ -245,7 +249,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('This Mac’s agent runner gets agent access for 3 days')).toBeInTheDocument()
+  expect(screen.getByText('This Mac’s agent runner gets agent access for 3 days (scope workable, verbs agent)')).toBeInTheDocument()
   expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
@@ -732,4 +736,67 @@ test('only the lines core flags as placeholders are hidden; a line that merely e
   expect(details).not.toHaveTextContent('from: set at signing')
   expect(details).not.toHaveTextContent('grant id: set at signing')
   expect(details).not.toHaveTextContent('expires_at: set at signing')
+})
+
+test('an unrecognised flag is shown in the summary and opens the details', async () => {
+  const { api } = withReview({ flags: [{ id: 'surprise', text: 'Something else happens too.' }] })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Something else happens too.')
+  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+})
+
+test('the runner line comes from the signed grant item, not from review.runner_grant', async () => {
+  const grant = { id: 'runner_grant', title: 'Agent access held by this machine', lines: ['Give agents access'], details: [], volatile: [], type: 'grant.issued', placeholders: [], placeholder_details: [] }
+  const { api } = withReview({
+    items: [{ ...grant, fields: { type: 'grant.issued', hours: 24, scope: 'workable', verbs: 'agent' } }],
+    runner_grant: { hours: 168, scope: 'everything', holder: 'x' },
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('agent access for 1 day (scope workable, verbs agent)')
+  expect(summary).not.toHaveTextContent(/7 days|everything/)
+})
+
+test.each([
+  ['a grant item with another id', { id: 'other', type: 'grant.issued', fields: { type: 'grant.issued', hours: 24, scope: 'a', verbs: 'b' } }],
+  ['a grant item without hours', { id: 'runner_grant', type: 'grant.issued', fields: { type: 'grant.issued' } }],
+  ['a settings payload with extra keys', { id: 'settings', type: 'settings.changed', fields: { type: 'settings.changed', set: { grant_hours: 24 }, extra: 1 } }],
+  ['a non-number grant_hours', { id: 'settings', type: 'settings.changed', fields: { type: 'settings.changed', set: { grant_hours: '24' } } }],
+])('%s is named and opens the details', async (_name, patch) => {
+  const { api } = withReview({
+    items: [{ title: 'Odd item', lines: ['x'], details: [], volatile: [], placeholders: [], placeholder_details: [], ...patch } as Review['items'][number]],
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Odd item')
+  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+})
+
+test('finish offers no runner grant when the workspace agent time is below the shortest choice', async () => {
+  const f = fake({ finish: true })
+  const fetcher: typeof fetch = async (url, init) => {
+    const res = await f.fetcher(url, init)
+    if (String(url).endsWith('/state')) {
+      const body = await res.json()
+      return new Response(JSON.stringify({ ...body, current: { ...body.current, agent_hours: 4 } }))
+    }
+    return res
+  }
+  render(<Setup api={new SetupAPI('tok', fetcher)} />)
+  await screen.findByRole('heading', { name: 'Finish setup in project' })
+  expect(screen.queryByLabelText(/Agent access for this Mac.s runner/)).toBeNull()
 })

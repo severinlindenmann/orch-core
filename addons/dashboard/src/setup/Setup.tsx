@@ -45,25 +45,32 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
   const lines: string[] = []
   let unknown = false
   const addons: string[] = []
-  for (const item of review.items) {
-    const set = (item.fields?.set ?? {}) as Record<string, unknown>
-    if (item.type === 'addon.granted') addons.push(item.title)
-    else if (item.type === 'grant.issued' && review.runner_grant) continue // shown from review.runner_grant below
-    else if (
-      item.type === 'settings.changed' &&
-      Object.keys(set).every((k) => k === 'grant_hours' || k === 'sign_methods')
-    ) {
-      if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
-      if (Array.isArray(set.sign_methods))
-        lines.push(`Ways to approve allowed here: ${set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')}`)
-    } else {
-      unknown = true
-      lines.push(item.title)
-    }
+  const odd = (title: string) => {
+    unknown = true
+    lines.push(title)
   }
-  if (review.runner_grant)
-    lines.push(`This Mac’s agent runner gets agent access for ${duration(review.runner_grant.hours)}`)
-  for (const f of review.flags) if (f.id === 'custody' || f.id === 'terminal') lines.push(f.text)
+  for (const item of review.items) {
+    const f = item.fields
+    const only = (...keys: string[]) => !!f && Object.keys(f).every((k) => k === 'type' || keys.includes(k))
+    if (item.type === 'addon.granted') addons.push(item.title)
+    else if (item.id === 'runner_grant' && item.type === 'grant.issued' && f && typeof f.hours === 'number' && typeof f.scope === 'string' && typeof f.verbs === 'string')
+      lines.push(`This Mac’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
+    else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
+      const set = f.set as Record<string, unknown>
+      const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
+      const okMethods = !('sign_methods' in set) || (Array.isArray(set.sign_methods) && set.sign_methods.every((m) => typeof m === 'string'))
+      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'sign_methods') || !okHours || !okMethods) odd(item.title)
+      else {
+        if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
+        if (Array.isArray(set.sign_methods))
+          lines.push(`Ways to approve allowed here: ${set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')}`)
+      }
+    } else odd(item.title)
+  }
+  for (const flag of review.flags) {
+    if (flag.id === 'custody' || flag.id === 'terminal') lines.push(flag.text)
+    else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
+  }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown }
 }
@@ -112,7 +119,8 @@ function FinishChoices({
 }) {
   const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons.includes(a.id))
   const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons.includes(a.id))
-  const offersGrant = state.missing.includes('runner_grant')
+  // a runner grant is never longer than the workspace's agent time: below the shortest choice (8 h) none is offered
+  const offersGrant = state.missing.includes('runner_grant') && current.agent_hours >= 8
   const offersClick = current.method === 'terminal' && state.click_available
   const hoursFixed = current.agent_hours !== 8
   const chosen =

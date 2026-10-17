@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
+import { fmtDateTime } from '@/lib/time'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
 const MESSAGES: Record<string, string> = {
@@ -126,7 +127,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
     <Section title="Sign in the dashboard">
       <div data-testid="workspace-card-signing" className="space-y-3 text-[13px]">
         <ClickRisk />
-        {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{new Date(card.risk_ack).toLocaleString()}</time></p>}
+        {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
         <p data-testid="signing-state">
           {on && card?.available
             ? 'On: actions can be signed here with one click. Hosts with approval settings offer other allowed methods under Other ways.'

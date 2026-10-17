@@ -57,7 +57,7 @@ describe('lease and reconnect', () => {
   it('losing the lease shows Take back; a 4409 offers Take control; neither takes by itself', async () => {
     render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)
     await flush()
-    expect(tickets).toEqual([{ mode: 'write', take: false }])
+    expect(tickets).toEqual([{ mode: 'write', take: true }]) // N5: the tab that started the shell gets control
     act(() => sockets[0].h.ready(ready(true)))
     expect(screen.queryByText('Read only.')).toBeNull()
     act(() => sockets[0].h.writer(false))

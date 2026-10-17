@@ -142,3 +142,49 @@ def test_the_host_refuses_a_sequence_for_the_phone(human):
         {"op": op, "args": args, "signer": {"device": human.person.device, "auth": "secure-enclave"}, "sequence": meta},
     )
     assert err(res) == "invalid.input"
+
+
+def test_a_sequence_with_people_is_a_click_and_the_typed_word(click, served, human):
+    """B12D: a people change decides who may act, so the whole review needs the typed word (a click is not enough)."""
+    me = click.owner.ref  # another member would need his own reader declaration for convenience signing
+    _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me]}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"]["kind"] == "word"
+    word = v["view"]["confirm"]["word"]
+    assert word.startswith("DEMO-")  # the ticket word, not GRANT
+    click.mono.t += 2
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
+    assert click.signatures == 0
+    out = click.sign(p["request_id"], v["view_digest"], word=word)
+    assert click.signatures == 4 + 1 + 1  # new, set, two sections, the criterion, the reviewer
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
+    assert [a["text"] for a in got["acceptance"]] == ["It opens"] and got["people"]["reviewers"] == [me]
+
+
+def test_an_edit_sequence_is_signed_by_one_click_when_it_changes_no_people(click, served, human):
+    from orch import canon
+
+    made_p = prepare(click)[1]
+    v = click.view(made_p["request_id"])
+    click.mono.t += 2
+    key = click.sign(made_p["request_id"], v["view_digest"])["result"]["key"]
+    data = ok(served.client().req("ticket.get", {"ref": key}))["data"]
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": key, "uid": data["doc"]["uid"]},
+        "ticket_type": "feature",
+        "head": data["doc"]["head"]["head"],
+        "sections": {"summary": {"was": canon.section_hash("One line."), "text": "A better line."}},
+        "acceptance": {"was": [], "edit": {}, "add": ["It opens"]},
+    }
+    before = click.signatures
+    _, p = prepare(click, intent)
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    assert v["view"]["content"]["headline"] == f"Edit {key}"
+    click.mono.t += 2
+    click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == before + 2
+    got = ok(served.client().req("ticket.get", {"ref": key}))["data"]
+    assert got["doc"]["sections"]["summary"] == "A better line." and got["doc"]["acceptance"][0]["text"] == "It opens"

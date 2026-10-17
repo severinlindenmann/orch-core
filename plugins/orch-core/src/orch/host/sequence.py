@@ -814,7 +814,11 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {signcontent.one(key)}"
         content["subline"] = "its text, acceptance checks and people, as shown below"
-        content.setdefault("notes", []).append(
+        notes = content.setdefault("notes", [])
+        if intent["sections"]:
+            names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
+            notes.append(f"Replaces the whole current text of: {names}.")
+        notes.append(
             "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
             "stops and nothing more is signed."
         )

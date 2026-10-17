@@ -86,6 +86,19 @@ def test_a_refused_directory_stops_before_a_browser_opens(tmp):
     assert rc == 1 and "home directory" in err and opened == []
 
 
+def test_no_browser_flag_is_passed_to_the_opener_and_other_args_are_refused(tmp):
+    seen = {}
+
+    def browser(env, err, launch, **kw):
+        seen.update(kw)
+        call(str(tmp.root / "run" / "setup.sock"), "POST", "/shutdown", {})
+        return "link"
+
+    rc, _, err = run_main(tmp, ["--no-browser"], open_browser=browser)
+    assert seen == {"no_browser": True} and rc == 1 and "use the link above" in err and "is open" not in err
+    assert run_main(tmp, ["--bogus"])[0] == 2
+
+
 def test_an_existing_project_dir_is_fine(tmp):
     (tmp.work / "README.md").write_text("hi")
     seen = {}

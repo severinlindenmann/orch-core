@@ -12,6 +12,9 @@ from pathlib import Path
 # comes first. A file a paused launcher writes after that holds a dead code (and the launcher refuses to write or keep
 # one past `expires_at`); the next server start's sweep removes any leftover.
 CODE_TTL = 30
+# The one-time nonce of `orch setup` lives 5 min: the person may copy the printed link into another terminal or
+# browser. Still single use, and the claim still binds the first browser; only the window to present it is longer.
+SETUP_CODE_TTL = 300
 
 
 class Auth:
@@ -38,7 +41,8 @@ class Auth:
             for stale in [c for c, until in self.codes.items() if until <= now]:
                 self._forget(stale)
             code = secrets.token_urlsafe(32)
-            self.codes[code] = now + CODE_TTL
+            ttl = SETUP_CODE_TTL if setup else CODE_TTL
+            self.codes[code] = now + ttl
             if setup:
                 self.setup_codes.add(code)
             payload = {
@@ -48,12 +52,12 @@ class Auth:
                 "code": code,
                 # the launcher writes no file, and keeps none, past this; whole seconds (a frame carries no floats),
                 # rounded down so the launcher stops early, never late
-                "expires_at": int(now + CODE_TTL),
+                "expires_at": int(now + ttl),
             }
             if self.directory is not None:
                 self.files[code] = Path(self.redirect_path(code))
                 payload["redirect_file"] = str(self.files[code])
-                timer = threading.Timer(CODE_TTL, lambda: self.expire(code))
+                timer = threading.Timer(ttl, lambda: self.expire(code))
                 timer.daemon = True
                 timer.start()
             return payload
@@ -84,7 +88,7 @@ class Auth:
 
     def exchange_setup(self, nonce):
         """The one-time browser nonce of ``orch setup`` (a launch code minted for setup): constant-time compare,
-        single use, 30 s. True only for the first browser that presents it; it never opens a normal session."""
+        single use, 5 min. True only for the first browser that presents it; it never opens a normal session."""
         with self.lock:
             now = self.clock()
             found = None

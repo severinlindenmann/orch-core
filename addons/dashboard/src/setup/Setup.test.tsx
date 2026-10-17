@@ -219,10 +219,14 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
+  // B11: the terminal asks only after Create; the review says so instead of "confirm in your terminal" now
+  expect(screen.getByRole('heading', { name: 'Then confirm in your terminal' })).toBeInTheDocument()
+  expect(screen.getByText(/After you click Create workspace, the terminal/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   expect(screen.getByText('demo not real')).toBeInTheDocument()
+  expect(screen.getByText(/Your terminal now asks you to confirm/)).toHaveTextContent('type yes there')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',

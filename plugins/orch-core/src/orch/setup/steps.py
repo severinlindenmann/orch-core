@@ -2,8 +2,8 @@
 
 The create sequence (batch-9.md "## Design" 3):
 
-1. (R3) the setup terminal shows the fingerprint words of the review and waits for them to be typed, when the
-   review asks;
+1. (R3) the setup terminal shows the fingerprint words of the review and waits for the person to type yes when
+   the page shows the same words, when the review asks;
 2. the keys and the genesis through the B5 bootstrap (``host.wsk_create`` + ``host.bootstrap``, one intent, rollback of
    the recorded entries only); nothing is durable before this;
 3. the add-on manifests are written into the workspace, the runner/execution flags too, and a runner grant waits for
@@ -47,6 +47,23 @@ __all__ = [
 
 CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
+#: what the person types on the setup terminal once the page shows the same three words (R3)
+TTY_WORD = "yes"  # distinct from the page's typed word GRANT: two prompts, two answers
+
+
+def tty_confirm_text(words: str) -> str:
+    """The block the setup terminal shows before it asks for :data:`TTY_WORD` (plain words, owner B11)."""
+    return (
+        "\n========================================================\n"
+        "orch setup is asking you to confirm.\n"
+        "The setup page in your browser should show these three words:\n\n"
+        f"    {words}\n\n"
+        f"Check the page. If they match, type {TTY_WORD} and press Enter.\n"
+        "Anything else (or Enter alone) cancels; nothing is created.\n"
+        "========================================================\n"
+    )
+
+
 CHECKS = 3
 
 
@@ -361,25 +378,23 @@ class Creator:
 
     # -- R3
     def _tty_confirm(self) -> None:
+        """R3, in plain words (B11): the terminal shows the words the page must show, and the person types the
+        confirm word. Written straight to ``/dev/tty`` (unbuffered ``os.write``), from the run thread, right after
+        the page's Create; the page says so before that click, so nobody waits for the terminal before it."""
         if not self.plan.tty_confirm:
             return
         words = " ".join(self.plan.fingerprint or [])
         self.run.waiting_tty = True
         try:
-            self.ports.terminal.show(
-                "\n=== orch setup: confirm on this terminal ===\n"
-                "The setup page wants to create this on your machine. Its fingerprint is:\n\n"
-                f"    {words}\n\n"
-                "Only continue if the page shows the same three words.\n"
-            )
-            typed = self.ports.terminal.ask("Type the three words to continue (Enter alone cancels): ")
+            self.ports.terminal.show(tty_confirm_text(words))
+            typed = self.ports.terminal.ask(f"If they match, type {TTY_WORD}: ")
         except SetupError:
             raise
         except Exception:  # noqa: BLE001 - no terminal: nothing is created
             raise SetupError("tty.unavailable", "no terminal to confirm on; nothing was created", 409) from None
         finally:
             self.run.waiting_tty = False
-        if " ".join(typed.lower().split()) != words:
+        if typed.strip().lower() != TTY_WORD:
             raise SetupError("tty.declined", "the terminal did not confirm; nothing was created", 409)
 
     # -- keys, genesis, register (B5)

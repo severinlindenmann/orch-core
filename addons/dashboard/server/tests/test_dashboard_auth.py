@@ -440,3 +440,93 @@ def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, mo
     page = auth.files[issued["code"]].read_text()
     assert "launch=" + issued["code"] in page and "to=%2Fsetup" in page
     assert auth.exchange(issued["code"])[0] is None and auth.exchange_setup(issued["code"]) is True
+
+
+def test_setup_nonce_lives_five_minutes_and_is_single_use_while_login_stays_30s():
+    from orch_dashboard.auth import CODE_TTL, SETUP_CODE_TTL
+
+    assert (CODE_TTL, SETUP_CODE_TTL) == (30, 300)
+    now = [1000.0]
+    auth = Auth(clock=lambda: now[0])
+    login = auth.launch(PORT)
+    setup = auth.launch(PORT, setup=True)
+    assert setup["expires_at"] - 1000 == 300 and login["expires_at"] - 1000 == 30
+    now[0] += 31
+    assert auth.exchange(login["code"])[1] == 401  # a normal link is dead after 30 s
+    now[0] += 250  # 281 s: the setup nonce is alive
+    assert auth.exchange_setup(setup["code"]) is True
+    assert auth.exchange_setup(setup["code"]) is False  # single use: a second browser is refused
+    late = auth.launch(PORT, setup=True)
+    now[0] += 301
+    assert auth.exchange_setup(late["code"]) is False
+
+
+def test_emit_url_fd_writes_to_a_pipe_only_and_no_browser_opens_nothing(tmp_path, monkeypatch, capsys):
+    import os
+
+    from orch_dashboard import __main__ as launcher
+
+    now = [time.time()]
+    (tmp_path / "dashboard").mkdir(mode=0o700)
+    auth = Auth(clock=lambda: now[0], directory=tmp_path / "dashboard")
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", lambda d, f: type("T", (), {"start": lambda s: None})())
+    issued = auth.launch(PORT, setup=True)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        launcher, "control", lambda p, c, k=None: issued if c == "launch" else {"release": launcher.code_digest()}
+    )
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    opened = []
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda u: opened.append(u) or True)
+    r, w = os.pipe()
+    try:
+        launcher.open_dashboard("/setup", emit_url_fd=w, no_browser=True)
+        line = os.read(r, 4096).decode()
+        assert line == f"http://127.0.0.1:{PORT}/#launch={issued['code']}&to=%2Fsetup\nno-browser\n"
+        assert opened == [] and not list((tmp_path / "dashboard").glob("launch-*.html"))
+        launcher.open_dashboard("/setup", emit_url_fd=w)  # with a browser: the argument is only the redirect file
+        assert b"no-browser" not in os.read(r, 4096)  # the browser opened: no marker
+        assert len(opened) == 1 and opened[0].startswith("file://") and issued["code"] not in opened[0]
+        issued2 = auth.launch(PORT, setup=True)
+        monkeypatch.setattr(
+            launcher, "control", lambda p, c, k=None: issued2 if c == "launch" else {"release": launcher.code_digest()}
+        )
+        monkeypatch.setattr(launcher.webbrowser, "open", lambda u: False)  # a browser that cannot open
+        launcher.open_dashboard("/setup", emit_url_fd=w)
+        assert os.read(r, 4096).decode().endswith("\nno-browser\n")
+        assert not __import__("pathlib").Path(issued2["redirect_file"]).exists()  # a failed open leaves no code on disk
+    finally:
+        os.close(r)
+        os.close(w)
+    with pytest.raises(RuntimeError):  # a tty / regular file is not a place for the code
+        launcher.open_dashboard("/setup", emit_url_fd=1)
+    assert issued["code"] not in capsys.readouterr().out
+
+
+def test_an_older_server_without_expires_at_keeps_the_30s_bound(tmp_path, monkeypatch):
+    from orch_dashboard import __main__ as launcher
+    from orch_dashboard.auth import CODE_TTL
+
+    class FakeSock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def settimeout(self, t):
+            pass
+
+        def connect(self, p):
+            pass
+
+        def sendall(self, b):
+            pass
+
+    monkeypatch.setattr(launcher.socket, "socket", lambda *a: FakeSock())
+    monkeypatch.setattr(launcher, "check_uid", lambda *a: None)
+    monkeypatch.setattr(launcher, "receive", lambda s: {"code": "c", "port": 1})
+    monkeypatch.setattr(launcher, "refuse_agent", lambda: None)
+    t0 = time.time()
+    reply = launcher.control(tmp_path / "ctl.sock", "launch", "setup")
+    assert t0 + CODE_TTL <= reply["expires_at"] <= time.time() + CODE_TTL

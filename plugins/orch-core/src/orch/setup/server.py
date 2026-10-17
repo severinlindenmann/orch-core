@@ -6,7 +6,7 @@
   header named explicitly (127.0.0.1 or localhost, with the dashboard's port), on a POST the ``Origin`` equal to
   ``http://<Host>`` and a JSON content type. Every answer is ``Cache-Control: no-store``.
 
-Session binding: the launch code is single use, lives 30 s and is bound to the ``setup_id``; the first claim wins, a
+Session binding: the launch code is single use, lives 5 min and is bound to the ``setup_id``; the first claim wins, a
 second one is refused (409) and reported to the terminal. The code never travels in a URL or an argument: it is written
 to ``<state>/setup/setup.code`` (0600, in the 0700 setup directory), which the dashboard server reads and deletes,
 and claimed over this socket together with the dashboard's own port; the browser is bound to that port
@@ -35,7 +35,7 @@ from .protocol import BROWSER_PREFIX, MAX_BODY, SOCKET_ROUTES, SetupError
 
 __all__ = ["CODE_SECONDS", "IDLE_SECONDS", "SetupServer"]
 
-CODE_SECONDS = 30.0
+CODE_SECONDS = 300.0  # 5 min: the person may copy the printed link elsewhere; still single use
 IDLE_SECONDS = 600.0
 CODE_TRIES = 5
 _HOST = re.compile(r"(?:127\.0\.0\.1|localhost):([0-9]{1,5})")

@@ -28,9 +28,10 @@ __all__ = ["AGENT_ENV", "INSTALL_HINT", "agent_refusal", "find_entry_point", "ma
 SCRIPT = "orch-dashboard"
 MODULE = "orch_dashboard"
 INSTALL_HINT = (
-    "the dashboard addon is not installed: install it into the environment that runs orch "
-    "(pip install orch-dashboard, or uv tool install orch-dashboard, or from a checkout: "
-    "pip install -e addons/dashboard/server)"
+    "the dashboard addon is not installed: install it into the same uv tool environment as orch: "
+    'uv tool install --force --with "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core@develop'
+    '#subdirectory=addons/dashboard/server" '
+    '"git+https://github.com/severinlindenmann/orch-core@develop#subdirectory=plugins/orch-core"'
 )
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 REFUSAL = (

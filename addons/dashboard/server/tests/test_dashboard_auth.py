@@ -13,6 +13,16 @@ from orch_dashboard.errors import HostError
 from orch_dashboard.hostlink import check_uid
 
 
+def _current(reply):
+    """A control stub for a running server of THIS release: `hello` answers the launcher's own digest (so the
+    server is reused, not restarted); every other command answers ``reply``."""
+    from orch_dashboard import __main__ as launcher
+
+    return lambda path, command, *rest: (
+        {"release": launcher.code_digest()} if command == "hello" else reply(path, command, *rest)
+    )
+
+
 def test_exchange_atomic_single_use_and_restart():
     auth = Auth()
     code = auth.launch(PORT)["code"]
@@ -182,7 +192,10 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     issued = auth.launch(PORT)
     opened = []
     monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
-    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    # a running server of this release: `hello` answers the same digest, so it is reused (not restarted)
+    monkeypatch.setattr(
+        launcher, "control", lambda _p, c, *_: {"release": launcher.code_digest()} if c == "hello" else issued
+    )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: opened.append("probe"))
     browser_args = []
 
@@ -214,6 +227,8 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     assert redirect.parent.stat().st_mode & 0o777 == 0o700
     html = redirect.read_text()
     assert issued["code"] in html and "location.replace" in html and 'http-equiv="refresh"' in html
+    # one navigation only: the refresh is a no-JavaScript fallback (two loads would spend the single-use code twice)
+    assert '<noscript><meta http-equiv="refresh"' in html and html.count("http-equiv") == 1
     assert auth.exchange(issued["code"])[1] == 200
     assert not redirect.exists()
     issued = auth.launch(PORT)
@@ -273,12 +288,14 @@ def test_launcher_uses_server_redirect_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         launcher,
         "control",
-        lambda *_: {
-            "port": PORT,
-            "code": "demo-not-a-real-code",
-            "redirect": str(server),
-            "expires_at": time.time() + 30,
-        },
+        _current(
+            lambda *_: {
+                "port": PORT,
+                "code": "demo-not-a-real-code",
+                "redirect": str(server),
+                "expires_at": time.time() + 30,
+            }
+        ),
     )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)
@@ -306,7 +323,13 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     seen = capsys.readouterr()
     assert not seen.out and seen.err == "orch-dashboard: --print-url requires a terminal\n"
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
+    monkeypatch.setattr(
+        launcher,
+        "control",
+        lambda _p, c, *_: {"release": launcher.code_digest()}
+        if c == "hello"
+        else {"port": PORT, "code": "demo-not-a-real-code"},
+    )
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
     launcher.open_dashboard(print_url=True)
     printed = capsys.readouterr().out
@@ -327,7 +350,9 @@ def test_launcher_refuses_an_unexpected_redirect_file(tmp_path, monkeypatch, nam
         (tmp_path / name).mkdir(mode=0o700)
     target = tmp_path / named.format(h=hashlib.sha256(code.encode()).hexdigest())
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": code, "redirect_file": str(target)})
+    monkeypatch.setattr(
+        launcher, "control", _current(lambda *_: {"port": PORT, "code": code, "redirect_file": str(target)})
+    )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must not open"))
     with pytest.raises(SystemExit, match="unexpected launch file"):
@@ -374,7 +399,7 @@ def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypat
         # The launcher's own environment resolves to a different directory than the server's (and the server's
         # "redirect" hint is absent): only the recorded file path may decide.
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "launcher-sees-something-else"))
-        monkeypatch.setattr(launcher, "control", lambda *_, issued=issued: {k: v for k, v in issued.items()})
+        monkeypatch.setattr(launcher, "control", _current(lambda *_, issued=issued: {k: v for k, v in issued.items()}))
         launcher.open_dashboard()
         redirect = auth.files[issued["code"]]
         assert redirect.parent == server_dir and redirect.is_file()
@@ -399,6 +424,8 @@ def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, mo
     issued = {}
 
     def control(path, command, kind=None):
+        if command == "hello":  # a running server of this release
+            return {"release": launcher.code_digest()}
         asked.append((command, kind))
         issued.update(auth.launch(PORT, setup=kind == "setup"))
         return dict(issued)

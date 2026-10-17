@@ -1,4 +1,4 @@
-import { codeReviewWaits, policySentence } from '@/api/gates'
+import { addFirst, codeReviewWaits, policySentence } from '@/api/gates'
 import type { GateName, GateStatus, QuestionStatus, TicketDocument } from '@/api/types'
 import { roleMeets } from '@/api/roles'
 import { can } from '@/api/permissions'
@@ -54,11 +54,10 @@ export interface Available {
 /** B11: core says an approval still lacks something (e.g. no plan written yet): never offer Approve for it. */
 export const lacks = (g: Pick<GateStatus, 'missing'>) => (g.missing?.length ?? 0) > 0
 
-/** What the gate waits for when it lacks something, in plain words: "Waiting for the agent to write the plan". */
+/** What the gate waits for when it lacks something: "Waiting for the agent to write the plan", else "Add … first". */
 export function lackText(gate: 'requirements' | 'plan', missing: string[]): string {
   if (missing.includes(gate)) return `Waiting for the agent to write the ${gate}`
-  const what = missing.map((m) => (m.startsWith('artifact:') ? m.slice('artifact:'.length) : m.replace(/_/g, ' ')))
-  return `Waiting for the agent to finish the ${gate} (missing: ${what.join(', ')})`
+  return addFirst(missing)
 }
 
 /** Human actions the viewer can take now, only where the gate or the needs say so. */

@@ -18,6 +18,7 @@ import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
 import { alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { refusalOf, refusalSentence } from '@/api/refusals'
+import { addFirst, missingOf } from '@/api/gates'
 import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { ClickBadge, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
@@ -219,7 +220,12 @@ export function HandoffDialog(p: HandoffDialogProps) {
   // H12d-2: a click-to-sign refusal (or a reader declaration that did not verify) is said in plain words; the host's own
   // message follows as text.
   const refusal = refusalOf(run.error)
-  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
+  // B11 (#14): an incomplete gate is said in words ("Add Context and Out of scope first."), never as the raw code
+  const lacking = run.error?.code === 'gate.incomplete' ? missingOf(run.error.message) : null
+  const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
+  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code)
+  // a CLI pointer ("orch describe approve") means nothing on this page
+  const cliOnly = (v: unknown) => typeof v === 'string' && /\borch describe\b/.test(v)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
@@ -347,8 +353,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 The host says: <Raw>{run.error.message}</Raw>
               </p>
             )}
-            {run.error?.fix && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
-            {run.error?.hint && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
+            {run.error?.fix && !cliOnly(run.error.fix) && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
+            {run.error?.hint && !cliOnly(run.error.hint) && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
 

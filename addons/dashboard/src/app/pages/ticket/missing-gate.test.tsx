@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
+import { missingOf } from '@/api/gates'
 import { availableActions, lackText, primaryAction } from './actions'
 import { GatesStrip } from './Gates'
 
@@ -40,7 +41,14 @@ it('never offers Approve requirements while acceptance criteria are missing', as
 })
 
 it('names what else is missing in plain words', () => {
-  expect(lackText('plan', ['decisions', 'tasks'])).toBe('Waiting for the agent to finish the plan (missing: decisions, tasks)')
+  expect(lackText('plan', ['decisions', 'tasks'])).toBe('Add Decisions and one task first.')
   expect(lackText('requirements', ['requirements', 'acceptance'])).toBe('Waiting for the agent to write the requirements')
-  expect(lackText('plan', ['artifact:design'])).toBe('Waiting for the agent to finish the plan (missing: design)')
+  expect(lackText('requirements', ['context', 'out_of_scope', 'acceptance'])).toBe('Add Context, Out of scope and one acceptance check first.')
+  expect(lackText('plan', ['artifact:design'])).toBe('Add the artifact design first.')
+})
+
+it('reads the items of a gate.incomplete refusal', () => {
+  expect(missingOf('missing: context, out_of_scope, acceptance')).toEqual(['context', 'out_of_scope', 'acceptance'])
+  expect(missingOf('gate.incomplete: missing: plan')).toEqual(['plan'])
+  expect(missingOf('something else')).toBeNull()
 })

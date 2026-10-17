@@ -47,6 +47,7 @@ from typing import Any, Literal, NamedTuple, Protocol
 from orch import canon, crypto, schema
 from orch.identity import CryptoVerifier, new_ulid
 from orch.identity.certs import REVOKE_REASONS, revoke_strength
+from orch.layout import Layout
 from orch.model import (
     WORKSPACE,
     Code,
@@ -272,8 +273,11 @@ class Store:
         lock_timeout: float | None,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         fs: RootFS | None = None,
+        layout: Layout | None = None,
     ) -> None:
         self.root = root
+        #: project (the root agents work in) and store (``root``); the same directory in the legacy layout
+        self.layout = layout if layout is not None else Layout.legacy_at(root)
         #: the pinned root (#516): every file under the workspace is reached through it, never by path
         self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
@@ -373,6 +377,7 @@ class Store:
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         config: bytes | None = None,
         ident: tuple[int, int] | None = None,
+        layout: Layout | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -391,7 +396,8 @@ class Store:
         caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
         them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
         it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
-        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516).
+        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516). ``layout``: the project and the
+        store directory (``path`` is the store); ``None``: the legacy layout, project = ``path``.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
@@ -412,6 +418,7 @@ class Store:
                 lock_timeout=lock_timeout,
                 guard=guard,
                 fs=fs,
+                layout=layout,
             )
             store._open(load == "all", config)
         except BaseException:

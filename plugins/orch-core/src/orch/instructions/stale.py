@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from .agents_md import INSTRUCTIONS_REV, stamp_rev
-from .harness import AGENTS_FILE, SKILLS_DIR, UnsafePath, safe_read
+from .harness import AGENTS_FILE, SKILLS_DIR, UnsafePath, agents_rel, safe_read
 from .skills import SIDECAR_NAME, SkillError, builtin_skills, check_sidecar
 
 __all__ = ["stale_findings"]
@@ -29,7 +29,7 @@ def stale_findings(root: Path, store: Path | None = None) -> list[dict[str, str]
     ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them)."""
     out: list[dict[str, str]] = []
     try:
-        text = safe_read(store if store is not None else root, AGENTS_FILE)
+        text = safe_read(root, agents_rel(root, store))
     except UnsafePath as e:
         out.append({"where": AGENTS_FILE, "what": str(e).split(": ", 1)[1]})
     except (OSError, UnicodeDecodeError):

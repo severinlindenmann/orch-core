@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from orch.host import custody
 from orch.host.control import ControlOps
 from orch.host.errors import HostError
 from orch.instructions import check_targets, write_workspace_files
-from orch.store import StoreError
+from orch.store import Store, StoreError
 from orch.store.store import open_store_fs
 
 CFG = json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "w"}})
@@ -69,13 +70,63 @@ def test_bootstrap_probes_read_the_store(tmp_path: Path) -> None:
 
 def test_bootstrap_rollback_removes_dot_orch_only_if_it_is_the_recorded_one(tmp_path: Path) -> None:
     p = _proj(tmp_path)
-    made = ControlOps._fingerprint(str(p))
-    assert list(made) == [".orch"]
+    st = os.stat(p / ".orch")
+    made = ControlOps._fingerprint(str(p), (st.st_dev, st.st_ino))
+    assert made == {".orch": [st.st_dev, st.st_ino]}
     ControlOps._clean_root(str(p), made)
     assert not (p / ".orch").exists()
+    assert not [n for n in os.listdir(p) if n.startswith(".orch-rollback")]  # no tombstone left
     q = _proj(tmp_path / "q")
     ControlOps._clean_root(str(q), {".orch": [1, 2]})  # another inode: not ours
+    assert (q / ".orch").is_dir() and (q / ".orch" / "config.json").is_file()
+    assert ControlOps._fingerprint(str(q), None) == {}  # an open that made nothing records nothing
+    ControlOps._clean_root(str(q), {})
     assert (q / ".orch").is_dir()
+
+
+def test_rollback_never_follows_a_link_or_a_swapped_dot_orch(tmp_path: Path) -> None:
+    p = _proj(tmp_path)
+    st = os.stat(p / ".orch")
+    made = {".orch": [st.st_dev, st.st_ino]}
+    (p / ".orch").rename(p / "moved")
+    (p / ".orch").symlink_to(p / "moved")
+    ControlOps._clean_root(str(p), made)
+    assert (p / "moved" / "config.json").is_file() and (p / ".orch").is_symlink()
+    (p / ".orch").unlink()
+    (p / ".orch").mkdir()  # a person's own directory, another inode
+    (p / ".orch" / "mine.txt").write_text("keep")
+    ControlOps._clean_root(str(p), made)
+    assert (p / ".orch" / "mine.txt").read_text() == "keep"
+
+
+def test_a_failing_bootstrap_leaves_a_pre_existing_dot_orch_untouched(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(layout, "WRITE_NEW", True)
+    p = tmp_path / "proj"
+    (p / ".orch").mkdir(parents=True)
+    (p / ".orch" / "notes.txt").write_text("another tool's")
+    with pytest.raises(StoreError, match="already exists and is not an orch store"):
+        Store.open(p, expected_workspace_id="w" * 32, create=True)
+    assert (p / ".orch" / "notes.txt").read_text() == "another tool's"
+    # what the control layer records for that failed open, and what its rollback then does
+    created = ControlOps._fingerprint(str(p), None)
+    ControlOps._clean_root(str(p), created)
+    assert (p / ".orch" / "notes.txt").read_text() == "another tool's"
+
+
+def test_store_open_creates_dot_orch_only_with_create_and_records_what_it_made(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(layout, "WRITE_NEW", True)
+    p = tmp_path / "proj"
+    p.mkdir()
+    with pytest.raises(StoreError):
+        Store.open(p, expected_workspace_id="w" * 32)  # a reader: nothing is made
+    assert not (p / ".orch").exists()
+    s = Store.open(p, expected_workspace_id="w" * 32, create=True)
+    try:
+        st = os.stat(p / ".orch")
+        assert s.created_store == (st.st_dev, st.st_ino) and not s.layout.legacy
+        assert stat.S_IMODE(st.st_mode) == 0o700
+    finally:
+        s.close()
 
 
 def test_addons_live_in_the_store(tmp_path: Path) -> None:
@@ -131,9 +182,9 @@ def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -
     with pytest.raises(OSError):
         open_store_fs(missing, None, None)
     assert not missing.exists()
-    fs, lay = open_store_fs(missing, None, None, create=True)
+    fs, lay, made = open_store_fs(missing, None, None, make_project=True)
     fs.close()
-    assert missing.is_dir() and lay.legacy  # WRITE_NEW is off
+    assert missing.is_dir() and lay.legacy and made is None  # WRITE_NEW is off
     with pytest.raises(StoreError):
         open_store_fs(missing, (1, 2), None, create=True)
     monkeypatch.setattr(layout, "WRITE_NEW", True)
@@ -142,9 +193,9 @@ def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -
     with pytest.raises(StoreError):  # no create: no .orch made, the open refuses
         open_store_fs(fresh, None, None)
     assert not (fresh / ".orch").exists()
-    fs, lay = open_store_fs(fresh, None, None, create=True)
+    fs, lay, made = open_store_fs(fresh, None, None, create=True)
     fs.close()
-    assert (fresh / ".orch").is_dir() and not lay.legacy
+    assert (fresh / ".orch").is_dir() and not lay.legacy and made is not None
     shutil.rmtree(fresh / ".orch")
 
 
@@ -199,3 +250,14 @@ def test_served_fence_fails_closed_like_the_sandbox_marker(tmp_path: Path) -> No
     both = _proj(tmp_path / "b")
     (both / "config.json").write_text(CFG)
     assert is_served(both) is True
+
+
+def test_the_link_check_for_agents_orch_md_covers_the_dot_orch_component(tmp_path: Path) -> None:
+    p = tmp_path / "proj"
+    p.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (p / ".orch").symlink_to(tmp_path / "elsewhere")
+    assert check_targets(p, p / ".orch")
+    with pytest.raises(Exception, match="symbolic link"):
+        write_workspace_files(p, store=p / ".orch", pointers=False)
+    assert not (tmp_path / "elsewhere" / "AGENTS.orch.md").exists()

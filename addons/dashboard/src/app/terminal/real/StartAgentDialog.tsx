@@ -349,7 +349,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
       <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Runner grant</p>
-      <p role="note" data-testid="runner-grant-risk" className="text-warning">{DEPOSIT_RISK}</p>
+      <p role="note" data-testid="runner-grant-risk" className="text-warning">{maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')}</p>
       {loading && <Skeleton className="h-6" />}
       {grant && !extend && step.kind !== 'polling' && (
         <div className="flex flex-wrap items-center gap-2" data-testid="runner-grant-current">

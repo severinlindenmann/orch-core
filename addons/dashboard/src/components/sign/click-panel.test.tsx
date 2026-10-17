@@ -356,6 +356,16 @@ it('makes the badge risk text available inline on small touch screens', () => {
   expect(screen.getByText(CLICK_RISK)).toHaveClass('sm:hidden')
 })
 
+it('K6: a removed person reads "remove: Severin", never "remove: — → Severin"', () => {
+  const ID = 'p_181d953f12ab34cd56ef78901234abcd'
+  const client = new QueryClient()
+  client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }])
+  render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content: { headline: 'x', fields_changed: [{ field: 'assignees: remove', before: null, after: ID }] } })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={WS} /></QueryClientProvider>)
+  const row = screen.getByText('assignees: remove').parentElement!
+  expect(row).toHaveTextContent(/^assignees: remove: Severin/)
+  expect(row).not.toHaveTextContent('—')
+})
+
 describe('people in the content are named from the View\'s own workspace', () => {
   const ID = 'p_181d953f12ab34cd56ef78901234abcd'
   const content = { headline: 'x', fields_changed: [{ field: 'owner', before: null, after: ID }] }

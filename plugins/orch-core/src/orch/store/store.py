@@ -1265,15 +1265,18 @@ class Store:
     # ------------------------------------------------------------------ locking, sync, recovery
 
     def _check_layout(self) -> None:
-        """Under the guard and the lock, on every transaction: the store this object has open is still the store of its
-        project. ``orch.layout.resolve`` runs afresh below the project and must find the layout this store was opened
-        with, and (new layout) the ``.orch`` it names must be the very directory pinned (same ``st_dev``/``st_ino``).
-        The legacy layout is resolved below the PINNED root fd (the project is the store; a project path swapped
-        later is no concern of a pinned fd), the new one below the project opened afresh by path (``O_NOFOLLOW``).
-        A migrate that moved the store (it holds ``owner.lock`` exclusively, which a direct-mode guard waits for),
-        a swapped ``.orch`` or a store that vanished fails closed with ``validation.path``: a stale opener never writes to a store
-        that is no longer where it was. A workspace whose ``config.json`` is not written yet (genesis in progress)
-        resolves to nothing and keeps the layout it was opened with."""
+        """Under the guard and the lock, on every transaction: the store this object has open is still the store of
+        its project.
+
+        ``orch.layout.resolve`` runs afresh and must find the layout this store was opened with; in the new layout the
+        ``.orch`` it names must be the very directory pinned (same ``st_dev``/``st_ino``). The legacy layout is
+        resolved below the PINNED root fd (the project is the store, and a project path swapped later is no concern of
+        a pinned fd), the new one below the project opened afresh by path (``O_NOFOLLOW``).
+
+        A migrate that moved the store (it holds ``owner.lock`` exclusively, which a direct-mode guard waits for), a
+        swapped ``.orch`` or a store that vanished fails closed with ``validation.path``: a stale opener never writes
+        to a store that is no longer where it was. A workspace whose ``config.json`` is not written yet (genesis in
+        progress) resolves to nothing and keeps the layout it was opened with."""
         if self.layout.legacy:
             self._resolve_checked(self.fs.fd)
             return

@@ -81,7 +81,8 @@ def test_task_done_without_run_says_the_criterion_still_has_no_evidence(ws, cli)
 def test_the_hints_of_a_refused_submit_name_what_is_open(ws, cli):
     claimed(cli)
     r = cli.j("submit")
-    assert r.doc["error"]["hint"] == 'orch ask "approve the requirements gate?"'
+    # B11: an incomplete gate is filled first; asking for its approval would be refused gate.incomplete
+    assert r.doc["error"]["hint"] == "orch section set context -m TEXT"
     fill_and_approve(ws, cli)
     r = cli.j("submit")
     assert r.err_code == "ac.evidence_missing" and r.doc["error"]["hint"] == "orch section set verification -m TEXT"
@@ -237,3 +238,19 @@ def test_claim_hint_stops_dependency_loading_at_its_budget(ws, cli, monkeypatch)
     monkeypatch.setattr(Store, "_spend_load", spend)
     assert last(cli("status")) == "next: orch next"
     assert len(reads) <= 3
+
+
+def test_a_refused_submit_of_a_quick_task_without_a_plan_says_to_write_the_plan(ws, cli):
+    """B11 (owner run 2): a quick task (chore) with approved requirements and tasks but no plan section: the hint was
+    'orch ask "approve the plan gate?"', and the person's Approve plan was then refused gate.incomplete."""
+    cli("new", "Quick one", "--type", "chore")
+    cli("claim", "1")
+    cli("section", "set", "requirements", "-m", "req")
+    cli("ac", "add", "it works")
+    ws.human("approve", ws.uid("1"), "requirements")
+    cli("task", "add", "do it", "--verify", "true", "--proves", "AC1")
+    r = cli.j("submit")
+    assert r.doc["error"]["hint"] == "orch section set plan -m TEXT"
+    cli("section", "set", "plan", "-m", "do the task")
+    r = cli.j("submit")
+    assert r.doc["error"]["hint"] == 'orch ask "approve the plan gate?"'  # complete now: asking works

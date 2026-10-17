@@ -593,16 +593,20 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>Confirm in your terminal</h2>
-                  <p>Match these three words in the terminal that started setup:</p>
+                  <h2>Then confirm in your terminal</h2>
+                  <p>
+                    After you click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}, the terminal that
+                    started setup shows three words. Check that they are:
+                  </p>
                   <p>
                     <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>
                   </p>
+                  <p>If they match, type yes there.</p>
                 </div>
               )}
               {review.typed_word && (
                 <label>
-                  Type <Raw>{review.typed_word}</Raw> to confirm
+                  Type <Raw>{review.typed_word}</Raw> here to confirm
                   <input autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
                 </label>
               )}
@@ -645,7 +649,8 @@ export function Setup({ api }: { api: SetupAPI }) {
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
               <p>
-                Match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw> and confirm in the terminal that started setup.
+                Your terminal now asks you to confirm. If it shows <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>, type
+                yes there.
               </p>
             )}
           {progress?.waiting && (

@@ -53,25 +53,26 @@ def test_a_workspace_planted_in_a_sticky_shared_directory_is_ignored(ws, tmp_pat
     if layout == "v2-here":
         _v2(shared, ws)
     elif layout == "v2-sub":
-        _v2(shared / "orchestrator", ws)
+        _v2(shared / ".orch", ws)
     else:
         shutil.copytree(V1_FIXTURE / "orchestrator", shared / "orchestrator")
     mine = shared / "mine" / "deep"
     mine.mkdir(parents=True)
     # the plant is owned by us and private: only the shared directory makes it no candidate
-    assert discovery._private(os.stat(shared / "orchestrator" if layout != "v2-here" else shared / "config.json"))
+    plant = {"v2-sub": ".orch", "v1": "orchestrator", "v2-here": "config.json"}[layout]
+    assert discovery._private(os.stat(shared / plant))
     assert runtime.locate_workspace({}, str(mine), FILES) is None
     assert runtime.locate_workspace({}, str(shared), FILES) is None  # the start itself is a stop
     code, err = _check(mine, {"HOME": str(tmp_path / "home")}, monkeypatch)
     assert code == 2 and "no orch workspace here" in err and "v1" not in err
     # a person's own workspace below the shared directory is found
-    own = _v2(shared / "proj" / "orchestrator", ws)
+    own = _v2(shared / "proj" / ".orch", ws)
     (own.parent / "sub").mkdir()
-    assert runtime.find_workspace({}, str(own.parent / "sub"), FILES) == own
+    assert runtime.find_workspace({}, str(own.parent / "sub"), FILES) == own.parent
 
 
 def test_a_workspace_above_a_shared_directory_is_never_reached(ws, tmp_path):
-    _v2(tmp_path / "top" / "orchestrator", ws)
+    _v2(tmp_path / "top" / ".orch", ws)
     _v1(tmp_path / "top" / "old")
     shared = _sticky(tmp_path / "top" / "shared")
     (shared / "x").mkdir()
@@ -80,14 +81,14 @@ def test_a_workspace_above_a_shared_directory_is_never_reached(ws, tmp_path):
     os.chmod(shared, 0o777)
     assert runtime.locate_workspace({}, str(shared / "x"), FILES) is None
     os.chmod(shared, 0o755)
-    assert runtime.find_workspace({}, str(shared / "x"), FILES) == tmp_path / "top" / "orchestrator"
+    assert runtime.find_workspace({}, str(shared / "x"), FILES) == tmp_path / "top"
 
 
 def test_a_workspace_owned_by_another_uid_is_ignored(ws, tmp_path, monkeypatch):
-    v2 = _v2(tmp_path / "a" / "orchestrator", ws)
+    v2 = _v2(tmp_path / "a" / ".orch", ws)
     v1 = _v1(tmp_path / "b")
     here = _v2(tmp_path / "c", ws)
-    for found, cwd, is_v1 in ((v2, v2.parent, False), (v1, v1.parent, True), (here, here, False)):
+    for found, cwd, is_v1 in ((v2.parent, v2.parent, False), (v1, v1.parent, True), (here, here, False)):
         assert runtime.locate_workspace({}, str(cwd), FILES) == (found, is_v1)
     monkeypatch.setattr(discovery, "_owner", lambda: os.getuid() + 1)
     for cwd in (v2.parent, v2, v1.parent, v1 / "tickets", here):
@@ -97,7 +98,7 @@ def test_a_workspace_owned_by_another_uid_is_ignored(ws, tmp_path, monkeypatch):
     # another uid's workspace is walked past, not a stop: our own further up is found
     monkeypatch.undo()
     mine = _v2(tmp_path / "mine", ws)
-    theirs = _v2(mine / "theirs" / "orchestrator", ws)
+    theirs = _v2(mine / "theirs" / ".orch", ws)
     real_fstat = os.fstat
 
     def fstat(fd):  # only the planted folder and its config.json are another uid's
@@ -115,7 +116,7 @@ def test_a_workspace_owned_by_another_uid_is_ignored(ws, tmp_path, monkeypatch):
 @pytest.mark.parametrize("target", ["dir", "config"])
 @pytest.mark.parametrize("bits", [0o020, 0o002])
 def test_a_group_or_other_writable_workspace_is_ignored(ws, tmp_path, target, bits):
-    v2 = _v2(tmp_path / "a" / "orchestrator", ws)
+    v2 = _v2(tmp_path / "a" / ".orch", ws)
     v1 = _v1(tmp_path / "b")
     here = _v2(tmp_path / "c", ws)
     for found, cwd in ((v2, v2.parent), (v1, v1.parent), (here, here)):
@@ -147,7 +148,7 @@ def test_config_json_swapped_between_the_check_and_the_read_is_not_read(ws, tmp_
     one another uid would own and could rewrite) is not what is read; no path lookup sits in between."""
     import stat as _stat
 
-    proj = _v2(tmp_path / "proj" / "orchestrator", ws)
+    proj = _v2(tmp_path / "proj" / ".orch", ws)
     original = json.loads((proj / "config.json").read_text())
     evil = dict(original, workspace=dict(original["workspace"], id="ws_evil"))
     real_fstat = os.fstat
@@ -167,7 +168,11 @@ def test_config_json_swapped_between_the_check_and_the_read_is_not_read(ws, tmp_
         m.setattr(discovery.os, "fstat", fstat)
         found = discovery.locate(proj.parent, explicit=False)
     assert swaps and json.loads((proj / "config.json").read_text())["workspace"]["id"] == "ws_evil"
-    assert found is not None and found.path == proj and found.config["workspace"]["id"] == original["workspace"]["id"]
+    assert (
+        found is not None
+        and found.path == proj.parent
+        and found.config["workspace"]["id"] == original["workspace"]["id"]
+    )
 
 
 def test_an_ancestor_swapped_for_a_symlink_after_the_resolve_is_never_entered(ws, tmp_path, monkeypatch):
@@ -199,7 +204,7 @@ def test_an_ancestor_swapped_for_a_symlink_after_the_resolve_is_never_entered(ws
 def test_an_ancestor_that_cannot_be_opened_stops_the_walk(ws, tmp_path, mode):
     """Fail closed: when a directory on the way up cannot be opened (sticky but unreadable ``0o1111``, or just
     unreadable), its boundary cannot be established, so the walk stops instead of climbing above it."""
-    _v2(tmp_path / "top" / "orchestrator", ws)
+    _v2(tmp_path / "top" / ".orch", ws)
     shut = tmp_path / "top" / "shut"
     (shut / "x").mkdir(parents=True)
     os.chmod(shut, mode)
@@ -207,7 +212,7 @@ def test_an_ancestor_that_cannot_be_opened_stops_the_walk(ws, tmp_path, mode):
         assert runtime.locate_workspace({}, str(shut / "x"), FILES) is None
     finally:
         os.chmod(shut, 0o755)
-    assert runtime.find_workspace({}, str(shut / "x"), FILES) == tmp_path / "top" / "orchestrator"
+    assert runtime.find_workspace({}, str(shut / "x"), FILES) == tmp_path / "top"
 
 
 def _no_path_open_of_config(monkeypatch):

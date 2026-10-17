@@ -219,6 +219,9 @@ class WorkspaceService:
                 clock=self.clock,
                 load="lazy",
             )
+            if store.layout.legacy != (self.entry.store is None):  # version skew or a half-done migrate: refuse
+                store.close()
+                raise HostError("custody.unsafe_mode", "the store layout differs from the registry entry")
         except (HostError, StoreError, OSError, ValueError, KeyError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
             return
@@ -372,7 +375,7 @@ class WorkspaceService:
         store = self.store
         if store is None:
             return
-        journal = self.journal or Journal(self.entry.workspace_id, self.entry.root, self.cursors)
+        journal = self.journal or Journal(self.entry.workspace_id, self.entry.store_dir, self.cursors)
         if audit:
             self.state, self.cause = "degraded", "the subscription journal is being rebuilt"
             LOG.warning(
@@ -532,7 +535,7 @@ class WorkspaceService:
             self.auth = None
             return
         try:
-            self.auth = build_auth(self.store, self.entry.root)
+            self.auth = build_auth(self.store, self.entry.store_dir)
         except (StoreError, OSError, ValueError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
             self.auth = None
@@ -600,7 +603,7 @@ class WorkspaceService:
                     )
                 except (OSError, ValueError, Unavailable):
                     git = None  # an unreadable pin file is never replaced by fresh pins: git is denied (fail closed)
-            self.caps = Capabilities.host((self.entry.root,), env={}, clock=self.clock, git=git)
+            self.caps = Capabilities.host((os.fspath(self.entry.store_dir),), env={}, clock=self.clock, git=git)
         return self.caps
 
     def sync_git(self) -> None:
@@ -616,7 +619,7 @@ class WorkspaceService:
             return
         repos = self.store.state.workspace.repos
         declared = tuple(
-            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.root, repos, n)) is not None)
+            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.layout, repos, n)) is not None)
         )
         now = time.monotonic()
         if declared == self._git_declared and now < self._git_retry_at:
@@ -1017,7 +1020,7 @@ class WorkspaceGate:
         """The column's refusal from the snapshot, or ``None`` (allowed, or the snapshot cannot say: stale)."""
         service = self.host.services.get(self.workspace_id)
         auth = service.auth if service is not None else None
-        if service is None or auth is None or service.closing or not auth.fresh(service.entry.root):
+        if service is None or auth is None or service.closing or not auth.fresh(service.entry.store_dir):
             return None
         now = service.clock()
         verified = auth.verify((frame.get("auth") or {}).get("grant"), now)

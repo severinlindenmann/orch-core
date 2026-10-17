@@ -1115,7 +1115,7 @@ def bound_copy(git: Any, store: Any, log: str, name: str, copies: list[dict[str,
     if not git.enabled or git.reader is None:  # fail closed: no reader means nothing can vouch for any copy
         raise HostError("observe.unavailable", f"{name}: git cannot be read in this workspace now")
     want = next((c for c in copies or [] if c.get("repo") == name and c.get("ticket") == log), None)
-    copy = git.ticket_copy(store.root, store.state.workspace.repos, log, name)
+    copy = git.ticket_copy(store.layout, store.state.workspace.repos, log, name)
     if want is None or copy.binding(log, name) != want:
         raise HostError(
             "observe.unavailable",

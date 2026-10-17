@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch import layout as layout_mod
+from orch.layout import LayoutError
 
 from . import frames
 from .blobs import BLOB_MAX, Quota
@@ -88,16 +90,65 @@ def _digest(ops: dict[str, int]) -> str:
 SERVED_MARKER = "host-served"
 
 
+def _state_fd(project: str | os.PathLike[str]) -> int | None:
+    """The fd of ``.state`` of the STORE of the project (``.orch/.state`` in the new layout, ``.state`` in the legacy
+    one), every step ``O_NOFOLLOW`` from the project fd; ``None`` when there is none. :class:`LayoutError` when the
+    layout is unusable (two stores, a linked ``.orch``)."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        pfd = os.open(project, flags)
+    except OSError:
+        return None
+    try:
+        found = layout_mod.resolve(pfd, project)
+        if found is None:
+            return None
+        sfd = pfd if found.legacy else layout_mod.open_store_dir(pfd)
+        if sfd is None:
+            return None
+        try:
+            return os.open(".state", flags, dir_fd=sfd)
+        except OSError:
+            return None
+        finally:
+            if sfd != pfd:
+                os.close(sfd)
+    finally:
+        os.close(pfd)
+
+
+def is_served(project: str | os.PathLike[str]) -> bool:
+    """A host serves the workspace of ``project``: its marker is under the store's ``.state`` (either layout). Fails
+    closed: a layout that cannot be resolved (two stores, a linked ``.orch``) counts as served, so a direct-mode tool
+    never opens a store it cannot place."""
+    try:
+        dfd = _state_fd(project)
+    except LayoutError:
+        return True
+    if dfd is None:
+        return False
+    try:
+        os.stat(SERVED_MARKER, dir_fd=dfd, follow_symlinks=False)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(dfd)
+
+
 def served_marker(root: str, on: bool, state_dir: Path) -> None:
     """Write or remove the marker beneath the workspace's ``.state`` (no symlink followed; failures are ignored: the
     marker is a second fence next to the registry, never a reason to stop serving)."""
     import json as _json
 
     del state_dir  # kept in the signature for the callers; never written into the workspace
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        dfd = os.open(Path(root) / ".state", flags)
-    except OSError:
+        dfd = _state_fd(root)
+    except LayoutError:
+        return
+    if dfd is None:
         return
     try:
         if on:
@@ -258,7 +309,7 @@ class Host:
         if service is None:
             return False
         auth = service.auth
-        if auth is not None and auth.fresh(service.entry.root):
+        if auth is not None and auth.fresh(service.entry.store_dir):
             return auth.person_ok(person, self.clock())
         try:
             asyncio.get_running_loop()

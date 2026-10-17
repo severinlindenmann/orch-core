@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from orch.layout import STORE_DIR
+
 from .custody import ensure_private_dir, read_json, root_key, unsafe, write_private
 from .errors import HostError
 from .peer import Peer
@@ -79,6 +81,14 @@ class Entry:
     group: str
     peers: dict[str, dict[str, Any]]
     repos: dict[str, Any] = field(default_factory=dict)
+    #: ``".orch"``: the store is ``<root>/.orch``; ``None`` (key absent in the registry file): the legacy layout, the
+    #: store is ``root`` itself. Written only by migrate or after the flip; any other value is refused on read.
+    store: str | None = None
+
+    @property
+    def store_dir(self) -> Path:
+        """The directory that holds this workspace's ``config.json``, ``events/``, ``tickets/``, ``.state/``."""
+        return Path(self.root) / self.store if self.store is not None else Path(self.root)
 
     @property
     def tier(self) -> str:
@@ -86,7 +96,7 @@ class Entry:
         return "B" if any(p["class"] == "agent" for p in self.peers.values()) else "A"
 
     def to_doc(self) -> dict[str, Any]:
-        return {
+        doc = {
             "workspace_id": self.workspace_id,
             "prefix": self.prefix,
             "root": self.root,
@@ -95,19 +105,18 @@ class Entry:
             "peers": copy.deepcopy(self.peers),
             "repos": copy.deepcopy(self.repos),
         }
+        if self.store is not None:  # exact key set: the key exists only once the store has moved
+            doc["store"] = self.store
+        return doc
 
     @classmethod
     def from_doc(cls, doc: Any) -> Entry:
-        if not isinstance(doc, dict) or set(doc) != {
-            "workspace_id",
-            "prefix",
-            "root",
-            "host_uid",
-            "group",
-            "peers",
-            "repos",
-        }:
+        keys = {"workspace_id", "prefix", "root", "host_uid", "group", "peers", "repos"}
+        if not isinstance(doc, dict) or set(doc) not in (keys, keys | {"store"}):
             raise unsafe("registry entry has an unexpected shape")
+        store = doc.get("store")
+        if "store" in doc and store != STORE_DIR:
+            raise unsafe("registry entry has an unknown store layout")
         wid, root, peers = doc["workspace_id"], doc["root"], doc["peers"]
         if (
             not isinstance(wid, str)
@@ -120,7 +129,7 @@ class Entry:
             raise unsafe("registry entry has bad peers")
         for key, spec in peers.items():
             _check_spec(key, spec)
-        return cls(wid, str(doc["prefix"]), root, doc["host_uid"], str(doc["group"]), peers, doc["repos"])
+        return cls(wid, str(doc["prefix"]), root, doc["host_uid"], str(doc["group"]), peers, doc["repos"], store)
 
 
 def group_name(workspace_id: str) -> str:

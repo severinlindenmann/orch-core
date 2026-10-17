@@ -159,6 +159,7 @@ def review_prompt(text: str, expect: str) -> bool:
         if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
             shown, details = details, ""
         os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
+        b6_view = bool(details)  # only a B6 review (plain view, full one behind d)
         import termios
 
         while True:
@@ -179,6 +180,10 @@ def review_prompt(text: str, expect: str) -> bool:
                 os.write(fd, ("\n=== details ===\n" + details + prompt).encode())
                 details = ""  # shown once; a second `d` is an answer that stops
                 continue
+            if answer == expect and b6_view:
+                from orch.custody.passphrase import note_plain_review
+
+                note_plain_review()  # one-shot: the next passphrase prompt only, and only after a confirmed review
             return answer == expect
     finally:
         os.close(fd)
@@ -325,7 +330,7 @@ class Human:
         if git.worktrees is None and not copy.registered:
             from orch.host.worktrees import worktree_path
 
-            declared = git.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            declared = git.repo_path(self.store.layout, self.store.state.workspace.repos, name)
             if declared is not None and os.path.lexists(worktree_path(os.fspath(declared), self.store.workspace_id,
                                                                       view.key)):  # fmt: skip
                 return f"{name}: the ticket has a worktree on disk but no registration (git-pins.json is missing)"
@@ -353,7 +358,7 @@ class Human:
                 except (ValueError, OSError) as exc:  # a pin file that cannot be read: fail closed
                     out.append(f"{name}: the worktree registrations cannot be read ({exc})")
                     continue
-            copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
+            copy = git.ticket_copy(self.store.layout, self.store.state.workspace.repos, view.uid, name)
             path = copy.path
             if self.ctx.prepare is None and git.reader is None:
                 # direct mode (Codex #439): the copy the person was shown is the one the precommit reads

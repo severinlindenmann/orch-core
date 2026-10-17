@@ -40,6 +40,7 @@ from typing import Any
 
 from orch import canon, discovery
 from orch.canon.text import TextError, normalize_text
+from orch.layout import Layout
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -224,6 +225,19 @@ class Workspace:
         return self._root
 
     @property
+    def layout(self) -> Layout | None:
+        """Project and store directory of the workspace (``None`` without one). ``root`` is the legacy root, so until
+        discovery learns the ``.orch`` layout (design step 2) project and store are both ``root``."""
+        root = self.root
+        return Layout.legacy_at(root) if root is not None else None
+
+    @property
+    def project(self) -> Path | None:
+        """The project root (where agents and terminals work); today ``root``."""
+        layout = self.layout
+        return layout.project if layout is not None else None
+
+    @property
     def config(self) -> dict[str, Any] | None:
         """The workspace's ``config.json`` as discovery read it (never re-read by path); ``None`` without a v2
         workspace. The host's view (:meth:`hosted`, nothing discovered) reads it through the host ``Files``."""
@@ -306,6 +320,7 @@ class Workspace:
             guard=DirectGuard(sd, wid) if self.files.roots is None else None,
             config=self._found.raw if self._found is not None and self._found.raw else None,
             ident=self.ident,  # the root fd is checked against what discovery saw; everything below goes through it
+            layout=self.layout,
         )
 
 

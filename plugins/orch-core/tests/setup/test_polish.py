@@ -42,7 +42,7 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
         ],
     )
     st = f.dispatch("GET", "state", {}, None)[1]
-    assert st["current"]["agent_hours"] == 72 and st["current"]["addons"] == ["dashboard", "start-agent"]
+    assert st["current"]["agent_hours"] == 72 and st["current"]["addons_on"] == ["dashboard", "start-agent"]
     assert st["current"]["runner"] == {"enabled": True, "terminals": False} and st["current"]["method"] == "terminal"
     assert "custody" not in st["missing"] and "settings" not in st["missing"] and "runner" not in st["missing"]
     assert st["missing"] == ["addon:terminals", "addon:worktrees", "runner_grant"]

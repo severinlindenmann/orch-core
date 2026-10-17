@@ -49,7 +49,7 @@ const state: SetupState = {
 const current = {
   name: 'Demo',
   prefix: 'TST',
-  addons: ['dashboard'],
+  addons_on: ['dashboard'],
   agent_hours: 72,
   runner: { enabled: true, terminals: false },
   runner_grant: false,

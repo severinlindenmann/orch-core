@@ -27,7 +27,7 @@ export interface SetupState {
   current?: {
     name: string
     prefix: string
-    addons: string[]
+    addons_on: string[]
     agent_hours: number
     runner: { enabled: boolean; terminals: boolean }
     runner_grant: boolean

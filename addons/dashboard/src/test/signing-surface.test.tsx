@@ -868,7 +868,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
       addons:[{id:'worktrees',title:'Worktrees',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
       methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
       relay:{available:false,enabled:false},missing:['addon:worktrees'],labels:{},
-      current:{name:'Demo',prefix:'TST',addons:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
+      current:{name:'Demo',prefix:'TST',addons_on:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
     }
     if (String(url).endsWith('/review')) value = {
       review_id:'demo-review',digest:'demo-bound-digest',fingerprint:['demo','not','real'],

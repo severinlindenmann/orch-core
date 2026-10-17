@@ -117,8 +117,8 @@ function FinishChoices({
   update: (value: Partial<Profile>) => void
   onContinue: () => void
 }) {
-  const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons.includes(a.id))
-  const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons.includes(a.id))
+  const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons_on.includes(a.id))
+  const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons_on.includes(a.id))
   // a runner grant is never longer than the workspace's agent time: below the shortest choice (8 h) none is offered
   const offersGrant = state.missing.includes('runner_grant') && current.agent_hours >= 8
   const offersClick = current.method === 'terminal' && state.click_available
@@ -342,7 +342,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               ...p,
               name: c.name,
               prefix: c.prefix,
-              addons: s.addons.filter((a) => a.required || (a.kind === 'addon' && c.addons.includes(a.id))).map((a) => a.id),
+              addons: s.addons.filter((a) => a.required || (a.kind === 'addon' && c.addons_on.includes(a.id))).map((a) => a.id),
               method: c.method,
               agent_hours: nearestHours(c.agent_hours, s.agent_hours),
             }))

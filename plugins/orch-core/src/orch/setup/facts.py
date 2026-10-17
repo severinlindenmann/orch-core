@@ -266,7 +266,7 @@ def current(facts: Facts, info: dict[str, AddonInfo]) -> dict[str, Any]:
     return {
         "name": facts.name,
         "prefix": facts.prefix,
-        "addons": [a.id for a in info.values() if a.kind == "addon" and a.id in facts.addons],
+        "addons_on": [a.id for a in info.values() if a.kind == "addon" and a.id in facts.addons],
         "agent_hours": facts.grant_hours,
         "runner": {"enabled": facts.runner_enabled, "terminals": facts.terminals_enabled},
         "runner_grant": facts.grant_issued,

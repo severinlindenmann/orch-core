@@ -62,6 +62,26 @@ def normalise_code(text: str) -> str:
     return raw
 
 
+def _deliver(
+    call: Callable[..., Any],
+    secret: str,
+    request_id: str,
+    choose: Callable[[str], str] | None,
+    show_secret: Callable[[str], None],
+) -> list[str]:
+    """A sequence's runner grant, after its commit: to the orch runner when the person chooses it on their own
+    terminal, else shown there once (the same choice as a single grant, H11c)."""
+    if choose is not None:
+        try:
+            wanted = choose(DEPOSIT_PROMPT)
+        except Exception:  # noqa: BLE001 - no terminal to ask on: shown
+            wanted = "s"
+        if wanted == "r":
+            return signer.deposit_lines(signer.hand_over(call, secret, request_id[3:]))
+    show_secret(signer.secret_text(secret))
+    return []
+
+
 def _local_files(prepared: Mapping[str, Any], files: Mapping[str, bytes]) -> None:
     """``--file NAME=PATH``: every artifact event of the request has a local file of its name whose digest and size are
     the signed ones, and every file names an artifact event. Anything else is refused before the review."""
@@ -96,6 +116,7 @@ def sign_code(
     files: Mapping[str, bytes] | None = None,
     choose: Callable[[str], str] | None = None,
     sessions: Any = None,
+    now: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -139,6 +160,8 @@ def sign_code(
             sessions=sessions,
             new_idem=new_idem,
             prefix=f"{NOTICE}\n\n",
+            deliver=lambda secret, rid: _deliver(call, secret, rid, choose, show_secret),
+            **({} if now is None else {"now": now}),
         )
 
     def on_secret(secret: str) -> list[str]:

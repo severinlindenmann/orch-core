@@ -360,7 +360,7 @@ class ClickSigner:
             raise ClickError("invalid.input", "deposit is true or false")
         seq = args.get("sequence")
         if seq is not None:
-            self._sequence_ok(op, inner, seq, deposit, files)
+            self._sequence_ok(entry, op, inner, seq, deposit, files)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -418,10 +418,12 @@ class ClickSigner:
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
 
-    @staticmethod
-    def _sequence_ok(op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any) -> None:
-        """A sequence (one review, N signatures, batch 11) is the first step of a New ticket and nothing else; the
-        confirmation of the whole is that of its strongest step, and a terminal step means the terminal."""
+    def _sequence_ok(
+        self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
+    ) -> None:
+        """A sequence (one review, N signatures, batch 11) starts with ``new`` and nothing else; the confirmation of
+        the whole is that of its strongest step: a click, or (with a grant to the runner last) the GRANT word, which
+        needs dashboard execution on this machine. A terminal step means the terminal."""
         from orch.host import sequence
 
         if deposit or files or op != "new" or not isinstance(seq, dict) or seq.get("step") != 0:
@@ -430,7 +432,8 @@ class ClickSigner:
             intent = sequence.validate_intent(seq.get("intent"))
         except sequence.SequenceInvalid as exc:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
-        if sequence.confirm_kind(intent) != "click":
+        kind = sequence.confirm_kind(intent)
+        if kind == "terminal" or (kind == "word" and not (sequence.has_grant(intent) and self._execution(entry))):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -583,11 +586,21 @@ class ClickSigner:
             body = {"op": op, "args": args, "signer": {"device": device, "auth": "convenience"}, "sequence": meta}
             return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body)["data"]))
 
+        box: dict[str, Any] = {}
+
         def check(prepared: dict[str, Any]) -> None:
-            views.check_prepared(prepared, workspace_id=wid, person=person, device=device, files=None)
+            # every §0.8.1 check; what each step may be is the intent's (check_step), including a last grant, which a
+            # lone click never signs
+            try:
+                host_signer.check(prepared, workspace_id=wid, person=person, device=device, auth="convenience")
+            except host_signer.SignerRefused as exc:
+                raise refused("check_failed", str(exc)) from None
 
         def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
-            return host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid).events
+            signed = host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid)
+            if signed.secret is not None:  # the runner grant (last): this frame only, handed over after its commit
+                box["secret"] = signed.secret
+            return signed.events
 
         def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
             return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
@@ -609,9 +622,14 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        if sequence.confirm_kind(intent) != "click":  # re-asserted here: what is signed is what the click may sign
+        kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
+        if (
+            kind == "terminal"
+            or (kind == "word" and not (sequence.has_grant(intent) and self._execution(entry)))
+            or approval.kind != kind
+        ):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
-        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent)
+        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent, now=self.wall)
         try:
             live = driver.resumable()
         except sequence.SessionError as exc:
@@ -650,7 +668,18 @@ class ClickSigner:
         approval.signed, approval.idem = ["sequence"], None  # in memory: a repeated sign answers, never re-signs
         approval.result = last
         self._note("committed", workspace=wid, request=approval.request_id, op=approval.op, steps=out["landed"])
-        return {"result": last, "duplicate": False}
+        answer: dict[str, Any] = {"result": last, "duplicate": False}
+        secret = box.pop("secret", None)
+        if secret is not None:  # the grant is signed and committed: now, and only now, to the runner
+            did = out["requests"][-1][3:]
+            outcome, reason = self._hand_over(entry, did, secret)
+            if outcome == "unknown":
+                outcome, reason = self._deposit_status(entry, did)
+            answer |= {"deposit": outcome, "deposit_id": did, "grant": secret.partition(".")[0]}
+            if outcome == "rejected":
+                answer["deposit_reason"] = reason if reason in DEPOSIT_REASONS else "other"
+            del secret
+        return answer
 
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """A deposit grant's arguments: ``hours`` 1..168 (the workspace grant_hours; default 8) and

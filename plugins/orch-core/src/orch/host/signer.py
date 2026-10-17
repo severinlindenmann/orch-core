@@ -258,6 +258,8 @@ def _touches(prepared: Mapping[str, Any]) -> None:
             _refuse("base_rev does not name exactly the paths the edit touches")
         if op in ("ac.add", "ac.edit"):
             ok = set(sets) == {"ticket.acceptance"} and not sections
+        elif op == "task.add":
+            ok = set(sets) == {"ticket.tasks"} and not sections
         elif op == "section.set":
             ok = not sets and len(sections) == 1
         elif op == "set":
@@ -508,6 +510,9 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
     ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
+    seq = prepared["material"].get("sequence")
+    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("agent") is not None:
+        return "GRANT"  # a sequence that gives agents access is confirmed with the grant's word (its strongest step)
     if op in ("policy.set", "settings.set") and ticket is None:
         wid = prepared["workspace_id"]
         known = workspace(wid) if workspace is not None else None
@@ -614,12 +619,15 @@ def render(
     if artifacts is not None and artifacts not in labels:
         raise ValueError(f"artifacts: {artifacts!r}")
     out = [*header(prepared, workspace), ""]
+    extra: list[str] = []
     if prepared["material"].get("sequence") is not None:  # one review of every step (batch 11, finding 9)
         from . import sequence
 
         out.append(
             f"=== {int(prepared['material']['sequence']['of'])} signatures, ONE confirmation; all steps below ==="
         )
+        intent = sequence.validate_intent(prepared["material"]["sequence"]["intent"])
+        extra = sequence.extra_lines(intent)
         prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]
@@ -660,6 +668,7 @@ def render(
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
         text = value if isinstance(value, str) else canon.dumps(value).decode("utf-8")
         out += ["| " + _clean(line) for line in text.split("\n")]
+    out += [_clean(line) for line in extra]
     for c in prepared.get("checks") or []:
         out.append(
             f"check: {_clean(c.get('repo'))} clean at {_clean(c.get('at'))} (attested by the worker, best effort)"

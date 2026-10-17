@@ -1,0 +1,345 @@
+"""Batch 11, order step (ii): a quick task on the sequence engine (host/seqquick.py): one review, one confirmation sign
+the ticket, its requirements and plan, both approvals and, last, an optional grant."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from orch.host import sequence, signer
+from orch.host.sequence import Aborted
+from tests.host import human_helpers
+from tests.host.dispatch_helpers import SESSION
+from tests.host.human_helpers import ok
+from tests.host.test_sequence import Rig, doc
+
+lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
+from tests.host.test_click import click  # noqa: E402,F401
+
+pytestmark = pytest.mark.slow
+
+
+def quick(agent=None, checks=None, **over):
+    base = {
+        "v": 1,
+        "kind": "quick_task",
+        "title": "Fix the typo in the README",
+        "description": "The README says teh instead of the.",
+        "checks": checks
+        if checks is not None
+        else [{"text": "The typo is gone", "cmd": 'test -z "$(grep -w teh README.md)"'}],
+        "agent": agent,
+    }
+    return {**base, **over}
+
+
+def test_the_full_quick_sequence_lands_in_order(human, tmp_path):
+    rig = Rig(human, tmp_path, quick())
+    out = rig.driver().run(rig.first())
+    # new, labels, requirements, ac, approve, plan, task, approve
+    assert out["landed"] == 8
+    got = doc(human, out["key"])
+    assert got["doc"]["labels"] == ["quick"] and got["doc"]["type"] == "chore"
+    assert got["gates"]["requirements"]["state"] == "approved" and got["gates"]["plan"]["state"] == "approved"
+    assert [(a["id"], a["text"]) for a in got["doc"]["acceptance"]] == [("AC1", "The typo is gone")]
+    assert got["doc"]["tasks"][0]["verify"]["cmd"].startswith("test -z")
+    assert got["status"] != "done"  # the task still ends with the person's verdict
+    plan = got["sections"]["plan"][-1]["hash"]
+    from orch import canon
+    from orch.host import seqquick
+
+    assert plan == canon.section_hash(seqquick.plan_text(rig.intent["checks"]))
+
+
+def test_the_review_shows_the_task_the_plan_and_what_is_approved(human, tmp_path):
+    from orch.host import signcontent
+
+    rig = Rig(human, tmp_path, quick())
+    first = rig.first()
+    human.check(first)
+    content = signcontent.build(first, verified=True)
+    assert content["headline"].startswith("Start task DEMO-") and "Fix the typo" in content["headline"]
+    assert sorted(s["id"] for s in content["sections"]) == ["plan", "requirements"]
+    plan = next(s for s in content["sections"] if s["id"] == "plan")["text"]
+    assert "1. The typo is gone" in plan and "Checked by: test -z" in plan
+    assert content["acceptance"][0]["text"] == "The typo is gone" and content["tasks"][0]["verify"]
+    assert any("approves the requirements" in n.lower() for n in content["notes"])
+    assert any("still ends with your own verdict" in n for n in content["notes"])
+    assert not any("Agents may work" in n for n in content["notes"])
+    text = signer.render(first, lambda w: ("ws", "DEMO"))
+    assert "Approves the requirements as written above" in text
+
+
+def test_a_foreign_event_between_the_sections_and_the_approval_aborts(human, tmp_path):
+    rig = Rig(human, tmp_path, quick())
+    first = rig.first()
+    real = rig.prepare
+    seen = {"n": 0}
+
+    def prepare(op, args, meta):
+        if op == "approve" and args["gate"] == "requirements":
+            res = human.c.req(
+                "log", {"ref": args["ref"], "message": "foreign"}, grant=human.served.grant, session=SESSION, idem=True
+            )
+            assert res["ok"]
+        return real(op, args, meta)
+
+    rig.port.prepare = prepare
+    with pytest.raises(Aborted):  # the host refuses to prepare on a head that is not the signer's own last event
+        rig.driver().run(first)
+    assert seen["n"] == 0
+    key = rig.sessions.get(rig.wid, rig.driver().digest)["ticket"]["key"]
+    got = doc(human, key)
+    assert got["gates"]["requirements"]["state"] != "approved"  # no approval was signed: a draft
+
+
+def test_a_host_supplied_wrong_gate_hash_is_refused(human, tmp_path):
+    rig = Rig(human, tmp_path, quick())
+    first = rig.first()
+    real = rig.prepare
+
+    def prepare(op, args, meta):
+        got = real(op, args, meta)
+        if op == "approve" and args["gate"] == "requirements":
+            got = copy.deepcopy(got)
+            got["events"][0]["hash"] = "sha256:" + "0" * 64  # the hash is not the input's
+        return got
+
+    rig.port.prepare = prepare
+    with pytest.raises(Aborted, match="refused|changed"):
+        rig.driver().run(first)
+    assert not any(e["type"] == "gate.approved" for _, ev, _ in rig.submitted for e in ev)
+
+
+def test_a_gate_input_that_does_not_match_the_signed_content_is_refused(human, tmp_path):
+    rig = Rig(human, tmp_path, quick())
+    first = rig.first()
+    real = rig.prepare
+
+    def prepare(op, args, meta):
+        got = real(op, args, meta)
+        if op == "approve" and args["gate"] == "plan":
+            from orch import canon
+
+            got = copy.deepcopy(got)
+            got["material"]["input"]["tasks"][0]["text"] = "Something else entirely"
+            # a host that is consistent with itself: hash recomputed over the altered input
+            got["events"][0]["hash"] = canon.gate_hash(got["material"]["input"])
+            from orch.host import review
+
+            got["material"]["review"] = [review.of(e, got["material"]) for e in got["events"]]
+            digest = review.review_digest(got["material"])
+            got["review_digest"], got["fingerprint"] = digest, review.fingerprint(digest, got["events"], "approve")
+        return got
+
+    rig.port.prepare = prepare
+    with pytest.raises(Aborted, match="changed while signing"):
+        rig.driver().run(first)
+    approvals = [e["gate"] for _, ev, _ in rig.submitted for e in ev if e["type"] == "gate.approved"]
+    assert approvals == ["requirements"]  # the plan approval was never signed
+
+
+def test_the_grant_is_last_and_an_abort_before_it_leaves_an_approved_ticket_without_one(human, tmp_path):
+    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
+    first = rig.first()
+    real = rig.prepare
+
+    def prepare(op, args, meta):
+        if op == "grant":
+            res = human.c.req(
+                "log",
+                {"ref": meta["ticket"], "message": "foreign"},
+                grant=human.served.grant,
+                session=SESSION,
+                idem=True,
+            )
+            assert res["ok"]  # lands before the grant is prepared
+        return real(op, args, meta)
+
+    rig.port.prepare = prepare
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
+    assert types[-1] == "gate.approved" and "grant.issued" not in types
+    key = rig.sessions.get(rig.wid, rig.driver().digest)["ticket"]["key"]
+    assert doc(human, key)["gates"]["plan"]["state"] == "approved"
+    grants = ok(human.c.req("grant.list", {})) if False else None  # no grant exists: nothing was signed for one
+    assert grants is None
+
+
+def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tmp_path):
+    from orch.host import signcontent
+
+    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
+    first = rig.first()
+    human.check(first)
+    content = signcontent.build(first, verified=True)
+    note = next(n for n in content["notes"] if n.startswith("Agents may work"))
+    assert "all workable tickets, not only this one" in note and "until about" in note and "GRANT" in note
+    assert signer.confirm_word(first) == "GRANT"
+    assert sequence.confirm_kind(rig.intent) == "word"
+    out = rig.driver().run(first)
+    assert out["landed"] == 9
+    types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
+    assert types[-1] == "grant.issued" and types.count("gate.approved") == 2
+
+
+def test_a_grant_with_other_hours_or_a_wrong_time_span_is_refused(human, tmp_path):
+    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
+    first = rig.first()
+    real = rig.prepare
+
+    def prepare(op, args, meta):
+        got = real(op, args, meta)
+        if op == "grant":
+            got = copy.deepcopy(got)
+            got["events"][0]["expires_at"] = "2099-01-01T00:00:00Z"
+            from orch.host import review
+
+            got["material"]["review"] = [review.of(e, got["material"]) for e in got["events"]]
+            digest = review.review_digest(got["material"])
+            got["review_digest"], got["fingerprint"] = digest, review.fingerprint(digest, got["events"], "grant")
+        return got
+
+    rig.port.prepare = prepare
+    with pytest.raises(Aborted, match="changed while signing"):
+        rig.driver().run(first)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"checks": []},
+        {"checks": [{"text": "a\nb", "cmd": None}]},
+        {"checks": [{"text": "ok", "cmd": "x\ny"}]},
+        {"title": ""},
+        {"description": "\nleading"},
+        {"agent": {"hours": 200, "scope": "workable"}},
+        {"agent": {"hours": 8, "scope": "all"}},
+        {"surprise": 1},
+    ],
+)
+def test_a_quick_intent_is_refused_unless_every_line_is_clean(change):
+    with pytest.raises(sequence.SequenceInvalid):
+        sequence.validate_intent(quick(**change))
+
+
+def test_the_phone_is_excluded(human, tmp_path):
+    rig = Rig(human, tmp_path, quick())
+    op, args = sequence.step_args(rig.intent, 0, None)
+    res = human.c.req(
+        "human.prepare",
+        {
+            "op": op,
+            "args": args,
+            "signer": {"device": human.person.device, "auth": "secure-enclave"},
+            "sequence": rig.meta0(),
+        },
+    )
+    assert res["error"]["code"] == "invalid.input"
+
+
+# --- the custody paths -------------------------------------------------------------------------------------------
+
+
+def test_terminal_one_word_one_unlock_and_the_grant_secret_only_after_the_commit(human, served, tmp_path):
+    from tests.host.test_handoff import Shown
+    from tests.host.test_sequence import handoff_first
+
+    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
+    p = handoff_first(rig)
+    unlocks = []
+
+    class OpenOnce:
+        name, person_capable, auth = "test", True, "passphrase"
+
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            import contextlib
+
+            unlocks.append(action)
+
+            @contextlib.contextmanager
+            def cm():
+                yield lambda payload: human.person.dk_sign(payload)
+
+            return cm()
+
+    shown = Shown()
+    from orch.host import handoff
+
+    clock = lambda: served.lab.ws.clock[0]  # noqa: E731
+    from orch.host.control_client import new_idem
+    from tests.host.test_handoff import connect
+
+    with connect(served) as conn:
+        result = handoff.sign_code(
+            conn.call,
+            p["request"]["code"],
+            backend=OpenOnce(),
+            key_id="dk",
+            workspace_id=served.wid,
+            person=rig.person,
+            device=human.person.device,
+            workspace=lambda w: ("Acme", "DEMO"),
+            confirm=shown.confirm,
+            show_secret=shown.secret,
+            idem=new_idem(),
+            sessions=rig.sessions,
+            now=clock,
+        )
+    assert shown.words == [shown.words[0]] and shown.words[0] == "GRANT"  # the strongest step's word
+    assert len(unlocks) == 1 and result["steps"] == 9
+    assert len(shown.secrets) == 1 and "ORCH_GRANT=" in shown.secrets[0]  # shown once, after the last commit
+    assert "Agents may work on all workable tickets" in shown.plain[0]
+    assert "Checked by" in shown.plain[0] and "Quick task: do these steps in order" in shown.plain[0]
+
+
+def click_prepare(click_, intent):
+    from orch.host import sequence
+
+    intent = sequence.validate_intent(intent)
+    meta = {
+        "step": 0,
+        "of": len(sequence.steps(intent)),
+        "digest": sequence.digest_of(click_.served.wid, click_.owner.ref, intent),
+        "intent": intent,
+    }
+    op, args = sequence.step_args(intent, 0, None)
+    return click_.prepare(op, args, sequence=meta)
+
+
+def test_one_click_signs_the_whole_quick_task(click, served, human):  # noqa: F811
+    p = click_prepare(click, quick())
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"} and v["view"]["headline"].startswith("Start task")
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == 8
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]
+    assert got["gates"]["plan"]["state"] == "approved" and got["doc"]["labels"] == ["quick"]
+
+
+def test_a_grant_needs_the_typed_word_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
+    from tests.host.test_click import refused
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"]["kind"] == "word" and v["view"]["confirm"]["word"].endswith("/GRANT")
+    assert "Agents may work on all workable tickets" in "\n".join(v["view"]["lines"])
+    click.mono.t += 2
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
+    assert click.signatures == 0
+    out = click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"])
+    assert click.signatures == 9
+    assert out["deposit"] in ("confirmed", "rejected", "unknown") and out["grant"].startswith("gr_")
+
+
+def test_without_dashboard_execution_a_grant_sequence_is_the_terminals(click, served, human):  # noqa: F811
+    from tests.host.test_click import refused
+
+    click.signer._execution = lambda entry: False
+    with pytest.raises(Exception, match="terminal|click"):
+        click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
+    del refused

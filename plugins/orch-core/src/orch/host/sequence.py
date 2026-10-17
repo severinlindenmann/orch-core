@@ -68,8 +68,9 @@ __all__ = [
 _EVENTS = "event" + "s"
 
 KIND = "new_ticket"
+QUICK = "quick_task"
 VERSION = 1
-MAX_STEPS = 12
+MAX_STEPS = 16
 MAX_SECTION_BYTES = 65536
 TTL = 600.0  # a session lives as long as a request does (§0.8.1): 10 minutes
 CHANGED = "the ticket changed while signing, review again"
@@ -115,6 +116,14 @@ class SessionError(Exception):
 def validate_intent(intent: Any) -> dict[str, Any]:
     """The intent in its one canonical form, or :class:`SequenceInvalid`. Texts must already be normalised (CRLF, NFC,
     no surrounding line feeds): the signer never changes what it was given, it refuses."""
+    if isinstance(intent, Mapping) and intent.get("kind") == QUICK:
+        from . import seqquick
+
+        return seqquick.validate(intent, SequenceInvalid)
+    return _validate_new_ticket(intent)
+
+
+def _validate_new_ticket(intent: Any) -> dict[str, Any]:
     from orch.canon.text import TextError, normalize_text
     from orch.schema import SECTIONS_BY_TYPE
 
@@ -190,37 +199,54 @@ def digest_of(workspace_id: str, person: str, intent: Mapping[str, Any]) -> str:
 
 
 def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """The ordinary person ops of the sequence, in order, as ``{"op", "args"}`` (``ref`` is added once the key is
-    known, :func:`step_args`)."""
-    out: list[dict[str, Any]] = [{"op": "new", "args": {"title": intent["title"], "type": intent["ticket_type"]}}]
+    """The ordinary person ops of the sequence, in order, as ``{"op", "args", "kind", "ref"}`` (``ref``: the op names
+    the ticket, added once the key is known, :func:`step_args`)."""
+    if intent["kind"] == QUICK:
+        from . import seqquick
+
+        return seqquick.steps(intent)
+    out: list[dict[str, Any]] = [
+        {"op": "new", "args": {"title": intent["title"], "type": intent["ticket_type"]}, "kind": "new", "ref": False}
+    ]
     sets = intent["set"]
     if sets:
         pairs = []
         for k in _SET_KEYS:
             if k in sets:
                 pairs.append(f"{k}={','.join(sets[k]) if k == 'labels' else sets[k]}")
-        out.append({"op": "set", "args": {"pairs": pairs}})
+        out.append({"op": "set", "args": {"pairs": pairs}, "kind": "set", "ref": True})
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
-        out.append({"op": "section.set", "args": {"section": sid, "message": intent["sections"][sid]}})
+        out.append(
+            {
+                "op": "section.set",
+                "args": {"section": sid, "message": intent["sections"][sid]},
+                "kind": "section",
+                "ref": True,
+            }
+        )
     return out
 
 
 def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, dict[str, Any]]:
-    """``(op, args)`` of step ``k`` for ``human.prepare``: steps after the first name the ticket by ``ref``."""
+    """``(op, args)`` of step ``k`` for ``human.prepare``: the steps that act on the ticket name it by ``ref``."""
     step = steps(intent)[k]
     args = copy.deepcopy(step["args"])
-    if k > 0:
+    if step["ref"]:
         args = {"ref": ref, **args}
     return step["op"], args
 
 
 def confirm_kind(intent: Mapping[str, Any]) -> str:
     """The strongest confirmation any step needs (``click`` < ``word`` < ``terminal``); the sequence's confirmation is
-    that of its strongest step."""
+    that of its strongest step. A grant to the runner is a ``word`` (the GRANT word) in a sequence."""
     from orch.click.protocol import op_class
 
     rank = {"click": 0, "word": 1, "terminal": 2}
-    return max((op_class(s["op"]) for s in steps(intent)), key=lambda c: rank[c])
+    return max(("word" if s["kind"] == "grant" else op_class(s["op"]) for s in steps(intent)), key=lambda c: rank[c])
+
+
+def has_grant(intent: Mapping[str, Any]) -> bool:
+    return any(s["kind"] == "grant" for s in steps(intent))
 
 
 def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str, Any]:
@@ -228,6 +254,10 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
     host allocates it (:func:`check_step` takes it from the prepared event and format-checks it)."""
     from orch.store.render import section_entry
 
+    if intent["kind"] == QUICK:
+        from . import seqquick
+
+        return seqquick.payloads(intent, person)[k]
     plan = steps(intent)
     if k == 0:
         return {
@@ -263,10 +293,13 @@ def check_step(
     person: str,
     first: Mapping[str, str] | None,
     prev_head: str | None,
+    done: Mapping[int, str] | None = None,
+    now: float | None = None,
 ) -> dict[str, str]:
     """Refuse (:class:`Aborted`) unless the request the host prepared for step ``k`` is, byte for byte, the event the
     reviewed intent says, on the ticket this sequence created, chained to the event this signer signed before it.
-    Returns ``{"key", "uid"}`` of the ticket (the first step's, taken from the request; later steps' compared)."""
+    ``done`` maps a step number to the id of the event this signer signed there (a gate approval's ``prior`` must name
+    the requirements approval it signed itself). Returns ``{"key", "uid"}`` of the ticket."""
 
     def stop() -> Aborted:
         return Aborted(CHANGED)
@@ -281,11 +314,14 @@ def check_step(
         or not isinstance(events[0], Mapping)
     ):
         raise stop()
-    ev = events[0]
-    got = {key: v for key, v in ev.items() if key not in _ENVELOPE}
+    ev, kind = events[0], plan[k]["kind"]
+    opened = _open_keys(kind)
+    got = {key: v for key, v in ev.items() if key not in _ENVELOPE and key not in opened}
     want = expected_payload(intent, k, person)
     log, material = prepared.get("log"), prepared.get("material") or {}
-    ticket = material.get("ticket") if isinstance(material, Mapping) else None
+    if not isinstance(material, Mapping):
+        raise stop()
+    ticket = material.get("ticket")
     if k == 0:
         key = got.pop("key", None)  # the one host-chosen value: allocated by the host, shown "per host, not proven"
         if not isinstance(key, str) or not _KEY.fullmatch(key) or not isinstance(log, str) or not _ULID.fullmatch(log):
@@ -293,23 +329,107 @@ def check_step(
         who: dict[str, str] = {"key": key, "uid": log}
         if first is not None and dict(first) != who:
             raise stop()  # a resume: the first step was signed for another ticket
+    elif kind == "grant":
+        if first is None or log != "workspace" or ticket is not None or material.get("kind") != "payload":
+            raise stop()
+        who = {"key": first["key"], "uid": first["uid"]}
+        if "sequence" in material or material.get("before") or material.get("texts"):
+            raise stop()
+        _check_grant(ev, intent, now)
     else:
         if first is None or log != first["uid"] or ticket != {"key": first["key"], "uid": first["uid"]}:
             raise stop()
         who = {"key": first["key"], "uid": first["uid"]}
         if prev_head is None or ev.get("based_on") != prev_head:
             raise stop()  # a foreign event in between, or not the head of the event this signer signed at k-1
-        texts = material.get("texts") if isinstance(material, Mapping) else None
-        sid = next(iter(want.get("sections") or {}), None)
-        if sid is not None and texts != {sid: intent["sections"][sid]}:
-            raise stop()
-        before = material.get("before") or {}
-        # the host's "current values" (signer.check ties each to base_rev); nothing the intent does not touch
-        if not isinstance(before, Mapping) or not set(before) <= set(want["base_rev"]) or "sequence" in material:
-            raise stop()
+        if kind == "approve":
+            _check_gate(intent, plan, k, prepared, material, who, done or {}, person)
+        else:
+            texts = material.get("texts")
+            sid = next(iter(want.get("sections") or {}), None)
+            if sid is not None and texts != {sid: plan[k]["args"]["message"]}:
+                raise stop()
+            before = material.get("before") or {}
+            # the host's "current values" (signer.check ties each to base_rev); nothing the intent does not touch
+            if not isinstance(before, Mapping) or not set(before) <= set(want["base_rev"]) or "sequence" in material:
+                raise stop()
     if canon.dumps(got) != canon.dumps(want):
         raise stop()
     return who
+
+
+def _open_keys(kind: str) -> frozenset[str]:
+    if kind in ("approve", "grant"):
+        from . import seqquick
+
+        return seqquick.open_keys(kind)
+    return frozenset()
+
+
+def _check_gate(
+    intent: Mapping[str, Any],
+    plan: list[dict[str, Any]],
+    k: int,
+    prepared: Mapping[str, Any],
+    material: Mapping[str, Any],
+    who: Mapping[str, str],
+    done: Mapping[int, str],
+    person: str,
+) -> None:
+    """A gate approval binds exactly the content this signer signed: the gate input is rebuilt from the intent and
+    compared; its hash (and the policy hash) is recomputed by ``signer.check``. Nothing of it is taken on the host's
+    word except what only the workspace knows (policy, people, generation numbers)."""
+    from . import seqquick
+
+    gate = plan[k]["args"]["gate"]
+    first_approval = next((i for i, s in enumerate(plan) if s["kind"] == "approve"), None)
+    prior = done.get(first_approval) if gate == "plan" and first_approval is not None else None
+    expect = seqquick.gate_expect(
+        intent, gate, workspace_id=str(prepared.get("workspace_id")), uid=who["uid"], requirements_approval=prior
+    )
+    if (
+        material.get("kind") != "gate"
+        or material.get("gate") != gate
+        or (gate == "plan" and prior is None)
+        or not seqquick.check_gate_input(expect, material.get("input"), material.get("texts"))
+    ):
+        raise Aborted(CHANGED)
+
+
+_TIME = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+_GRANT = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+GRANT_SKEW = 600  # the host's clock and this one may differ by this many seconds
+
+
+def _epoch(stamp: str) -> int:
+    import calendar
+    import time
+
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def _check_grant(ev: Mapping[str, Any], intent: Mapping[str, Any], now: float | None) -> None:
+    """The three values a grant leaves to the host: its id, and its times, which must span exactly the hours the person
+    reviewed and start about now (a grant that starts in the past or the future is not the one that was shown)."""
+    import time
+
+    try:
+        issued, expires = ev["issued_at"], ev["expires_at"]
+        if not (isinstance(ev["grant"], str) and _GRANT.fullmatch(ev["grant"])):
+            raise Aborted(CHANGED)
+        if not (
+            isinstance(issued, str)
+            and isinstance(expires, str)
+            and _TIME.fullmatch(issued)
+            and _TIME.fullmatch(expires)
+        ):
+            raise Aborted(CHANGED)
+        hours = intent["agent"]["hours"]
+        t = time.time() if now is None else now
+        if _epoch(expires) - _epoch(issued) != hours * 3600 or abs(_epoch(issued) - t) > GRANT_SKEW:
+            raise Aborted(CHANGED)
+    except (KeyError, ValueError):
+        raise Aborted(CHANGED) from None
 
 
 # --- the request meta (`human.prepare {sequence}`) ----------------------------------------------------------------
@@ -333,12 +453,14 @@ def check_meta(meta: Any, *, op: str, args: Mapping[str, Any], workspace_id: str
         if (op, dict(args)) != step_args(intent, 0, None):
             raise SequenceInvalid("the first op is not the intent's")
         return dict(meta)
-    if set(meta) != {"step", "of", "digest", "prev"} or not 1 <= step < total <= MAX_STEPS:
-        raise SequenceInvalid("a later step names its number, the digest and the event before it")
+    if set(meta) != {"step", "of", "digest", "prev", "ticket"} or not 1 <= step < total <= MAX_STEPS:
+        raise SequenceInvalid("a later step names its number, the digest, the ticket and the event before it")
     if not isinstance(meta["prev"], str) or not _ULID.fullmatch(meta["prev"]):
         raise SequenceInvalid("prev is an event id")
-    if op not in ("set", "section.set"):
-        raise SequenceInvalid("a later step is set or section.set")
+    if not isinstance(meta["ticket"], str) or not _KEY.fullmatch(meta["ticket"]):
+        raise SequenceInvalid("ticket is a ticket key")
+    if op not in ("set", "section.set", "ac.add", "task.add", "approve", "grant"):
+        raise SequenceInvalid("a later step is set, section.set, ac.add, task.add, approve or grant")
     return dict(meta)
 
 
@@ -359,6 +481,8 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     events = [copy.deepcopy(first)]
     texts: dict[str, str] = {}
     for k in range(1, len(plan)):
+        if plan[k]["kind"] in ("approve", "grant"):  # told in words (extra_lines); not an event of this review
+            continue
         ev = {
             "v": 2,
             # a placeholder id (the host allocates the real one when it prepares the step); never signed, never sent
@@ -372,7 +496,7 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
         }
         events.append(ev)
         for sid in ev.get("sections") or {}:
-            texts[sid] = intent["sections"][sid]
+            texts[sid] = plan[k]["args"]["message"] if intent["kind"] == QUICK else intent["sections"][sid]
     new_material: dict[str, Any] = {"kind": "payload", "ticket": material.get("ticket"), "review": []}
     if texts:
         new_material["texts"] = texts
@@ -395,25 +519,62 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
-    count = len(intent["sections"])
     key = prepared["material"]["ticket"]["key"]
-    # one headline for the whole review; the text is a subline (not one clause per signature)
-    content["headline"] = f"Create {signcontent.one(key)}: {signcontent.one(intent['title'])}"
-    if count:
-        content["subline"] = f"and its text ({count} section{'s' if count != 1 else ''})"
-    elif intent["set"]:
-        content["subline"] = "and its details"
+    if intent["kind"] == QUICK:
+        content["headline"] = f"Start task {signcontent.one(key)}: {signcontent.one(intent['title'])}"
+        content["subline"] = "creates the task and approves its requirements and plan"
+        content.setdefault("notes", []).extend(extra_lines(intent))
+    else:
+        count = len(intent["sections"])
+        # one headline for the whole review; the text is a subline (not one clause per signature)
+        content["headline"] = f"Create {signcontent.one(key)}: {signcontent.one(intent['title'])}"
+        if count:
+            content["subline"] = f"and its text ({count} section{'s' if count != 1 else ''})"
+        elif intent["set"]:
+            content["subline"] = "and its details"
     content.setdefault("notes", []).append(
         f"One confirmation signs all {n} steps, in order ({n} signatures). If the ticket changes meanwhile, "
-        "signing stops and what was created stays a draft."
+        "signing stops and what was already signed stays as it is."
     )
     return content
+
+
+def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str]:
+    """The steps that are not events of the plain review, in words (the plain view and the full review show them):
+    the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5)."""
+    if intent["kind"] != QUICK:
+        return []
+    from .signcontent import span
+
+    out = [
+        "Approves the requirements as written above, and the plan as written above "
+        "(the signer checks that each approval covers exactly this text).",
+        "The task still ends with your own verdict: nothing closes it for you.",
+    ]
+    agent = intent["agent"]
+    if agent is not None:
+        t = time.time() if now is None else now
+        until = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t + agent["hours"] * 3600))
+        out.append(
+            f"Agents may work on all workable tickets, not only this one, until about {until} "
+            f"({span(agent['hours'])}). Typed word: GRANT. The grant is signed last; its secret goes to your orch "
+            "runner or your own terminal, never to the dashboard."
+        )
+    return out
 
 
 def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list[str]:
     """The intent in plain words, for a terminal prompt that has no SignContent."""
     from orch.host.signcontent import one
 
+    if intent["kind"] == QUICK:
+        lines = [f"title: {clean(one(intent['title']))}", "description:"]
+        lines += ["| " + clean(x) for x in intent["description"].split("\n")]
+        lines += [
+            f"check: {clean(one(c['text']))}" + (f" (checked by {clean(one(c['cmd']))})" if c["cmd"] else "")
+            for c in intent["checks"]
+        ]
+        return lines
     lines = [f"title: {clean(one(intent['title']))}", f"type: {clean(intent['ticket_type'])}"]
     lines += [f"{clean(k)}: {clean(one(v))}" for k, v in intent["set"].items()]
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
@@ -640,7 +801,9 @@ class Driver:
         person: str,
         intent: Mapping[str, Any],
         on_step: Callable[[int, int], None] | None = None,
+        now: Callable[[], float] = time.time,
     ) -> None:
+        self.now = now
         self.port, self.sessions = port, sessions
         self.workspace_id, self.person = workspace_id, person
         self.intent = validate_intent(intent)
@@ -736,7 +899,8 @@ class Driver:
             if self.on_step:
                 self.on_step(k + 1, self.total)
         assert who is not None
-        return {"key": who["key"], "uid": who["uid"], "results": results, "landed": self.total}
+        requests = [st["request_id"] for st in rec["steps"]]
+        return {"key": who["key"], "uid": who["uid"], "results": results, "landed": self.total, "requests": requests}
 
     def _land(self, rec: dict[str, Any], k: int, res: Mapping[str, Any]) -> str | None:
         """The step landed: read the head the host reports and require it to be the head of the event this signer just
@@ -788,11 +952,19 @@ class Driver:
             else:
                 assert who is not None
                 op, args = step_args(self.intent, k, who["key"])
-                meta = {"step": k, "of": self.total, "digest": self.digest, "prev": prev_id}
+                meta = {"step": k, "of": self.total, "digest": self.digest, "prev": prev_id, "ticket": who["key"]}
                 prepared = self.port.prepare(op, args, meta)
                 self.port.check(prepared)
+            done = {st["k"]: st["signed"][-1]["id"] for st in rec["steps"] if st["state"] == "landed"}
             found = check_step(
-                self.intent, k, prepared, person=self.person, first=who if k else None, prev_head=prev_head
+                self.intent,
+                k,
+                prepared,
+                person=self.person,
+                first=who if k else None,
+                prev_head=prev_head,
+                done=done,
+                now=self.now(),
             )
         except Aborted as exc:
             self._cancel(prepared)

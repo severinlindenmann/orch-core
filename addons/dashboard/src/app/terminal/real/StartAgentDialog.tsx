@@ -366,7 +366,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {extend && <p>Agents that are running now stop; new agents use the extended access.</p>}
       {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
       {(!grant || extend) && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
-        <div className="flex flex-wrap items-center gap-2">
+        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows.</p> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
             {lengths.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
@@ -376,8 +376,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
             <option value="workable">workable</option>
             <option value="all">all</option>
           </select>
-          <Button size="xs" disabled={!enabled || lengths.length === 0 || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
-          {lengths.length === 0 && <span className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows.</span>}
+          <Button size="xs" disabled={!enabled || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
           {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
         </div>
       )}

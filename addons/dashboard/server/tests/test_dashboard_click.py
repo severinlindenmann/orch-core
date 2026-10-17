@@ -1581,7 +1581,7 @@ def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
 def test_runner_grant_handoff_is_refused_where_the_workspace_signs_by_one_click(client, token, stub, deposits):
     # B11-P1: the terminal hand-off exists for terminal-approval workspaces; a one-click workspace keeps its refusal.
     res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
-    assert res.status_code == 403 and res.json()["error"]["code"] == "sign.click_only"
+    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only"
 
 
 def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):

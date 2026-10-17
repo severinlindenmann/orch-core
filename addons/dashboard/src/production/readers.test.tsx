@@ -43,7 +43,7 @@ it('a hand-off refused with sign.convenience_readers says the reason in plain wo
   const end = await within(dialog).findByText(READERS_SENTENCE.reader_too_old, {}, T)
   const box = end.closest('[data-handoff-end]') as HTMLElement
   expect(box).toHaveAttribute('data-handoff-end', 'error')
-  expect(await within(box).findByText(/a device of/, {}, T)).toHaveTextContent('a device of Mara with no name')
+  expect(await within(box).findByText(/device \(unnamed\)/, {}, T)).toHaveTextContent('Mara’s device (unnamed)')
   expect(within(box).getByTestId('refusal-devices').textContent).not.toContain(MARA_DEVICE)
   expect(within(box).getByTestId('refusal-host-message')).toHaveTextContent('reader_too_old: the reader is below')
 })
@@ -63,7 +63,7 @@ it('Settings → Devices reads /readers: levels, required_reader and the device 
   show('/w/DEMO/settings/devices')
   const rows = await screen.findAllByTestId('reader-row', {}, T)
   expect(rows.map((r) => r.dataset.below)).toEqual(['true', 'false'])
-  expect(rows[0]).toHaveTextContent('a device of Mara with no name')
+  expect(rows[0]).toHaveTextContent('Mara’s device (unnamed)')
   expect(rows[0]).toHaveTextContent('Needs an update of the orch app')
   expect(screen.getByTestId('readers-required')).toHaveAttribute('data-required', '1')
   expect(state.host.calls.some((c) => c.path.endsWith('/readers'))).toBe(true)

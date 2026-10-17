@@ -187,7 +187,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
         </p>
       )}
       <div className="rounded-lg border border-border bg-surface">
-        <Table>
+        <Table className="min-w-[30rem]">
           <TableHeader>
             <TableRow>
               <TableHead>Person</TableHead>
@@ -219,14 +219,14 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
               return (
                 <TableRow key={m.person}>
                   <TableCell>
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <PersonAvatar id={m.person} name={m.name} />
                       {m.name_hidden ? (
                         <span className="text-warning">Name not shown: it has invisible characters</span>
                       ) : (
                         <Raw>{m.name}</Raw>
                       )}
-                      <span className="font-mono text-[11px] text-text-faint" title={visible(m.person)}><Raw>{shortId(m.person)}</Raw></span>
+                      <span className="basis-full pl-8 font-mono text-[11px] text-text-faint @[40rem]/page:basis-auto @[40rem]/page:pl-0" title={visible(m.person)}><Raw>{shortId(m.person)}</Raw></span>
                     </span>
                   </TableCell>
                   <TableCell>{select}</TableCell>

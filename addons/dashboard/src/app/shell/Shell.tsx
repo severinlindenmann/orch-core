@@ -80,7 +80,7 @@ export function Shell() {
           >
             Skip to content
           </a>
-          <div className="flex h-full min-w-[1024px]">
+          <div className="flex h-full min-w-0">
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />

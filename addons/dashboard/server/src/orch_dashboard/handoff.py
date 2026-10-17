@@ -179,6 +179,33 @@ class WriteSection(Action):
     text: SectionText
 
 
+PersonId = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
+Criterion = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+PeopleRole = Literal["owner", "assignees", "reviewers"]
+
+
+class NewPeople(BaseModel):
+    """The people of a NEW ticket (B12D): the owner and the assignees and reviewers, as the form picked them."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    owner: PersonId | None = None
+    assignees: list[PersonId] = Field(default_factory=list, max_length=16)
+    reviewers: list[PersonId] = Field(default_factory=list, max_length=16)
+
+
+def _new_people(people: "NewPeople | None") -> dict:
+    out: dict = {}
+    if people is None:
+        return out
+    if people.owner:
+        out["owner"] = people.owner
+    for role in ("assignees", "reviewers"):
+        ids = sorted(set(getattr(people, role)))
+        if ids:
+            out[role] = ids
+    return out
+
+
 class NewTicketSequence(Action):
     """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
@@ -192,6 +219,9 @@ class NewTicketSequence(Action):
     labels: list[Label] | None = Field(default=None, max_length=16)
     parent: Key | None = None
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
+    #: B12D: acceptance criteria and people in the same review (N3)
+    acceptance: list[Criterion] = Field(default_factory=list, max_length=8)
+    people: NewPeople | None = None
 
     def intent(self) -> dict:
         """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
@@ -210,18 +240,92 @@ class NewTicketSequence(Action):
             if self.parent and self.type != "epic":
                 sets["parent"] = self.parent
             sections = {sid: normalize_text(text).strip("\n") for sid, text in self.sections.items()}
-            return sequence.validate_intent(
-                {
-                    "v": 1,
-                    "kind": "new_ticket",
-                    "title": normalize_text(self.title, one_line=True),
-                    "ticket_type": self.type,
-                    "set": sets,
-                    "sections": {sid: t for sid, t in sections.items() if t},
-                }
-            )
+            intent: dict = {
+                "v": 1,
+                "kind": "new_ticket",
+                "title": normalize_text(self.title, one_line=True),
+                "ticket_type": self.type,
+                "set": sets,
+                "sections": {sid: t for sid, t in sections.items() if t},
+            }
+            criteria = [normalize_text(t, one_line=True) for t in self.acceptance if t.strip()]
+            if criteria:
+                intent["acceptance"] = criteria
+            people = _new_people(self.people)
+            if people:
+                intent["people"] = people
+            return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid) as exc:
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
+
+
+class EditSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    was: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+    text: SectionText
+
+
+class EditAcceptance(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    was: list[dict[str, str]] = Field(max_length=64)
+    edit: dict[Annotated[str, StringConstraints(pattern=r"^AC[1-9][0-9]*$")], Criterion] = Field(
+        default_factory=dict, max_length=8
+    )
+    add: list[Criterion] = Field(default_factory=list, max_length=8)
+
+
+class PeopleChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    add: list[PersonId] = Field(default_factory=list, max_length=16)
+    remove: list[PersonId] = Field(default_factory=list, max_length=16)
+
+
+class EditTicket(Action):
+    """B12D (finding N3): an inline edit of an EXISTING ticket on ONE review and ONE confirmation. The browser sends
+    what the page showed (the ticket, its log head, the text and criteria it replaces) and what changes; the signer
+    signs one ordinary event per change and stops if anyone else writes to the ticket meanwhile. This server only
+    relays the intent (core `orch.host.sequence`, kind edit_ticket)."""
+
+    action: Literal["edit_sequence"]
+    key: Key
+    uid: Annotated[str, StringConstraints(pattern=r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    type: Literal["feature", "bug", "chore", "spike", "epic"]
+    head: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+    sections: dict[SectionId, EditSection] = Field(default_factory=dict, max_length=10)
+    acceptance: EditAcceptance | None = None
+    people: dict[PeopleRole, PeopleChange] | None = None
+
+    def intent(self) -> dict:
+        from orch.canon.text import TextError, normalize_text
+        from orch.host import sequence
+
+        try:
+            intent: dict = {
+                "v": 1,
+                "kind": "edit_ticket",
+                "ticket": {"key": self.key, "uid": self.uid},
+                "ticket_type": self.type,
+                "head": self.head,
+                "sections": {
+                    sid: {"was": e.was, "text": normalize_text(e.text).strip("\n")} for sid, e in self.sections.items()
+                },
+            }
+            if self.acceptance is not None and (self.acceptance.edit or self.acceptance.add):
+                a = self.acceptance
+                intent["acceptance"] = {
+                    "was": [{"id": x.get("id", ""), "text": x.get("text", "")} for x in a.was],
+                    "edit": {k: normalize_text(v, one_line=True) for k, v in a.edit.items()},
+                    "add": [normalize_text(t, one_line=True) for t in a.add],
+                }
+            if self.people:
+                intent["people"] = {
+                    role: {"add": sorted(set(c.add)), "remove": sorted(set(c.remove))}
+                    for role, c in self.people.items()
+                    if c.add or c.remove
+                }
+            return sequence.validate_intent(intent)
+        except (TextError, sequence.SequenceInvalid) as exc:
+            raise fail("invalid.input", f"That edit can't be signed: {exc}", exit=1) from None
 
 
 class QuickCheck(BaseModel):
@@ -450,6 +554,7 @@ PrepareBody = Annotated[
     | Move
     | NewTicket
     | NewTicketSequence
+    | EditTicket
     | QuickStart
     | Details
     | WriteSection
@@ -472,7 +577,7 @@ def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | No
     from orch.host import sequence
 
     total = len(sequence.steps(intent))
-    if not isinstance(key, str):
+    if not isinstance(key, str) or intent["kind"] == "edit_ticket":  # an edit shows no step count (follow-up)
         return None
     try:
         data = gateway.call(ws, "ticket.get", {"ref": key})
@@ -500,6 +605,10 @@ def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | No
         elif kind == "ac":
             ac += 1
             ok = len(doc.get("acceptance") or []) >= ac
+        elif kind == "people":
+            role, add = step["args"]["role"], step["args"]["add"]
+            have = [doc.get("owner")] if role == "owner" else (doc.get("people") or {}).get(role) or []
+            ok = set(add) <= set(have)
         elif kind == "task":
             tasks += 1
             ok = len(doc.get("tasks") or []) >= tasks
@@ -546,6 +655,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case QuickStart():
             intent = action.intent()
             return "new", {"title": intent["title"], "type": "chore"}
+        case EditTicket():
+            from orch.host import sequence
+
+            return sequence.step_args(action.intent(), 0, None)  # the first step of the edit, naming the ticket
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels is not None:
@@ -609,6 +722,9 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=kind) and (
                 person is None or ev[0].get("owner") == person
             )
+        case EditTicket():
+            head = action.head  # the first event is chained on the head the page showed (the signer checks it again)
+            return lambda ev: len(ev) == 1 and ev[0].get("based_on") == head
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -707,7 +823,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     person = link.welcome["peer"]["person"]
     meta = None
-    if isinstance(body, NewTicketSequence | QuickStart):
+    if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
         from orch.host import sequence
 
         intent = body.intent()

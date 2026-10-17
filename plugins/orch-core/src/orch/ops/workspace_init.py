@@ -157,7 +157,7 @@ class Terminal:
         return self._read(prompt, echo=False)
 
     def ask(self, prompt: str) -> str:
-        """One line from the person, echoed (``orch setup`` asks the fingerprint words with it)."""
+        """One line from the person, echoed (``orch setup`` asks for GRANT with it)."""
         return self._read(prompt, echo=True)
 
 

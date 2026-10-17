@@ -225,7 +225,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
   const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code)
   // a CLI pointer ("orch describe approve") means nothing on this page
-  const cliOnly = (v: unknown) => typeof v === 'string' && /\borch describe\b/.test(v)
+  const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>

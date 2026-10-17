@@ -41,7 +41,7 @@ sys.exit(out.get("code", 12))
 """
 
 
-def _run(answer: bytes) -> tuple[int, str]:
+def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
     src = os.path.join(os.path.dirname(__file__), "..", "..", "src")
     pid, fd = pty.fork()
     if pid == 0:  # the child: its controlling terminal is the pty
@@ -50,6 +50,8 @@ def _run(answer: bytes) -> tuple[int, str]:
             os.execve(sys.executable, [sys.executable, "-c", CHILD], env)
         finally:
             os._exit(13)
+    if early:  # typed before any prompt exists (type-ahead, a paste): must never count as the answer
+        os.write(fd, early)
     seen = b""
     deadline = time.monotonic() + 20
     sent = False
@@ -63,7 +65,10 @@ def _run(answer: bytes) -> tuple[int, str]:
             if not chunk:
                 break
             seen += chunk
-        if not sent and b"type GRANT: " in seen:
+        if not sent and b"type yes: " in seen:
+            if early:  # the early line was discarded: the child still waits for an answer
+                time.sleep(1.0)
+                assert os.waitpid(pid, os.WNOHANG)[0] == 0, f"type-ahead was taken as the answer: {seen!r}"
             os.write(fd, answer)
             sent = True
         done, status = os.waitpid(pid, os.WNOHANG)
@@ -79,15 +84,23 @@ def _run(answer: bytes) -> tuple[int, str]:
     return os.waitstatus_to_exitcode(status), seen.decode("utf-8", "replace")
 
 
-def test_the_terminal_shows_the_plain_block_and_grant_confirms():
-    code, seen = _run(b"GRANT\n")
+def test_the_terminal_shows_the_plain_block_and_yes_confirms():
+    code, seen = _run(b"yes\n")
     assert "orch setup is asking you to confirm." in seen
     assert "stick napkin dress" in seen
-    assert "If they match, type GRANT: " in seen
+    assert "If they match, type yes: " in seen
     assert code == 0
 
 
 def test_anything_else_on_the_terminal_declines():
-    code, seen = _run(b"stick napkin dress\n")
+    code, seen = _run(b"GRANT\n")  # the page's word is not the terminal's
     assert "stick napkin dress" in seen
+    assert code == 10
+
+
+def test_input_typed_before_the_prompt_is_discarded_never_an_answer():
+    """Opus review MEDIUM: a "yes" queued before the prompt (type-ahead, a pasted line) is flushed; only a line typed
+    after the prompt answers it. Here the later line is "no", so the run is declined."""
+    code, seen = _run(b"no\n", early=b"yes\n")
+    assert "If they match, type yes: " in seen
     assert code == 10

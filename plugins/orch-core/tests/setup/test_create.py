@@ -65,7 +65,7 @@ def run_ok(tmp, profile, ports=None, typed=None, **envkw):
     f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
     _, rv = f.dispatch("POST", "review", {}, {})
     if rv["fingerprint"]:
-        ports.terminal.answers[:] = ["GRANT"]
+        ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
     body = {"review_id": rv["review_id"], "digest": rv["digest"], **({"typed_word": typed} if typed else {})}
     out = f.dispatch("POST", "create", {}, body)[1]

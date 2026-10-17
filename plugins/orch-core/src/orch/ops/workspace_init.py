@@ -129,6 +129,8 @@ class Terminal:
         fd = self._open()
         try:
             old = termios.tcgetattr(fd)
+            # B11 review: input typed before the prompt (type-ahead, a pasted line) is never an answer, in every mode
+            termios.tcflush(fd, termios.TCIFLUSH)
             if not echo:  # echo off first, then the prompt: input typed on seeing it is neither shown nor flushed
                 new = old[:]
                 new[3] &= ~termios.ECHO
@@ -157,7 +159,7 @@ class Terminal:
         return self._read(prompt, echo=False)
 
     def ask(self, prompt: str) -> str:
-        """One line from the person, echoed (``orch setup`` asks for GRANT with it)."""
+        """One line from the person, echoed (``orch setup`` asks for yes with it)."""
         return self._read(prompt, echo=True)
 
 

@@ -219,7 +219,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     f = finish_flow(tmp, ports, box)
     f.dispatch("POST", "profile", {}, PROF)
     rv = f.dispatch("POST", "review", {}, {})[1]
-    ports.terminal.answers[:] = ["GRANT"]
+    ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
     out = f.dispatch(
         "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"], "typed_word": "GRANT"}
@@ -289,7 +289,7 @@ def test_finish_moves_a_passphrase_key_to_one_click_by_asking_the_passphrase_on_
         {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
     )
     rv = f.dispatch("POST", "review", {}, {})[1]
-    ports.terminal.answers[:] = ["GRANT"]
+    ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
     out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
@@ -312,7 +312,7 @@ def test_finish_conversion_failure_never_shows_the_typed_passphrase_back(tmp):
         {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
     )
     rv = f.dispatch("POST", "review", {}, {})[1]
-    ports.terminal.answers[:] = ["GRANT"]
+    ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
     out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)

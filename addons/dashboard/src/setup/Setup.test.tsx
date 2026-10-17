@@ -222,7 +222,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   expect(screen.getByText('demo not real')).toBeInTheDocument()
-  expect(screen.getByText(/Your terminal now asks you to confirm/)).toHaveTextContent('type GRANT there')
+  expect(screen.getByText(/Your terminal now asks you to confirm/)).toHaveTextContent('type yes there')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',

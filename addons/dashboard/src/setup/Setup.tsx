@@ -601,7 +601,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <p>
                     <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>
                   </p>
-                  <p>If they match, type GRANT in the terminal.</p>
+                  <p>If they match, type yes there.</p>
                 </div>
               )}
               {review.typed_word && (
@@ -650,7 +650,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
               <p>
                 Your terminal now asks you to confirm. If it shows <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>, type
-                GRANT there.
+                yes there.
               </p>
             )}
           {progress?.waiting && (

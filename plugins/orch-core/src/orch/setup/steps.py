@@ -2,7 +2,7 @@
 
 The create sequence (batch-9.md "## Design" 3):
 
-1. (R3) the setup terminal shows the fingerprint words of the review and waits for the person to type GRANT when
+1. (R3) the setup terminal shows the fingerprint words of the review and waits for the person to type yes when
    the page shows the same words, when the review asks;
 2. the keys and the genesis through the B5 bootstrap (``host.wsk_create`` + ``host.bootstrap``, one intent, rollback of
    the recorded entries only); nothing is durable before this;
@@ -48,7 +48,7 @@ __all__ = [
 CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
 #: what the person types on the setup terminal once the page shows the same three words (R3)
-TTY_WORD = "GRANT"
+TTY_WORD = "yes"  # distinct from the page's typed word GRANT: two prompts, two answers
 
 
 def tty_confirm_text(words: str) -> str:
@@ -394,7 +394,7 @@ class Creator:
             raise SetupError("tty.unavailable", "no terminal to confirm on; nothing was created", 409) from None
         finally:
             self.run.waiting_tty = False
-        if typed.strip().upper() != TTY_WORD:
+        if typed.strip().lower() != TTY_WORD:
             raise SetupError("tty.declined", "the terminal did not confirm; nothing was created", 409)
 
     # -- keys, genesis, register (B5)

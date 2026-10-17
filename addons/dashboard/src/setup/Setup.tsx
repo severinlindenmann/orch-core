@@ -620,7 +620,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>To confirm</h2>
+                  <h2>Then confirm in your terminal</h2>
                   <ol>
                     {review.typed_word && (
                       <li>

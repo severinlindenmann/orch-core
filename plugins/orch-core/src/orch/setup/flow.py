@@ -465,7 +465,10 @@ USAGE = "usage: orch setup   (run it in the folder you want to make a workspace;
 
 def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
     """Open the dashboard on ``/setup``. The launch code is NOT in the path or in any argument: it is in the 0600 file
-    ``<state>/setup/setup.code`` that the dashboard server reads and deletes, and claims with its own port."""
+    ``<state>/setup/setup.code`` that the dashboard server reads and deletes, and claims with its own port. A missing
+    dashboard says how to install it (``find_entry_point`` writes the hint); a dashboard that fails to start says why
+    (its last error line, with any URL fragment removed so no one-time code is ever echoed)."""
+    import re
     import subprocess
 
     from orch.cli.dashboard import find_entry_point
@@ -482,9 +485,16 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) 
             timeout=60,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        err.write(f"orch setup: the dashboard did not start ({type(exc).__name__})\n")
         return False
-    return res.returncode == 0
+    if res.returncode != 0:
+        text = (res.stderr or b"").decode("utf-8", "replace") + (res.stdout or b"").decode("utf-8", "replace")
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        last = re.sub(r"#\S*", "#…", lines[-1])[:300] if lines else f"exit {res.returncode}"
+        err.write(f"orch setup: the dashboard did not start: {last}\n")
+        return False
+    return True
 
 
 def main(
@@ -543,7 +553,7 @@ def main(
     if (open_browser or _open_browser)(env, err, launch):
         err.write("orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n")
     else:
-        err.write("orch setup: could not open the dashboard; install it (pip install orch-dashboard) and run again\n")
+        err.write("orch setup: could not open the setup page (see above); fix that and run orch setup again\n")
         server.stop()
         return 1
     try:

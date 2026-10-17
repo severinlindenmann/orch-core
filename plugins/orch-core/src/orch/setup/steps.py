@@ -24,7 +24,7 @@ import contextlib
 import secrets as _secrets
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -165,6 +165,14 @@ class Secrets:
                 raise SetupError("secrets.not_confirmed", "the secrets were not confirmed", 409)
             return bytes(self._code).decode("ascii")
 
+    def held(self) -> list[str]:
+        """Every secret this session holds, for :func:`redact_reason` only (never shown, logged or stored)."""
+        with self._lock:
+            if self.dead:
+                return []
+            code = bytes(self._code).decode("ascii")
+            return [bytes(self._pass).decode("ascii"), code, *code.split()]
+
     def _wipe(self) -> None:
         _wipe(self._pass)
         _wipe(self._code)
@@ -180,6 +188,44 @@ class Secrets:
 
     def __repr__(self) -> str:  # never the secrets
         return "Secrets(<redacted>)"
+
+
+# ============================================================================================ redacting error text
+
+HIDDEN_REASON = "details hidden because they contained a secret; see the terminal"
+_MIN_SECRET = 6  # a shorter "secret" would match ordinary words
+
+
+def _forms(text: str) -> tuple[str, str]:
+    """Two normal forms of ``text``: lower-cased with ALL whitespace removed, and lower-cased letters/digits only.
+    Splitting a secret by spaces, newlines or tabs (or joining its words with punctuation) changes neither."""
+    low = text.lower()
+    return "".join(low.split()), "".join(c for c in low if c.isalnum())
+
+
+def contains_secret(text: str, secrets: Iterable[str]) -> bool:
+    """True when ``text`` holds any of ``secrets`` (a passphrase, a recovery code as a whole or its words as the full
+    sequence) in either normal form. Fails closed on odd input: a non-str secret is ignored, never raised on."""
+    t_ws, t_an = _forms(text)
+    for sec in secrets:
+        if not isinstance(sec, str) or not sec.strip():
+            continue
+        s_ws, s_an = _forms(sec)
+        if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
+            return True
+        if len(s_an) >= _MIN_SECRET and s_an in t_an:
+            return True
+    return False
+
+
+def redact_reason(text: str, secrets: Iterable[str], limit: int | None = None) -> str:
+    """THE one gate for error/reason text of the setup flow. The whole text is checked BEFORE any cut (and the cut
+    result again), so no cut can show part of a secret; a hit replaces the whole text with :data:`HIDDEN_REASON`."""
+    secrets = [x for x in secrets if isinstance(x, str)]
+    if contains_secret(text, secrets):
+        return HIDDEN_REASON
+    out = text if limit is None else text[:limit]
+    return HIDDEN_REASON if contains_secret(out, secrets) else out
 
 
 # ================================================================================================== the create sequence
@@ -318,6 +364,16 @@ class Creator:
         self._custody_done = False
         self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
+    def _held_secrets(self) -> list[str]:
+        out: list[str] = [self._passphrase] if self._passphrase else []
+        if self.secrets is not None:
+            out += self.secrets.held()
+        return out
+
+    def _safe(self, text: str, limit: int | None = None) -> str:
+        """Every error/reason text the flow shows, logs or stores goes through here (see :func:`redact_reason`)."""
+        return redact_reason(text, self._held_secrets(), limit)
+
     def _say(self, line: str) -> None:
         """One progress line on the person's own terminal (never a secret: step names only)."""
         self.ports.terminal.show(line + "\n")
@@ -395,7 +451,7 @@ class Creator:
         if not self._custody_done and self.run.status("custody") in ("failed", "skipped", "todo", "doing"):
             if self.run.status("flags") == "done":
                 self.run.set("flags", "skipped")
-        self.run.error = {"code": e.code, "message": e.message[:400], "finishable": bool(post_genesis)}
+        self.run.error = {"code": e.code, "message": self._safe(e.message, 400), "finishable": bool(post_genesis)}
 
     # -- R3
     def _tty_confirm(self) -> None:
@@ -650,9 +706,13 @@ class Creator:
         from orch import canon
 
         raw = str(getattr(e, "message", None) or e or "").strip()
-        if not raw or (self._passphrase and self._passphrase in raw):
+        if not raw:
             return "this Mac refused (" + (type(e).__name__ if e is not None else "unknown") + ")"
+        if self._safe(raw) == HIDDEN_REASON:
+            return HIDDEN_REASON
         text = " ".join(canon.clean(raw).split())
+        if self._safe(text) == HIDDEN_REASON:
+            return HIDDEN_REASON
         low = text.lower()
         if (
             "keychain" in low
@@ -663,7 +723,7 @@ class Creator:
         if len(text) > 160:  # cut at a word, never in the middle of one
             text = text[:160].rsplit(" ", 1)[0] + "…"
         text = text.rstrip(" .;:")
-        return text[:1].lower() + text[1:]
+        return self._safe(text[:1].lower() + text[1:])
 
 
 # ======================================================================================================== the real host

@@ -55,3 +55,67 @@ def test_an_unknown_workspace_is_not_found_and_a_refusal_keeps_serving(lab) -> N
         assert h.host.services[wid].state != "unavailable"  # served again after the refusal
     finally:
         h.__exit__(None, None, None)
+
+
+def test_a_records_enabled_workspace_is_refused_untouched(lab) -> None:  # noqa: F811
+    from orch.host import records
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    try:
+        records._write_record(
+            Path(lab.state),
+            wid,
+            os.getuid(),
+            {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}},
+        )
+        assert records._configured(records.read_record(Path(lab.state), wid, os.getuid())), "fixture must be configured"
+        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
+        assert res["ok"] is False and res["error"]["code"] == "migrate.refused"
+        assert (Path(lab.root) / "config.json").is_file() and not (Path(lab.root) / ".orch").exists()
+        assert h.host.services[wid].state != "unavailable"
+    finally:
+        h.__exit__(None, None, None)
+
+
+def test_a_host_start_finishes_a_committed_journal_and_rolls_back_an_unfinished_one(lab) -> None:  # noqa: F811
+    """Recovery follows the migrate journal, not only the control intent: a host restarted over a half-done migration
+    brings it to a terminal state before it serves."""
+    from orch.store import migrate as mg
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    root = Path(lab.root)
+    try:
+        ok(c.call("host.unregister", {"workspace_id": wid}, idem=new_idem()))
+    finally:
+        h.__exit__(None, None, None)
+
+    # a crash after the commit point: journal committed, store in .orch, registry not yet updated
+    def stop_at_committed(p: str) -> None:
+        if p == "committed":
+            raise KeyboardInterrupt(p)
+
+    h2 = lab.host(backend=lambda: backend)
+    h2.__enter__()
+    try:
+        c2 = h2.client()
+        wid = ok(lab.register(c2))["data"]["workspace_id"]
+    finally:
+        h2.__exit__(None, None, None)
+    try:
+        mg.migrate(root, state_dir=Path(lab.state), workspace_id=wid, fault=stop_at_committed)
+    except KeyboardInterrupt:
+        pass
+    assert mg.journal_step(Path(lab.state), wid) == "committed" and (root / ".orch").is_dir()
+    h3 = lab.host(backend=lambda: backend)
+    h3.__enter__()
+    try:
+        assert ("host.store_migrate", "done") in h3.host.recovered
+        entry = h3.host.registry.get(wid)
+        assert entry is not None and entry.store == ".orch"
+        assert h3.host.services[wid].state != "unavailable"
+    finally:
+        h3.__exit__(None, None, None)

@@ -452,7 +452,8 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `host.busy` | 4 | no | stays | a second host on the same state or run directory (at start); `register` or `bootstrap` of a root or id that is already registered, has a genesis, or is being bootstrapped (N5) | — |
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
-| `migrate.refused` | 3 | no | stays | `host.store_migrate` was refused before anything moved (the directory is not a legacy store, two stores, a link or an odd entry, a journal that cannot be completed); the message names it | — |
+| `migrate.refused` | 3 | no | stays | `host.store_migrate` was refused before anything moved (the directory is not a complete legacy store, two stores, a link or an odd entry, records are enabled); the message names it | — |
+| `migrate.stuck` | 3 | no | stays | `host.store_migrate` (or a host start) found a migration it cannot finish or roll back right now: files may be half way. Nothing is deleted or guessed; the journal `hosts/<ws>/migrate.json` keeps its step and the next `store_migrate` or host start continues from it | — |
 | `migrate.failed` | 1 | no | stays | `host.store_migrate` moved the store, the check after the move failed and everything was rolled back; nothing was lost, the legacy layout is as before | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
@@ -609,7 +610,7 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `host.wsk_create` | none |
 | `host.register` | `host.busy` (root already registered), `lock.busy`, `trust.genesis_mismatch`, `custody.unsafe_mode`, `op.not_allowed` (peers map) |
 | `host.unregister` | `not_found` |
-| `host.store_migrate` | `not_found`, `lock.busy` (owner lock or the workspace store lock), `migrate.refused`, `migrate.failed`, `trust.genesis_mismatch`, `custody.unsafe_mode` |
+| `host.store_migrate` | `not_found`, `lock.busy` (owner lock or the workspace store lock), `migrate.refused`, `migrate.failed`, `migrate.stuck`, `trust.genesis_mismatch`, `custody.unsafe_mode` |
 | `host.bootstrap` | `host.busy` (id already has a genesis or a registration, N5), `not_found` (id not from `wsk_create`), `custody.unsafe_mode`, the genesis model codes |
 
 **As built in B5 (16 Oct 2026).** The "new empty directory" rule of `host.bootstrap` existed so that the rollback (`_clean_root`)

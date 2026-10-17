@@ -237,3 +237,110 @@ def test_the_ongoing_migration_is_a_journal_other_runs_do_not_overwrite(tmp_path
     os.chmod(jp, 0o644)
     with pytest.raises(mg.MigrateError):
         _run(env)
+
+
+def test_the_mkdir_to_journal_gap_leaves_an_empty_tmp_that_recovery_drops(tmp_path: Path, monkeypatch) -> None:
+    env = _world(tmp_path)
+    before = _tree(env.root)
+    monkeypatch.setattr(mg, "_rollback", lambda *a, **k: None)  # the process died at that point
+
+    def fault(p: str) -> None:
+        if p == "mkdir":
+            raise Boom(p)
+
+    with pytest.raises(Boom):
+        _run(env, fault=fault)
+    assert (env.root / mg.TMP_DIR).is_dir() and not list((env.root / mg.TMP_DIR).iterdir())
+    monkeypatch.undo()
+    assert mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS) == "rolled_back"
+    assert _tree(env.root) == before
+
+
+def test_a_crash_inside_the_rollback_is_stuck_not_an_oserror_and_a_later_run_finishes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    env = _world(tmp_path)
+
+    def fault(p: str) -> None:
+        if p == "moved_all":
+            raise Boom(p)
+
+    real_rename = os.rename
+    calls = {"n": 0, "armed": False}
+
+    def flaky(src, dst, *a, **k):
+        if calls["armed"]:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError(5, "I/O error")
+        return real_rename(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "rename", flaky)
+
+    def arm(p: str) -> None:
+        if p == "moved_all":
+            calls["armed"] = True
+            raise Boom(p)
+
+    with pytest.raises(mg.MigrateError) as exc:
+        _run(env, fault=arm)
+    assert exc.value.code == "migrate.stuck"
+    assert json.loads((env.host_state / "hosts" / WS / mg.JOURNAL).read_text())["step"] == "moving"
+    calls["armed"] = False
+    assert mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS) == "rolled_back"
+    assert _legacy_names(env.root) >= {"events", "tickets", ".state", "config.json"}
+
+
+def test_a_failing_after_commit_step_is_stuck_and_the_next_run_finishes_forward(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    boom = {"on": True}
+
+    def after() -> None:
+        if boom["on"]:
+            raise RuntimeError("registry write failed")
+
+    with pytest.raises(mg.MigrateError) as exc:
+        _run(env, after_commit=after)
+    assert exc.value.code == "migrate.stuck"
+    assert json.loads((env.host_state / "hosts" / WS / mg.JOURNAL).read_text())["step"] == "committed"
+    assert (env.root / ".orch" / "config.json").is_file()
+    boom["on"] = False
+    assert mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS, after_commit=after) == "done"
+    assert mg.journal_step(env.host_state, WS) == "done"
+
+
+def test_stray_entries_in_tickets_are_ignored_but_a_linked_ticket_name_is_refused(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    (env.root / "tickets" / ".DS_Store").write_text("junk")
+    (env.root / "tickets" / "notes.txt").write_text("junk")
+    assert _run(env)["migrated"] is True
+    env2 = _world(tmp_path / "b")
+    uid = next(p.name for p in (env2.root / "tickets").iterdir() if mg.ULID.fullmatch(p.name))
+    (env2.root / "tickets" / uid).rename(env2.root / "tickets-away")
+    (env2.root / "tickets" / uid).symlink_to(env2.root / "tickets-away")
+    with pytest.raises(mg.MigrateError) as exc:
+        _run(env2)
+    assert exc.value.code == "migrate.unsafe"
+
+
+def test_gitignore_that_is_hard_linked_or_a_link_is_left_alone(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    other = tmp_path / "elsewhere.txt"
+    other.write_text("node_modules/\n")
+    os.link(other, env.root / ".gitignore")
+    out = _run(env)
+    assert out["migrated"] is True and out["gitignore"] is False
+    assert other.read_text() == "node_modules/\n"
+    env2 = _world(tmp_path / "b")
+    (tmp_path / "t.txt").write_text("x\n")
+    (env2.root / ".gitignore").symlink_to(tmp_path / "t.txt")
+    assert _run(env2)["gitignore"] is False
+    assert (tmp_path / "t.txt").read_text() == "x\n"
+
+
+def test_the_verify_open_does_not_make_directories(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    (env.root / "tickets").rename(env.root / "tickets-away")  # a store without tickets/ is refused at the plan
+    with pytest.raises(mg.MigrateError) as exc:
+        _run(env)
+    assert exc.value.code == "migrate.layout" and not os.path.lexists(env.root / ".orch")

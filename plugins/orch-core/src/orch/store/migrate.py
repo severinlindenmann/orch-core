@@ -36,8 +36,9 @@ from orch import layout as layout_mod
 from .errors import StoreError
 from .fsio import write_atomic
 from .lock import FileLock, LockTimeout
+from .paths import ULID
 
-__all__ = ["JOURNAL", "MOVE_NAMES", "TMP_DIR", "MigrateError", "finish_interrupted", "migrate"]
+__all__ = ["JOURNAL", "MOVE_NAMES", "TMP_DIR", "MigrateError", "finish_interrupted", "journal_step", "migrate"]
 
 #: what moves: every store record and directory of the legacy root layout (design section 1)
 MOVE_NAMES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", "addons", ".state")
@@ -52,7 +53,8 @@ Fault = Callable[[str], None]
 class MigrateError(Exception):
     """``code``: ``migrate.layout`` (not a legacy store, two stores, a link), ``migrate.busy`` (a lock),
     ``migrate.unsafe`` (an entry that must not be moved), ``migrate.verify`` (the check after the move failed; rolled
-    back), ``migrate.stuck`` (a journal that cannot be completed or rolled back; nothing is guessed)."""
+    back), ``migrate.stuck`` (a journal that cannot be completed or rolled back right now: files may be half way;
+    nothing is guessed, nothing deleted, and a later run or the next host start continues from the journal)."""
 
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(f"{code}: {detail}")
@@ -88,6 +90,13 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
 
 
 _STEPS = ("planned", "moving", "committed", "done", "rolled_back")
+
+
+def journal_step(state_dir: Path, workspace_id: str) -> str | None:
+    """The step of the migrate journal (``None``: there is none). Raises :class:`MigrateError` (``migrate.stuck``) for
+    one that cannot be read."""
+    doc = _read_journal(_journal_path(state_dir, workspace_id))
+    return None if doc is None else doc["step"]
 
 
 def _write_journal(path: Path, doc: dict[str, Any]) -> None:
@@ -148,6 +157,8 @@ def _digests(root_fd: int) -> dict[str, str]:
     if tickets is not None:
         try:
             for uid in sorted(os.listdir(tickets)):
+                if not ULID.fullmatch(uid):
+                    continue  # .DS_Store and the like: not a ticket, not read, not part of the comparison
                 tdir = sub(tickets, uid)
                 if tdir is None:
                     continue
@@ -165,21 +176,26 @@ def _fsync(fd: int) -> None:
         os.fsync(fd)
 
 
-def _gitignore(pfd: int) -> None:
-    """Make sure the project's ``.gitignore`` has the line ``.orch/`` (idempotent, never a link, user lines kept)."""
+def _gitignore(pfd: int) -> bool:
+    """Make sure the project's ``.gitignore`` has the line ``.orch/`` (idempotent, user lines kept). Only a plain file
+    of this user with one link is touched (``O_NOFOLLOW``, ``O_NONBLOCK``): a link, a FIFO, a hard link or another
+    owner's file is left alone. ``True``: the line is there."""
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        fd = os.open(".gitignore", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644, dir_fd=pfd)
+        fd = os.open(".gitignore", flags | getattr(os, "O_CLOEXEC", 0), 0o644, dir_fd=pfd)
     except OSError:
-        return
+        return False
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != os.getuid():
+            return False
         text = os.read(fd, 1 << 20).decode("utf-8", "replace")
         if ".orch/" in text.split("\n"):
-            return
+            return True
         os.lseek(fd, 0, os.SEEK_END)
         os.write(fd, (("" if not text or text.endswith("\n") else "\n") + ".orch/\n").encode())
         _fsync(fd)
+        return True
     finally:
         os.close(fd)
 
@@ -188,6 +204,14 @@ def _gitignore(pfd: int) -> None:
 
 
 def _rollback(pfd: int, journal: dict[str, Any], jpath: Path) -> None:
+    """:func:`_rollback_steps`, with a file system error as ``migrate.stuck`` (never an unhandled ``OSError``)."""
+    try:
+        _rollback_steps(pfd, journal, jpath, _state_base(pfd, journal))
+    except OSError as exc:
+        raise MigrateError("migrate.stuck", f"the rollback could not finish ({exc.strerror}); run it again") from None
+
+
+def _rollback_steps(pfd: int, journal: dict[str, Any], jpath: Path, state_base: int | None) -> None:
     """Reverse the renames of an unfinished migration: every entry goes back only if it is the recorded one."""
     tmp_ident = journal.get("tmp")
     names: dict[str, list[int]] = journal.get("names") or {}
@@ -196,6 +220,16 @@ def _rollback(pfd: int, journal: dict[str, Any], jpath: Path) -> None:
     if tmp_ident is not None and here is None and orch is not None and _ident(orch) == tmp_ident:
         os.rename(layout_mod.STORE_DIR, TMP_DIR, src_dir_fd=pfd, dst_dir_fd=pfd)  # the last rename had happened
         here = _lstat(pfd, TMP_DIR)
+    if here is not None and tmp_ident is None:
+        # the crash was between ``mkdir`` and the journal write: an EMPTY directory of that name is ours to drop
+        tfd = os.open(TMP_DIR, _DIR, dir_fd=pfd)
+        try:
+            empty = not os.listdir(tfd)
+        finally:
+            os.close(tfd)
+        if empty:
+            os.rmdir(TMP_DIR, dir_fd=pfd)
+            here = None
     if here is not None:
         if tmp_ident is None or _ident(here) != tmp_ident:
             raise MigrateError("migrate.stuck", f"{TMP_DIR} is not the directory this migration made; left as it is")
@@ -223,14 +257,45 @@ def _rollback(pfd: int, journal: dict[str, Any], jpath: Path) -> None:
 
 def _finish(
     pfd: int, journal: dict[str, Any], jpath: Path, after_commit: Callable[[], None] | None, fault: Fault
-) -> None:
-    """After ``committed``: only forward, every step idempotent."""
-    if after_commit is not None:
-        after_commit()
-    _gitignore(pfd)
-    fault("after_commit")
-    _write_journal(jpath, {**journal, "step": "done"})
-    fault("done")
+) -> bool:
+    """After ``committed``: only forward, every step idempotent. A failing step is ``migrate.stuck`` and the journal
+    stays ``committed``: the next run (or host start) does it again. Returns whether ``.gitignore`` has the line."""
+    try:
+        if after_commit is not None:
+            after_commit()
+        ignored = _gitignore(pfd)
+        fault("after_commit")
+        _write_journal(jpath, {**journal, "step": "done"})
+        fault("done")
+        return ignored
+    except MigrateError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the registry write, the journal, a fault: continue later, never half-done
+        raise MigrateError(
+            "migrate.stuck", f"finishing the migration failed ({type(exc).__name__}); run it again"
+        ) from None
+
+
+def _state_base(pfd: int, journal: dict[str, Any]) -> int | None:
+    """An fd of the directory that holds the store's ``.state`` NOW, found by the journal's recorded ``(dev, ino)``: the
+    project, ``.orch-migrating`` or ``.orch`` (the caller closes it); ``None`` when there is no ``.state`` anywhere."""
+    want = (journal.get("names") or {}).get(".state")
+    if want is None:
+        return None
+    candidates: list[int] = [os.dup(pfd)]
+    for name in (TMP_DIR, layout_mod.STORE_DIR):
+        try:
+            candidates.append(os.open(name, _DIR, dir_fd=pfd))
+        except OSError:
+            continue
+    found: int | None = None
+    for fd in candidates:
+        st = _lstat(fd, ".state")
+        if found is None and st is not None and _ident(st) == want:
+            found = fd
+        else:
+            os.close(fd)
+    return found
 
 
 def finish_interrupted(
@@ -243,21 +308,31 @@ def finish_interrupted(
 ) -> str:
     """Bring an interrupted migration to a terminal state (the caller holds ``owner.lock`` exclusively): ``planned`` or
     ``moving`` is rolled back, ``committed`` is finished forward. Returns the journal's step afterwards (``"none"``
-    without a journal). The legacy ``.state/lock`` is taken like in :func:`migrate`."""
+    without a journal). The store lock is the ``.state/lock`` found by the journal's recorded identity, wherever
+    ``.state`` sits now. A step that cannot finish is ``migrate.stuck`` and the journal keeps its step."""
     fault = fault or (lambda point: None)
     jpath = _journal_path(state_dir, workspace_id)
     journal = _read_journal(jpath)
     if journal is None or journal["step"] in ("done", "rolled_back"):
         return "none" if journal is None else journal["step"]
     pfd = _open_project(project)
+    base: int | None = None
     try:
-        with _legacy_lock(pfd, journal["step"] == "committed", 10.0):
-            if journal["step"] == "committed":
-                _finish(pfd, journal, jpath, after_commit, fault)
-                return "done"
-            _rollback(pfd, journal, jpath)
-            return "rolled_back"
+        try:
+            base = _state_base(pfd, journal)
+            with _lock_in(base, 10.0):
+                if journal["step"] == "committed":
+                    _finish(pfd, journal, jpath, after_commit, fault)
+                    return "done"
+                _rollback_steps(pfd, journal, jpath, base)
+                return "rolled_back"
+        except OSError as exc:
+            raise MigrateError(
+                "migrate.stuck", f"the interrupted migration could not finish ({exc.strerror})"
+            ) from None
     finally:
+        if base is not None:
+            os.close(base)
         os.close(pfd)
 
 
@@ -269,40 +344,31 @@ def _open_project(project: str | os.PathLike[str]) -> int:
 
 
 @contextlib.contextmanager
-def _legacy_lock(pfd: int, moved: bool, timeout: float) -> Any:
-    """The store lock of the legacy layout, ``<project>/.state/lock`` (below the fd, never a link). ``moved``: the store
-    is already in ``.orch`` (a forward finish): the lock file is then ``.orch/.state/lock``."""
-    base = pfd
-    close = False
-    if moved:
-        base = layout_mod.open_store_dir(pfd) or -1
-        close = True
-        if base < 0:
-            yield
-            return
+def _lock_in(base: int | None, timeout: float) -> Any:
+    """The store lock ``.state/lock`` below the directory fd ``base`` (never a link; ``None``: there is no store lock to
+    take, nothing can hold it)."""
+    if base is None:
+        yield
+        return
     try:
-        try:
-            sfd = os.open(".state", _DIR, dir_fd=base)
-        except FileNotFoundError:
-            yield  # no store lock yet: nothing can hold it
-            return
-        except OSError as exc:
-            raise MigrateError("migrate.unsafe", f".state is not a real directory ({exc.strerror})") from None
-        try:
+        sfd = os.open(".state", _DIR, dir_fd=base)
+    except FileNotFoundError:
+        yield
+        return
+    except OSError as exc:
+        raise MigrateError("migrate.unsafe", f".state is not a real directory ({exc.strerror})") from None
+    try:
 
-            def opener() -> int:
-                return os.open("lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=sfd)
+        def opener() -> int:
+            return os.open("lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=sfd)
 
-            try:
-                with FileLock(".state/lock", timeout=timeout, opener=opener):
-                    yield
-            except LockTimeout:
-                raise MigrateError("migrate.busy", "the workspace store lock is held by another process") from None
-        finally:
-            os.close(sfd)
+        try:
+            with FileLock(".state/lock", timeout=timeout, opener=opener):
+                yield
+        except LockTimeout:
+            raise MigrateError("migrate.busy", "the workspace store lock is held by another process") from None
     finally:
-        if close and base >= 0:
-            os.close(base)
+        os.close(sfd)
 
 
 def migrate(
@@ -335,7 +401,7 @@ def migrate(
             raise MigrateError("migrate.layout", "the directory holds no orch store")
         if not found.legacy:
             return {"migrated": False, "names": [], "recovered": step}
-        with _legacy_lock(pfd, False, lock_timeout):
+        with _lock_in(pfd, lock_timeout):
             return _move(pfd, project, jpath, state_dir, workspace_id, expected_genesis, after_commit, fault)
     finally:
         os.close(pfd)
@@ -369,8 +435,10 @@ def _move(
                 "migrate.unsafe", f"{name} is a link or not what the store keeps there; nothing is moved"
             )
         names[name] = _ident(st)
-    if "config.json" not in names:
-        raise MigrateError("migrate.layout", "the directory holds no orch store")
+    if not {"config.json", "events", "tickets", ".state"} <= set(names):
+        raise MigrateError(
+            "migrate.layout", "the directory holds no complete orch store (config.json, events/, tickets/, .state/)"
+        )
     before = _digests(pfd)
     journal: dict[str, Any] = {"v": 1, "step": "planned", "names": names, "digests": before, "tmp": None}
     _write_journal(jpath, journal)
@@ -378,6 +446,7 @@ def _move(
     # --- move
     try:
         os.mkdir(TMP_DIR, 0o700, dir_fd=pfd)
+        fault("mkdir")  # a crash here leaves an empty .orch-migrating and a journal without its identity
         tst = os.stat(TMP_DIR, dir_fd=pfd, follow_symlinks=False)
         journal = {**journal, "step": "moving", "tmp": _ident(tst)}
         _write_journal(jpath, journal)
@@ -411,8 +480,8 @@ def _move(
     journal = {**journal, "step": "committed"}
     _write_journal(jpath, journal)
     fault("committed")
-    _finish(pfd, journal, jpath, after_commit, fault)
-    return {"migrated": True, "names": sorted(names)}
+    ignored = _finish(pfd, journal, jpath, after_commit, fault)
+    return {"migrated": True, "names": sorted(names), "gitignore": ignored}
 
 
 def _verify(
@@ -449,7 +518,9 @@ def _verify(
     from .store import Store  # a full replay through the real open: chain, genesis pin, projections
 
     try:
-        s = Store.open(project, expected_workspace_id=workspace_id, expected_genesis=expected_genesis, load="all")
+        s = Store.open(
+            project, expected_workspace_id=workspace_id, expected_genesis=expected_genesis, load="all", scaffold=False
+        )
     except StoreError as exc:
         raise MigrateError("migrate.verify", f"replay failed: {exc.code}") from None
     try:

@@ -468,6 +468,7 @@ class Store:
         ident: tuple[int, int] | None = None,
         store_pin: StorePin | None = None,
         create: bool = False,
+        scaffold: bool = True,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -495,6 +496,8 @@ class Store:
         user's and not group/other-writable. ``create`` (default ``False``; only ``orch init`` and ``host.bootstrap``
         set it): a new workspace may be made: in the new layout its ``.orch`` (which
         must not exist: ``Store.created_store`` is its identity). Without it no ``.orch`` is ever made.
+        ``scaffold=False`` (the migrate check): the ``events``, ``tickets`` and ``.state``
+        directories are not made, so a store that lacks one cannot pass.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
@@ -519,7 +522,7 @@ class Store:
                 layout=layout,
             )
             store.created_store = created
-            store._open(load == "all", config)
+            store._open(load == "all", config, scaffold)
         except BaseException:
             fs.close()
             if created is not None:  # this open made .orch and failed: it leaves nothing behind
@@ -527,7 +530,7 @@ class Store:
             raise
         return store
 
-    def _open(self, eager: bool, config: bytes | None = None) -> None:
+    def _open(self, eager: bool, config: bytes | None = None, scaffold: bool = True) -> None:
         # the window between open_store_fs's resolve and the first check under the lock fails closed too: a store that
         # had its config then is checked before anything below the root is made
         self._config_seen = self.fs.config_seen
@@ -535,7 +538,8 @@ class Store:
         for d in ("events", "tickets", ".state"):
             if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")
-            self.fs.mkdir(d)
+            if scaffold:
+                self.fs.mkdir(d)
         self._known_config = config
         try:
             self._open_checked(eager)

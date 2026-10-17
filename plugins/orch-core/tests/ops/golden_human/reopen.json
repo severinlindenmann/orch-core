@@ -3,7 +3,7 @@
   "error": {
     "code": "transition.refused",
     "message": "status.transition: ticket.reopened from testing",
-    "hint": "orch show --section current_state",
+    "hint": "orch show REF",
     "fix": {
       "argv": [
         "orch",

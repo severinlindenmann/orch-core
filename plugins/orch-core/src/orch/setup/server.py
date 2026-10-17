@@ -33,10 +33,12 @@ from typing import Any, Protocol
 
 from .protocol import BROWSER_PREFIX, MAX_BODY, SOCKET_ROUTES, SetupError
 
-__all__ = ["CODE_SECONDS", "IDLE_SECONDS", "SetupServer"]
+__all__ = ["CODE_SECONDS", "IDLE_SECONDS", "LOST_SECONDS", "LOST_LINE", "SetupServer"]
 
 CODE_SECONDS = 300.0  # 5 min: the person may copy the printed link elsewhere; still single use
 IDLE_SECONDS = 600.0
+LOST_SECONDS = 5.0  # K2: the page polls /state every second; this long without any request means it was closed or reloaded
+LOST_LINE = "The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop."
 CODE_TRIES = 5
 _HOST = re.compile(r"(?:127\.0\.0\.1|localhost):([0-9]{1,5})")
 
@@ -45,6 +47,8 @@ class Flow(Protocol):
     """What the server needs from the flow."""
 
     def launch(self, directory: str) -> None: ...
+    @property
+    def dir(self) -> str: ...
     def dispatch(self, method: str, route: str, query: dict[str, str], body: Any) -> tuple[int, dict[str, Any]]: ...
     @property
     def busy(self) -> bool: ...
@@ -64,12 +68,16 @@ class SetupServer:
         clock: Callable[[], float] = time.monotonic,
         idle_seconds: float = IDLE_SECONDS,
         code_seconds: float = CODE_SECONDS,
+        lost_seconds: float = LOST_SECONDS,
         notify: Callable[[str], None] = lambda line: None,
     ) -> None:
         self.path = Path(sock_path)
         self.flow = flow
         self.clock = clock
         self.idle_seconds, self.code_seconds = idle_seconds, code_seconds
+        self.lost_seconds = lost_seconds
+        self._seen = 0.0  # the last request the bound browser made (a poll counts), unlike ``_last``
+        self.lost = False  # K2: the bound browser went quiet and the terminal was told
         self.notify = notify
         self._lock = threading.Lock()
         self.setup_id: str | None = None
@@ -127,9 +135,29 @@ class SetupServer:
                 self._remove_code_file()
             if self._token is None or self.ended or self.flow.busy:
                 return
-            if self.clock() - self._last < self.idle_seconds:
-                return
-        self.die("idle")
+            now = self.clock()
+            if now - self._last >= self.idle_seconds:
+                idle, tell = True, False
+            else:
+                idle = False
+                tell = not self.lost and now - self._seen > self.lost_seconds
+                self.lost = self.lost or tell
+        if idle:
+            self.die("idle")
+        elif tell:
+            self.notify(LOST_LINE)
+
+    def relink(self) -> dict[str, Any] | None:
+        """K2: the bound browser is gone (closed, reloaded: its token lived only in that page). Mint a NEW single-use
+        link: the old token stops working, the flow starts over (secrets already shown are dropped, so new words are
+        drawn and never shown again to anyone), then a fresh launch code. ``None`` when there is nothing to replace
+        (no lost browser, a run in progress, an ended session). Checked and swapped inside the lock (invariant 4)."""
+        with self._lock:
+            if not self.lost or self._token is None or self.ended or self.flow.busy:
+                return None
+            self._token, self.ports, self.lost = None, None, False  # the old page is refused from here on
+            directory = self.flow.dir
+        return self.launch(directory)
 
     def die(self, why: str) -> None:
         with self._lock:
@@ -223,7 +251,8 @@ class SetupServer:
             self.ports = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
             token = secrets.token_urlsafe(32)
             self._token = hashlib.sha256(token.encode()).digest()
-            self._last = self.clock()
+            self._last = self._seen = self.clock()
+            self.lost = False
         self.notify("browser connected")
         return {"token": token, "setup_id": self.setup_id}
 
@@ -249,8 +278,11 @@ class SetupServer:
             )
             if not ok:
                 raise SetupError("setup.token", "missing or wrong setup token", 401)
+            self._seen, back, self.lost = self.clock(), self.lost, False
             if not passive:  # the page's own once-a-second GET state must not keep an abandoned session alive
                 self._last = self.clock()
+        if back:
+            self.notify("the setup page is back; carry on there")
 
     def handle(self, method: str, target: str, headers: Any, raw: bytes) -> tuple[int, dict[str, Any]]:
         """One request -> (status, JSON-able body). Never raises."""

@@ -324,7 +324,7 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
     event = sample(typ)
     content = build({"op": "x", "events": [event], "material": material_for(typ, event)})
     text = flat(content) + "\n".join(signcontent.text(content, signer._clean))
-    for key in signcontent.SHOWN[typ]:
+    for key in signcontent.SHOWN[typ] - signcontent.DETAILS_ONLY.get(typ, frozenset()):
         value = event[key]
         needles = []
         if isinstance(value, str) and value.startswith("sha256:"):
@@ -381,8 +381,8 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     g = sample("grant.issued")
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["scope"] == "workable" and rows["verbs"] == "agent" and rows["until"] == "2026-10-16T17:00:00Z"
-    assert "scope workable, verbs agent" in c["headline"]
+    assert "scope" not in rows and rows["who can use it"] == "agents working for you"  # K4: scope/verbs are in words
+    assert c["headline"].startswith("Agents may work on all open tickets for 7 hours (until ")
     m = sample("member.added")
     c = build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
@@ -395,11 +395,76 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
 
 
+def _tz(monkeypatch, name):
+    import time
+
+    monkeypatch.setenv("TZ", name)
+    time.tzset()
+
+
+@pytest.fixture
+def restore_tz():
+    import os
+    import time
+
+    old = os.environ.get("TZ")
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
+def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, monkeypatch):
+    """The headline says what agents may do and until when, in this computer's time with the zone name; scope, verbs,
+    the grant id and the UTC times are not in the plain view (they are in the technical details)."""
+    g = {**sample("grant.issued"), "hours": 24, "issued_at": "2026-10-20T21:45:37Z", "expires_at": "2026-10-21T21:45:37Z"}
+    request = {"op": "grant", "events": [g], "material": material_for("grant.issued", g)}
+    _tz(monkeypatch, "Europe/Zurich")
+    c = build(request)
+    assert c["headline"] == "Agents may work on all open tickets for 1 day (until Wed 23:45 CEST, your time)"
+    assert [(r["field"], r["after"]) for r in c["fields_changed"]] == [
+        ("who can use it", "agents working for you"),
+        ("label", "marker-label"),
+    ]
+    assert c["notes"] == ["Scope, verbs, grant id and the exact times (UTC) are in the technical details."]
+    shown = "\n".join(signcontent.text(c, signer._clean))
+    for raw in ("2026-10-2", "gr_" + "3" * 26, "workable", "verbs agent", "scope workable"):
+        assert raw not in shown + c["headline"]
+    _tz(monkeypatch, "America/New_York")
+    assert build(request)["headline"].endswith("(until Wed 17:45 EDT, your time)")
+    _tz(monkeypatch, "UTC")
+    assert build(request)["headline"].endswith("(until Wed 21:45 UTC, your time)")
+    long = {**g, "hours": 168, "expires_at": "2026-10-27T21:45:37Z"}
+    assert "(until Tue 27 Oct 22:45 UTC" not in build({**request, "events": [long]})["headline"]  # 22:45 is CET, not UTC
+    assert build({**request, "events": [long]})["headline"].endswith("for 7 days (until Tue 27 Oct 21:45 UTC, your time)")
+
+
+def test_k4_other_scopes_and_unknown_times_keep_the_technical_review(restore_tz, monkeypatch):
+    _tz(monkeypatch, "UTC")
+    for change in ({"scope": "all"}, {"verbs": ["a.b"]}, {"expires_at": "set at signing"}):
+        g = {**sample("grant.issued"), **change}
+        c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+        rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+        assert {"scope", "verbs", "from", "until", "grant id"} <= set(rows)
+        assert c["headline"].startswith("Give agents access for 7 hours (scope ")
+
+
+def test_k4_the_details_still_carry_every_signed_field_of_the_grant(human, served):
+    p = human.prepare("grant", {"hours": 24, "scope": "workable"})
+    review = signer.plain(p, WS)
+    ev = p["events"][0]
+    for value in (ev["grant"], ev["scope"], ev["issued_at"], ev["expires_at"], "agent"):
+        assert value in review.details
+        assert value not in review.body if hasattr(review, "body") else True
+    assert "Agents may work on all open tickets for 1 day (until " in str(review)
+
+
 def test_b8_lengths_read_as_days_and_hours_in_the_headline_and_the_settings_note(human, served):
     g = {**sample("grant.issued"), "hours": 72}
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
-    assert c["headline"].startswith("Give agents access for 3 days (")
-    assert "for 3 days," in " ".join(c["notes"])
+    assert c["headline"].startswith("Agents may work on all open tickets for 3 days (")
     assert signcontent.span(8) == "8 hours" and signcontent.span(24) == "1 day" and signcontent.span(168) == "7 days"
     event = {**sample("settings.changed"), "set": {"grant_hours": 168}}
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})

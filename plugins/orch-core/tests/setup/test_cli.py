@@ -225,3 +225,61 @@ def test_default_socket_directory_is_private_not_the_host_run_directory(tmp):
     )
     assert seen == {"mode": 0o700, "sock": True} and rc == 1, err.getvalue()
     assert not (tmp.state / "run" / "setup.sock").exists()
+
+
+def test_k2_a_lost_page_prints_the_notice_and_enter_opens_a_new_link(tmp):
+    """Fake clock: the page claims, then stops polling; the terminal says so; Enter mints a new link, opens it, and the
+    old token is refused."""
+    sock = str(tmp.root / "run" / "setup.sock")
+    clock = {"t": 1000.0}
+    seen: dict = {"opened": [], "enter": 0}
+    result: dict = {}
+
+    def browser(env, err, launch):
+        seen["opened"].append(launch["code"])
+        n = len(seen["opened"])
+
+        def drive():
+            st, c, _ = call(sock, "POST", "/claim", {"code": launch["code"], "port": 8765})
+            assert st == 200
+            tok = c["token"]
+            if n == 1:
+                seen["old"] = tok
+                assert call(sock, "GET", "/api/setup/state", token=tok)[0] == 200
+                clock["t"] += 6  # the page goes quiet (a reload: the token lived in its memory)
+                for _ in range(100):  # the watchdog notices
+                    if "closed or reloaded" in err.getvalue():
+                        break
+                    threading.Event().wait(0.05)
+                seen["noticed"] = "closed or reloaded" in err.getvalue()
+                seen["enter"] = 1  # now the person presses Enter
+            else:
+                result["old_refused"] = call(sock, "GET", "/api/setup/state", token=seen["old"])[0] in (401, 403)
+                result["new_ok"] = call(sock, "GET", "/api/setup/state", token=tok)[0] == 200
+                call(sock, "POST", "/shutdown", {})
+
+        def safe():
+            try:
+                drive()
+            except BaseException as e:  # noqa: BLE001
+                result["error"] = repr(e)
+                call(sock, "POST", "/shutdown", {})
+
+        threading.Thread(target=safe, daemon=True).start()
+        return True
+
+    def enter(timeout, flush=False):
+        if seen["enter"] == 1 and not flush:
+            seen["enter"] = 2
+            return True
+        threading.Event().wait(min(timeout, 0.05))
+        return False
+
+    rc, out, err = run_main(
+        tmp, open_browser=browser, enter_pressed=enter, server_options={"clock": lambda: clock["t"]}
+    )
+    assert "error" not in result, result
+    assert seen["noticed"] and len(seen["opened"]) == 2 and seen["opened"][0] != seen["opened"][1]
+    assert result == {"old_refused": True, "new_ok": True}
+    assert err.count("The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop.") == 1
+    assert seen["opened"][0] not in out + err and seen["opened"][1] not in out + err  # codes never on stderr/stdout

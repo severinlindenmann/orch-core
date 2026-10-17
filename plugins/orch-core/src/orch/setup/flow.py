@@ -113,6 +113,8 @@ class SetupFlow:
 
     def launch(self, directory: str) -> None:
         with self.lock:
+            if self._running:  # K2: a new session never replaces a run in progress
+                raise SetupError("setup.busy", "setup is creating the workspace", 409)
             real, mode = facts_mod.check_dir(
                 directory,
                 home=self.e.home,
@@ -571,6 +573,8 @@ def main(
     make_env: Callable[[Mapping[str, str]], Env] | None = None,
     ensure_host: Callable[[Mapping[str, str], Any], None] | None = None,
     open_browser: Callable[[Mapping[str, str], Any, dict[str, Any]], bool] | None = None,
+    enter_pressed: Callable[..., bool] | None = None,
+    server_options: Mapping[str, Any] | None = None,
     run_dir: Path | None = None,
     cwd: str | None = None,
 ) -> int:
@@ -605,7 +609,12 @@ def main(
     # launch-code file need a directory only this user can enter.
     sock_dir = run_dir if run_dir is not None else denv.state_dir / "setup"
     flow = SetupFlow(denv)
-    server = SetupServer(Path(sock_dir) / "setup.sock", flow, notify=lambda line: err.write(f"orch setup: {line}\n"))
+    server = SetupServer(
+        Path(sock_dir) / "setup.sock",
+        flow,
+        notify=lambda line: err.write(f"orch setup: {line}\n"),
+        **(server_options or {}),
+    )
     try:
         server.start()
         launch = server.launch(cwd if cwd is not None else os.path.realpath(os.getcwd()))
@@ -628,8 +637,27 @@ def main(
         return 1
     try:
         with wi._hangup_as_interrupt():
-            while not server.stop_event.wait(0.5):
-                pass
+            wait_enter = enter_pressed or wi.TERMINAL.enter_pressed
+            armed = False  # K2: the lost-page notice was printed and Enter now asks for a fresh link
+            while not server.stop_event.is_set():
+                if not server.lost:
+                    armed = False
+                    server.stop_event.wait(0.5)
+                    continue
+                if not armed:
+                    armed = True
+                    wait_enter(0.0, flush=True)  # what was typed before the notice is not an answer
+                if wait_enter(0.5):
+                    try:
+                        fresh = server.relink()
+                    except SetupError as e:
+                        err.write(f"orch setup: {e.message}\n")
+                        fresh = None
+                    if fresh is not None and not (
+                        opener(env, err, fresh, no_browser=True) if no_browser else opener(env, err, fresh)
+                    ):
+                        err.write("orch setup: could not open the setup page (see above); run orch setup again\n")
+                        server.die("error")
     except KeyboardInterrupt:
         flow.cancel_run()
         if flow.thread is not None:

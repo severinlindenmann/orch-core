@@ -2,9 +2,9 @@
 
 The same sequence the dashboard uses (:mod:`orch.host.seqquick`): the signer shows the whole task and what it
 approves once, you confirm once, and it signs the ticket (a chore labelled ``quick``), its requirements, one
-criterion and one task per ``--step``, the plan it derives, both approvals and, only with ``--agents HOURS``, the agent access, last. The task
-still ends with your own verdict. This is a person's command: it needs your device key and your terminal, and an agent
-never reaches it.
+criterion and one task per ``--step``, the plan it derives, both approvals and, only with ``--agents HOURS``, the
+agent access, last. The task still ends with your own verdict. This is a person's command: it needs your device
+key and your terminal, and an agent never reaches it.
 """
 
 from __future__ import annotations

@@ -345,7 +345,7 @@ def test_without_dashboard_execution_a_grant_sequence_is_the_terminals(click, se
     del refused
 
 
-# --- §0.8.6 at submit: the convenience condition is checked AGAIN, under the lock, before the events are judged ----------
+# --- §0.8.6 at submit: the convenience condition is checked AGAIN, under the lock, before judging ------
 
 
 def _convenience_signer(human):

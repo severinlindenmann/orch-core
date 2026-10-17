@@ -29,6 +29,7 @@ class Env:
     def __init__(self, tmp_path: Path, *, clock_start: int = T0) -> None:
         self.tmp = tmp_path
         self.root = tmp_path / "workspace"
+        self.root.mkdir(parents=True, exist_ok=True)  # Store.open makes no project directory for a reader
         self.host_state = tmp_path / "host-state"
         self.clock = [clock_start]
         self.host_backend = FileBackend(tmp_path / "wsk")

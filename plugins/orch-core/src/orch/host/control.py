@@ -24,7 +24,6 @@ import json
 import logging
 import os
 import re
-import secrets
 import shutil
 import stat
 import time
@@ -931,42 +930,11 @@ class ControlOps:
 
     @staticmethod
     def _remove_made_store(root: str, recorded: Any) -> None:
-        """Remove the ``.orch`` this bootstrap made, by fds: open it ``O_NOFOLLOW`` below the project fd, compare its
-        ``(dev, inode)`` with the recorded one, rename it to a unique tombstone, check the tombstone is still that
-        directory, and remove it below the project fd. Anything else there is a person's own and is left alone."""
-        from orch.store.rootfs import rm_at
+        """Remove the ``.orch`` this bootstrap made and nothing else (:func:`orch.store.rootfs.remove_made_dir`)."""
+        from orch.store.rootfs import remove_made_dir
 
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        try:
-            pfd = os.open(root, flags)
-        except OSError:
-            return
-        try:
-            try:
-                dfd = os.open(STORE_DIR, flags, dir_fd=pfd)
-            except OSError:
-                return
-            try:
-                st = os.fstat(dfd)
-                if recorded != [st.st_dev, st.st_ino]:
-                    log.warning("host.bootstrap rollback left %s/.orch: not made by this bootstrap", root)
-                    return
-                tomb = f".orch-rollback-{secrets.token_hex(8)}"
-                try:
-                    os.rename(STORE_DIR, tomb, src_dir_fd=pfd, dst_dir_fd=pfd)
-                except OSError:
-                    return
-                moved = os.stat(tomb, dir_fd=pfd, follow_symlinks=False)
-                if (moved.st_dev, moved.st_ino) != (st.st_dev, st.st_ino):
-                    with contextlib.suppress(OSError):  # not what we opened: put it back, touch nothing
-                        os.rename(tomb, STORE_DIR, src_dir_fd=pfd, dst_dir_fd=pfd)
-                    return
-                with contextlib.suppress(OSError):
-                    rm_at(pfd, tomb)
-            finally:
-                os.close(dfd)
-        finally:
-            os.close(pfd)
+        if not remove_made_dir(root, STORE_DIR, recorded):
+            log.warning("host.bootstrap rollback left %s/.orch: not made by this bootstrap", root)
 
     # -- host.outcome
     def outcome(self, args: dict[str, Any]) -> dict[str, Any]:

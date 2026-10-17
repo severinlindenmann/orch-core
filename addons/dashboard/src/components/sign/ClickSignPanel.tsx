@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
+import { fmtClock } from '@/lib/time'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -31,7 +32,7 @@ export const ClickBadge = () => <div className="space-y-1"><TooltipProvider><Too
 
 function When({ stamp }: { stamp: string }) {
   const t = Date.parse(stamp)
-  return <time dateTime={stamp}>{Number.isNaN(t) ? stamp : new Date(t).toLocaleTimeString()}</time>
+  return <time dateTime={stamp}>{Number.isNaN(t) ? stamp : fmtClock(stamp)}</time>
 }
 
 interface Props {

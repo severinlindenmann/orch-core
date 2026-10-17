@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 """Batch 11, finding 9: the one-click path of the sequence. The checks run in the click signer's own process (the
 dashboard server only relays), one click signs every step with the convenience key."""
 
@@ -9,7 +10,7 @@ from orch.click.signer import ClickSigner  # noqa: F401
 from tests.host import human_helpers
 from tests.host.human_helpers import err, ok
 from tests.host.test_click import Click, click, refused  # noqa: F401
-from tests.host.test_sequence import doc, intent_of
+from tests.host.test_sequence import intent_of
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 

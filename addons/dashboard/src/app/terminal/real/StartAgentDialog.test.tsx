@@ -372,6 +372,23 @@ it.each([4, 24, 500])('caps runner lengths at workspace hours %s and 168', async
   expect(Number(select.value)).toBeLessThanOrEqual(Math.min(limit, 168))
 })
 
+it('B12A old 12: the lengths come from the SIGNED settings when the workspace list carries no grant_hours', async () => {
+  vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'], grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  s.preview.mockResolvedValue(noGrant())
+  mount()
+  await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+  await waitFor(() => expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days']))
+  expect([...(screen.getByLabelText('Tickets') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['Tickets you may work on', 'All tickets'])
+})
+
+it('B12A N16: at the maximum, Extend says how long the workspace allows and why there is no choice', async () => {
+  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: null, grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const until = new Date(nowMs() + 100 * 3_600_000).toISOString()
+  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all', until }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  expect(await screen.findByTestId('runner-grant-longest')).toHaveTextContent('as long as this workspace allows (3 days)')
+})
+
 describe('terminal-approval workspace (no one-click)', () => {
   beforeEach(() => {
     vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)

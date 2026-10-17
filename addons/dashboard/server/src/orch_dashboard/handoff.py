@@ -585,7 +585,35 @@ PrepareBody = Annotated[
 ]
 
 
-def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | None:
+def _grant_landed(gateway: Gateway, ws: str, intent: dict, person, since) -> bool:
+    """The last step of a quick task with agent access: a live runner grant of this person with exactly the reviewed
+    length, issued after this request began. Unknown or unreadable counts as not landed (fail closed: the dialog keeps
+    waiting and never says "done" for access that was not given)."""
+    from orch.host import sequence
+
+    if not isinstance(person, str) or not isinstance(since, str):
+        return False
+    try:
+        grants = gateway.call(ws, "grant.list", {"active": True}).get("grants") or []
+        hours = intent["agent"]["hours"]
+        for g in grants:
+            issued, expires = g.get("issued_at"), g.get("expires_at")
+            if (
+                g.get("person") == person
+                and g.get("label") == "runner"
+                and not g.get("revoked_at")
+                and isinstance(issued, str)
+                and isinstance(expires, str)
+                and issued >= since
+                and sequence._epoch(expires) - sequence._epoch(issued) == hours * 3600
+            ):
+                return True
+    except (HostError, KeyError, TypeError, ValueError, AttributeError):
+        return False
+    return False
+
+
+def sequence_progress(gateway: Gateway, ws: str, key, intent: dict, person=None, since=None) -> dict | None:
     """B11: how many steps of a sequence are in the ticket's log now, read from the host (`ticket.get`): the created
     ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for the terminal
     path (the signer drives the run in the person's terminal); it decides nothing."""
@@ -604,9 +632,11 @@ def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | No
     ac = tasks = 0
     for step in sequence.steps(intent)[1:]:
         kind = step["kind"]
-        if kind == "grant":  # not visible on the ticket; the run is as done as its last visible step
-            total -= 1
-            break
+        if kind == "grant":  # a workspace event, not in the ticket: read from the grants, and counted like any step
+            if not _grant_landed(gateway, ws, intent, person, since):
+                break
+            done += 1
+            continue
         if kind == "set":
             labels = ["quick"] if intent["kind"] == "quick_task" else None
             ok = (
@@ -1187,7 +1217,11 @@ def register(app: FastAPI, gateway: Gateway):
         out = adapters.handoff.state(rows[0])
         intent = handoffs.intents.get(request_id)
         if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
-            out["progress"] = sequence_progress(gateway, ws, rows[0].get("key"), intent)
+            out["progress"] = sequence_progress(
+                gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")
+            )
+            if out["progress"] is not None and intent.get("agent") is not None:
+                out["progress"]["last"] = "grant"  # the terminal signs the agent access last (the dialog says so)
         return out
 
     @app.delete("/api/w/{ws}/handoff/{request_id}")

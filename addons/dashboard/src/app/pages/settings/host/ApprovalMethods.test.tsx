@@ -6,15 +6,18 @@ import { ApprovalMethods } from './ApprovalMethods'
 const ask = vi.fn()
 vi.mock('./useSettingsHandoff', () => ({ useSettingsHandoff: () => ({ ask, dialog: null }) }))
 afterEach(() => { cleanup(); vi.restoreAllMocks(); ask.mockReset() })
-function mount(owner = true, supported: boolean | null = true) {
+function mount(owner = true, supported: boolean | null = true, custody: 'convenience' | 'passphrase' | 'none' = 'convenience') {
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: 'w', click: { custody, enabled: custody === 'convenience', available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
   vi.spyOn(api, 'getHostSettings').mockResolvedValue((supported === null ? { sign_methods: null } : supported ? { sign_methods: ['terminal', 'click', 'phone'] } : {}) as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockImplementation(async () => { if (supported === false) throw new Error('Absent'); return { method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false } })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ApprovalMethods ws="w" owner={owner} /></QueryClientProvider>)
 }
 it('saves allowed methods through the signed settings flow and keeps reserved methods disabled', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
   mount()
   const phone = screen.getByLabelText('Phone (Face ID)')
   await waitFor(() => expect(phone).toBeEnabled())
+  await waitFor(() => expect(screen.getByLabelText('One click on this computer')).toBeChecked())
   expect(screen.getByLabelText('Terminal (always)')).toBeDisabled()
   expect(screen.getByLabelText(/Touch ID/)).toBeDisabled()
   expect(screen.getByLabelText(/Security key/)).toBeDisabled()
@@ -55,8 +58,34 @@ it('does not show Phone as allowed in an unrestricted workspace without a paired
   mount(true, null)
   await screen.findByText(/No limit is set/)
   expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
-  expect(screen.getByText('no phone paired yet')).toBeInTheDocument()
-  expect(screen.getByLabelText('One click on this computer')).toBeChecked()
+  expect(screen.getByText(/no phone paired yet/)).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByLabelText('One click on this computer')).toBeChecked())
+})
+
+it('N11: on a terminal workspace One click is off and not offered, and the boxes follow the signed methods', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 0 })
+  mount(true, null, 'none')
+  await screen.findByText(/No limit is set/)
+  await waitFor(() => expect(screen.getByText(/not set up: turn on/)).toBeInTheDocument())
+  expect(screen.getByLabelText('One click on this computer')).not.toBeChecked()
+  expect(screen.getByLabelText('One click on this computer')).toBeDisabled()
+  expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
+  expect(screen.getByText(/Pairing a phone is not available on this host yet/)).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
+  // My settings offers no one-click fallback either.
+  expect(screen.queryByRole('option', { name: /One click/i })).toBeNull()
+})
+
+it('N11: a signed list of terminal only leaves One click unchecked even with convenience custody', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', allowed: ['terminal'], is_default: true } as Awaited<ReturnType<typeof api.getSignDefault>>)
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: 'w', click: { custody: 'convenience', enabled: true, available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ApprovalMethods ws="w" owner /></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
+  expect(screen.getByLabelText('One click on this computer')).not.toBeChecked()
+  expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
+  expect(screen.getByLabelText('Terminal (always)')).toBeChecked()
 })
 
 it('treats explicit null as unrestricted and lets the owner set a restriction', async () => {

@@ -542,6 +542,19 @@ class HumanOps:
             seq = store.log_seq(want["uid"]) if view is not None and view.uid == want["uid"] else None
             if seq is None or store.head_at(want["uid"], seq) != checked["intent"]["head"]:
                 raise HostError("human.request_mismatch", sequence.CHANGED)
+        agent = (checked.get("intent") or {}).get("agent") if checked["step"] == 0 else None
+        if (
+            agent is not None
+        ):  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
+            from orch.model.types import GRANT_MAX_HOURS
+
+            cap = min(store.state.workspace.settings["grant_hours"], GRANT_MAX_HOURS)
+            if agent["hours"] > cap:
+                raise HostError(
+                    "invalid.input",
+                    f"agent access can last at most {cap} hours in this workspace (Settings), not {agent['hours']}; "
+                    "nothing was signed",
+                )
         if checked["step"] > 0 and not dry_run:
             view = store.ticket(checked["ticket"])
             if (

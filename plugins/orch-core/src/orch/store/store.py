@@ -110,17 +110,26 @@ def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
 
 
 def open_store_fs(
-    project: Path, ident: tuple[int, int] | None, pin: StorePin | None, *, create: bool = False
-) -> tuple[RootFS, Layout]:
+    project: Path,
+    ident: tuple[int, int] | None,
+    pin: StorePin | None,
+    *,
+    create: bool = False,
+    make_project: bool = False,
+) -> tuple[RootFS, Layout, tuple[int, int] | None]:
     """The pinned store root and the layout of the project directory ``project`` (opened ``O_NOFOLLOW``, checked
     against ``ident``): the layout is resolved from that one fd and, in the new layout, ``.orch`` is opened below it
-    (``O_NOFOLLOW``), never by a path. ``create`` (a new workspace only, never with ``ident``): the project directory
-    and, when it holds no store and the layout switch says new, ``.orch`` may be made; otherwise nothing is created
-    (a records or read caller can never make a store)."""
+    (``O_NOFOLLOW``), never by a path. ``create`` (a new workspace only, never with ``ident``): when the project holds
+    no store and the layout switch says new, ``.orch`` may be made; otherwise no store is ever created (a records or
+    read caller can never make one). ``make_project``: a missing project directory may be made
+    (``Store.open``). Returns the root, the layout and the ``(st_dev, st_ino)`` of the ``.orch`` directory THIS call
+    made (``None``: none): it is made with ``mkdir`` (``EEXIST`` is refused), so an existing directory of that name,
+    a person's own, is never taken for a new store."""
     if create and ident is not None:
         raise StoreError("validation.path", "a store found by its identity is never created")
-    pfs = RootFS.at(project, ident=ident, create=create)
+    pfs = RootFS.at(project, ident=ident, create=make_project and ident is None)
     keep = False
+    created: tuple[int, int] | None = None
     try:
         try:
             found = _layout.resolve(pfs.fd, project)
@@ -129,10 +138,20 @@ def open_store_fs(
                 raise StoreError("validation.path", "the store layout changed since the workspace was found")
             if layout.legacy:
                 keep = True
-                return pfs, layout
-            sfd = _layout.open_store_dir(pfs.fd)
-            if sfd is None and found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only
-                os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
+                return pfs, layout, None
+            if found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only, never reused
+                try:
+                    os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
+                except FileExistsError:
+                    raise StoreError(
+                        "validation.path",
+                        f"{_layout.STORE_DIR} already exists and is not an orch store; it is not used or replaced",
+                    ) from None
+                sfd = _layout.open_store_dir(pfs.fd)
+                if sfd is not None:
+                    st = os.fstat(sfd)
+                    created = (st.st_dev, st.st_ino)
+            else:
                 sfd = _layout.open_store_dir(pfs.fd)
         except LayoutError as exc:
             raise StoreError("validation.path", str(exc)) from None
@@ -145,7 +164,7 @@ def open_store_fs(
                     raise StoreError(
                         "validation.path", f"{_layout.STORE_DIR} is no longer the store directory that was found"
                     )
-            return RootFS(layout.store, sfd), layout
+            return RootFS(layout.store, sfd), layout, created
         except BaseException:
             os.close(sfd)
             raise
@@ -327,6 +346,8 @@ class Store:
         #: project (the directory agents work in) and store (``root``); the same directory in the legacy layout. There
         #: is no default: :meth:`open` resolves it from the directory (``orch.layout.resolve``).
         self.layout = layout
+        #: ``(st_dev, st_ino)`` of the ``.orch`` directory the open that built this store made (``None``: none)
+        self.created_store: tuple[int, int] | None = None
         #: the pinned root (#516): every file under the workspace is reached through it, never by path
         self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
@@ -427,6 +448,7 @@ class Store:
         config: bytes | None = None,
         ident: tuple[int, int] | None = None,
         store_pin: StorePin | None = None,
+        create: bool = False,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -451,14 +473,16 @@ class Store:
         ``validation.path``, and a directory with no store yet gets :func:`orch.layout.fresh`. ``store_pin``: what
         discovery saw of the store (:class:`~orch.layout.StorePin`): the opened ``.orch`` must be that directory (an
         inode swapped in between is ``validation.path``), and after an implicit walk it must still be the current
-        user's and not group/other-writable.
+        user's and not group/other-writable. ``create`` (default ``False``; only ``orch init`` and ``host.bootstrap``
+        set it): a new workspace may be made: in the new layout its ``.orch`` (which
+        must not exist: ``Store.created_store`` is its identity). Without it no ``.orch`` is ever made.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         project = Path(path)
-        fs, layout = open_store_fs(project, ident, store_pin, create=ident is None)
+        fs, layout, created = open_store_fs(project, ident, store_pin, create=create, make_project=True)
         root = layout.store
         try:
             store = cls(
@@ -475,6 +499,7 @@ class Store:
                 fs=fs,
                 layout=layout,
             )
+            store.created_store = created
             store._open(load == "all", config)
         except BaseException:
             fs.close()

@@ -286,5 +286,5 @@ it('shows the ISO risk acknowledgement as a date in Settings', async () => {
   mount({ ...ON, risk_ack: at })
   const notice = await screen.findByText(/Risk notice acknowledged on/)
   expect(notice.querySelector('time')).toHaveAttribute('datetime', at)
-  expect(notice).toHaveTextContent(new Date(at).toLocaleString())
+  expect(notice).toHaveTextContent('16 Oct 18:30') // local zone (UTC in tests), the shared formatter
 })

@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
   | 'idle'
@@ -204,7 +205,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     const expires = Date.parse(prepared.expires_at)
     const deadline = (Number.isNaN(expires) ? Date.now() + 600_000 : expires) + 30_000
     const stillOpen = () => {
-      const when = Number.isNaN(expires) ? '' : ` It expires at ${new Date(expires).toLocaleTimeString()}.`
+      const when = Number.isNaN(expires) ? '' : ` It expires at ${fmtClock(new Date(expires).toISOString())}.`
       setSettleNote(`Still not settled.${when} Check the ticket's activity before doing anything else; nothing is offered until it settles.`)
     }
     const check = async (last = false) => {

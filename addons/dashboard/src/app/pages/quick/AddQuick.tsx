@@ -4,9 +4,12 @@
 // the workspace's ONE signing path (HandoffDialog: click where it is on, the terminal where it is off); this file adds no
 // path of its own.
 import { useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { HandoffAction } from '@/api/handoff'
+import { accessLength, GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from '@/api/grants'
+import { queries } from '@/api/queries'
 import { ONE_SIGNATURE } from '@/api/quickRecords'
+import { useWorkspace } from '@/app/workspace'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,12 +18,6 @@ import { Label } from '@/components/ui/label'
 /** The most a title may hold: one line (the host's own limit is wider; a quick task is one line). */
 export const MAX_QUICK_TITLE = 120
 export const MAX_STEPS = 4
-const HOURS = [
-  { hours: 8, label: '8 hours' },
-  { hours: 24, label: '1 day' },
-  { hours: 72, label: '3 days' },
-  { hours: 168, label: '7 days' },
-] as const
 
 export const oneLine = (v: string): string | null => {
   const t = v.trim()
@@ -52,6 +49,11 @@ export function quickAction(title: string, description: string, steps: Step[], a
 
 export function AddQuick({ ws }: { ws: string }) {
   const qc = useQueryClient()
+  const { workspace } = useWorkspace()
+  // The signer's runner grant lasts at most the workspace maximum (Settings), owners included: offer nothing longer.
+  const hostCap = useQuery(queries.hostSettings(ws)).data?.grant_hours
+  const cap = typeof hostCap === 'number' ? Math.min(GRANT_MAX_HOURS, Math.max(1, Math.floor(hostCap))) : grantDefaultHours(workspace)
+  const lengths = runnerLengths(cap)
   const [text, setText] = useState('')
   const [details, setDetails] = useState('')
   const [steps, setSteps] = useState<Step[]>([{ text: '', cmd: '' }])
@@ -61,7 +63,8 @@ export function AddQuick({ ws }: { ws: string }) {
   const input = useRef<HTMLInputElement>(null)
   const title = oneLine(text)
   const tooLong = [...text.trim()].length > MAX_QUICK_TITLE
-  const built = quickAction(text, details, steps, agents ? hours : null)
+  const chosen = lengths.some(([h]) => h === hours) ? hours : (lengths[0]?.[0] ?? 8)
+  const built = quickAction(text, details, steps, agents ? chosen : null)
   const done = () => {
     setAction(null)
     setText('')
@@ -106,16 +109,17 @@ export function AddQuick({ ws }: { ws: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-[13px] text-text">
             <input type="checkbox" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
-            Let agents work on workable tickets (all of them, not only this one) for
+            Let agents work on any ticket they are allowed to work on, not only this one, for
           </label>
-          <select aria-label="How long agents may work" value={hours} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="rounded-md border border-border bg-bg px-2 py-1 text-[13px]">
-            {HOURS.map((h) => (
-              <option key={h.hours} value={h.hours}>
-                {h.label}
+          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="rounded-md border border-border bg-bg px-2 py-1 text-[13px]">
+            {lengths.map(([h, label]) => (
+              <option key={h} value={h}>
+                {label}
               </option>
             ))}
           </select>
         </div>
+        {agents && <p className="text-[12px] text-text-muted">This workspace allows agent access of up to {accessLength(cap)} (Settings).</p>}
         <Button type="submit" disabled={!title || !built || !!action}>
           Start task
         </Button>

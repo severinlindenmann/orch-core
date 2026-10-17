@@ -201,3 +201,41 @@ def test_the_real_built_shell_has_a_literal_head_tag():
     if not built.is_file():
         pytest.skip("the UI is not built here")
     assert "<head>" in built.read_text(encoding="utf-8")
+
+
+def test_loading_css_is_served_as_css_with_the_csp(gateway, auth, tmp_path):
+    """B12A N6: the boot shell's stylesheet answered 404 JSON, so the blank-page guard never applied."""
+    from fastapi.testclient import TestClient
+
+    from orch_dashboard.app import create_app
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html><head></head></html>", encoding="utf-8")
+    (static / "loading.css").write_text(".boot{display:flex}", encoding="utf-8")
+    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as c:
+        res = c.get("/loading.css")
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith("text/css")
+        assert "style-src 'self'" in res.headers["content-security-policy"]
+        assert res.headers["x-content-type-options"] == "nosniff"
+        assert c.get("/other.css").status_code == 404
+        (static / "loading.css").unlink()
+        assert c.get("/loading.css").status_code == 404  # missing file: the closed 404, never index.html
+
+
+def test_every_root_file_the_built_shell_references_is_served(client):
+    """B12A N6 / old 32: each root-level href/src of the built index.html is a route (needs the built UI)."""
+    import re
+    from pathlib import Path
+
+    built = Path(__file__).resolve().parents[1] / "src/orch_dashboard/static/index.html"
+    if not built.is_file():
+        pytest.skip("the UI is not built here")
+    refs = re.findall(r'(?:href|src)="(/[^"/][^"]*)"', built.read_text(encoding="utf-8"))
+    assert refs
+    from orch_dashboard.app import ROOT_FILES
+
+    for ref in refs:
+        if not ref.startswith("/assets/"):
+            assert ref.lstrip("/") in ROOT_FILES, ref

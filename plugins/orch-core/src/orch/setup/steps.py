@@ -391,7 +391,11 @@ class Creator:
         for s in self.run.steps:
             if s["status"] == "doing":
                 self.run.set(s["id"], "failed")
-        self.run.error = {"code": e.code, "message": e.message[:300], "finishable": bool(post_genesis)}
+        # B12 N14: the one-click switch is only effective with the key moved; a "Done" row above a failure would lie
+        if not self._custody_done and self.run.status("custody") in ("failed", "skipped", "todo", "doing"):
+            if self.run.status("flags") == "done":
+                self.run.set("flags", "skipped")
+        self.run.error = {"code": e.code, "message": e.message[:400], "finishable": bool(post_genesis)}
 
     # -- R3
     def _tty_confirm(self) -> None:
@@ -648,7 +652,17 @@ class Creator:
         raw = str(getattr(e, "message", None) or e or "").strip()
         if not raw or (self._passphrase and self._passphrase in raw):
             return "this Mac refused (" + (type(e).__name__ if e is not None else "unknown") + ")"
-        text = " ".join(canon.clean(raw).split())[:120].rstrip(" .;:")
+        text = " ".join(canon.clean(raw).split())
+        low = text.lower()
+        if (
+            "keychain" in low
+        ):  # B12 N14: the macOS keychain wording ("interaction not allowed, -25308 ...") is not for people
+            if "interaction not allowed" in low or "-25308" in low or "locked" in low:
+                return "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again"
+            return "macOS did not let orch use the keychain"
+        if len(text) > 160:  # cut at a word, never in the middle of one
+            text = text[:160].rsplit(" ", 1)[0] + "…"
+        text = text.rstrip(" .;:")
         return text[:1].lower() + text[1:]
 
 

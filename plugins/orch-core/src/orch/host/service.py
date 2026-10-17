@@ -95,24 +95,10 @@ def _state_fd(project: str | os.PathLike[str]) -> int | None:
 
 
 def is_served(project: str | os.PathLike[str]) -> bool:
-    """A host serves the workspace of ``project``: its marker is under the store's ``.state`` (either layout). Fails
-    closed: a layout that cannot be resolved (two stores, a linked ``.orch``) counts as served, so a direct-mode tool
-    never opens a store it cannot place."""
-    try:
-        dfd = _state_fd(project)
-    except LayoutError:
-        return True
-    if dfd is None:
-        return False
-    try:
-        os.stat(SERVED_MARKER, dir_fd=dfd, follow_symlinks=False)
-        return True
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    finally:
-        os.close(dfd)
+    """A host serves the workspace of ``project``: its marker is under the store's ``.state``. Fails closed: absent only
+    when shown absent in both candidate places (``orch.layout.state_marker_present``); a layout that cannot be placed
+    counts as served, so a direct-mode tool never opens a store it cannot place."""
+    return layout_mod.state_marker_present(project, SERVED_MARKER)
 
 
 def served_marker(root: str, on: bool, state_dir: Path) -> None:

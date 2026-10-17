@@ -277,22 +277,9 @@ def click_refusal(state_dir: str | os.PathLike[str], env: Mapping[str, str]) -> 
 
 
 def marker_present(ws_root: str | os.PathLike[str]) -> bool:
-    """``<ws>/.state/dev-sandbox.json`` exists in any form (a narrowing signal: a broken one counts too)."""
-    try:
-        fd = layout.open_state_fd(ws_root)
-    except (layout.LayoutError, ValueError):
-        return True  # a layout that cannot be placed counts as marked (fail closed)
-    if fd is None:
-        return False
-    try:
-        os.stat(WS_MARKER, dir_fd=fd, follow_symlinks=False)
-        return True
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    finally:
-        os.close(fd)
+    """``<store>/.state/dev-sandbox.json`` exists in any form (a narrowing signal: a broken one counts too). Fails
+    closed, in both candidate places: see :func:`orch.layout.state_marker_present`."""
+    return layout.state_marker_present(ws_root, WS_MARKER)
 
 
 def read_marker(ws_root: str | os.PathLike[str]) -> dict[str, Any]:

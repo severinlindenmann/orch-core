@@ -146,3 +146,56 @@ def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -
     fs.close()
     assert (fresh / ".orch").is_dir() and not lay.legacy
     shutil.rmtree(fresh / ".orch")
+
+
+def test_marker_present_is_false_only_for_a_positively_clean_workspace(tmp_path: Path) -> None:
+    clean = _proj(tmp_path)
+    assert devsandbox.marker_present(clean) is False
+    legacy = tmp_path / "old"
+    (legacy / ".state").mkdir(parents=True)
+    assert devsandbox.marker_present(legacy) is False
+    assert devsandbox.marker_present(tmp_path / "does-not-exist") is False  # no root, no marker
+
+
+def test_a_marker_in_the_old_location_counts_while_the_layout_says_dot_orch(tmp_path: Path) -> None:
+    p = _proj(tmp_path)
+    (p / ".state").mkdir()
+    (p / ".state" / devsandbox.WS_MARKER).write_text("{}")  # hidden from a reader that only trusts the resolved store
+    assert devsandbox.marker_present(p) is True
+    q = _proj(tmp_path / "q")
+    (q / ".orch" / ".state" / devsandbox.WS_MARKER).write_text("{}")
+    assert devsandbox.marker_present(q) is True
+
+
+def test_an_unplaceable_or_unreadable_layout_counts_as_marked(tmp_path: Path) -> None:
+    both = _proj(tmp_path / "a")
+    (both / "config.json").write_text(CFG)  # two stores
+    assert devsandbox.marker_present(both) is True
+    linked = tmp_path / "b"
+    linked.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (linked / ".orch").symlink_to(tmp_path / "elsewhere")
+    assert devsandbox.marker_present(linked) is True
+    odd = tmp_path / "c"
+    odd.mkdir()
+    (odd / ".state").write_text("a file where a directory belongs")
+    assert devsandbox.marker_present(odd) is True
+    locked = _proj(tmp_path / "d")
+    os.chmod(locked / ".orch" / ".state", 0o000)
+    try:
+        assert devsandbox.marker_present(locked) is True  # cannot show the marker absent
+    finally:
+        os.chmod(locked / ".orch" / ".state", 0o700)
+
+
+def test_served_fence_fails_closed_like_the_sandbox_marker(tmp_path: Path) -> None:
+    from orch.host.service import SERVED_MARKER, is_served
+
+    clean = _proj(tmp_path)
+    assert is_served(clean) is False
+    (clean / ".state").mkdir()
+    (clean / ".state" / SERVED_MARKER).write_text("{}")  # old place, layout says .orch
+    assert is_served(clean) is True
+    both = _proj(tmp_path / "b")
+    (both / "config.json").write_text(CFG)
+    assert is_served(both) is True

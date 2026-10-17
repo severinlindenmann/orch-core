@@ -33,6 +33,7 @@ __all__ = [
     "check_single_store",
     "fresh",
     "open_state_fd",
+    "state_marker_present",
     "open_store_dir",
     "store_of",
     "resolve",
@@ -214,3 +215,49 @@ def store_of(project: str | os.PathLike[str]) -> Path:
     finally:
         os.close(pfd)
     return found.store if found is not None else fresh(project).store
+
+
+def state_marker_present(project: str | os.PathLike[str], name: str) -> bool:
+    """A marker file ``name`` in the ``.state`` of the project's store, in any form. Fails closed: ``False`` only when
+    its absence is shown positively (``ENOENT`` on a component or on the file) in BOTH candidate places,
+    ``<project>/.state`` and ``<project>/.orch/.state``, each walked without following a link. Any other answer (a
+    link, a file where a directory belongs, a permission error, two stores) counts as present. A project that does not
+    exist has no marker."""
+    try:
+        pfd = os.open(project, _DIR)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    try:
+        try:
+            resolve(pfd, project)
+        except LayoutError:
+            return True
+        return any(_marked_below(pfd, chain, name) for chain in ((".state",), (STORE_DIR, ".state")))
+    finally:
+        os.close(pfd)
+
+
+def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
+    fds: list[int] = []
+    fd = pfd
+    try:
+        for part in chain:
+            try:
+                fd = os.open(part, _DIR, dir_fd=fd)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return True
+            fds.append(fd)
+        try:
+            os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        return True
+    finally:
+        for item in fds:
+            os.close(item)

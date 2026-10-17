@@ -108,6 +108,15 @@ class RequestStore:
             file_bytes(record),
         )
 
+    def open_count(self) -> int:
+        """How many requests are not terminal and not expired (a person's prepared sign request still open)."""
+        now = self.clock()
+        return sum(
+            1
+            for _who, state, expires, submitting, _principal, _bytes in list(self._indexed().values())
+            if state in PENDING and (submitting or expires > now)
+        )
+
     def held(self) -> Iterator[tuple[str, str, int]]:
         """(request id, principal, file bytes) of every non-terminal record that holds file bytes (rebuilt
         reservations at open)."""

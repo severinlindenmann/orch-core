@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from orch.host import control
 from orch.host.control_client import new_idem
 from tests.host.human_helpers import lab  # noqa: F401  (fixture)
@@ -119,3 +121,46 @@ def test_a_host_start_finishes_a_committed_journal_and_rolls_back_an_unfinished_
         assert h3.host.services[wid].state != "unavailable"
     finally:
         h3.__exit__(None, None, None)
+
+
+def test_running_work_is_refused_and_named(lab, monkeypatch) -> None:  # noqa: F811
+    from orch.host.runners import RunnerHub
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    try:
+        monkeypatch.setattr(RunnerHub, "running_work", lambda self, w: {"runs": 2, "terminals": 1})
+        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
+        assert res["ok"] is False and res["error"]["code"] == "migrate.refused"
+        assert "2 agent or runner session" in res["error"]["message"] and "1 terminal" in res["error"]["message"]
+        assert (Path(lab.root) / "config.json").is_file() and not (Path(lab.root) / ".orch").exists()
+        monkeypatch.undo()
+        monkeypatch.setattr(type(h.host.jobs), "leased", lambda self, w: 1)
+        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
+        assert res["error"]["code"] == "migrate.refused" and "lease" in res["error"]["message"]
+        monkeypatch.undo()
+        service = h.host.services[wid]
+        monkeypatch.setattr(type(service.requests), "open_count", lambda self: 3)
+        res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
+        assert res["error"]["code"] == "migrate.refused" and "3 sign request" in res["error"]["message"]
+        assert h.host.services[wid].state != "unavailable"
+    finally:
+        h.__exit__(None, None, None)
+
+
+def test_the_cli_refuses_a_host_that_does_not_list_the_op(lab, monkeypatch) -> None:  # noqa: F811
+    from orch import migrate_cli
+
+    class Old:
+        welcome = {"ops": {"host.list": 1}}
+
+        def close(self) -> None:
+            pass
+
+    from orch.ops import workspace_init as wi
+
+    monkeypatch.setattr(wi, "connect_host", lambda sd: Old())
+    with pytest.raises(migrate_cli.MigrateCliError) as exc:
+        migrate_cli._via_host({}, Path(lab.state), "a" * 32)  # noqa: SLF001
+    assert exc.value.code == "migrate.version_skew" and "orch host install" in (exc.value.hint or "")

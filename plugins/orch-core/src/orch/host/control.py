@@ -524,6 +524,27 @@ class ControlOps:
         self.intents.complete(intent, ok_result({"workspace_id": entry.workspace_id, "migrated": True}))
         return True
 
+    def _refuse_running_work(self, entry: Entry) -> None:
+        """Nothing may be running while the store moves: live agent or runner sessions, open terminals, unexpired job
+        leases, pending sign requests. Each is named; nothing was moved when this refuses (``migrate.refused``)."""
+        wid = entry.workspace_id
+        work = self.host.runners.running_work(wid)
+        problems: list[str] = []
+        if work["runs"]:
+            problems.append(f"{work['runs']} agent or runner session(s) running")
+        if work["terminals"]:
+            problems.append(f"{work['terminals']} terminal(s) open")
+        leased = self.host.jobs.leased(wid)
+        if leased:
+            problems.append(f"{leased} job lease(s) held")
+        service = self.host.services.get(wid)
+        requests = getattr(service, "requests", None)
+        pending = requests.open_count() if requests is not None else 0
+        if pending:
+            problems.append(f"{pending} sign request(s) pending")
+        if problems:
+            raise HostError("migrate.refused", "work is in progress: " + ", ".join(problems) + "; nothing was moved")
+
     def _migrate_entry(self, entry: Entry, *, live: bool) -> bool:
         """Run the engine for ``entry`` with the workspace unserved, then serve it again whatever happened. It is
         unserved under ``owner.lock`` (exclusive), so no other control op can serve it again in between."""
@@ -548,6 +569,7 @@ class ControlOps:
             if exc.code == "migrate.refused":
                 raise
             raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
+        self._refuse_running_work(entry)
         served = False
         try:
             check_tree(Path(entry.root), self.host_uid)
@@ -1110,7 +1132,7 @@ class ControlOps:
         out: list[tuple[str, str]] = []
         for entry in self.host.registry.entries():
             try:
-                step = mg.journal_step(self.state_dir, entry.workspace_id)
+                step = mg.journal_step(self.state_dir, entry.workspace_id, entry.root)
                 if step in (None, "done", "rolled_back"):
                     continue
                 out.append(("host.store_migrate", self._finish_migrate_journal(entry.workspace_id, False)))

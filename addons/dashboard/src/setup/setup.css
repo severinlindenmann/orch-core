@@ -181,6 +181,16 @@
 .setup summary {
   cursor: pointer;
 }
+.setup .review-summary {
+  padding-left: 20px;
+  margin: 8px 0 16px;
+  display: grid;
+  gap: 6px;
+}
+.setup .review-technical h3 {
+  font-size: 14px;
+  margin: 12px 0 4px;
+}
 .setup .progress {
   padding: 0;
   list-style: none;

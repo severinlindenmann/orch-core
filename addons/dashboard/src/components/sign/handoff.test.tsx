@@ -30,6 +30,7 @@ describe('the hand-off dialog (real host)', () => {
     expect(within(dialog).getByRole('heading', { name: 'Approve plan' })).toBeInTheDocument()
     expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent(`orch sign ${CODE}`)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
+    expect(within(dialog).getByTestId('handoff-fingerprint')).toBeVisible()
     expect(dialog).toHaveTextContent('Check the same fingerprint in your terminal')
     expect(dialog).toHaveTextContent(/This dashboard is not where you sign/)
     expect(dialog).toHaveTextContent('Preview. Your terminal shows what you sign.')
@@ -330,7 +331,7 @@ describe('the preview shows values exactly', () => {
     expect(text).toContain('DEEPEST-VALUE')
     expect(text).not.toMatch(/nested deeper/)
     expect(text).toContain('01J9ZP0000000000000000000A')
-    expect(text).toContain('ticket key per host, not proven')
+    expect(text).toContain('ticket key is host-local, not proven')
     expect(text).toContain('DEMO-0044/')
     expect(text).toContain('Stated by the host; your terminal works these out again')
     expect(text).toContain('based_on')
@@ -442,4 +443,16 @@ describe('move stays hidden on a real host until the host serves it', () => {
     setFeatures(null)
     expect(can('owner', 'ticket.move')).toBe(true)
   })
+})
+
+it('uses the host content headline and keeps the technical preview collapsed', async () => {
+  const request = { ...fakeRequest(), content: { headline: 'Approve the requirements of DEMO-0044', sections: [{ id: 'requirements', title: 'Requirements', text: 'Do the thing' }] } }
+  s.prepare.mockResolvedValue(request)
+  s.get.mockResolvedValue(state(request))
+  await mount(PLAN)
+  const title = await screen.findByRole('heading', { name: request.content.headline }, T)
+  const dialog = title.closest('[role="dialog"]')!
+  expect(within(dialog as HTMLElement).getByText('Do the thing')).toBeVisible()
+  expect(dialog.querySelector('details')).not.toHaveAttribute('open')
+  expect(dialog.querySelector('[data-handoff-preview]')?.closest('details')).not.toHaveAttribute('open')
 })

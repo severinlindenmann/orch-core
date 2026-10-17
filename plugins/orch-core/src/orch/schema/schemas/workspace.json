@@ -77,7 +77,7 @@
         "grant_hours": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 24
+          "maximum": 168
         },
         "claim_ttl_min": {
           "type": "integer",
@@ -88,6 +88,23 @@
           "type": "integer",
           "minimum": 5,
           "maximum": 1440
+        },
+        "sign_methods": {
+          "type": "array",
+          "description": "B6 (owner decision F, 16 Oct 2026): the ways a signature may be made in this workspace. terminal is always present; touchid is reserved and not selectable yet.",
+          "items": {
+            "enum": [
+              "terminal",
+              "click",
+              "phone"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "maxItems": 3,
+          "contains": {
+            "const": "terminal"
+          }
         },
         "repos": {
           "type": "object",

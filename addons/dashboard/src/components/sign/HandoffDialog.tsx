@@ -1,3 +1,8 @@
+import { api } from '@/api/client'
+import type { PhoneRequest } from '@/api/phone'
+import { usePhone } from './usePhone'
+import { OtherWays, PhoneWaiting, useSignMethods } from './SignMethods'
+import { methodLabel, type SignMethod } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
@@ -12,13 +17,15 @@ import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
 import { alreadySigned, clickEligible, clickReady } from '@/api/click'
-import { refusalOf, refusalSentence, signerProblem } from '@/api/refusals'
+import { refusalOf, refusalSentence } from '@/api/refusals'
+import { addFirst, missingOf } from '@/api/gates'
 import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
-import { ClickRisk, ClickSignPanel } from './ClickSignPanel'
+import { ClickBadge, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
-import { Raw } from './visible'
+import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
+import { fmtClock } from '@/lib/time'
 
 interface Words {
   title: string
@@ -43,6 +50,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
     case 'failed':
+      if (code === 'sequence.no_access') return { title: 'Task created; agent access was NOT given', body: error ?? '', tone: 'warn' }
       return { title: 'The earlier attempt did not land', body: error ?? '', tone: 'warn' }
     case 'blocked':
       return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }
@@ -60,6 +68,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
 export interface HandoffDialogProps {
   /** Core's title: "Approve plan", "Comment", "Close DEMO-0043". */
   title: string
+  phoneRequest?: PhoneRequest
   ws: string | undefined
   /** What to prepare. Null while the form is not complete (the button stays off). */
   action: HandoffAction | null
@@ -78,6 +87,8 @@ export interface HandoffDialogProps {
   /** The signer's event is in the log. */
   onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
   onPending?: (pending: boolean) => void
+  /** A click signature was rejected or cancelled. */
+  onInterrupted?: () => void
   onClose: () => void
   initialFocus?: () => HTMLElement | null
 }
@@ -97,9 +108,51 @@ export function HandoffDialog(p: HandoffDialogProps) {
     toast.success(`${p.title}: signed`)
     p.onSettled?.('done', state, request)
   })
-  const canClick = clickReady(here) && clickEligible(p.action)
-  // ONE signing path per workspace (owner decision, 12 Oct 2026): where click-to-sign is on, there is no terminal hand-off.
-  const clickOnly = !!here?.click?.enabled
+  const methods = useSignMethods(p.ws)
+  const [chosen, setChosen] = useState<SignMethod | null>(null)
+  const phoneRun = usePhone(p.ws)
+  useEffect(() => {
+    if (phoneRun.switched) p.onClose()
+  }, [phoneRun.switched, p.onClose])
+  const phone = !!phoneRun.hint || phoneRun.busy
+  const phones = useQuery({ queryKey: ['phone-available', p.ws], queryFn: () => api.phoneAvailable(p.ws!), enabled: !!p.ws && !!p.phoneRequest, retry: false })
+  const canPhone = !!p.phoneRequest && (phones.data?.phones ?? 0) > 0
+  const [switching, setSwitching] = useState(false)
+  const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
+  const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action)
+  const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || canClick)
+  const preferred = methods.preference?.method
+  const fallback = methods.preference?.fallback
+  const available = (m: SignMethod) => (m !== 'phone' || canPhone) && (m !== 'click' || canClick)
+  const method: SignMethod = phone ? 'phone' : chosen && available(chosen) && allowed?.includes(chosen) ? chosen
+    : allowed ? (preferred && allowed.includes(preferred) && available(preferred) ? preferred
+      : fallback && allowed.includes(fallback) && available(fallback) ? fallback
+        : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal')
+    : canClick ? 'click' : 'terminal'
+  const startMethod = (m: SignMethod, retryFloor = 0) => {
+    if (!p.action) return
+    if (m === 'phone') {
+      if (p.phoneRequest && canPhone && allowed?.includes('phone')) void phoneRun.start(p.phoneRequest)
+      return
+    }
+    if (m === 'click') void click.start(p.action, retryFloor)
+    else void run.prepare(p.action, retryFloor)
+  }
+  const selectMethod = async (m: SignMethod) => {
+    if (switching) return
+    setSwitching(true)
+    const retryFloor = Math.max(run.retry, click.retry) + (phase === 'waiting' || click.phase === 'ready' ? 1 : 0)
+    if (phase === 'waiting') { await run.cancel(); run.reset() }
+    if (click.phase === 'ready') { await click.cancel(); click.reset() }
+    if (phone && !(await phoneRun.cancel())) { setSwitching(false); return }
+    phoneRun.reset()
+    setChosen(m)
+    setSwitching(false)
+    if (m === 'phone' || !p.hint) startMethod(m, retryFloor)
+  }
+  useEffect(() => {
+    if (!switching && (click.phase === 'cancelled' || (click.phase === 'failed' && click.problem?.next !== 'check'))) p.onInterrupted?.()
+  }, [click.phase, click.problem, switching, p.onInterrupted])
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -108,13 +161,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
 
   useEffect(() => {
     // Not before the list of workspaces is known: whether this one offers Sign decides how the dialog starts.
-    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !canClick && !clickOnly) {
+    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && method === 'terminal' && !methods.loading && !allowed) {
       started.current = true
       void run.prepare(p.action)
     }
     // Once per opening: a changed action object is not a new click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.autoStart, p.ws, known.isPending, canClick])
+  }, [p.autoStart, p.ws, known.isPending, canClick, methods.loading, method])
 
   // Switching workspace cancels the open request at the host; the dialog belongs to the old workspace and closes.
   useEffect(() => {
@@ -140,7 +193,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   }, [click.leftUnsettled])
 
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
-  const open = phase === 'preparing' || phase === 'waiting' || clickLive
+  const open = phase === 'preparing' || phase === 'waiting' || clickLive || phoneRun.busy || phoneRun.hint?.state === 'open'
   useEffect(() => {
     p.onPending?.(open)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -151,6 +204,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
   }, [click.problem])
 
   const close = async () => {
+    if (phoneRun.busy) return
+    if (phoneRun.hint?.state === 'open') { await phoneRun.cancel(); return }
     if (phase === 'waiting' || phase === 'invalid') await run.cancel()
     // Only Cancel cancels. When the outcome is unknown, closing must not cancel: the signature may be on its way.
     if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
@@ -167,13 +222,18 @@ export function HandoffDialog(p: HandoffDialogProps) {
   // H12d-2: a click-to-sign refusal (or a reader declaration that did not verify) is said in plain words; the host's own
   // message follows as text.
   const refusal = refusalOf(run.error)
-  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
+  // B11 (#14): an incomplete gate is said in words ("Add Context and Out of scope first."), never as the raw code
+  const lacking = run.error?.code === 'gate.incomplete' ? missingOf(run.error.message) : null
+  const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
+  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code)
+  // a CLI pointer ("orch describe approve") means nothing on this page
+  const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
       <DialogContent
         data-handoff-dialog
-        className="max-w-lg gap-4 border-border bg-surface"
+        className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           ;(p.initialFocus?.() ?? cancelRef.current)?.focus()
@@ -182,7 +242,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
-            <bdi>{p.title}</bdi>
+            <Inline>{click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
           </DialogTitle>
           {shared && here && (
             <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
@@ -196,26 +256,26 @@ export function HandoffDialog(p: HandoffDialogProps) {
             </p>
           )}
           <DialogDescription>
-            {clickOpen
-              ? 'Signed with your key by core’s signing helper, only after you press Sign. An agent or an addon cannot prepare this request.'
+            {(click.view?.view.content || run.request?.content) ? (click.view?.view.content?.subline ?? run.request?.content?.subline ?? 'Review what you’re approving.') : clickOpen
+              ? 'Only you can approve this. Agents cannot.'
               : phase === 'idle'
-                ? canClick
-                  ? 'Sign here with one click. Core prepares the request and its signing helper signs it.'
-                  : clickOnly
-                    ? 'This workspace signs in the dashboard.'
-                    : 'You sign in your terminal. This dashboard prepares the request and never signs.'
-                : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
+                ? method === 'click'
+                  ? 'Approve with one click.'
+                  : method === 'phone' ? 'Review and approve on your phone.' : 'Approve in your terminal. This page only shows the request.'
+                : 'Approve in your terminal. Only you can approve this. Agents cannot.'}
           </DialogDescription>
         </DialogHeader>
 
-        {p.summary}
-        {phase === 'idle' && !clickOpen && p.children}
-        {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
-        {phase === 'idle' && !clickOpen && clickOnly && !canClick && (
-          <p role="alert" data-testid="click-unavailable" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-            The signing helper cannot sign right now.{here?.click?.problem ? <> <span data-testid="click-unavailable-why">{signerProblem(here.click.problem)}</span></> : null} Fix that, or turn convenience off from the terminal with <code>orch host convenience off --workspace {here?.prefix ?? 'W'}</code>. Nothing was prepared.
-          </p>
-        )}
+        {!(click.view?.view.content || run.request?.content) && p.summary}
+        {phoneRun.hint && <PhoneWaiting hint={phoneRun.hint} />}
+        {phoneRun.busy && <p role="status">Contacting your phone…</p>}
+        {phoneRun.needsPair && phoneRun.hint?.state === 'open' && <p role="alert">Pair a phone first. You can cancel this request and choose another way.</p>}
+        {phoneRun.error && <p role="alert">{phoneRun.error}</p>}
+        {method === 'phone' && p.phoneRequest && <p className="text-[12px] text-text-muted"><Raw>{phoneRun.hint?.ref ?? p.phoneRequest.ref}</Raw> · Version {phoneRun.hint?.gate_gen ?? p.phoneRequest.gate_gen} of this step (as reported by your Mac)</p>}
+        {method === 'phone' && !phone && <p className="text-[13px] text-text-muted">Review and choose on your phone. If you request changes, enter the text there.</p>}
+        {phase === 'idle' && !clickOpen && !phone && method !== 'phone' && p.children}
+        {phase === 'idle' && !clickOpen && method === 'click' && <ClickBadge />}
+
 
         {(click.phase === 'preparing' || click.phase === 'viewing') && (
           <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
@@ -229,7 +289,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             ws={p.ws}
             answer={click.view}
             problem={click.problem}
-            signing={click.phase === 'signing'}
+            signing={click.phase === 'signing' || switching}
             onSign={(word) => void click.sign(word)}
             onCancel={() => void close()}
             waitUntil={waitUntil}
@@ -278,10 +338,15 @@ export function HandoffDialog(p: HandoffDialogProps) {
             )}
             {run.state?.error?.code && (
               <p role="alert" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-                Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
+                Refused: {failedSubmit(run.state.error.code)} The request stays open until {fmtClock(run.request.expires_at)}.
               </p>
             )}
             <HandoffPanel request={run.request} workspace={here ?? null} />
+            {run.state?.progress && (
+              <p role="status" data-testid="sequence-progress" className="text-[13px] text-text-muted">
+                Signing in your terminal: {run.state.progress.done} of {run.state.progress.of} steps are in the ticket.
+              </p>
+            )}
           </>
         )}
 
@@ -295,30 +360,33 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 The host says: <Raw>{run.error.message}</Raw>
               </p>
             )}
-            {run.error?.fix && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
-            {run.error?.hint && phase === 'error' && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
+            {run.error?.fix && !cliOnly(run.error.fix) && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
+            {run.error?.hint && !cliOnly(run.error.hint) && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
 
+        {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
+          <OtherWays phoneAvailable={canPhone} phonePhaseOne={!!p.phoneRequest} allowed={allowed} current={method} disabled={switching || phoneRun.busy || phoneRun.hint?.state === 'done' || !p.action} onSelect={m => void selectMethod(m)} />
+        )}
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span aria-live="polite" className="text-[12px] text-text-muted">
-            {phase === 'idle' && p.hint}
+            {phase === 'idle' && method !== 'phone' && p.hint}
             {phase === 'waiting' && 'Waiting for your signature'}
           </span>
           <div className="flex flex-wrap gap-2">
             {phase === 'idle' && !clickOpen && (
               <>
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
-                  Cancel
+                  {phoneRun.hint && phoneRun.hint.state !== 'open' ? 'Close' : 'Cancel'}
                 </Button>
-                {!clickOnly || canClick ? (
+                {(
                   <Button
-                    onClick={() => (canClick ? p.action && void click.start(p.action) : p.action && void run.prepare(p.action))}
-                    disabled={!p.action || !p.ws || !!p.hint}
+                    onClick={() => startMethod(method)}
+                    disabled={!p.action || !p.ws || (method !== 'phone' && !!p.hint) || methods.loading || switching || phone || (method === 'click' && !canClick)}
                   >
-                    {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
+                    {method === 'click' ? 'Sign' : allowed ? methodLabel[method] : (p.confirmLabel ?? p.title)}
                   </Button>
-                ) : null}
+                )}
               </>
             )}
             {click.phase === 'settling' && (
@@ -352,7 +420,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
+            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && run.error?.code !== 'sequence.no_access' && (
               <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'failed' || phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {phase === 'already' && (run.request?.state === 'submitted' || run.error?.code === 'intent.done') && p.action && <Button onClick={again}>Do it again</Button>}

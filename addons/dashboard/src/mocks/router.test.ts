@@ -174,19 +174,19 @@ describe('mock tickets search', () => {
     it('issues a grant for the viewer and validates the hours', async () => {
       const { api, store } = setup()
       const ws = store.workspaces[0].id
-      await expect(api.issueGrant(ws, { hours: 25, scope: 'all' })).rejects.toMatchObject({ status: 400 })
+      await expect(api.issueGrant(ws, { hours: 169, scope: 'all' })).rejects.toMatchObject({ status: 400 })
       await expect(api.issueGrant(ws, { hours: 0, scope: 'all' })).rejects.toMatchObject({ status: 400 })
-      const long = await api.issueGrant(ws, { hours: 24, scope: 'all' }) // owners and maintainers: 1 to 24 h
+      const long = await api.issueGrant(ws, { hours: 24, scope: 'all' }) // owners and maintainers: 1 to 168 h
       expect(Date.parse(long.until) - Date.parse(long.issued_at)).toBe(24 * 3600_000)
       const g = await api.issueGrant(ws, { hours: 4, scope: 'all' })
       expect(g).toMatchObject({ person: 'p_sev', scope: 'all', revoked: null })
       expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(4 * 3600_000)
       expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' && e.grant === g.id)).toBe(true)
     })
-    it('the owner sets the agent grant length (1 to 24 h): it is the longest a member signs; others cannot', async () => {
+    it('the owner sets the agent grant length (1 to 168 h): it is the longest a member signs; others cannot', async () => {
       const { api, store } = setup()
       const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
-      await expect(api.postSettings(cli, { op: 'grant.hours', hours: 25 })).rejects.toMatchObject({ status: 400, code: 'validation.hours' })
+      await expect(api.postSettings(cli, { op: 'grant.hours', hours: 169 })).rejects.toMatchObject({ status: 400, code: 'validation.hours' })
       await expect(api.postSettings(cli, { op: 'grant.hours', hours: 0 })).rejects.toMatchObject({ status: 400 })
       await api.postSettings(cli, { op: 'grant.hours', hours: 20 })
       expect(store.workspaces.find((w) => w.id === cli)!.grant_hours).toBe(20)
@@ -384,9 +384,9 @@ describe('stable ages and the attention count', () => {
 })
 
 describe('grant default hours', () => {
-  it('is clamped to 1..24 whole hours', async () => {
+  it('is clamped to 1..168 whole hours', async () => {
     const { grantDefaultHours } = await import('@/api/grants')
-    expect(grantDefaultHours({ grant_hours: 99 })).toBe(24)
+    expect(grantDefaultHours({ grant_hours: 999 })).toBe(168)
     expect(grantDefaultHours({ grant_hours: 0 })).toBe(1)
     expect(grantDefaultHours({ grant_hours: Number.NaN })).toBe(8)
     expect(grantDefaultHours({})).toBe(8)

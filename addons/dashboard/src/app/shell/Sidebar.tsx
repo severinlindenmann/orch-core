@@ -49,7 +49,7 @@ import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
-import { fmtClock, fmtDateTime } from '@/lib/time'
+import { fmtClock, fmtDateTime, sameLocalDay } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
 
@@ -171,7 +171,7 @@ export function Sidebar() {
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
-  const grantTime = grant ? (today.data && grant.until.slice(0, 10) !== today.data.now.slice(0, 10) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
+  const grantTime = grant ? (today.data && !sameLocalDay(grant.until, today.data.now) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
   const { railCollapsed: collapsed, railAnimating, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
   const { pinned, toggle: togglePin } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))

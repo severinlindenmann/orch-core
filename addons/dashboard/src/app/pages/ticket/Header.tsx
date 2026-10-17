@@ -1,3 +1,4 @@
+import { useSignMethods } from '@/components/sign/SignMethods'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
@@ -103,6 +104,12 @@ function RealStartAgentItem({ ticket, onStart }: { ticket: TicketDocument; onSta
   )
 }
 
+/** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
+export function turnReason(why: string): string {
+  const text = why.trim()
+  return text ? ` · ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
+}
+
 export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
@@ -115,6 +122,9 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
   const r = useRunAddonAction(ticket.key)
   const { workspace } = useWorkspace()
   const [agent, setAgent] = useState(false)
+  // The label names how this workspace really signs (its allowed ways), never a method it does not offer.
+  const ways = useSignMethods(workspace?.id).allowed
+  const signedWith = !ways ? null : ways.includes('click') ? 'in your terminal or with one click' : 'in your terminal'
   return (
     <>
     <DropdownMenu>
@@ -125,7 +135,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions, signed with Touch ID</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
         {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
         {answer.map((q) => (
           <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: q.id })}>
@@ -275,7 +285,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <StatusChip status={ticket.status} landing={ticket.landing} />
         <span className="text-[13px] text-text-muted">
-          Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span> · {ticket.turn.why.charAt(0).toLowerCase() + ticket.turn.why.slice(1)}
+          Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
         </span>
         {shown.map((l) => (
           <Pill key={l}>

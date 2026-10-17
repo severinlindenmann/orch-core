@@ -40,7 +40,12 @@ def test_a_good_event_passes_and_comes_back_unchanged():
 
 def test_the_table_and_ops_agree():
     """I1: both types need ``decide`` (11A.14 route scope, L2, the 14.8 phone profile ``["look","decide"]``)."""
-    assert submit.EVENTS == {"new_ticket": ("ticket.created", "decide"), "answer": ("question.answered", "decide")}
+    assert submit.EVENTS == {
+        "new_ticket": ("ticket.created", "decide"),
+        "answer": ("question.answered", "decide"),
+        "approve": ("gate.approved", "decide"),  # B10 Part B phase 1
+        "changes": ("gate.changes_requested", "decide"),
+    }
     for op, (typ, scope) in submit.EVENTS.items():
         assert framing.OPS[op].event == typ and framing.OPS[op].scope == scope
 

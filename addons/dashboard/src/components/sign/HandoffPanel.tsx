@@ -1,9 +1,10 @@
 // The hand-off panel (design 4.1): where the dashboard stops and the terminal begins. The dashboard is not where you
 // sign. It shows the command to run, the fingerprint to compare, and an informational preview rendered ONLY from the
 // host's `material` (never from a cached ticket) through visible.tsx, so every value is exact and nothing is hidden.
+import { SignContent, SignDetails } from './SignContent'
 import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import { confirmWord, signCommand, workspaceConfirmWord, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
+import { confirmWord, sequenceWord, signCommand, workspaceConfirmWord, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Prose, Raw, RawValue, plain } from './visible'
 
@@ -80,13 +81,13 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
     <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
       <p className="text-[12px] text-text-muted">Preview. Your terminal shows what you sign.</p>
       {material.ticket?.key && (
-        <Block title="Ticket (ticket key per host, not proven)">
+        <Block title="Ticket">
           <Raw>{material.ticket.key}</Raw>
           <p className="text-[12px] text-text-muted">
             Ticket id <Raw>{material.ticket.uid}</Raw> (signed; its last 8 characters are <Raw>{uidFragment(material.ticket.uid)}</Raw>)
           </p>
           <p className="text-[12px] text-text-muted">
-            In your terminal you type <Raw>{confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
+            In your terminal you type <Raw>{sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
           </p>
         </Block>
       )}
@@ -95,6 +96,11 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
           <p className="text-[12px] text-text-muted">
             In your terminal you type <Raw>{word}</Raw> to continue.
           </p>
+        </Block>
+      )}
+      {material.sequence && (
+        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, each written section, each acceptance criterion and the people)`}>
+          <Value value={material.sequence.intent} />
         </Block>
       )}
       {material.kind === 'gate' && (
@@ -195,16 +201,26 @@ export function CommandLine({ code }: { code: string }) {
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
 export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
   const remaining = useRemaining(request.expires_at)
+  const { material } = request
+  const word = material.ticket ? (sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)) : workspaceConfirmWord(request, workspace)
+  const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">
+      {request.content && <SignContent content={request.content} ws={workspace?.id} />}
       <p className="text-[13px] text-text">
         Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
       </p>
       {request.code ? <CommandLine code={request.code} /> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
+      <p className="text-[11px] text-text-muted">The terminal shows the same code: <code data-testid="handoff-fingerprint">{request.fingerprint}</code></p>
+      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
+      <SignDetails>
+      <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
+      <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-text-muted">Fingerprint</dt>
         <dd>
-          <code data-testid="handoff-fingerprint" className="font-mono text-[14px] text-text">
+          <code className="font-mono text-[14px] text-text">
             {request.fingerprint}
           </code>
           <span className="block text-[12px] text-text-muted">Check the same fingerprint in your terminal.</span>
@@ -236,7 +252,9 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
           </span>
         </dd>
       </dl>
-      <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />
+      {request.content && <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />}
+      </SignDetails>
+      {!request.content && <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />}
       <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
     </div>
   )

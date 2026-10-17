@@ -6,6 +6,7 @@ import { clearSession, getToken } from './bootstrap'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
+import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
@@ -59,7 +60,7 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
-async function call<T>(path: string, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
+async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body)
   if (result.status === 401) {
@@ -173,6 +174,7 @@ const reads = {
     return { person: first.person, name: first.name, role }
   },
   getWorkspaces: listWorkspaces,
+  getHostInfo: () => call<unknown>('/api/host'),
   listPeople: async (ws: string): Promise<KnownPerson[]> =>
     ((await listWorkspaces()).find((x) => x.id === ws)?.members ?? []).map((m) => ({ person: m.person, name: m.name, email: '' })),
   getToday: (ws: string) => call<TodayDocument>(`${w(ws)}/today`),
@@ -252,6 +254,12 @@ const click = {
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
   stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
+  // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
+  // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
+  // 404 and the page then hides the controls.
+  getSignDefault: (ws: string) => call<SignDefault>(`${w(ws)}/me/sign_default`),
+  putSignDefault: (ws: string, body: { method: SignMethod; fallback?: SignMethod }) => call<SignDefault>(`${w(ws)}/me/sign_default`, 'PUT', body),
+  phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
 }

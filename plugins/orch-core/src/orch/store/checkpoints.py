@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from orch import canon, crypto, schema
+from orch.identity.certs import revoke_strength
 from orch.model.types import ts
 
 from .errors import StoreError
@@ -83,9 +84,6 @@ def _extension(old: Mapping[str, Any], new: Mapping[str, Any], heads: Any) -> bo
 _ZERO_ACC = "sha256:" + "0" * 64
 _PLACEHOLDER_SIG = crypto.b64u(bytes(crypto.SIG_LEN))
 SKEW_S = 300  # receivers refuse a checkpoint whose `at` is more than this ahead of their clock (§5.10)
-# Revocation reason strength, compromised > lost = retired (§5.10): one rule for completeness and for the
-# `revocation.unpublished` signal.
-_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}
 
 
 def _offer_ok(offered: object) -> bool:
@@ -360,7 +358,8 @@ def _judge_restore(
                 if (
                     got is None
                     or ("pk_pub" in known and got["pk_pub"] != known["pk_pub"])
-                    or _STRENGTH[got["revocation"]["o"]["reason"]] < _STRENGTH[known["revocation"]["o"]["reason"]]
+                    or revoke_strength(got["revocation"]["o"]["reason"])
+                    < revoke_strength(known["revocation"]["o"]["reason"])
                 ):
                     return diverged
         acc = restore.get("acc_from")
@@ -416,12 +415,13 @@ def _judge_restore(
                 if (
                     got is None
                     or ("pk_pub" in local and got["pk_pub"] != local["pk_pub"])
-                    or _STRENGTH[got["revocation"]["o"]["reason"]] < _STRENGTH[local["revocation"]["o"]["reason"]]
+                    or revoke_strength(got["revocation"]["o"]["reason"])
+                    < revoke_strength(local["revocation"]["o"]["reason"])
                 ):
                     key = ("d_" + device, "p_" + person)
                     have = unpublished.get(key)
                     reason = local["revocation"]["o"]["reason"]
-                    if have is None or _STRENGTH[reason] > _STRENGTH[have["revocation"]["o"]["reason"]]:
+                    if have is None or revoke_strength(reason) > revoke_strength(have["revocation"]["o"]["reason"]):
                         unpublished[key] = local  # the strongest held evidence of the pair, first on a tie
         return "ok", (log, ev["id"], signer, signer_pair[1], tuple(sorted(unpublished.items())))
     except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):

@@ -14,6 +14,7 @@ idem, expiry) is synced to disk, and before a signature leaves the signer the re
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -61,6 +62,8 @@ HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "
 #: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
 #: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
 READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
+
+GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 class Budget:
@@ -136,6 +139,7 @@ class ClickSigner:
         wall: Callable[[], float] = time.time,
         log: Any = None,
         records: Records | None = None,
+        sessions: Any = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -158,6 +162,10 @@ class ClickSigner:
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
+        from orch.host.sequence import Sessions
+
+        #: the durable sessions of sequences (one review, N signatures; batch 11), beside the sign records
+        self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -185,6 +193,15 @@ class ClickSigner:
         from orch.host.convenience import enabled
 
         return enabled(self.state, entry["workspace_id"], int(entry["host_uid"]))
+
+    def _risk_ack(self, entry: dict[str, Any]) -> str | None:
+        """B6: when the risk notice was acknowledged at enable time (``None``: enabled before B6, or off)."""
+        from orch.host.convenience import risk_ack
+
+        try:
+            return risk_ack(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            return None
 
     def _default_execution(self, entry: dict[str, Any]) -> bool:
         from orch.runner import enablement
@@ -341,6 +358,9 @@ class ClickSigner:
         deposit = args.get("deposit", False)
         if type(deposit) is not bool:
             raise ClickError("invalid.input", "deposit is true or false")
+        seq = args.get("sequence")
+        if seq is not None:
+            self._sequence_ok(entry, op, inner, seq, deposit, files)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -355,6 +375,8 @@ class ClickSigner:
         _, sel = self._convenience(entry)
         device = sel["device"]
         body = {"op": op, "args": inner, "signer": {"device": device, "auth": "convenience"}}
+        if seq is not None:
+            body["sequence"] = seq
         prepared = self._call(entry, "human.prepare", body, idem=idem, files=files or None)
         prepared = canon.loads_strict(canon.dumps(prepared["data"]))
         request = prepared.get("request") or {}
@@ -395,6 +417,27 @@ class ClickSigner:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
+
+    def _sequence_ok(
+        self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
+    ) -> None:
+        """A sequence (one review, N signatures, batch 11) starts with ``new`` and nothing else; the confirmation of
+        the whole is that of its strongest step: a click, or (with a grant to the runner last) the GRANT word, which
+        needs dashboard execution on this machine. A terminal step means the terminal."""
+        from orch.host import sequence
+
+        if deposit or files or not isinstance(seq, dict) or seq.get("step") != 0:
+            raise ClickError("invalid.input", "a sequence starts at its first step, without files or a deposit")
+        try:
+            intent = sequence.validate_intent(seq.get("intent"))
+        except sequence.SequenceInvalid as exc:
+            raise ClickError("invalid.input", f"sequence: {exc}") from None
+        if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
+            raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
+        kind = sequence.confirm_kind(intent)
+        # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
+        if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
@@ -487,6 +530,8 @@ class ClickSigner:
             if args.get("word") != expected:
                 raise refused("word", "type the word the review shows")
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
+        if (stored.get("material") or {}).get("sequence") is not None:
+            return self._sign_sequence(entry, approval, backend, sel, stored)
         self.budget.reserve(len(stored["events"]))
         from orch.host import signer as host_signer
 
@@ -526,10 +571,134 @@ class ClickSigner:
         finally:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
 
+    def _sign_sequence(
+        self, entry: dict[str, Any], approval: Approval, backend: Any, sel: Any, stored: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One click signs every step of a sequence (batch 11): the engine of :mod:`orch.host.sequence`, on this
+        signer's own host connection and its own convenience key. The session record is the durable claim (a step is
+        claimed, then signed, then landed; never signed twice); the checks run HERE, in this process, never in the
+        dashboard server. A sequence that ends early leaves what landed as a visible draft."""
+        from orch.host import sequence
+        from orch.host import signer as host_signer
+
+        wid, person, device = approval.workspace_id, self._person(entry), sel["device"]
+        self._attempted.add((wid, approval.request_id))
+        intent = sequence.validate_intent(stored["material"]["sequence"]["intent"])
+
+        def prepare(op: str, args: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+            body = {"op": op, "args": args, "signer": {"device": device, "auth": "convenience"}, "sequence": meta}
+            return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body)["data"]))
+
+        box: dict[str, Any] = {}
+
+        def check(prepared: dict[str, Any]) -> None:
+            # every §0.8.1 check; what each step may be is the intent's (check_step), including a last grant, which a
+            # lone click never signs
+            try:
+                host_signer.check(prepared, workspace_id=wid, person=person, device=device, auth="convenience")
+            except host_signer.SignerRefused as exc:
+                raise refused("check_failed", str(exc)) from None
+            # in ADDITION: the click rules of every single request (event count, clean worker checks, the grant's
+            # terminal-only gate: only the runner grant of deposit mode passes, as the sequence's last step)
+            views.check_prepared(
+                prepared,
+                workspace_id=wid,
+                person=person,
+                device=device,
+                files=None,
+                deposit=prepared.get("op") == "grant",
+            )
+
+        def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
+            signed = host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid)
+            if signed.secret is not None:  # the runner grant (last): this frame only, handed over after its commit
+                box["secret"] = signed.secret
+            return signed.events
+
+        def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
+            return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
+
+        def head(key: str) -> dict[str, Any]:
+            data = self._call(entry, "ticket.get", {"ref": key})["data"]
+            return {**data["doc"]["head"], "tail": (data.get("log") or [None])[-1]}
+
+        def cancel(rid: str) -> None:
+            self._call(entry, "human.cancel", {"request_id": rid})
+
+        port = sequence.Port(
+            prepare=prepare,
+            check=check,
+            sign=sign,
+            submit=submit,
+            new_idem=_new_idem,
+            head=head,
+            cancel=cancel,
+            budget=self.budget.reserve,
+        )
+        kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
+        if (
+            kind == "terminal"
+            or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
+            or approval.kind != kind
+        ):
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent, now=self.wall)
+        try:
+            live = driver.resumable()
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing was signed") from None
+        if live is not None:
+            # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
+            raise refused(
+                "resumable",
+                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                "or on the ticket page; nothing is signed here.",
+            )
+        try:
+            out = driver.run(stored)
+        except sequence.Aborted as exc:
+            self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
+            where = ""
+            if exc.landed:
+                try:
+                    held = self.sessions.get(wid, driver.digest)
+                except sequence.SessionError:
+                    held = None
+                name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
+                where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+            if exc.resumable:
+                unfinished = where.replace(" stays a draft", " is not finished")
+                raise refused(
+                    "resumable",
+                    f"The host did not confirm the last signature.{unfinished} "
+                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                ) from None
+            raise refused("stopped", f"{exc.reason}.{where}") from None
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing more is signed") from None
+        last = out["results"][-1]
+        approval.signed, approval.idem = ["sequence"], None  # in memory: a repeated sign answers, never re-signs
+        approval.result = last
+        self._note("committed", workspace=wid, request=approval.request_id, op=approval.op, steps=out["landed"])
+        answer: dict[str, Any] = {"result": last, "duplicate": False}
+        secret = box.pop("secret", None)
+        if secret is not None:  # the grant is signed and committed: now, and only now, to the runner
+            did = out["requests"][-1][3:]
+            outcome, reason = self._hand_over(entry, did, secret)
+            if outcome == "unknown":
+                outcome, reason = self._deposit_status(entry, did)
+            answer |= {"deposit": outcome, "deposit_id": did, "grant": secret.partition(".")[0]}
+            if outcome == "rejected":
+                answer["deposit_reason"] = reason if reason in DEPOSIT_REASONS else "other"
+            del secret
+        return answer
+
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
-        """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
+        """A deposit grant's arguments: ``hours`` 1..168 (the workspace grant_hours; default 8) and
+        ``scope``; the signer sets ``label:"runner"``
         and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
-        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner"}
+        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner", "extend"}
         if inner.get("runner", True) is not True:
             raise ClickError("invalid.input", "a deposit grant is a runner grant")
         hours, scope = inner.get("hours", 8), inner.get("scope", "workable")
@@ -541,8 +710,13 @@ class ClickSigner:
             raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
         if not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
-        # runner:true makes the op itself a runner grant (label runner, at most 12 h, verbs agent, no ORCH_GRANT hint)
-        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        # runner:true makes the op itself a runner grant (label runner, workspace grant_hours cap, verbs agent, no hint)
+        out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        if "extend" in inner:  # B8: the grant this one replaces; the op checks it is yours and live
+            if not (isinstance(inner["extend"], str) and GRANT_ID.fullmatch(inner["extend"])):
+                raise ClickError("invalid.input", "extend is a grant id")
+            out["extend"] = inner["extend"]
+        return out
 
     def _deposited(
         self, entry: dict[str, Any], op: str, rid: str, res: dict[str, Any], secret: str | None = None
@@ -732,6 +906,7 @@ class ClickSigner:
             "custody": st["custody"],
             "device": st["device"],
             "enabled": bool(self._enabled(e)),
+            "risk_ack": self._risk_ack(e),
         }
         problem = st.get("problem") or self.problems.get(wid)
         if problem is None and st["custody"] != "convenience":
@@ -890,6 +1065,13 @@ class ClickSigner:
                 f"check; switch it on in the terminal: orch host convenience on --workspace {name}",
             )
         self._custody_budget()
+        try:
+            convenience.refuse_turn_on(self.state, entry, uid)  # B10: before any passphrase work or key move
+        except HostError as exc:
+            head = exc.message.split(":", 1)[0]
+            raise ClickError(
+                exc.code, exc.message, reason=head if head in REASONS else None, detail=exc.detail
+            ) from None
         try:
             before = select.read_selection(self.state, wid)
             self._refuse_pending(convenience, self.state, wid, uid, self.wall)  # early; checked again under the lock

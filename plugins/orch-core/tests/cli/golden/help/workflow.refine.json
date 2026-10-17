@@ -17,6 +17,10 @@
         "call": "orch ac add 'text'"
       },
       {
+        "op": "section.set",
+        "call": "orch section set plan --file -"
+      },
+      {
         "op": "task.add",
         "call": "orch task add 'text' --verify 'cmd' --proves AC1"
       },

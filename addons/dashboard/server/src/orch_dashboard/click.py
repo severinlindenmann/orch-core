@@ -21,14 +21,17 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
+    EditTicket,
+    NewTicketSequence,
     PrepareBody,
+    QuickStart,
     RequestId,
     RunnerGrant,
     done_error,
@@ -54,8 +57,8 @@ TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
-    "hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
 DEPOSITS = ("confirmed", "rejected", "unknown")
@@ -97,7 +100,8 @@ class CustodyBody(BaseModel):
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
-ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
+# The runner grant is a click request, or a terminal hand-off with `runner` set by this server, never by the browser.
+ClickBody = PrepareBody
 
 
 def deposit_view_ok(view: dict, ws: str) -> bool:
@@ -278,6 +282,11 @@ def register(app: FastAPI, gateway: Gateway):
                 },
                 3,
             )
+        if isinstance(body, NewTicketSequence | EditTicket | QuickStart) and not signer.sequences():
+            # an older signer would ignore `sequence` and sign the first step only
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
+            )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
         # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
@@ -305,6 +314,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
+            if planned.sequence:
+                sent["sequence"] = planned.sequence
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)

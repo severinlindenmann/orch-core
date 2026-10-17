@@ -64,7 +64,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
         </label>
       </div>
       <p className="text-[13px] text-text-muted">
-        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agents are granted in your terminal; here a grant can only be revoked.
+        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agent access is given from the “Agents can work for you” pill at the top (Extend or Start again) or in your terminal; here you can revoke a grant.
       </p>
       {!grants.data ? (
         <p className="text-[13px] text-text-muted">Reading the grants…</p>
@@ -92,12 +92,15 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                   <TableRow key={g.id}>
                     <TableCell>
                       <span className="block"><Raw>{name(g.person)}</Raw></span>
-                      <Mono className="text-[11px] text-text-faint">{g.id}</Mono>
-                      {g.label === 'runner' ? (
-                        <span data-testid="runner-grant-tag" className="ml-1.5"><Pill tone="neutral">runner grant</Pill></span>
-                      ) : g.label ? (
-                        <span className="ml-1.5 text-[11px] text-text-faint">label <Raw>{g.label}</Raw></span>
-                      ) : null}
+                      <span className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-text-faint">
+                        {g.label === 'runner' ? (
+                          <span data-testid="runner-grant-tag"><Pill tone="neutral">runner grant</Pill></span>
+                        ) : g.label ? (
+                          <span>label <Raw>{g.label}</Raw></span>
+                        ) : null}
+                        {g.label && <span aria-hidden>·</span>}
+                        <Mono className="break-all text-[11px] text-text-faint">{g.id}</Mono>
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Mono><Raw>{g.scope}</Raw></Mono>

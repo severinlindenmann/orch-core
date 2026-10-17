@@ -187,8 +187,8 @@ class Requests:
     def prepare(
         self, store, views, args: dict[str, Any], opts: dict[str, Any], files: dict[str, bytes] | None = None
     ) -> dict[str, Any]:
-        if set(args) - {"op", "args", "signer", "handoff"} or not {"op", "args"} <= set(args):
-            raise invalid("human.prepare takes op, args, signer? and handoff?")
+        if set(args) - {"op", "args", "signer", "handoff", "sequence"} or not {"op", "args"} <= set(args):
+            raise invalid("human.prepare takes op, args, signer?, handoff? and sequence?")
         op, op_args = args["op"], args["args"]
         if not isinstance(op, str) or not isinstance(op_args, dict):
             raise invalid("op must be text and args an object")
@@ -212,6 +212,7 @@ class Requests:
                 raise invalid("idem is a_ and 26 characters")
             binding = review.digest_of(
                 {"op": op, "args": op_args, "signer": signer, "handoff": handoff, "person": self.host.person,
+                 "sequence": args.get("sequence"),
                  "files": {n: review.digest_of(base64.b64encode(d).decode()) for n, d in sorted((files or {}).items())}}
             )  # fmt: skip
             known = self.prepares.get(idem)
@@ -245,6 +246,18 @@ class Requests:
         if signer is not None:
             for event in events:
                 event["actor"]["device"], event["auth"] = signer["device"], signer["auth"]
+        if args.get("sequence") is not None:  # B11: one review, N signatures (core orch.host.sequence)
+            from orch.host import sequence
+
+            try:
+                meta = sequence.check_meta(
+                    args["sequence"], op=op, args=op_args, workspace_id=self.host.ws, person=self.host.person
+                )
+            except sequence.SequenceInvalid as exc:
+                raise invalid(f"sequence: {exc}") from None
+            if meta["step"] != 0:
+                raise invalid("the dev stub prepares the first step of a sequence only")
+            material["sequence"] = {"digest": meta["digest"], "of": meta["of"], "intent": meta["intent"]}
         digest = review.digest_of(material)
         now = self.clock()
         request = {
@@ -544,10 +557,9 @@ class Builder:
             "gate": gate,
             "input": thaw(view.gates[gate].input or {}),
             "policy": thaw(view.gates[gate].policy),
-            "texts": {
-                sid: text
-                for sid, text in self.store.body_sections(view.uid).items()
-                if sid in ((view.gates[gate].input or {}).get("sections") or {})
+            "texts": {  # every section the gate binds, an empty one as "" (the real host's material, P1)
+                sid: self.store.body_sections(view.uid).get(sid, "")
+                for sid in sorted((view.gates[gate].input or {}).get("sections") or {})
             },
             "ticket": {"key": view.key, "uid": view.uid},
         }

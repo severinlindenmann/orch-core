@@ -86,7 +86,7 @@ _HUMAN_WRITES = frozenset({"human.submit"})
 _RELAY_WRITES = frozenset({"relay.submit"})
 #: host-side writes with an idem and an outcome record but no log event (H11e: the private-remote mark); a record
 #: with nothing planned is removed by reconciliation, and the op is idempotent, so a retry after a crash runs again
-HOST_WRITES = frozenset({"records.remote_private", "records.note", "reader.declare"})
+HOST_WRITES = frozenset({"records.remote_private", "records.note", "reader.declare", "phone.request", "phone.cancel"})
 #: every other host op (§0.7 table): reads and side-effect-free ops, whose ``opts.idem`` is ignored
 _READS = frozenset(
     {
@@ -98,8 +98,13 @@ _READS = frozenset(
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status", "reader.list",
+        "phone.requests", "phone.status", "gate.input",
         "run.list", "run.sub",
-        "host.relay_stop", "host.relay_start", "host.relay_unlink",
+        "host.relay_stop", "host.relay_start", "host.relay_unlink", "host.relay_link", "host.relay_status",
+        # R6c-2: relay pairing (no idem, no outcome record: the offer's link is only in its direct answer)
+        "host.relay_pair_offer", "host.relay_pair_show", "host.relay_pair_list", "host.relay_pair_answer",
+        "host.relay_pair_cancel", "host.relay_pair_abandon", "host.relay_pair_cert", "host.relay_primary_set",
+        "host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit",  # B1: the genesis pin (11A.2)
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a; ``relay.submit`` through the

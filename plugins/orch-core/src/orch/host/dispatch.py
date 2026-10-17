@@ -81,8 +81,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from jsonschema import Draft202012Validator
 
 from . import diff as git_diff
+from . import phonehints, readerops, reads, sessions, terms
 from . import quick as quick_list
-from . import readerops, reads, sessions, terms
 from . import records as records_ops
 from .agents import AGENT_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
@@ -210,6 +210,7 @@ def served_ops() -> dict[str, int]:
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     out.update(records_ops.RECORDS_OPS)
+    out.update(phonehints.PHONE_WRITE_OPS)  # B10 Part B: phone.request, phone.cancel (P only)
     out.update(readerops.READER_HOST_OPS)  # H12d-2: reader.declare (reader.list is a read, cap reader/1)
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
@@ -235,6 +236,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
+    if name in phonehints.PHONE_WRITE_OPS:  # B10 Part B: column P only (G and N get op.not_allowed)
+        return ("person_write", "write")
     if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R: device_signed, H12d-3)
         return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
@@ -389,7 +392,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKTREE_CAPS, *readerops.CAPS,
+            *WORKTREE_CAPS, *readerops.CAPS, *phonehints.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -603,6 +606,8 @@ class RegistryBackend:
                 result = records_ops.serve(call)
             elif op in readerops.READER_HOST_OPS:
                 result = readerops.serve(call)
+            elif op in phonehints.PHONE_WRITE_OPS:
+                result = phonehints.serve(call)
             elif op in TERM_OPS or op == "run.stop":
                 result = terms.serve(call)
             elif op in AGENT_OPS:
@@ -743,17 +748,27 @@ class RegistryBackend:
             },
             "session": session,
             **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
-            **({"relay": self._relay_caps()} if call.column.name == "R" else {}),
+            **({"relay": self._relay_caps(call.service)} if call.column.name == "R" else {}),
         }
 
     @staticmethod
-    def _relay_caps() -> dict[str, Any]:
+    def _relay_caps(service: Any) -> dict[str, Any]:
         """``whoami.relay`` (column R only): the person-event writes this host serves on R (the framing table's write
-        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). Nothing else."""
+        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). §11A.17.2: ``dev``
+        only while :func:`orch.host.devmode.dev_gate` passes for this workspace now (fresh, never cached); absent
+        everywhere else. Nothing else."""
         from orch.relay import worker as relay_worker
         from orch.relay.framing import WRITE_OP_VERSIONS
 
-        return {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
+        from .devmode import dev_gate
+
+        out: dict[str, Any] = {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
+        gate = dev_gate(service)
+        if getattr(service, "dev", None) is not None:
+            service.dev_ok = gate is not None  # the phone reads whoami before every review: P5's cache follows it
+        if gate is not None:
+            out["dev"] = {"sim_convenience": True, "sandbox": gate.sandbox_id[:8]}
+        return out
 
     def status(self, call: Call) -> dict[str, Any]:
         from orch.cli.main import VERSION_LINE
@@ -771,6 +786,9 @@ class RegistryBackend:
                 relay = {"error": type(exc).__name__}
             if relay is not None:
                 data["relay"] = relay
+            dev = getattr(call.service, "dev", None)
+            if dev is not None:  # §11A.17.2: only on a dev host (absent, not false, elsewhere)
+                data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}
         return data
 
     # -- registry ops

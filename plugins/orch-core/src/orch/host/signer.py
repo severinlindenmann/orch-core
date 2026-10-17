@@ -17,6 +17,7 @@ secret on the person's own terminal.
 from __future__ import annotations
 
 import copy
+import os
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -25,7 +26,7 @@ from typing import Any
 from orch import canon
 from orch.identity import pairdevice
 
-from . import review
+from . import review, signcontent
 
 __all__ = [
     "Signed",
@@ -92,8 +93,6 @@ def check(
 ) -> None:
     """Refuse (:class:`SignerRefused`) anything the signer cannot vouch for, **before any prompt**. ``device`` and
     ``auth``, when given, must be what the events carry (a bound request)."""
-    if prepared.get("op") == pairdevice.OP and auth == "convenience":  # H12c-e (11A.15.6): the terminal signer only
-        _refuse("relay.pair_device is never signed with convenience custody: sign it with orch sign CODE")
     _shape(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
     _formats(prepared)
     _hashes(prepared, workspace_id)
@@ -101,6 +100,7 @@ def check(
     material = prepared["material"]
     events = prepared["events"]
     check_reviews(material, events)
+    _sequence(prepared, events, workspace_id, person)
     for block in material["review"]:  # derived values are rendered too: they must have their formats
         d = block["derived"]
         if ("cert_device" in d and not _DEVICE.fullmatch(str(d["cert_device"]))) or (
@@ -112,6 +112,50 @@ def check(
         _refuse("review_digest does not match the material")
     if prepared.get("fingerprint") != review.fingerprint(digest, events, prepared["op"]):
         _refuse("the fingerprint does not match")
+
+
+def _sequence(prepared: Mapping[str, Any], events: list[Any], workspace_id: str, person: str) -> None:
+    """Batch 11 (finding 9): the first request of a signer's sequence. The intent in the material is the one thing the
+    person reviews; its digest, its step count and the first event are recomputed from it here, so a host cannot show
+    one intent and prepare another."""
+    from . import sequence
+
+    meta = prepared["material"].get("sequence")
+    if meta is None:
+        return
+    try:
+        if not isinstance(meta, dict) or set(meta) != {"digest", "of", "intent"}:
+            _refuse("the sequence material has keys outside its schema")
+        intent = sequence.validate_intent(meta["intent"])
+        plan = sequence.steps(intent)
+        if meta["digest"] != sequence.digest_of(workspace_id, person, intent) or meta["of"] != len(plan):
+            _refuse("the sequence digest or step count is not the intent's")
+        if prepared["op"] != plan[0]["op"] or len(events) != 1:
+            _refuse("a sequence starts with its first step's op")
+        sequence.check_step(intent, 0, prepared, person=person, first=None, prev_head=None)
+    except sequence.SequenceInvalid as exc:
+        _refuse(f"the sequence is not one this signer knows ({exc})")
+    except sequence.Aborted as exc:
+        _refuse(exc.reason)
+
+
+def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
+    """The part of :func:`check` that needs no person and no device (a reader that only shows a request, like the
+    dashboard server): the shape, the hashes the material binds (gate, policy, question, sections), every ``before``
+    against the event's ``base_rev``, every review recomputed from the events and the material. Raises
+    :class:`SignerRefused`. It vouches for the material; it is not a substitute for :func:`check` before a signature."""
+    try:
+        events = prepared["events"]
+        person = events[0]["actor"]["id"]  # whose request it is; the signer's own check compares it
+    except (KeyError, IndexError, TypeError):
+        _refuse("the request carries no events")
+    _shape(prepared, workspace_id=workspace_id, person=person, device=None, auth=None)
+    _formats(prepared)
+    _hashes(prepared, workspace_id)
+    check_reviews(prepared["material"], events)
+    _sequence(prepared, events, workspace_id, person)
+    if prepared.get("review_digest") != review.review_digest(prepared["material"]):
+        _refuse("review_digest does not match the material")
 
 
 def _formats(prepared: Mapping[str, Any]) -> None:
@@ -173,7 +217,8 @@ _SET_FIELDS = frozenset(
 #: what the host person ops (H6b, §0.8) may change
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "repos"})
+_PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
+_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos"})
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
@@ -188,6 +233,17 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             scope_ok = (log == "workspace") == (ticket is None)
             ok = e["type"] == "policy.changed" and isinstance(gates, dict) and 1 <= len(gates) <= 4
             ok = ok and set(gates) <= _GATES and scope_ok
+        elif op == "people.set":
+            ok = (
+                e["type"] == "people.changed"
+                and log != "workspace"
+                and ticket is not None
+                and e.get("role") in _PEOPLE_ROLES
+                and isinstance(e.get("add"), list)
+                and isinstance(e.get("remove"), list)
+                and (len(e["add"]) + len(e["remove"]) > 0)
+                and (e.get("role") != "owner" or (len(e["add"]) == 1 and not e["remove"]))
+            )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
@@ -214,6 +270,8 @@ def _touches(prepared: Mapping[str, Any]) -> None:
             _refuse("base_rev does not name exactly the paths the edit touches")
         if op in ("ac.add", "ac.edit"):
             ok = set(sets) == {"ticket.acceptance"} and not sections
+        elif op == "task.add":
+            ok = set(sets) == {"ticket.tasks"} and not sections
         elif op == "section.set":
             ok = not sets and len(sections) == 1
         elif op == "set":
@@ -302,7 +360,7 @@ _MATERIAL_KEYS = {
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
     # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
     pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
@@ -449,6 +507,7 @@ _PLAIN = {
     "move": "move {ticket} to {to}",
     "policy.set": "set the gate policies {gates} of {ticket}",
     "settings.set": "change the workspace settings {set}",
+    "people.set": "change the {role} of {ticket}",
     "relay.pair_device": "add the paired device {device} to your devices",
 }
 
@@ -464,6 +523,9 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
     ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
+    seq = prepared["material"].get("sequence")
+    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("agent") is not None:
+        return "GRANT"  # a sequence that gives agents access is confirmed with the grant's word (its strongest step)
     if op in ("policy.set", "settings.set") and ticket is None:
         wid = prepared["workspace_id"]
         known = workspace(wid) if workspace is not None else None
@@ -570,6 +632,16 @@ def render(
     if artifacts is not None and artifacts not in labels:
         raise ValueError(f"artifacts: {artifacts!r}")
     out = [*header(prepared, workspace), ""]
+    extra: list[str] = []
+    if prepared["material"].get("sequence") is not None:  # one review of every step (batch 11, finding 9)
+        from . import sequence
+
+        out.append(
+            f"=== {int(prepared['material']['sequence']['of'])} signatures, ONE confirmation; all steps below ==="
+        )
+        intent = sequence.validate_intent(prepared["material"]["sequence"]["intent"])
+        extra = sequence.extra_lines(intent) + sequence.technical_lines(intent)
+        prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]
     for i, block in enumerate(material["review"], 1):
@@ -609,6 +681,7 @@ def render(
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
         text = value if isinstance(value, str) else canon.dumps(value).decode("utf-8")
         out += ["| " + _clean(line) for line in text.split("\n")]
+    out += [_clean(line) for line in extra]
     for c in prepared.get("checks") or []:
         out.append(
             f"check: {_clean(c.get('repo'))} clean at {_clean(c.get('at'))} (attested by the worker, best effort)"
@@ -617,6 +690,52 @@ def render(
     if any(unicodedata.category(c) in ("Cc", "Cf") and c != "\n" for c in text):  # every value went through _clean
         _refuse("the review would carry a control character")
     return text
+
+
+class Review(str):
+    """The text the person reads first (the plain view: headline, content, no hashes) with the full review of
+    :func:`render` as :attr:`details` (``d`` at the prompt, ``--details`` or ``ORCH_SIGN_DETAILS=1`` shows it first)."""
+
+    details: str = ""
+    details_first: bool = False
+
+
+def plain(
+    prepared: Mapping[str, Any],
+    workspace: Callable[[str], tuple[str, str] | None],
+    *,
+    artifacts: str | None = None,
+    prefix: str = "",
+) -> Review:
+    """B6 (owner decision E): the review in three layers. The plain view is :func:`signcontent.text` of the request's
+    own events and material (so it is exactly what is signed); the details are today's full :func:`render`, which
+    also runs here, so every refusal of the full review still comes before any prompt. A relay pairing keeps the full
+    review as its only view (the code the person compared is part of what it binds)."""
+    full = render(prepared, workspace, artifacts=artifacts)
+    if prepared["material"].get("kind") == pairdevice.MATERIAL_KIND:
+        out = Review(prefix + full)
+        out.details = ""
+        return out
+    known = workspace(prepared["workspace_id"])
+    try:
+        lines = signcontent.text(
+            signcontent.build(prepared, verified=True),
+            _clean,
+            workspace=f"{known[0]} ({known[1]})" if known is not None else None,
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
+        return Review(prefix + full)
+    if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
+        lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]
+    for c in prepared.get("checks") or []:
+        lines.append(f"check: {_clean(c.get('repo'))} clean (attested by the worker, best effort)")
+    body = "\n".join(lines).rstrip("\n") + "\n"
+    if any(unicodedata.category(c) in ("Cc", "Cf") and c != "\n" for c in body):
+        _refuse("the review would carry a control character")
+    out = Review(prefix + body)
+    out.details = prefix + full
+    out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"  # `orch sign --details` sets it
+    return out
 
 
 def _pair_content(material: Mapping[str, Any]) -> list[str]:
@@ -838,7 +957,7 @@ def finish(
         check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
         if files is not None:
             check_uploads(prepared, files)
-        text = prefix + render(prepared, workspace, artifacts=artifacts)
+        text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix)
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)

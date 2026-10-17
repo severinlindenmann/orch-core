@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "relay.quota",
+    "message": "the relay's membership quota is reached",
+    "hint": "remove a device from the workspace before pairing another",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

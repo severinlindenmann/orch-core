@@ -18,6 +18,7 @@ pinned by a known-answer test; changing them changes every person key, so they a
 
 from __future__ import annotations
 
+import re
 import secrets
 import unicodedata
 
@@ -37,6 +38,7 @@ __all__ = [
     "derive_person_key",
     "derive_person_scalar",
     "generate_recovery_code",
+    "format_code_numbered",
     "normalise_code",
 ]
 
@@ -72,7 +74,24 @@ def normalise_code(code: str) -> str:
     """NFKD, lower case, single spaces. Does not validate."""
     if type(code) is not str:
         raise RecoveryCodeError("recovery.words", "not text")
-    return " ".join(unicodedata.normalize("NFKD", code).lower().split())
+    text = unicodedata.normalize("NFKD", code).lower()
+    text = re.sub(r"(?<!\S)(\d{1,2})[:.)](?=\S)", r"\1 ", text)
+    tokens = [t[:-1] if t[-1] in ":.)" and t[:-1].isdigit() else t for t in text.split()]
+    if tokens and len(tokens) % 2 == 0 and all(t.isdigit() for t in tokens[0::2]):
+        nums, rest = tokens[0::2], tokens[1::2]
+        if [int(n) for n in nums] == list(range(1, len(nums) + 1)) and not any(w.isdigit() for w in rest):
+            tokens = rest
+    return " ".join(tokens)
+
+
+def format_code_numbered(code: str, per_row: int = 6) -> str:
+    """The code for a human: numbered words, ``per_row`` per line, aligned columns (display only, never logged)."""
+    words = code.split()
+    width = max((len(w) for w in words), default=0)
+    rows = []
+    for i in range(0, len(words), per_row):
+        rows.append("  ".join(f"{i + j + 1:>2} {w:<{width}}" for j, w in enumerate(words[i : i + per_row])).rstrip())
+    return "\n".join(rows)
 
 
 def check_recovery_code(code: str) -> str:

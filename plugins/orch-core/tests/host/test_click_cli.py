@@ -24,7 +24,8 @@ def run(*argv, env=None):
     return code, out.getvalue(), err.getvalue()
 
 
-def test_the_flag_is_switched_per_workspace_by_the_host_cli(served):
+def test_the_flag_is_switched_per_workspace_by_the_host_cli(served, monkeypatch):
+    monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)
     state = str(served.lab.state)
     assert not convenience.enabled(served.lab.state, served.wid, UID)
     code, out, _ = run("host", "convenience", "on", "--workspace", served.service.entry.prefix, "--state", state)

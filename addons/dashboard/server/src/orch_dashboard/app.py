@@ -9,10 +9,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, reads, settings, terminals
+from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals
+from .adapters.setup import SetupProxy
+from .adapters.setup import register as register_setup
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
-from .gateway import Gateway
+from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
 
@@ -30,7 +32,11 @@ SPA_PATH = re.compile(
 )
 
 
-def create_app(port: int, gateway=None, auth=None, static=None):
+# Every root-level file index.html references (public/ of the UI). A test checks the built index.html against this list.
+ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
+
+
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
@@ -108,6 +114,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def workspaces():
         return gateway.workspaces()
 
+    @app.get("/api/host")
+    def host():
+        return gateway.host_info()
+
     def identity_row(ws):
         link = gateway.enabled(ws)
         return adapters.me(
@@ -137,10 +147,13 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             "runner": who.runner,
         }
 
+    register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
     settings.register(app, gateway)
+    signprefs.register(app, gateway)
+    phone.register(app, gateway)
     addon_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
@@ -153,15 +166,20 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-        elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
+        elif path in ROOT_FILES:
+            # Files index.html names at the root (favicon, boot-shell css): a fixed list, never a path from the request.
+            candidate = static / path
+            if candidate.is_file():
+                return FileResponse(candidate, headers={"Cache-Control": "no-store"})
+        elif path in ("", "setup") or SPA_PATH.fullmatch(path):
             # The file:// launcher is cross-site too: serve its shell, but forbid
             # automatic session sharing in foreign documents. Missing metadata keeps
             # old-browser compatibility (and cannot protect their foreign loads).
             sites = request.headers.getlist("sec-fetch-site")
             foreign = bool(sites) and sites not in (["none"], ["same-origin"])
-            candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
+            candidate = static / "index.html"
             if candidate.is_file():
-                if path != "favicon.svg" and foreign:
+                if foreign:
                     html = candidate.read_text(encoding="utf-8")
                     marked = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
                     if marked == html:

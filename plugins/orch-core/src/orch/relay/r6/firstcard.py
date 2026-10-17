@@ -96,6 +96,13 @@ class R6LinkSource:
             relay_url=self._signer.link.origin, part=self._part, issued_ms=self._now_ms(),
         )  # fmt: skip
 
+    def card_accepted(self) -> None:
+        """The relay accepted the first ``PUT card`` (R5 calls it before the first publication, B1): the pending card
+        becomes the accepted one (11A.15.5, D:9423). Idempotent: nothing pending is a no-op (a resumed link)."""
+        pending = self._keys.head()["card"]["pending_card_seq"]
+        if pending is not None:
+            self._keys.card_accepted(pending)
+
     def genesis(self) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
         if self._pin is None:
             raise GenesisPathMissing("the genesis pin's person path (relay.genesis_pin) is not built")

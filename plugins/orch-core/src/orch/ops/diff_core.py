@@ -136,7 +136,7 @@ def diff_plan(
     jobs = []
     for name in names:
         branch = links["branches"].get(name)
-        path = caps.git.repo_path(store.root, repos, name)
+        path = caps.git.repo_path(store.layout, repos, name)
         if not branch:
             raise OrchError("observe.unavailable", f"{name}: the ticket names no branch")
         if path is None:

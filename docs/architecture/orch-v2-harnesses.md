@@ -11,7 +11,7 @@ depends on a harness:
 - Every command is defined once in the operation registry (A1). Any agent that can run a shell command can use it.
 - Gates, roles, policies and signatures are enforced by the CLI and the host (A2, D3), not by a harness hook.
 - An agent's identity is `ORCH_GRANT` and `ORCH_SESSION` (A3, A4): plain environment variables.
-- Instructions are `AGENTS.orch.md` (neutral) and `SKILL.md` skills (portable format, D55).
+- Instructions are `AGENTS.orch.md` (neutral, reached from a marked block in `AGENTS.md`) and `SKILL.md` skills in `.agents/skills/` (portable format, D55).
 
 Supported harnesses are those that pass the test in section 4: Claude Code and Codex CLI first, then GitHub
 Copilot CLI. A harness is not "supported" until its row in section 4 has passed.
@@ -20,8 +20,8 @@ Copilot CLI. A harness is not "supported" until its row in section 4 has passed.
 
 | Piece | Claude Code | Other harnesses |
 |---|---|---|
-| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
-| Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md` (Codex reads `AGENTS.md`; Copilot reads its own instruction files), skills where the harness supports `SKILL.md` |
+| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md`, `.agents/skills/` and the `AGENTS.md` block |
+| Instructions | `CLAUDE.md` imports `@AGENTS.md` (project rules, holding the orch block) and `@AGENTS.orch.md`; skills from the plugin and the generated copy in `.claude/skills` | `AGENTS.md` with the orch block (Codex reads it; Copilot reads its own instruction files), skills in `.agents/skills/` where the harness supports `SKILL.md` |
 | Session-start and pre-compact hooks | plugin hooks | none; the agent runs `orch status` first (stated in `AGENTS.orch.md`) |
 | Guard hook (`PreToolUse`) | optional second layer | not available |
 

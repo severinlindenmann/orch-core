@@ -82,7 +82,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
             if not chunk:
                 break
             shown += chunk
-            if not confirmed and b"and Enter to continue to the passphrase; anything else stops: " in shown:
+            if not confirmed and b"and Enter to continue; anything else stops: " in shown:
                 time.sleep(0.3)  # typed after the prompt is up: the prompt discards typeahead
                 os.write(tty, (answer or key_of(argv)).encode() + b"\n")  # read after the review, as a person does
                 confirmed = True

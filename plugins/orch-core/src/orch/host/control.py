@@ -26,19 +26,31 @@ import os
 import re
 import shutil
 import stat
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from . import frames
-from .custody import check_tree, check_workspace_files, ensure_private_dir, same_or_inside, unsafe, write_private
+from orch import layout as layout_mod
+from orch.layout import STORE_DIR, LayoutError
+
+from . import devmode, frames
+from .custody import (
+    check_tree,
+    check_workspace_files,
+    ensure_private_dir,
+    same_or_inside,
+    store_name,
+    unsafe,
+    write_private,
+)
 from .errors import HostError
 from .intents import Intent, IntentStore
 from .outcomes import CONTROL_WRITES, request_idem
 from .ownership import OwnershipLock
-from .registry import PERSON, Entry, group_name, validate_peers
+from .registry import PERSON, Entry, admit, group_name, validate_peers
 from .transport import Session
 from .workspace import ok_result, person_ok
 
@@ -51,6 +63,40 @@ __all__ = ["CONTROL_OPS", "ControlGate", "ControlOps", "KEY_TTL_SECONDS", "WSK_M
 
 KEY_TTL_SECONDS = 3600
 WSK_MARKER = "wsk_create.json"
+log = logging.getLogger(__name__)
+
+
+def _store_pin(root: str) -> Any:
+    """What the check saw of the store of ``root`` (the ``.orch`` identity, or legacy), for the open that follows."""
+    from orch.layout import StorePin
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        pfd = os.open(root, flags)
+    except OSError as exc:
+        raise unsafe(f"{root}: {exc.strerror or exc}") from None
+    try:
+        try:
+            found = layout_mod.resolve(pfd, root)
+            sfd = layout_mod.open_store_dir(pfd) if found is not None and not found.legacy else None
+        except LayoutError as exc:
+            raise unsafe(str(exc)) from None
+        if sfd is None:
+            return StorePin(None)
+        try:
+            st = os.fstat(sfd)
+        finally:
+            os.close(sfd)
+        return StorePin((st.st_dev, st.st_ino))
+    finally:
+        os.close(pfd)
+
+
+def _store_dir(root: str) -> Path:
+    """The store directory of the project ``root`` as it is on disk now (:func:`orch.layout.store_of`)."""
+    return layout_mod.store_of(root)
+
+
 _ROOT_FILES = ("config.json", "keys.jsonl", "events", "tickets", ".state")
 
 _WS = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
@@ -79,6 +125,9 @@ _PEERS = {
 }
 
 
+_OFFER = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
+
+
 def _closed(required: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": required, "required": list(required), "additionalProperties": False}
 
@@ -92,6 +141,62 @@ _SCHEMAS = {
     "host.relay_stop": _closed({"workspace_id": _WS}),
     "host.relay_start": _closed({"workspace_id": _WS}),
     "host.relay_unlink": _closed({"workspace_id": _WS}),
+    "host.relay_status": _closed({"workspace_id": _WS}),  # B1: host.status.relay over the control socket (the CLI link)
+    # B1 (11A.5 step 1): the reservation of a first link; human-only, no idem, no outcome record
+    "host.relay_link": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "origin": {"type": "string", "minLength": 8, "maxLength": 256},
+            "max_publication_bytes": {"type": "integer", "minimum": 1 << 20, "maximum": 1 << 30},
+            "ca_file": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "proxy": {"type": "string", "minLength": 1, "maxLength": 512},
+        },
+        "required": ["workspace_id", "origin", "max_publication_bytes"],
+        "additionalProperties": False,
+    },
+    # R6c-2 (11A.15.9): relay pairing, human-only (the CLI refuses under ORCH_GRANT); none is a write (no idem, no
+    # outcome record): the offer's link exists only in its direct answer
+    "host.relay_pair_offer": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "scopes": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"enum": ["look", "decide"]}},
+            "ttl_ms": {"type": "integer", "minimum": 60_000, "maximum": 600_000},
+        },
+        "required": ["workspace_id"],
+        "additionalProperties": False,
+    },
+    "host.relay_pair_show": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_list": _closed({"workspace_id": _WS}),
+    "host.relay_pair_answer": _closed(
+        {
+            "workspace_id": _WS,
+            "offer_id": _OFFER,
+            "code": {"type": "string", "maxLength": 32},
+            "approve": {"type": "boolean"},
+        }
+    ),  # fmt: skip
+    "host.relay_pair_cancel": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_abandon": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
+    "host.relay_pair_cert": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "offer_id": _OFFER,
+            "cert": {"type": "object"},
+            "rejection": {"type": "object"},
+            "challenge": {"type": "object"},
+        },  # fmt: skip
+        "required": ["workspace_id", "offer_id"],
+        "additionalProperties": False,
+    },
+    "host.relay_primary_set": _closed(
+        {"workspace_id": _WS, "cert": {"type": "object"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
+    ),
+    # B1 (11A.2): the genesis pin's person path; human-only like pairing, no idem, no outcome record
+    "host.relay_genesis_pin_facts": _closed({"workspace_id": _WS}),
+    "host.relay_genesis_pin_submit": _closed({"workspace_id": _WS, "pin": {"type": "object"}}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -102,9 +207,17 @@ _SCHEMAS = {
         }
     ),
 }
+PAIR_OPS = frozenset(op for op in _SCHEMAS if op.startswith("host.relay_pair_") or op == "host.relay_primary_set")
+GENESIS_OPS = frozenset({"host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit"})
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
+
+
+def _genesis_view(event: dict[str, Any]) -> devmode.View:
+    """A new workspace's view for :func:`orch.host.registry.admit`: its genesis, its owner as the only member."""
+    owner = (event.get("owner") or {}).get("person") if isinstance(event.get("owner"), dict) else None
+    return devmode.View(event, frozenset({owner}) if isinstance(owner, str) else frozenset())
 
 
 def _replay(record: dict[str, Any]) -> dict[str, Any]:
@@ -174,7 +287,14 @@ class ControlOps:
                     "person": self.host.registry.mapping(caller_uid, entry.workspace_id),
                 }
             )
-        return ok_result({"workspaces": rows})
+            if self.host.dev is not None:  # §11A.17.2: per workspace, only on a dev host
+                rows[-1]["sandbox"] = service is not None and service.dev_ok is True
+        data: dict[str, Any] = {"workspaces": rows}
+        if self.host.dev is not None:  # absent, not false, on a normal host (goldens unchanged)
+            data["dev"] = {"sim_convenience": True, "sandbox": self.host.dev.id8}
+        if self.host.dev_alarms:  # §11A.17.3 D3: absent while there is none
+            data["alarms"] = [dict(a) for a in self.host.dev_alarms]
+        return ok_result(data)
 
     # -- host.wsk_create
     def wsk_create(self) -> dict[str, Any]:
@@ -224,8 +344,9 @@ class ControlOps:
                     continue
 
     # -- host.register
-    def _inspect(self, root: str) -> tuple[str, str, Any]:
-        """Check a root for registration; returns (workspace id, prefix, workspace view)."""
+    def _inspect(self, root: str) -> tuple[str, str, Any, dict[str, Any], str | None]:
+        """Check a root for registration; returns (workspace id, prefix, workspace view, verified genesis, store): the
+        store (``".orch"``; ``None``: legacy) is that of the store this check opened, and must be the one on disk."""
         from orch.ops.caps import Files
         from orch.ops.runtime import _config
         from orch.store import Store, StoreError
@@ -251,10 +372,16 @@ class ControlOps:
         if pin is None:
             raise HostError("trust.genesis_mismatch", "no genesis pin on this machine for this workspace")
         ensure_private_dir(self._hosts(workspace_id), self.host_uid, create=False)
-        check_workspace_files(self.state_dir, workspace_id, Path(root), self.host_uid)
+        check_workspace_files(self.state_dir, workspace_id, Path(root), self.host_uid, store=store_name(root))
         try:
             store = Store.open(
-                root, expected_workspace_id=workspace_id, expected_genesis=pin, host_state_dir=None, load="lazy"
+                root,
+                expected_workspace_id=workspace_id,
+                expected_genesis=pin,
+                host_state_dir=None,
+                load="lazy",
+                ident=(info.st_dev, info.st_ino),  # the project and the store directory this check looked at
+                store_pin=_store_pin(root),
             )
         except StoreError as exc:
             raise HostError(exc.code, exc.detail or exc.code) from None
@@ -262,7 +389,13 @@ class ControlOps:
             ws = store.state.workspace
             if ws.genesis != pin or ws.workspace_id != workspace_id:
                 raise HostError("trust.genesis_mismatch", "the verified genesis differs from the pinned one")
-            return workspace_id, ws.prefix, ws
+            genesis = store.genesis_event()
+            if genesis is None:
+                raise HostError("trust.genesis_mismatch", "the workspace has no verified genesis")
+            opened = None if store.layout.legacy else STORE_DIR
+            if opened != store_name(root):
+                raise HostError("custody.unsafe_mode", "the store layout changed while the workspace was inspected")
+            return workspace_id, ws.prefix, ws, genesis, opened
         finally:
             store.close()
 
@@ -307,9 +440,16 @@ class ControlOps:
                 raise HostError("host.busy", f"{root} is already registered")
             if self.host.bootstrapping_root(root):
                 raise HostError("host.busy", f"{root} is being bootstrapped")
-            workspace_id, prefix, ws = self._inspect(root)
+            workspace_id, prefix, ws, genesis, store_kind = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
+            view = devmode.View(
+                genesis,
+                frozenset(ws.members),
+                frozenset(ws.former),
+                devmode._link_origin(self.state_dir, workspace_id, self.host_uid),  # noqa: SLF001
+            )
+            devmode.check_admit(self.host.dev, workspace_id, root, view)  # §11A.17: before anything is touched
             now = self.host.clock()
             peers = validate_peers(
                 args["peers"],
@@ -319,10 +459,10 @@ class ControlOps:
                 person_valid=lambda person: person_ok(ws, person, now),
             )
             self.intents.update(intent, workspace_id=workspace_id)
-            entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers)
+            entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers, store=store_kind)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
                 self._import_readers(workspace_id, root)  # H12d-2: after admission, under the store lock
-                self.host.registry.add(entry)
+                admit(self.host, entry, view)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
             return self.intents.complete(intent, ok_result({"workspace_id": workspace_id}))["result"]
 
@@ -416,6 +556,101 @@ class ControlOps:
         name = service.relay_unlink()
         return ok_result({"workspace_id": workspace_id, "unlinked": name})
 
+    def relay_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        from .relayhook import status
+
+        workspace_id = args["workspace_id"]
+        service = self.host.services.get(workspace_id)
+        if self.host.registry.get(workspace_id) is None or service is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not served")
+        return ok_result({"workspace_id": workspace_id, "relay": status(service)})
+
+    def relay_link(self, args: dict[str, Any]) -> dict[str, Any]:
+        """``orch host relay link`` step 1 (11A.5): ``GET /v2/relay-info`` for the reader level (on this thread, never
+        the workspace's worker thread), then the reservation as a worker job (``link.json``, state ``linking``; the
+        permanent reader reservation of 11A.6). It starts nothing: the owner signs the genesis pin, then
+        ``host.relay_start`` runs the first link."""
+        from orch.relay.http import TransportError
+        from orch.relay.retry import RelayRefused
+        from orch.relay.session import SessionError
+        from orch.store import StoreError
+
+        from .relayhook import link_step1
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        try:
+            link = link_step1(
+                service, origin=args["origin"], max_publication_bytes=args["max_publication_bytes"],
+                ca_file=args.get("ca_file"), proxy=args.get("proxy"),
+            )  # fmt: skip
+        except (TransportError, RelayRefused, SessionError, OSError) as exc:
+            raise HostError(
+                "invalid.input", f"the relay could not be read ({type(exc).__name__}); nothing was linked"
+            ) from None
+        except StoreError as exc:  # relay.link_exists (the permanent reservation), validation.relay_link
+            raise HostError("invalid.input", f"{exc.code}: {str(exc)[:160]}") from None
+        return ok_result({"workspace_id": workspace_id, "state": link["state"], "origin": link["origin"],
+                          "max_publication_bytes": link["max_publication_bytes"]})  # fmt: skip
+
+    # -- R6c-2: relay pairing (11A.15.9), thin wrappers over the internal API (relaypair.api)
+    def relay_pair(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        from . import relaypair
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        data: dict[str, Any] = {"workspace_id": workspace_id}
+        if op == "host.relay_primary_set":
+            data["device_id"] = relaypair.primary_set(service, args["cert"], args["label"])
+        elif op == "host.relay_pair_offer":
+            h = relaypair.api(service, "offer", tuple(args.get("scopes") or ("look", "decide")),
+                              args.get("ttl_ms", 600_000))  # fmt: skip
+            data.update(h.public())
+            data["link"] = {"native": h.link.native, "https": h.link.https}  # the direct answer only
+        elif op == "host.relay_pair_list":
+            data["offers"] = [{**asdict(o), "scopes": list(o.scopes)} for o in relaypair.api(service, "list_offers")]
+        elif op == "host.relay_pair_show":
+            shown = relaypair.api(service, "show", args["offer_id"])
+            data["offer"] = {**asdict(shown), "scopes": list(shown.scopes)}
+        elif op == "host.relay_pair_answer":
+            state, left = relaypair.api(service, "answer", args["offer_id"], args["code"], args["approve"])
+            data.update(offer_id=args["offer_id"], state=state, attempts_left=left)
+        elif op == "host.relay_pair_cancel":
+            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "cancel", args["offer_id"]))
+        elif op == "host.relay_pair_abandon":
+            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "abandon", args["offer_id"]))
+        elif op == "host.relay_pair_cert":
+            state = relaypair.api(service, "pair_cert", args["offer_id"], cert=args.get("cert"),
+                                  rejection=args.get("rejection"), challenge=args.get("challenge"))  # fmt: skip
+            data.update(offer_id=args["offer_id"], state=state)
+        else:  # pragma: no cover - the schema table names every op
+            raise HostError("unknown_command", op)
+        return ok_result(data)
+
+    # -- B1: the genesis pin (11A.2)
+    def relay_genesis_pin(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        from . import relaygenesis
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        if op == "host.relay_genesis_pin_facts":
+            return ok_result({"workspace_id": workspace_id, "facts": relaygenesis.facts(service)})
+        return ok_result(relaygenesis.submit(service, args["pin"]))
+
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
         root = os.path.realpath(args["root"])
@@ -436,15 +671,20 @@ class ControlOps:
                 self.intents.abandon(intent)  # nothing was created: the same key may run again
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
-            self.intents.update(intent, validated=True)
+            self.intents.update(intent, validated=True, validated_at=int(time.time()))
             return self._run_bootstrap(intent, root, peers, backend)
 
     def _check_new_root(self, root: str) -> None:
         check_tree(Path(root), self.host_uid)
         if not stat.S_ISDIR(os.lstat(root).st_mode):
             raise unsafe(f"{root}: not a directory")
-        if os.listdir(root):
-            raise HostError("invalid.input", f"{root} is not empty")
+        from orch import rootclaim
+
+        # an existing project is fine; a name the store writes is not (rollback owns them, a project's file is never
+        # written over): one rule for setup, init and here (rootclaim)
+        why = rootclaim.refusal(rootclaim.inspect(root), init_lock_ok=True)
+        if why is not None:
+            raise HostError("invalid.input", f"{root}: {why}")
 
     def _validate_bootstrap(self, args: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], Any]:
         """Every check that needs no change on disk; returns (peers, the key backend)."""
@@ -490,7 +730,29 @@ class ControlOps:
             pins=self.host.pins,
             person_valid=lambda person: person == owner and person_scope_ok(cert.get("o") or {}),
         )
+        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event))  # §11A.17: nothing appended
+        self._check_reserved_prefix(event)
         return peers, backend
+
+    def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
+        """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
+        person (a member of no registered workspace) with the owner name ``orch dev sandbox <id8>`` of the dev host's
+        sandbox. The host cannot see whether the init generated the recovery code; the client side refuses a code it
+        did not generate (:func:`orch.ops.workspace_init.check_reserved_prefix`)."""
+        from orch import devsandbox
+
+        if event.get("prefix") != devsandbox.RESERVED_PREFIX:
+            return
+        owner = event.get("owner") if isinstance(event.get("owner"), dict) else {}
+        dev = self.host.dev
+        if dev is None or owner.get("name") != devsandbox.owner_name(dev.sandbox_id):
+            raise HostError("invalid.input", "SBX is reserved for dev-pair sandboxes")
+        for entry in self.host.registry.entries():
+            if any(p.get("person") == owner.get("person") for p in entry.peers.values()):
+                raise HostError(
+                    "invalid.input",
+                    "SBX is reserved for dev-pair sandboxes: the owner is not a fresh person",
+                )
 
     def _run_bootstrap(self, intent: Intent, root: str, peers: dict[str, dict[str, Any]], backend: Any) -> dict:
         from orch.store import BackendSigner, Store, StoreError
@@ -505,8 +767,12 @@ class ControlOps:
                 clock=self.host.clock,
                 workspace_name=Path(root).name or event.get("prefix"),
                 load="lazy",
+                create=True,
             )
             try:
+                self.intents.update(
+                    intent, created=self._fingerprint(root, store.created_store)
+                )  # what this bootstrap made (dev, inode)
                 store.append(event, log="workspace")
             finally:
                 store.close()
@@ -519,7 +785,9 @@ class ControlOps:
                 raise _unknown() from None
             if not landed:
                 if not self._foreign_root(root, workspace_id, event["id"]):
-                    self._clean_root(root)  # the root was empty when validated: only store-made names go
+                    self._clean_root(
+                        root, intent.record.get("created"), intent.record.get("validated_at")
+                    )  # only what we made
                 error = HostError(exc.code, exc.detail or exc.code) if isinstance(exc, StoreError) else None
                 self.intents.fail(intent, error or HostError("internal", "host.bootstrap failed"))
                 if error is not None:
@@ -542,9 +810,17 @@ class ControlOps:
         with contextlib.suppress(FileNotFoundError):
             (self._hosts(workspace_id) / WSK_MARKER).unlink()
         if self.host.registry.get(workspace_id) is None:
-            entry = Entry(workspace_id, str(event["prefix"]), root, self.host_uid, group_name(workspace_id), peers)
+            entry = Entry(
+                workspace_id,
+                str(event["prefix"]),
+                root,
+                self.host_uid,
+                group_name(workspace_id),
+                peers,
+                store=store_name(root),  # as on disk: the bootstrap's own Store.open made it
+            )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
-                self.host.registry.add(entry)
+                admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)
         return self.intents.complete(intent, result)["result"]
@@ -555,13 +831,13 @@ class ControlOps:
         an empty or torn line, another event), ``None`` when the log cannot be read (EIO, EMFILE...): unknown."""
         from orch import canon
 
-        path = Path(root) / "events" / "workspace.jsonl"
+        path = _store_dir(root) / "events" / "workspace.jsonl"
         try:
             with open(path, "rb") as handle:
                 line = handle.readline()
         except FileNotFoundError:
             return False
-        except OSError:
+        except (OSError, LayoutError):
             return None
         try:
             return canon.parse_event_line(line).get("id") == planned_id
@@ -574,7 +850,11 @@ class ControlOps:
         ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
         whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
         Its files are not ours to delete."""
-        path = Path(root) / "config.json"
+        try:
+            store = _store_dir(root)
+        except LayoutError:
+            return True  # a layout we cannot place is not ours to delete
+        path = store / "config.json"
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
@@ -588,23 +868,73 @@ class ControlOps:
             except (ValueError, KeyError, TypeError):
                 return True
         try:
-            with open(Path(root) / "events" / "workspace.jsonl", "rb") as handle:
+            with open(store / "events" / "workspace.jsonl", "rb") as handle:
                 first = json.loads(handle.readline(1 << 20))
         except (OSError, ValueError):
             return False  # no first line, or a torn one: nothing a direct init finished
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
-    def _clean_root(root: str) -> None:
-        """Remove what the store created in a new root; never anything else, and never the root itself (bootstrap
-        did not create it: it is the person's own empty directory)."""
+    def _fingerprint(root: str, made: tuple[int, int] | None = None) -> dict[str, list[int]]:
+        """``name -> [dev, inode]`` of what this bootstrap made in ``root`` right now: every store name (directories,
+        not links) in the legacy layout; in the new layout only the ``.orch`` directory this bootstrap's own open
+        made (``made``, from ``Store.created_store``), never one that was already there."""
+        out: dict[str, list[int]] = {}
+        try:
+            store = _store_dir(root)
+        except LayoutError:
+            return out
+        if store != Path(root):
+            if made is not None:
+                out[STORE_DIR] = [made[0], made[1]]
+            return out
+        for name in _ROOT_FILES:
+            with contextlib.suppress(OSError):
+                st = os.lstat(os.path.join(root, name))
+                if stat.S_ISDIR(st.st_mode):
+                    out[name] = [st.st_dev, st.st_ino]
+        return out
+
+    @staticmethod
+    def _clean_root(root: str, created: Any = None, since: Any = None) -> None:
+        """Remove what this bootstrap made in the root, and nothing else (the root may be a person's project).
+        A directory goes only if it still has the recorded (dev, inode); ``config.json`` / ``keys.jsonl`` go only if
+        they are regular files the host's append made (changed since ``validated_at``). Anything else is left alone.
+        In the new layout the ``.orch`` directory goes only if it is the recorded one, whole (it holds only ours)."""
+        created = created if isinstance(created, dict) else {}
+        if STORE_DIR in created:
+            ControlOps._remove_made_store(root, created[STORE_DIR])
+            return
         for name in _ROOT_FILES:
             path = Path(root) / name
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                rec = created.get(name)
+                if rec == [st.st_dev, st.st_ino]:
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    log.warning("host.bootstrap rollback left %s: not made by this bootstrap", path)
+            elif (
+                stat.S_ISREG(st.st_mode)
+                and name in ("config.json", "keys.jsonl")
+                and isinstance(since, int)
+                and st.st_ctime >= since
+            ):
                 with contextlib.suppress(OSError):
                     path.unlink()
+            else:
+                log.warning("host.bootstrap rollback left %s: not made by this bootstrap", path)
+
+    @staticmethod
+    def _remove_made_store(root: str, recorded: Any) -> None:
+        """Remove the ``.orch`` this bootstrap made and nothing else (:func:`orch.store.rootfs.remove_made_dir`)."""
+        from orch.store.rootfs import remove_made_dir
+
+        if not remove_made_dir(root, STORE_DIR, recorded):
+            log.warning("host.bootstrap rollback left %s/.orch: not made by this bootstrap", root)
 
     # -- host.outcome
     def outcome(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -680,7 +1010,9 @@ class ControlOps:
         registered = self.host.registry.get(workspace_id) is not None or self.host.registry.by_root(root) is not None
         if not registered:
             if not self._foreign_root(root, workspace_id, event["id"]):
-                self._clean_root(root)  # the person's own directory stays, empty again
+                self._clean_root(
+                    root, intent.record.get("created"), intent.record.get("validated_at")
+                )  # only what we made
             pins = HostPins(self.state_dir, workspace_id)
             try:
                 pinned = (directory / "genesis").exists() or pins.genesis() is not None
@@ -747,6 +1079,10 @@ class ControlGate:
                 "host.relay_stop": lambda: ops.relay_stop(args),
                 "host.relay_start": lambda: ops.relay_start(args),
                 "host.relay_unlink": lambda: ops.relay_unlink(args),
+                "host.relay_link": lambda: ops.relay_link(args),
+                "host.relay_status": lambda: ops.relay_status(args),
+                **{name: (lambda n=name: ops.relay_pair(n, args)) for name in PAIR_OPS},
+                **{name: (lambda n=name: ops.relay_genesis_pin(n, args)) for name in GENESIS_OPS},
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

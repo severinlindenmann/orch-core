@@ -10,9 +10,10 @@ import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
 import { mergeRunItems, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
+import { nowMs } from '@/lib/time'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { EXECUTION_LINE } from './executionLine'
-import { StartAgentDialog } from './StartAgentDialog'
+import { RunnerGrantCard, StartAgentDialog } from './StartAgentDialog'
 
 const WS = 'a'.repeat(32)
 const T = { timeout: 5000 }
@@ -43,6 +44,9 @@ const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer
 
 let s: Record<string, ReturnType<typeof vi.spyOn>>
 beforeEach(() => {
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
   s = {
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
     start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
@@ -78,8 +82,16 @@ describe('the preview', () => {
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
     expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.')
+    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.')
     expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
+  })
+
+  it('N16: the risk sentence names the real workspace maximum, not "7 days", on a 3-day workspace', async () => {
+    vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    mount()
+    await screen.findByTestId('agent-cwd', {}, T)
+    await waitFor(() => expect(screen.getByTestId('runner-grant-risk')).toHaveTextContent('(up to 3 days, the length you choose)'))
+    expect(screen.getByTestId('runner-grant-risk')).not.toHaveTextContent('7 days')
   })
 
   it('says "shared working copy" in the approved words for cwd.kind repo', async () => {
@@ -176,16 +188,17 @@ describe('the runner grant', () => {
     expect(await screen.findByTestId('runner-grant-needed', {}, T)).toHaveTextContent(text)
   })
 
-  it('issues a deposit grant with hours (at most 12) and scope; confirmed reads the grant and previews again', async () => {
+  it('issues a deposit grant with hours (a length from the list) and scope; confirmed reads the grant and previews again', async () => {
     s.preview.mockResolvedValue(noGrant())
     mount()
     await screen.findByTestId('runner-grant-issue', {}, T)
-    expect(within(card()).getByLabelText('Hours').querySelectorAll('option')).toHaveLength(12)
-    fireEvent.change(within(card()).getByLabelText('Hours'), { target: { value: '12' } })
+    expect(within(card()).getByLabelText('Length').querySelectorAll('option')).toHaveLength(4)
+    expect([...within(card()).getByLabelText('Length').querySelectorAll('option')].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days', '7 days'])
+    fireEvent.change(within(card()).getByLabelText('Length'), { target: { value: '24' } })
     fireEvent.change(within(card()).getByLabelText('Tickets'), { target: { value: 'all' } })
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } }) })
     await issueAndSign()
-    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 12, scope: 'all' })
+    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 24, scope: 'all' })
     expect(s.sign.mock.calls[0][3]).toBe(WORD)
     expect(await screen.findByTestId('runner-grant-confirmed', {}, T)).toBeInTheDocument()
     await waitFor(() => expect(s.preview).toHaveBeenCalledTimes(2), T)
@@ -343,4 +356,81 @@ describe('the live stream', () => {
     mergeRunItems(qc, WS, [{ t: 'runner', grant: null }])
     expect((qc.getQueryData(['runner', WS]) as { runner: Runner }).runner.grant).toBeNull()
   })
+})
+
+
+it('Extend preserves the runner scope and posts its id with the selected length', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all', until: UNTIL }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  expect(screen.getByText('Agents that are running now stop; new agents use the extended access.')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('option', { name: '7 days' })).toBeInTheDocument())
+  fireEvent.change(screen.getByLabelText('Length'), { target: { value: '168' } })
+  expect(screen.getByLabelText('Tickets')).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Extend access' }))
+  await waitFor(() => expect(s.prepare).toHaveBeenCalled())
+  expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'all', extend: GRANT })
+})
+
+it.each([4, 24, 500])('caps runner lengths at workspace hours %s and 168', async (limit) => {
+  vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: limit }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  s.preview.mockResolvedValue(noGrant())
+  mount()
+  await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+  const select = screen.getByLabelText('Length') as HTMLSelectElement
+  expect([...select.options].every(o => Number(o.value) <= Math.min(limit, 168))).toBe(true)
+  expect(Number(select.value)).toBeLessThanOrEqual(Math.min(limit, 168))
+})
+
+it('B12A old 12: the lengths come from the SIGNED settings when the workspace list carries no grant_hours', async () => {
+  vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'], grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  s.preview.mockResolvedValue(noGrant())
+  mount()
+  await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+  await waitFor(() => expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days']))
+  expect([...(screen.getByLabelText('Tickets') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['Tickets you may work on', 'All tickets'])
+})
+
+it('B12A N16: at the maximum, Extend says how long the workspace allows and why there is no choice', async () => {
+  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: null, grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const until = new Date(nowMs() + 100 * 3_600_000).toISOString()
+  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all', until }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  expect(await screen.findByTestId('runner-grant-longest')).toHaveTextContent('as long as this workspace allows (3 days)')
+})
+
+describe('terminal-approval workspace (no one-click)', () => {
+  beforeEach(() => {
+    vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+  })
+  it('issues the runner grant through the terminal hand-off, never click/prepare, and offers 8 h up to the workspace maximum', async () => {
+    const handoff = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'stop here', retryable: false }))
+    s.preview.mockResolvedValue(noGrant())
+    mount()
+    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+    expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
+    fireEvent.click(screen.getByTestId('runner-grant-issue'))
+    fireEvent.click(await screen.findByRole('button', { name: /Terminal/ }, T))
+    await waitFor(() => expect(handoff).toHaveBeenCalled())
+    expect(handoff.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    expect(s.prepare).not.toHaveBeenCalled()
+    expect(screen.queryByText(/convenience/i)).not.toBeInTheDocument()
+  })
+  it('Extend hides lengths shorter than the access it replaces', async () => {
+    const until = new Date(nowMs() + 40 * 3_600_000).toISOString()
+    render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until, scope: 'workable' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'workable', until }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+    expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['3 days'])
+  })
+})
+
+it('Start agent folds the technical lines into Details and explains each mode', async () => {
+  mount()
+  const details = await screen.findByTestId('agent-details', {}, T)
+  expect(details.tagName).toBe('DETAILS')
+  expect(details).not.toHaveAttribute('open')
+  expect(within(details).getByText('Runs')).toBeInTheDocument()
+  expect(screen.getByTestId('agent-mode-help')).toHaveTextContent(/Works through the ticket/)
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'refine' } })
+  expect(screen.getByTestId('agent-mode-help')).toHaveTextContent(/changes no code/)
 })

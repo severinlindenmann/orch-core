@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
-from orch.host import signer
+from orch.host import signcontent, signer
 
 from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, RISK, op_class, refused
 
@@ -40,6 +40,8 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     if op == "grant":  # v1.6: only a deposit grant gets this far (check_prepared)
         return f"{tag}/GRANT"
     ticket = prepared["material"].get("ticket")
+    if _sequence_grant(prepared):  # a sequence that gives agents access: the strongest step's word
+        return f"{tag}/GRANT"
     if op in ("policy.set", "settings.set") and ticket is None:
         return f"{tag}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"
     if op in ("addon.grant", "addon.purge"):
@@ -47,23 +49,57 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     return signer.confirm_word(prepared)
 
 
+def _sequence_word(prepared: Mapping[str, Any]) -> bool:
+    """B12D: does the strongest step of this sequence need the typed word (a people change signs who may act)?"""
+    from orch.host import sequence
+
+    seq = (prepared.get("material") or {}).get("sequence")
+    if not isinstance(seq, Mapping):
+        return False
+    try:
+        return sequence.confirm_kind(sequence.validate_intent(seq.get("intent"))) == "word"
+    except sequence.SequenceInvalid:
+        raise refused("check_failed", "the sequence is not one this signer knows") from None
+
+
+def _sequence_grant(prepared: Mapping[str, Any]) -> bool:
+    seq = (prepared.get("material") or {}).get("sequence")
+    return (
+        isinstance(seq, Mapping) and isinstance(seq.get("intent"), Mapping) and seq["intent"].get("agent") is not None
+    )
+
+
 def deposit_checks(prepared: Mapping[str, Any]) -> None:
     """The one exception to "``grant`` is terminal-only" (v1.6, D-P2-27): exactly one ``grant.issued`` with
-    ``label:"runner"``, ``verbs:"agent"`` and 1 to 12 hours. Anything else is ``terminal_only``."""
+    ``label:"runner"``, ``verbs:"agent"`` and 1 to 168 hours,
+    optionally followed by the ``grant.revoked`` of the one it replaces (Extend). Anything else is ``terminal_only``."""
     events = prepared.get("events")
     ok = (
         prepared.get("op") == "grant"
         and isinstance(events, list)
-        and len(events) == 1
+        and len(events) in (1, 2)
         and isinstance(events[0], Mapping)
         and events[0].get("type") == "grant.issued"
         and events[0].get("label") == "runner"
         and events[0].get("verbs") == "agent"
         and type(events[0].get("hours")) is int
         and 1 <= events[0]["hours"] <= DEPOSIT_MAX_HOURS
+        # B8 Extend: the second event, if any, is the revoke of the grant being replaced (shown in full in the review)
+        and (
+            len(events) == 1
+            or (
+                isinstance(events[1], Mapping)
+                and events[1].get("type") == "grant.revoked"
+                and isinstance(events[1].get("grant"), str)
+                and events[1]["grant"] != events[0].get("grant")
+            )
+        )
     )
     if not ok:
-        raise refused("terminal_only", "only a runner grant of at most 12 hours is handed to the runner by a click")
+        raise refused(
+            "terminal_only",
+            "only a runner grant within the workspace grant_hours (at most 168) is handed to the runner by a click",
+        )
 
 
 def check_prepared(
@@ -94,6 +130,8 @@ def check_prepared(
         kind = "word"
     else:
         kind = op_class(str(prepared["op"]), events)
+        if kind == "click" and (_sequence_grant(prepared) or _sequence_word(prepared)):
+            kind = "word"  # a sequence whose strongest step is a word (a grant, a people change) is confirmed with it
         if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
             raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
     for c in prepared.get("checks") or []:
@@ -128,6 +166,10 @@ def build(
         {"repo": signer._clean(c["repo"]), "clean": True, "attested_by": "worker", "at": signer._clean(c["at"])}
         for c in prepared.get("checks") or []
     ]
+    try:  # B6 (owner decision E): additive; `lines` stays the full review. Unknown shapes get no plain view at all
+        content = signcontent.clean_tree(signcontent.build(body, verified=True))  # check_prepared ran
+    except (KeyError, TypeError, ValueError, AttributeError):
+        content = None
     view = {
         "risk": RISK,
         "op": prepared["op"],
@@ -150,6 +192,8 @@ def build(
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
         view["deposit"] = True
         view["deposit_line"] = DEPOSIT_LINE
+    if content is not None:
+        view["headline"], view["content"] = content["headline"], content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view

@@ -167,6 +167,58 @@ _SPECS = [
         "(orch-v2-host 0.8.6 item 9.9).",
     ),
     _e(
+        "relay.pair_open",
+        3,
+        False,
+        "a relay pairing is already in progress",
+        "one pairing at a time: cancel the live offer or wait for it and its cert request to end",
+        ["orch", "host", "relay", "pair", "list"],
+        "A relay pairing offer was refused because a live offer or an outstanding cert request exists in this "
+        "workspace (orch-v2-host 11A.15.6 step 1).",
+    ),
+    _e(
+        "relay.no_primary",
+        3,
+        False,
+        "no verified primary for relay pairing",
+        "set the primary (the device that signs phone certificates) first",
+        ["orch", "host", "relay", "primary", "set"],
+        "A relay pairing offer needs a verified membership/primary.json: the primary's certificate under the owner "
+        "key (orch-v2-host 11A.15.1).",
+    ),
+    _e(
+        "relay.quota",
+        3,
+        False,
+        "the relay's membership quota is reached",
+        "remove a device from the workspace before pairing another",
+        ["orch", "host", "status"],
+        "A relay pairing offer was refused under the membership_quota alarm or at the member-list cap "
+        "(orch-v2-host 11A.15.6 step 1).",
+    ),
+    _e(
+        "relay.pair_closed",
+        3,
+        False,
+        "the pairing does not allow this step now",
+        "look at the offer's state; start a new pairing if it ended",
+        ["orch", "host", "relay", "pair", "list"],
+        "A pairing step its offer's state does not allow: cancel of an allocated offer, an answer or certificate "
+        "for an offer not waiting for it, relay.pair_device outside step 9 or near the phone's deadline, or "
+        "without a membership publisher (orch-v2-host 11A.15.6, 11A.15.9A).",
+    ),
+    _e(
+        "host.dev_refused",
+        3,
+        False,
+        "refused by the Simulator dev gate",
+        "a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace",
+        ["orch", "host", "status"],
+        "A host started with --dev-sim-convenience refused to start or refused a non-sandbox workspace, or a normal "
+        "host refused a dev-pair sandbox workspace (prefix SBX); the reason is first in the message (orch-v2-host "
+        "11A.17).",
+    ),
+    _e(
         "reader.decl_invalid",
         3,
         False,

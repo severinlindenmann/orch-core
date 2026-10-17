@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "worktrees",
+  "version": "0.1.0",
+  "title": "Worktrees",
+  "entry": {"cmd": ["orch-worktrees", "serve"]},
+  "capabilities": []
+}

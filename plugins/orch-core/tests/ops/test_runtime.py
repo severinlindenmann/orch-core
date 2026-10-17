@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from orch import model
 from orch.ops import runtime
 from orch.ops.caps import Files
@@ -21,9 +23,9 @@ def test_the_workspace_is_found_from_the_environment_or_by_walking_up(ws, tmp_pa
     deep.mkdir(parents=True)
     assert runtime.find_workspace({}, deep, Files.direct()) == ws.root
     parent = tmp_path / "repo"
-    (parent / "orchestrator").mkdir(parents=True)
-    (parent / "orchestrator" / "config.json").write_text((ws.root / "config.json").read_text())
-    assert runtime.find_workspace({}, parent, Files.direct()) == parent / "orchestrator"
+    (parent / ".orch").mkdir(parents=True)
+    (parent / ".orch" / "config.json").write_text((ws.root / "config.json").read_text())
+    assert runtime.find_workspace({}, parent, Files.direct()) == parent  # the project; the store is its .orch
     assert runtime.find_workspace({}, tmp_path / "nowhere", Files.direct()) is None
     (tmp_path / "bad").mkdir()
     (tmp_path / "bad" / "config.json").write_text('{"schema": "other"}')
@@ -86,6 +88,15 @@ def test_notes_survive_a_corrupt_file_by_asking_for_a_read(ws, cli):
     assert r.err_code == "conflict.section"  # unknown: read first, never a blind write
     cli("show", "1", "--section", "plan")
     assert cli("section", "set", "plan", "-m", "v2", "--ref", "1").code == 0
+
+
+def test_a_task_op_without_a_ticket_shows_the_real_syntax(ws, cli):
+    """B11-P6 (finding 36): ``task start`` has no ``--ref``; the refusal names the ``REF/T<n>`` form it does take."""
+    cli("new", "A")
+    r = cli.j("task", "start", "T1")
+    assert r.err_code == "ambiguous_ref"
+    assert "REF/T<n>" in r.doc["error"]["message"] and "--ref" not in r.doc["error"]["message"]
+    assert "DEMO-0001/T3" not in r.doc["error"]["message"] and "/T3" in r.doc["error"]["hint"]
 
 
 # ---------------------------------------------------------------------------------------------- store and model
@@ -277,7 +288,7 @@ def test_a_symlinked_start_is_resolved_and_trusted_for_v2_and_v1(ws, tmp_path):
     """The start (cwd or ORCH_WORKSPACE) is resolved first: a symlinked ancestor (``/tmp`` on macOS, a symlinked
     home) still finds the workspace, v2 and v1, and ORCH_WORKSPACE through a symlinked path works."""
     real = tmp_path / "real"
-    v2 = _v2_copy(ws, real / "proj" / "orchestrator")
+    v2 = _v2_copy(ws, real / "proj" / ".orch").parent
     (real / "proj" / "sub").mkdir()
     v1 = _v1_copy(real / "old")
     lnk = tmp_path / "lnk"
@@ -289,9 +300,9 @@ def test_a_symlinked_start_is_resolved_and_trusted_for_v2_and_v1(ws, tmp_path):
         v1 / "orchestrator",
         True,
     )
-    assert runtime.find_workspace({"ORCH_WORKSPACE": str(lnk / "proj" / "orchestrator")}, None, files) == v2
+    assert runtime.find_workspace({"ORCH_WORKSPACE": str(lnk / "proj" / ".orch")}, None, files) == v2
     assert runtime.find_v1_workspace({"ORCH_WORKSPACE": str(lnk / "old")}, None, files) == v1 / "orchestrator"
-    assert runtime._config(lnk / "proj" / "orchestrator", files) is not None  # a symlinked ancestor of the root
+    assert runtime._config(lnk / "proj", files) is not None  # a symlinked ancestor of the root
 
 
 def test_inside_the_start_nothing_is_followed_and_nothing_outside_is_opened(ws, tmp_path, monkeypatch):
@@ -299,26 +310,29 @@ def test_inside_the_start_nothing_is_followed_and_nothing_outside_is_opened(ws, 
     ``O_NOFOLLOW`` fds: a symlink to a valid v1 or v2 layout elsewhere is no workspace, and nothing there is opened."""
     outside = tmp_path / "outside"
     _v1_copy(outside / "v1")
-    _v2_copy(ws, outside / "v2" / "orchestrator")
+    _v2_copy(ws, outside / "v2" / ".orch")
     a = tmp_path / "a"  # orchestrator -> a v1 layout
     a.mkdir()
     (a / "orchestrator").symlink_to(outside / "v1" / "orchestrator", target_is_directory=True)
-    a2 = tmp_path / "a2"  # orchestrator -> a v2 workspace
+    a2 = tmp_path / "a2"  # .orch -> a v2 workspace: refused by name, never followed (see below)
     a2.mkdir()
-    (a2 / "orchestrator").symlink_to(outside / "v2" / "orchestrator", target_is_directory=True)
+    (a2 / ".orch").symlink_to(outside / "v2" / ".orch", target_is_directory=True)
     b = tmp_path / "b" / "orchestrator"  # config.json -> outside
     (b / "tickets").mkdir(parents=True)
     (b / "config.json").symlink_to(outside / "v1" / "orchestrator" / "config.json")
-    b2 = tmp_path / "b2" / "orchestrator"
+    b2 = tmp_path / "b2" / ".orch"
     b2.mkdir(parents=True)
-    (b2 / "config.json").symlink_to(outside / "v2" / "orchestrator" / "config.json")
+    (b2 / "config.json").symlink_to(outside / "v2" / ".orch" / "config.json")
     c = tmp_path / "c" / "orchestrator"  # tickets -> outside
     c.mkdir(parents=True)
     (c / "config.json").write_bytes((outside / "v1" / "orchestrator" / "config.json").read_bytes())
     (c / "tickets").symlink_to(outside / "v1" / "orchestrator" / "tickets", target_is_directory=True)
     files = Files.direct()
     _Sentinel(outside, monkeypatch)
-    for cwd in (a, a2, b.parent, b, b2.parent, b / "tickets", c.parent):
+    for cwd in (a2,):
+        with pytest.raises(runtime.OrchError, match="not a real directory"):
+            runtime.locate_workspace({}, str(cwd), files)
+    for cwd in (a, b.parent, b, b2.parent, b / "tickets", c.parent):
         assert runtime.locate_workspace({}, str(cwd), files) is None, cwd
         try:
             runtime.Workspace({}, cwd=str(cwd), files=files).require_root()
@@ -326,42 +340,49 @@ def test_inside_the_start_nothing_is_followed_and_nothing_outside_is_opened(ws, 
             assert "no orch workspace here" in e.message, (cwd, e.message)
         else:  # pragma: no cover
             raise AssertionError(cwd)
-    for named in (a, a2, b.parent, b2.parent, c.parent, b, b2):  # ORCH_WORKSPACE naming the project folder
+    with pytest.raises(runtime.OrchError, match="not a real directory"):
+        runtime.locate_workspace({"ORCH_WORKSPACE": str(a2)}, None, files)
+    for named in (a, b.parent, b2.parent, c.parent, b, b2):  # ORCH_WORKSPACE naming the project folder
         assert runtime.locate_workspace({"ORCH_WORKSPACE": str(named)}, None, files) is None, named
     monkeypatch.undo()
     assert runtime.locate_workspace({}, str(outside / "v1"), files) == (outside / "v1" / "orchestrator", True)
-    assert runtime.find_workspace({}, str(outside / "v2"), files) == outside / "v2" / "orchestrator"
+    assert runtime.find_workspace({}, str(outside / "v2"), files) == outside / "v2"
 
 
 def test_orchestrator_swapped_for_a_symlink_mid_discovery_never_reads_outside(ws, tmp_path, monkeypatch):
     """The race the review found: the probe checked, then read by path. Now a swap between any two steps lands on
-    an ``O_NOFOLLOW`` open and is refused; nothing outside is opened."""
+    an ``O_NOFOLLOW`` open and is refused; nothing outside is opened. A swapped v1 ``orchestrator/`` is no workspace;
+    a swapped ``.orch`` is refused by name."""
     outside = tmp_path / "outside"
     _v1_copy(outside / "v1")
-    _v2_copy(ws, outside / "v2" / "orchestrator")
+    _v2_copy(ws, outside / "v2" / ".orch")
     files = Files.direct()
-    for target in (outside / "v1" / "orchestrator", outside / "v2" / "orchestrator"):
+    for name, target in (("orchestrator", outside / "v1" / "orchestrator"), (".orch", outside / "v2" / ".orch")):
         proj = tmp_path / ("p-" + target.parent.name)
-        (proj / "orchestrator").mkdir(parents=True)  # a plain folder when the walk starts
+        (proj / name).mkdir(parents=True)  # a plain folder when the walk starts
         sentinel = _Sentinel(outside, monkeypatch)
 
-        def swap(path, dir_fd, proj=proj, target=target, sentinel=sentinel):
-            if path == "orchestrator" and dir_fd is not None and not (proj / "orchestrator").is_symlink():
-                (proj / "orchestrator").rename(proj / "was")
-                (proj / "orchestrator").symlink_to(target, target_is_directory=True)
+        def swap(path, dir_fd, proj=proj, target=target, sentinel=sentinel, name=name):
+            if path == name and dir_fd is not None and not (proj / name).is_symlink():
+                (proj / name).rename(proj / "was")
+                (proj / name).symlink_to(target, target_is_directory=True)
                 sentinel.before_open = None
 
         sentinel.before_open = swap
-        assert runtime.locate_workspace({}, str(proj), files) is None, target
-        assert (proj / "orchestrator").is_symlink()  # the swap happened
+        if name == ".orch":
+            with pytest.raises(runtime.OrchError, match="cannot be opened|not a real directory"):
+                runtime.locate_workspace({}, str(proj), files)
+        else:
+            assert runtime.locate_workspace({}, str(proj), files) is None, target
+        assert (proj / name).is_symlink()  # the swap happened
         monkeypatch.undo()
-    # after discovery: the root found, then its orchestrator swapped before the config is read again (Workspace._open)
+    # after discovery: the project found, then its .orch swapped before the config is read again (Workspace._open)
     proj = tmp_path / "late"
-    _v2_copy(ws, proj / "orchestrator")
+    _v2_copy(ws, proj / ".orch")
     root = runtime.find_workspace({}, str(proj), files)
-    assert root == proj / "orchestrator"
-    (proj / "orchestrator").rename(proj / "was")
-    (proj / "orchestrator").symlink_to(outside / "v2" / "orchestrator", target_is_directory=True)
+    assert root == proj
+    (proj / ".orch").rename(proj / "was")
+    (proj / ".orch").symlink_to(outside / "v2" / ".orch", target_is_directory=True)
     _Sentinel(outside, monkeypatch)
     assert runtime._config(root, files) is None
     monkeypatch.undo()

@@ -147,7 +147,7 @@ def rig(tmp_path, gate):
 # -- the R6 gate ------------------------------------------------------------------------------------------------------
 
 
-def test_the_r6_gate_is_the_literal_false_and_nothing_in_the_source_assigns_it():
+def test_the_r6_gate_is_the_literal_true_and_nothing_in_the_source_assigns_it():
     """11A.1: no poll thread until R6 is merged and integration-tested. The gate is ONE module-level literal; no other
     source line under ``orch/`` assigns or patches it (tests may, through monkeypatch). Flipping it is a reviewed
     change with the 11A.4 "As built in R5" checklist. Honest limit: same-process code can still set the attribute."""
@@ -158,7 +158,7 @@ def test_the_r6_gate_is_the_literal_false_and_nothing_in_the_source_assigns_it()
         and any(isinstance(t, ast.Name) and t.id == "R6_READY" for t in (n.targets if isinstance(n, ast.Assign)
                                                                            else [n.target]))
     ]  # fmt: skip
-    assert len(assigns) == 1 and isinstance(assigns[0].value, ast.Constant) and assigns[0].value.value is False
+    assert len(assigns) == 1 and isinstance(assigns[0].value, ast.Constant) and assigns[0].value.value is True
     assert assigns[0] in tree.body  # module level, not inside a function
     src = Path(orch.relay.__file__).resolve().parent.parent
     offenders = []
@@ -176,7 +176,8 @@ def test_the_r6_gate_is_the_literal_false_and_nothing_in_the_source_assigns_it()
     assert offenders == []
 
 
-def test_start_refuses_with_the_gate_closed_before_any_thread(tmp_path):
+def test_start_refuses_with_the_gate_closed_before_any_thread(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "R6_READY", False)
     r = Rig(tmp_path)
     before = {t.name for t in threading.enumerate()}
     with pytest.raises(W.SeamMissing, match="r6_not_ready"):
@@ -505,6 +506,35 @@ def test_join_waits_for_the_publisher_before_releasing_anything(tmp_path, gate):
     assert r.w.alive() is True  # still holding its directory and slot
     done.set()
     assert _wait(lambda: r.ended == 1) and r.w.alive() is False
+    r.close()
+
+
+def test_a_companion_starts_after_the_publisher_stops_with_the_worker_and_is_joined_before_the_release(tmp_path, gate):
+    """B1: R6b's membership thread is a companion: started after the loop and the publisher, stopped by ``stop()`` and
+    joined (bounded) before anything is released."""
+    done = threading.Event()
+    log: list[str] = []
+
+    class Companion:
+        def start(self) -> None:
+            log.append("start")
+
+        def stop(self) -> None:
+            log.append("stop")
+
+        def join(self, timeout: float) -> bool:
+            return done.wait(timeout)
+
+    r = Rig(tmp_path)
+    r.w.companions.append(Companion())
+    r.w.start()
+    r.wait_started()
+    assert _wait(lambda: log == ["start"])
+    r.w.stop()
+    assert "stop" in log
+    assert r.w.join(0.2) is False and r.ended == 0 and r.w.alive() is True
+    done.set()
+    assert _wait(lambda: r.ended == 1)
     r.close()
 
 

@@ -48,7 +48,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     else:
         lines.append("no claim")
     if not hints:
-        hints = [views.claim_hint(c)]
+        hints = [
+            views.human_next_hint(c) if ctx.hosted and person is not None and not c.grant_id else views.claim_hint(c)
+        ]
     if args.get("verbose") and not ctx.hosted:  # host mode: no host path is ever returned
         data["state_dir"] = str(c.ws.state_dir)
         lines.append(f"state dir {c.ws.state_dir}")

@@ -15,7 +15,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     are installed but not granted (``not_granted``). ``enabled`` is true only for an active addon. P1: this is the one
     place that loads the registry; P2 loads it for every call that runs or writes an addon."""
     c = Call.of(ctx, "addon.list")
-    root = c.ws.require_root()
+    c.ws.require_root()
+    root = c.store.layout.store  # addons/ lives in the store
     view = c.store.state.workspace.addons
     registry = install.load_registry(root, view)
     granted = install.as_addons(view)

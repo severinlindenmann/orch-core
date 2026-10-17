@@ -125,13 +125,13 @@ def workspace_records(workspace: Any, default: MemoryRecords) -> MemoryRecords:
     """``FileRecords`` in the workspace's ``.state/sessions``, or ``default`` (process memory) outside a workspace."""
     from orch.ops.runtime import records_dir
 
-    root = workspace.root
-    if root is None:
+    layout = workspace.layout
+    if layout is None:
         return default
 
-    def pinned() -> Any:  # opened on first use, checked against the root discovery found (#564)
-        from orch.store.rootfs import RootFS
+    def pinned() -> Any:  # opened on first use, checked against the root and store discovery found (#564)
+        from orch.store.store import open_store_fs
 
-        return RootFS.at(root, ident=workspace.ident)
+        return open_store_fs(layout.project, workspace.ident, workspace.store_pin)[0]
 
-    return FileRecords(records_dir(root), fs=pinned)
+    return FileRecords(records_dir(layout), fs=pinned)

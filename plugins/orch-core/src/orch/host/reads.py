@@ -121,6 +121,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "workspace.show": _obj({}),
     "member.list": _obj({}),
     "reader.list": _obj({}),  # H12d-2 (§0.8.6 item 9.11): columns P and R
+    "phone.requests": _obj({}),  # B10 Part B: columns P and R (the viewer's own open hints)
+    "phone.status": _obj({"id": {"type": "string", "pattern": r"^ph_[0-7][0-9A-HJKMNP-TV-Z]{25}$"}}),  # column P
+    "gate.input": _obj({"ref": _REF, "gate": {"enum": ["requirements", "plan", "verify", "code"]}}, ("ref", "gate")),
     "session.list": _obj({"active": {"type": "boolean"}}),
     "grant.list": _obj({"active": {"type": "boolean"}}),
     "workspace.settings": _obj({"limit": {**_INT, "minimum": 1, "maximum": 32}, "page": _PAGE}),
@@ -237,7 +240,13 @@ def handler(op: str) -> Callable[[Handler], Handler]:
 
 
 def _load() -> None:
-    from . import reads_feed, reads_query, reads_ticket, reads_ws  # noqa: F401 - they register their handlers
+    from . import (  # noqa: F401 - they register their handlers
+        reads_feed,
+        reads_phone,
+        reads_query,
+        reads_ticket,
+        reads_ws,
+    )
 
 
 def serve(call: Call) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 {
-  "aggregate": "90f533604eccdd28dbb22834171f88be64d6be2fc73f86d4fff529caad0c7e8a",
+  "aggregate": "82703ffe2ebf80eed5176146b430538303f5bea2f96a6c2dddb87783abcc5b6b",
   "files": {
-    "README.md": "b02f1bb0dbbe887ca6049cde4a2a78026f1b0b23cad7f7a0068ab145e6098d49",
+    "README.md": "863f2bb0eefbe1e1f02b52f370e68a69a07ae088c4a21aa34577ee6397144a3b",
     "accounts.json": "060776501099476673fa1026afa1256ec7c06f8c922c9b3542ee63ee6058d1c3",
     "baseline_delete.json": "d463dc15149dc8ed0669ffc1cad74f53e9d841957f3e91de0bc91b9582f0dd1f",
     "baseline_post.json": "595b7d56c266ca88888c7c2c32cc9444838e9b3879ddc2391f367a8078f8bcec",
@@ -21,12 +21,13 @@
     "checkpoint_put.json": "c12b4fd42db5be943fb9c6d836df4fe284c37e6f07be64f60fc041b5001ca5e3",
     "device_get.json": "ff37825adf657c46cc4c0b380a86838b16a67875ecabd417901681fc794196a1",
     "device_put.json": "448656fea7366cd8e61fbbaaa2f8e39a28c6b6ba81fe7c53b9b2555916e10187",
-    "drop_blob_get.json": "0c92f286b8173d25f38610e1564c7b21c95d23d43a7f8c461e639593e9f5adcb",
-    "drop_descriptor_get.json": "107cca10813f5ec87cb4c07835b87dc3400fd59de2c2d49bdeaae8e0514f31ca",
+    "drop_blob_get.json": "b4aa1e6e18c83fc699aef32d65d050abb0140b18c2dbdfc493f47f6b113446f2",
+    "drop_descriptor_get.json": "a999dec48df57d4091fe928338ac6371d02a7c0a2b3c3c006bac2bf5f9d7c87d",
     "drop_descriptors.json": "a5cda4bf79748c1551ee11ef16828b2c6493f51fd5a4f2172206fbcdddb3fb20",
-    "drop_list.json": "b0cd7b75686b47ce397b09548fb164e9da42694517021d59088dddac81477ad4",
-    "drop_put.json": "02b350c441546edc2378d64a7fdaa60f0731b258c647e709cb499e8d56a8a075",
-    "drop_wraps_get.json": "e3d5fdb4423fa1ecbf5f03cb210c77d252794f36609a4a9f0f027c9d7ffcfd7c",
+    "drop_list.json": "b233c682a0243256f72d82071d7b1e098bd60df97540c3ef56ac0df80760db50",
+    "drop_put.json": "3cd019a2827fed1d11a52e63c1993eec2fc93bda7c6726e829c1c9f810818024",
+    "drop_retire.json": "6c034bb4a3badf7242d52b02c552ab487538d2d9ce68557d28368050b0f347aa",
+    "drop_wraps_get.json": "c8792ccecd72a1333a760bcd6c7d5ac4e95a2dd57741356226d07137b768c9a3",
     "genesis.json": "f769c7a11e16629f3600ef9592d86c641079988cca304cfa14374c90ccb20277",
     "grants.json": "accfe157b6b57fd72fc1b86697596343d6bdd68f2cf8680f26a64e4ef56e3591",
     "host_hold.json": "3e53d3d685b0beb747890b1ca83d4af506f75cffc787ee8948e56803b5925fc7",
@@ -38,6 +39,9 @@
     "pair_host_post.json": "8b10f584a8b3b5c594fb7753e619745d9e2eb55184b92685b1b094880a189297",
     "pair_poll.json": "e5b146b13447e6ca5b570ed11ed3c53eec11e81d091812c719327ccf8854307e",
     "proof.json": "b6f8cff6ec22c651ee7ba7110c7e94e5d841a42dfdb4255f827808e9b26bf135",
+    "push_register.json": "0fd7dc846f3c10f280842db8ad78cfc130a89cbe24e898abf846e73c94cad28c",
+    "push_send.json": "3fae0953eba4ee58b68faf7801d4678b66bc18078ab58c9610d6424ac6293825",
+    "push_unregister.json": "eb6305262e78f219821b6084cf6f463a2cdf3356d189b72e2944217c4ca11520",
     "relay_info.json": "51177abdcbefc2e1acb1579376f44dd21fe78de09279cdd402eb06ac7f6d0e07",
     "revocation_feed.json": "66fadcc488dd22f0e742e0f815e2e969d169549686594f2bdbdb5c4bb4feb8b2",
     "revocation_get.json": "236b9b42f5d229d4a9c147714e9fba7539b6fa1512e9baec3cff4fcd451af6b9",
@@ -51,5 +55,5 @@
     "unpublished_ack.json": "b9eb82d048df7dc44c9b351fee3c491701f010ee86d57d40782c5adf8f054fd8",
     "unpublished_get.json": "73ee9247010acb848870bd0e21a476ec36f883ae4c5c6ceacb31cdd6d6245768"
   },
-  "revision": 13
+  "revision": 19
 }

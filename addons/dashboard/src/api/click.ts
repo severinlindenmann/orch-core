@@ -4,9 +4,9 @@
 import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
-import { refusalOf, refusalSentence } from './refusals'
+import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
 
-/** Verbatim (owner decision, 12 Oct 2026). Also the first line of every sign panel. */
+/** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
 
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
@@ -17,6 +17,7 @@ export const HOLD_MS = 1500
 
 /** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
 export interface ClickCard {
+  risk_ack?: string | null
   custody: 'convenience' | 'passphrase' | 'none'
   enabled: boolean
   available: boolean
@@ -42,6 +43,8 @@ export interface ClickPrepared {
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
+  headline?: string
+  content?: import('./signing').SignContent
   risk: string
   op: string
   workspace: { id: string; name: string; prefix: string }
@@ -85,12 +88,8 @@ export interface ClickSigned {
 export type DepositOutcome = 'confirmed' | 'rejected' | 'unknown'
 export type DepositReason = 'grant.forgotten' | 'grant.not_runner' | 'grant.verbs' | 'grant.expiring' | 'rate.limited' | 'runner.unavailable' | 'other'
 
-/** M7b: the runner grant, a click request of its own (never a terminal hand-off). The signer sets label and verbs. */
-export interface RunnerGrantAction {
-  action: 'runner_grant'
-  hours: number
-  scope: 'workable' | 'all'
-}
+/** M7b: the runner grant, a click request, or a terminal hand-off with runner set by this server, never by the browser. The signer sets label and verbs. */
+export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' }>
 
 /** Every typed action a click request may carry. */
 export type ClickAction = HandoffAction | RunnerGrantAction
@@ -98,7 +97,7 @@ export type ClickAction = HandoffAction | RunnerGrantAction
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
 /** The owner's risk sentence for the runner grant (D-P2-27), verbatim. */
-export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.'
+export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'
 
 /**
  * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace
@@ -117,7 +116,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
-  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'details', 'section',
+  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
   'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
@@ -185,11 +184,17 @@ export function clickProblem(e: unknown): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
+      // B11: a sequence (one review, N signatures) that stopped after some signatures: say what landed (core's words)
+      // aborted: what landed stays a draft and starting again would make a NEW ticket; resumable: only the terminal finishes it
+      if (e.reason === 'stopped') return { title: 'Signing stopped part way', body: `${e.message} Finish it on its page. Starting again makes a new ticket.`, next: 'open' }
+      if (e.reason === 'resumable') return { title: 'Not finished yet', body: e.message, next: 'open' }
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
-      return { title: 'Click-to-sign is not available here', body: `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
+      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
+    case DEV_REFUSED:
+      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
     case 'intent.done':
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
     case 'intent.failed':

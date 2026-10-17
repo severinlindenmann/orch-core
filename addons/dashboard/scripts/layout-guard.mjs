@@ -542,6 +542,12 @@ async function run(send, close) {
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
+              // Core D1 (#582): the dev sandbox host. The badge sits in the topbar of every page.
+              ['real-host-dev-badge', 'dev-badge', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the sandbox id', '[data-testid="dev-badge-sandbox"]']]],
+              ['real-host-dev-badge-long', 'dev-badge-long', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the long workspace name', '[data-testid="workspace-card-signing"], h2']]],
+              ['real-host-dev-alarms', 'dev-alarms', [['the alarms', '[data-testid="host-alarms"] [data-testid="host-alarm"]']]],
+              ['real-host-dev-refused', 'dev-refused', [['the refusals', '[data-testid="dev-refused-gallery"] [data-testid="click-problem"]']]],
+              ['real-host-signing-dev-host', 'signing-dev-host', [['the signing card', '[data-testid="workspace-card-signing"]'], ['the dev-host explanation', '[data-testid="signing-dev-host"]'], ['the badge', '[data-testid="dev-badge"]']]],
               // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
               ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
               ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],
@@ -554,6 +560,45 @@ async function run(send, close) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
+            }
+            // The signing card (#578, #580): fixture card with a long name, prefix and device; the forms are opened by their buttons.
+            const typeInto = (sel, value) =>
+              evaluate(async (s, v) => {
+                const input = document.querySelector(s)
+                if (!input) return false
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, v)
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+                await new Promise((r) => setTimeout(r, 200))
+                return true
+              }, sel, value)
+            const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
+            if (!ONLY || ONLY.test('real-host-signing-on')) {
+              await go('/__layout/signing-on')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              await settle()
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the Turn on… button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-off')) {
+              await go('/__layout/signing-off')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn off$/))
+              await settle()
+              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the move-back command', '[data-testid="signing-move-back"] code'], ['the copy button', '[data-testid="signing-move-back"] button']]) : ['the Turn off button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
+              await go('/__layout/signing-terminal-on')
+              await check(config, 'real-host-signing-terminal-on', await need([...CARD, ['the terminal-on view', '[data-testid="signing-terminal-on"] code'], ['the copy button', '[data-testid="signing-terminal-on"] button']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unsafe')) {
+              await go('/__layout/signing-unsafe')
+              await check(config, 'real-host-signing-unsafe', await need([...CARD, ['the refused-prefix description', '[data-testid="signing-command-unsafe"]']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unknown')) {
+              await go('/__layout/signing-unknown')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
+              const sent = typed && (await clickText('button', /^Turn on$/))
+              await settle()
+              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the Turn on… form did not open or send'])
             }
             // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {

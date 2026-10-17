@@ -13,6 +13,7 @@ errors:
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.unsafe_mode (exit 3): use a directory owned by you whose parents only you or root can change | fix: orch describe init
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
+  host.dev_refused (exit 3): a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace | fix: orch host status
   human_only (exit 3): run orch init in your own terminal, not through an agent | fix: orch describe init
   host.busy (exit 4): orch host list
   lock.busy (exit 4 retry): retry in a moment | fix: orch status

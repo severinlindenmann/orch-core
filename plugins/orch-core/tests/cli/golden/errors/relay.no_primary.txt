@@ -1,0 +1,1 @@
+err relay.no_primary no verified primary for relay pairing · retry:false · next: set the primary (the device that signs phone certificates) first · fix: orch host relay primary set

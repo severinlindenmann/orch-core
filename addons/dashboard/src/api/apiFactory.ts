@@ -60,7 +60,7 @@ export interface ListTicketsParams {
 }
 
 export function createApi(transport: Transport) {
-  async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  async function call<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
     const res = await transport.request(method, path, body)
     if (res.status >= 400) {
       const err = (res.json as ApiErrorBody | null)?.error ?? {
@@ -105,6 +105,8 @@ export function createApi(transport: Transport) {
     getMe: (_ws?: string) => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
+    /** Core D1 (#582): the host's dev facts (`dev`, `alarms`); `{}` on a normal host and in the mock. Read it through `hostInfoOf`. */
+    getHostInfo: () => call<unknown>('GET', '/api/host'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
     getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),
     /** The board's own list: every ticket the board draws. The mock serves it as the plain list. */
@@ -136,6 +138,12 @@ export function createApi(transport: Transport) {
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
+    phoneAvailable: (ws: string) => call<{ phones: number }>('GET', `/api/w/${ws}/phone/available`),
+    phoneRequest: (ws: string, body: import('./phone').PhoneRequest & { idem: string }) => call<import('./phone').PhoneHint & { phones: number }>('POST', `/api/w/${ws}/phone/request`, body),
+    phoneCancel: (ws: string, id: string) => call<{ id: string; state: import('./phone').PhoneHint['state'] }>('POST', `/api/w/${ws}/phone/cancel`, { id }),
+    phoneStatus: (ws: string, id: string) => call<{ hints: import('./phone').PhoneHint[] }>('GET', `/api/w/${ws}/phone/status/${id}`),
+    getSignDefault: (ws: string) => call<import('./signing').SignDefault>('GET', `/api/w/${ws}/me/sign_default`),
+    putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
     /** H12d-2: every device's reader level and the workspace's `required_reader` (real host only). */

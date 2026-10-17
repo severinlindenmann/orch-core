@@ -40,6 +40,7 @@ import pytest
 from .. import corpus
 
 RELAY_DIR_ENV = "ORCH_RELAY_DIR"
+DESCENDANT_ENV = "ORCH_RELAY_T2_ALLOW_DESCENDANT"  # local: a relay branch that descends from the pin
 REQUIRED_ENVS = ("CI", "ORCH_RELAY_T2_REQUIRED")
 INTERNAL_CAP = 4 * 1024 * 1024  # the internal deployment's ORCH_RELAY_MAX_PUBLICATION_BYTES
 DEFAULT_CAP = 16 * 1024 * 1024  # the relay's default when the variable is unset
@@ -81,9 +82,17 @@ def relay_dir() -> Path:
     head = subprocess.run(
         ["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30, check=False
     ).stdout.strip()
-    if head != pinned_commit():
+    if head != pinned_commit() and not (os.environ.get(DESCENDANT_ENV) and _descends(d, pinned_commit(), head)):
         pytest.fail(f"{RELAY_DIR_ENV} is at {head or '?'}, SOURCE pins {pinned_commit()}", pytrace=False)
     return d
+
+
+def _descends(d: Path, ancestor: str, head: str) -> bool:
+    """``head`` is a descendant of the pinned commit (an unmerged relay branch under test; never set in CI)."""
+    return bool(head) and subprocess.run(
+        ["git", "-C", str(d), "merge-base", "--is-ancestor", ancestor, head], capture_output=True, timeout=30,
+        check=False,
+    ).returncode == 0  # fmt: skip
 
 
 def ref_module(d: Path) -> ModuleType:
@@ -108,13 +117,16 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def relay_env(data: Path, port: int, instance: str, cap: int | None) -> dict[str, str]:
+def relay_env(
+    data: Path, port: int, instance: str, cap: int | None, extra: dict[str, str] | None = None
+) -> dict[str, str]:
     env = {k: os.environ[k] for k in PASS_ENV if k in os.environ}
     env["ORCH_RELAY_ORIGIN"] = f"http://{HOST}:{port}"
     env["ORCH_RELAY_DATA"] = str(data)
     env["ORCH_RELAY_INSTANCE"] = instance
     if cap is not None:
         env["ORCH_RELAY_MAX_PUBLICATION_BYTES"] = str(cap)
+    env.update(extra or {})  # a test's own relay settings (push on: the APNs config and the fake gateway)
     return env
 
 
@@ -232,6 +244,7 @@ class RelayProcess:
     proc: subprocess.Popen[bytes]
     log: Path
     stopped: bool = field(default=False)
+    extra_env: dict[str, str] = field(default_factory=dict)
     started: float = field(default_factory=time.time)  # wall clock just after the spawn (the group's birth bound)
 
     def __post_init__(self) -> None:
@@ -250,7 +263,7 @@ class RelayProcess:
         return DEFAULT_CAP if self.cap is None else self.cap
 
     def env(self) -> dict[str, str]:
-        return relay_env(self.data, self.port, self.instance, self.cap)
+        return relay_env(self.data, self.port, self.instance, self.cap, self.extra_env)
 
     def log_tail(self, n: int = 4000) -> str:
         with contextlib.suppress(OSError):
@@ -382,16 +395,26 @@ def reap_all() -> list[str]:
 atexit.register(reap_all)
 
 
-def start_relay(d: Path, data: Path, cap: int | None, *, attempts: int = START_ATTEMPTS) -> RelayProcess:
+def start_relay(
+    d: Path,
+    data: Path,
+    cap: int | None,
+    *,
+    attempts: int = START_ATTEMPTS,
+    extra_env: dict[str, str] | None = None,
+    entry: Path | None = None,
+) -> RelayProcess:
     """Start the pinned relay on a free port chosen first; retried on a new port if the port was taken."""
     tails = []
     for i in range(attempts):
         port = free_port()
         instance = secrets.token_hex(16)
         log = data.parent / f"{data.name}-relay-{i}.log"
-        proc = spawn(["uv", "run", "orch-relay", "serve", "--host", HOST, "--port", str(port)], cwd=d,
-                     env=relay_env(data, port, instance, cap), log=log)  # fmt: skip
-        rp = RelayProcess(d, data, port, instance, cap, proc, log)
+        # ``entry``: a script (named orch-relay-*) that serves the relay in this process with a test's seams patched
+        cmd = ["uv", "run", "python", str(entry)] if entry else ["uv", "run", "orch-relay"]
+        proc = spawn([*cmd, "serve", "--host", HOST, "--port", str(port)], cwd=d,
+                     env=relay_env(data, port, instance, cap, extra_env), log=log)  # fmt: skip
+        rp = RelayProcess(d, data, port, instance, cap, proc, log, extra_env=dict(extra_env or {}))
         try:
             healthy = rp.wait_healthy()
         except BaseException:

@@ -82,7 +82,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             claim=st.data.get("claim"),
             claim_line=short(claim_line, 110) if claim_line else None,
             unread=[short(u, 60) for u in unread],
-            stale=bool(stale_findings(ws.root)),
+            stale=bool(stale_findings(ws.root, ws.store_dir)),
             next_hint=st.hints[0] if st.hints else "orch status",
         )
         return _split(event, lines)

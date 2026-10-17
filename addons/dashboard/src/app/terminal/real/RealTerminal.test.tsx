@@ -35,6 +35,18 @@ const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0))
 const ready = (writer: boolean) => ({ start: 0, offset: 0, cols: 80, rows: 24, writer, state: 'running' as const })
 
 describe('lease and reconnect', () => {
+  it('K7: the tab that just opened the terminal takes keyboard focus; a read-only one does not', async () => {
+    const { unmount } = render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)
+    await flush()
+    act(() => sockets[0].h.ready(ready(true)))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Terminal input')
+    unmount()
+    sockets = []
+    render(<RealTerminal ws={WS} run={run()} initial="read" connect={connect} />)
+    await flush()
+    act(() => sockets[0].h.ready(ready(false)))
+    expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Terminal input')
+  })
   it('attaches read-only by default and offers Take control (take:true only after the click)', async () => {
     render(<RealTerminal ws={WS} run={run()} initial="read" connect={connect} />)
     await flush()
@@ -57,7 +69,7 @@ describe('lease and reconnect', () => {
   it('losing the lease shows Take back; a 4409 offers Take control; neither takes by itself', async () => {
     render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)
     await flush()
-    expect(tickets).toEqual([{ mode: 'write', take: false }])
+    expect(tickets).toEqual([{ mode: 'write', take: true }]) // N5: the tab that started the shell gets control
     act(() => sockets[0].h.ready(ready(true)))
     expect(screen.queryByText('Read only.')).toBeNull()
     act(() => sockets[0].h.writer(false))

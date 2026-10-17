@@ -80,12 +80,20 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(WORKTREE_OPS)  # H11d
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
+    host |= {"phone.request", "phone.cancel"}  # B10 Part B
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
-        "grant.list", "workspace.settings", "ticket.text", "reader.list",
+        "grant.list", "workspace.settings", "ticket.text", "reader.list", "phone.requests", "phone.status",
+        "gate.input",
     }  # fmt: skip
-    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e
+    assert set(HOST_PERSON_OPS) == {
+        "move",
+        "policy.set",
+        "settings.set",
+        "people.set",
+        "relay.pair_device",
+    }  # H12c-e, B12D
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -169,6 +177,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
         elif op == "reader.declare":  # H12d-2: P only on a socket (column R: H12d-3)
+            assert kind == ("person_write", "write")
+        elif op in {"phone.request", "phone.cancel"}:  # B10 Part B: P only
             assert kind == ("person_write", "write")
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}

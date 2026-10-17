@@ -37,9 +37,11 @@ from orch.relay.framing import Identity, Refusal
 from orch.store import StoreError
 from orch.store.pins import HostPins, pair
 
-from . import relayadmit
+from . import convenience, relayadmit
 from .auth import Verified
 from .columns import Column, resolve_relay
+from .devmode import GATED_TYPE, DevGate, dev_gate
+from .devmode import LOG as DEV_LOG
 from .errors import HostError
 from .human import append_relay
 from .outcomes import Planned
@@ -160,15 +162,35 @@ class RelayEntry:
                 raise HostError("workspace.degraded", "the workspace is read-only")
 
             def apply(intent: Any) -> dict[str, Any]:
-                return self._apply(intent, identity, log, events)
+                gate = None
+                if any(e.get("auth") == convenience.AUTH for e in events):
+                    gate = self._dev_gate(identity, events)  # §11A.17.4 L2: fresh, under the store lock
+                return self._apply(intent, identity, log, events, gate)
 
             with store.locked():  # the one span; the store is re-read first
                 self._call(identity, "relay.submit", args, recheck, idem).authorize()
+                methods = store.state.workspace.settings.get("sign_methods")
+                if methods is not None and "phone" not in methods:  # B6: every column R device is a paired phone
+                    raise HostError("op.not_allowed", "this workspace does not allow signing with a phone")
                 return service.outcomes.execute(identity.principal, idem, "relay.submit", args, apply, planned=None)
         except (HostError, StoreError) as exc:
             raise _refusal(exc) from None
 
-    def _apply(self, intent: Any, identity: Identity, log: str, events: list[dict]) -> dict[str, Any]:
+    def _dev_gate(self, identity: Identity, events: list[dict]) -> DevGate:
+        """§11A.17.4 L2 for a convenience event: an answer only, and the dev gate passes on fresh state; then the
+        readers condition with the gate standing in for the flag (``disabled`` does not apply, every other reason
+        does). Else ``op.not_allowed`` (or the condition's own ``sign.convenience_unavailable``)."""
+        service = self._service
+        gate = dev_gate(service)
+        service.dev_ok = gate is not None
+        if gate is None or any(e.get("type") != GATED_TYPE for e in events):
+            raise HostError("op.not_allowed", "column R accepts no convenience-signed event here")
+        convenience.check(service, identity.person_id, identity.device_id, gate=gate)
+        return gate
+
+    def _apply(
+        self, intent: Any, identity: Identity, log: str, events: list[dict], gate: DevGate | None = None
+    ) -> dict[str, Any]:
         """Inside the span, after the outcome record: the log dedup, THEN the window for a never-seen event (ruling A,
         host clock), the target and key, the judgement, the plan, the append and the log check."""
         service = self._service
@@ -179,6 +201,10 @@ class RelayEntry:
         seq = relayadmit.known_or_fresh(store, log, ev, service.clock())
         if seq is not None:  # an identical landed event: committed, duplicate (before anything is judged)
             return relay_submit.result(log, [seq], duplicate=True)
+        try:
+            relay_submit.check_phase1(ev)  # B10 Part B phase 1: again under the lock (a recovered write meets it too)
+        except Refusal:
+            raise HostError("op.not_allowed", "the phone decides requirements and plan only") from None
         relayadmit.check_target(store, log, ev)
         try:
             relayadmit.judge_events(store, log, events)
@@ -188,13 +214,18 @@ class RelayEntry:
             raise HostError("validation.event", "the event cannot be judged") from None
         service.outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events])  # fsynced
         landed, error = append_relay(
-            service, log, events, [{} for _ in events], person_id=identity.person_id, device_id=identity.device_id
-        )
+            service, log, events, [{} for _ in events], person_id=identity.person_id, device_id=identity.device_id,
+            dev_gate=gate,
+        )  # fmt: skip
         if error is not None:
             raise error
         logged = store.logged_event(log, ev["id"])  # the log check before the outcome is classified
         if logged is None or not same_event(ws, log, logged, ev):
             raise HostError("internal", "the appended event is not in the log as submitted")
+        if gate is not None:
+            DEV_LOG.warning(
+                "dev convenience answer accepted ws=%s device=%s seq=%s", ws[:8], identity.device_id[2:10], landed[-1]
+            )
         return relay_submit.result(log, landed)
 
 

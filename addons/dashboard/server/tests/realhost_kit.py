@@ -193,7 +193,7 @@ class Workspace:
         self.make_dirs()
 
         def word(m, t):
-            code = re.findall(r"\n\n((?:[a-z]+ ){23}[a-z]+)\n", t)[-1].split()
+            code = re.findall(r"\d+ ([a-z]+)", re.findall(r"\n\n((?: *\d+ [a-z]+(?: +\d+ [a-z]+)*\n){4})", t)[-1])
             return code[int(m.group(1)) - 1]
 
         rules = [(r"Press Enter[^\n]*: $", lambda m, t: ""), (r"Word (\d+): $", word), *confirm_rules()]

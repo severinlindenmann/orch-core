@@ -31,12 +31,34 @@ LAUNCHD_LABEL = "io.orch.host"
 SYSTEMD_NAME = "orch-host.service"
 
 
-def program_arguments(python: Path, release: Path, state_dir: Path, run_dir: Path | None = None) -> list[str]:
+#: flags a service unit never carries (§11A.17.2: a service-managed host never runs as a dev host)
+DEV_ONLY_FLAGS = ("--dev-sim-convenience", "--dev-runner", "--foreground")
+
+
+def refuse_dev_flags(args: list[str]) -> None:
+    """Every unit writer (launchd, systemd; host and runner) refuses a dev-only flag in a unit's argv
+    (``invalid.input``): the exact token, ``--flag=…``, and any prefix of it (the CLIs take no abbreviation either,
+    ``allow_abbrev=False``)."""
+    from .errors import HostError
+
+    for arg in args:
+        name = arg.split("=", 1)[0]
+        # the exact token and any abbreviation argparse could expand to it (``--dev-sim``, ``--fore``, ``--dev``)
+        if len(name) > 2 and name.startswith("--") and any(flag.startswith(name) for flag in DEV_ONLY_FLAGS):
+            raise HostError("invalid.input", f"{name} is never written into a service unit")
+
+
+def program_arguments(
+    python: Path, release: Path, state_dir: Path, run_dir: Path | None = None, extra_args: tuple[str, ...] = ()
+) -> list[str]:
     """The service's argv. Every value comes from the environment or the interpreter, so a control character (a newline
-    would end a unit line, NUL or another control byte breaks either format) is refused here, for both units."""
+    would end a unit line, NUL or another control byte breaks either format) is refused here, for both units.
+    ``extra_args`` (nothing passes any today) may never hold a dev-only flag (:func:`refuse_dev_flags`)."""
     args = [str(python), "-I", str(release / "bin" / "orch-host"), "run", "--state", str(state_dir)]
     if run_dir is not None:
         args += ["--run", str(run_dir)]
+    args += list(extra_args)
+    refuse_dev_flags(args)
     for arg in args:
         if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in arg):
             raise ValueError(f"a control character in a unit argument: {arg!r}")
@@ -54,12 +76,18 @@ def systemd_quote(arg: str) -> str:
 
 
 def launchd_plist(
-    python: Path, release: Path, state_dir: Path, *, log_dir: Path | None = None, run_dir: Path | None = None
+    python: Path,
+    release: Path,
+    state_dir: Path,
+    *,
+    log_dir: Path | None = None,
+    run_dir: Path | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> bytes:
     """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default."""
     doc: dict[str, object] = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": program_arguments(python, release, state_dir, run_dir),
+        "ProgramArguments": program_arguments(python, release, state_dir, run_dir, extra_args),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Background",
@@ -81,6 +109,7 @@ def systemd_unit(
     group: str | None = None,
     host_uid: int | None = None,
     run_dir: Path | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> str:
     """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``).
     ``run_dir`` names the run directory (tier A: ``<state>/run``, H7); a system unit defaults to ``/run/orch/<uid>``."""
@@ -90,7 +119,7 @@ def systemd_unit(
         raise ValueError("the host never runs as root")
     if run_dir is None and host_uid is not None:
         run_dir = Path("/run/orch") / str(host_uid)
-    exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir))
+    exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir, extra_args))
     lines = [
         "[Unit]",
         "Description=orch host",

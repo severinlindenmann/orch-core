@@ -8,6 +8,7 @@ from typing import Any
 # a stdlib-only leaf (no custody, no I/O): the dashboard side may import it (§0.8.6 "Packaging and versions")
 from orch.host.errors import DETAIL_KEYS as _HOST_DETAIL
 from orch.host.errors import DEVICE_ID, DEVICES_MAX
+from orch.model.types import GRANT_MAX_HOURS
 
 __all__ = [
     "CLICK_OPS",
@@ -42,15 +43,16 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 #: the owner's plain-language risk of a click-issued runner grant (D-P2-27), the tier-A sentence of its View
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to "
-    "12 hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 #: a deposit grant lasts at most this many hours (D-P2-27)
-DEPOSIT_MAX_HOURS = 12
+DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
-#: the dashboard's click-to-sign switch (§0.8.6 item 3a); an older signer has no ``features`` and no switch
-FEATURES = ("custody",)
+#: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
+#: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
+FEATURES = ("custody", "sequence")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -67,6 +69,8 @@ REFUSALS = (
     "uncertain",
     "already_signed",
     "record_unavailable",
+    "stopped",
+    "resumable",
 )
 #: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
 #: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth
@@ -119,7 +123,18 @@ CLICK_OPS = frozenset(
     }
 )
 #: §0.8.6 item 6: ops that change who or what may act: click plus the typed word
-WORD_OPS = frozenset({"member.add", "member.role", "member.remove", "addon.grant", "addon.purge", "policy.set"})
+WORD_OPS = frozenset(
+    {
+        "relay.pair_device",
+        "member.add",
+        "member.role",
+        "member.remove",
+        "addon.grant",
+        "addon.purge",
+        "policy.set",
+        "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
+    }
+)
 #: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
 
 
@@ -131,7 +146,10 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
     if op == "settings.set" and events is not None:
         for ev in events:
             changed = ev.get("set")
-            if not isinstance(changed, dict) or any(str(k).split(".")[0] == "repos" for k in changed):
+            # B6: sign_methods decides which signatures the workspace accepts: a typed word, like repos
+            if not isinstance(changed, dict) or any(
+                str(k).split(".")[0] in ("repos", "sign_methods", "grant_hours") for k in changed
+            ):
                 return "word"
         return "click"
     if op in CLICK_OPS:

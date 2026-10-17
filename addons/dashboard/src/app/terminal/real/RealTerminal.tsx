@@ -1,6 +1,8 @@
 // One real terminal (M7a): xterm per section 12.6.7 (termView), the WebSocket of section 12.6.6 (termProtocol) and the
 // lease of section 12.6.5. Read-only by default; "Take control" asks for the lease with take:true; a reconnect, a
-// remount or a focus change never asks for it by itself. Retry is decided by the close code alone.
+// remount or a focus change never asks for it by itself. The one exception is the first attach of the tab that just
+// started this run (`initial: 'write'`, B12A N5): nobody else can hold a run that was created a moment ago, so that tab
+// asks for the lease outright instead of showing "Read only". Retry is decided by the close code alone.
 
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/api/types'
@@ -25,7 +27,7 @@ export type LeaseState = 'reading' | 'writing' | 'busy' | 'lost'
 export function RealTerminal({ ws, run, initial, connect = termTransport.connect }: {
   ws: string
   run: Run
-  /** The first attach of this mount: read, except right after the person opened this shell (write, never take). */
+  /** The first attach of this mount: read, except right after this tab started the shell (write, and it takes the lease). */
   initial: 'read' | 'write'
   /** Tests pass a fake socket. */
   connect?: typeof connectTerm
@@ -33,13 +35,14 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<TermView | null>(null)
   const conn = useRef<TermConnection | null>(null)
-  const [req, setReq] = useState<AttachRequest>({ mode: initial, take: false, n: 0 })
+  const [req, setReq] = useState<AttachRequest>({ mode: initial, take: initial === 'write', n: 0 })
   const [lease, setLease] = useState<LeaseState>('reading')
   const [status, setStatus] = useState<{ words: string; detail?: string; final: boolean } | null>(null)
   const [paused, setPaused] = useState(false)
   const [lost, setLost] = useState(false)
   const [exit, setExit] = useState<{ code: number | null; signal: string | null } | null>(null)
   const failures = useRef(0)
+  const focused = useRef(false)
   const runRef = useRef(run)
   runRef.current = run
 
@@ -91,6 +94,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           v?.setWriter(r.writer)
           v?.ready(r)
           setLease(r.writer ? 'writing' : runRef.current.writer ? 'busy' : 'reading')
+          // K7: the tab that just opened this terminal types into it at once (once per mount; a reconnect never steals focus).
+          if (r.writer && initial === 'write' && !focused.current) { focused.current = true; v?.term.focus() }
           if (r.writer) {
             const size = v?.fit()
             if (size) c.resize(size.cols, size.rows)

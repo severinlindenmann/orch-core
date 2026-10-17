@@ -17,6 +17,7 @@ def test_closed_route_allowlist():
         "/api/events",
         "/api/w/{ws}/head",
         "/api/workspaces",
+        "/api/host",
         "/api/me",
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",
@@ -36,6 +37,11 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
         "/api/w/{ws}/settings",
+        "/api/w/{ws}/me/sign_default",
+        "/api/w/{ws}/phone/available",
+        "/api/w/{ws}/phone/request",
+        "/api/w/{ws}/phone/cancel",
+        "/api/w/{ws}/phone/status/{id}",
         "/api/w/{ws}/members",
         "/api/w/{ws}/readers",
         "/api/w/{ws}/grants",
@@ -55,6 +61,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",
+        "/auth/setup",
+        "/api/setup/{route:path}",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected

@@ -235,6 +235,7 @@ class Session:
         raw: bytes | None = None,
         transport: Transport | None = None,
         content_type: str = "application/octet-stream",
+        resend_ok: bool = True,
     ) -> dict[str, Any]:
         """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
         once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
@@ -270,7 +271,10 @@ class Session:
                 if self._gen is None:
                     raise NotHolder("no holder generation")
                 headers["Orch-Holder"] = str(self._gen)
-            r = conn.request(method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap)
+            extra = {} if resend_ok else {"resend_ok": False}  # the transport never resends this one
+            r = conn.request(
+                method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap, **extra
+            )
             if 200 <= r.status < 300:
                 try:
                     obj = wire.loads_body(r.body, cap=cap)
@@ -321,7 +325,7 @@ class Session:
     def challenge(self) -> bytes:
         obj = self.call(
             "POST", "/v2/session/challenge", "POST /v2/session/challenge", body={}, auth=False,
-            keys={"challenge", "expires_ms"},
+            keys={"challenge", "expires_ms"}, resend_ok=False,
         )  # fmt: skip
         try:
             ch = wire.b64_field(obj["challenge"], max_len=wire.CHALLENGE_LEN, exact=wire.CHALLENGE_LEN)
@@ -344,7 +348,7 @@ class Session:
         try:
             obj = self.call(
                 "POST", "/v2/session/login", "POST /v2/session/login", body=body, auth=False,
-                keys={"token", "expires_ms"},
+                keys={"token", "expires_ms"}, resend_ok=False,
             )  # fmt: skip
         except RelayRefused as e:
             if e.status == 401 and e.code == "bad_signature":
@@ -564,6 +568,7 @@ class Session:
             obj = self.call(
                 "POST", path, route, body=body, deadline_s=deadline_s, keys={"gen", "lease_s", "cursor"},
                 fenced_stops=fenced_stops, transport=transport,
+                resend_ok=body.get("gen") is not None,  # an acquire / probe / takeover is not idempotent
             )  # fmt: skip
             return Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
         except RelayMisbehaving as e:

@@ -14,6 +14,8 @@ exactly as it judges a signed one (``lifecycle.moved``, ``lifecycle.policy_chang
   a ticket override: whoever ``claims.may_manage`` (the ticket owner who is not a viewer, owners, maintainers; F1
   5.4.2); the workspace default: workspace owners only.
 * ``settings.set {set}`` -> ``settings.changed {set}``: workspace owners only.
+* ``people.set {ref, role, add, remove}`` -> ``people.changed {role, add, remove}`` (B12D): who owns, works on or
+  reviews a ticket; whoever ``claims.may_manage``; an owner is exactly one person.
 * ``relay.pair_device {offer_id}`` -> ``device.added {device, cert}`` (H12c-e, 11A.15.10 item 12): the phone R6 paired,
   from R6's verified facts (never from the request); its own material kind (:mod:`orch.identity.pairdevice`).
 
@@ -26,6 +28,7 @@ from typing import Any
 
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
+from orch.model.types import GRANT_MAX_HOURS
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -66,9 +69,17 @@ _REPO = {
 _SET = {
     "type": "object",
     "properties": {
-        "grant_hours": {"type": "integer", "minimum": 1, "maximum": 24},
+        "grant_hours": {"type": "integer", "minimum": 1, "maximum": GRANT_MAX_HOURS},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+        "sign_methods": {  # B6: terminal always; touchid is reserved
+            "type": "array",
+            "items": {"enum": ["terminal", "click", "phone"]},
+            "uniqueItems": True,
+            "minItems": 1,
+            "maxItems": 3,
+            "contains": {"const": "terminal"},
+        },
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -216,6 +227,28 @@ SETTINGS_SET = operation(
 )
 
 
+def handle_people(ctx: Context, args: dict[str, Any]) -> Result:
+    """``people.set {ref, role, add, remove}`` -> ``people.changed``: whoever ``claims.may_manage`` (the ticket owner
+    who is not a viewer, owners, maintainers). The lists are canonical (sorted, de-duplicated); an owner has exactly
+    one id and no removal; a person who is not a member is refused here, before anything is signed (the model refuses
+    it again)."""
+    h = _Human(ctx, "people.set")
+    view = h.ticket(args["ref"])
+    core = h.store.state._core
+    if not claims.may_manage(core.ws, core.tickets[view.uid], h.person):
+        raise OrchError("role.denied", "people are for the ticket owner, owners and maintainers")
+    role = args["role"]
+    add, remove = sorted(set(args.get("add") or [])), sorted(set(args.get("remove") or []))
+    if set(add) & set(remove) or not (add or remove) or (role == "owner" and (len(add) != 1 or remove)):
+        raise OrchError("invalid.input", "people.set: nothing to change, or an owner that is not exactly one person")
+    unknown = [p for p in add if p not in core.ws.members]
+    if unknown:
+        raise OrchError("invalid.input", f"people.set: not members: {', '.join(unknown)}"[:200])
+    event = {"type": "people.changed", "role": role, "add": add, "remove": remove}
+    done = h.run(event, view.uid, f"change the {role} of {view.key}", review=h.header(view))
+    return h.ticket_result(view, done, {"role": role, "add": add, "remove": remove}, "orch show")
+
+
 def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
     """``relay.pair_device {offer_id}`` (H12c-e, 11A.15.6 step 9): ``device.added {device, cert}`` of the phone R6
     paired. The facts are R6's, handed to this handler by the host (``Capture.pair``, :mod:`orch.host.pairdevice`):
@@ -245,6 +278,25 @@ def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the relay pairing continues: orch host relay pair list")
 
 
+_PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
+PEOPLE_SET = operation(
+    "people.set",
+    "Human only",
+    "Add or remove the people of one role of a ticket (the owner is replaced by exactly one person).",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "role": E("the role", "owner", "assignees", "reviewers"),
+        "add": {"type": "array", "items": _PERSON, "maxItems": 16, "description": "people to add"},
+        "remove": {"type": "array", "items": _PERSON, "maxItems": 16, "description": "people to remove"},
+    },
+    required=("ref", "role"),
+    emits=("people.changed",),
+    text="ok {key} people.changed {role} seq={seq}\nnext: {next}",
+    data=obj({"role": STR, "add": {"type": "array", "items": STR}, "remove": {"type": "array", "items": STR}}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_people,
+)
 PAIR_DEVICE = operation(
     "relay.pair_device",
     "Human only",
@@ -255,10 +307,15 @@ PAIR_DEVICE = operation(
     emits=("device.added",),
     text="ok device.added {device} seq={seq}\nnext: {next}",
     data=obj({"device": STR, "offer_id": STR, "attempt": STR}),
-    errors=(err("role.denied"), err("reader.decl_invalid"), err("sign.convenience_readers")),
+    errors=(
+        err("role.denied"),
+        err("reader.decl_invalid"),
+        err("sign.convenience_readers"),
+        err("relay.pair_closed"),  # R6c: the offer is not at step 9, the phone's deadline is near, no publisher
+    ),
     handler=handle_pair_device,
 )
-OPS: dict[str, Operation] = {op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PAIR_DEVICE)}
+OPS: dict[str, Operation] = {op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE)}
 
 
 def get(name: str) -> Operation:

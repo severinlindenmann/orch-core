@@ -247,5 +247,5 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
 
 /** "until Tue" for the banner; the exact instant stays in the Mandates tab. */
 export function weekday(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })
+  return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short' })
 }

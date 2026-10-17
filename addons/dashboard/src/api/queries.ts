@@ -6,6 +6,7 @@ import { queryOptions } from '@tanstack/react-query'
 import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
+import { hostInfoOf } from './hostInfo'
 import type { HostGrant } from './settings'
 import type { QuickLimits } from './quickRecords'
 
@@ -20,6 +21,8 @@ export const queries = {
   /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
   workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
   workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
+  /** Core D1 (#582): is this host a dev sandbox host, and which alarms does it raise. Checked by `hostInfoOf`. */
+  hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false, refetchInterval: (q) => (q.state.status === 'error' ? 15_000 : false) }),
   addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
   devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
   today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
@@ -41,6 +44,7 @@ export const queries = {
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
   /** Reduced workspace settings of a real host (M4). */
+  signDefault: (ws: string) => queryOptions({ queryKey: ['sign-default', ws], queryFn: () => api.getSignDefault(ws), retry: false }),
   hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
   roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
   /** H12d-2: reader levels and `required_reader` (Settings → Devices). */

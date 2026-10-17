@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import os
 import re
@@ -36,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .devmode import gated as devmode_gated
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -45,8 +47,10 @@ if TYPE_CHECKING:
     from .workspace import WorkspaceService
 
 __all__ = [
+    "SEAMS",
     "Seams",
     "convenience_block",
+    "install_seams",
     "link_step1",
     "make_starter",
     "relay_state_path",
@@ -72,7 +76,8 @@ class Seams:
     * ``r6(service) -> (EpochKeySource, R6View)``: R6 (11A.15.2), the real key source and member view;
     * ``publisher(service, worker) -> Publisher``: R3 (11A.5), the publisher thread and ``publish_first``;
     * ``unpublished(service, worker) -> Unpublished``: R4 (11A.9), one step on the aux thread;
-    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3).
+    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3);
+    * ``push(service, worker, keys, signer, view)``: H13a, the push thread (a worker companion, optional).
 
     The transport is not a seam here: production always uses :class:`orch.relay.http.RelayConn` with ``link.json``'s
     ``ca_file`` and ``proxy``; only a test passes ``transport=`` to :func:`make_starter` (an AST rule refuses it in
@@ -82,6 +87,9 @@ class Seams:
     publisher: Callable[[WorkspaceService, RelayWorker], Publisher] | None = None
     unpublished: Callable[[WorkspaceService, RelayWorker], Unpublished] | None = None
     link_source: Callable[[WorkspaceService], LinkSource] | None = None
+    #: H13a (11A.16.4): ``push(service, worker, keys, signer, view) -> companion`` (the push thread). Unset, no push
+    #: thread runs (the refusing default): not part of :meth:`missing`, a worker is complete without it
+    push: Callable[..., Any] | None = None
 
     def missing(self) -> list[str]:
         return [n for n in ("r6", "publisher", "unpublished", "link_source") if getattr(self, n) is None]
@@ -89,6 +97,32 @@ class Seams:
 
 #: the seams the host uses (frozen: R3, R4 and R6 replace it with ``dataclasses.replace`` when they land)
 SEAMS = Seams()
+
+
+def install_seams() -> Seams:
+    """Land the production seams at host start (B1; ``Host.serve`` calls it before the first starter is built):
+    ``r6`` = :func:`relayr6.r6`, ``link_source`` = :func:`relayr6.link_source`, ``publisher`` =
+    :func:`relayr3.publisher`, ``unpublished`` = :func:`relayr4.unpublished`, ``push`` =
+    :func:`relaypush.push` (H13a). A seam already set (a test's) is
+    kept, and calling it again changes nothing. The R6 gate (``relay_worker.R6_READY``) is a separate switch: with it
+    closed no worker starts whatever the seams are. Also sets the R6b membership seam,
+    :data:`orch.host.relaypair.MEMBERSHIP`, when it is unset."""
+    global SEAMS
+    from . import relaypush, relayr3, relayr4, relayr6
+
+    SEAMS = dataclasses.replace(
+        SEAMS,
+        r6=SEAMS.r6 or relayr6.r6,
+        publisher=SEAMS.publisher or relayr3.publisher,
+        unpublished=SEAMS.unpublished or relayr4.unpublished,
+        link_source=SEAMS.link_source or relayr6.link_source,
+        push=SEAMS.push or relaypush.push,
+    )
+    from . import relaypair, relayr6b
+
+    if relaypair.MEMBERSHIP is None:
+        relaypair.MEMBERSHIP = relayr6b.membership
+    return SEAMS
 
 
 # -- the per-process slots of the 8-per-host cap ----------------------------------------------------------------------
@@ -171,6 +205,8 @@ def convenience_block(service: WorkspaceService) -> str | None:
     """§11A.6 at worker start and after a foreign append: ``convenience_events_present`` when the merged history (or
     the durable mark, or the flag) would refuse ``relay.link``; ``None`` otherwise. Under the store lock (worker
     thread)."""
+    from orch.store.readerrecs import read_relay_level
+
     from .convenience import refuse_reader_op
 
     store = service.store
@@ -178,7 +214,10 @@ def convenience_block(service: WorkspaceService) -> str | None:
         return "workspace_unavailable"
     try:
         with store.locked():
-            refuse_reader_op(service, "relay.link", history=True)
+            # the relay's last verified reader level (H12d-3 9.8, stored at link and every R1 login): a relay of
+            # level 1 passes with convenience history (§11A.17.4, the dev sandbox's worker restart); None counts as 0
+            level = read_relay_level(service.state_dir, service.workspace_id, service.host_uid)
+            refuse_reader_op(service, "relay.link", history=True, relay_level=level)
     except HostError as exc:
         if exc.code == "sign.convenience_readers":
             return "convenience_events_present"
@@ -230,7 +269,7 @@ def start_worker(
     from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
     from orch.store import BackendSigner
 
-    from . import relaylink
+    from . import relaylink, relaypair
     from .relayentry import RelayEntry
 
     if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
@@ -245,6 +284,7 @@ def start_worker(
     state: Any = None
     rids: Any = None
     worker: Any = None
+    pusher: Any = None
     try:
         state = StateDir(relay_state_path(service))
         link = _link_record(state, ws)
@@ -278,7 +318,10 @@ def start_worker(
             # H12d-3 9.8: every login re-reads the relay's reader level; stored only while link.json still names THIS
             # origin, exactly as link.json stores it (#555 F2), under relay-link.lock (a leaf lock: no store lock,
             # no relay_cond; it runs on a relay thread under the session's login lock)
-            relaylink.observe_relay_level(service.state_dir, ws, service.host_uid, level, alarms, origin=origin)
+            relaylink.observe_relay_level(
+                service.state_dir, ws, service.host_uid, level, alarms, origin=origin,
+                gated=lambda: devmode_gated(service),
+            )  # fmt: skip
 
         session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop, relay_info=observe)
 
@@ -294,26 +337,35 @@ def start_worker(
         worker = relay_worker.RelayWorker(
             workspace_id=ws, state=state, session=session, submit=service.submit, alarms=alarms, stop_event=stop,
             link_state=lambda: _link_state(state), precheck=lambda: convenience_block(service),
-            first_link=run_first_link, on_ended=release,
+            first_link=run_first_link, on_ended=release, conn=conn,
         )  # fmt: skip
         holder["w"] = worker
         worker.publisher = _conform(seams.publisher(service, worker), relay_worker.Publisher, "publisher")
         worker.unpublished = _conform(seams.unpublished(service, worker), relay_worker.Unpublished, "unpublished")
         rids = RidStore(state)
+        if seams.push is not None:  # H13a: the push thread, a companion started after the loop and the publisher
+            pusher = seams.push(service, worker, bkeys, signer, view)
+            worker.companions.append(pusher)
 
         def no_post(device: str, rid: str, envelope: bytes) -> str:
             raise RuntimeError("the loop installs the poster")  # replaced in the poll thread before any POST
 
+        from .devmode import gated
+
         bridge = Bridge(
             workspace_id=ws, rids=rids, keys=bkeys, signer=signer, r6=view, port=RelayEntry(service, backend),
-            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms,
+            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms, convenience_gate=lambda: gated(service),
         )  # fmt: skip
-        worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws), rids)
+        # R6c: the pair thread (11A.15.2 "Threads"), started and stopped with the bridge loop; its own connection
+        pairing = relaypair.start_thread(service, session, conn, worker=worker)
+        worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws, pairing=pairing), rids)
         service.relay = worker  # before the start thread exists (review R1); the caller holds relay_lock
         worker.start()
     except BaseException:
         if worker is not None and service.relay is worker:
             service.relay = None
+        if pusher is not None:
+            pusher.close()
         if rids is not None:
             rids.close()
         if state is not None:
@@ -345,6 +397,11 @@ class _LinkSteps:
         return self.source.genesis()
 
     def publish(self, session: Any, directory: Any) -> None:
+        # the card was accepted by now (R1: PUT card precedes login, hold, genesis and this step): R6a's source moves
+        # its pending card to accepted (11A.15.5; a source without the hook, a test fake, has nothing to move)
+        accepted = getattr(self.source, "card_accepted", None)
+        if callable(accepted):
+            accepted()
         self.worker.publisher.publish_first(session, directory)
 
     def mark_linked(self) -> None:
@@ -397,7 +454,7 @@ def reserve_link(
         link["ca_file"] = ca_file
     if proxy is not None:
         link["proxy"] = proxy
-    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level))
+    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level, origin=origin))
     return {**link, "state": "linking"}
 
 
@@ -561,6 +618,44 @@ def _stored_alarms(service: WorkspaceService) -> list[dict[str, Any]]:
 
 
 def status(service: WorkspaceService) -> dict[str, Any] | None:
+    """``host.status.relay`` with R6c's pairing block (``pairing``: offers, alarms, ``needs`` items, the drop count;
+    no secret) when a pairing engine is open in this process."""
+    from . import relaypair
+
+    out = _status(service)
+    pairing = relaypair.status(service)
+    if out is not None and pairing is not None:
+        out["pairing"] = pairing
+    if out is not None and out.get("link") == "linking":
+        extra = _genesis_pin_status(service)
+        out["genesis_pin"] = extra["genesis_pin"]
+        if "note" in extra:  # beside R4's held-evidence notes, never over them
+            out["attention"] = [*out.get("attention", []), extra["note"]]
+    return out
+
+
+def _genesis_pin_status(service: WorkspaceService) -> dict[str, Any]:
+    """The first link waits for the owner's signature of the genesis pin (11A.5 step 3, ``relay.genesis_pin``):
+    ``genesis_pin: "needed"`` and an ``attention`` entry that names the command (the dashboard's click signer is a
+    follow-up), or ``"signed"``. Never a secret."""
+    from . import relaygenesis
+
+    try:
+        present = relaygenesis.pin_path(service).is_file()
+    except OSError:
+        present = False
+    if present:
+        return {"genesis_pin": "signed"}
+    note = {
+        "what": f"{service.entry.prefix}: the first relay link needs your signature of the workspace's genesis pin",
+        "fix": "run orch host relay genesis-pin --workspace W at your terminal (your passphrase signs it), then "
+        "orch host relay start --workspace W",
+        "actionable": True,
+    }
+    return {"genesis_pin": "needed", "note": note}
+
+
+def _status(service: WorkspaceService) -> dict[str, Any] | None:
     """``host.status.relay`` (classes P and G; ``None``, so no field, for a workspace that never had a relay
     directory and runs no worker): the link state, the worker (``running``, ``stopping``, ``stuck`` or
     ``off``) and whether a thread is alive, why none runs, the stop marker, the R6 gate, the outbox entries queued for
@@ -599,7 +694,11 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
         out["alarms"] = list(st.get("alarms") or [])
         if st.get("gen") is not None:
             out["gen"] = st["gen"]
-        return out
+        for companion in getattr(worker, "companions", ()):  # H13a: the push thread's state and intent counts
+            push_status = getattr(companion, "push_status", None)
+            if callable(push_status):
+                out["push"] = push_status()
+        return _with_held(service, out)
     if stuck:
         out.update(worker="stuck", alive=True, reason="relay_thread_stuck")
     elif stopping:
@@ -609,4 +708,17 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     with contextlib.suppress(Exception):
         out["alarms"] = _stored_alarms(service) if out["link"] != "none" else []
     out.setdefault("alarms", [])
+    return _with_held(service, out)
+
+
+def _with_held(service: WorkspaceService, out: dict[str, Any]) -> dict[str, Any]:
+    """R4 (11A.9): the held unpublished evidence for the owner, with what to do (``attention``); SEAM #572."""
+    from .relayr4 import held_attention, ledger_at
+
+    ledger = ledger_at(service.state_dir, service.workspace_id, service.host_uid)
+    pairs = ledger["held"]
+    out["held_evidence"] = pairs
+    out["ledger"] = {k: v for k, v in ledger.items() if k != "held"}
+    note = held_attention(str(service.entry.prefix), pairs, ledger)
+    out["attention"] = [note] if note is not None else []
     return out

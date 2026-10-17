@@ -42,6 +42,7 @@
    ],
    "gen": 0,
    "hash": "HASH12",
+   "missing": [],
    "needed": 1,
    "not": "assignees",
    "required": false,
@@ -56,6 +57,10 @@
    ],
    "gen": 2,
    "hash": "HASH12",
+   "missing": [
+    "plan",
+    "decisions"
+   ],
    "needed": 1,
    "required": true,
    "state": "pending",
@@ -69,6 +74,7 @@
    ],
    "gen": 1,
    "hash": "HASH12",
+   "missing": [],
    "needed": 1,
    "required": true,
    "state": "pending",
@@ -77,9 +83,12 @@
   "verify": {
    "approvals": [],
    "approvers": "reviewers",
-   "eligible": [],
+   "eligible": [
+    "p_user1"
+   ],
    "gen": 3,
    "hash": "HASH12",
+   "missing": [],
    "needed": 1,
    "not": "assignees",
    "required": true,

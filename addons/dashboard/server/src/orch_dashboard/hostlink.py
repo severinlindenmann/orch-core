@@ -35,6 +35,7 @@ CAPS = [
     "run/1",
     "term/1",
     "reader/1",
+    "phone/1",
 ]
 OPS = {
     name: 1
@@ -81,6 +82,9 @@ OPS = {
         # H12d-2 (section 0.8.6 item 9.11): the readers and their levels, a read of cap `reader/1`. Never
         # `reader.declare`: a declaration comes from the device itself.
         "reader.list",
+        "phone.request",
+        "phone.cancel",
+        "phone.status",
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
@@ -278,7 +282,9 @@ class HostLink:
         if write and not dry_run and not idem:
             raise ValueError("every write requires its logical call's idem")
         cap = (
-            "control/1"
+            "phone/1"
+            if op.startswith("phone.")
+            else "control/1"
             if op == "host.list"
             else "sub/1"
             if op.startswith("sub.")

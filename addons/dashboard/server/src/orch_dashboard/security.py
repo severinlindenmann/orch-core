@@ -56,8 +56,12 @@ class Security:
         async def reject(code, status):
             await response(code, status)(scope, receive, secure_send)
 
-        origin = f"http://127.0.0.1:{self.port}"
-        if values(b"host") != [f"127.0.0.1:{self.port}"]:
+        setup = path == "/setup" or path == "/auth/setup" or path.startswith("/api/setup/")
+        host = values(b"host")
+        setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css")
+        allowed = [f"127.0.0.1:{self.port}", f"localhost:{self.port}"] if setup_host else [f"127.0.0.1:{self.port}"]
+        origin = f"http://{host[0]}" if len(host) == 1 else ""
+        if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)
         origins = values(b"origin")
         if origins and origins != [origin]:
@@ -66,7 +70,10 @@ class Security:
         if api or path == "/auth/logout":
             auth = values(b"authorization")
             token = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
-            if not self.auth.valid(token):
+            if setup:
+                tokens = values(b"x-setup-token")
+                token = tokens[0] if len(tokens) == 1 and len(tokens[0]) <= 200 else ""
+            if not (self.auth.valid_setup(token) if setup else self.auth.valid(token)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
         if method not in ("GET", "HEAD", "OPTIONS"):
@@ -86,6 +93,23 @@ class Security:
         click_step = path.startswith("/api/w/") and "/click/" in path and path.endswith(CLICK_STEP)
         records_step = path.startswith("/api/w/") and path.endswith(("/records/commit", "/records/auto-off"))
         limit = 1024 if path == "/auth/session" or records_step else CLICK_BODY_LIMIT if click_step else 1_048_576
+        if setup:
+            total = 0
+
+            async def bounded_receive():
+                nonlocal total
+                event = await receive()
+                total += len(event.get("body", b""))
+                if total > (1024 if path == "/auth/setup" else 65536):
+                    raise ValueError("setup body too large")
+                return event
+
+            try:
+                return await self.app(scope, bounded_receive, secure_send)
+            except Exception:
+                if not started:
+                    return await reject("invalid.input", 400)
+                return
         body = bytearray()
         while True:
             event = await receive()

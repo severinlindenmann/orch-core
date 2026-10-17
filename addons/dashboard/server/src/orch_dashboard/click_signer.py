@@ -36,6 +36,7 @@ TIMEOUT = {
 }
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
+SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
 def child_env(state: Path) -> dict[str, str]:
@@ -157,6 +158,16 @@ class Signer:
             except HostError:
                 return False
             return CUSTODY_FEATURE in self.features
+
+    def sequences(self) -> bool:
+        """Can the running signer (started now if needed) sign a sequence on one review (batch 11)? An older signer
+        would ignore `sequence` and sign the first step only, so it is never asked. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return SEQUENCE_FEATURE in self.features
 
     def close(self) -> None:
         with self.lock:

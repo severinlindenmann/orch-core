@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "error": {
+    "code": "relay.pair_closed",
+    "message": "the pairing does not allow this step now",
+    "hint": "look at the offer's state; start a new pairing if it ended",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "relay",
+        "pair",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

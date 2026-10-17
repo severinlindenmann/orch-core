@@ -81,7 +81,8 @@ def manager(monkeypatch) -> FakeManager:
 
 def _cli(argv, env, tty=None, monkeypatch=None) -> tuple[int, dict]:
     out = io.StringIO()
-    code = orch_main(["runner", *argv], env=env, stdout=out)
+    machine = ["--json"] if argv and argv[0] in ("enable", "disable") else []  # N18: plain text without it
+    code = orch_main(["runner", *argv, *machine], env=env, stdout=out)
     text = out.getvalue()
     return code, (json.loads(text) if text.startswith("{") else {"text": text})
 
@@ -109,6 +110,25 @@ def test_enable_shows_the_risk_requires_the_prefix_and_records_the_switch(env, m
     assert (Path(env["HOME"]) / ".local/share/orch/releases/current/bin/orch-runner").is_file()
     settings = json.loads((state / "runner" / "settings.json").read_text())
     assert settings["umask"] == (lambda m: (os.umask(m), m)[1])(os.umask(0))  # the person's umask, captured
+
+
+def test_enable_defaults_to_the_workspace_of_the_current_directory(env, manager, monkeypatch, tmp_path):
+    from orch import discovery
+
+    root = tmp_path / "ws"
+    root.mkdir(mode=0o700)
+    cfg = root / "config.json"
+    cfg.write_text(json.dumps({"schema": discovery.CONFIG_SCHEMA, "workspace": {"id": WID}}))
+    cfg.chmod(0o600)
+    (root / "sub").mkdir(mode=0o700)
+    monkeypatch.chdir(root / "sub")
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["enable", "--dev"], env)
+    assert code == 0, doc
+    assert doc["result"]["data"]["workspace_id"] == WID
+    monkeypatch.chdir(tmp_path)  # outside any workspace: it asks for one
+    code, doc = _cli(["disable"], env)
+    assert code != 0
 
 
 def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch):

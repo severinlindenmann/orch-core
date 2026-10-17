@@ -249,7 +249,9 @@ def plan(
     typed = None
     if runner_grant is not None:
         typed = "GRANT"
-    elif profile["agent_hours"] > 8:
+    elif "grant_hours" in sets and wanted(
+        "settings"
+    ):  # the workspace's agent time changes (Finish setup keeps a value that is already set)
         typed = "AGENTS"
     # R3: a terminal confirmation for Finish setup and for anything that gives a machine-held grant or runs code
     exec_addon = any(

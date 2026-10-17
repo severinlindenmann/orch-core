@@ -836,7 +836,7 @@ def test_a_quick_task_is_one_request_one_review_with_the_derived_plan(ready, hos
     assert got["content"]["headline"].startswith("Start task DEMO-")
     ids = sorted(s["id"] for s in got["content"]["sections"])
     assert ids == ["plan", "requirements"]
-    assert any(n.startswith("Agents may work on all workable tickets") for n in got["content"]["notes"])
+    assert any(n.startswith("Agents may work on any ticket they are allowed to work on") for n in got["content"]["notes"])
 
 
 def test_a_quick_task_without_steps_gets_one_check_and_no_grant(ready, host_calls):

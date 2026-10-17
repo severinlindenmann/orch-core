@@ -36,7 +36,7 @@ def _parser() -> argparse.ArgumentParser:
         help="the command that checks the step with the same position",
     )
     p.add_argument(
-        "--agents", type=int, metavar="HOURS", help="let agents work on all workable tickets for this many hours"
+        "--agents", type=int, metavar="HOURS", help="let agents work on any ticket for this many hours"
     )
     p.add_argument("--workspace", help="the workspace id or prefix")
     p.add_argument("--state", type=Path)

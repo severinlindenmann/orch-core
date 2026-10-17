@@ -176,7 +176,7 @@ def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tm
     human.check(first)
     content = signcontent.build(first, verified=True)
     note = next(n for n in content["notes"] if n.startswith("Agents may work"))
-    assert "all workable tickets, not only this one" in note and "until about" in note and "GRANT" in note
+    assert "any ticket they are allowed to work on, not only this one" in note and "until about" in note and "GRANT" in note
     assert signer.confirm_word(first) == "GRANT"
     assert sequence.confirm_kind(rig.intent) == "word"
     out = rig.driver().run(first)
@@ -291,8 +291,80 @@ def test_terminal_one_word_one_unlock_and_the_grant_secret_only_after_the_commit
     assert shown.words == [shown.words[0]] and shown.words[0] == "GRANT"  # the strongest step's word
     assert len(unlocks) == 1 and result["steps"] == 9
     assert len(shown.secrets) == 1 and "ORCH_GRANT=" in shown.secrets[0]  # shown once, after the last commit
-    assert "Agents may work on all workable tickets" in shown.plain[0]
+    assert "Agents may work on any ticket they are allowed to work on" in shown.plain[0]
     assert "Checked by" in shown.plain[0] and "Quick task: do these steps in order" in shown.plain[0]
+
+
+def _real_passphrase_backend(human, tmp_path):
+    """The REAL passphrase file backend over the test person's own device key (nothing here accepts a label it
+    should not: the custody checks every payload against the labels the batch was opened for)."""
+    from orch.custody.passphrase import PassphraseBackend
+    from tests.ops.humans import KDF, PASSPHRASE
+
+    be = PassphraseBackend(tmp_path / "keys", _passphrase_provider=lambda _req: PASSPHRASE, _kdf=KDF)
+    scalar = human.person.dk_sig.private_numbers().private_value.to_bytes(32, "big")
+    pub = be.create("dk", secret=scalar, role="device", passphrase=PASSPHRASE)
+    assert pub == human.person.sig_pub
+    return be
+
+
+def test_a_quick_task_with_agent_access_lands_nine_of_nine_through_the_real_passphrase_backend(
+    human, served, tmp_path
+):
+    from tests.host.test_handoff import Shown, connect
+    from tests.host.test_sequence import handoff_first
+
+    from orch.host import handoff
+    from orch.host.control_client import new_idem
+
+    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
+    p = handoff_first(rig)
+    shown = Shown()
+    be = _real_passphrase_backend(human, tmp_path)
+    with connect(served) as conn:
+        result = handoff.sign_code(
+            conn.call,
+            p["request"]["code"],
+            backend=be,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=rig.person,
+            device=human.person.device,
+            workspace=lambda w: ("Acme", "DEMO"),
+            confirm=shown.confirm,
+            show_secret=shown.secret,
+            idem=new_idem(),
+            sessions=rig.sessions,
+            now=lambda: served.lab.ws.clock[0],
+        )
+    assert result["steps"] == 9 and shown.words == ["GRANT"] and len(shown.secrets) == 1
+
+
+def test_the_unlock_covers_exactly_the_labels_the_reviewed_steps_need(human, tmp_path):
+    from orch import canon
+    from orch.custody.base import CustodyError
+    from orch.host import sequence_terminal
+
+    ticket, ws_ev = (canon.LABELS[n].encode("ascii") for n in ("sig_ticket_event", "sig_ws_event"))
+    plain = sequence.validate_intent(quick())
+    with_grant = sequence.validate_intent(quick(agent={"hours": 8, "scope": "workable"}))
+    assert sequence_terminal.labels_for(plain) == (ticket,)  # no grant step: never the workspace label
+    assert set(sequence_terminal.labels_for(with_grant)) == {ticket, ws_ev}
+    be = _real_passphrase_backend(human, tmp_path)
+    narrow = dict(digest="0" * 32, fields=(), action="test")
+    with sequence_terminal.unlocked_backend(be, "dk", labels=(ticket,), **narrow) as open_:
+        with pytest.raises(CustodyError):  # the custody still refuses another label
+            open_.sign("dk", ws_ev + b"\x00payload", action="a")
+
+
+def test_agent_access_longer_than_the_workspace_maximum_is_refused_at_the_review(human, tmp_path):
+    rig = Rig(human, tmp_path, quick(agent={"hours": 72, "scope": "workable"}))  # the workspace allows 8 hours
+    res = human.c.req(
+        "human.prepare",
+        {"op": "new", "args": sequence.step_args(rig.intent, 0, None)[1], "signer": human.signer, "sequence": rig.meta0()},
+    )
+    assert res["error"]["code"] == "invalid.input" and "at most 8 hours" in res["error"]["message"]
+    assert not rig.sessions.get(rig.wid, rig.driver().digest)  # nothing was signed
 
 
 def click_prepare(click_, intent):
@@ -335,7 +407,7 @@ def test_a_grant_needs_the_typed_word_and_goes_to_the_runner_last(click, served,
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])
     assert v["view"]["confirm"]["kind"] == "word" and v["view"]["confirm"]["word"].endswith("/GRANT")
-    assert "Agents may work on all workable tickets" in "\n".join(v["view"]["lines"])
+    assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
     click.mono.t += 2
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
     assert click.signatures == 0

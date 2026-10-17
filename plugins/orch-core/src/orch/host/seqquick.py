@@ -280,8 +280,8 @@ def check_gate_input(expect: Mapping[str, Any], inp: Mapping[str, Any], texts: A
         if canon.dumps(inp.get(key)) != canon.dumps(expect[key]):
             return False
     fields = inp.get("fields")
-    if not isinstance(fields, Mapping) or not isinstance(fields.get(_ADDONS), Mapping):
-        return False
+    if not isinstance(fields, Mapping) or fields.get(_ADDONS) != {} or inp.get("addon_packages") != {}:
+        return False  # a new quick chore has no addon fields or packages: anything there is not what was shown
     if canon.dumps({k: v for k, v in fields.items() if k != _ADDONS}) != canon.dumps(expect["fields"]):
         return False
     if canon.dumps(dict(texts)) != canon.dumps(expect["texts"]):

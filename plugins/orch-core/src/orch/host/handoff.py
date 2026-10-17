@@ -366,7 +366,7 @@ def main(
     err.write(NOTICE + "\n")
     conn: Connection | None = None
     try:
-        if env.get("ORCH_GRANT"):
+        if "ORCH_GRANT" in env:
             raise HostError("human_only", "orch sign is a person's command; an agent never signs")
         code = normalise_code(args.code)
         files = _read_files(args.file)

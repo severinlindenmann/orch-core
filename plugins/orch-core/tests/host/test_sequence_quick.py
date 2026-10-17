@@ -506,3 +506,77 @@ def test_orch_quick_start_is_a_persons_command(monkeypatch, tmp_path):
         stderr=errs,
     )
     assert rc != 0 and "human_only" in out.getvalue()
+
+
+# --- the click rules still run per step, IN ADDITION to the host checks ------------------------------------------------  # noqa: E501
+
+
+def test_a_click_sequence_still_refuses_a_dirty_worker_check_and_too_many_events(click, served, human):  # noqa: F811
+    from tests.host.test_click import refused
+
+    p = click_prepare(click, quick())
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    real = click.tamper
+
+    def tamper(op, args, res):
+        if op == "human.prepare" and args.get("sequence", {}).get("step") == 2:
+            res = copy.deepcopy(res)
+            res["data"]["checks"] = [
+                {"repo": "r", "clean": False, "attested_by": "worker", "at": "2026-10-12T00:00:00Z"}
+            ]
+        return res
+
+    click.tamper = tamper
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "stopped")
+    assert click.signatures == 2  # created and labelled; the step with the dirty check was never signed
+    click.tamper = real
+
+    from orch.click import view as views
+
+    many = {"workspace_id": served.wid, "events": [{}] * (views.MAX_EVENTS + 1)}
+    with pytest.raises(Exception, match="too many events"):
+        views.check_prepared(many, workspace_id=served.wid, person="p", device="d", files=None)
+
+
+def test_a_quick_gate_input_with_addon_fields_or_packages_is_refused():
+    from orch.host import seqquick
+
+    intent = sequence.validate_intent(quick())
+    base = seqquick.gate_expect(intent, "requirements", workspace_id="w" * 32, uid="U" * 26, requirements_approval=None)
+    inp = {
+        k: base[k]
+        for k in (
+            "workspace_id",
+            "uid",
+            "gate",
+            "schema",
+            "hash_v",
+            "sections",
+            "tasks",
+            "artifacts",
+            "receipts",
+            "source_sha",
+        )
+    }
+    inp |= {"fields": {**base["fields"], "addons": {}}, "addon_packages": {}, "prior": {}}
+    assert seqquick.check_gate_input(base, inp, base["texts"])
+    assert not seqquick.check_gate_input(base, {**inp, "addon_packages": {"x": "sha256:" + "0" * 64}}, base["texts"])
+    assert not seqquick.check_gate_input(
+        base, {**inp, "fields": {**inp["fields"], "addons": {"x": {"y": 1}}}}, base["texts"]
+    )
+
+
+def test_an_empty_orch_grant_still_means_an_agent(monkeypatch, tmp_path):
+    import io
+
+    from orch.cli.main import main
+
+    out = io.StringIO()
+    rc = main(
+        ["quick", "start", "T", "--state", str(tmp_path), "--json"],
+        env={"ORCH_GRANT": "", "HOME": str(tmp_path)},
+        stdout=out,
+        stderr=io.StringIO(),
+    )
+    assert rc != 0 and "human_only" in out.getvalue()

@@ -932,6 +932,8 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log != "workspace" and store.log_head(log) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+                if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

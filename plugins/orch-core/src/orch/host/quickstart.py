@@ -89,7 +89,7 @@ def main(
     args = _parser().parse_args(argv)
     conn = None
     try:
-        if env.get("ORCH_GRANT"):
+        if "ORCH_GRANT" in env:
             raise HostError("human_only", "orch quick start is a person's command; an agent never signs")
         intent = build_intent(args)
         state = args.state.resolve() if args.state is not None else state_dir(env)

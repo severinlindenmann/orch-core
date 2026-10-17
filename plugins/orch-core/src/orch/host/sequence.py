@@ -539,6 +539,18 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     return content
 
 
+def technical_lines(intent: Mapping[str, Any]) -> list[str]:
+    """The technical part of the full review for a quick task: what the host fills in and the signer checks."""
+    if intent["kind"] != QUICK:
+        return []
+    return [
+        "technical: the plan approval's prior is the requirements approval of this run (checked by the signer); "
+        "its generation (prior.requirements.gen) is set by the host when that step is prepared (per host, not signed "
+        "by you until you confirm)",
+        "technical: a new quick task carries no add-on fields or packages (checked by the signer)",
+    ]
+
+
 def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
     the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5)."""

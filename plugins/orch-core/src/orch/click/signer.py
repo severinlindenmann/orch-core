@@ -595,6 +595,16 @@ class ClickSigner:
                 host_signer.check(prepared, workspace_id=wid, person=person, device=device, auth="convenience")
             except host_signer.SignerRefused as exc:
                 raise refused("check_failed", str(exc)) from None
+            # in ADDITION: the click rules of every single request (event count, clean worker checks, the grant's
+            # terminal-only gate: only the runner grant of deposit mode passes, as the sequence's last step)
+            views.check_prepared(
+                prepared,
+                workspace_id=wid,
+                person=person,
+                device=device,
+                files=None,
+                deposit=prepared.get("op") == "grant",
+            )
 
         def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
             signed = host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid)

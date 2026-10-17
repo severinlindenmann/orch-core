@@ -177,7 +177,7 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     if ticket is None:
         return "the workspace"
     name = f"{ticket['key']} · {one(ticket['title'])}" if ticket["title"] else ticket["key"]
-    return f"{name} (…{ticket['uid_tail']})"
+    return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
 def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
@@ -442,7 +442,9 @@ def _event(
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
         tail = (out.get("ticket") or {}).get("uid_tail")
-        return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (f" (…{tail})" if tail else "")
+        return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (
+            f" (key per host; signed id …{tail})" if tail else ""
+        )
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":

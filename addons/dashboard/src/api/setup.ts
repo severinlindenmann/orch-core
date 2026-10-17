@@ -69,7 +69,10 @@ export class SetupAPI {
     this.token = ''
   }
   async call<T>(path: string, body?: unknown): Promise<T> {
-    const res = await this.fetcher(`/api/setup/${path}`, {
+    // Called unbound: `this.fetcher(...)` would run the browser's fetch with `this` = SetupAPI, which real browsers
+    // refuse ("Illegal invocation"); a test double never notices.
+    const fetcher = this.fetcher
+    const res = await fetcher(`/api/setup/${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       credentials: 'omit',
       cache: 'no-store',

@@ -340,6 +340,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
               </p>
             )}
             <HandoffPanel request={run.request} workspace={here ?? null} />
+            {run.state?.progress && (
+              <p role="status" data-testid="sequence-progress" className="text-[13px] text-text-muted">
+                Signing in your terminal: {run.state.progress.done} of {run.state.progress.of} steps are in the ticket.
+              </p>
+            )}
           </>
         )}
 

@@ -98,6 +98,11 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
           </p>
         </Block>
       )}
+      {material.sequence && (
+        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, then each written section)`}>
+          <Value value={material.sequence.intent} />
+        </Block>
+      )}
       {material.kind === 'gate' && (
         <Block title={`Gate: ${plain(material.gate ?? '')} (your terminal recomputes the content hash from this)`}>
           <Value value={material.input ?? {}} />

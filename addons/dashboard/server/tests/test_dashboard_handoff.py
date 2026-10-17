@@ -774,3 +774,38 @@ def test_a_new_ticket_with_its_text_refuses_a_bad_intent(ready, change):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, {**SEQ, **change})
     assert res.status_code in (400, 422), res.text
+
+
+def test_the_progress_of_a_sequence_is_read_from_the_tickets_log():
+    from orch import canon
+    from orch.host import sequence
+
+    from orch_dashboard.handoff import sequence_progress
+
+    intent = sequence.validate_intent(
+        {
+            "v": 1,
+            "kind": "new_ticket",
+            "title": "T",
+            "ticket_type": "feature",
+            "set": {"priority": "high"},
+            "sections": {"summary": "One", "context": "Two"},
+        }
+    )
+    ticket = {"doc": {"priority": "medium"}, "sections": {}}
+
+    class Gateway:
+        def call(self, ws, op, args):
+            return ticket
+
+    def at():
+        return sequence_progress(Gateway(), "w", "DEMO-0001", intent)
+
+    assert at() == {"done": 1, "of": 4}  # the ticket exists
+    ticket["doc"]["priority"] = "high"
+    assert at() == {"done": 2, "of": 4}
+    ticket["sections"]["context"] = [{"hash": canon.section_hash("Two")}]
+    assert at() == {"done": 3, "of": 4}
+    ticket["sections"]["summary"] = [{"hash": canon.section_hash("One")}]
+    assert at() == {"done": 4, "of": 4}
+    assert sequence_progress(Gateway(), "w", None, intent) is None

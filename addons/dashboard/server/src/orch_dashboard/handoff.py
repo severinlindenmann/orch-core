@@ -413,6 +413,35 @@ PrepareBody = Annotated[
 ]
 
 
+def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | None:
+    """B11: how many steps of a sequence are in the ticket's log now, read from the host (`ticket.get`): the created
+    ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for the terminal
+    path (the signer drives the run in the person's terminal); it decides nothing."""
+    from orch import canon
+    from orch.host import sequence
+
+    total = len(sequence.steps(intent))
+    if not isinstance(key, str):
+        return None
+    try:
+        data = gateway.call(ws, "ticket.get", {"ref": key})
+    except HostError:
+        return None
+    doc, sections = data.get("doc") or {}, data.get("sections") or {}
+    done = 1
+    for step in sequence.steps(intent)[1:]:
+        if step["op"] == "set":
+            ok = all(doc.get(k) == v for k, v in intent["set"].items())
+        else:
+            sid = step["args"]["section"]
+            history = sections.get(sid) or []
+            ok = bool(history) and history[-1].get("hash") == canon.section_hash(intent["sections"][sid])
+        if not ok:
+            break
+        done += 1
+    return {"done": done, "of": total}
+
+
 def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[str, dict]:
     """(host op, args) for a typed action. The only place an op name is chosen, and it is a literal."""
     match action:
@@ -729,6 +758,9 @@ class Handoffs:
     """
 
     def __init__(self, clock=time.monotonic):
+        #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
+        #: signer drives in the person's terminal). Not a guard of anything.
+        self.intents: dict[str, dict] = {}
         self.clock = clock
         self.lock = threading.Lock()
         self.owned: dict[tuple[str, str], dict[str, float]] = {}  # (person, workspace) -> request id -> deadline
@@ -919,6 +951,10 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.release(token)
             raise read_done(human, ws, response["id"])
         handoffs.own(planned.person, ws, response["id"], TTL)
+        if planned.sequence:
+            handoffs.intents[response["id"]] = planned.sequence["intent"]
+            while len(handoffs.intents) > 64:
+                handoffs.intents.pop(next(iter(handoffs.intents)))
         if response["state"] in ("prepared", "bound"):
             handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
         else:
@@ -938,7 +974,11 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("not_found", exit=2)
         if rows[0]["state"] not in ("prepared", "bound"):
             handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
-        return adapters.handoff.state(rows[0])
+        out = adapters.handoff.state(rows[0])
+        intent = handoffs.intents.get(request_id)
+        if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
+            out["progress"] = sequence_progress(gateway, ws, rows[0].get("key"), intent)
+        return out
 
     @app.delete("/api/w/{ws}/handoff/{request_id}")
     def cancel(request_id: RequestId, request: Request, ws: str = Depends(workspace)):

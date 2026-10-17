@@ -22,6 +22,11 @@ export type HandoffAction =
   | { action: 'move'; key: string; to: 'backlog' | 'open'; reason?: string }
   /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */
   | { action: 'new'; title: string; type?: 'feature' | 'bug' | 'chore' | 'spike' | 'epic' }
+  /**
+   * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
+   * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
+   */
+  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>> }
   | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
@@ -71,6 +76,8 @@ export interface HandoffMaterial {
   question?: Record<string, unknown>
   texts?: Record<string, string>
   before?: Record<string, unknown>
+  /** B11: the whole intent of a sequence (bound by `review_digest`); the first request of one signer's run. */
+  sequence?: { digest: string; of: number; intent: Record<string, unknown> }
   review: HandoffReview[]
 }
 
@@ -105,6 +112,8 @@ export interface HandoffState {
   seq: number | null
   /** Host v1.5, optional: why a signer's submit failed (a catalog code). */
   error?: { code: string } | null
+  /** B11: a sequence (one review, N signatures) that has landed `done` of its `of` steps; absent for other requests. */
+  progress?: { done: number; of: number } | null
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -158,7 +167,7 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
   gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence']],
 }
 
 /** Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1). */

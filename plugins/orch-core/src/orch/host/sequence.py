@@ -381,7 +381,18 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     from orch.host import signcontent
 
     content = signcontent.build(expand(prepared), verified=verified)
-    n = int(prepared["material"]["sequence"]["of"])
+    meta = prepared["material"]["sequence"]
+    intent = validate_intent(meta["intent"])
+    n = int(meta["of"])
+    first = signcontent.build({**prepared, "material": {**prepared["material"], "sequence": None}}, verified=verified)
+    count = len(intent["sections"])
+    extra = []
+    if intent["set"]:
+        extra.append("its details")
+    if count:
+        extra.append(f"{count} written section{'s' if count != 1 else ''}")
+    # one headline for the whole review: the ticket, and what is written into it (not one clause per signature)
+    content["headline"] = first["headline"] + (" and write " + " and ".join(extra) if extra else "")
     content.setdefault("notes", []).append(
         f"One confirmation signs all {n} steps, in order ({n} signatures). If the ticket changes meanwhile, "
         "signing stops and what was created stays a draft."

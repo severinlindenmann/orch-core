@@ -117,7 +117,11 @@ def sign_sequence(
             pass
         raise
     box: dict[str, Any] = {}
-    fields = (("signatures", str(driver.total)), ("ticket title", intent["title"]), ("workspace", workspace_id))
+    fields = (
+        ("signatures", str(driver.total)),
+        ("ticket title", sequence.label_of(intent)),
+        ("workspace", workspace_id),
+    )
     with unlocked_backend(
         backend,
         key_id,

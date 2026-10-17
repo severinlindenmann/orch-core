@@ -59,6 +59,7 @@ __all__ = [
     "expand",
     "expected_payload",
     "intent_lines",
+    "label_of",
     "step_args",
     "steps",
     "validate_intent",
@@ -371,6 +372,14 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
     if len(steps(result)) > MAX_STEPS:
         raise bad("too many changes for one review")
     return result
+
+
+def label_of(intent: Mapping[str, Any]) -> str:
+    """What names the sequence in a prompt: the title of a new ticket or quick task, ``edit KEY`` for an edit (which has
+    no title: it changes a ticket that already exists)."""
+    if intent["kind"] == EDIT:
+        return f"edit {intent['ticket']['key']}"
+    return str(intent["title"])
 
 
 def digest_of(workspace_id: str, person: str, intent: Mapping[str, Any]) -> str:

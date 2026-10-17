@@ -222,7 +222,9 @@ def error_envelope(err: OrchError, op: Operation | None = None) -> dict[str, Any
         hint = hint or cat.hint.replace("{cmd}", name)
         fix = fix or [a.replace("{cmd}", name) for a in cat.fix]
         retryable = cat.retryable if retryable is None else retryable
-    if err.fix is not None and not fix_is_safe(err.fix):
+    if err.fix == []:  # N18: the error says it has no command to run (the hint is for a person); no default fills in
+        fix = []
+    if err.fix and not fix_is_safe(err.fix):
         return error_envelope(OrchError("internal", "an operation returned an unsafe fix"), op)
     body: dict[str, Any] = {"code": err.code, "message": err.message}
     if hint:

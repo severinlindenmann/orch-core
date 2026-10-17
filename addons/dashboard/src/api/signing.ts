@@ -8,6 +8,7 @@ export interface SignContent {
   sections?: { id: string; title: string; text: string }[]
   acceptance?: { id: string; text: string; checked?: boolean }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]
+  fields_title?: string
   fields_changed?: { field: string; before: string | null; after: string | null; before_note?: string }[]
   note?: string | string[]
   notes?: string[]

@@ -17,7 +17,8 @@ fails when a key is added without being classified here.
 The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Contract")::
 
     {headline, ticket?: {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}],
-     tasks?: [{n, id, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}], notes?: [str]}
+     tasks?: [{n, id, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}],
+     fields_title?: str, notes?: [str]}
     ticket = {key, title, uid_tail, key_note}   // key_note: the key is the host's word; uid_tail is the signed id's end
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
@@ -176,7 +177,7 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     if ticket is None:
         return "the workspace"
     name = f"{ticket['key']} · {one(ticket['title'])}" if ticket["title"] else ticket["key"]
-    return f"{name} (…{ticket['uid_tail']})"
+    return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
 def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
@@ -319,10 +320,13 @@ def _gate(
         "verdict.given": f"Give the verdict {_s(ev.get('outcome'))} on the {gate} of",
     }[typ]
     out["headline"] = f"{verb} {_ref(ticket)}"
-    out["sections"] = [
-        {"id": sid, "title": _title(sid), "text": body or ""}
-        for sid, body in sorted((material.get("texts") or {}).items())
-    ]
+    texts = sorted((material.get("texts") or {}).items())
+    out["sections"] = [{"id": sid, "title": _title(sid), "text": body} for sid, body in texts if body]
+    # N12: a bound section with no text is noise in the plain view, said in one line (the full review lists each)
+    empty = [_title(sid) for sid, body in texts if not body]
+    if empty:
+        out.setdefault("notes", []).append(f"Empty, not shown: {', '.join(empty)}.")
+    out["fields_title"] = "Applies under"  # initial values of the ticket and the rule, not changes (N12)
     if ev.get("text"):
         out["sections"].append({"id": "comment", "title": "Your comment", "text": _s(ev["text"])})
     inp = material.get("input")
@@ -438,7 +442,9 @@ def _event(
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
         tail = (out.get("ticket") or {}).get("uid_tail")
-        return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (f" (…{tail})" if tail else "")
+        return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (
+            f" (key per host; signed id …{tail})" if tail else ""
+        )
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
@@ -594,9 +600,7 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
     out = [v(content["headline"])]
     if workspace:
         out.append(f"in workspace {v(workspace)}")
-    ticket = content.get("ticket") or {}
-    if ticket.get("key_note"):
-        out.append(f"ticket {v(ticket['key'])}: {v(ticket['key_note'])}")
+    # N13: the host's word for the key ("per host, not proven") is in the technical details (`d`), not in this view
     out.append("")
     for sec in content.get("sections") or []:
         out += [v(sec["title"]), *block(sec["text"]), ""]
@@ -612,7 +616,10 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
             out += [f"       verify: {v(x)}" for x in t.get("verify") or []]
         out.append("")
     if content.get("fields_changed"):
-        out.append("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
+        title = content.get("fields_title")
+        out.append(
+            title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
+        )
         for c in content["fields_changed"]:
             new = "(not set)" if c["after"] is None else v(c["after"])
             if c["before"] is None:

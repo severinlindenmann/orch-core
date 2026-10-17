@@ -22,12 +22,14 @@ def _tuple(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in version.split("."))
 
 
-def stale_findings(root: Path) -> list[dict[str, str]]:
+def stale_findings(root: Path, store: Path | None = None) -> list[dict[str, str]]:
     """``[{"where", "what"}]`` for every installed instruction file that is missing, unstamped, older or newer than
-    this CLI's generator; empty when everything is current."""
+    this CLI's generator; empty when everything is current. Two roots: ``AGENTS.orch.md`` is read from ``store`` (the
+    ``.orch`` directory, or the project itself in the legacy layout; ``None``: ``root``), the skills from the project
+    ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them)."""
     out: list[dict[str, str]] = []
     try:
-        text = safe_read(root, AGENTS_FILE)
+        text = safe_read(store if store is not None else root, AGENTS_FILE)
     except UnsafePath as e:
         out.append({"where": AGENTS_FILE, "what": str(e).split(": ", 1)[1]})
     except (OSError, UnicodeDecodeError):

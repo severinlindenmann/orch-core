@@ -34,7 +34,15 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from . import devmode, frames
-from .custody import check_tree, check_workspace_files, ensure_private_dir, same_or_inside, unsafe, write_private
+from .custody import (
+    check_tree,
+    check_workspace_files,
+    ensure_private_dir,
+    same_or_inside,
+    store_name,
+    unsafe,
+    write_private,
+)
 from .errors import HostError
 from .intents import Intent, IntentStore
 from .outcomes import CONTROL_WRITES, request_idem
@@ -328,7 +336,7 @@ class ControlOps:
         if pin is None:
             raise HostError("trust.genesis_mismatch", "no genesis pin on this machine for this workspace")
         ensure_private_dir(self._hosts(workspace_id), self.host_uid, create=False)
-        check_workspace_files(self.state_dir, workspace_id, Path(root), self.host_uid)
+        check_workspace_files(self.state_dir, workspace_id, Path(root), self.host_uid, store=store_name(root))
         try:
             store = Store.open(
                 root, expected_workspace_id=workspace_id, expected_genesis=pin, host_state_dir=None, load="lazy"

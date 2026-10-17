@@ -206,8 +206,9 @@ def visible_to(person: str | None, view: Any) -> bool:
     return person is not None and isinstance(vis, Mapping) and person in vis.get("restricted", ())
 
 
-def records_dir(root: Path) -> Path:
-    return root / ".state" / "sessions"
+def records_dir(layout: Layout) -> Path:
+    """The session records: ``<store>/.state/sessions`` (the layout, never a bare root, so it is the store's)."""
+    return layout.store / ".state" / "sessions"
 
 
 class Workspace:
@@ -278,7 +279,8 @@ class Workspace:
         found = self._found
         if found is not None and found.layout is not None:
             return found.layout
-        return Layout.legacy_at(root)
+        injected = getattr(self._store, "layout", None) if self.hosted else None  # the host's own store knows
+        return injected if isinstance(injected, Layout) else Layout.legacy_at(root)
 
     @property
     def project(self) -> Path | None:
@@ -788,9 +790,9 @@ class Call:
     @property
     def notes(self) -> Notes:
         if self._notes is None:
-            root = self.ws.root
+            layout = self.ws.layout
             self._notes = Notes(
-                records_dir(root) if root else None, self.ctx.session, self.ctx.caps.files, self.ctx.principal
+                records_dir(layout) if layout else None, self.ctx.session, self.ctx.caps.files, self.ctx.principal
             )
         return self._notes
 
@@ -823,7 +825,8 @@ class Call:
         out: list[str] = []
         session = self.ctx.session or ""
         while session:
-            directory = records_dir(self.ws.root) if self.ws.root else None
+            layout = self.ws.layout
+            directory = records_dir(layout) if layout else None
             out += Notes(directory, session, self.ctx.caps.files, self.ctx.principal).claims()
             session = session.rpartition(".")[0]
         return list(dict.fromkeys(out))

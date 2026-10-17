@@ -804,8 +804,8 @@ def test_the_progress_of_a_sequence_is_read_from_the_tickets_log():
     assert at() == {"done": 1, "of": 4}  # the ticket exists
     ticket["doc"]["priority"] = "high"
     assert at() == {"done": 2, "of": 4}
-    ticket["sections"]["context"] = [{"hash": canon.section_hash("Two")}]
+    ticket["sections"]["summary"] = [{"hash": canon.section_hash("One")}]  # the ticket page's order: summary first
     assert at() == {"done": 3, "of": 4}
-    ticket["sections"]["summary"] = [{"hash": canon.section_hash("One")}]
+    ticket["sections"]["context"] = [{"hash": canon.section_hash("Two")}]
     assert at() == {"done": 4, "of": 4}
     assert sequence_progress(Gateway(), "w", None, intent) is None

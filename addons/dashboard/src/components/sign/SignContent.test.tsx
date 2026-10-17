@@ -73,8 +73,8 @@ it('renders every display string in fully populated content', () => {
   expect(screen.getAllByText('—')).toHaveLength(2)
 })
 
-const SEV = 'p_181d953fa2b4c6d8'
-const MARA = 'p_aaaa1111'
+const SEV = 'p_181d953f12ab34cd56ef78901234abcd'
+const MARA = 'p_aaaa11112222333344445555666677'
 function withMembers(members: { person: string; name: string }[], fields: { field: string; before: string | null; after: string | null }[], key_note = 'key per host, not proven') {
   const client = new QueryClient()
   client.setQueryData(['workspaces'], [{ id: 'w_1', members }])
@@ -83,12 +83,12 @@ function withMembers(members: { person: string; name: string }[], fields: { fiel
 const row = (field: string) => screen.getByText(field).parentElement!
 
 it('shows a known member as name WITH short id, the full id and the key line only under Technical details', () => {
-  withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: 'p_0badc0de99' }])
-  expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d…)')
+  withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: 'p_0badc0de99887766' }])
+  expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d953f12ab…)')
   expect(row('owner')).not.toHaveTextContent(SEV)
-  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa…) → p_0bad… (unknown person)')
+  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa11112222…) → p_0badc0de9988… (unknown person)')
   const details = screen.getByText(/Technical details/).closest('details')!
-  expect(details).toHaveTextContent(`Severin (p_181d…) = ${SEV}`)
+  expect(details).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
   expect(details).toHaveTextContent('key per host, not proven')
 })
 
@@ -99,12 +99,29 @@ it('a cut id never resolves by prefix: it shows as unknown person', () => {
 })
 
 it('two members with the same display name are told apart by id, with no name shown', () => {
-  withMembers([{ person: 'p_aaaa1111', name: 'Severin' }, { person: 'p_bbbb2222', name: 'Severin' }], [{ field: 'owner', before: 'p_aaaa1111', after: 'p_bbbb2222' }])
-  expect(row('owner')).toHaveTextContent('owner: p_aaaa… (name shared by 2 members) → p_bbbb… (name shared by 2 members)')
+  withMembers([{ person: 'p_aaaa1111222233334444', name: 'Severin' }, { person: 'p_bbbb1111222233334444', name: 'Severin' }], [{ field: 'owner', before: 'p_aaaa1111222233334444', after: 'p_bbbb1111222233334444' }])
+  expect(row('owner')).toHaveTextContent('owner: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
   expect(row('owner')).not.toHaveTextContent('Severin')
 })
 
 it('an id that is not a member of any known workspace says unknown person', () => {
-  withMembers([{ person: SEV, name: 'Severin' }], [{ field: 'owner', before: null, after: 'p_deadbeef01' }])
-  expect(row('owner')).toHaveTextContent('p_dead… (unknown person)')
+  withMembers([{ person: SEV, name: 'Severin' }], [{ field: 'owner', before: null, after: 'p_deadbeef01aabbccdd' }])
+  expect(row('owner')).toHaveTextContent('p_deadbeef01aa… (unknown person)')
+})
+
+it('confusable, case-different and zero-width duplicate names still count as shared, and render without controls', () => {
+  withMembers([{ person: 'p_aaaa1111222233334444', name: 'Severin' }, { person: 'p_bbbb1111222233334444', name: 'S\u200Be\u202Ev\uFF45rin' }, { person: 'p_cccc1111222233334444', name: 'SEVERIN' }], [{ field: 'owner', before: 'p_aaaa1111222233334444', after: 'p_cccc1111222233334444' }])
+  expect(row('owner')).toHaveTextContent('p_aaaa11112222… (name shared by 3 members) → p_cccc11112222… (name shared by 3 members)')
+})
+
+it('strips zero-width and bidi controls from a name it does show', () => {
+  withMembers([{ person: SEV, name: 'Sev\u202Eerin\u200B' }], [{ field: 'owner', before: null, after: SEV }])
+  expect(row('owner').textContent).toContain('Severin (p_181d953f12ab…)')
+  expect(row('owner').textContent).not.toMatch(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/)
+})
+
+it('resolves a real-host shaped fixture: full 32-hex person id from core, not a prefix', () => {
+  const full = 'p_' + '181d953f12ab34cd56ef789012345678'
+  withMembers([{ person: full, name: 'Severin' }], [{ field: 'owner', before: null, after: full }])
+  expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d953f12ab…)')
 })

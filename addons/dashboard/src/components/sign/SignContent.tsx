@@ -21,7 +21,13 @@ function Value({ children, block = false }: { children: string; block?: boolean 
 }
 /** A person id as the host writes it: `p_181d953f…` (cut) or the full `p_<hex>`. */
 const PERSON = /^p_[0-9a-f]+(…|\.\.\.)?$/
-const shortId = (id: string) => (id.length > 6 ? `${id.slice(0, 6)}…` : id)
+/** `p_` plus 12 hex characters: long enough to tell people apart, never the whole id. */
+const shortId = (id: string) => (id.length > 14 ? `${id.slice(0, 14)}…` : id)
+const CONTROLS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g
+/** A name as it is shown: zero-width and bidi control characters removed, so it cannot reorder the text around it. */
+export const cleanName = (name: string) => name.replace(CONTROLS, '')
+/** A name as it is compared: NFKC, casefolded (lower then upper, for ß and the like) and cleaned. */
+const nameKey = (name: string) => cleanName(name).normalize('NFKC').toLowerCase().toUpperCase().toLowerCase()
 
 /** The members of every workspace the dashboard already loaded (no fetch, no provider needed in tests). */
 export function useKnownMembers(): { person: string; name: string }[] {
@@ -38,9 +44,9 @@ export function personLabel(value: string | null, members: { person: string; nam
   if (!value || !PERSON.test(value)) return null
   const hit = members.find(x => x.person === value)
   if (!hit) return { text: `${value.endsWith('…') || value.endsWith('...') ? value : shortId(value)} (unknown person)`, full: null }
-  const sharing = new Set(members.filter(x => x.name === hit.name).map(x => x.person)).size
+  const sharing = new Set(members.filter(x => nameKey(x.name) === nameKey(hit.name)).map(x => x.person)).size
   if (sharing > 1) return { text: `${shortId(value)} (name shared by ${sharing} members)`, full: value }
-  return { text: `${hit.name} (${shortId(value)})`, full: value }
+  return { text: `${cleanName(hit.name)} (${shortId(value)})`, full: value }
 }
 export function SignContent({ content }: { content: Content }) {
   const members = useKnownMembers()

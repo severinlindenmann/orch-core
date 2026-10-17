@@ -152,7 +152,7 @@ function FinishChoices({
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
       </dl>
-      {canAdd.length > 0 || offersGrant || offersClick ? (
+      {!state.complete && (canAdd.length > 0 || offersGrant || offersClick) ? (
         <>
           <h2>You can still add</h2>
           {canAdd.map((a) => (

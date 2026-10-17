@@ -26,10 +26,21 @@ const shortId = (id: string) => (id.length > 14 ? `${id.slice(0, 14)}…` : id)
 const CONTROLS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g
 /** A name as it is shown: zero-width and bidi control characters removed, so it cannot reorder the text around it. */
 export const cleanName = (name: string) => name.replace(CONTROLS, '')
-/** A name as it is compared: cleaned, NFKC, casefolded, whitespace collapsed. */
-const nameKey = (name: string) => cleanName(name).normalize('NFKC').toLowerCase().toUpperCase().toLowerCase().trim().replace(/\s+/g, ' ')
-/** A name that could pass for punctuation or for an id inside "Name (p_…)" is never shown. */
-const FAKES_AN_ID = /[()]|p_[0-9a-f]/i
+/** The one form a name is judged and compared in: controls removed, NFKC, whitespace collapsed. */
+const canonName = (name: string) => cleanName(name).normalize('NFKC').trim().replace(/\s+/g, ' ')
+const nameKey = (name: string) => canonName(name).toLowerCase().toUpperCase().toLowerCase()
+/**
+ * An ALLOWLIST, not a blocklist: a name is shown only when, after NFKC, it is letters and marks (plus space . ' -) of at
+ * most 40 characters, in ONE script among those that have look-alike letters (no Latin + Cyrillic/Greek mixing). Brackets
+ * of any width, digits, symbols, emoji and the ellipsis can therefore never appear in a name.
+ */
+const NAME_OK = /^[\p{L}\p{M}][\p{L}\p{M} .'\-]{0,39}$/u
+const LOOKALIKE_SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u, /\p{Script=Armenian}/u, /\p{Script=Cherokee}/u, /\p{Script=Coptic}/u]
+export function showableName(name: string): string | null {
+  const n = canonName(name)
+  if (!NAME_OK.test(n) || /\.{2,}/.test(n)) return null // NFKC turns an ellipsis into "...": no run of dots either
+  return LOOKALIKE_SCRIPTS.filter(re => re.test(n)).length > 1 ? null : n
+}
 
 export interface Member { person: string; name: string; hidden?: boolean }
 /** What the plain view shows for a person id. `full` is the id in full when the value is not cut, so it is always inspectable. */
@@ -52,8 +63,8 @@ export function personLabel(value: string | null, members: Member[]): PersonPart
   const key = nameKey(hit.name)
   const sharing = new Set(members.filter(x => !x.hidden && nameKey(x.name) === key).map(x => x.person)).size
   if (sharing > 1) return { ...base, note: `name shared by ${sharing} members` }
-  const name = cleanName(hit.name)
-  if (!name.trim() || FAKES_AN_ID.test(name)) return { ...base, note: 'name not shown' }
+  const name = showableName(hit.name)
+  if (name === null) return { ...base, note: 'name not shown' }
   return { ...base, name, note: null }
 }
 

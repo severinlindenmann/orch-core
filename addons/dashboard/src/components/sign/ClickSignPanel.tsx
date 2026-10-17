@@ -76,7 +76,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       <ClickBadge />
-      {view.content && <SignContent content={view.content} ws={ws} />}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} />}
       <p data-testid="click-custody" role="note" className="text-[13px] text-warning">
         {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
       </p>

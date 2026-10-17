@@ -103,6 +103,10 @@ const members: M[] = [
   { person: 'p_cccc1111222233334444555566667777', name: 'Mal (p_dddd1111222233334444555566667777)' }, // a name that fakes an id
   { person: 'p_eeee1111222233334444555566667777', name: 'Dev  Two' }, { person: 'p_ffff1111222233334444555566667777', name: 'dev two' }, // whitespace + case variant
   { person: 'p_9999111122223333444455556666777a', name: 'hidden-name', name_hidden: true },
+  { person: 'p_7777111122223333444455556666777c', name: '\uFF08p_dddd1111222233334444555566667777\uFF09' }, // fullwidth brackets: a fake id after NFKC
+  { person: 'p_6666111122223333444455556666777d', name: '\u0405everin' }, // Cyrillic Dze + Latin: mixed script
+  { person: 'p_5555111122223333444455556666777e', name: 'Sev\u{1F600}' }, // emoji
+  { person: 'p_4444111122223333444455556666777f', name: 'Ann\u2026' }, // ellipsis
   { person: 'p_8888111122223333444455556666777b', name: 'א\u202Eבג' }, // right-to-left name
 ]
 const table: [string, string, string][] = [
@@ -111,6 +115,10 @@ const table: [string, string, string][] = [
   ['the other one of the pair', B, 'p_bbbb11112222… (name shared by 2 members)'],
   ['a name with "(p_…)" in it', 'p_cccc1111222233334444555566667777', 'p_cccc11112222… (name not shown)'],
   ['whitespace and case variants', 'p_eeee1111222233334444555566667777', 'p_eeee11112222… (name shared by 2 members)'],
+  ['fullwidth brackets and an id as a name', 'p_7777111122223333444455556666777c', 'p_777711112222… (name not shown)'],
+  ['Cyrillic Dze mixed into a Latin name (next to a real Severin)', 'p_6666111122223333444455556666777d', 'p_666611112222… (name not shown)'],
+  ['an emoji name', 'p_5555111122223333444455556666777e', 'p_555511112222… (name not shown)'],
+  ['an ellipsis in a name', 'p_4444111122223333444455556666777f', 'p_444411112222… (name not shown)'],
   ['hidden name', 'p_9999111122223333444455556666777a', 'p_999911112222… (name not shown)'],
   ['unknown full id', 'p_0badc0de99887766554433221100ffee', 'p_0badc0de9988… (unknown person)'],
   ['a cut id never resolves by prefix', 'p_181d953f…', 'p_181d953f… (unknown person)'],

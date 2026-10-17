@@ -259,6 +259,13 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     material, events = prepared["material"], list(prepared["events"])
     if not events:
         raise PlainUnavailable("a request without events")
+    if material.get("sequence") is not None:  # batch 11: the first request of a sequence is one review of all its steps
+        from . import sequence
+
+        try:
+            return sequence.build_content(prepared, verified=verified)
+        except sequence.SequenceInvalid as exc:
+            raise PlainUnavailable(str(exc)) from None
     ticket = _ticket(material, events)
     out: dict[str, Any] = {"headline": ""}
     ctx = _Ctx(verified)

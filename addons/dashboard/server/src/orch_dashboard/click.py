@@ -28,6 +28,7 @@ from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
+    NewTicketSequence,
     PrepareBody,
     RequestId,
     RunnerGrant,
@@ -279,6 +280,11 @@ def register(app: FastAPI, gateway: Gateway):
                 },
                 3,
             )
+        if isinstance(body, NewTicketSequence) and not signer.sequences():
+            # an older signer would ignore `sequence` and sign the first step only
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
+            )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
         # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
@@ -306,6 +312,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
+            if planned.sequence:
+                sent["sequence"] = planned.sequence
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)

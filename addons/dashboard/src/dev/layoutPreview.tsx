@@ -4,7 +4,7 @@
 // (features `quick`, `records`, `runner`), so the layout guard, which runs against the mock app, never sees them. This
 // draws the REAL components with fixture answers: the mock `api` methods they call are replaced here, per scenario, by
 // functions that return plain data. Nothing of this is in a production build and nothing in it reaches a host.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest, type HandoffState } from '@/api/handoff'
@@ -35,6 +35,8 @@ import type { RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
 import { readersOf, readersRoster, refusalSamples } from './readersFixture'
+import { setFeatures } from '@/api/features'
+import { NewTicketPage } from '@/app/pages/new-ticket'
 
 export const LAYOUT_SCENARIOS = [
   'quick-normal',
@@ -95,6 +97,8 @@ export const LAYOUT_SCENARIOS = [
   'drop-errors',
   'drop-versions',
   'drop-phone',
+  // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
+  'new-sequence',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -197,8 +201,68 @@ const records = (scenario: LayoutScenario): RecordsStatus => {
   return base
 }
 
+/** The first request of a New ticket sequence as the dashboard server sends it: `ticket.created`, the whole intent in the material, one SignContent with the ticket and its text. */
+function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
+  serial += 1
+  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
+  const order = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'findings', 'current_state']
+  const sections = Object.entries((action.sections ?? {}) as Record<string, string>).sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
+  const sets: Record<string, unknown> = {
+    ...(action.priority ? { priority: action.priority } : {}),
+    ...(action.size ? { size: action.size } : {}),
+    ...(Array.isArray(action.labels) && action.labels.length ? { labels: [...(action.labels as string[])].sort() } : {}),
+    ...(action.parent ? { parent: action.parent } : {}),
+  }
+  const intent = { v: 1, kind: 'new_ticket', title: action.title, ticket_type: action.type, set: sets, sections: Object.fromEntries(sections) }
+  const of = 1 + (Object.keys(sets).length ? 1 : 0) + sections.length
+  const key = 'DEMO-0199'
+  const uid = '01J9ZP0000000000000000X0AB'
+  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }
+  const material = {
+    kind: 'payload' as const,
+    ticket: { key, uid },
+    sequence: { digest: 'sha256:' + 'c'.repeat(64), of, intent },
+    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
+  }
+  const digest = reviewDigestOf(material)
+  const events = [event] as unknown as HandoffEvent[]
+  const written = [sections.length ? `${sections.length} written section${sections.length === 1 ? '' : 's'}` : '', Object.keys(sets).length ? 'its details' : ''].filter(Boolean)
+  const headline = `Create ${key}: ${String(action.title)}`
+  const subline = sections.length ? `and its text (${sections.length} section${sections.length === 1 ? '' : 's'})` : undefined
+  void written
+  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+  return {
+    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
+    code: '7F3K-Q2MA',
+    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+    state: 'prepared',
+    op: 'new',
+    key,
+    fingerprint: fingerprintOf(digest, events, 'new'),
+    review_digest: digest,
+    gate_hash: null,
+    headline,
+    content: {
+      headline,
+      subline,
+      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
+      fields_changed: [
+        { field: 'type', before: null, after: String(action.type) },
+        { field: 'owner', before: null, after: 'you' },
+        ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
+      ],
+      notes: [`One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was created stays a draft.`],
+    },
+    material,
+    events,
+    origin: null,
+  } as unknown as HandoffRequest
+}
+
 let serial = 0
 function request(action: Record<string, unknown>): HandoffRequest {
+  if (action.action === 'new_sequence') return sequenceRequest(action)
   serial += 1
   const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
   const type = action.action === 'new' ? 'ticket.created' : 'ticket.updated'
@@ -567,6 +631,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
+  if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
@@ -646,4 +711,19 @@ function TerminalPreview({ scenario }: { scenario: LayoutScenario }) {
         rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} autoPreview={scenario === 'terminal-preview'} />
     </div>
   )
+}
+
+/** The real New ticket form in hand-off mode (a real host): Create opens the one review with fixture answers. */
+function NewSequencePreview() {
+  useEffect(() => {
+    setFeatures({ features: ['actions'] })
+    return () => setFeatures(null)
+  }, [])
+  const ready = useRef(false)
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    ready.current = true
+    setOn(true)
+  }, [])
+  return on ? <NewTicketPage /> : null
 }

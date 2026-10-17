@@ -1881,6 +1881,24 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    (F4); the host does not adopt the old ones, because a session label is public. A running agent session sees no
    current claim after registration and claims again (`orch claim KEY`). Register before starting agents.
 
+**Sequences: one review, N signatures (batch 11, finding 9).** `human.prepare` takes an optional `sequence` object, a
+*composite op* built from ordinary person ops and ordinary events (no new event type). The first step is `new` and carries
+`{step: 0, of, digest, intent}`: the whole intent (title, type, priority/size/labels/parent, written sections) is in
+`material.sequence` and so inside `review_digest` and the fingerprint. A signer that knows sequences builds the expected
+payload of every later event from the intent alone (`orch.host.sequence`), reviews them once, confirms once, and signs
+`ticket.created`, one `ticket.updated` for the fields and one per section (`set`, `section.set`), preparing each step after the
+previous one landed with `{step: k, of, digest, prev}` (`prev` = the id of the event it signed before). Only the chain
+fields stay open (event ids, `based_on`, the new ticket's `key`); any other difference between a prepared step and the
+intent aborts with "the ticket changed while signing, review again" before that step is signed. The host re-checks the chain
+at prepare and again under the store lock at submit: the last event of the log must be `prev` and `based_on` the log head
+(`human.request_mismatch` otherwise). The signer keeps a durable session record (10 minutes, keyed by the intent digest, in its
+custody root): a step is claimed, signed, then landed; on a resume it resends only the bytes it already signed (same idem) and
+goes on only if the head is its own last event; a claim without signed bytes is never signed again. Every prefix is a valid
+ticket (a draft with less text). The confirmation is the strongest of all steps. Custody: the terminal opens its key once for
+the batch (`orch sign CODE`), one-click checks and signs in the click signer's process (`status.features` lists `sequence`;
+an older signer is never asked), and the phone is excluded (it keeps separate signatures; a sequence is refused for any
+`signer.auth` other than `passphrase` or `convenience`).
+
 #### 0.8.2 Job ops (worker socket, H10)
 
 ```

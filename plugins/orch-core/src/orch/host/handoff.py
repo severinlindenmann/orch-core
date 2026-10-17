@@ -35,8 +35,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import signer
+from . import sequence, signer
 from .errors import HostError
+from .sequence import Sessions
 
 __all__ = ["NOTICE", "CODE", "main", "normalise_code", "sign_code"]
 
@@ -94,6 +95,7 @@ def sign_code(
     resolved: list[dict[str, Any]] | None = None,
     files: Mapping[str, bytes] | None = None,
     choose: Callable[[str], str] | None = None,
+    sessions: Any = None,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -109,6 +111,35 @@ def sign_code(
         raise HostError("not_found", f"no pending request of yours has the code {code} in this workspace")
     request_id = found[0]["id"]
     prepared = call("human.get", {"request_id": request_id, "signer": {"device": device, "auth": backend.auth}})["data"]
+
+    if (prepared.get("material") or {}).get("sequence") is not None:
+        # batch 11, finding 9: the first request of a sequence is signed with its steps, on one review and one
+        # confirmation (host/sequence.py); a client without the session store cannot do that
+        from . import sequence_terminal
+        from .control_client import new_idem
+
+        if sessions is None:
+            signer._refuse("this request is a sequence of signatures and this client cannot sign sequences")
+        if files:
+            signer._refuse("a sequence carries no files")
+        req = prepared.get("request") or {}
+        if req.get("id") != request_id or req.get("code") != code:
+            signer._refuse("the host answered with another request than the code names")
+        return sequence_terminal.sign_sequence(
+            call,
+            prepared,
+            request_id,
+            backend=backend,
+            key_id=key_id,
+            workspace_id=workspace_id,
+            person=person,
+            device=device,
+            workspace=workspace,
+            confirm=confirm,
+            sessions=sessions,
+            new_idem=new_idem,
+            prefix=f"{NOTICE}\n\n",
+        )
 
     def on_secret(secret: str) -> list[str]:
         """H11c: a runner grant (label ``runner``) may go to the orch runner instead of the screen; the person
@@ -348,7 +379,13 @@ def main(
             resolved=found,
             files=files or None,
             choose=human.secret_destination,
+            sessions=Sessions(state),
         )
+    except sequence.Aborted as exc:
+        text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"
+        if exc.landed:
+            text += "; what was signed stays in the ticket as a draft"
+        return _fail(out, args.json, HostError("human.request_mismatch", text))
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
     except HostError as exc:
@@ -366,7 +403,8 @@ def main(
         out.write(json.dumps({"ok": True, "result": result}, sort_keys=True) + "\n")
     else:
         on = f" on {result['key']}" if result.get("key") else ""
-        out.write(f"signed {found[0]['op']}{on}: seq {result.get('seq')}\n")
+        more = f" ({result['steps']} signatures)" if result.get("steps") else ""
+        out.write(f"signed {found[0]['op']}{on}{more}: seq {result.get('seq')}\n")
     return 0
 
 

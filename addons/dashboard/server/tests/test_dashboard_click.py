@@ -1834,3 +1834,29 @@ def test_the_switch_takes_a_small_body(client, token, stub, script):
     res = switch(client, token, stub, {"on": True, "passphrase": "x" * 20_000})
     assert res.status_code == 413 and "x" * 100 not in res.text
     assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+SEQUENCE = {
+    "action": "new_sequence",
+    "title": "Plan the launch",
+    "priority": "high",
+    "sections": {"summary": "Why this exists."},
+}
+
+
+def test_a_new_ticket_with_its_text_goes_to_the_signer_as_one_sequence(client, token, stub, script):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    assert args["op"] == "new" and args["args"] == {"title": "Plan the launch", "type": "feature"}
+    meta = args["sequence"]
+    assert meta["step"] == 0 and meta["of"] == 3 and meta["intent"]["sections"] == {"summary": "Why this exists."}
+    assert meta["intent"]["set"] == {"priority": "high"} and meta["digest"].startswith("sha256:")
+
+
+def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, script):
+    script.features = ["custody"]  # it would ignore `sequence` and sign the first step only
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code >= 400 and "orch-core" in res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []

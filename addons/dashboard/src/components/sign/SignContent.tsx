@@ -34,11 +34,13 @@ const canonName = (name: string) => cleanName(name).normalize('NFKC').trim().rep
  * combining marks dropped. Two members whose skeletons are equal share a name, however they spell it.
  */
 const LOOKALIKES: Record<string, string> = Object.fromEntries(Object.entries({
+  // lowercase look-alikes (mapped on the original-case string, BEFORE any casefolding: Greek capital Ν is N, small ν is v)
   a: 'аα', b: 'вβ', c: 'сϲ', d: 'ԁ', e: 'еε', h: 'нһ', i: 'іιlӏ', j: 'јϳ', k: 'кκ', m: 'мμ', n: 'η', o: 'оο', p: 'рρ',
   q: 'ԛ', r: 'г', s: 'ѕ', t: 'тτ', u: 'υ', v: 'νѵ', w: 'ԝω', x: 'хχ', y: 'уүγ', z: 'ζ',
+  // capitals
+  A: 'АΑ', B: 'ВΒ', C: 'С', E: 'ЕΕ', H: 'НΗ', I: 'ІΙ', J: 'Ј', K: 'КΚ', M: 'МΜ', N: 'Ν', O: 'ОΟ', P: 'РΡ', S: 'Ѕ', T: 'ТΤ', X: 'ХΧ', Y: 'ΥҮ', Z: 'Ζ',
 }).flatMap(([latin, many]) => [...many].map(c => [c, latin])))
-const nameKey = (name: string) => [...canonName(name).toLowerCase().toUpperCase().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')]
-  .map(c => LOOKALIKES[c] ?? c).join('')
+const nameKey = (name: string) => [...canonName(name)].map(c => LOOKALIKES[c] ?? c).join('').toLowerCase().toUpperCase().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
 /**
  * An ALLOWLIST, not a blocklist: a name is shown only when, after NFKC, it is letters and marks (plus space . ' -) of at
  * most 40 characters, in ONE script among those that have look-alike letters (no Latin + Cyrillic/Greek mixing), with no
@@ -49,7 +51,11 @@ const NAME_OK = /^[\p{L}\p{M}][\p{L}\p{M} .'\-]{0,39}$/u
 const LOOKALIKE_SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u, /\p{Script=Armenian}/u, /\p{Script=Cherokee}/u, /\p{Script=Coptic}/u]
 export function showableName(name: string): string | null {
   const n = canonName(name)
-  if (!NAME_OK.test(n) || /\.{2,}/.test(n) || /\p{Me}/u.test(n) || /\p{M}{3,}/u.test(n.normalize('NFD'))) return null // NFKC turns an ellipsis into "...": no run of dots either
+  if (/\p{Default_Ignorable_Code_Point}/u.test(n) || !NAME_OK.test(n) || /\.{2,}/.test(n) || /\p{Me}/u.test(n) || /\p{M}{3,}/u.test(n.normalize('NFD'))) return null // NFKC turns an ellipsis into "...": no run of dots either
+  // Covered letters (Latin, or a mapped look-alike) mixed with letters the table does not cover: not judgeable, not shown.
+  const letters = [...n].filter(c => /\p{L}/u.test(c))
+  const covered = (c: string) => /\p{Script=Latin}/u.test(c) || c in LOOKALIKES
+  if (letters.some(covered) && !letters.every(covered)) return null
   return LOOKALIKE_SCRIPTS.filter(re => re.test(n)).length > 1 ? null : n
 }
 

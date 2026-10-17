@@ -161,3 +161,19 @@ it('a Cyrillic look-alike "Ѕеѵегіn" next to a Latin "Severin": both are sh
   withMembers([{ person: cyr, name: '\u0405\u0435\u0475\u0435\u0433\u0456n' }, { person: lat, name: 'Severin' }], [{ field: 'a', before: cyr, after: lat }])
   expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
+
+it('uppercase Greek "ΝΙΚΟ" next to a Latin "NIKO" counts as shared (look-alikes map before casefolding)', () => {
+  const g = 'p_aaaa1111222233334444555566667777', l = 'p_bbbb1111222233334444555566667777'
+  withMembers([{ person: g, name: '\u039D\u0399\u039A\u039F' }, { person: l, name: 'NIKO' }], [{ field: 'a', before: g, after: l }])
+  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+})
+
+it('a name mixing covered letters with letters the table does not cover is not shown', () => {
+  withMembers([{ person: SEV, name: 'Sev\u05D0' }], [{ field: 'owner', before: null, after: SEV }])
+  expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')
+})
+
+it.each(['\u3164', '\u115F', '\uFFA0'])('a name with the invisible Hangul filler U+%s is not shown', (filler) => {
+  withMembers([{ person: SEV, name: `Sev${filler}erin` }], [{ field: 'owner', before: null, after: SEV }])
+  expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')
+})

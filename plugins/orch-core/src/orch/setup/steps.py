@@ -20,10 +20,12 @@ Everything the host does is behind :class:`Ports`, so the sequence is tested wit
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import secrets as _secrets
 import threading
 import time
+import urllib.parse
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -203,18 +205,77 @@ def _forms(text: str) -> tuple[str, str]:
     return "".join(low.split()), "".join(c for c in low if c.isalnum())
 
 
+def _tokens(text: str) -> list[str]:
+    out: list[str] = []
+    cur: list[str] = []
+    for c in text.lower():
+        if c.isalnum():
+            cur.append(c)
+        elif cur:
+            out.append("".join(cur))
+            cur = []
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def _b64_forms(b: bytes) -> list[str]:
+    """Base64 (standard and URL-safe, no padding) of ``b`` as it would appear at any of the 3 byte alignments inside a
+    longer encoded text; the unstable first/last characters are dropped."""
+    out: list[str] = []
+    for k in range(3):
+        for enc in (base64.b64encode, base64.urlsafe_b64encode):
+            e = enc(b"\0" * k + b).decode("ascii").rstrip("=")
+            skip = (k * 8 + 5) // 6 + (1 if k else 0)
+            e = e[skip : len(e) - 2 if len(e) > 8 else len(e)]
+            if len(e) >= _MIN_SECRET:
+                out.append(e)
+    return out
+
+
 def contains_secret(text: str, secrets: Iterable[str]) -> bool:
-    """True when ``text`` holds any of ``secrets`` (a passphrase, a recovery code as a whole or its words as the full
-    sequence) in either normal form. Fails closed on odd input: a non-str secret is ignored, never raised on."""
-    t_ws, t_an = _forms(text)
+    """True when ``text`` holds a secret. For each secret (the passphrase, the recovery code, each recovery word):
+
+    * the whole secret, or any run of its words, in whitespace-removed or letters/digits-only lower-case form;
+    * any single word of it of at least 6 characters (so a single recovery word of 6+ letters triggers), and any two
+      consecutive words joined, as whole tokens or run together;
+    * its hex, base64 (standard / URL-safe, any alignment) and URL-encoded (%20, +) forms; URL-encoded text is also
+      decoded before the comparison.
+
+    Fails closed on odd input: a non-str secret is ignored, never raised on."""
+    texts = {text, urllib.parse.unquote(text), urllib.parse.unquote_plus(text)}
+    forms = [_forms(t) for t in texts]
+    toks = [set(_tokens(t)) for t in texts]
+    raw_nows = ["".join(t.split()) for t in texts]
     for sec in secrets:
         if not isinstance(sec, str) or not sec.strip():
             continue
         s_ws, s_an = _forms(sec)
-        if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
+        for t_ws, t_an in forms:
+            if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
+                return True
+            if len(s_an) >= _MIN_SECRET and s_an in t_an:
+                return True
+        words = _tokens(sec)
+        for w in words:
+            if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
+                return True
+        for w1, w2 in zip(words, words[1:], strict=False):
+            pair = w1 + w2
+            if len(pair) >= _MIN_SECRET and any(pair in t_an for _, t_an in forms):
+                return True
+        raw = sec.encode("utf-8", "replace")
+        hexed = {raw.hex(), "".join(sec.split()).encode("utf-8", "replace").hex()}
+        if any(h in t_ws for h in hexed for t_ws, _ in forms):
             return True
-        if len(s_an) >= _MIN_SECRET and s_an in t_an:
-            return True
+        for variant in (sec, " ".join(sec.split()), "".join(sec.split())):
+            vb = variant.encode("utf-8", "replace")
+            for e in _b64_forms(vb):
+                if any(e in r for r in raw_nows):
+                    return True
+            for q in (urllib.parse.quote(variant), urllib.parse.quote_plus(variant)):
+                if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms):
+                    return True
     return False
 
 
@@ -747,7 +808,9 @@ class _UnlockedBackend:
 def _as_setup_error(e: Exception) -> SetupError:
     code = getattr(e, "code", None)
     message = getattr(e, "message", None) or str(e)
-    return SetupError(code if isinstance(code, str) else "internal", str(message)[:300], 500)
+    return SetupError(
+        code if isinstance(code, str) else "internal", str(message), 500
+    )  # no cut here: `_fail` redacts first, then cuts
 
 
 class RealPorts:
@@ -834,7 +897,7 @@ class RealPorts:
         argv = ["enable", "--workspace", wid, "--state", str(self.state)] + ([] if terminals else ["--no-terminals"])
         res = runner_cli.enable(runner_cli._parser().parse_args(argv), self.env, io.StringIO(), confirmed=True)
         if not res.get("ok"):
-            raise SetupError("runner.unavailable", str((res.get("error") or {}).get("message", "runner"))[:200], 500)
+            raise SetupError("runner.unavailable", str((res.get("error") or {}).get("message", "runner")), 500)
 
     def runner_hello(self, wid: str, timeout: float) -> bool:
         from orch.runner import enablement

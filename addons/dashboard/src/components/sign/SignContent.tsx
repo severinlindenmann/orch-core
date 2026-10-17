@@ -26,19 +26,30 @@ const shortId = (id: string) => (id.length > 14 ? `${id.slice(0, 14)}…` : id)
 const CONTROLS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g
 /** A name as it is shown: zero-width and bidi control characters removed, so it cannot reorder the text around it. */
 export const cleanName = (name: string) => name.replace(CONTROLS, '')
-/** The one form a name is judged and compared in: controls removed, NFKC, whitespace collapsed. */
+/** The one form a name is judged and shown in: controls removed, NFKC, whitespace collapsed. */
 const canonName = (name: string) => cleanName(name).normalize('NFKC').trim().replace(/\s+/g, ' ')
-const nameKey = (name: string) => canonName(name).toLowerCase().toUpperCase().toLowerCase()
+/**
+ * DESIGN RULE: the 12-hex id is the identity; a name is only a hint, and shown only when it is unambiguous.
+ * "Unambiguous" is judged on a skeleton (UTS #39 subset): NFKC, casefold, Cyrillic/Greek look-alikes mapped to Latin,
+ * combining marks dropped. Two members whose skeletons are equal share a name, however they spell it.
+ */
+const LOOKALIKES: Record<string, string> = Object.fromEntries(Object.entries({
+  a: 'аα', b: 'вβ', c: 'сϲ', d: 'ԁ', e: 'еε', h: 'нһ', i: 'іιlӏ', j: 'јϳ', k: 'кκ', m: 'мμ', n: 'η', o: 'оο', p: 'рρ',
+  q: 'ԛ', r: 'г', s: 'ѕ', t: 'тτ', u: 'υ', v: 'νѵ', w: 'ԝω', x: 'хχ', y: 'уүγ', z: 'ζ',
+}).flatMap(([latin, many]) => [...many].map(c => [c, latin])))
+const nameKey = (name: string) => [...canonName(name).toLowerCase().toUpperCase().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')]
+  .map(c => LOOKALIKES[c] ?? c).join('')
 /**
  * An ALLOWLIST, not a blocklist: a name is shown only when, after NFKC, it is letters and marks (plus space . ' -) of at
- * most 40 characters, in ONE script among those that have look-alike letters (no Latin + Cyrillic/Greek mixing). Brackets
- * of any width, digits, symbols, emoji and the ellipsis can therefore never appear in a name.
+ * most 40 characters, in ONE script among those that have look-alike letters (no Latin + Cyrillic/Greek mixing), with no
+ * enclosing mark and at most 2 combining marks in a row. Brackets of any width, digits, symbols, emoji and the ellipsis
+ * can therefore never appear in a name.
  */
 const NAME_OK = /^[\p{L}\p{M}][\p{L}\p{M} .'\-]{0,39}$/u
 const LOOKALIKE_SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u, /\p{Script=Armenian}/u, /\p{Script=Cherokee}/u, /\p{Script=Coptic}/u]
 export function showableName(name: string): string | null {
   const n = canonName(name)
-  if (!NAME_OK.test(n) || /\.{2,}/.test(n)) return null // NFKC turns an ellipsis into "...": no run of dots either
+  if (!NAME_OK.test(n) || /\.{2,}/.test(n) || /\p{Me}/u.test(n) || /\p{M}{3,}/u.test(n.normalize('NFD'))) return null // NFKC turns an ellipsis into "...": no run of dots either
   return LOOKALIKE_SCRIPTS.filter(re => re.test(n)).length > 1 ? null : n
 }
 

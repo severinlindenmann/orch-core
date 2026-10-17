@@ -104,9 +104,12 @@ const members: M[] = [
   { person: 'p_eeee1111222233334444555566667777', name: 'Dev  Two' }, { person: 'p_ffff1111222233334444555566667777', name: 'dev two' }, // whitespace + case variant
   { person: 'p_9999111122223333444455556666777a', name: 'hidden-name', name_hidden: true },
   { person: 'p_7777111122223333444455556666777c', name: '\uFF08p_dddd1111222233334444555566667777\uFF09' }, // fullwidth brackets: a fake id after NFKC
-  { person: 'p_6666111122223333444455556666777d', name: '\u0405everin' }, // Cyrillic Dze + Latin: mixed script
+  { person: 'p_6666111122223333444455556666777d', name: '\u0405amuel' }, // Cyrillic Dze + Latin: mixed script
   { person: 'p_5555111122223333444455556666777e', name: 'Sev\u{1F600}' }, // emoji
   { person: 'p_4444111122223333444455556666777f', name: 'Ann\u2026' }, // ellipsis
+  { person: 'p_3333111122223333444455556666777a', name: 'Anna\u20DD' }, // enclosing mark
+  { person: 'p_2222111122223333444455556666777b', name: 'Zo\u0301\u0302\u0303e' }, // 3 stacked combining marks
+  { person: 'p_1111111122223333444455556666777c', name: '\u0406van' }, { person: 'p_1212111122223333444455556666777c', name: 'Ivan' }, // Cyrillic I + Latin
   { person: 'p_8888111122223333444455556666777b', name: 'א\u202Eבג' }, // right-to-left name
 ]
 const table: [string, string, string][] = [
@@ -119,6 +122,9 @@ const table: [string, string, string][] = [
   ['Cyrillic Dze mixed into a Latin name (next to a real Severin)', 'p_6666111122223333444455556666777d', 'p_666611112222… (name not shown)'],
   ['an emoji name', 'p_5555111122223333444455556666777e', 'p_555511112222… (name not shown)'],
   ['an ellipsis in a name', 'p_4444111122223333444455556666777f', 'p_444411112222… (name not shown)'],
+  ['an enclosing mark', 'p_3333111122223333444455556666777a', 'p_333311112222… (name not shown)'],
+  ['3 stacked combining marks', 'p_2222111122223333444455556666777b', 'p_222211112222… (name not shown)'],
+  ['whole-Cyrillic look-alike of a Latin name counts as shared', 'p_1111111122223333444455556666777c', 'p_111111112222… (name shared by 2 members)'],
   ['hidden name', 'p_9999111122223333444455556666777a', 'p_999911112222… (name not shown)'],
   ['unknown full id', 'p_0badc0de99887766554433221100ffee', 'p_0badc0de9988… (unknown person)'],
   ['a cut id never resolves by prefix', 'p_181d953f…', 'p_181d953f… (unknown person)'],
@@ -148,4 +154,10 @@ it('a right-to-left name cannot reorder the id: name and id are separate isolate
   expect(id).toHaveAttribute('dir', 'ltr')
   expect(id.tagName).toBe('BDI')
   expect(row('owner').querySelectorAll('bdi').length).toBeGreaterThanOrEqual(2)
+})
+
+it('a Cyrillic look-alike "Ѕеѵегіn" next to a Latin "Severin": both are shared, neither shows a name', () => {
+  const cyr = 'p_aaaa1111222233334444555566667777', lat = 'p_bbbb1111222233334444555566667777'
+  withMembers([{ person: cyr, name: '\u0405\u0435\u0475\u0435\u0433\u0456n' }, { person: lat, name: 'Severin' }], [{ field: 'a', before: cyr, after: lat }])
+  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })

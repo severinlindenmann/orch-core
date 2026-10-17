@@ -126,6 +126,8 @@ def stale_socket(path):
         sock.settimeout(2)
         try:
             sock.connect(str(path))
+        except FileNotFoundError:
+            return  # a stopping server removed it between lstat and connect: already gone
         except OSError as exc:
             if exc.errno != errno.ECONNREFUSED:
                 raise

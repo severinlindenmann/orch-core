@@ -320,9 +320,7 @@ def test_one_click_signs_the_whole_quick_task(click, served, human):  # noqa: F8
     assert got["gates"]["plan"]["state"] == "approved" and got["doc"]["labels"] == ["quick"]
 
 
-def test_a_grant_sequence_is_refused_by_the_click_when_a_step_other_than_the_last_would_be_a_grant(
-    click, served, human
-):  # noqa: F811
+def test_the_grant_is_only_ever_the_last_step():
     from orch.host import sequence
 
     intent = sequence.validate_intent(quick(agent={"hours": 8, "scope": "workable"}))

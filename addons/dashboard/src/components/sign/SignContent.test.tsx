@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it } from 'vitest'
 import { SignContent } from './SignContent'
 
@@ -13,7 +14,8 @@ it('shows the signed identity tail, host key qualification, task id and before q
     notes: ['Host note'], note: ['Legacy list note'],
   }} />)
   expect(screen.getByText('TST-0001').parentElement).toHaveTextContent('TST-0001 · …ab12cd34')
-  expect(screen.getByText('key per host')).toBeVisible()
+  // The host's key qualification is technical: folded away, not in the plain view.
+  expect(screen.getByText('key per host').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByRole('listitem')).toHaveTextContent('T-3 · Check it ⏎ 2. forged task')
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
   expect(screen.getByText('Old').parentElement).toHaveTextContent('Old (per host, not signed) → New')
@@ -57,15 +59,46 @@ it('renders every display string in fully populated content', () => {
   // The dialog owns the headline; section ids are structural keys, not display values.
   render(<><h2>{content.headline}</h2><SignContent content={content} /></>)
   for (const text of [
-    content.headline, ...Object.values(content.ticket),
+    content.headline, content.ticket.key, content.ticket.title, content.ticket.uid_tail,
     content.sections[0].title, ...content.sections[0].text.split('\n'),
     ...content.acceptance.flatMap(a => [a.id, a.text]),
     ...content.tasks.flatMap(t => [t.id, t.title, ...t.verify]),
     ...content.fields_changed.flatMap(f => [f.field, f.before, f.before_note, f.after]).filter((v): v is string => typeof v === 'string'),
     ...content.notes, ...content.note,
   ]) expect(screen.getByText(text)).toBeVisible()
+  expect(screen.getByText(content.ticket.key_note)).toBeInTheDocument() // folded under the technical details
   expect(screen.getByLabelText('Checked')).toBeVisible()
   expect(screen.getByLabelText('Unchecked')).toBeVisible()
   expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
   expect(screen.getAllByText('—')).toHaveLength(2)
+})
+
+const WS = [{ id: 'w_1', members: [{ person: 'p_181d953fa2b4c6d8', name: 'Severin', role: 'owner' }, { person: 'p_aaaa1111', name: 'Mara', role: 'member' }] }]
+function withNames(ui: React.ReactElement) {
+  const client = new QueryClient()
+  client.setQueryData(['workspaces'], WS)
+  return <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+}
+
+it('shows people by display name, keeps the id under Technical details, and drops the key line from the plain view', () => {
+  render(withNames(<SignContent content={{
+    headline: 'New ticket',
+    ticket: { key: 'RA-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host, not proven' },
+    fields_changed: [{ field: 'owner', before: null, after: 'p_181d953f…' }, { field: 'reviewer', before: 'p_aaaa1111', after: 'p_unknown99…' }],
+  }} />))
+  const plain = screen.getByText('owner').parentElement!
+  expect(plain).toHaveTextContent('owner: — → Severin')
+  expect(plain).not.toHaveTextContent('p_181d953f')
+  expect(screen.getByText('reviewer').parentElement).toHaveTextContent('reviewer: Mara → p_unknown99…') // unknown: the short id
+  const details = screen.getByText(/Technical details/).closest('details')!
+  expect(details).toHaveTextContent('Severin = p_181d953f…')
+  expect(details).toHaveTextContent('key per host, not proven')
+  expect(screen.getByText('key per host, not proven').closest('details')).toBe(details)
+})
+
+it('does not guess when a cut id fits two people', () => {
+  const client = new QueryClient()
+  client.setQueryData(['workspaces'], [{ id: 'w', members: [{ person: 'p_abc1', name: 'A' }, { person: 'p_abc2', name: 'B' }] }])
+  render(<QueryClientProvider client={client}><SignContent content={{ headline: 'x', fields_changed: [{ field: 'owner', before: null, after: 'p_abc…' }] }} /></QueryClientProvider>)
+  expect(screen.getByText('owner').parentElement).toHaveTextContent('owner: — → p_abc…')
 })

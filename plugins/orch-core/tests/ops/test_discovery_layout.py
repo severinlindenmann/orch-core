@@ -231,3 +231,74 @@ def test_the_served_marker_lives_in_the_store_and_the_guard_holds_in_both_layout
     # legacy layout
     served_marker(str(ws.root), True, tmp_path)
     assert _served(ws.root)
+
+
+def test_a_non_orch_dot_orch_away_from_the_start_does_not_block_the_walk(tmp_path: Path) -> None:
+    outer = _store(tmp_path / "outer")
+    inner = outer / "inner"
+    sub = inner / "sub"
+    sub.mkdir(parents=True)
+    (inner / ".orch").write_text("another tool's file")  # e.g. ~/.orch of something else
+    found = discovery.locate(sub, explicit=False)
+    assert found is not None and found.project == outer.resolve()
+    with pytest.raises(LayoutError) as exc:  # standing in the directory that holds it: refused, with its own hint
+        discovery.locate(inner, explicit=False)
+    assert "migrate" not in (exc.value.hint or "") and ".orch" in (exc.value.hint or "")
+
+
+def test_a_directory_dot_orch_without_an_orch_config_is_passed_by_the_walk(tmp_path: Path) -> None:
+    outer = _store(tmp_path / "outer")
+    (outer / "inner" / ".orch").mkdir(parents=True)  # another tool's directory
+    (outer / "inner" / ".orch" / "config.json").write_text('{"name": "x"}')
+    found = discovery.locate(outer / "inner", explicit=False)
+    assert found is not None and found.project == outer.resolve()
+
+
+def test_runtime_gives_the_double_store_hint_only_for_two_stores(tmp_path: Path) -> None:
+    project = _store(tmp_path / "p")
+    (project / ".orch").write_text("x")
+    with pytest.raises(OrchError) as exc:
+        runtime.discover({"ORCH_WORKSPACE": str(project)}, None, FILES)
+    assert "migrate" not in (exc.value.hint or "")
+
+
+def test_host_mode_refuses_a_linked_or_file_dot_orch_like_direct_mode(tmp_path: Path) -> None:
+    for kind in ("symlink", "file"):
+        project = _store(tmp_path / kind)  # a legacy store next to it must not be used
+        if kind == "symlink":
+            (tmp_path / "elsewhere").mkdir(exist_ok=True)
+            (project / ".orch").symlink_to(tmp_path / "elsewhere")
+        else:
+            (project / ".orch").write_text("x")
+        files = Files.host((str(project),))
+        try:
+            with pytest.raises(OrchError, match="not a real directory"):
+                runtime.discover({"ORCH_WORKSPACE": str(project)}, None, files)
+        finally:
+            files.close()
+
+
+def test_store_open_never_makes_a_dot_orch_that_vanished_after_the_resolve(
+    ws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orch import layout as lay
+
+    project, wid = _project_with_store(ws, tmp_path)
+    monkeypatch.setattr(lay, "WRITE_NEW", True)  # even with the switch on
+    monkeypatch.setattr(lay, "open_store_dir", lambda *a, **k: None)  # resolve saw it, the open does not
+    # (resolve itself uses open_store_dir; patch only the second use by counting)
+    calls = {"n": 0}
+    real = lay.resolve
+
+    def resolve(fd, project_path):
+        calls["n"] += 1
+        monkeypatch.undo()
+        monkeypatch.setattr(lay, "WRITE_NEW", True)
+        out = real(fd, project_path)
+        monkeypatch.setattr(lay, "open_store_dir", lambda *a, **k: None)
+        return out
+
+    monkeypatch.setattr(lay, "resolve", resolve)
+    with pytest.raises(StoreError, match="vanished"):
+        Store.open(project, expected_workspace_id=wid, load="lazy")
+    assert (project / ".orch").is_dir()  # never made again, never replaced

@@ -108,7 +108,20 @@ def _hosted_layout(path: Path, files: Files) -> tuple[Layout, dict[str, Any]] | 
             return None
         return discovery.v2_config(doc if isinstance(doc, dict) else None)
 
-    old, new = read(path / "config.json"), read(path / layout_mod.STORE_DIR / "config.json")
+    orch_dir = path / layout_mod.STORE_DIR
+    try:
+        present = files.lexists(orch_dir)
+    except CapabilityDenied:
+        present = False
+    if present:  # a link or a file there is refused like in direct mode, never read around
+        try:
+            files.listdir(orch_dir)
+        except (OSError, CapabilityDenied):
+            raise LayoutError(
+                f"{layout_mod.STORE_DIR} is not a real directory (a link or a file); refusing to use this project",
+                hint=f"rename or remove {layout_mod.STORE_DIR}: orch keeps its store in a real directory",
+            ) from None
+    old, new = read(path / "config.json"), read(orch_dir / "config.json")
     layout_mod.check_single_store(legacy=old is not None, new=new is not None)
     if new is not None:
         return Layout.new_at(path), new
@@ -125,9 +138,7 @@ def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: 
     try:
         return _discover(env, cwd, files)
     except LayoutError as exc:
-        raise OrchError(
-            "invalid.input", str(exc), hint="a project holds one orch store; run `orch migrate` or remove one"
-        ) from None
+        raise OrchError("invalid.input", str(exc), hint=exc.hint or "a project holds one orch store") from None
 
 
 def _discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:

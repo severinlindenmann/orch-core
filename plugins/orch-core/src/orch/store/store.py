@@ -125,13 +125,13 @@ def _open_fs(project: Path, ident: tuple[int, int] | None, pin: StorePin | None)
                 keep = True
                 return pfs, layout
             sfd = _layout.open_store_dir(pfs.fd)
-            if sfd is None:  # a new workspace in the new layout: made here, owner only
+            if sfd is None and found is None and _layout.WRITE_NEW:  # a new workspace: made here, owner only
                 os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
                 sfd = _layout.open_store_dir(pfs.fd)
         except LayoutError as exc:
             raise StoreError("validation.path", str(exc)) from None
-        if sfd is None:  # pragma: no cover - just made
-            raise StoreError("validation.path", f"{_layout.STORE_DIR} cannot be opened")
+        if sfd is None:  # it was there when the layout was resolved and is gone now: never made again here
+            raise StoreError("validation.path", f"{_layout.STORE_DIR} vanished while the store was being opened")
         try:
             if pin is not None:
                 st = os.fstat(sfd)

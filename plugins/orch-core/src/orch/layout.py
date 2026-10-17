@@ -49,7 +49,12 @@ _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0
 
 
 class LayoutError(Exception):
-    """The layout is not usable (two stores, a linked ``.orch``). Callers map it to ``validation.path``."""
+    """The layout is not usable (two stores, a linked ``.orch``). Callers map it to ``validation.path``. ``hint``: what
+    the person can do about this particular refusal."""
+
+    def __init__(self, message: str, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.hint = hint
 
 
 @dataclass(frozen=True)
@@ -91,7 +96,8 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
     if legacy and new:
         raise LayoutError(
             "two orch stores in one project (config.json in the root and in .orch/); "
-            "finish `orch migrate` or remove one"
+            "finish `orch migrate` or remove one",
+            hint="run `orch migrate`, or remove one of the two stores",
         )
 
 
@@ -138,11 +144,14 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     return Layout.legacy_at(project) if legacy else None
 
 
-def open_store_dir(project_fd: int, skip: Callable[[os.stat_result], bool] | None = None) -> int | None:
+def open_store_dir(
+    project_fd: int, skip: Callable[[os.stat_result], bool] | None = None, *, lenient: bool = False
+) -> int | None:
     """The fd of ``.orch`` below the project fd (``O_NOFOLLOW``), or ``None`` when there is no ``.orch``. Anything that
     is there but not a real directory (a symlink, a file) is :class:`LayoutError`: it never falls through to the legacy
     layout (design §5). ``skip(lstat)`` true: not looked at, ``None`` (the implicit walk ignores what is not the
-    person's own)."""
+    person's own). ``lenient``: a non-directory is ``None`` too (it cannot hold a config; the implicit walk, away
+    from its start, passes another tool's ``.orch``)."""
     try:
         st = os.stat(STORE_DIR, dir_fd=project_fd, follow_symlinks=False)
     except FileNotFoundError:
@@ -152,7 +161,12 @@ def open_store_dir(project_fd: int, skip: Callable[[os.stat_result], bool] | Non
     if skip is not None and skip(st):
         return None
     if not stat.S_ISDIR(st.st_mode):
-        raise LayoutError(f"{STORE_DIR} is not a real directory (a link or a file); refusing to use this project")
+        if lenient:  # not a directory, so it holds no orch config: the caller walks on
+            return None
+        raise LayoutError(
+            f"{STORE_DIR} is not a real directory (a link or a file); refusing to use this project",
+            hint=f"rename or remove {STORE_DIR}: orch keeps its store in a real {STORE_DIR}/ directory",
+        )
     try:
         return os.open(STORE_DIR, _DIR, dir_fd=project_fd)
     except OSError as exc:

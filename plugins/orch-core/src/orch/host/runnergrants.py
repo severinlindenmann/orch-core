@@ -409,7 +409,7 @@ class RunnerGrants:
         for wid, table in list(self.tables.items()):
             service = self.hub.host.services.get(wid)
             auth = getattr(service, "auth", None)
-            if service is not None and auth is not None and not auth.fresh(service.entry.root):
+            if service is not None and auth is not None and not auth.fresh(service.entry.store_dir):
                 await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
             # dashboard execution switched off: the runner gives up the workspace's grants too (fail closed)
             off = not enablement.state_of(self.hub.host.state_dir, wid, self.hub.host.host_uid)["enabled"]

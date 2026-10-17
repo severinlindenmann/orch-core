@@ -387,6 +387,8 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
   } as unknown as HandoffRequest
 }
 
+/** The op of each request this preview prepared (the state it answers must name the same op). */
+const opOf = new Map<string, string>()
 let serial = 0
 function request(action: Record<string, unknown>): HandoffRequest {
   if (action.action === 'new_sequence') return sequenceRequest(action)
@@ -713,7 +715,11 @@ function install() {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
     throw new TypeError('fixture: the connection was lost')
   })
-  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => request(action))
+  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {
+    const made = request(action)
+    opOf.set(made.id, made.op)
+    return made
+  })
   set('getHostSettings', async () => ({
     available: true,
     grant_hours: 8,
@@ -729,7 +735,7 @@ function install() {
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
   set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
-  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
+  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 

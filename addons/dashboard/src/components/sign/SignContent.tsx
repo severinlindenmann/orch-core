@@ -19,39 +19,66 @@ function Value({ children, block = false }: { children: string; block?: boolean 
     </span>)}
   </span>
 }
-/** A person id as the host writes it: `p_181d953f…` (cut) or the full `p_<hex>`. */
+/** A person id as the host writes it: the full `p_<hex>`, or one cut by an older host (`p_181d953f…`). */
 const PERSON = /^p_[0-9a-f]+(…|\.\.\.)?$/
 /** `p_` plus 12 hex characters: long enough to tell people apart, never the whole id. */
 const shortId = (id: string) => (id.length > 14 ? `${id.slice(0, 14)}…` : id)
 const CONTROLS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g
 /** A name as it is shown: zero-width and bidi control characters removed, so it cannot reorder the text around it. */
 export const cleanName = (name: string) => name.replace(CONTROLS, '')
-/** A name as it is compared: NFKC, casefolded (lower then upper, for ß and the like) and cleaned. */
-const nameKey = (name: string) => cleanName(name).normalize('NFKC').toLowerCase().toUpperCase().toLowerCase()
+/** A name as it is compared: cleaned, NFKC, casefolded, whitespace collapsed. */
+const nameKey = (name: string) => cleanName(name).normalize('NFKC').toLowerCase().toUpperCase().toLowerCase().trim().replace(/\s+/g, ' ')
+/** A name that could pass for punctuation or for an id inside "Name (p_…)" is never shown. */
+const FAKES_AN_ID = /[()]|p_[0-9a-f]/i
 
-/** The members of every workspace the dashboard already loaded (no fetch, no provider needed in tests). */
-export function useKnownMembers(): { person: string; name: string }[] {
+export interface Member { person: string; name: string; hidden?: boolean }
+/** What the plain view shows for a person id. `full` is the id in full when the value is not cut, so it is always inspectable. */
+export interface PersonParts { id: string; short: string; name: string | null; note: string | null; full: string | null }
+
+/**
+ * THE only place a person id becomes display parts. `members` are the members of THE request's workspace only.
+ * A name appears only for an EXACT full id of a known member, only when it is unique after normalisation, visible and
+ * cannot fake an id; it always comes with the short id. Everything else shows the short id and says why there is no name.
+ * Null when the value is not a person id.
+ */
+export function personLabel(value: string | null, members: Member[]): PersonParts | null {
+  if (!value || !PERSON.test(value)) return null
+  const cut = value.endsWith('…') || value.endsWith('...')
+  const base = { id: value, short: cut ? value : shortId(value), name: null, full: cut ? null : value }
+  if (cut) return { ...base, note: 'unknown person' }
+  const hit = members.find(x => x.person === value)
+  if (!hit) return { ...base, note: 'unknown person' }
+  if (hit.hidden) return { ...base, note: 'name not shown' }
+  const key = nameKey(hit.name)
+  const sharing = new Set(members.filter(x => !x.hidden && nameKey(x.name) === key).map(x => x.person)).size
+  if (sharing > 1) return { ...base, note: `name shared by ${sharing} members` }
+  const name = cleanName(hit.name)
+  if (!name.trim() || FAKES_AN_ID.test(name)) return { ...base, note: 'name not shown' }
+  return { ...base, name, note: null }
+}
+
+/** The members of the request's workspace from what the dashboard already loaded (no fetch, no provider needed in tests). */
+export function useWorkspaceMembers(ws: string | undefined): Member[] {
   const client = useContext(QueryClientContext)
   const all = client?.getQueryData<Workspace[]>(['workspaces']) ?? []
-  return all.flatMap(w => w.members.filter(m => !m.name_hidden).map(m => ({ person: m.person, name: m.name })))
+  return (all.find(w => w.id === ws)?.members ?? []).map(m => ({ person: m.person, name: m.name, hidden: !!m.name_hidden }))
 }
-/**
- * How a person id reads in the plain view. Names are self-chosen, so the name never stands alone: it comes WITH the short
- * id, and only for an EXACT full id of a known member (never a prefix). An unknown id, a cut id or a name two different
- * people share shows the short id plus why there is no name. Null when the value is not a person id.
- */
-export function personLabel(value: string | null, members: { person: string; name: string }[]): { text: string; full: string | null } | null {
-  if (!value || !PERSON.test(value)) return null
-  const hit = members.find(x => x.person === value)
-  if (!hit) return { text: `${value.endsWith('…') || value.endsWith('...') ? value : shortId(value)} (unknown person)`, full: null }
-  const sharing = new Set(members.filter(x => nameKey(x.name) === nameKey(hit.name)).map(x => x.person)).size
-  if (sharing > 1) return { text: `${shortId(value)} (name shared by ${sharing} members)`, full: value }
-  return { text: `${cleanName(hit.name)} (${shortId(value)})`, full: value }
+
+/** Name and id as separate isolates, so neither can reorder or hide the other. */
+function Person({ parts }: { parts: PersonParts }) {
+  const id = <bdi dir="ltr" className="whitespace-pre-wrap break-all font-mono text-[12px] text-text [unicode-bidi:isolate]">{parts.short}</bdi>
+  if (parts.name !== null) return <><Raw>{parts.name}</Raw> ({id})</>
+  return <>{id} ({parts.note})</>
 }
-export function SignContent({ content }: { content: Content }) {
-  const members = useKnownMembers()
-  const shown = (v: string | null) => v === null ? null : personLabel(v, members)?.text ?? v
-  const named = (content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null)
+function Shown({ value, members }: { value: string | null; members: Member[] }) {
+  const parts = personLabel(value, members)
+  if (parts) return <Person parts={parts} />
+  return <Value>{value ?? '—'}</Value>
+}
+export function SignContent({ content, ws }: { content: Content; ws?: string }) {
+  const members = useWorkspaceMembers(ws)
+  // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
+  const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
   return <div className="max-h-[38vh] space-y-4 overflow-auto text-[13px] [overflow-wrap:anywhere]">
     {content.ticket && <div>
       <p><Raw>{content.ticket.key}</Raw> · …<Raw>{content.ticket.uid_tail}</Raw></p>
@@ -60,12 +87,12 @@ export function SignContent({ content }: { content: Content }) {
     {content.sections?.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Raw>{s.title}</Raw></h3><Value block>{s.text}</Value></section>)}
     {!!content.acceptance?.length && <section><h3 className="text-text-muted">Acceptance criteria</h3><ul className="space-y-1">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Raw>{a.id}</Raw> · <Value>{a.text}</Value></li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="text-text-muted">Plan tasks</h3><ol className="list-decimal space-y-2 pl-5">{content.tasks.map(t => <li key={t.n} value={t.n}><Raw>{t.id}</Raw> · <Value>{t.title}</Value>{t.verify?.map((v,i) => <p key={i} className="font-mono text-[12px]">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
-    {!!content.fields_changed?.length && <section><h3 className="text-text-muted">Changed fields</h3>{content.fields_changed.map(f => <p key={f.field}><Raw>{f.field}</Raw>: <Value>{shown(f.before) ?? '—'}</Value>{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → <Value>{shown(f.after) ?? '—'}</Value></p>)}</section>}
+    {!!content.fields_changed?.length && <section><h3 className="text-text-muted">Changed fields</h3>{content.fields_changed.map(f => <p key={f.field}><Raw>{f.field}</Raw>: <Shown value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → <Shown value={f.after} members={members} /></p>)}</section>}
     {[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i}><Value>{note}</Value></p>)}
-    {(content.ticket?.key_note || named.length > 0) && <details className="text-[12px] text-text-muted">
+    {(content.ticket?.key_note || ids.length > 0) && <details className="text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details: ids and keys</summary>
       {content.ticket?.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
-      {[...new Set(named)].map(id => <p key={id}><Raw>{personLabel(id, members)!.text}</Raw> = <Raw>{id}</Raw></p>)}
+      {ids.map(id => <p key={id}><Person parts={personLabel(id, members)!} /> = <Raw>{id}</Raw></p>)}
     </details>}
   </div>
 }

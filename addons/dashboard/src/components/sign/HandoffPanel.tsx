@@ -194,14 +194,14 @@ export function CommandLine({ code }: { code: string }) {
 }
 
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
-export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
+export function HandoffPanel({ request, workspace = null, ws }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null; /** The request's workspace id: whose members name the people in the content. */ ws?: string }) {
   const remaining = useRemaining(request.expires_at)
   const { material } = request
   const word = material.ticket ? confirmWord(material.ticket.key, material.ticket.uid) : workspaceConfirmWord(request, workspace)
   const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">
-      {request.content && <SignContent content={request.content} />}
+      {request.content && <SignContent content={request.content} ws={ws} />}
       <p className="text-[13px] text-text">
         Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
       </p>

@@ -333,7 +333,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
               </p>
             )}
-            <HandoffPanel request={run.request} workspace={here ?? null} />
+            <HandoffPanel request={run.request} workspace={here ?? null} ws={p.ws} />
           </>
         )}
 

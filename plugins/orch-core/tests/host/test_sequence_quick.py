@@ -320,6 +320,16 @@ def test_one_click_signs_the_whole_quick_task(click, served, human):  # noqa: F8
     assert got["gates"]["plan"]["state"] == "approved" and got["doc"]["labels"] == ["quick"]
 
 
+def test_a_grant_sequence_is_refused_by_the_click_when_a_step_other_than_the_last_would_be_a_grant(
+    click, served, human
+):  # noqa: F811
+    from orch.host import sequence
+
+    intent = sequence.validate_intent(quick(agent={"hours": 8, "scope": "workable"}))
+    kinds = [s["kind"] for s in sequence.steps(intent)]
+    assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
+
+
 def test_a_grant_needs_the_typed_word_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
     from tests.host.test_click import refused
 
@@ -444,3 +454,57 @@ def test_the_cli_builds_the_same_intent_as_the_form():
         quickstart.build_intent(quickstart._parser().parse_args(["T", "--check", "cmd only"]))
     with pytest.raises(HostError):
         quickstart.build_intent(quickstart._parser().parse_args(["bad\nline"]))
+
+
+# --- `orch quick start` against a real test registry and host ----------------------------------------------------
+
+
+def test_orch_quick_start_runs_the_whole_sequence_against_a_real_registry(human, served, monkeypatch, tmp_path):
+    import io
+    import json
+
+    from orch.cli.main import main
+    from tests.host.test_handoff import Cli, CliBackend
+
+    class Unlocking(CliBackend):  # one passphrase for the batch, like the real passphrase backend
+        opened = 0
+
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            import contextlib
+
+            Unlocking.opened += 1
+
+            @contextlib.contextmanager
+            def cm():
+                yield lambda payload: human.person.dk_sign(payload)
+
+            return cm()
+
+    cli = Cli(human, served, monkeypatch, backend=Unlocking(human.person))
+    out, errs = io.StringIO(), io.StringIO()
+    argv = [
+        "quick", "start", "Fix the typo", "--details", "It says teh.", "--step", "Typo gone", "--check", "true",
+        "--state", str(served.lab.state), "--run", str(served.lab.run), "--json",
+    ]  # fmt: skip
+    rc = main(argv, env={"HOME": str(served.lab.tmp)}, stdout=out, stderr=errs)
+    assert rc == 0, (out.getvalue(), errs.getvalue())
+    res = json.loads(out.getvalue())["result"]
+    assert res["steps"] == 8 and Unlocking.opened == 1 and len(cli.shown.words) == 1
+    got = doc(human, res["key"])
+    assert got["doc"]["labels"] == ["quick"] and got["gates"]["plan"]["state"] == "approved"
+    assert "Quick task: do these steps in order" in cli.shown.plain[0]
+
+
+def test_orch_quick_start_is_a_persons_command(monkeypatch, tmp_path):
+    import io
+
+    from orch.cli.main import main
+
+    out, errs = io.StringIO(), io.StringIO()
+    rc = main(
+        ["quick", "start", "T", "--state", str(tmp_path), "--json"],
+        env={"ORCH_GRANT": "gr_x.y", "HOME": str(tmp_path)},
+        stdout=out,
+        stderr=errs,
+    )
+    assert rc != 0 and "human_only" in out.getvalue()

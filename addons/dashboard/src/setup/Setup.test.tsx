@@ -90,6 +90,7 @@ function fake(
     done?: boolean
     click?: boolean
     relayUnavailable?: boolean
+    complete?: boolean
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -104,7 +105,8 @@ function fake(
         ...(options.stateError ? {phase: 'failed', error: {code: 'demo.failure', message: 'Runner could not connect'}} : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
         mode: options.finish ? 'finish' : 'new',
-        missing: options.finish ? ['addon:worktrees', 'runner_grant'] : [],
+        missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
+        ...(options.complete ? { complete: true } : {}),
         ...(options.finish ? { current } : {}),
       }
     if (path === 'secrets/reveal')
@@ -118,6 +120,16 @@ function fake(
     if (path === 'review')
       result = {
         ...review,
+        ...(options.finish
+          ? {}
+          : {
+              workspace: {
+                prefix: 'RA',
+                name: 'Severin',
+                dir: '/demo/orch-run2-a',
+                lines: ['Workspace RA for Severin', 'Short name: RA', 'Person: Severin', 'Folder: /demo/orch-run2-a'],
+              },
+            }),
         tty_confirm: !!options.finish,
         ...(options.agents ? { typed_word: 'AGENTS' } : {}),
         ...(options.typed
@@ -799,4 +811,61 @@ test('finish offers no runner grant when the workspace agent time is below the s
   render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Finish setup in project' })
   expect(screen.queryByLabelText(/Agent access for this Mac.s runner/)).toBeNull()
+})
+
+test('N7: the review names the workspace from what core returned, not from the typed values', async () => {
+  const f = fake()
+  const { container } = render(<Setup api={f.api} />)
+  await reveal()
+  // the page's own profile says Demo/TST; the review shows what core's review holds
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const box = container.querySelector('.review-workspace')!
+  expect(box).toHaveTextContent('Workspace RA for Severin')
+  expect(box).toHaveTextContent('Short name')
+  expect(box).toHaveTextContent('/demo/orch-run2-a')
+  expect(box.textContent).not.toContain('Demo')
+})
+
+test('N9: finish on a complete workspace says Setup is complete and opens the dashboard', async () => {
+  const f = fake({ finish: true, complete: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Setup is complete' })
+  expect(screen.queryByRole('button', { name: 'Continue →' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Finish setup later' })).toBeNull()
+  expect(screen.queryByText(/paused/i)).toBeNull()
+  expect(screen.getByRole('button', { name: 'Open dashboard →' })).toBeEnabled()
+})
+
+test('N8: leaving the page after ready tells the setup it is finished', async () => {
+  const f = fake({ done: true })
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  const before = f.calls.filter((c) => c.path === 'finish').length
+  window.dispatchEvent(new Event('pagehide'))
+  expect(f.calls.filter((c) => c.path === 'finish').length).toBe(before + 1)
+})
+
+test('N14: a failed step is shown with its reason in full', async () => {
+  const msg = 'one-click could not be set up because macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again'
+  const f = fake({ failure: true })
+  const orig = f.fetcher.getMockImplementation()!
+  f.fetcher.mockImplementation(async (u, i) => {
+    const r = await orig(u, i)
+    if (String(u).includes('progress')) {
+      const b = await r.json()
+      return new Response(JSON.stringify({ ...b, error: { ...b.error, message: msg } }))
+    }
+    return r
+  })
+  const { container } = render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await waitFor(() => expect(container.textContent).toContain(msg))
 })

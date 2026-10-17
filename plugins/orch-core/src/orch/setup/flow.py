@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets as _secrets
 import threading
 import time
@@ -460,15 +461,18 @@ def default_env(environ: Mapping[str, str]) -> Env:
     )
 
 
-USAGE = "usage: orch setup   (run it in the folder you want to make a workspace; it opens the setup page)\n"
+_LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
+USAGE = "usage: orch setup [--no-browser]   (run it in the folder you want to make a workspace; it opens the page)\n"
 
 
-def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
-    """Open the dashboard on ``/setup``. The launch code is NOT in the path or in any argument: it is in the 0600 file
-    ``<state>/setup/setup.code`` that the dashboard server reads and deletes, and claims with its own port. A missing
-    dashboard says how to install it (``find_entry_point`` writes the hint); a dashboard that fails to start says why
-    (its last error line, with any URL fragment removed so no one-time code is ever echoed)."""
-    import re
+def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> Any:
+    """Open the dashboard on ``/setup`` and show the same single-use link on the person's own terminal (/dev/tty,
+    never ``err``). The launch code is NOT in any argument or in the environment of a child: the launcher returns the
+    link over a pipe (``--emit-url-fd``, a number only) and opens the browser through its own 0600 redirect file. A
+    missing dashboard says how to install it; one that fails to start says why (its last error line, with any URL
+    fragment removed so no one-time code is ever echoed). Returns ``True`` (browser opened), ``"link"`` (the link was
+    shown but no browser opened) or ``False``."""
+    import os
     import subprocess
 
     from orch.cli.dashboard import find_entry_point
@@ -476,25 +480,50 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) 
     cmd = find_entry_point(environ, err)
     if cmd is None:
         return False
+    read_fd, write_fd = os.pipe()
     try:
-        res = subprocess.run(
-            [*cmd, "open", "/setup"],
-            env=dict(environ),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        err.write(f"orch setup: the dashboard did not start ({type(exc).__name__})\n")
+        try:
+            res = subprocess.run(
+                [*cmd, "open", "/setup", "--emit-url-fd", str(write_fd), *(["--no-browser"] if no_browser else [])],
+                env=dict(environ),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+                check=False,
+                pass_fds=(write_fd,),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            err.write(f"orch setup: the dashboard did not start ({type(exc).__name__})\n")
+            return False
+        finally:
+            os.close(write_fd)
+        if res.returncode != 0:
+            text = (res.stderr or b"").decode("utf-8", "replace") + (res.stdout or b"").decode("utf-8", "replace")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            last = re.sub(r"#\S*", "#…", lines[-1])[:300] if lines else f"exit {res.returncode}"
+            err.write(f"orch setup: the dashboard did not start: {last}\n")
+            return False
+        with os.fdopen(read_fd, "rb", closefd=False) as pipe:
+            raw = pipe.read(4097).decode("utf-8", "replace").split("\n")
+    finally:
+        os.close(read_fd)
+    line = raw[0].strip()
+    browser_opened = "no-browser" not in [x.strip() for x in raw[1:]]
+    if not _LINK.fullmatch(line):
+        err.write("orch setup: the dashboard returned no usable link\n")
         return False
-    if res.returncode != 0:
-        text = (res.stderr or b"").decode("utf-8", "replace") + (res.stdout or b"").decode("utf-8", "replace")
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        last = re.sub(r"#\S*", "#…", lines[-1])[:300] if lines else f"exit {res.returncode}"
-        err.write(f"orch setup: the dashboard did not start: {last}\n")
-        return False
-    return True
+    # The link carries the single-use code, so it goes to the person's own terminal (/dev/tty) and nowhere else: not
+    # ``err`` or stdout, which can be redirected into a file or a CI log (``orch setup 2>log``).
+    from orch.custody import NoPrompt
+    from orch.ops import workspace_init as wi
+
+    lead = "If no browser opened, use this link" if browser_opened else "Open this link in your browser"
+    try:
+        wi.TERMINAL.show(f"{lead} (single use, 5 minutes): {line}\n")
+    except (NoPrompt, OSError):
+        err.write("orch setup: cannot show the link here; run orch setup in your own terminal\n")
+        return True if browser_opened else False
+    return True if browser_opened else "link"
 
 
 def main(
@@ -519,7 +548,8 @@ def main(
     from .server import SetupServer
     from .steps import set_no_core_dumps
 
-    if argv:
+    no_browser = argv == ["--no-browser"]
+    if argv and not no_browser:
         err.write(USAGE)
         return 2
     if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
@@ -550,8 +580,12 @@ def main(
     err.write(
         f"orch setup: {flow.dir} ({'finishing an existing workspace' if flow.mode == 'finish' else 'new workspace'})\n"
     )
-    if (open_browser or _open_browser)(env, err, launch):
+    opener = open_browser or _open_browser
+    opened = opener(env, err, launch, no_browser=True) if no_browser else opener(env, err, launch)
+    if opened is True:
         err.write("orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n")
+    elif opened:
+        err.write("orch setup: no browser was opened; use the link above (Ctrl-C cancels)\n")
     else:
         err.write("orch setup: could not open the setup page (see above); fix that and run orch setup again\n")
         server.stop()

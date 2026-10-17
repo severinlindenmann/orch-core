@@ -12915,12 +12915,13 @@ or `ORCH_SESSION` and without `/dev/tty`; it runs `host enable` once if no host 
 sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page is finished, cancelled or Ctrl-C.
 
 * **Wire** (`protocol.py`, `server.py`): HTTP/1.1 over the unix socket. Browser routes are `/api/setup/*` only (the dashboard
-  proxies them); `/launch`, `/claim`, `/shutdown` have no such prefix. The launch code is single use, 30 s, bound to the
+  proxies them); `/launch`, `/claim`, `/shutdown` have no such prefix. The launch code is single use, 5 min (login links stay 30 s), bound to the
   `setup_id`; it never travels in a URL or an argument: it is a 0600 file `<state>/setup/setup.code` that the dashboard server reads
   and deletes, and claims over the socket together with its own port (`POST /claim {code, port}`); the first claim wins, a
   second one is refused and printed, and the browser is bound to that port (no browser request is answered before it). Every browser call checks `X-Setup-Token`,
   the `Host` header (127.0.0.1 or localhost, the claimed port) and, on a POST, `Origin == http://<Host>`
   and a JSON content type. The session dies on done, cancel or 10 minutes idle, never during a run.
+* **Link** (17 Oct): `orch setup` also shows the one-time link (`http://127.0.0.1:<port>/#launch=...&to=%2Fsetup`) on `/dev/tty` only, never stderr/stdout, and opens the browser through the launcher's 0600 redirect file; the launcher hands the link over an inherited pipe (`--emit-url-fd`), so the code is in no argv or environment. `orch setup --no-browser` shows the link only; over SSH or screen sharing the link is on your terminal, so anyone who sees the screen within 5 minutes could use it first.
 * **Profile** (`flow.py`, `facts.py`): a closed schema; refused directories are `$HOME`, its ancestors, `/`, the state and config
   directories, symbolic-link paths and directories holding store files; a registered directory is Finish setup. R5: method
   `click` with `relay` is `click_relay_unsupported`.

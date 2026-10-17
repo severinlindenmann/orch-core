@@ -70,10 +70,18 @@ def test_claim_is_single_use_and_second_browser_refused(srv):
     assert any("second browser" in x for x in srv.events)
 
 
-def test_code_expires_after_30_seconds(srv):
+def test_code_is_alive_at_299_seconds_and_single_use(srv):
+    path = str(srv.path)
+    _, alive, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    srv.clock_obj.t += 299
+    assert call(path, "POST", "/claim", {"code": alive["code"], "port": 8765})[0] == 200
+    assert call(path, "POST", "/claim", {"code": alive["code"], "port": 8765})[0] == 409  # single use
+
+
+def test_code_expires_after_5_minutes(srv):
     path = str(srv.path)
     _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
-    srv.clock_obj.t += 31
+    srv.clock_obj.t += 301
     st, e, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 403 and e["error"]["code"] == "setup.code_invalid"
 
@@ -172,7 +180,7 @@ def test_the_code_goes_to_a_0600_file_not_a_url(srv):
 def test_code_file_is_removed_on_expiry_wrong_tries_stop_and_a_new_launch(srv):
     path = str(srv.path)
     call(path, "POST", "/launch", {"dir": srv.workdir})
-    srv.clock_obj.t += 31
+    srv.clock_obj.t += 301
     srv.check_idle()
     assert not srv.code_path.exists()
     call(path, "POST", "/launch", {"dir": srv.workdir})
@@ -205,20 +213,109 @@ def test_a_launch_that_named_a_port_only_claims_with_that_port(srv):
     assert call(path, "POST", "/claim", {"code": out["code"], "port": 9000})[0] == 200
 
 
-def test_the_opener_puts_no_code_in_the_path_or_the_arguments(monkeypatch):
+def _tty(monkeypatch):
+    from orch.ops import workspace_init as wi
+
+    shown: list[str] = []
+    monkeypatch.setattr(wi.TERMINAL, "show", shown.append)
+    return shown
+
+
+CODE = "SECRETCODE0123456789abcdefgh"
+URL = f"http://127.0.0.1:8123/#launch={CODE}&to=%2Fsetup"
+
+
+def _fake_run(seen, url, rc=0, extra=b"", stderr=b""):
+    import os
+    import subprocess
+
+    def run(argv, **kw):
+        seen.setdefault("calls", []).append((argv, kw.get("env")))
+        fd = int(argv[argv.index("--emit-url-fd") + 1])
+        assert kw["pass_fds"] == (fd,)
+        if rc == 0:
+            os.write(fd, (url + "\n").encode() + extra)
+        return subprocess.CompletedProcess(argv, rc, stdout=b"", stderr=stderr)
+
+    return run
+
+
+def _setup(monkeypatch, run):
+    import io
     import subprocess
 
     from orch.cli import dashboard as dash
+
+    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    monkeypatch.setattr(subprocess, "run", run)
+    return io.StringIO(), _tty(monkeypatch)
+
+
+def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monkeypatch):
     from orch.setup import flow as flow_mod
 
     seen = {}
-    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL))
+    assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": CODE}) is True
+    assert err.getvalue() == ""  # the code never reaches stderr/stdout
+    ((argv, env),) = seen["calls"]
+    assert argv[:3] == ["orch-dashboard", "open", "/setup"] and "--no-browser" not in argv
+    assert CODE not in repr(argv) and CODE not in repr(env)
+    lines = "".join(tty).splitlines()
+    assert lines == [f"If no browser opened, use this link (single use, 5 minutes): {URL}"]
+    assert "#launch=" in lines[0] and "?" not in lines[0]
 
-    def run(argv, **kw):
-        seen["argv"], seen["env"] = argv, kw.get("env")
-        return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr(subprocess, "run", run)
-    assert flow_mod._open_browser({"PATH": "/usr/bin"}, None, {"setup_id": "su_1", "code": "SECRETCODE"})
-    assert seen["argv"] == ["orch-dashboard", "open", "/setup"]
-    assert "SECRETCODE" not in repr(seen)
+def test_no_browser_passes_the_flag_and_always_prints_the_link(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    seen = {}
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"))
+    assert flow_mod._open_browser({}, err, {}, no_browser=True) == "link"
+    assert "--no-browser" in seen["calls"][0][0] and CODE not in repr(seen["calls"][0][0])
+    assert "".join(tty).startswith("Open this link in your browser (single use, 5 minutes): ") and err.getvalue() == ""
+
+
+def test_a_failed_browser_open_is_reported_apart_from_a_success(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    err, tty = _setup(monkeypatch, _fake_run({}, URL, extra=b"no-browser\n"))
+    assert flow_mod._open_browser({}, err, {}) == "link"
+    assert "Open this link" in "".join(tty)
+
+
+def test_without_a_writable_terminal_no_link_is_shown_anywhere(monkeypatch):
+    from orch.custody import NoPrompt
+    from orch.ops import workspace_init as wi
+    from orch.setup import flow as flow_mod
+
+    err, _ = _setup(monkeypatch, _fake_run({}, URL, extra=b"no-browser\n"))
+
+    def broken(text):
+        raise NoPrompt("no controlling terminal")
+
+    monkeypatch.setattr(wi.TERMINAL, "show", broken)
+    assert flow_mod._open_browser({}, err, {}, no_browser=True) is False
+    assert CODE not in err.getvalue() and "your own terminal" in err.getvalue()
+
+
+def test_a_failing_launcher_tail_never_contains_the_code(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    noisy = f"boom http://127.0.0.1:8123/#launch={CODE}&to=%2Fsetup".encode()
+    err, tty = _setup(monkeypatch, _fake_run({}, URL, rc=1, stderr=noisy))
+    assert flow_mod._open_browser({}, err, {}) is False
+    assert "did not start" in err.getvalue() and CODE not in err.getvalue() and tty == []
+
+
+def test_a_bad_line_from_the_launcher_prints_nothing(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    for bad in (
+        "http://127.0.0.1:1/?launch=x#launch=" + CODE + "&to=%2Fsetup",
+        "http://evil.example/#launch=" + CODE + "&to=%2Fsetup",
+        "http://127.0.0.1:8123/#launch=short&to=%2Fsetup",
+        URL + "\x1b[2J",
+    ):
+        err, tty = _setup(monkeypatch, _fake_run({}, bad))
+        assert flow_mod._open_browser({}, err, {}) is False and CODE not in err.getvalue() and tty == []

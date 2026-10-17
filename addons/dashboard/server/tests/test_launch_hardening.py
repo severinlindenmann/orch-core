@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 import orch_dashboard.__main__ as launcher
-from orch_dashboard.auth import CODE_TTL, Auth
+from orch_dashboard.auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from orch_dashboard.hostlink import encode
 
 PORT = 43210
@@ -158,7 +158,7 @@ def test_no_browser_leaves_no_file(tmp_path, monkeypatch):
     assert not list((tmp_path / "dashboard").glob("launch-*.html"))
 
 
-def test_the_startup_sweep_uses_the_code_lifetime(tmp_path):
+def test_the_startup_sweep_uses_the_longest_code_lifetime(tmp_path):
     import os
 
     directory = tmp_path / "d"
@@ -167,8 +167,8 @@ def test_the_startup_sweep_uses_the_code_lifetime(tmp_path):
     for p in (old, young):
         p.write_text("x")
     now = 1_000_000.0
-    os.utime(old, (now - CODE_TTL, now - CODE_TTL))
-    os.utime(young, (now - CODE_TTL + 1, now - CODE_TTL + 1))
+    os.utime(old, (now - SETUP_CODE_TTL, now - SETUP_CODE_TTL))
+    os.utime(young, (now - SETUP_CODE_TTL + 1, now - SETUP_CODE_TTL + 1))
     launcher.sweep_redirects(directory, now=now)
     assert not old.exists() and young.exists()
 

@@ -28,10 +28,10 @@ def test_a_legacy_opener_fails_closed_after_the_store_moved(tmp_path: Path) -> N
     s.close()
     s = env.open()
     _move_into_dot_orch(env.root)
-    with pytest.raises(StoreError, match="layout changed"):
+    with pytest.raises(StoreError, match=r"layout changed|\.state is gone"):
         with s.locked():
             pass
-    with pytest.raises(StoreError, match="layout changed"):
+    with pytest.raises(StoreError, match=r"layout changed|\.state is gone"):
         s.append(env.person_event(env.owner, "workspace", "settings.changed", set={"x": 1}), log="workspace")
     s.close()
 
@@ -83,4 +83,37 @@ def test_a_new_workspace_without_a_config_yet_keeps_its_opened_layout(tmp_path: 
     s = env.open()  # no genesis yet: nothing resolves; this is not a layout change
     with s.locked():
         pass
+    s.close()
+
+
+def test_a_legacy_opener_with_a_genesis_refuses_when_config_json_is_deleted_or_invalid(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    env.bootstrap().close()
+    cfg = env.root / "config.json"
+    good = cfg.read_bytes()
+    for mutate in (
+        lambda: cfg.unlink(),
+        lambda: cfg.write_text("{not json"),
+        lambda: cfg.write_bytes(b"x" * (2 << 20)),
+    ):
+        cfg.write_bytes(good)
+        s = env.open()
+        mutate()
+        with pytest.raises(StoreError, match="config.json is gone or unreadable"):
+            with s.locked():
+                pass
+        s.close()
+        cfg.unlink(missing_ok=True)
+    cfg.write_bytes(good)
+
+
+def test_a_stale_legacy_opener_never_recreates_state_in_the_root(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    env.bootstrap().close()
+    s = env.open()
+    _move_into_dot_orch(env.root)
+    with pytest.raises(StoreError):
+        with s.locked():
+            pass
+    assert sorted(p.name for p in env.root.iterdir()) == [".orch"]  # no .state, no events, nothing re-created
     s.close()

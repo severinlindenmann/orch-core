@@ -87,7 +87,11 @@ def _lock_opener(fs: RootFS) -> Callable[[], int]:
     def opener() -> int:
         fs.revalidate()
         try:
-            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+            # no parents=True: .state is made when the store is opened; a stale opener (after a migrate moved the
+            # store) must never re-create ``.state`` in a root that is no longer the store
+            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600)
+        except FileNotFoundError:
+            raise StoreError("validation.path", ".state is gone; the store was moved or removed") from None
         except (NotRegularFile, IsADirectoryError):
             raise StoreError("validation.path", ".state/lock is not a regular file") from None
 
@@ -147,10 +151,17 @@ def open_store_fs(
                         "validation.path",
                         f"{_layout.STORE_DIR} already exists and is not an orch store; it is not used or replaced",
                     ) from None
-                sfd = _layout.open_store_dir(pfs.fd)
-                if sfd is not None:
-                    st = os.fstat(sfd)
-                    created = (st.st_dev, st.st_ino)
+                try:
+                    sfd = _layout.open_store_dir(pfs.fd)
+                    if sfd is not None:
+                        st = os.fstat(sfd)
+                        created = (st.st_dev, st.st_ino)
+                    else:
+                        raise LayoutError(f"{_layout.STORE_DIR} cannot be opened")
+                except BaseException:
+                    with contextlib.suppress(OSError):  # this call made it and failed: nothing is left behind
+                        os.rmdir(_layout.STORE_DIR, dir_fd=pfs.fd)
+                    raise
             else:
                 sfd = _layout.open_store_dir(pfs.fd)
         except LayoutError as exc:
@@ -349,6 +360,8 @@ class Store:
         #: project (the directory agents work in) and store (``root``); the same directory in the legacy layout. There
         #: is no default: :meth:`open` resolves it from the directory (``orch.layout.resolve``).
         self.layout = layout
+        #: a ``config.json`` was seen by the layout check: its later absence refuses (``_resolve_checked``)
+        self._config_seen = False
         #: ``(st_dev, st_ino)`` of the ``.orch`` directory the open that built this store made (``None``: none)
         self.created_store: tuple[int, int] | None = None
         #: the pinned root (#516): every file under the workspace is reached through it, never by path
@@ -1294,6 +1307,13 @@ class Store:
             found = _layout.resolve(pfd, self.layout.project)
         except LayoutError as exc:
             raise StoreError("validation.path", str(exc)) from None
+        if found is not None:
+            self._config_seen = True
+        elif self._config_seen:
+            # once this store has seen its config.json (or opened with one), a missing one is a migrate window, a
+            # deleted, invalid, oversized or FIFO file, never "no config yet": fail closed, never write into a root that
+            # is no longer a store. Only a store opened before any config existed keeps its layout.
+            raise StoreError("validation.path", "the workspace's config.json is gone or unreadable; nothing is written")
         if found is not None and found.legacy != self.layout.legacy:
             raise StoreError("validation.path", "the store layout changed since it was opened; run the command again")
         if self.layout.legacy:

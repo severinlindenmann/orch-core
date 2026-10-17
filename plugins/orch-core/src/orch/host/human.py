@@ -932,6 +932,17 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log != "workspace" and store.log_head(log) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+            if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
+                convenience.check(service, record["person"], events[0]["actor"]["device"])
+            # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
+            # however long ago the request was prepared
+            convenience.refuse_reader_op(
+                service,
+                record["op"],
+                history=True,
+                events=record["prepared"]["events"],
+                readers=record.get("readers") or [],
+            )
             with contextlib.ExitStack() as stack:
                 if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
                     # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes

@@ -343,3 +343,76 @@ def test_without_dashboard_execution_a_grant_sequence_is_the_terminals(click, se
     with pytest.raises(Exception, match="terminal|click"):
         click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     del refused
+
+
+# --- §0.8.6 at submit: the convenience condition is checked AGAIN, under the lock, before the events are judged ----------
+
+
+def _convenience_signer(human):
+    return {"device": human.person.device, "auth": "convenience"}
+
+
+def _sign_convenience(human, prepared):
+    backend = human_helpers.KeyBackend(human.person, auth="convenience")
+    signer.check(
+        prepared,
+        workspace_id=human.served.wid,
+        person=human.person.ref,
+        device=human.person.device,
+        auth="convenience",
+    )
+    return signer.sign(prepared, backend=backend, key_id="dk", workspace_id=human.served.wid)
+
+
+def test_a_single_op_is_refused_at_submit_when_convenience_was_turned_off_after_prepare(human, served):
+    from orch.host import convenience
+    from tests.host.lifecycle_helpers import UID
+
+    key = human.agent("new", {"title": "x", "type": "chore"})["key"]
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    p = human.prepare("log", {"ref": key, "message": "note"}, signer=_convenience_signer(human))
+    signed = _sign_convenience(human, p)
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)  # between prepare and submit
+    res = human.submit_res(p["request"]["id"], signed.events)
+    assert res["ok"] is False and res["error"]["code"] == "sign.convenience_unavailable"
+    assert doc(human, key)["log"][-1]["type"] != "log.added"  # nothing landed
+
+
+def test_a_quick_sequence_step_is_refused_at_submit_when_convenience_was_turned_off(human, served, tmp_path):
+    from orch.host import convenience
+    from tests.host.lifecycle_helpers import UID
+
+    rig = Rig(human, tmp_path, quick())
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    op, args = sequence.step_args(rig.intent, 0, None)
+    first = ok(
+        human.c.req(
+            "human.prepare",
+            {"op": op, "args": args, "signer": _convenience_signer(human), "sequence": rig.meta0()},
+        )
+    )["data"]
+    ok(human.submit_res(first["request"]["id"], _sign_convenience(human, first).events))
+    key = first["material"]["ticket"]["key"]
+    op, args = sequence.step_args(rig.intent, 1, key)
+    meta = {
+        "step": 1,
+        "of": len(sequence.steps(rig.intent)),
+        "digest": rig.meta0()["digest"],
+        "prev": _last_id(human, key),
+        "ticket": key,
+    }
+    p = ok(
+        human.c.req("human.prepare", {"op": op, "args": args, "signer": _convenience_signer(human), "sequence": meta})
+    )["data"]
+    signed = _sign_convenience(human, p)
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)  # between prepare and submit of THIS step
+    res = human.submit_res(p["request"]["id"], signed.events)
+    assert res["ok"] is False and res["error"]["code"] == "sign.convenience_unavailable"
+    assert doc(human, key)["doc"]["labels"] == []  # the label step did not land
+
+
+def _last_id(human, key):
+    store = human.served.service.store
+    store.refresh()
+    uid = store.ticket(key).uid
+    return store.events(uid)[-1]["id"]

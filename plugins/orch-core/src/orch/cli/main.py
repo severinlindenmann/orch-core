@@ -288,6 +288,10 @@ def main(
         from orch.host.handoff import main as sign_main
 
         return sign_main(args[1:], env=env, out=out, err=err)
+    if args[:2] == ["quick", "start"]:  # B11 step (ii): a person's quick task on one review (a host client, like sign)
+        from orch.host.quickstart import main as start_main
+
+        return start_main(args[2:], env=env, out=out, err=err)
     if args[:2] == ["quick", "add"]:
         # H11f: the composite (new, then set labels=quick); `quick list` is a registry read like any other
         def step(argv: list[str], step_out: TextIO, step_err: TextIO) -> int:

@@ -19,8 +19,8 @@ export const TERMINAL_COMMANDS = {
   pushInitial: 'orch records push --initial',
 } as const
 
-/** Quick adds by a person are two signatures until host contract 9 item 12 lands: said in the UI. */
-export const TWO_SIGNATURES = 'Adding a quick task is two signatures for now: the new task, then its quick label.'
+/** Starting a quick task is ONE review and ONE confirmation (B11): said in the UI, in plain words. */
+export const ONE_SIGNATURE = 'One signature starts the task: it creates it, approves its requirements and plan, and only if you tick the box lets agents work. You still give the final verdict.'
 export const QUICK_LABEL = 'quick'
 
 export interface QuickCounts {

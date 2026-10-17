@@ -117,6 +117,7 @@ def check_append_code(sc: dict[str, Any], st: Any, step: dict[str, Any], where: 
     event = copy.deepcopy(step["event"])
     with TemporaryDirectory() as tmp, pytest.MonkeyPatch.context() as patch:
         root = Path(tmp)
+        (root / "workspace").mkdir()
         with closing(
             Store.open(
                 root / "workspace",

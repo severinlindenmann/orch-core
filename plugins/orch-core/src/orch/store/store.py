@@ -72,7 +72,7 @@ from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_l
 from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
-from .rootfs import RootFS
+from .rootfs import RootFS, remove_made_dir
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
@@ -190,6 +190,9 @@ RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (6
 RELAY_CACHE_BYTES = 16 << 20  # the one cached branch, raw digests (64 bytes a head: about 262 000 heads at most)
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
 _MAX_LABEL_SEALED = 1024  # b64u characters of a forwarded certificate's sealed label
 _ITEM_KEYS = frozenset(
@@ -482,7 +485,7 @@ class Store:
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         project = Path(path)
-        fs, layout, created = open_store_fs(project, ident, store_pin, create=create, make_project=True)
+        fs, layout, created = open_store_fs(project, ident, store_pin, create=create, make_project=create)
         root = layout.store
         try:
             store = cls(
@@ -503,6 +506,8 @@ class Store:
             store._open(load == "all", config)
         except BaseException:
             fs.close()
+            if created is not None:  # this open made .orch and failed: it leaves nothing behind
+                remove_made_dir(project, _layout.STORE_DIR, created)
             raise
         return store
 
@@ -532,6 +537,7 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._guard(), self._lock:
+            self._check_layout()
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
@@ -1258,9 +1264,54 @@ class Store:
 
     # ------------------------------------------------------------------ locking, sync, recovery
 
+    def _check_layout(self) -> None:
+        """Under the guard and the lock, on every transaction: the store this object has open is still the store of its
+        project. ``orch.layout.resolve`` runs afresh below the project and must find the layout this store was opened
+        with, and (new layout) the ``.orch`` it names must be the very directory pinned (same ``st_dev``/``st_ino``).
+        The legacy layout is resolved below the PINNED root fd (the project is the store; a project path swapped
+        later is no concern of a pinned fd), the new one below the project opened afresh by path (``O_NOFOLLOW``).
+        A migrate that moved the store (it holds ``owner.lock`` exclusively, which a direct-mode guard waits for),
+        a swapped ``.orch`` or a store that vanished fails closed with ``validation.path``: a stale opener never writes to a store
+        that is no longer where it was. A workspace whose ``config.json`` is not written yet (genesis in progress)
+        resolves to nothing and keeps the layout it was opened with."""
+        if self.layout.legacy:
+            self._resolve_checked(self.fs.fd)
+            return
+        try:
+            pfd = os.open(self.layout.project, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC)
+        except OSError as exc:
+            raise StoreError("validation.path", f"the project directory cannot be opened ({exc.strerror})") from None
+        try:
+            self._resolve_checked(pfd)
+        finally:
+            os.close(pfd)
+
+    def _resolve_checked(self, pfd: int) -> None:
+        try:
+            found = _layout.resolve(pfd, self.layout.project)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if found is not None and found.legacy != self.layout.legacy:
+            raise StoreError("validation.path", "the store layout changed since it was opened; run the command again")
+        if self.layout.legacy:
+            return
+        try:
+            sfd = _layout.open_store_dir(pfd)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if sfd is None:
+            raise StoreError("validation.path", f"{_layout.STORE_DIR} is gone")
+        try:
+            now = os.fstat(sfd)
+        finally:
+            os.close(sfd)
+        if (now.st_dev, now.st_ino) != tuple(self.fs.ident):
+            raise StoreError("validation.path", "the store directory is no longer the one that was opened")
+
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._guard(), self._lock:
+            self._check_layout()
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()

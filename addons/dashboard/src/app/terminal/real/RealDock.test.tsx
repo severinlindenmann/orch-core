@@ -2,7 +2,7 @@
 // "Output no longer kept" without attaching.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { runsApi, type Run, type RunList, type TermPreview } from '@/api/runs'

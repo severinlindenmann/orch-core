@@ -225,7 +225,7 @@ def test_loading_css_is_served_as_css_with_the_csp(gateway, auth, tmp_path):
 
 
 def test_every_root_file_the_built_shell_references_is_served(client):
-    """B12A N6 / old 32: every root-level href/src of the built index.html must be a route (checked where the UI is built)."""
+    """B12A N6 / old 32: each root-level href/src of the built index.html is a route (needs the built UI)."""
     import re
     from pathlib import Path
 

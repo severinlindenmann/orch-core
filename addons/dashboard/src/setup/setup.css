@@ -324,3 +324,9 @@ body:has(> #root > .setup) {
   padding-left: 20px;
   color: var(--text-muted);
 }
+
+.setup .words bdi {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+}

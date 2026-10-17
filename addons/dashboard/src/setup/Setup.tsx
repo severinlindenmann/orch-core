@@ -38,6 +38,19 @@ function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
 }
+/** The three fingerprint words: each stays whole, lines break only between words. */
+function Words({ words }: { words: string[] | null }) {
+  return (
+    <span className="words">
+      {(words ?? []).map((w, i) => (
+        <span key={i}>
+          {i > 0 && ' '}
+          <Raw>{w}</Raw>
+        </span>
+      ))}
+    </span>
+  )
+}
 const steps = ['Welcome', 'You', 'Agents may', 'Approval', 'Secret words', 'Review']
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
@@ -620,7 +633,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>Then confirm in your terminal</h2>
+                  <h2>How to finish</h2>
                   <ol>
                     {review.typed_word && (
                       <li>
@@ -628,7 +641,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       </li>
                     )}
                     <li>
-                      Then the terminal that started setup shows three words. If they match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>,
+                      Then the terminal that started setup shows three words. If they match <Words words={review.fingerprint} />,
                       type yes there.
                     </li>
                   </ol>
@@ -679,7 +692,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
               <p>
-                Your terminal now asks you to confirm. If it shows <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>, type
+                Your terminal now asks you to confirm. If it shows <Words words={review.fingerprint} />, type
                 yes there.
               </p>
             )}

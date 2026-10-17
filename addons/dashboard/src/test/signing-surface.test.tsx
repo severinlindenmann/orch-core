@@ -884,7 +884,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
   fireEvent.click(screen.getByText('Show technical details'))
   expect(screen.getByText('Agents: 8 hours')).toBeVisible()
-  expect(screen.getByText('demo not real')).toBeVisible()
+  expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
   await waitFor(() => expect(posted).toEqual([{review_id:'demo-review',digest:'demo-bound-digest'}]))
 })

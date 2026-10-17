@@ -54,7 +54,20 @@ export interface Review {
   review_id: string
   digest: string
   fingerprint: string[] | null
-  items: { id: string; title: string; lines: string[]; details: string[]; volatile: string[]; note?: string }[]
+  items: {
+    id: string
+    title: string
+    lines: string[]
+    details: string[]
+    volatile: string[]
+    note?: string
+    /** The signed event's type and payload (core's own structure: the summary is built from these, never from prose). */
+    type?: string
+    fields?: Record<string, unknown>
+    /** Positions in `lines` / `details` that are values the host draws at signing (core says which; no text matching). */
+    placeholders?: number[]
+    placeholder_details?: number[]
+  }[]
   runner_grant: { hours: number; scope: string; holder: string } | null
   flags: { id: string; text: string }[]
   risk: { text: string; once: boolean } | null

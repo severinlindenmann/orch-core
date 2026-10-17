@@ -33,7 +33,40 @@ function clearClipboard() {
   void navigator.clipboard.writeText('').catch(() => {})
 }
 /** Hide the lines that carry no information for a person: blanks and values the host fills in at signing. */
-const shown = (line: string) => line.trim() !== '' && !/:\s*set at signing$/.test(line)
+const shown = (line: string) => line.trim() !== ''
+/** Lines of a review row without blanks and without the values the host fills in at signing: core names those by
+ * position (`placeholders`); a line is never hidden for how it ends. */
+const rowLines = (lines: string[], hidden: number[] | undefined) =>
+  lines.filter((line, i) => shown(line) && !(hidden ?? []).includes(i))
+/** The plain summary of what a review signs, from the review core returned and nothing else: the events' own fields,
+ * the runner grant, and core's flags. A kind this page does not know is shown by its title (and opens the technical
+ * details), never left out. */
+export function summarize(review: Review): { lines: string[]; unknown: boolean } {
+  const lines: string[] = []
+  let unknown = false
+  const addons: string[] = []
+  for (const item of review.items) {
+    const set = (item.fields?.set ?? {}) as Record<string, unknown>
+    if (item.type === 'addon.granted') addons.push(item.title)
+    else if (item.type === 'grant.issued' && review.runner_grant) continue // shown from review.runner_grant below
+    else if (
+      item.type === 'settings.changed' &&
+      Object.keys(set).every((k) => k === 'grant_hours' || k === 'sign_methods')
+    ) {
+      if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
+      if (Array.isArray(set.sign_methods))
+        lines.push(`Ways to approve allowed here: ${set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')}`)
+    } else {
+      unknown = true
+      lines.push(item.title)
+    }
+  }
+  if (review.runner_grant)
+    lines.push(`This Mac’s agent runner gets agent access for ${duration(review.runner_grant.hours)}`)
+  for (const f of review.flags) if (f.id === 'custody' || f.id === 'terminal') lines.push(f.text)
+  if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
+  return { lines, unknown }
+}
 function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
@@ -473,7 +506,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       (state?.mode === 'finish'
         ? review.items.some((i) => i.id === 'settings' && i.details.some((d) => d.includes('grant_hours')))
         : profile.agent_hours > 8))
-  const addonTitles = (review?.items ?? []).filter((i) => i.id.startsWith('addon:')).map((i) => i.title)
+  const summary = review ? summarize(review) : { lines: [], unknown: false }
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -789,25 +822,16 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <h2>You are about to approve</h2>
               <ul className="review-summary">
-                {(review.runner_grant || (state.mode === 'new' && access !== 'none')) && (
-                  <li>Agents may work for you for up to {duration(review.runner_grant?.hours ?? profile.agent_hours)}</li>
-                )}
-                {state.mode === 'new' && access === 'none' && <li>No agent access</li>}
-                <li>
-                  {profile.method === 'click'
-                    ? 'You approve in the terminal or with one click on this Mac'
-                    : 'You approve in the terminal'}
-                </li>
-                {addonTitles.length > 0 && (
-                  <li>
-                    Add-ons: <Inline>{addonTitles.join(', ')}</Inline>
+                {summary.lines.map((line, i) => (
+                  <li key={i}>
+                    <Inline>{line}</Inline>
                   </li>
-                )}
+                ))}
               </ul>
               {(review.risk || review.flags.some((f) => f.id === 'runner' || f.id === 'terminals')) && (
                 <div className="warning">
                   <p>
-                    {profile.method === 'click'
+                    {review.flags.some((f) => f.id === 'custody')
                       ? 'One-click approval and dashboard agents act as you on this Mac.'
                       : 'Dashboard agents act as you on this Mac.'}{' '}
                     Only continue on a computer you trust.
@@ -827,7 +851,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </details>
                 </div>
               )}
-              <details className="review-technical">
+              <details className="review-technical" open={summary.unknown || undefined}>
                 <summary>Show technical details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.items.map((item) => (
@@ -835,7 +859,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <h3>
                       <Raw>{item.title}</Raw>
                     </h3>
-                    {item.lines.filter(shown).map((line, i) => (
+                    {rowLines(item.lines, item.placeholders).map((line, i) => (
                       <p key={i}>
                         <Raw>{line}</Raw>
                       </p>
@@ -845,7 +869,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                         <Raw>{item.note}</Raw>
                       </p>
                     )}
-                    {item.details.filter(shown).map((line, i) => (
+                    {rowLines(item.details, item.placeholder_details).map((line, i) => (
                       <p key={`d${i}`}>
                         <Raw>{line}</Raw>
                       </p>

@@ -66,6 +66,10 @@ const review: Review = {
       lines: ['Agent access: 8 hours'],
       details: ['exact details'],
       volatile: ['set at signing'],
+      type: 'settings.changed',
+      fields: { set: { grant_hours: 24 } },
+      placeholders: [],
+      placeholder_details: [],
     },
   ],
   runner_grant: null,
@@ -241,8 +245,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('Agents may work for you for up to 3 days')).toBeInTheDocument()
-  expect(screen.queryByText(/runner gets agent access for/)).toBeNull()
+  expect(screen.getByText('This Mac’s agent runner gets agent access for 3 days')).toBeInTheDocument()
   expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
@@ -627,4 +630,111 @@ test('when the terminal setup ends the page notices within 2 seconds, clears the
   expect(container.textContent).not.toContain('demo-word-')
   expect(container.textContent).not.toContain('demo-not-a-real-passphrase')
   expect(screen.getByRole('alert')).toHaveTextContent('The setup in your terminal has ended')
+})
+
+function withReview(patch: Partial<Review>) {
+  const f = fake()
+  const fetcher: typeof fetch = async (url, init) => {
+    const res = await f.fetcher(url, init)
+    if (String(url).endsWith('/review')) return new Response(JSON.stringify({ ...(await res.json()), ...patch }))
+    return res
+  }
+  return { f, api: new SetupAPI('tok', fetcher) }
+}
+async function toReview() {
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+}
+
+test('the summary comes from the review core returned, not from the choices on the page', async () => {
+  // The page chose 3 days and one click; core's review says 1 day and a terminal flag: the summary says what core says.
+  const { api } = withReview({ flags: [{ id: 'terminal', text: 'Every approval asks for your passphrase in a terminal.' }] })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('Agents may work for you for up to 1 day')
+  expect(summary).not.toHaveTextContent('3 days')
+  expect(summary).toHaveTextContent('Every approval asks for your passphrase in a terminal.')
+})
+
+test('nothing about agents or approval is claimed when the review has none of it', async () => {
+  const { api } = withReview({ items: [], flags: [] })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '7 days' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).not.toHaveTextContent(/7 days|terminal|one click|Agents may/)
+})
+
+test('a review item of a kind this page does not know is named in the summary and opens the details', async () => {
+  const { api } = withReview({
+    items: [
+      { id: 'mystery', title: 'Something new to sign', lines: ['Do the new thing'], details: [], volatile: [], type: 'thing.done', fields: {}, placeholders: [], placeholder_details: [] },
+    ],
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Something new to sign')
+  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+  expect(screen.getByText('Do the new thing')).toBeInTheDocument()
+})
+
+test('a settings change this page does not know is named, not summarised away', async () => {
+  const { api } = withReview({
+    items: [
+      { id: 'settings', title: 'Workspace settings', lines: ['Change lease time'], details: [], volatile: [], type: 'settings.changed', fields: { set: { lease_ttl_min: 5 } }, placeholders: [], placeholder_details: [] },
+    ],
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Workspace settings')
+})
+
+test('only the lines core flags as placeholders are hidden; a line that merely ends in "set at signing" stays', async () => {
+  const { api } = withReview({
+    items: [
+      {
+        id: 'runner_grant',
+        title: 'Agent access held by this machine',
+        lines: ['Give agents access', 'from: set at signing', 'label: set at signing', '', 'grant id: set at signing'],
+        details: ['expires_at: set at signing', 'note: set at signing'],
+        volatile: [],
+        type: 'grant.issued',
+        fields: {},
+        placeholders: [1, 4],
+        placeholder_details: [0],
+      },
+    ],
+    runner_grant: { hours: 24, scope: 'workable', holder: "this machine's runner, never shown" },
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const details = document.querySelector('.review-technical')!
+  expect(details).toHaveTextContent('label: set at signing')
+  expect(details).toHaveTextContent('note: set at signing')
+  expect(details).not.toHaveTextContent('from: set at signing')
+  expect(details).not.toHaveTextContent('grant id: set at signing')
+  expect(details).not.toHaveTextContent('expires_at: set at signing')
 })

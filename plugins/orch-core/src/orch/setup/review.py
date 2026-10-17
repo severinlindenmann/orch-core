@@ -284,11 +284,48 @@ def _rows(p: Plan, profile: Mapping[str, Any]) -> list[dict[str, Any]]:
             retry_note = "re-issues agent access; an earlier grant was not confirmed (or was revoked)"
             note = f"{note}; {retry_note}" if note else retry_note
         volatile = [f"{k.replace('_', ' ')}: {PLACEHOLDER}" for k in sorted(VOLATILE.get(it.event["type"], ()))]
-        row = {"id": it.id, "title": it.title, "lines": lines, "details": _details(it.event), "volatile": volatile}
+        row = {
+            "id": it.id,
+            "title": it.title,
+            "lines": lines,
+            "details": _details(it.event),
+            "volatile": volatile,
+            # What the page may build its summary from, without reading prose: the event type and its payload (the
+            # very event that is signed; the values the host draws at signing are PLACEHOLDER strings).
+            "type": it.event["type"],
+            "fields": copy.deepcopy(payload_of(it.event)),
+            # Which of ``lines`` are the host's placeholders (by position, from the event's own volatile keys): the page
+            # hides exactly these and never filters on how a line ends.
+            "placeholders": _placeholder_lines(it, lines),
+            "placeholder_details": [
+                i
+                for i, key in enumerate(k for k in sorted(it.event) if k not in ENVELOPE)
+                if key in VOLATILE.get(it.event["type"], ())
+            ],
+        }
         if note:
             row["note"] = note
         rows.append(row)
     return rows
+
+
+_SENTINEL = "VOLATILE-PLACEHOLDER-7f3a"
+
+
+def _placeholder_lines(item: Item, lines: list[str]) -> list[int]:
+    """Positions in ``lines`` that show a value the host draws at signing: render the event again with each volatile key
+    set to a marker and see which lines carry it. If that render differs in shape, nothing is marked (every line
+    stays visible: never hide on a guess)."""
+    keys = VOLATILE.get(item.event["type"], ())
+    if not keys:
+        return []
+    try:
+        marked = render_events([{**item.event, **{k: _SENTINEL for k in keys}}])
+    except SetupError:
+        return []
+    if len(marked) != len(lines):
+        return []
+    return [i for i, line in enumerate(marked) if _SENTINEL in line and _SENTINEL not in lines[i]]
 
 
 def _digest(p: Plan) -> str:
@@ -296,7 +333,16 @@ def _digest(p: Plan) -> str:
         "v": 1,
         "profile": p.canon_profile,
         "items": [{"id": it.id, "op": it.op, "args": it.args, "event": it.event} for it in p.items],
-        "rows": [{"id": r["id"], "lines": r["lines"], "note": r.get("note")} for r in p.rows],
+        "rows": [
+            {
+                "id": r["id"],
+                "lines": r["lines"],
+                "note": r.get("note"),
+                "placeholders": r["placeholders"],
+                "placeholder_details": r["placeholder_details"],
+            }
+            for r in p.rows
+        ],
         "flags": p.flags,
         "risk": p.risk,
         "typed_word": p.typed_word,

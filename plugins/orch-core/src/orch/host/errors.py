@@ -29,6 +29,8 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "host.required": (3, False),
     "lock.busy": (9, True),
     "control.rolled_back": (9, True),
+    "migrate.refused": (3, False),
+    "migrate.failed": (1, False),
     "outcome.unknown": (9, True),
     "outcome.unknown_idem": (2, False),
     "idem.required": (5, False),

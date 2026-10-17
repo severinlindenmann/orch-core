@@ -117,3 +117,23 @@ def test_a_stale_legacy_opener_never_recreates_state_in_the_root(tmp_path: Path)
             pass
     assert sorted(p.name for p in env.root.iterdir()) == [".orch"]  # no .state, no events, nothing re-created
     s.close()
+
+
+def test_a_store_moved_between_the_resolve_and_the_open_fails_closed_and_makes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from orch.store import store as store_mod
+
+    env = Env(tmp_path)
+    env.bootstrap().close()
+    real = store_mod.open_store_fs
+
+    def moved_after_resolve(*a, **k):
+        out = real(*a, **k)
+        _move_into_dot_orch(env.root)  # a migrate lands in the window
+        return out
+
+    monkeypatch.setattr(store_mod, "open_store_fs", moved_after_resolve)
+    with pytest.raises(StoreError):
+        env.open()
+    assert sorted(p.name for p in env.root.iterdir()) == [".orch"]  # events/tickets/.state were not re-made

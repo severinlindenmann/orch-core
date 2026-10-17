@@ -142,6 +142,7 @@ def open_store_fs(
                 raise StoreError("validation.path", "the store layout changed since the workspace was found")
             if layout.legacy:
                 keep = True
+                pfs.config_seen = found is not None
                 return pfs, layout, None
             if found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only, never reused
                 try:
@@ -175,7 +176,9 @@ def open_store_fs(
                     raise StoreError(
                         "validation.path", f"{_layout.STORE_DIR} is no longer the store directory that was found"
                     )
-            return RootFS(layout.store, sfd), layout, created
+            nfs = RootFS(layout.store, sfd)
+            nfs.config_seen = found is not None
+            return nfs, layout, created
         except BaseException:
             os.close(sfd)
             raise
@@ -525,6 +528,10 @@ class Store:
         return store
 
     def _open(self, eager: bool, config: bytes | None = None) -> None:
+        # the window between open_store_fs's resolve and the first check under the lock fails closed too: a store that
+        # had its config then is checked before anything below the root is made
+        self._config_seen = self.fs.config_seen
+        self._check_layout()
         for d in ("events", "tickets", ".state"):
             if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")

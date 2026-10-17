@@ -138,6 +138,7 @@ _SCHEMAS = {
     "host.restart": _closed({}),
     "host.register": _closed({"root": _ROOT, "peers": _PEERS}),
     "host.unregister": _closed({"workspace_id": _WS}),
+    "host.store_migrate": _closed({"workspace_id": _WS}),
     "host.relay_stop": _closed({"workspace_id": _WS}),
     "host.relay_start": _closed({"workspace_id": _WS}),
     "host.relay_unlink": _closed({"workspace_id": _WS}),
@@ -492,6 +493,74 @@ class ControlOps:
             real = os.path.realpath(base)
             if root == real or root.startswith(real.rstrip("/") + "/") or same_or_inside(root, base):
                 raise HostError("invalid.input", f"{root} lies inside the host's {base}")
+
+    # -- host.store_migrate
+    def store_migrate(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
+        """Move the workspace's store from the project root into ``<project>/.orch`` (design B11-P2 section 3). The host
+        stops serving the workspace, holds ``owner.lock`` exclusively (the engine adds the legacy store lock), runs
+        :func:`orch.store.migrate.migrate`, records ``store`` in the registry after its commit point and serves again.
+        The refusals for running work and version skew are the CLI's step (M2)."""
+        workspace_id = args["workspace_id"]
+        begun = self._begin(idem, "host.store_migrate", {"workspace_id": workspace_id})
+        if isinstance(begun, dict):
+            return _replay(begun)
+        intent = begun
+        if intent.resumed:
+            return self._resume(intent)
+
+        def run() -> dict[str, Any]:
+            entry = self.host.registry.get(workspace_id)
+            if entry is None:
+                raise HostError("not_found", f"workspace {workspace_id} is not registered")
+            out = self._migrate_entry(entry, live=True)
+            return self.intents.complete(intent, ok_result({"workspace_id": workspace_id, "migrated": out}))["result"]
+
+        return self._guarded(intent, run, lambda: self._migrated(intent))
+
+    def _migrated(self, intent: Intent) -> bool:
+        entry = self.host.registry.get(intent.args["workspace_id"])
+        if entry is None or entry.store is None:
+            return False
+        self.intents.complete(intent, ok_result({"workspace_id": entry.workspace_id, "migrated": True}))
+        return True
+
+    def _migrate_entry(self, entry: Entry, *, live: bool) -> bool:
+        """Run the engine for ``entry`` with the workspace unserved, then serve it again whatever happened."""
+        from orch.store import StoreError
+        from orch.store import migrate as mg
+        from orch.store.pins import HostPins
+
+        wid = entry.workspace_id
+        pins = HostPins(self.state_dir, wid)
+        try:
+            pin = pins.genesis()
+        except StoreError as exc:
+            raise HostError(exc.code, exc.detail) from None
+        finally:
+            pins.close()
+        if live:
+            self.host.unserve_from_thread(wid)  # drains first: a write in flight finishes and is answered
+        try:
+            check_tree(Path(entry.root), self.host_uid)
+            with OwnershipLock(self.state_dir, wid).exclusive(self.host.lock_wait):
+                result = mg.migrate(
+                    entry.root,
+                    state_dir=self.state_dir,
+                    workspace_id=wid,
+                    expected_genesis=pin,
+                    after_commit=lambda: self.host.registry.set_store(wid, STORE_DIR),
+                )
+        except mg.MigrateError as exc:
+            if exc.code == "migrate.busy":
+                raise HostError("lock.busy", exc.detail, retry_after_ms=1000) from None
+            raise HostError(
+                "migrate.failed" if exc.code == "migrate.verify" else "migrate.refused", exc.detail
+            ) from None
+        finally:
+            current = self.host.registry.get(wid)
+            if live and current is not None:
+                self.host.serve_from_thread(current)
+        return bool(result["migrated"])
 
     # -- host.unregister
     def unregister(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
@@ -960,7 +1029,7 @@ class ControlOps:
             or validator is None
             or not isinstance(args, dict)
             or not validator.is_valid(args)
-            or (op != "host.unregister" and not str(args.get("root", "")).startswith("/"))
+            or (op not in ("host.unregister", "host.store_migrate") and not str(args.get("root", "")).startswith("/"))
         ):
             return self.intents.fail(intent, HostError("internal", f"unreadable control intent {op!r}; left as is"))
         if op == "host.register":
@@ -968,12 +1037,44 @@ class ControlOps:
             if entry is not None:
                 return self.intents.complete(intent, ok_result({"workspace_id": entry.workspace_id}))
             return self.intents.fail(intent, _rolled_back(op))
+        if op == "host.store_migrate":
+            return self._recover_migrate(intent, live)
         if op == "host.unregister":
             if live:
                 self.host.unserve_from_thread(args["workspace_id"])
             self.host.registry.remove(args["workspace_id"])
             return self.intents.complete(intent, ok_result({}))
         return self._recover_bootstrap(intent)
+
+    def _recover_migrate(self, intent: Intent, live: bool) -> dict[str, Any]:
+        """A migrate left ``started``: the engine's own journal decides (a committed one is finished forward, an
+        unfinished one is rolled back); the registry follows the disk."""
+        from orch.store import migrate as mg
+
+        wid = intent.args["workspace_id"]
+        entry = self.host.registry.get(wid)
+        if entry is None:
+            return self.intents.fail(intent, HostError("not_found", f"workspace {wid} is not registered"))
+        try:
+            if live:
+                self.host.unserve_from_thread(wid)
+            with OwnershipLock(self.state_dir, wid).exclusive(self.host.lock_wait):
+                step = mg.finish_interrupted(
+                    entry.root,
+                    state_dir=self.state_dir,
+                    workspace_id=wid,
+                    after_commit=lambda: self.host.registry.set_store(wid, STORE_DIR),
+                )
+        except (mg.MigrateError, HostError):
+            self.intents.release(intent)  # stuck or busy: retried at the next start or with the same idem
+            return intent.record
+        finally:
+            current = self.host.registry.get(wid)
+            if live and current is not None:
+                self.host.serve_from_thread(current)
+        if step == "done":
+            return self.intents.complete(intent, ok_result({"workspace_id": wid, "migrated": True}))
+        return self.intents.fail(intent, _rolled_back("host.store_migrate"))
 
     def _recover_bootstrap(self, intent: Intent) -> dict[str, Any]:
         from orch.custody import FileBackend
@@ -1074,6 +1175,7 @@ class ControlGate:
                 "host.wsk_create": ops.wsk_create,
                 "host.register": lambda: ops.register(args, idem),
                 "host.unregister": lambda: ops.unregister(args, idem),
+                "host.store_migrate": lambda: ops.store_migrate(args, idem),
                 "host.bootstrap": lambda: ops.bootstrap(args, idem),
                 "host.outcome": lambda: ops.outcome(args),
                 "host.relay_stop": lambda: ops.relay_stop(args),

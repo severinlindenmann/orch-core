@@ -136,6 +136,18 @@ def test_idle_session_dies_after_ten_minutes(srv):
     assert st == 410 and out["error"]["code"] == "setup.ended"
 
 
+def test_a_page_that_only_polls_state_still_idles_out(srv):
+    path, token, _ = claimed(srv)
+    for _ in range(55):  # the page asks for /state every second-ish; ten minutes pass
+        srv.clock_obj.t += 10
+        assert call(path, "GET", "/api/setup/state", token=token)[0] == 200
+        srv.check_idle()
+    srv.clock_obj.t += 60
+    srv.check_idle()
+    st, out, _ = call(path, "GET", "/api/setup/state", token=token)
+    assert st == 410 and out["error"]["code"] == "setup.ended"
+
+
 def test_idle_never_during_a_run(srv):
     path, token, _ = claimed(srv)
     srv.flow._running = True

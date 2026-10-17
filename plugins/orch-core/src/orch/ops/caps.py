@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from orch.layout import Layout
+
 WHOLE_FILE_LIMIT = 64 << 20  # host mode: read_bytes and read_text refuse a larger file
 
 __all__ = [
@@ -443,20 +445,20 @@ class Git:
         if self.reader is not None and not self.principal:
             raise CapabilityDenied("git", "git: a host-mode read needs the caller's principal")
 
-    def repo_path(self, root: Path, repos: Any, name: str) -> Path | None:
+    def repo_path(self, layout: Layout, repos: Any, name: str) -> Path | None:
         """Where repo ``name`` of ``settings.repos`` lives. Direct mode: P1's ``observe.repo_path`` (resolved).
         Host mode: joined and normalised **lexically**, never resolved: the components are agent-writable, and the
         reader's pins are keyed by this path (a symlink planted there must not lead to another repo's pins)."""
         from orch.store import observe
 
         if self.reader is None:
-            return observe.repo_path(root, repos, name)
+            return observe.repo_path(layout, repos, name)
         spec = repos.get(name)
         if not spec:
             return None
-        return Path(os.path.normpath(os.path.join(os.fspath(root), spec["path"])))
+        return Path(os.path.normpath(os.path.join(os.fspath(layout.project), spec["path"])))
 
-    def ticket_copy(self, root: Path, repos: Any, uid: str, name: str) -> WorkingCopy:
+    def ticket_copy(self, layout: Layout, repos: Any, uid: str, name: str) -> WorkingCopy:
         """H11d (D-P2-32, §12.7): the working copy of ticket ``uid`` for repo ``name`` that D58 and ``tree.check``
         read. A registered worktree is that ticket's working copy, and **only** it: an unpinned registration has no
         path (``why`` says so) and never falls back to the declared working copy. Without a registration it is the
@@ -465,7 +467,7 @@ class Git:
         slot = registry.worktree(uid, name) if registry is not None else {"gen": 0, "reg": None}
         reg = slot["reg"]
         if reg is None:
-            return WorkingCopy(self.repo_path(root, repos, name), slot["gen"], None, False, None)
+            return WorkingCopy(self.repo_path(layout, repos, name), slot["gen"], None, False, None)
         if not repos.get(name):
             return WorkingCopy(None, slot["gen"], None, True, f"{name}: the repository is no longer declared")
         if reg["pins"] is None:

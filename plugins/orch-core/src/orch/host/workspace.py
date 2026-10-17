@@ -616,7 +616,7 @@ class WorkspaceService:
             return
         repos = self.store.state.workspace.repos
         declared = tuple(
-            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.root, repos, n)) is not None)
+            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.layout, repos, n)) is not None)
         )
         now = time.monotonic()
         if declared == self._git_declared and now < self._git_retry_at:

@@ -152,6 +152,8 @@ class RootFS:
         self._finalizer = weakref.finalize(self, _close, self._fd, self._cache)
         st = os.fstat(fd)
         self.ident: tuple[int, int] = (st.st_dev, st.st_ino)
+        #: set by ``open_store_fs``: the layout resolve that opened this root found an orch ``config.json``
+        self.config_seen = False
 
     @classmethod
     def at(cls, path: Rel, *, ident: tuple[int, int] | None = None, create: bool = False) -> RootFS:

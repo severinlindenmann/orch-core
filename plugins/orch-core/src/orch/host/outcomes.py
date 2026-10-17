@@ -79,7 +79,7 @@ MAX_RECORDS = 100_000
 #: workspace has one worker thread, so a wait that long was never going to be woken by that thread anyway.
 WAIT_SECONDS = 5.0
 LOG = logging.getLogger(__name__)
-CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"})
+CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap", "host.store_migrate"})
 #: ops that are log writes though no registry operation carries them
 _HUMAN_WRITES = frozenset({"human.submit"})
 #: device-signed person events through the relay entry (column R, §11A.4): a log write with an idem, no dry run

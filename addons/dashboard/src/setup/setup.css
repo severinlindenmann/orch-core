@@ -309,3 +309,18 @@ body:has(> #root > .setup) {
   color: var(--text-muted);
   margin-top: 0.25rem;
 }
+
+.setup .inset > :first-child,
+.setup .warning > :first-child {
+  margin-top: 0;
+}
+.setup .inset > :last-child,
+.setup .warning > :last-child {
+  margin-bottom: 0;
+}
+.setup .inset ol {
+  list-style: decimal;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}

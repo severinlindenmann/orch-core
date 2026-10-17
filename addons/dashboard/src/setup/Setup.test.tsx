@@ -213,8 +213,8 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByText('Agents may work for you for up to 3 days')).toBeInTheDocument()
-  expect(screen.getByText(/runner gets agent access for/)).toBeInTheDocument()
-  expect(screen.getByText(/Check your terminal: it shows three words/)).toHaveTextContent('demo not real, type GRANT there.')
+  expect(screen.queryByText(/runner gets agent access for/)).toBeNull()
+  expect(screen.getByText(/Your terminal then shows three words/)).toHaveTextContent('demo not real, type GRANT there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()

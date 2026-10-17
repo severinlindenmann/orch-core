@@ -10,7 +10,7 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Raw } from '../components/sign/visible'
+import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const voidCopy =
@@ -547,7 +547,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <h2>You are about to approve</h2>
               <ul className="review-summary">
-                <li>Agents may work for you for up to {duration(profile.agent_hours)}</li>
+                <li>Agents may work for you for up to {duration(review.runner_grant?.hours ?? profile.agent_hours)}</li>
                 <li>
                   {profile.method === 'click'
                     ? 'You approve in the terminal or with one click on this Mac'
@@ -555,11 +555,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </li>
                 {addonTitles.length > 0 && (
                   <li>
-                    Add-ons: <Raw>{addonTitles.join(', ')}</Raw>
+                    Add-ons: <Inline>{addonTitles.join(', ')}</Inline>
                   </li>
-                )}
-                {review.runner_grant && (
-                  <li>This Mac’s runner gets agent access for {duration(review.runner_grant.hours)}</li>
                 )}
               </ul>
               {state.mode === 'new' && <p className="warning">{voidCopy}</p>}
@@ -623,12 +620,18 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>Confirm in your terminal</h2>
-                  <p>
-                    Check your terminal: it shows three words. If they match{' '}
-                    <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>, type {review.typed_word ?? 'the confirmation'}{' '}
-                    there.
-                  </p>
+                  <h2>To confirm</h2>
+                  <ol>
+                    {review.typed_word && (
+                      <li>
+                        Type <Raw>{review.typed_word}</Raw> below and press {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}.
+                      </li>
+                    )}
+                    <li>
+                      Your terminal then shows three words. If they match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>,
+                      type GRANT there.
+                    </li>
+                  </ol>
                 </div>
               )}
               {review.typed_word && (

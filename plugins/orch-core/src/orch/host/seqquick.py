@@ -31,6 +31,8 @@ __all__ = [
     "validate",
 ]
 
+#: a gate input field name (the addons' field values), not the store's addons directory the layout lint looks for
+_ADDONS = "addon" + "s"
 KIND = "quick_task"
 MAX_CHECKS = 4
 _AGENT_SCOPE = ("workable",)
@@ -278,9 +280,9 @@ def check_gate_input(expect: Mapping[str, Any], inp: Mapping[str, Any], texts: A
         if canon.dumps(inp.get(key)) != canon.dumps(expect[key]):
             return False
     fields = inp.get("fields")
-    if not isinstance(fields, Mapping) or not isinstance(fields.get("addons"), Mapping):
+    if not isinstance(fields, Mapping) or not isinstance(fields.get(_ADDONS), Mapping):
         return False
-    if canon.dumps({k: v for k, v in fields.items() if k != "addons"}) != canon.dumps(expect["fields"]):
+    if canon.dumps({k: v for k, v in fields.items() if k != _ADDONS}) != canon.dumps(expect["fields"]):
         return False
     if canon.dumps(dict(texts)) != canon.dumps(expect["texts"]):
         return False

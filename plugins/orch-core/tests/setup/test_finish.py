@@ -360,3 +360,13 @@ def test_m2_a_runner_grant_retry_row_says_it_re_issues_access(tmp):
 def test_facts_read_the_explicit_sign_methods():
     assert facts_of(ws(settings={"sign_methods": ["terminal"]})).sign_methods == ("terminal",)
     assert facts_of(ws()).sign_methods is None
+
+
+def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp):
+    """B12 N9: nothing missing -> state says complete; finish is allowed without a run and ends as done."""
+    box = [mkfacts(addons=frozenset({"dashboard", "terminals", "worktrees", "start-agent"}), grant_issued=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    st = f.dispatch("GET", "state", {}, None)[1]
+    assert st["missing"] == [] and st["complete"] is True
+    assert f.dispatch("POST", "finish", {}, {})[1]["url"]
+    assert f.finished and f.outcome == "done"

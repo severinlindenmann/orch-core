@@ -109,7 +109,19 @@ def test_only_a_finished_setup_says_finished(tmp):
     s = SetupServer(tmp.root / "s.sock", _Flow("paused"), notify=lines.append)
     for why in ("done", "cancel", "idle", "shutdown"):
         assert "paused; run orch setup again to continue" in s.ending_line(why)
-    assert SetupServer(tmp.root / "t.sock", _Flow("done")).ending_line("done") == "setup finished"
+    assert SetupServer(tmp.root / "t.sock", _Flow("done")).ending_line("done") == ""
+
+
+def test_a_set_up_workspace_never_ends_as_paused(tmp):
+    """B12 N8: the page left after "ready" (idle, hang-up): no "setup paused", the terminal prints one closing line."""
+    flow = _Flow("paused")
+    flow.ready = True
+    lines = []
+    s = SetupServer(tmp.root / "u.sock", flow, notify=lines.append)
+    for why in ("done", "idle", "shutdown"):
+        assert s.ending_line(why) == ""
+    s.die("idle")
+    assert lines == []
     assert "(done)" not in s.ending_line("done")
 
 

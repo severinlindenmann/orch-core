@@ -138,14 +138,17 @@ class SetupServer:
             self.ended, self._token, self._code_hash = why, None, None
         self._remove_code_file()
         self.flow.end(why)
-        self.notify(self.ending_line(why))
+        line = self.ending_line(why)
+        if line:
+            self.notify(line)
         self.stop_event.set()
 
     def ending_line(self, why: str) -> str:
         """The last line on the setup terminal. Only a finished setup says so; every other end (Finish setup later,
-        Ctrl-C, hang-up, idle, an error) reads as paused, never as "(done)" (B11 finding 25)."""
-        if why == "done" and getattr(self.flow, "outcome", "paused") == "done":
-            return "setup finished"
+        Ctrl-C, hang-up, idle, an error) reads as paused, never as "(done)" (B11 finding 25). Once the workspace is set
+        up there is nothing paused (B12 N8): no line here, ``orch setup`` prints its one closing line."""
+        if getattr(self.flow, "ready", False) or getattr(self.flow, "outcome", "paused") == "done":
+            return ""
         return "setup paused; run orch setup again to continue"
 
     # ---------------------------------------------------------------------------------------- socket-only routes

@@ -325,7 +325,7 @@ class Human:
         if git.worktrees is None and not copy.registered:
             from orch.host.worktrees import worktree_path
 
-            declared = git.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            declared = git.repo_path(self.store.layout, self.store.state.workspace.repos, name)
             if declared is not None and os.path.lexists(worktree_path(os.fspath(declared), self.store.workspace_id,
                                                                       view.key)):  # fmt: skip
                 return f"{name}: the ticket has a worktree on disk but no registration (git-pins.json is missing)"
@@ -353,7 +353,7 @@ class Human:
                 except (ValueError, OSError) as exc:  # a pin file that cannot be read: fail closed
                     out.append(f"{name}: the worktree registrations cannot be read ({exc})")
                     continue
-            copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
+            copy = git.ticket_copy(self.store.layout, self.store.state.workspace.repos, view.uid, name)
             path = copy.path
             if self.ctx.prepare is None and git.reader is None:
                 # direct mode (Codex #439): the copy the person was shown is the one the precommit reads

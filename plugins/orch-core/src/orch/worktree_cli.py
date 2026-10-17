@@ -223,7 +223,7 @@ class Direct:
         from orch.gitread.errors import Unavailable
         from orch.gitread.pinning import pin_repo
 
-        path = self.git.repo_path(self.root, self.store().state.workspace.repos, repo)
+        path = self.git.repo_path(self.store().layout, self.store().state.workspace.repos, repo)
         if path is None:
             raise WtError("not_found", f"{repo} is not declared in settings.repos")
         real = os.path.realpath(path)
@@ -344,7 +344,7 @@ class Direct:
         path = worktree_path(declared, self.wid, view.key)
         repos = self.store().state.workspace.repos
         declared_paths = {
-            os.path.realpath(p) for n in repos if (p := self.git.repo_path(self.root, repos, n)) is not None
+            os.path.realpath(p) for n in repos if (p := self.git.repo_path(self.store().layout, repos, n)) is not None
         }
         if path in declared_paths or os.path.realpath(path) in declared_paths:  # parity with the host (Opus #439 F4)
             raise WtError("worktree.exists", "the worktree path is a declared repository")

@@ -45,9 +45,10 @@ from stat import S_ISLNK as _S_ISLNK
 from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
+from orch import layout as _layout
 from orch.identity import CryptoVerifier, new_ulid
 from orch.identity.certs import REVOKE_REASONS, revoke_strength
-from orch.layout import Layout
+from orch.layout import Layout, LayoutError
 from orch.model import (
     WORKSPACE,
     Code,
@@ -106,6 +107,37 @@ def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
         return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
     return verify
+
+
+def _open_fs(project: Path, ident: tuple[int, int] | None) -> tuple[RootFS, Layout]:
+    """The pinned store root and the layout of the project directory ``project`` (opened ``O_NOFOLLOW``, checked
+    against ``ident``): the layout is resolved from that one fd and, in the new layout, ``.orch`` is opened below it
+    (``O_NOFOLLOW``), never by a path."""
+    pfs = RootFS.at(project, ident=ident, create=ident is None)
+    keep = False
+    try:
+        try:
+            found = _layout.resolve(pfs.fd, project)
+            layout = found if found is not None else _layout.fresh(project)
+            if layout.legacy:
+                keep = True
+                return pfs, layout
+            sfd = _layout.open_store_dir(pfs.fd)
+            if sfd is None:  # a new workspace in the new layout: made here, owner only
+                os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
+                sfd = _layout.open_store_dir(pfs.fd)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if sfd is None:  # pragma: no cover - just made
+            raise StoreError("validation.path", f"{_layout.STORE_DIR} cannot be opened")
+        try:
+            return RootFS(layout.store, sfd), layout
+        except BaseException:
+            os.close(sfd)
+            raise
+    finally:
+        if not keep:
+            pfs.close()
 
 
 def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
@@ -273,11 +305,14 @@ class Store:
         lock_timeout: float | None,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         fs: RootFS | None = None,
-        layout: Layout | None = None,
+        layout: Layout,
     ) -> None:
+        if Path(root) != layout.store:
+            raise ValueError("the store root is not the layout's store directory")
         self.root = root
-        #: project (the root agents work in) and store (``root``); the same directory in the legacy layout
-        self.layout = layout if layout is not None else Layout.legacy_at(root)
+        #: project (the directory agents work in) and store (``root``); the same directory in the legacy layout. There
+        #: is no default: :meth:`open` resolves it from the directory (``orch.layout.resolve``).
+        self.layout = layout
         #: the pinned root (#516): every file under the workspace is reached through it, never by path
         self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
@@ -377,7 +412,6 @@ class Store:
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         config: bytes | None = None,
         ident: tuple[int, int] | None = None,
-        layout: Layout | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -396,15 +430,18 @@ class Store:
         caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
         them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
         it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
-        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516). ``layout``: the project and the
-        store directory (``path`` is the store); ``None``: the legacy layout, project = ``path``.
+        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516). ``path`` is the **project**
+        directory (and ``ident`` is its identity): the layout (legacy: the store is the project; new: the store is
+        ``.orch``) is resolved here from that one fd (:func:`orch.layout.resolve`), a linked or double store is
+        ``validation.path``, and a directory with no store yet gets :func:`orch.layout.fresh`.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
-        root = Path(path)
-        fs = RootFS.at(root, ident=ident, create=ident is None)
+        project = Path(path)
+        fs, layout = _open_fs(project, ident)
+        root = layout.store
         try:
             store = cls(
                 root,

@@ -443,7 +443,7 @@ def _index(s: InspectStore) -> list[Finding]:
 def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
-        p = caps.git.repo_path(root, s.state.workspace.repos, name)  # host mode: lexical, no I/O
+        p = caps.git.repo_path(s.layout, s.state.workspace.repos, name)  # host mode: lexical, no I/O
         if caps.files.roots is not None:
             # Host mode: never stat a path outside the root; the reader child opens the repo under its pins.
             try:

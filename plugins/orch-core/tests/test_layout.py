@@ -31,8 +31,6 @@ def test_layout_values(tmp_path: Path) -> None:
     old, new = Layout.legacy_at(tmp_path), Layout.new_at(tmp_path)
     assert (old.project, old.store, old.legacy) == (tmp_path, tmp_path, True)
     assert (new.project, new.store, new.legacy) == (tmp_path, tmp_path / ".orch", False)
-    assert Layout.of_store(tmp_path / ".orch") == new
-    assert Layout.of_store(tmp_path) == old
 
 
 def test_resolve_legacy_new_none(tmp_path: Path) -> None:
@@ -68,4 +66,20 @@ def test_linked_store_dir_is_not_followed(tmp_path: Path) -> None:
     proj = tmp_path / "p"
     proj.mkdir()
     (proj / ".orch").symlink_to(real)
-    assert _resolve(proj) is None
+    with pytest.raises(LayoutError):
+        _resolve(proj)
+
+
+def test_store_dir_that_is_a_file_is_refused_not_ignored(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(CFG)
+    (tmp_path / ".orch").write_text("not a directory")
+    with pytest.raises(LayoutError, match="not a real directory"):
+        _resolve(tmp_path)
+
+
+def test_linked_store_dir_is_refused_even_with_a_legacy_store(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(CFG)
+    (tmp_path / "x").mkdir()
+    (tmp_path / ".orch").symlink_to(tmp_path / "x")
+    with pytest.raises(LayoutError):
+        _resolve(tmp_path)

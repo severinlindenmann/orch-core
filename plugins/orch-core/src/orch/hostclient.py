@@ -143,14 +143,13 @@ def locate(
 
 
 def _same_root(registered: str, found: Path) -> bool:
-    """The registry's root and the directory the CLI found are one directory (the found one may be its
-    ``orchestrator/`` subdirectory, as ``find_workspace`` allows)."""
+    """The registry's root (the project) and the project directory the CLI found are one directory."""
     try:
         want = Path(registered).resolve()
         have = Path(found).resolve()
     except (OSError, RuntimeError):
         return False
-    return have == want or (have.name == "orchestrator" and have.parent == want)
+    return have == want
 
 
 # --- connection ----------------------------------------------------------------------------------------------------

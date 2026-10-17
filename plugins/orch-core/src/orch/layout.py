@@ -29,6 +29,8 @@ __all__ = [
     "Layout",
     "LayoutError",
     "check_single_store",
+    "fresh",
+    "open_store_dir",
     "resolve",
 ]
 
@@ -36,7 +38,8 @@ STORE_DIR = ".orch"
 CONFIG_SCHEMA = "orch.workspace/2"
 _CONFIG_LIMIT = 1 << 20
 
-#: The flip switch (design §6): ``False`` until the flip step; new workspaces are then written to the legacy layout.
+#: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
+#: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
 WRITE_NEW = False
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -65,13 +68,6 @@ class Layout:
         p = Path(project)
         return cls(p, p / STORE_DIR, False)
 
-    @classmethod
-    def of_store(cls, store: str | os.PathLike[str]) -> Layout:
-        """The layout for a path that is the store directory, by its name: ``<project>/.orch`` is new, anything else is
-        a legacy root (project = store). The ``ORCH_WORKSPACE`` alias (design §2)."""
-        p = Path(store)
-        return cls.new_at(p.parent) if p.name == STORE_DIR else cls.legacy_at(p)
-
 
 def check_single_store(*, legacy: bool, new: bool) -> None:
     """An orch config in the project root AND in ``.orch/`` is refused (design §5)."""
@@ -80,6 +76,11 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
             "two orch stores in one project (config.json in the root and in .orch/); "
             "finish `orch migrate` or remove one"
         )
+
+
+def fresh(project: str | os.PathLike[str]) -> Layout:
+    """The layout of a project that holds no store yet (a workspace being created): the switch decides."""
+    return Layout.new_at(project) if WRITE_NEW else Layout.legacy_at(project)
 
 
 def _orch_config(fd: int) -> bool:
@@ -108,10 +109,7 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     orch config in the root and one in ``.orch/`` is :class:`LayoutError` (:func:`check_single_store`)."""
     legacy = _orch_config(project_fd)
     new = False
-    try:
-        sfd = os.open(STORE_DIR, _DIR, dir_fd=project_fd)
-    except OSError:
-        sfd = None
+    sfd = open_store_dir(project_fd)
     if sfd is not None:
         try:
             new = _orch_config(sfd)
@@ -121,3 +119,21 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     if new:
         return Layout.new_at(project)
     return Layout.legacy_at(project) if legacy else None
+
+
+def open_store_dir(project_fd: int) -> int | None:
+    """The fd of ``.orch`` below the project fd (``O_NOFOLLOW``), or ``None`` when there is no ``.orch``. Anything that
+    is there but not a real directory (a symlink, a file) is :class:`LayoutError`: it never falls through to the legacy
+    layout (design §5)."""
+    try:
+        st = os.stat(STORE_DIR, dir_fd=project_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise LayoutError(f"{STORE_DIR} cannot be examined ({exc.strerror})") from None
+    if not stat.S_ISDIR(st.st_mode):
+        raise LayoutError(f"{STORE_DIR} is not a real directory (a link or a file); refusing to use this project")
+    try:
+        return os.open(STORE_DIR, _DIR, dir_fd=project_fd)
+    except OSError as exc:
+        raise LayoutError(f"{STORE_DIR} cannot be opened ({exc.strerror})") from None

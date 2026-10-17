@@ -26,9 +26,6 @@ __all__ = [
     "read_facts",
 ]
 
-#: names that make a directory "already an orch workspace or a half-made one" (same list as the host's bootstrap)
-STORE_NAMES = ("config.json", "keys.jsonl", "events", "tickets", ".state", ".orch", ".orch-init.lock")
-
 
 @dataclass(frozen=True)
 class AddonInfo:
@@ -129,7 +126,8 @@ def check_dir(
 
     Refused: a path that is not absolute or whose spelling differs from its real path (a symbolic link), ``$HOME``,
     any ancestor of ``$HOME`` (``/`` included), the state and config directories and anything inside or above them, and
-    a directory that already holds store files unless it is a registered workspace (then the mode is ``finish``)."""
+    an unregistered orch workspace, and a project whose own files take a name orch's store writes
+    (:mod:`orch.rootclaim`); a registered workspace is ``finish`` mode."""
     if not isinstance(directory, str) or not directory.startswith("/") or "\x00" in directory:
         raise SetupError("setup.dir_refused", "the directory is not an absolute path", 400)
     try:
@@ -149,12 +147,15 @@ def check_dir(
             raise SetupError("setup.dir_refused", "orch's own state or config directory cannot be a workspace", 400)
     if registered is not None and registered(str(real)) is not None:
         return real, "finish"
+    from orch import rootclaim
+
     try:
-        names = set(os.listdir(real))
+        view = rootclaim.inspect(real)
     except OSError:
         raise SetupError("setup.dir_refused", "the directory cannot be listed", 400) from None
-    if names & set(STORE_NAMES):
-        raise SetupError("setup.dir_refused", "this directory already holds orch files", 400)
+    why = rootclaim.refusal(view)
+    if why is not None:
+        raise SetupError("setup.dir_refused", why, 400)
     return real, "new"
 
 

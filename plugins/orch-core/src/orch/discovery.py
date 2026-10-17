@@ -192,7 +192,7 @@ def _probe(fd: int, path: Path, *, v2: bool, v1: bool, owned: bool) -> tuple[Fou
     )
 
 
-def _store_probe(fd: int, d: Path, *, owned: bool) -> Found | None:
+def _store_probe(fd: int, d: Path, *, owned: bool, start: bool = True) -> Found | None:
     """The v2 candidate in ``.orch/`` below the project fd (``O_NOFOLLOW``). An entry that is there but not a real
     directory is :class:`LayoutError`, never a fall-through, except in the implicit walk (``owned``) for an entry that
     is not the person's own (or in a project that is not their own): that is no candidate and the walk goes on (a
@@ -200,7 +200,8 @@ def _store_probe(fd: int, d: Path, *, owned: bool) -> Found | None:
     pinned by ``store_pin`` (identity, and ``owned``: ownership checked again on the opened fd)."""
     if owned and not _private(os.fstat(fd)):
         return None
-    sfd = _layout.open_store_dir(fd, (lambda st: st.st_uid != _owner()) if owned else None)
+    # away from the start, another tool's ``.orch`` (a link, a file) holds no orch config and must not block the walk
+    sfd = _layout.open_store_dir(fd, (lambda st: st.st_uid != _owner()) if owned else None, lenient=owned and not start)
     if sfd is None:
         return None
     try:
@@ -215,13 +216,13 @@ def _store_probe(fd: int, d: Path, *, owned: bool) -> Found | None:
     return Found(d, False, got.config, got.raw, (st.st_dev, st.st_ino), Layout.new_at(d), pin)
 
 
-def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool) -> Found | None:
+def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool, start: bool = True) -> Found | None:
     """The directory open at ``fd`` (named ``d``): v2 first (the legacy root config or ``.orch/``; both is
     :class:`LayoutError`), then v1 (here, else in its ``orchestrator/``, ``O_NOFOLLOW`` from ``fd``). ``owned`` (the
     implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on the exact fd that is then
     read (the one place it is enforced, with the stop in :func:`_walk`)."""
     here2, here1 = _probe(fd, d, v2=True, v1=v1, owned=owned)
-    new2 = _store_probe(fd, d, owned=owned)
+    new2 = _store_probe(fd, d, owned=owned, start=start)
     _layout.check_single_store(legacy=here2 is not None, new=new2 is not None)
     if new2 is not None:
         return new2
@@ -256,7 +257,7 @@ def _walk(here: Path, *, v1: bool) -> Found | None:
                 return None
             if _shared(st):
                 return None
-            found = _level(fd, d, v1_sub=True, v1=v1, owned=True)
+            found = _level(fd, d, v1_sub=True, v1=v1, owned=True, start=d == here)
             if found is not None:
                 return found
             try:

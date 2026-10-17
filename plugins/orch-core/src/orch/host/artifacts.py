@@ -25,7 +25,6 @@ import hashlib
 import os
 import threading
 from collections import OrderedDict
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -95,7 +94,7 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if not art.digest:
         raise _missing()  # an addon artifact has no file
     offset, length = int(args["offset"]), int(args.get("length", CHUNK))
-    path = Path(service.entry.root) / "tickets" / view.uid / "artifacts" / art.name
+    path = service.entry.store_dir / "tickets" / view.uid / "artifacts" / art.name
     try:
         fd = service.capabilities().files.open_fd(path, os.O_RDONLY)
     except OSError:  # missing, a symlink, not a regular file, hard-linked: not the file the log names

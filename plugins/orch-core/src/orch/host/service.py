@@ -309,7 +309,7 @@ class Host:
         if service is None:
             return False
         auth = service.auth
-        if auth is not None and auth.fresh(service.entry.root):
+        if auth is not None and auth.fresh(service.entry.store_dir):
             return auth.person_ok(person, self.clock())
         try:
             asyncio.get_running_loop()

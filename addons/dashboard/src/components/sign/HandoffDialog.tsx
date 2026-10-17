@@ -49,6 +49,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
     case 'failed':
+      if (code === 'sequence.no_access') return { title: 'Task created; agent access was NOT given', body: error ?? '', tone: 'warn' }
       return { title: 'The earlier attempt did not land', body: error ?? '', tone: 'warn' }
     case 'blocked':
       return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }
@@ -418,7 +419,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
+            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && run.error?.code !== 'sequence.no_access' && (
               <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'failed' || phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {phase === 'already' && (run.request?.state === 'submitted' || run.error?.code === 'intent.done') && p.action && <Button onClick={again}>Do it again</Button>}

@@ -42,6 +42,8 @@ export function failedSubmit(code: string): string {
 export const POLL_MS = 2000
 /** A sequence (one review, N signatures) that makes no progress for this long has ended: the signer's session is 10 minutes. */
 export const SEQUENCE_STALL_MS = 11 * 60_000
+/** The agent access is the signer's very last step, signed right after the ticket's steps: if it does not follow, it stopped. */
+export const GRANT_STALL_MS = 45_000
 const MAX_FAILED_POLLS = 5
 
 export interface HandoffRun {
@@ -209,10 +211,17 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           // B11: the first signature of a sequence landed; the signer goes on in the person's terminal. Not done yet.
           setState(got)
           if (got.progress.done !== progressed.done) progressed = { done: got.progress.done, at: Date.now() }
-          else if (Date.now() - progressed.at > SEQUENCE_STALL_MS) {
-            stopped = true
-            setError(new ApiError(409, { code: 'intent.failed', message: `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`, retryable: false }))
-            finish('failed', got)
+          else {
+            // Only the agent access is missing: the task is made and approved, and agents were NOT given access.
+            const grantOnly = got.progress.last === 'grant' && got.progress.done === got.progress.of - 1
+            if (Date.now() - progressed.at > (grantOnly ? GRANT_STALL_MS : SEQUENCE_STALL_MS)) {
+              stopped = true
+              const message = grantOnly
+                ? `${got.key ?? 'The task'} was created and approved; agent access was NOT given: signing stopped at the last signature (your terminal says why). Agents cannot work until you give them access from the agent access control.`
+                : `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`
+              setError(new ApiError(409, { code: grantOnly ? 'sequence.no_access' : 'intent.failed', message, retryable: false }))
+              finish('failed', got)
+            }
           }
         } else if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
           stopped = true

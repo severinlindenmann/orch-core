@@ -302,3 +302,26 @@ def test_store_open_never_makes_a_dot_orch_that_vanished_after_the_resolve(
     with pytest.raises(StoreError, match="vanished"):
         Store.open(project, expected_workspace_id=wid, load="lazy")
     assert (project / ".orch").is_dir()  # never made again, never replaced
+
+
+def test_a_linked_dot_orch_next_to_a_legacy_config_still_refuses_away_from_the_start(tmp_path: Path) -> None:
+    project = _store(tmp_path / "p")  # a legacy store
+    (project / ".orch").write_text("x")  # and a file named .orch beside it: the double-store case
+    sub = project / "sub"
+    sub.mkdir()
+    with pytest.raises(LayoutError, match="not a real directory"):
+        discovery.locate(sub, explicit=False)
+
+
+def test_records_and_stale_findings_use_the_store_dir(ws, tmp_path: Path) -> None:
+    from orch.instructions import stale_findings
+    from orch.ops.runtime import records_dir
+
+    project, _ = _project_with_store(ws, tmp_path)
+    layout = Layout.new_at(project)
+    assert records_dir(layout) == project / ".orch" / ".state" / "sessions"
+    findings = stale_findings(project, project / ".orch")
+    assert {"where": "AGENTS.orch.md", "what": "missing"} in findings  # looked for in the store dir...
+    (project / "AGENTS.orch.md").write_text("x")  # ...a copy in the project root is not it
+    assert {"where": "AGENTS.orch.md", "what": "missing"} in stale_findings(project, project / ".orch")
+    assert any(f["where"].startswith(".agents/skills") for f in findings)  # skills stay under the project

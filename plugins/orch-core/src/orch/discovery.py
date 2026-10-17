@@ -222,7 +222,8 @@ def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool, start: bool
     implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on the exact fd that is then
     read (the one place it is enforced, with the stop in :func:`_walk`)."""
     here2, here1 = _probe(fd, d, v2=True, v1=v1, owned=owned)
-    new2 = _store_probe(fd, d, owned=owned, start=start)
+    # a link/file ``.orch`` next to a legacy config is the double-store case: strict there, as at the start
+    new2 = _store_probe(fd, d, owned=owned, start=start or here2 is not None)
     _layout.check_single_store(legacy=here2 is not None, new=new2 is not None)
     if new2 is not None:
         return new2

@@ -25,8 +25,8 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
         # store, no config.json. --staged needs git, which the host's handlers do not have (problem line).
         c = Call.of(ctx, "check")
         findings, _ = health.inspect(
-            root, c.store.workspace_id, None, fast=True, instructions=stale_findings(root), caps=ctx.caps,
-            store=c.store, sees=c.sees,
+            root, c.store.workspace_id, None, fast=True, caps=ctx.caps, store=c.store, sees=c.sees,
+            instructions=stale_findings(root, c.store.layout.store),
         )  # fmt: skip
         if args.get("staged"):
             findings += health.check_staged(c.store, root, ctx.caps)
@@ -41,7 +41,7 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             wid,
             ws.state_dir,
             fast=True,
-            instructions=stale_findings(root),
+            instructions=stale_findings(root, ws.store_dir),
             caps=ctx.caps,
             ident=ws.ident,
             config=ws.config_bytes,

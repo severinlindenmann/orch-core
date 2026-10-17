@@ -279,7 +279,7 @@ _SPECS = [
         3,
         False,
         "the ticket status does not allow this",
-        "orch show --section current_state",
+        "orch show REF",
         ["orch", "show"],
         "A status transition or an edit on a done or closed ticket that the lifecycle refuses.",
     ),

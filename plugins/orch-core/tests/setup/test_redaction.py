@@ -46,9 +46,10 @@ def test_secret_hidden_before_confirm_too():
 
 def test_reason_without_secret_passes_unchanged():
     c, _ = creator()
-    assert c._reason_words(RuntimeError("the host said no")) == "the host said no"
-    c._fail(SetupError("x", "plain message", 500), False)
-    assert c.run.error["message"] == "plain message"
+    # fixed tokens that are in no word list: a random recovery word must never be a substring of these
+    assert c._reason_words(RuntimeError("zqx7 qqz9 xk-7")) == "zqx7 qqz9 xk-7"
+    c._fail(SetupError("x", "zqx7 xk-7 qqz9", 500), False)
+    assert c.run.error["message"] == "zqx7 xk-7 qqz9"
 
 
 def test_cut_at_400_never_exposes_part_of_a_secret():
@@ -61,8 +62,8 @@ def test_cut_at_400_never_exposes_part_of_a_secret():
         assert out == HIDDEN_REASON
         c._fail(SetupError("x", msg, 500), False)
         assert c.run.error["message"] == HIDDEN_REASON
-        for w in code.split():
-            assert w not in c.run.error["message"]
+        # the message is exactly the fixed hidden text: a per-word check would flake when a random recovery word is a
+        # substring of that fixed text
 
 
 def test_wiped_secrets_and_odd_input_do_not_raise():

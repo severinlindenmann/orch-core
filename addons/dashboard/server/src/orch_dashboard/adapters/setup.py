@@ -30,6 +30,7 @@ ROUTES = {
     "create": "POST",
     "progress": "GET",
     "finish": "POST",
+    "left": "POST",
     "cancel": "POST",
 }
 

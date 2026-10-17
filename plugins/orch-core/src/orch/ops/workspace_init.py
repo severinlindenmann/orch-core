@@ -155,6 +155,30 @@ class Terminal:
         """Write ``prompt`` and wait for the person to press Enter."""
         self._read(prompt, echo=True)
 
+    def enter_pressed(self, timeout: float, *, flush: bool = False) -> bool:
+        """K2: wait up to ``timeout`` seconds for the person to press Enter on their own terminal; ``True`` once a line
+        was read. ``flush`` first drops anything typed before (type-ahead is never an answer). Echo stays as the
+        terminal has it; a terminal that cannot be opened or read is simply "not pressed"."""
+        import select
+        import termios
+
+        try:
+            fd = self._open()
+        except NoPrompt:
+            time.sleep(timeout)
+            return False
+        try:
+            if flush:
+                with contextlib.suppress(termios.error):
+                    termios.tcflush(fd, termios.TCIFLUSH)
+            if not select.select([fd], [], [], timeout)[0]:
+                return False
+            return bool(os.read(fd, 4096))
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
     def ask_secret(self, prompt: str) -> str:
         """One line from the person with echo off."""
         return self._read(prompt, echo=False)

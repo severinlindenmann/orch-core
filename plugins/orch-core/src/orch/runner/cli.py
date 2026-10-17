@@ -67,9 +67,11 @@ def _parser() -> argparse.ArgumentParser:
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
     en.add_argument("--state", type=Path)
     en.add_argument("--run", type=Path)
+    en.add_argument("--json", action="store_true", help="machine-readable output")
     dis = sub.add_parser("disable", help="turn dashboard execution off for a workspace")
     dis.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
     dis.add_argument("--state", type=Path)
+    dis.add_argument("--json", action="store_true", help="machine-readable output")
     term = sub.add_parser("terminals", help="turn terminals on or off for a workspace with dashboard execution on")
     term.add_argument("switch", choices=["on", "off"])
     term.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
@@ -127,6 +129,22 @@ def _workspace(state: Path, uid: int, wanted: str | None, env: Mapping[str, str]
 
 def _write(out: TextIO, doc: dict[str, Any]) -> None:
     out.write(json.dumps(doc, sort_keys=True) + "\n")
+
+
+def _human(cmd: str, doc: dict[str, Any]) -> str:
+    """N18: the result of ``enable`` or ``disable`` as plain lines for a person (``--json`` keeps the document)."""
+    if not doc.get("ok"):
+        from orch.host.cli import human_text
+
+        return human_text(cmd, doc, subject="orch runner")
+    data = doc["result"]["data"]
+    wid = " ".join(str(data.get("workspace_id")).split())
+    if cmd == "disable":
+        return (
+            f"Dashboard execution is off for workspace {wid}. The runner service stays installed but starts nothing.\n"
+        )
+    terms = "on" if data.get("terminals") else "off"
+    return f"Dashboard execution is on for workspace {wid} (terminals {terms}).\n"
 
 
 def _fail(code: str, message: str, exit_: int, **extra: Any) -> dict[str, Any]:
@@ -312,13 +330,20 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
     try:
         if args.cmd == "enable":
             doc = enable(args, env, out)
-            _write(out, doc)
+            if args.json:
+                _write(out, doc)
+            else:
+                out.write(_human("enable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 1))
         if args.cmd == "disable":
             state = _state(args.state, env)
             wid, _ = _workspace(state, os.getuid(), args.workspace, env)
             enablement.set_enabled(state, wid, False, os.getuid())
-            _write(out, {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}})
+            done = {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}}
+            if args.json:
+                _write(out, done)
+            else:
+                out.write(_human("disable", done))
             return 0
         if args.cmd == "terminals":
             doc = terminals(args, env)

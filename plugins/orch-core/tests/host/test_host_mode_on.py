@@ -113,7 +113,9 @@ def host(argv: list[str], env: dict[str, str]) -> tuple[int, str]:
     from orch.cli.main import main
 
     out = io.StringIO()
-    code = main(["host", *argv], env=env, stdout=out, stderr=io.StringIO())
+    # N18: enable, disable and restart print plain text; the tests read the JSON document
+    machine = ["--json"] if argv and argv[0] in ("enable", "disable", "restart") else []
+    code = main(["host", *argv, *machine], env=env, stdout=out, stderr=io.StringIO())
     return code, out.getvalue()
 
 
@@ -587,7 +589,7 @@ def test_a_subprocess_orch_host_enable_in_a_test_env_never_reaches_the_service_m
     env = child_env(tmp_path, ORCH_STATE_DIR=str(tmp_path / "s"), ORCH_HOST_RUN_DIR="/r")
     assert env["ORCH_NO_SERVICE_MANAGER"] == "1"
     res = subprocess.run(
-        [sys.executable, "-m", "orch", "host", "enable", "--dev"],
+        [sys.executable, "-m", "orch", "host", "enable", "--dev", "--json"],
         capture_output=True, text=True, timeout=120, env=env, cwd=tmp_path,
     )  # fmt: skip
     doc = json.loads(res.stdout.strip().splitlines()[-1])

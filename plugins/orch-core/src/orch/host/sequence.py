@@ -807,12 +807,14 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     key = prepared["material"]["ticket"]["key"]
+    # the key is the host's word: said so right next to it (invariant 1), with the end of the signed id
+    key = f"{signcontent.one(key)} (key per host; signed id …{content['ticket']['uid_tail']})"
     if intent["kind"] == QUICK:
-        content["headline"] = f"Start task {signcontent.one(key)}: {signcontent.one(intent['title'])}"
+        content["headline"] = f"Start task {key}: {signcontent.one(intent['title'])}"
         content["subline"] = "creates the task and approves its requirements and plan"
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
-        content["headline"] = f"Edit {signcontent.one(key)}"
+        content["headline"] = f"Edit {key}"
         content["subline"] = "its text, acceptance checks and people, as shown below"
         notes = content.setdefault("notes", [])
         if intent["sections"]:
@@ -830,7 +832,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     else:
         count = len(intent["sections"])
         # one headline for the whole review; the text is a subline (not one clause per signature)
-        content["headline"] = f"Create {signcontent.one(key)}: {signcontent.one(intent['title'])}"
+        content["headline"] = f"Create {key}: {signcontent.one(intent['title'])}"
         parts = []
         if count:
             parts.append(f"its text ({count} section{'s' if count != 1 else ''})")

@@ -27,9 +27,8 @@ def build(prepared, verified=True):
 
 
 APPROVE = """\
-Approve the requirements of DEMO-0001 (…<TAIL>)
+Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-ticket DEMO-0001: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Context
   | the context
@@ -40,21 +39,19 @@ Out of scope
 Requirements
   | the requirements
 
-Summary
-  | (empty)
-
 Acceptance criteria
   [ ] AC1  it works
 
-Fields
+Applies under
   type: feature
   rule for this gate: 1 approval from owner; applies to all tickets
+
+Empty, not shown: Summary.
 """
 
 NEW = """\
-Create ticket DEMO-0002 · Elefant Chart (…<TAIL>)
+Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-ticket DEMO-0002: key per host, not proven; the ticket's signed id ends …<TAIL>
 
 Fields
   type: chore
@@ -72,6 +69,11 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
+    assert "key per host; signed id" in text.splitlines()[0]  # the host-vouched key is labelled next to the key
+    assert "not proven" not in text and "(empty)" not in text  # N12/N13: noise stays out of the plain view
+    assert (
+        "section summary" in text.details and "Changes" not in text
+    )  # ... but the empty section is in the full review
 
 
 def test_the_plain_view_of_a_new_ticket(human, served):
@@ -511,7 +513,9 @@ def test_the_ticket_key_is_the_hosts_word_and_the_signed_id_tail_is_shown():
     """MEDIUM-1."""
     ev = {"type": "log.added", "text": "x"}
     c = build({"op": "log", "events": [ev], "material": {"kind": "payload", "ticket": {"key": "ORCH-12", "uid": UID}}})
-    assert c["headline"].endswith(f"(…{UID[-8:]})") and "key per host" in c["ticket"]["key_note"]
+    assert (
+        c["headline"].endswith(f"(key per host; signed id …{UID[-8:]})") and "key per host" in c["ticket"]["key_note"]
+    )
     assert c["ticket"]["uid_tail"] == UID[-8:]
 
 

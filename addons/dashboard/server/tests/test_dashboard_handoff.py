@@ -1000,7 +1000,7 @@ def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_ca
     )
     assert intent["ticket"] == {"key": "DEMO-0001", "uid": view.uid}
     got = res.json()
-    assert got["content"]["headline"] == "Edit DEMO-0001"
+    assert got["content"]["headline"].startswith("Edit DEMO-0001 (key per host; signed id")
     assert got["events"][0]["based_on"] == intent["head"]
     # the same edit is the same request
     assert post(client, token, stub, body).json()["id"] == got["id"]

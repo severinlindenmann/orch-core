@@ -182,7 +182,7 @@ def test_an_edit_sequence_is_signed_by_one_click_when_it_changes_no_people(click
     _, p = prepare(click, intent)
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click"}
-    assert v["view"]["content"]["headline"] == f"Edit {key}"
+    assert v["view"]["content"]["headline"].startswith(f"Edit {key} (key per host; signed id")
     click.mono.t += 2
     click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == before + 2

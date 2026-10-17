@@ -104,7 +104,8 @@ def sign_sequence(
             n = sum(1 for s in resumed["steps"] if s["state"] == "landed")
             note = (
                 f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
-                f"{signer._clean(resumed['ticket']['key'])}; no second ticket is made.\n\n"
+                f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
+                f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
             )
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):

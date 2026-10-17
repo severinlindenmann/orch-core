@@ -13,7 +13,7 @@ it('shows the signed identity tail, host key qualification, task id and before q
     fields_changed: [{ field: 'title', before: 'Old', after: 'New', before_note: 'per host, not signed' }],
     notes: ['Host note'], note: ['Legacy list note'],
   }} />)
-  expect(screen.getByText('TST-0001').parentElement).toHaveTextContent('TST-0001 · …ab12cd34')
+  expect(screen.getByText('TST-0001').parentElement).toHaveTextContent('TST-0001 (key per host) · signed id …ab12cd34')
   // The host's key qualification is technical: folded away, not in the plain view.
   expect(screen.getByText('key per host').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByRole('listitem')).toHaveTextContent('T-3 · Check it ⏎ 2. forged task')

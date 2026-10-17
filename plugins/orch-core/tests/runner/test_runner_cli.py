@@ -81,7 +81,8 @@ def manager(monkeypatch) -> FakeManager:
 
 def _cli(argv, env, tty=None, monkeypatch=None) -> tuple[int, dict]:
     out = io.StringIO()
-    code = orch_main(["runner", *argv], env=env, stdout=out)
+    machine = ["--json"] if argv and argv[0] in ("enable", "disable") else []  # N18: plain text without it
+    code = orch_main(["runner", *argv, *machine], env=env, stdout=out)
     text = out.getvalue()
     return code, (json.loads(text) if text.startswith("{") else {"text": text})
 

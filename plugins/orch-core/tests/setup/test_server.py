@@ -331,3 +331,85 @@ def test_a_bad_line_from_the_launcher_prints_nothing(monkeypatch):
     ):
         err, tty = _setup(monkeypatch, _fake_run({}, bad))
         assert flow_mod._open_browser({}, err, {}) is False and CODE not in err.getvalue() and tty == []
+
+
+# --- K2 (B12 run 3): a reload or a closed page is noticed, and Enter mints a fresh single-use link -----------------
+
+
+def _poll(path, token, srv):
+    st = call(path, "GET", "/api/setup/state", token=token)[0]
+    srv.check_idle()
+    return st
+
+
+def test_a_polling_page_is_never_reported_lost(srv):
+    path, token, _ = claimed(srv)
+    for _ in range(30):
+        srv.clock_obj.t += 1
+        assert _poll(path, token, srv) == 200
+    assert not srv.lost and "closed or reloaded" not in " ".join(srv.events)
+
+
+def test_a_page_that_stops_polling_for_more_than_5_seconds_is_reported_once(srv):
+    path, token, _ = claimed(srv)
+    srv.clock_obj.t += 5
+    srv.check_idle()
+    assert not srv.lost  # exactly 5 s is still a slow poll
+    srv.clock_obj.t += 0.5
+    srv.check_idle()
+    srv.check_idle()
+    lines = [e for e in srv.events if "closed or reloaded" in e]
+    assert lines == [
+        "The setup page was closed or reloaded. Press Enter to open a fresh setup link, or Ctrl-C to stop."
+    ]
+    assert srv.lost
+
+
+def test_the_page_coming_back_clears_the_notice(srv):
+    path, token, _ = claimed(srv)
+    srv.clock_obj.t += 6
+    srv.check_idle()
+    assert srv.lost
+    assert call(path, "GET", "/api/setup/state", token=token)[0] == 200
+    assert not srv.lost and srv.events[-1].startswith("the setup page is back")
+    assert srv.relink() is None  # nothing was lost: Enter does nothing
+
+
+def test_relink_refuses_old_token_and_gives_new_words(srv):
+    from .conftest import PROFILE
+    from .test_secrets import words_for
+
+    path, old, _ = claimed(srv)
+    api = lambda m, r, b=None, t=old: call(path, m, "/api/setup/" + r, b, token=t)  # noqa: E731
+    assert api("POST", "profile", PROFILE)[0] == 200
+    shown = api("POST", "secrets/reveal", {})[1]
+    assert api("POST", "secrets/reveal", {})[0] in (409, 410)  # shown once
+    assert srv.relink() is None  # the page is not lost yet
+    srv.clock_obj.t += 6
+    srv.check_idle()
+    fresh = srv.relink()
+    assert fresh is not None and fresh["code"]
+    # the old token is refused at once, on reads and on writes; nothing of the old session answers
+    assert api("GET", "state")[0] in (401, 403) and api("POST", "secrets/reveal", {})[0] in (401, 403)
+    # a second relink has nothing to replace until the new page is bound and lost in its turn
+    assert srv.relink() is None
+    st, c, _ = call(path, "POST", "/claim", {"code": fresh["code"], "port": 8765})
+    assert st == 200 and c["token"] != old
+    assert call(path, "POST", "/claim", {"code": fresh["code"], "port": 8765})[0] in (403, 409)  # single use
+    new = lambda m, r, b=None: api(m, r, b, c["token"])  # noqa: E731
+    assert new("GET", "state")[1]["phase"] == "profile"  # the flow started over
+    assert new("POST", "secrets/reveal", {})[0] == 409  # no secrets carried over: the profile step comes first
+    assert new("POST", "profile", PROFILE)[0] == 200
+    again = new("POST", "secrets/reveal", {})[1]
+    assert again["recovery_words"] != shown["recovery_words"]  # NEW words, never the old ones
+    assert words_for(again)  # and the new page can go on
+
+
+def test_relink_never_replaces_a_run_in_progress(srv):
+    path, token, _ = claimed(srv)
+    srv.clock_obj.t += 6
+    srv.check_idle()
+    assert srv.lost
+    srv.flow._running = True
+    assert srv.relink() is None
+    assert call(path, "GET", "/api/setup/state", token=token)[0] == 200  # the old session is untouched

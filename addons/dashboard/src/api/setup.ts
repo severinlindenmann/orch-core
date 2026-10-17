@@ -78,8 +78,8 @@ export class SetupAPI {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     if (!res.ok) {
-      const value = await res.json()
-      throw new SetupError(value.error?.code ?? 'setup.unavailable')
+      const value = await res.json().catch(() => null)
+      throw new SetupError(typeof value?.error?.code === 'string' ? value.error.code : `http.${res.status}`)
     }
     return res.json() as Promise<T>
   }

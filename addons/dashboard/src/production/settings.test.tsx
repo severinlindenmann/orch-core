@@ -32,12 +32,12 @@ it('Devices on a real host: pairing a phone is not available yet, and no pairing
 it('General shows what the host says, marks defaults and lists repositories read only', async () => {
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('button', { name: '8 h' }, T)).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText(/Claim lasts/)).toHaveValue(120)
+  expect(screen.getByLabelText(/Ticket reserved for/)).toHaveValue(120)
   expect(screen.getAllByText(/The default\./).length).toBe(2) // claim and lease; the grant length is not a default here
   const repos = screen.getByRole('list', { name: 'Repositories' })
   expect(within(repos).getByText('main')).toBeInTheDocument()
   expect(within(repos).getByText('https://git.example.test/a/code')).toBeInTheDocument()
-  expect(screen.getByText(/added, changed and removed in the Repos addon/)).toBeInTheDocument()
+  expect(screen.getByText(/has no button or command to add one yet/)).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /repo/i })).not.toBeInTheDocument()
 })
 
@@ -72,7 +72,7 @@ it('changing the grant length opens the hand-off with the typed action, and show
 it('out-of-range durations never reach the host', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Claim lasts/, {}, T)
+  const input = await screen.findByLabelText(/Ticket reserved for/, {}, T)
   await user.clear(input)
   await user.type(input, '999999')
   expect(screen.getByRole('alert')).toHaveTextContent('whole number')

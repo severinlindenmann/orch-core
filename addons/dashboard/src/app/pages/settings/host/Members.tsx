@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, keyText, type RosterMember } from '@/api/settings'
+import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, SCOPE_HELP, shortId, keyText, type RosterMember } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -226,7 +226,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                       ) : (
                         <Raw>{m.name}</Raw>
                       )}
-                      <span className="font-mono text-[11px] text-text-faint"><Raw>{m.person}</Raw></span>
+                      <span className="font-mono text-[11px] text-text-faint" title={visible(m.person)}><Raw>{shortId(m.person)}</Raw></span>
                     </span>
                   </TableCell>
                   <TableCell>{select}</TableCell>
@@ -237,7 +237,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                       <ul aria-label={`Devices of ${visible(m.name)}`} className="space-y-0.5 text-[12px]">
                         {m.devices.map((d) => (
                           <li key={d.id} className="flex flex-wrap gap-x-2">
-                            <span className="font-mono text-text-muted"><Raw>{d.id}</Raw></span>
+                            <span className="font-mono text-text-muted" title={visible(d.id)}><Raw>{shortId(d.id)}</Raw></span>
                             <span className={d.valid ? 'text-text-faint' : 'text-warning'}>{d.valid ? <Raw>{d.scopes.join(', ')}</Raw> : 'not valid'}</span>
                             {d.auth && <span className="text-text-faint"><Raw>{d.auth}</Raw></span>}
                           </li>
@@ -265,6 +265,9 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
           </TableBody>
         </Table>
       </div>
+      <p className="text-[12px] text-text-muted" data-testid="scope-legend">
+        A device can: {Object.entries(SCOPE_HELP).map(([k, v], i) => <span key={k}>{i > 0 && '; '}<b className="font-medium text-text">{k}</b> = {v}</span>)}.
+      </p>
       {adding && (
         <AddMember
           me={role}

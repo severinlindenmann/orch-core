@@ -1,3 +1,4 @@
+import { useSignMethods } from '@/components/sign/SignMethods'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
@@ -115,6 +116,9 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
   const r = useRunAddonAction(ticket.key)
   const { workspace } = useWorkspace()
   const [agent, setAgent] = useState(false)
+  // The label names how this workspace really signs (its allowed ways), never a method it does not offer.
+  const ways = useSignMethods(workspace?.id).allowed
+  const signedWith = !ways ? null : ways.includes('click') ? 'in your terminal or with one click' : 'in your terminal'
   return (
     <>
     <DropdownMenu>
@@ -125,7 +129,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions, signed with Touch ID</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
         {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
         {answer.map((q) => (
           <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: q.id })}>

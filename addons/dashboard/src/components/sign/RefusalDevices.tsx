@@ -41,7 +41,7 @@ export function DeviceName({ device }: { device: NamedDevice }) {
   if (device.member)
     return (
       <span data-testid="refusal-device">
-        a device of <Inline>{device.member}</Inline> with no name
+        <Inline>{device.member}</Inline>’s device (unnamed)
       </span>
     )
   return <span data-testid="refusal-device">a device this page does not know</span>

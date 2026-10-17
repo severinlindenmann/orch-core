@@ -42,6 +42,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const [lost, setLost] = useState(false)
   const [exit, setExit] = useState<{ code: number | null; signal: string | null } | null>(null)
   const failures = useRef(0)
+  const focused = useRef(false)
   const runRef = useRef(run)
   runRef.current = run
 
@@ -93,6 +94,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           v?.setWriter(r.writer)
           v?.ready(r)
           setLease(r.writer ? 'writing' : runRef.current.writer ? 'busy' : 'reading')
+          // K7: the tab that just opened this terminal types into it at once (once per mount; a reconnect never steals focus).
+          if (r.writer && initial === 'write' && !focused.current) { focused.current = true; v?.term.focus() }
           if (r.writer) {
             const size = v?.fit()
             if (size) c.resize(size.cols, size.rows)

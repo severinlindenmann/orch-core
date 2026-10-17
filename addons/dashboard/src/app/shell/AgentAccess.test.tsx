@@ -87,3 +87,27 @@ it('keeps "Agents stopped · Start again" after Stop completes', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Start again' }))
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
+
+it('K3: cancelling the first Stop signature restores the normal pill, no "Stopped 0 of 2"', async () => {
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Close stop' }))
+  expect(screen.queryByText(/Stopped 0 of/)).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Stop again' })).toBeNull()
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents can work for you until')
+  expect(screen.getByRole('button', { name: 'Extend agent access' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+})
+
+it('K8: the pill shows the soonest end of all own access, with "+1 more"', async () => {
+  runner = { ...runner, grant: { id: 'runner', scope: 'workable', until: '2026-10-19T13:00:00Z' } } as Runner
+  vi.mocked(api.listHostGrants).mockResolvedValue([
+    { id: 'runner', person: 'me', issued_at: '2026-10-16T05:00:00Z', expires_at: '2026-10-19T13:00:00Z', revoked: null },
+    { id: 'terminal', person: 'me', expires_at: '2026-10-16T20:00:00Z', revoked: null },
+  ] as Awaited<ReturnType<typeof api.listHostGrants>>)
+  show()
+  const pill = await screen.findByRole('group', { name: 'Agent access' })
+  await waitFor(() => expect(pill).toHaveTextContent('(+1 more)'))
+  expect(pill.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-16T20:00:00.000Z')
+})

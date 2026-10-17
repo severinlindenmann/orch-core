@@ -14,6 +14,7 @@ whose person is no longer a member with a valid ``decide`` device reads as ``per
 from __future__ import annotations
 
 import copy
+import dataclasses
 import re
 import threading
 from collections.abc import Callable, Mapping
@@ -259,6 +260,22 @@ class Registry:
             entries = {**self._entries, entry.workspace_id: entry}
             self._save(entries, token=token)
             self._entries = entries
+
+    def set_store(self, workspace_id: str, store: str | None) -> bool:
+        """Record where the workspace's store lives (``".orch"``; ``None``: the project itself). Idempotent: ``True``
+        when the entry changed. Only migrate calls it, after its commit point (design B11-P2 section 3)."""
+        if store is not None and store != STORE_DIR:
+            raise HostError("internal", "unknown store layout")
+        with self._lock:
+            entry = self._entries.get(workspace_id)
+            if entry is None:
+                return False
+            if entry.store == store:
+                return False
+            entries = {**self._entries, workspace_id: dataclasses.replace(entry, store=store)}
+            self._save(entries)
+            self._entries = entries
+            return True
 
     def remove(self, workspace_id: str) -> bool:
         with self._lock:

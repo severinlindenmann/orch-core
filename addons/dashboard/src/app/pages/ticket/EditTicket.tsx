@@ -112,6 +112,10 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
   const acId = useId()
   const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people }, mayEditPeople), [ticket, sections, criteria, added, people, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')
+  // K10: anything changed (even something not signable yet) is asked about before it is thrown away.
+  const [asking, setAsking] = useState(false)
+  const dirty = !('nothing' in built)
+  const requestClose = () => { if (dirty) setAsking(true); else onClose() }
   const addNext = () => {
     const t = next.trim()
     if (!t) return
@@ -125,7 +129,7 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
     setSigning(built.action)
   }
   return (
-    <Dialog open onOpenChange={(o) => !o && !signing && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !signing && !asking && requestClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
         <DialogHeader>
           <DialogTitle>Edit {ticket.key}</DialogTitle>
@@ -196,13 +200,27 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
           </p>
         )}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={requestClose}>
             Cancel
           </Button>
           <Button type="button" onClick={review} disabled={!!signing}>
             Review and sign{'action' in built ? ` (${built.steps} ${built.steps === 1 ? 'change' : 'changes'})` : ''}
           </Button>
         </DialogFooter>
+        {asking && (
+          <Dialog open onOpenChange={(o) => !o && setAsking(false)}>
+            <DialogContent aria-label="Discard unsaved changes?">
+              <DialogHeader>
+                <DialogTitle>Discard unsaved changes?</DialogTitle>
+                <DialogDescription>You changed this ticket's text, checks or people. Closing now throws those changes away.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAsking(false)}>Keep editing</Button>
+                <Button type="button" variant="destructive" onClick={onClose}>Discard changes</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
         {signing && ws && (
           <HandoffDialog
             title={`Edit ${ticket.key}`}

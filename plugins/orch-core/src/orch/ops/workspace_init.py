@@ -871,6 +871,7 @@ def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, pas
             clock=ctx.now,
             workspace_name=root.name or prefix,
             load="lazy",
+            create=True,
         )
         appended = store.append(event, log="workspace")
     except (CustodyError, Refused, StoreError, OSError, ValueError) as e:

@@ -165,6 +165,9 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       )
     case 'new':
       return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.type ?? 'feature', title: body.title } })
+    case 'quick_start':
+    case 'new_sequence':
+      return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.action === 'quick_start' ? 'chore' : body.type, title: body.title } })
     case 'details':
       return workspaceRequest('set', { type: 'ticket.updated', ticket: body.key, labels: body.labels })
     case 'close':

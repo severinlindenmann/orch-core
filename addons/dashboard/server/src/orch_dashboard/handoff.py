@@ -224,6 +224,56 @@ class NewTicketSequence(Action):
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
 
 
+class QuickCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    cmd: Annotated[str, StringConstraints(min_length=1, max_length=300)] | None = None
+
+
+class QuickAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hours: Annotated[int, Field(ge=1, le=168)]
+
+
+class QuickStart(Action):
+    """B11 step (ii): a quick task on ONE review and ONE confirmation. The signer signs the ticket (labelled quick), its
+    requirements, the acceptance criteria and tasks (one per check), the plan derived from them, both approvals and,
+    only when the person asks for it, the agent access, last. This server only relays the intent."""
+
+    action: Literal["quick_start"]
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    description: str = Field(default="", max_length=65536)
+    checks: list[QuickCheck] = Field(default_factory=list, max_length=4)
+    agent: QuickAgent | None = None
+
+    def intent(self) -> dict:
+        from orch.canon.text import TextError, normalize_text
+        from orch.host import sequence
+
+        try:
+            title = normalize_text(self.title, one_line=True)
+            description = normalize_text(self.description).strip("\n") or title
+            checks = [
+                {
+                    "text": normalize_text(c.text, one_line=True),
+                    "cmd": None if c.cmd is None else normalize_text(c.cmd, one_line=True),
+                }
+                for c in self.checks
+            ] or [{"text": title, "cmd": None}]
+            return sequence.validate_intent(
+                {
+                    "v": 1,
+                    "kind": "quick_task",
+                    "title": title,
+                    "description": description,
+                    "checks": checks,
+                    "agent": None if self.agent is None else {"hours": self.agent.hours, "scope": "workable"},
+                }
+            )
+        except (TextError, sequence.SequenceInvalid) as exc:
+            raise fail("invalid.input", f"That task can't be signed: {exc}", exit=1) from None
+
+
 # ---- Workspace settings, members and grants (M4, #306) -------------------------------------------------------------
 # Closed and typed like the ticket actions above. `repos` is not an argument of `settings_set`: the Repos addon owns
 # repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
@@ -400,6 +450,7 @@ PrepareBody = Annotated[
     | Move
     | NewTicket
     | NewTicketSequence
+    | QuickStart
     | Details
     | WriteSection
     | SettingsSet
@@ -427,15 +478,33 @@ def sequence_progress(gateway: Gateway, ws: str, key, intent: dict) -> dict | No
         data = gateway.call(ws, "ticket.get", {"ref": key})
     except HostError:
         return None
-    doc, sections = data.get("doc") or {}, data.get("sections") or {}
+    doc, sections, gates = data.get("doc") or {}, data.get("sections") or {}, data.get("gates") or {}
     done = 1
+    ac = tasks = 0
     for step in sequence.steps(intent)[1:]:
-        if step["op"] == "set":
-            ok = all(doc.get(k) == v for k, v in intent["set"].items())
-        else:
+        kind = step["kind"]
+        if kind == "grant":  # not visible on the ticket; the run is as done as its last visible step
+            total -= 1
+            break
+        if kind == "set":
+            labels = ["quick"] if intent["kind"] == "quick_task" else None
+            ok = (
+                all(doc.get(k) == v for k, v in intent.get("set", {}).items())
+                if labels is None
+                else doc.get("labels") == labels
+            )
+        elif kind == "section":
             sid = step["args"]["section"]
             history = sections.get(sid) or []
-            ok = bool(history) and history[-1].get("hash") == canon.section_hash(intent["sections"][sid])
+            ok = bool(history) and history[-1].get("hash") == canon.section_hash(step["args"]["message"])
+        elif kind == "ac":
+            ac += 1
+            ok = len(doc.get("acceptance") or []) >= ac
+        elif kind == "task":
+            tasks += 1
+            ok = len(doc.get("tasks") or []) >= tasks
+        else:  # approve
+            ok = (gates.get(step["args"]["gate"]) or {}).get("state") == "approved"
         if not ok:
             break
         done += 1
@@ -474,6 +543,9 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case NewTicketSequence():
             intent = action.intent()
             return "new", {"title": intent["title"], "type": intent["ticket_type"]}
+        case QuickStart():
+            intent = action.intent()
+            return "new", {"title": intent["title"], "type": "chore"}
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels is not None:
@@ -531,9 +603,10 @@ def expected(action: Action, person: str | None = None):
         case PolicySet():
             _, args = host_call(action)
             return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
-        case NewTicketSequence():
+        case NewTicketSequence() | QuickStart():
             intent = action.intent()
-            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=intent["ticket_type"]) and (
+            kind = intent.get("ticket_type", "chore")
+            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=kind) and (
                 person is None or ev[0].get("owner") == person
             )
         case Move():
@@ -634,7 +707,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     person = link.welcome["peer"]["person"]
     meta = None
-    if isinstance(body, NewTicketSequence):
+    if isinstance(body, NewTicketSequence | QuickStart):
         from orch.host import sequence
 
         intent = body.intent()

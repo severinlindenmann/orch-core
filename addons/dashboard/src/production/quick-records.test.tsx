@@ -15,7 +15,6 @@ vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof
 
 const A = 'a'.repeat(32)
 const T = { timeout: 5000 }
-const KEY = 'DEMO-0007'
 const FEATURES = [...READS, ...DO, 'actions', 'quick', 'records']
 const URL_PUSH = 'https://git.example.test/me/records.git'
 const row = (key: string, title: string, status: string, quick: { commits: number | null; files: number | null; over: boolean | null } | null, labels: string[] = ['quick']) => ({
@@ -136,31 +135,45 @@ it('a viewer sees the list but no add form and no Close', async () => {
   expect(screen.queryByRole('button', { name: /^Close/ })).toBeNull()
 })
 
-it('says "two signatures" in the add form', async () => {
+it('says "one signature" in the add form, in plain words', async () => {
   show('/w/DEMO/quick')
-  expect(await screen.findByTestId('quick-two-signatures', {}, T)).toHaveTextContent('two signatures')
+  const note = await screen.findByTestId('quick-one-signature', {}, T)
+  expect(note).toHaveTextContent('One signature starts the task')
+  expect(note).toHaveTextContent('final verdict')
+  expect(screen.queryByTestId('quick-two-signatures')).toBeNull()
 })
 
-it('adding on a terminal workspace: new (chore), signed in the terminal, then the label quick, one hand-off each', async () => {
+it('starting on a terminal workspace is ONE hand-off with the whole task: title, details, steps, no agent access unless ticked', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Fix the typo in CONTRIBUTING')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.type(screen.getByLabelText('Details (optional)'), 'It says teh.')
+  await user.type(screen.getByLabelText('Step 1'), 'The typo is gone')
+  await user.type(screen.getByLabelText('Step 1 check'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
-  expect(within(first).getByText('New quick task (1 of 2)')).toBeInTheDocument()
   await within(first).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'new', title: 'Fix the typo in CONTRIBUTING', type: 'chore' })
+  expect(state.host.posts()).toHaveLength(1)
+  expect(state.host.posts()[0].body).toEqual({
+    action: 'quick_start',
+    title: 'Fix the typo in CONTRIBUTING',
+    description: 'It says teh.',
+    checks: [{ text: 'The typo is gone', cmd: 'test -z "$(grep -w teh CONTRIBUTING.md)"' }],
+  })
   expect(other('/click/')).toEqual([]) // the terminal path only: no click route on a workspace where it is off
-  state.host.submitted.set([...state.host.requests.keys()][0], KEY)
-  const second = await waitFor(() => {
-    const d = screen.getByRole('dialog')
-    expect(within(d).getByText('Label as quick (2 of 2)')).toBeInTheDocument()
-    return d
-  }, { timeout: 15000 })
-  expect(second).toHaveTextContent('Labels: quick')
-  await user.click(within(second).getByRole('button', { name: 'Prepare details' }))
-  await waitFor(() => expect(state.host.posts().length).toBe(2), T)
-  expect(state.host.posts()[1].body).toMatchObject({ action: 'details', key: KEY, labels: ['quick'] })
+}, 30000)
+
+it('ticking the box adds the agent access (workable tickets only) to the same request, never on its own', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
+  expect(screen.getByLabelText('How long agents may work')).toBeDisabled()
+  await user.click(screen.getByRole('checkbox', { name: /Let agents work on workable tickets/ }))
+  await user.selectOptions(screen.getByLabelText('How long agents may work'), '24')
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
+  await screen.findByRole('dialog', {}, T)
+  await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
+  expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } })
 }, 30000)
 
 it('adding where click-to-sign is on goes through the click routes, not a hand-off', async () => {
@@ -169,10 +182,9 @@ it('adding where click-to-sign is on goes through the click routes, not a hand-o
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Remove the dead import')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
   await within(first).findByRole('button', { name: 'Sign' }, T)
-  expect(within(first).getByText('New quick task (1 of 2)')).toBeInTheDocument()
   expect(state.host.posts()).toEqual([]) // no terminal hand-off was prepared
   expect(within(first).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
 })
@@ -181,12 +193,12 @@ it('a title that is empty or has a line break is never submitted', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   const field = await screen.findByLabelText(/^Quick task \(one line\)/, {}, T)
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   await user.type(field, '   ')
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   await user.clear(field)
   await user.type(field, 'x'.repeat(121))
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('at most 120')
 })
 

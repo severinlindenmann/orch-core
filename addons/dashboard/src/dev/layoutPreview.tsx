@@ -260,9 +260,72 @@ function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
   } as unknown as HandoffRequest
 }
 
+/** The first request of a quick start as the dashboard server sends it (the plan is derived, shown verbatim). */
+function quickRequest(action: Record<string, unknown>): HandoffRequest {
+  serial += 1
+  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
+  const title = String(action.title)
+  const description = String(action.description ?? title)
+  const checks = ((action.checks as { text: string; cmd?: string }[] | undefined) ?? [{ text: title }]).map((c) => ({ text: c.text, cmd: c.cmd ?? null }))
+  const agent = (action.agent as { hours: number } | undefined) ?? null
+  const plan = ['Quick task: do these steps in order.', ...checks.flatMap((c, i) => [`${i + 1}. ${c.text}`, ...(c.cmd ? [`   Checked by: ${c.cmd}`] : [])])].join('\n')
+  const of = 6 + 2 * checks.length + (agent ? 1 : 0)
+  const key = 'DEMO-0200'
+  const uid = '01J9ZP0000000000000000X0AC'
+  const intent = { v: 1, kind: 'quick_task', title, description, checks, agent: agent ? { hours: agent.hours, scope: 'workable' } : null }
+  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }
+  const material = {
+    kind: 'payload' as const,
+    ticket: { key, uid },
+    sequence: { digest: 'sha256:' + 'd'.repeat(64), of, intent },
+    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
+  }
+  const digest = reviewDigestOf(material)
+  const events = [event] as unknown as HandoffEvent[]
+  const headline = `Start task ${key}: ${title}`
+  const until = new Date(Date.now() + (agent?.hours ?? 0) * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+  return {
+    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
+    code: '7F3K-Q2MA',
+    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+    state: 'prepared',
+    op: 'new',
+    key,
+    fingerprint: fingerprintOf(digest, events, 'new'),
+    review_digest: digest,
+    gate_hash: null,
+    headline,
+    content: {
+      headline,
+      subline: 'creates the task and approves its requirements and plan',
+      ticket: { key, title, uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      sections: [
+        { id: 'requirements', title: 'Requirements', text: description },
+        { id: 'plan', title: 'Plan', text: plan },
+      ],
+      acceptance: checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text, checked: false })),
+      tasks: checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
+      fields_changed: [
+        { field: 'type', before: null, after: 'chore' },
+        { field: 'labels', before: null, after: 'quick' },
+      ],
+      notes: [
+        'Approves the requirements as written above, and the plan as written above (the signer checks that each approval covers exactly this text).',
+        'The task still ends with your own verdict: nothing closes it for you.',
+        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. Typed word: GRANT. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
+        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
+      ],
+    },
+    material,
+    events,
+    origin: null,
+  } as unknown as HandoffRequest
+}
+
 let serial = 0
 function request(action: Record<string, unknown>): HandoffRequest {
   if (action.action === 'new_sequence') return sequenceRequest(action)
+  if (action.action === 'quick_start') return quickRequest(action)
   serial += 1
   const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
   const type = action.action === 'new' ? 'ticket.created' : 'ticket.updated'

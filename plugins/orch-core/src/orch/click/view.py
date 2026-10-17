@@ -40,11 +40,20 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     if op == "grant":  # v1.6: only a deposit grant gets this far (check_prepared)
         return f"{tag}/GRANT"
     ticket = prepared["material"].get("ticket")
+    if _sequence_grant(prepared):  # a sequence that gives agents access: the strongest step's word
+        return f"{tag}/GRANT"
     if op in ("policy.set", "settings.set") and ticket is None:
         return f"{tag}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"
     if op in ("addon.grant", "addon.purge"):
         return f"{signer._clean(prepared['events'][0].get('name'))}~{wid[-8:]}"
     return signer.confirm_word(prepared)
+
+
+def _sequence_grant(prepared: Mapping[str, Any]) -> bool:
+    seq = (prepared.get("material") or {}).get("sequence")
+    return (
+        isinstance(seq, Mapping) and isinstance(seq.get("intent"), Mapping) and seq["intent"].get("agent") is not None
+    )
 
 
 def deposit_checks(prepared: Mapping[str, Any]) -> None:
@@ -108,6 +117,8 @@ def check_prepared(
         kind = "word"
     else:
         kind = op_class(str(prepared["op"]), events)
+        if kind == "click" and _sequence_grant(prepared):
+            kind = "word"  # a sequence that ends with a grant is confirmed with the grant's word
         if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
             raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
     for c in prepared.get("checks") or []:

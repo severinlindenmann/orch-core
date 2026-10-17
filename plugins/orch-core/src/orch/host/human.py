@@ -529,9 +529,12 @@ class HumanOps:
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
         if checked["step"] > 0 and not dry_run:
-            ref = inner.get("ref")
-            view = store.ticket(ref) if isinstance(ref, str) else None
-            if view is None or _tail_id(store, view.uid) != checked["prev"]:
+            view = store.ticket(checked["ticket"])
+            if (
+                inner.get("ref") not in (None, checked["ticket"])
+                or view is None
+                or _tail_id(store, view.uid) != checked["prev"]
+            ):
                 raise HostError("human.request_mismatch", sequence.CHANGED)
         return checked
 
@@ -924,7 +927,12 @@ class HumanOps:
                 # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
                 # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)
                 log = record["prepared"]["log"]
-                if not (_tail_id(store, log) == meta["prev"] and store.log_head(log) == events[0].get("based_on")):
+                view = store.ticket(meta["ticket"])
+                if view is None or _tail_id(store, view.uid) != meta["prev"]:
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+                if log != "workspace" and store.log_head(log) != events[0].get("based_on"):
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+                if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])

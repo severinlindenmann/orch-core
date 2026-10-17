@@ -292,8 +292,10 @@ def note_plain_review() -> None:
 def tty_passphrase_provider(request: PassphraseRequest) -> str:
     """Ask on the person's own terminal (see the module docstring). Refuses with :class:`NoPrompt` without one."""
     r, w, close = _open_tty()
+    compact = _PLAIN_REVIEW["shown"]
+    _PLAIN_REVIEW["shown"] = False  # one-shot: a later signature in this process never inherits it
     try:
-        if request.kind in ("unlock", "batch") and _PLAIN_REVIEW["shown"]:
+        if request.kind in ("unlock", "batch") and compact:
             # A plain review was just shown on this terminal (B11-P6, finding 24): one line instead of the technical
             # block. `d` is never a valid passphrase (too short), so it is safe to take it as the question.
             first = _read_secret(r, w, "\nPress d for technical details\nPassphrase: ")

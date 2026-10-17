@@ -799,7 +799,7 @@ class Call:
 
             hint = f"orch {cli} {mine[0].key}" if mine else views.claim_hint(self)
             if "task" in ops.get(self.op).input.get("properties", {}):  # task ops take REF/T3, there is no --ref
-                key = mine[0].key if mine else "DEMO-0043"
+                key = mine[0].key if mine else "REF"
                 hint = f"orch {cli} {key}/T3 (the task is written REF/T<n>, for example {key}/T3)"
                 raise OrchError(
                     "ambiguous_ref", f"name the ticket in the task as REF/T<n>; your claims: {names}", hint=hint

@@ -276,3 +276,50 @@ def test_an_edit_that_changes_people_is_refused_for_a_signer_who_may_not_manage(
             "sequence": rig.meta0(),
         },
     )
+
+
+def test_an_edit_is_signed_through_the_terminal_path_with_a_batch_unlock(human, lab, tmp_path):
+    """The terminal path renders the intent too (the unlock prompt names it): an edit has no title, only its ticket."""
+    import contextlib
+
+    from tests.host.test_handoff import Shown
+    from tests.host.test_sequence import handoff_first, terminal
+
+    quinn = lab.add_member()
+    key = made(human, tmp_path)
+    intent = edit_intent(
+        human,
+        key,
+        sections={"summary": {"was": canon.section_hash("One line."), "text": "Terminal edit."}},
+        acceptance={"was": [{"id": "AC1", "text": "First check"}], "edit": {"AC1": "First, reworded"}, "add": []},
+        people={"reviewers": {"add": [quinn.ref], "remove": []}},
+    )
+    rig = Rig(human, tmp_path / "edit", intent)
+    p = handoff_first(rig)
+    unlocks = []
+
+    class OpenOnce:
+        name, person_capable, auth = "test", True, "passphrase"
+
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            unlocks.append((action, fields))
+
+            @contextlib.contextmanager
+            def cm():
+                yield lambda payload: human.person.dk_sign(payload)
+
+            return cm()
+
+    shown = Shown()
+    result = terminal(rig, served=human.served, shown=shown, code=p["request"]["code"], backend=OpenOnce())
+    assert result["steps"] == 3 and result["key"] == key
+    assert ("ticket title", f"edit {key}") in unlocks[0][1]
+    assert "AC1: First check -> First, reworded" in shown.plain[0]
+    got = doc(human, key)["doc"]
+    assert got["sections"]["summary"] == "Terminal edit." and got["people"]["reviewers"] == [quinn.ref]
+    # and step by step with the key backend that prompts per signature (no batch unlock)
+    key2 = made(human, tmp_path / "two")
+    intent2 = edit_intent(human, key2, sections={"summary": {"was": canon.section_hash("One line."), "text": "Again."}})
+    rig2 = Rig(human, tmp_path / "edit2", intent2)
+    p2 = handoff_first(rig2)
+    assert terminal(rig2, human.served, Shown(), p2["request"]["code"])["key"] == key2

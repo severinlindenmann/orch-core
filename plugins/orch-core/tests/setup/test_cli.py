@@ -284,3 +284,39 @@ def test_k2_a_lost_page_prints_the_notice_and_enter_opens_a_new_link(tmp):
     assert result == {"old_refused": True, "new_ok": True}
     assert err.count(server_mod.LOST_LINE) == 1
     assert seen["opened"][0] not in out + err and seen["opened"][1] not in out + err  # codes never on stderr/stdout
+
+
+def test_k2_a_failing_relink_ends_the_setup_with_one_plain_line(tmp, monkeypatch):
+    sock = str(tmp.root / "run" / "setup.sock")
+    clock = {"t": 1000.0}
+    state = {"enter": 0}
+
+    def browser(env, err, launch):
+        def drive():
+            assert call(sock, "POST", "/claim", {"code": launch["code"], "port": 8765})[0] == 200
+            clock["t"] += 151
+            for _ in range(100):
+                if "closed or reloaded" in err.getvalue():
+                    break
+                threading.Event().wait(0.05)
+            state["enter"] = 1
+
+        threading.Thread(target=drive, daemon=True).start()
+        return True
+
+    def enter(timeout, flush=False):
+        if state["enter"] == 1 and not flush:
+            state["enter"] = 2
+            return True
+        threading.Event().wait(min(timeout, 0.05))
+        return False
+
+    def boom(self):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(server_mod.SetupServer, "relink", boom)
+    rc, out, err = run_main(
+        tmp, open_browser=browser, enter_pressed=enter, server_options={"clock": lambda: clock["t"]}
+    )
+    assert rc == 1  # returned instead of hanging
+    assert "could not make a new link; run orch setup again" in err and "secret detail" not in err

@@ -450,3 +450,12 @@ def test_relink_never_replaces_a_run_in_progress(srv):
     srv.flow._running = True
     assert srv.relink() is None
     assert call(path, "GET", "/api/setup/state", token=token)[0] == 200  # the old session is untouched
+
+
+def test_a_leave_call_does_not_reset_the_idle_timer(srv):
+    path, token, _ = claimed(srv)
+    srv.clock_obj.t += 590
+    assert call(path, "POST", "/api/setup/left", {}, token=token)[0] == 200
+    srv.clock_obj.t += 20  # 610 s since the last real request: the leave call did not count as activity
+    srv.check_idle()
+    assert srv.ended == "idle"

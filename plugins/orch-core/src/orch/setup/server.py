@@ -322,7 +322,7 @@ class SetupServer:
             self._check_browser(
                 method,
                 headers,
-                passive=method == "GET" and path == BROWSER_PREFIX + "state",
+                passive=(method == "GET" and path == BROWSER_PREFIX + "state") or path == BROWSER_PREFIX + "left",
                 leaving=path == BROWSER_PREFIX + "left",
             )
             if path == BROWSER_PREFIX + "left":  # K2: the page said it is going away (pagehide), with the valid token

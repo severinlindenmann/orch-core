@@ -650,9 +650,13 @@ def main(
                 if wait_enter(0.5):
                     try:
                         fresh = server.relink()
-                    except SetupError as e:
-                        err.write(f"orch setup: {e.message}\n")
-                        fresh = None
+                    except Exception as e:  # noqa: BLE001 - never leave the terminal waiting on a dead session
+                        err.write(
+                            f"orch setup: {e.message if isinstance(e, SetupError) else 'could not make a new link'}; "
+                            "run orch setup again\n"
+                        )
+                        server.die("error")
+                        break
                     if fresh is not None and not (
                         opener(env, err, fresh, no_browser=True) if no_browser else opener(env, err, fresh)
                     ):

@@ -51,6 +51,8 @@ class Flow(Protocol):
     @property
     def finished(self) -> bool: ...
     def end(self, why: str) -> None: ...
+    @property
+    def outcome(self) -> str: ...
 
 
 class SetupServer:
@@ -136,8 +138,15 @@ class SetupServer:
             self.ended, self._token, self._code_hash = why, None, None
         self._remove_code_file()
         self.flow.end(why)
-        self.notify(f"setup session ended ({why})")
+        self.notify(self.ending_line(why))
         self.stop_event.set()
+
+    def ending_line(self, why: str) -> str:
+        """The last line on the setup terminal. Only a finished setup says so; every other end (Finish setup later,
+        Ctrl-C, hang-up, idle, an error) reads as paused, never as "(done)" (B11 finding 25)."""
+        if why == "done" and getattr(self.flow, "outcome", "paused") == "done":
+            return "setup finished"
+        return "setup paused; run orch setup again to continue"
 
     # ---------------------------------------------------------------------------------------- socket-only routes
     def _launch(self, body: Any) -> dict[str, Any]:
@@ -216,7 +225,7 @@ class SetupServer:
         return {"token": token, "setup_id": self.setup_id}
 
     # ------------------------------------------------------------------------------------------ browser routes
-    def _check_browser(self, method: str, headers: Any) -> None:
+    def _check_browser(self, method: str, headers: Any, *, passive: bool = False) -> None:
         host = headers.get("Host", "")
         m = _HOST.fullmatch(host)
         if m is None or int(m.group(1)) > 65535 or self.ports is None or host not in self.ports:
@@ -237,7 +246,8 @@ class SetupServer:
             )
             if not ok:
                 raise SetupError("setup.token", "missing or wrong setup token", 401)
-            self._last = self.clock()
+            if not passive:  # the page's own once-a-second GET state must not keep an abandoned session alive
+                self._last = self.clock()
 
     def handle(self, method: str, target: str, headers: Any, raw: bytes) -> tuple[int, dict[str, Any]]:
         """One request -> (status, JSON-able body). Never raises."""
@@ -263,7 +273,7 @@ class SetupServer:
                 return 200, {"ok": True}
             if not path.startswith(BROWSER_PREFIX):
                 raise SetupError("setup.not_found", "not found", 404)
-            self._check_browser(method, headers)
+            self._check_browser(method, headers, passive=method == "GET" and path == BROWSER_PREFIX + "state")
             status, out = self.flow.dispatch(method, path[len(BROWSER_PREFIX) :], query, body)
             if self.flow.finished:
                 self.die("done")

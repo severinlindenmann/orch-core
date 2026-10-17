@@ -21,6 +21,20 @@ export interface SetupState {
   agent_hours: number[]
   relay: { available: boolean; enabled: boolean }
   missing: string[]
+  /** `missing` in words, same order (core's wording; the page shows these, never the ids) */
+  missing_words?: string[]
+  /** Finish setup: what the workspace has now (read-only on the page) */
+  current?: {
+    name: string
+    prefix: string
+    addons_on: string[]
+    agent_hours: number
+    runner: { enabled: boolean; terminals: boolean }
+    runner_grant: boolean
+    method: 'terminal' | 'click'
+  } | null
+  /** step/item id -> words (`runner_grant`: "Agent access for this Mac's runner") */
+  labels?: Record<string, string>
 }
 export interface Profile {
   name: string
@@ -40,7 +54,20 @@ export interface Review {
   review_id: string
   digest: string
   fingerprint: string[] | null
-  items: { id: string; title: string; lines: string[]; details: string[]; volatile: string[]; note?: string }[]
+  items: {
+    id: string
+    title: string
+    lines: string[]
+    details: string[]
+    volatile: string[]
+    note?: string
+    /** The signed event's type and payload (core's own structure: the summary is built from these, never from prose). */
+    type?: string
+    fields?: Record<string, unknown>
+    /** Positions in `lines` / `details` that are values the host draws at signing (core says which; no text matching). */
+    placeholders?: number[]
+    placeholder_details?: number[]
+  }[]
   runner_grant: { hours: number; scope: string; holder: string } | null
   flags: { id: string; text: string }[]
   risk: { text: string; once: boolean } | null

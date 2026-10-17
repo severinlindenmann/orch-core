@@ -30,6 +30,7 @@ from .gateway import Gateway
 from .handoff import (
     NewTicketSequence,
     PrepareBody,
+    QuickStart,
     RequestId,
     RunnerGrant,
     done_error,
@@ -280,7 +281,7 @@ def register(app: FastAPI, gateway: Gateway):
                 },
                 3,
             )
-        if isinstance(body, NewTicketSequence) and not signer.sequences():
+        if isinstance(body, NewTicketSequence | QuickStart) and not signer.sequences():
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9

@@ -809,3 +809,57 @@ def test_the_progress_of_a_sequence_is_read_from_the_tickets_log():
     ticket["sections"]["context"] = [{"hash": canon.section_hash("Two")}]
     assert at() == {"done": 4, "of": 4}
     assert sequence_progress(Gateway(), "w", None, intent) is None
+
+
+QUICK = {
+    "action": "quick_start",
+    "title": "Fix the typo in the README",
+    "description": "The README says teh.\r\nFix it.",
+    "checks": [{"text": "The typo is gone", "cmd": "grep -c teh README.md"}],
+    "agent": {"hours": 8},
+}
+
+
+def test_a_quick_task_is_one_request_one_review_with_the_derived_plan(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**QUICK})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [a for op, a, _ in host_calls if op == "human.prepare"][-1]
+    assert sent["op"] == "new" and sent["args"] == {"title": "Fix the typo in the README", "type": "chore"}
+    meta = sent["sequence"]
+    # new, labels, requirements, 1 ac, approve, plan, 1 task, approve, grant
+    assert meta["step"] == 0 and meta["of"] == 9
+    assert meta["intent"]["kind"] == "quick_task" and meta["intent"]["agent"] == {"hours": 8, "scope": "workable"}
+    assert meta["intent"]["description"] == "The README says teh.\nFix it."
+    assert got["material"]["sequence"]["intent"] == meta["intent"]
+    assert got["content"]["headline"].startswith("Start task DEMO-")
+    ids = sorted(s["id"] for s in got["content"]["sections"])
+    assert ids == ["plan", "requirements"]
+    assert any(n.startswith("Agents may work on all workable tickets") for n in got["content"]["notes"])
+
+
+def test_a_quick_task_without_steps_gets_one_check_and_no_grant(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {"action": "quick_start", "title": "Water the plants"})
+    assert res.status_code == 200, res.text
+    meta = [a for op, a, _ in host_calls if op == "human.prepare"][-1]["sequence"]
+    assert meta["of"] == 8 and meta["intent"]["agent"] is None
+    assert meta["intent"]["checks"] == [{"text": "Water the plants", "cmd": None}]
+    assert meta["intent"]["description"] == "Water the plants"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"checks": [{"text": "a", "cmd": None}] * 5},
+        {"agent": {"hours": 500}},
+        {"title": ""},
+        {"surprise": 1},
+        {"checks": [{"text": "a\nb"}]},
+    ],
+)
+def test_a_bad_quick_task_is_refused(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**QUICK, **change})
+    assert res.status_code in (400, 422), res.text

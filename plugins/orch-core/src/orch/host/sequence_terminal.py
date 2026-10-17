@@ -7,6 +7,7 @@ the batch (the key is open only for the sequence; the scalar is zeroised when it
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -62,6 +63,8 @@ def sign_sequence(
     new_idem: Callable[[], str],
     prefix: str = "",
     before: Callable[[], None] | None = None,
+    deliver: Callable[[str, str], list[str]] | None = None,
+    now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """Check, review ONCE, confirm ONCE, then sign every step. Raises :class:`signer.SignerRefused` before anything is
     signed (the request is cancelled), :class:`sequence.Aborted` when the sequence ends after some signatures (what
@@ -78,6 +81,7 @@ def sign_sequence(
             workspace_id=workspace_id,
             person=person,
             intent=intent,
+            now=now,
         )
         resumed = driver.resumable()
         review = signer.plain(prepared, workspace, prefix=prefix)
@@ -106,7 +110,11 @@ def sign_sequence(
         driver.port = port
         out = driver.run(prepared)
     last = out["results"][-1] if out["results"] else {}
-    return {"key": out["key"], "seq": last.get("seq"), "steps": out["landed"]}
+    result: dict[str, Any] = {"key": out["key"], "seq": last.get("seq"), "steps": out["landed"]}
+    secret = box.pop("secret", None)
+    if secret is not None and deliver is not None:  # the grant is the last step: its secret only after the commit
+        result["lines"] = deliver(secret, out["requests"][-1])
+    return result
 
 
 def _prefixed(review: signer.Review, note: str) -> signer.Review:
@@ -138,9 +146,10 @@ def _port(
         signer.check(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
 
     def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
-        return signer.sign(
-            prepared, backend=box.get("backend", backend), key_id=key_id, workspace_id=workspace_id
-        ).events
+        signed = signer.sign(prepared, backend=box.get("backend", backend), key_id=key_id, workspace_id=workspace_id)
+        if signed.secret is not None:  # a sequence's grant: kept in this frame until the commit, never recorded
+            box["secret"] = signed.secret
+        return signed.events
 
     def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
         res = call("human.submit", dict(request_id=rid, events=events), idem=idem)

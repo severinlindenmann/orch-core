@@ -83,7 +83,14 @@ class Rig:
         return {**res["data"], "seq": res.get("seq", res["data"].get("seq"))}
 
     def driver(self):
-        return Driver(self.port, self.sessions, workspace_id=self.wid, person=self.person, intent=self.intent)
+        return Driver(
+            self.port,
+            self.sessions,
+            workspace_id=self.wid,
+            person=self.person,
+            intent=self.intent,
+            now=lambda: self.h.served.lab.ws.clock[0],  # the host's test clock
+        )
 
 
 def doc(human, key):
@@ -251,7 +258,7 @@ def test_the_host_refuses_a_later_step_on_a_foreign_head(human, tmp_path):
             "op": "section.set",
             "args": {"ref": out["key"], "section": "plan", "message": "x"},
             "signer": human.signer,
-            "sequence": {"step": 1, "of": 4, "digest": "sha256:" + "0" * 64, "prev": "0" * 26},
+            "sequence": {"step": 1, "of": 4, "digest": "sha256:" + "0" * 64, "prev": "0" * 26, "ticket": out["key"]},
         },
     )
     assert res["error"]["code"] == "human.request_mismatch"
@@ -415,7 +422,7 @@ def test_the_host_rechecks_the_chain_inside_the_lock_at_submit(human, tmp_path):
     ok(human.submit_res(first["request"]["id"], events0))
     rec_head = ok(human.c.req("ticket.get", {"ref": first["material"]["ticket"]["key"]}))["data"]["doc"]["head"]["head"]
     key = first["material"]["ticket"]["key"]
-    meta = {"step": 1, "of": 4, "digest": out.digest, "prev": events0[0]["id"]}
+    meta = {"step": 1, "of": 4, "digest": out.digest, "prev": events0[0]["id"], "ticket": key}
     op, args = sequence.step_args(rig.intent, 1, key)
     p1 = rig.prepare(op, args, meta)
     assert p1["events"][0]["based_on"] == rec_head

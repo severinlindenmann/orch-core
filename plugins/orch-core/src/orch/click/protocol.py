@@ -124,7 +124,16 @@ CLICK_OPS = frozenset(
 )
 #: §0.8.6 item 6: ops that change who or what may act: click plus the typed word
 WORD_OPS = frozenset(
-    {"relay.pair_device", "member.add", "member.role", "member.remove", "addon.grant", "addon.purge", "policy.set"}
+    {
+        "relay.pair_device",
+        "member.add",
+        "member.role",
+        "member.remove",
+        "addon.grant",
+        "addon.purge",
+        "policy.set",
+        "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
+    }
 )
 #: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
 

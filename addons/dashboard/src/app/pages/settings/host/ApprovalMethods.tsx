@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { pairServed } from '@/api/pairing'
+import { queries } from '@/api/queries'
 import { methodLabel, type SignMethod } from '@/api/signing'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Button } from '@/components/ui/button'
@@ -12,13 +14,18 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   // A paired phone is what makes "Phone" real here; with none, an unrestricted workspace shows it unchecked.
   const phones = useQuery({ queryKey: ['phone-available', ws], queryFn: () => api.phoneAvailable(ws), retry: false })
   const phonePaired = (phones.data?.phones ?? 0) > 0
+  // One click is real only where this workspace's custody is convenience (the signer's own answer, not a label).
+  const workspaces = useQuery(queries.workspaces())
+  const clickSetUp = workspaces.data?.find(w => w.id === ws)?.click?.custody === 'convenience'
+  const setUp = (m: SignMethod) => m === 'terminal' || (m === 'click' ? clickSetUp : phonePaired)
   const qc = useQueryClient()
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
   const [method, setMethod] = useState<SignMethod | null>(null)
   const [fallback, setFallback] = useState<SignMethod | '' | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const selected = draft ?? (unrestricted ? (allowed ?? ['terminal']).filter(m => m !== 'phone' || phonePaired) : allowed) ?? ['terminal']
+  // The boxes come from the SIGNED sign_methods (all three when none is signed), and only methods that are set up count as on.
+  const selected = (draft ?? allowed ?? ['terminal']).filter(setUp)
   const primary = method ?? preference?.method ?? 'terminal'
   const secondary = fallback ?? preference?.fallback ?? ''
   const { ask, dialog } = useSettingsHandoff(ws, () => {
@@ -36,14 +43,14 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
     finally { setBusy(false) }
   }
   // Phone is not a personal default yet: it needs a paired phone for each request, so it is not offered here.
-  const personal = (allowed ?? ['terminal']).filter(m => m !== 'phone')
+  const personal = (allowed ?? ['terminal']).filter(m => m !== 'phone' && setUp(m))
   const readOnly = loading ? 'Reading approval settings…' : !allowed ? 'This host does not report its approval settings, so they cannot be changed here.' : null
   return <>
     <Section title="Allowed ways to approve">
       <div className="space-y-3 text-[13px]">
-        {unrestricted && <p>No limit is set: every way below can be used.</p>}
+        {unrestricted && <p>No limit is set: every way below that is set up can be used.</p>}
         <p className="text-text-muted">Choose which methods people can use in this workspace.</p>
-        {(['terminal', 'click', 'phone'] as const).map(m => <div key={m} className="flex flex-wrap items-center gap-x-2"><label className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal'} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label>{m === 'phone' && !phonePaired && <span className="text-text-muted">no phone paired yet</span>}</div>)}
+        {(['terminal', 'click', 'phone'] as const).map(m => <div key={m} className="flex flex-wrap items-center gap-x-2"><label className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal' || (!setUp(m) && !selected.includes(m))} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label>{m === 'phone' && !phonePaired && <span className="text-text-muted">no phone paired yet{pairServed(ws) ? '' : '. Pairing a phone is not available on this host yet.'}</span>}{m === 'click' && !clickSetUp && <span className="text-text-muted">not set up: turn on “Sign in the dashboard”</span>}</div>)}
         <label className="flex items-center gap-2 text-text-muted"><input type="checkbox" disabled />Touch ID on this Mac · coming</label>
         <label className="flex items-center gap-2 text-text-muted"><input type="checkbox" disabled />Security key · later</label>
         {readOnly && <p className="text-text-muted">{readOnly}</p>}

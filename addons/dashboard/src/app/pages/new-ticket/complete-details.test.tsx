@@ -106,7 +106,7 @@ describe('what a signed new ticket hands on', () => {
     expect(made).toMatchObject({ action: { sections: { findings: 'What we found' } } })
   })
   it('refuses what the host has no signed operation for, instead of dropping it', () => {
-    for (const patch of [{ visibility: { restricted: ['p_x'] } }, { due: '2026-11-01' }, { acceptance: ['x'] }, { people: { owner: 'p_x', assignees: [], reviewers: [] } }]) {
+    for (const patch of [{ visibility: { restricted: ['p_x'] } }, { due: '2026-11-01' }]) {
       const made = handoffNewTicket({ ...EMPTY, title: 'T', ...patch })
       expect(made).toHaveProperty('problem')
       expect((made as { problem: string }).problem).toMatch(/cannot carry/)

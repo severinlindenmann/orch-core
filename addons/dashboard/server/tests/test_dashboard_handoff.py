@@ -811,6 +811,66 @@ def test_the_progress_of_a_sequence_is_read_from_the_tickets_log():
     assert sequence_progress(Gateway(), "w", None, intent) is None
 
 
+def test_the_agent_access_of_a_quick_task_counts_as_the_last_step_and_is_read_from_the_grants():
+    from orch import canon
+    from orch.host import sequence
+
+    from orch_dashboard.handoff import sequence_progress
+
+    intent = sequence.validate_intent(
+        {
+            "v": 1,
+            "kind": "quick_task",
+            "title": "T",
+            "description": "D",
+            "checks": [{"text": "C", "cmd": None}],
+            "agent": {"hours": 24, "scope": "workable"},
+        }
+    )
+    from orch.host import seqquick
+
+    plan = seqquick.plan_text(intent["checks"])
+    ticket = {
+        "doc": {"labels": ["quick"], "acceptance": [{}], "tasks": [{}]},
+        "sections": {
+            "requirements": [{"hash": canon.section_hash("D")}],
+            "plan": [{"hash": canon.section_hash(plan)}],
+        },
+        "gates": {"requirements": {"state": "approved"}, "plan": {"state": "approved"}},
+    }
+    grants = []
+
+    class Gateway:
+        def call(self, ws, op, args):
+            return ticket if op == "ticket.get" else {"grants": grants}
+
+    total = len(sequence.steps(intent))
+
+    def at():
+        return sequence_progress(Gateway(), "w", "DEMO-0001", intent, person="p_me", since="2026-10-17T10:00:00Z")
+
+    assert at() == {"done": total - 1, "of": total}  # every ticket step landed; the grant did not: not done
+    good = {
+        "person": "p_me",
+        "label": "runner",
+        "issued_at": "2026-10-17T10:00:05Z",
+        "expires_at": "2026-10-18T10:00:05Z",
+    }
+    for bad in (
+        {**good, "person": "p_other"},
+        {**good, "label": None},
+        {**good, "issued_at": "2026-10-17T09:00:00Z", "expires_at": "2026-10-18T09:00:00Z"},  # older than this request
+        {**good, "expires_at": "2026-10-17T18:00:05Z"},  # another length
+        {**good, "revoked_at": "2026-10-17T10:01:00Z"},
+    ):
+        grants[:] = [bad]
+        assert at() == {"done": total - 1, "of": total}
+    grants[:] = [good]
+    assert at() == {"done": total, "of": total}
+    no_person = sequence_progress(Gateway(), "w", "DEMO-0001", intent)
+    assert no_person == {"done": total - 1, "of": total}  # closed
+
+
 QUICK = {
     "action": "quick_start",
     "title": "Fix the typo in the README",
@@ -836,7 +896,8 @@ def test_a_quick_task_is_one_request_one_review_with_the_derived_plan(ready, hos
     assert got["content"]["headline"].startswith("Start task DEMO-")
     ids = sorted(s["id"] for s in got["content"]["sections"])
     assert ids == ["plan", "requirements"]
-    assert any(n.startswith("Agents may work on all workable tickets") for n in got["content"]["notes"])
+    prefix = "Agents may work on any ticket they are allowed to work on"
+    assert any(n.startswith(prefix) for n in got["content"]["notes"])
 
 
 def test_a_quick_task_without_steps_gets_one_check_and_no_grant(ready, host_calls):
@@ -863,3 +924,107 @@ def test_a_bad_quick_task_is_refused(ready, change):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, {**QUICK, **change})
     assert res.status_code in (400, 422), res.text
+
+
+QUINN = "p_" + "7" * 32
+
+
+def test_a_new_ticket_carries_criteria_and_people_in_the_same_review(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    body = {**SEQ, "acceptance": ["It opens", "It saves"], "people": {"assignees": [QUINN], "owner": QUINN}}
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    intent = sent["sequence"]["intent"]
+    assert intent["acceptance"] == ["It opens", "It saves"]
+    assert intent["people"] == {"assignees": [QUINN], "owner": QUINN}
+    assert sent["sequence"]["of"] == 4 + 2 + 2  # new, set, two sections, two criteria, assignees, owner
+    # neither key: the intent is the old one, with the old digest
+    plain = post(client, token, stub, {**SEQ}).json()
+    assert "acceptance" not in sent_intent(host_calls) and plain["id"] != res.json()["id"]
+
+
+def sent_intent(host_calls):
+    return [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]["sequence"]["intent"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"acceptance": ["x"] * 9},
+        {"people": {"owner": "not-a-person"}},
+        {"people": {"watchers": [QUINN]}},
+        {"people": {"assignees": [QUINN], "extra": 1}},
+    ],
+)
+def test_a_new_ticket_refuses_bad_criteria_and_people(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ, **change})
+    assert res.status_code in (400, 422), res.text
+
+
+def _edit_body(p1, **over):
+    """The edit action of DEMO-0001 the way the page sends it: what changes and the log head it showed."""
+    store = p1.store
+    view = store.ticket("DEMO-0001")
+    return {
+        "action": "edit_sequence",
+        "key": "DEMO-0001",
+        "head_seq": store.log_seq(view.uid),
+        "sections": {"summary": "New text.\r\nTwo"},
+        **over,
+    }
+
+
+def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_calls, p1):
+    from orch import canon
+
+    client, token, stub, rich, signing = ready
+    body = _edit_body(
+        p1,
+        acceptance={"edit": {}, "add": ["Second"]},
+        people={"reviewers": {"add": [QUINN], "remove": []}},
+    )
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    meta = sent["sequence"]
+    assert sent["op"] == "section.set" and sent["args"]["ref"] == "DEMO-0001"
+    assert meta["step"] == 0 and meta["of"] == 3  # the section, the criterion, the reviewer
+    intent = meta["intent"]
+    assert intent["sections"]["summary"]["text"] == "New text.\nTwo"  # CRLF made LF
+    # the text it replaces, the criteria it extends and the head come from the host's read, not from the browser
+    view = p1.store.ticket("DEMO-0001")
+    assert intent["sections"]["summary"]["was"] == canon.section_hash(
+        p1.store.body_sections(view.uid).get("summary", "")
+    )
+    assert intent["ticket"] == {"key": "DEMO-0001", "uid": view.uid}
+    got = res.json()
+    assert got["content"]["headline"].startswith("Edit DEMO-0001 (key per host; signed id")
+    assert got["events"][0]["based_on"] == intent["head"]
+    # the same edit is the same request
+    assert post(client, token, stub, body).json()["id"] == got["id"]
+
+
+def test_an_edit_of_a_ticket_that_changed_since_the_page_is_refused(ready, p1):
+    client, token, stub, rich, signing = ready
+    body = _edit_body(p1)
+    res = post(client, token, stub, {**body, "head_seq": body["head_seq"] - 1})
+    assert res.status_code >= 400 and "changed after you opened it" in res.text, res.text
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sections": {}},  # nothing changes
+        {"head_seq": 0},
+        {"people": {"owner": {"add": [QUINN, "p_" + "8" * 32], "remove": []}}},
+        {"people": {"watchers": {"add": [QUINN], "remove": []}}},
+        {"acceptance": {"edit": {"AC9": "x"}, "add": []}},
+        {"surprise": 1},
+    ],
+)
+def test_an_edit_refuses_a_bad_intent(ready, p1, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, _edit_body(p1, **change))
+    assert res.status_code in (400, 409, 422), res.text

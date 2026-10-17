@@ -39,6 +39,16 @@ def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
     return env
 
 
+@pytest.fixture(autouse=True)
+def _no_plain_review_leak():
+    """The one-shot "a plain review was just shown" flag of the passphrase prompt never survives a test (a review
+    confirmed in one test and no passphrase asked would shorten the next test's prompt)."""
+    yield
+    from orch.custody import passphrase
+
+    passphrase._PLAIN_REVIEW.update(shown=False, hint=True)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _never_the_real_keychain():
     """No test may reach the owner's real keychains (H5c): the store, ``_open`` and every keychain test helper refuse

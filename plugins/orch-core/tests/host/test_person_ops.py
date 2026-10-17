@@ -65,7 +65,7 @@ def test_the_host_person_ops_are_not_registry_ops():
     import orch.ops as ops
     from orch.model.emits import EMITS_V1
 
-    want = {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e: relay.pair_device
+    want = {"move", "policy.set", "settings.set", "people.set", "relay.pair_device"}  # H12c-e, B12D
     assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
         assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched
@@ -226,6 +226,29 @@ def test_policy_set_with_a_ref_is_for_the_ticket_owner_owners_and_maintainers(ma
     w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
     w.person_event("role.changed", person=w.quinn.ref, role="viewer")
     assert err(quinn.prepare_res("policy.set", args)) == "role.denied"  # a viewer owning the ticket
+
+
+def test_people_set_is_for_whoever_may_manage_the_ticket_and_names_members_only(maint):
+    """B12D: ``claims.may_manage`` (ticket owner, owners, maintainers); an owner is exactly one person."""
+    w, quinn = maint
+    uid, key = w.ticket()
+    args = {"ref": key, "role": "assignees", "add": [w.quinn.ref], "remove": []}
+    assert err(quinn.prepare_res("people.set", args)) == "role.denied"  # a member who does not own the ticket
+    w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
+    quinn.run("people.set", args)
+    assert [e["add"] for e in events_of(w, uid, "people.changed")][-1] == [w.quinn.ref]
+    assert err(quinn.prepare_res("people.set", {**args, "add": ["p_" + "9" * 32]})) == "invalid.input"  # not a member
+    assert err(quinn.prepare_res("people.set", {**args, "add": [], "remove": []})) == "invalid.input"  # nothing
+    assert (
+        err(quinn.prepare_res("people.set", {**args, "add": [w.quinn.ref], "remove": [w.quinn.ref]})) == "invalid.input"
+    )
+    owner = {"ref": key, "role": "owner"}
+    assert err(quinn.prepare_res("people.set", {**owner, "add": [w.quinn.ref, w.lab.owner]})) == "invalid.input"
+    assert (
+        err(quinn.prepare_res("people.set", {**owner, "add": [w.quinn.ref], "remove": [w.lab.owner]}))
+        == "invalid.input"
+    )
+    assert err(quinn.prepare_res("people.set", {**args, "role": "watchers"})) == "invalid.input"  # not offered yet
 
 
 def test_a_ticket_owner_fixes_a_no_eligible_gate_with_policy_set(maint):

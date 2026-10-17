@@ -49,6 +49,19 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     return signer.confirm_word(prepared)
 
 
+def _sequence_word(prepared: Mapping[str, Any]) -> bool:
+    """B12D: does the strongest step of this sequence need the typed word (a people change signs who may act)?"""
+    from orch.host import sequence
+
+    seq = (prepared.get("material") or {}).get("sequence")
+    if not isinstance(seq, Mapping):
+        return False
+    try:
+        return sequence.confirm_kind(sequence.validate_intent(seq.get("intent"))) == "word"
+    except sequence.SequenceInvalid:
+        raise refused("check_failed", "the sequence is not one this signer knows") from None
+
+
 def _sequence_grant(prepared: Mapping[str, Any]) -> bool:
     seq = (prepared.get("material") or {}).get("sequence")
     return (
@@ -117,8 +130,8 @@ def check_prepared(
         kind = "word"
     else:
         kind = op_class(str(prepared["op"]), events)
-        if kind == "click" and _sequence_grant(prepared):
-            kind = "word"  # a sequence that ends with a grant is confirmed with the grant's word
+        if kind == "click" and (_sequence_grant(prepared) or _sequence_word(prepared)):
+            kind = "word"  # a sequence whose strongest step is a word (a grant, a people change) is confirmed with it
         if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
             raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
     for c in prepared.get("checks") or []:

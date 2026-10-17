@@ -4,7 +4,7 @@
 import { SignContent, SignDetails } from './SignContent'
 import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import { confirmWord, signCommand, workspaceConfirmWord, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
+import { confirmWord, sequenceWord, signCommand, workspaceConfirmWord, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Prose, Raw, RawValue, plain } from './visible'
 
@@ -87,7 +87,7 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
             Ticket id <Raw>{material.ticket.uid}</Raw> (signed; its last 8 characters are <Raw>{uidFragment(material.ticket.uid)}</Raw>)
           </p>
           <p className="text-[12px] text-text-muted">
-            In your terminal you type <Raw>{confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
+            In your terminal you type <Raw>{sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
           </p>
         </Block>
       )}
@@ -99,7 +99,7 @@ export function MaterialPreview({ material, events = [], word = null }: { materi
         </Block>
       )}
       {material.sequence && (
-        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, then each written section)`}>
+        <Block title={`One review for ${material.sequence.of} signatures, in this order (the title, then the fields, each written section, each acceptance criterion and the people)`}>
           <Value value={material.sequence.intent} />
         </Block>
       )}
@@ -202,7 +202,7 @@ export function CommandLine({ code }: { code: string }) {
 export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
   const remaining = useRemaining(request.expires_at)
   const { material } = request
-  const word = material.ticket ? confirmWord(material.ticket.key, material.ticket.uid) : workspaceConfirmWord(request, workspace)
+  const word = material.ticket ? (sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)) : workspaceConfirmWord(request, workspace)
   const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">

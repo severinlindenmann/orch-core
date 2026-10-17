@@ -130,8 +130,8 @@ def _sequence(prepared: Mapping[str, Any], events: list[Any], workspace_id: str,
         plan = sequence.steps(intent)
         if meta["digest"] != sequence.digest_of(workspace_id, person, intent) or meta["of"] != len(plan):
             _refuse("the sequence digest or step count is not the intent's")
-        if prepared["op"] != "new" or len(events) != 1:
-            _refuse("a sequence starts with one new")
+        if prepared["op"] != plan[0]["op"] or len(events) != 1:
+            _refuse("a sequence starts with its first step's op")
         sequence.check_step(intent, 0, prepared, person=person, first=None, prev_head=None)
     except sequence.SequenceInvalid as exc:
         _refuse(f"the sequence is not one this signer knows ({exc})")
@@ -217,6 +217,7 @@ _SET_FIELDS = frozenset(
 #: what the host person ops (H6b, §0.8) may change
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
+_PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos"})
 
 
@@ -232,6 +233,17 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             scope_ok = (log == "workspace") == (ticket is None)
             ok = e["type"] == "policy.changed" and isinstance(gates, dict) and 1 <= len(gates) <= 4
             ok = ok and set(gates) <= _GATES and scope_ok
+        elif op == "people.set":
+            ok = (
+                e["type"] == "people.changed"
+                and log != "workspace"
+                and ticket is not None
+                and e.get("role") in _PEOPLE_ROLES
+                and isinstance(e.get("add"), list)
+                and isinstance(e.get("remove"), list)
+                and (len(e["add"]) + len(e["remove"]) > 0)
+                and (e.get("role") != "owner" or (len(e["add"]) == 1 and not e["remove"]))
+            )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
@@ -495,6 +507,7 @@ _PLAIN = {
     "move": "move {ticket} to {to}",
     "policy.set": "set the gate policies {gates} of {ticket}",
     "settings.set": "change the workspace settings {set}",
+    "people.set": "change the {role} of {ticket}",
     "relay.pair_device": "add the paired device {device} to your devices",
 }
 

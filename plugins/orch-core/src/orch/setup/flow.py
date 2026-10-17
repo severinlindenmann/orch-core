@@ -94,7 +94,22 @@ class SetupFlow:
     @property
     def outcome(self) -> str:
         """``done`` when the workspace was set up and the person pressed Finish, else ``paused``."""
-        return "done" if self._closed and self.run is not None and self.run.done else "paused"
+        return "done" if self._closed and (self.ready or self.complete) else "paused"
+
+    @property
+    def ready(self) -> bool:
+        """The workspace is set up (whether or not the page pressed Finish)."""
+        return self.run is not None and self.run.done
+
+    @property
+    def complete(self) -> bool:
+        """Finish setup on a workspace that lacks nothing (B12 N9): there is nothing to do but open the dashboard."""
+        return (
+            self.mode == "finish"
+            and self.run is None
+            and self.facts is not None
+            and not facts_mod.all_missing(self.facts, self.addons)
+        )
 
     def launch(self, directory: str) -> None:
         with self.lock:
@@ -177,6 +192,7 @@ class SetupFlow:
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
             "current": current,
+            "complete": self.complete,
             "labels": {k: facts.label(k, self.addons) for k in (*facts.LABELS, *(f"addon:{a}" for a in self.addons))},
             "error": self.error,
         }
@@ -345,11 +361,13 @@ class SetupFlow:
         return out
 
     def _finish(self, _body: Any) -> dict[str, Any]:
-        if self.run is None or not self.run.done or self.phase == "cancelled":
+        if not (self.ready or self.complete) or self.phase == "cancelled":
             raise SetupError("setup.phase", "setup is not finished", 409)
-        if self.mode == "new" and self.run.workspace is None:
+        if self.mode == "new" and (self.run is None or self.run.workspace is None):
             raise SetupError("setup.phase", "setup is not finished", 409)
-        wid = (self.run.workspace or {}).get("id") or (self.entry or {}).get("workspace_id", "")
+        wid = ((self.run.workspace if self.run is not None else None) or {}).get("id") or (self.entry or {}).get(
+            "workspace_id", ""
+        )
         self._closed = True
         return {"url": self.e.workspace_url(wid)}
 
@@ -620,10 +638,12 @@ def main(
         err.write("orch setup: cancelled\n")
     finally:
         server.stop()
-    ok = flow.phase == "done" or (flow._closed and flow.run is not None and flow.run.done)
+    ok = flow.phase == "done" or (flow._closed and (flow.ready or flow.complete))
     if ok and flow.run is not None:
         ws = flow.run.workspace or {}
         out.write(f"workspace {ws.get('prefix', '')} set up in {flow.dir}\n")
+    elif ok and flow.facts is not None:
+        out.write(f"workspace {flow.facts.prefix} is already set up in {flow.dir}\n")
     return 0 if ok else 1
 
 

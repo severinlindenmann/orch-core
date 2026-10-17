@@ -2,7 +2,7 @@
 // "Output no longer kept" without attaching.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { runsApi, type Run, type RunList, type TermPreview } from '@/api/runs'
@@ -61,6 +61,12 @@ describe('the real dock', () => {
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('Dashboard execution: agents and terminals started here run as you.')
     expect(dialog).toHaveTextContent('$SHELL -l')
+    // B12A N15: the command and the environment sit in a collapsed Details, as in Start agent.
+    const details = within(dialog).getByTestId('term-details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    expect(details).toHaveTextContent('$SHELL -l')
+    expect(details).toHaveTextContent('Environment')
+    expect(within(dialog).getByTestId('term-preview-lines').querySelector(':scope > dl')?.textContent ?? '').not.toContain('$SHELL')
     expect(dialog).toHaveTextContent('acts as you, not as an agent')
     expect(dialog.textContent).not.toContain('‮') // the bidi override is shown, never applied
     fireEvent.click(await screen.findByRole('button', { name: 'Open terminal' }))
@@ -71,7 +77,7 @@ describe('the real dock', () => {
     expect(open.mock.calls[1][3]).toBe(open.mock.calls[0][3]) // the retry keeps the idem: one run, never two
     const term = await screen.findByTestId('term')
     expect(term.dataset.run).toBe(opened.run)
-    expect(term.dataset.initial).toBe('write') // the shell this person just opened; take is never set by itself
+    expect(term.dataset.initial).toBe('write') // the shell this tab just opened: its first attach takes control (B12A N5)
   })
 
   it('the write attach after Open is one-shot: switching away and back attaches read (review M1)', async () => {

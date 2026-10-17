@@ -1,6 +1,6 @@
 import { ChevronRight, Eye, Pencil, Plus, X } from 'lucide-react'
 import { useId, useState } from 'react'
-import { SECTIONS_BY_TYPE, SECTION_ORDER, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
+import { SECTIONS_BY_TYPE, SECTION_ORDER, neededBefore, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { BodySections, TicketType } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { Button } from '@/components/ui/button'
@@ -18,11 +18,11 @@ const HINT: Partial<Record<SectionName, string>> = {
   current_state: 'Where things stand right now.',
 }
 
-function Section({ type, name, value, onChange, error }: { type: TicketType; name: SectionName; value: string; onChange: (v: string) => void; error?: string }) {
+export function Section({ type, name, value, onChange, error }: { type: TicketType; name: SectionName; value: string; onChange: (v: string) => void; error?: string }) {
   const id = useId()
   const [preview, setPreview] = useState(false)
   const label = sectionLabel(type, name)
-  const need = SECTIONS_BY_TYPE[type][name]
+  const needGate = neededBefore(type, name)
   const atCreation = requiredAtCreation(type).includes(name)
   return (
     <section className="space-y-1.5">
@@ -31,7 +31,7 @@ function Section({ type, name, value, onChange, error }: { type: TicketType; nam
           {label}
         </label>
         <span id={`${id}-need`} className="text-[11px] text-text-faint">
-          {atCreation ? 'required' : need === 'required' ? 'needed before the plan gate' : 'optional'}
+          {atCreation ? 'required' : needGate ? `needed before the ${needGate} gate` : 'optional'}
         </span>
         <div className="flex-1" />
         <Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-[11px]" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>

@@ -14,6 +14,7 @@ import secrets
 import time
 from collections.abc import Mapping
 
+from orch import canon
 from orch.ops import views as p1_views
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store import observe
@@ -639,6 +640,8 @@ def get(host, store, views, args, person):
         "sections": {s: texts.get(s, "") for s in sections},
     }
     all_events = store.events(v.uid)
+    # as core's `doc.head` (v1.7): the seq and the head hash of the log's last event (the edit sequence chains on it)
+    doc["head"] = {"seq": all_events[-1]["seq"], "head": canon.event_head(all_events[-1])}
     events = store.events(v.uid, after=since, limit=limit + 1)
     more = len(events) > limit
     events = events[:limit]

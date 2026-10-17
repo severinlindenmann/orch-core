@@ -426,14 +426,17 @@ class ClickSigner:
         needs dashboard execution on this machine. A terminal step means the terminal."""
         from orch.host import sequence
 
-        if deposit or files or op != "new" or not isinstance(seq, dict) or seq.get("step") != 0:
-            raise ClickError("invalid.input", "a sequence starts with new, without files or a deposit")
+        if deposit or files or not isinstance(seq, dict) or seq.get("step") != 0:
+            raise ClickError("invalid.input", "a sequence starts at its first step, without files or a deposit")
         try:
             intent = sequence.validate_intent(seq.get("intent"))
         except sequence.SequenceInvalid as exc:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
+        if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
+            raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
         kind = sequence.confirm_kind(intent)
-        if kind == "terminal" or (kind == "word" and not (sequence.has_grant(intent) and self._execution(entry))):
+        # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
+        if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -635,7 +638,7 @@ class ClickSigner:
         kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
         if (
             kind == "terminal"
-            or (kind == "word" and not (sequence.has_grant(intent) and self._execution(entry)))
+            or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
             or approval.kind != kind
         ):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")

@@ -26,7 +26,13 @@ export type HandoffAction =
    * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
    * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
    */
-  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>> }
+  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] } }
+  /**
+   * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
+   * criteria to change or add and the people to add or remove. `head_seq` is the log head the page showed: the server
+   * refuses the edit when the ticket has changed since.
+   */
+  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }
@@ -102,6 +108,9 @@ export interface HandoffRequest {
 
 /** A written section is at most 64 KiB of UTF-8 (P1 and the host), counted in bytes like the server. */
 export const MAX_SECTION_BYTES = 65536
+/** Core's limits of one sequence (orch.host.sequence): criteria a sequence adds, and signatures in all. */
+export const MAX_CRITERIA = 8
+export const MAX_SEQUENCE_STEPS = 16
 
 /** `GET /handoff/<id>`: where the request is now (host `human.pending`). `request` only with `?full=1` while open. */
 export interface HandoffState {
@@ -115,7 +124,7 @@ export interface HandoffState {
   /** Host v1.5, optional: why a signer's submit failed (a catalog code). */
   error?: { code: string } | null
   /** B11: a sequence (one review, N signatures) that has landed `done` of its `of` steps; absent for other requests. */
-  progress?: { done: number; of: number } | null
+  progress?: { done: number; of: number; last?: 'grant' } | null
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -207,6 +216,15 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
 
 /** The word typed to confirm a ticket operation: the key as the host gives it, and the last 8 characters of the signed log's uid. */
 export const confirmWord = (key: string, uid: string): string => `${key}/${uid.slice(-8)}`
+
+/**
+ * The word a terminal asks for when the request is one step of a sequence: `GRANT` when the reviewed intent includes
+ * agent access (the signer's own `confirm_word`: the strongest step's word), else null (the ticket's own word applies).
+ */
+export const sequenceWord = (material: Pick<HandoffMaterial, 'sequence'>): string | null => {
+  const intent = material.sequence?.intent as { agent?: unknown } | undefined
+  return intent && intent.agent !== null && intent.agent !== undefined ? 'GRANT' : null
+}
 
 /** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/

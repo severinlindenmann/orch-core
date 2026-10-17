@@ -32,17 +32,32 @@ class _Unlocked:
         return self._raw(payload)
 
 
+def labels_for(intent: Mapping[str, Any]) -> tuple[bytes, ...]:
+    """The domain labels the reviewed intent's steps need, and no more: a ticket event's label for every step on the
+    ticket, the workspace event's label only when a step is the grant (``grant.issued`` is a workspace event)."""
+    names = ["sig_ws_event" if s["kind"] == "grant" else "sig_ticket_event" for s in sequence.steps(intent)]
+    return tuple(canon.LABELS[n].encode("ascii") for n in dict.fromkeys(names))
+
+
 @contextmanager
 def unlocked_backend(
-    backend: Any, key_id: str, *, digest: str, fields: tuple[tuple[str, str], ...], action: str
+    backend: Any,
+    key_id: str,
+    *,
+    digest: str,
+    fields: tuple[tuple[str, str], ...],
+    action: str,
+    labels: tuple[bytes, ...] | None = None,
 ) -> Iterator[Any]:
     """The backend to sign the whole sequence with: one passphrase for the batch where the custody can do it, else the
-    backend itself (it signs without a factor, or asks per signature)."""
+    backend itself (it signs without a factor, or asks per signature). ``labels`` are the domain labels the batch may
+    sign (:func:`labels_for`); without them, one ticket's events only. The custody refuses any other label."""
     opener = getattr(backend, "unlocked", None)
     if opener is None:
         yield backend
         return
-    labels = (canon.LABELS["sig_ticket_event"].encode("ascii"),)  # a sequence signs one ticket's events only
+    if labels is None:
+        labels = (canon.LABELS["sig_ticket_event"].encode("ascii"),)
     with opener(key_id, action=action, digest=digest.split(":")[-1][:32], fields=fields, labels=labels) as raw:
         yield _Unlocked(str(backend.auth), raw)
 
@@ -89,7 +104,8 @@ def sign_sequence(
             n = sum(1 for s in resumed["steps"] if s["state"] == "landed")
             note = (
                 f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
-                f"{signer._clean(resumed['ticket']['key'])}; no second ticket is made.\n\n"
+                f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
+                f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
             )
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):
@@ -103,7 +119,12 @@ def sign_sequence(
     box: dict[str, Any] = {}
     fields = (("signatures", str(driver.total)), ("ticket title", intent["title"]), ("workspace", workspace_id))
     with unlocked_backend(
-        backend, key_id, digest=driver.digest, fields=fields, action=f"orch: {driver.total} signatures, one review"
+        backend,
+        key_id,
+        digest=driver.digest,
+        fields=fields,
+        action=f"orch: {driver.total} signatures, one review",
+        labels=labels_for(intent),
     ) as be:
         box["backend"] = be
         port = _port(call, be, key_id, workspace_id, person, device, auth, workspace, new_idem, box)

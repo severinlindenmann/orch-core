@@ -280,25 +280,30 @@ def _read_secret(r: int, w: int, prompt: str) -> str:
     return _decode(buf)
 
 
-_PLAIN_REVIEW = {"shown": False}
+_PLAIN_REVIEW = {"shown": False, "hint": True}
 
 
-def note_plain_review() -> None:
+def note_plain_review(hint: bool = True) -> None:
     """The plain review of what is about to be signed was shown on the person's terminal: the passphrase prompt that
     follows asks for the technical block with ``d`` instead of printing it (everything stays reachable)."""
     _PLAIN_REVIEW["shown"] = True
+    _PLAIN_REVIEW["hint"] = hint  # N13: False when the person already read the full review (no point in offering it)
 
 
 def tty_passphrase_provider(request: PassphraseRequest) -> str:
     """Ask on the person's own terminal (see the module docstring). Refuses with :class:`NoPrompt` without one."""
     r, w, close = _open_tty()
     compact = _PLAIN_REVIEW["shown"]
+    hint = _PLAIN_REVIEW["hint"]
     _PLAIN_REVIEW["shown"] = False  # one-shot: a later signature in this process never inherits it
+    _PLAIN_REVIEW["hint"] = True
     try:
         if request.kind in ("unlock", "batch") and compact:
             # A plain review was just shown on this terminal (B11-P6, finding 24): one line instead of the technical
             # block. `d` is never a valid passphrase (too short), so it is safe to take it as the question.
-            first = _read_secret(r, w, "\nPress d for technical details\nPassphrase: ")
+            # N13: the hint is shown only where `d` works here (not after the details were already read); the prompt
+            # keeps ending in "Passphrase: " (the dev-pair and e2e terminal drivers answer that text)
+            first = _read_secret(r, w, "\nPress d for technical details\nPassphrase: " if hint else "\nPassphrase: ")
             while first == "d":
                 first = _read_secret(r, w, render_prompt(request) + "Passphrase: ")
         else:

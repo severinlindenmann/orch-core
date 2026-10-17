@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { handoffMode } from '@/api/features'
-import { MAX_SECTION_BYTES, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
@@ -32,8 +32,9 @@ const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
  * A new ticket through the hand-off is ONE review and ONE confirmation (B11, finding 9): the title, the type, the
  * fields and every written section go to the signer as one intent. The signer signs `ticket.created`, the fields and one
  * `ticket.updated` per written section, each step checked against the intent; the review shows the ticket AND its text.
- * What the host has no signed operation for is said instead of dropped: restricted visibility, people, a due date and
- * acceptance criteria.
+ * B12D (finding N3): acceptance criteria and people (owner, assignees, reviewers) are signed in the same review, as
+ * `ac.add` and `people.set` steps after the text. What the host has no signed operation for is said instead of
+ * dropped: restricted visibility and a due date.
  */
 /**
  * The key of the ticket: the one of the `new` request THIS dialog prepared and watched, and no other.
@@ -43,19 +44,29 @@ export function ownKey(state: HandoffState | null, request: HandoffRequest | nul
   return state && request && state.id === request.id && request.op === 'new' && state.op === 'new' ? state.key : null
 }
 
-export function handoffNewTicket(d: Draft): { action: HandoffAction } | { problem: string } {
+/** The people the sequence signs: the creator is already the owner, so naming them again is no change. */
+export function sequencePeople(p: PeopleValue, creator?: string): { owner?: string; assignees?: string[]; reviewers?: string[] } | undefined {
+  const out: { owner?: string; assignees?: string[]; reviewers?: string[] } = {}
+  if (p.owner && p.owner !== creator) out.owner = p.owner
+  if (p.assignees.length) out.assignees = [...new Set(p.assignees)].sort()
+  if (p.reviewers.length) out.reviewers = [...new Set(p.reviewers)].sort()
+  return Object.keys(out).length ? out : undefined
+}
+
+export function handoffNewTicket(d: Draft, creator?: string): { action: HandoffAction } | { problem: string } {
   const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
-  const later = [
-    d.visibility !== 'workspace' && 'restricted visibility',
-    (d.people.owner || d.people.assignees.length || d.people.reviewers.length) && 'people',
-    d.due && 'a due date',
-    d.acceptance.length > 0 && 'acceptance criteria',
-  ].filter(Boolean)
+  const later = [d.visibility !== 'workspace' && 'restricted visibility', d.due && 'a due date'].filter(Boolean)
   const big = written.find(([, t]) => new TextEncoder().encode((t as string).trim()).length > MAX_SECTION_BYTES)
   if (big) return { problem: `${sectionLabel(d.type, big[0])} is longer than ${MAX_SECTION_BYTES / 1024} KiB (counted in UTF-8 bytes). Shorten it before the ticket is created.` }
   if (later.length) return { problem: `A signed new ticket cannot carry ${later.join(', ')} yet: the host has no signed operation for it. Create the ticket first, then add these.` }
+  const criteria = d.acceptance.map((t) => t.trim()).filter(Boolean)
+  if (criteria.length > MAX_CRITERIA) return { problem: `At most ${MAX_CRITERIA} acceptance criteria can be signed together with a new ticket. Add the rest after the ticket exists.` }
   // A spike keeps its findings where other types have verification (the form's label says "Findings").
   const sections = Object.fromEntries(written.map(([name, text]) => [d.type === 'spike' && name === 'verification' ? 'findings' : name, (text as string).trim()]))
+  const people = sequencePeople(d.people, creator)
+  const hasFields = d.priority !== 'medium' || !!d.size || d.labels.length > 0 || !!(d.parent && d.type !== 'epic')
+  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0)
+  if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Leave some sections or criteria for later.` }
   return {
     action: {
       action: 'new_sequence',
@@ -66,6 +77,8 @@ export function handoffNewTicket(d: Draft): { action: HandoffAction } | { proble
       ...(d.labels.length ? { labels: d.labels } : {}),
       ...(d.parent && d.type !== 'epic' ? { parent: d.parent } : {}),
       sections,
+      ...(criteria.length ? { acceptance: criteria } : {}),
+      ...(people ? { people } : {}),
     } as HandoffAction,
   }
 }
@@ -327,7 +340,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const made = handoffNewTicket(draft)
+      const made = handoffNewTicket(draft, me.person)
       if ('problem' in made) return setServerError(made.problem)
       return setHandoffNew({ action: made.action, another })
     }

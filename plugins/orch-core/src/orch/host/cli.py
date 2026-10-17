@@ -63,6 +63,8 @@ def _parser() -> argparse.ArgumentParser:
         c = sub.add_parser(name)
         c.add_argument("--state", type=Path)
         c.add_argument("--run", type=Path)
+        if name == "restart":
+            c.add_argument("--json", action="store_true", help="machine-readable output")
     en = sub.add_parser("enable", help="install the release and the per-user service unit, start the host (tier A)")
     en.add_argument("--state", type=Path)
     en.add_argument("--run", type=Path)
@@ -72,6 +74,7 @@ def _parser() -> argparse.ArgumentParser:
         help="replace a service installed for another state dir, run dir or interpreter (its host stops)",
     )
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
+    en.add_argument("--json", action="store_true", help="machine-readable output")
     dis = sub.add_parser(
         "disable",
         help="stop and unload the per-user service and remove its unit (the reverse of enable); the state dir stays",
@@ -87,6 +90,7 @@ def _parser() -> argparse.ArgumentParser:
     dis.add_argument(
         "--force", action="store_true", help="also remove a service installed for another state dir, run dir or setup"
     )
+    dis.add_argument("--json", action="store_true", help="machine-readable output")
     for name in ("status", "doctor"):
         st = sub.add_parser(name, help="the host, the service, the registered workspaces and this directory's mode")
         st.add_argument("--state", type=Path)
@@ -275,11 +279,11 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return _readers(args, env, out)
         if args.cmd == "enable":
             doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
-            out.write(json.dumps(doc, sort_keys=True) + "\n")
+            out.write(json.dumps(doc, sort_keys=True) + "\n" if args.json else human_text("enable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd == "disable":
             doc = disable(_state(args.state, env), env, run=args.run, purge=args.purge_releases, force=args.force)
-            out.write(json.dumps(doc, sort_keys=True) + "\n")
+            out.write(json.dumps(doc, sort_keys=True) + "\n" if args.json else human_text("disable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd in {"status", "doctor"}:
             from .status import render, report
@@ -325,7 +329,10 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             res = {**res, "idem": idem}
         if service is not None and service.get("started"):
             res = {**res, "service": service}
-        out.write(json.dumps(res, sort_keys=True) + "\n")
+        if args.cmd == "restart" and not args.json:
+            out.write(human_text("restart", res))
+        else:
+            out.write(json.dumps(res, sort_keys=True) + "\n")
         return 0 if res.get("ok") else int(res.get("exit", 1))
     except HostError as exc:
         out.write(json.dumps({"ok": False, "error": exc.error()}, sort_keys=True) + "\n")
@@ -334,6 +341,46 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
         error = {"code": "host.unavailable", "message": str(exc)[:400], "retryable": True}
         out.write(json.dumps({"ok": False, "error": error}, sort_keys=True) + "\n")
         return 9
+
+
+def human_text(cmd: str, doc: Mapping[str, Any], *, subject: str = "orch host") -> str:
+    """N18: ``doc`` (the result of ``enable``, ``disable`` or ``restart``, here or of ``orch runner``) as a few plain
+    lines for a person; ``--json`` keeps the document for machines. Values come from orch's own result, but go through
+    one-line cleaning anyway."""
+
+    def one(v: Any) -> str:
+        return " ".join(str(v).split())[:300]
+
+    if not doc.get("ok"):
+        err = doc.get("error") or {}
+        return f"{subject} {cmd}: {one(err.get('message', 'failed'))} [{one(err.get('code', 'error'))}]\n"
+    data = (doc.get("result") or {}).get("data") or {}
+    lines: list[str] = []
+    if cmd == "enable":
+        if data.get("mode") == "direct":
+            lines.append(
+                f"No per-user service on this platform ({one(data.get('reason'))}); workspaces stay in direct mode."
+            )
+        else:
+            lines.append(f"The orch host is running as a {one(data.get('service'))} service.")
+            if data.get("changed"):
+                lines.append("The service was installed or updated.")
+            if data.get("message"):
+                lines.append(one(data["message"]))
+    elif cmd == "disable":
+        if data.get("service") is None:
+            lines.append(f"No per-user service on this platform ({one(data.get('reason'))}); nothing to turn off.")
+        else:
+            lines.append(f"The orch host service ({one(data['service'])}) is off.")
+            if data.get("purged_releases"):
+                lines.append(f"Removed {len(data['purged_releases'])} installed release copies.")
+            lines.append(f"Your workspaces and keys are kept ({one(data.get('state_kept'))}).")
+            if data.get("note"):
+                note = one(data["note"])
+                lines.append(note[:1].upper() + note[1:] + ".")
+    elif cmd == "restart":
+        lines.append("The host is restarting; the service brings it back in a few seconds.")
+    return "".join(line + "\n" for line in lines)
 
 
 def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str, Any]:

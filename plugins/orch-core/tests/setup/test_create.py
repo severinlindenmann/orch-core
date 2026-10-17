@@ -247,6 +247,10 @@ def test_r6_conversion_failure_shows_the_passphrase_once_on_the_tty_only(tmp):
     ports.fail_stage = 2
     f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
     assert p["error"]["code"] == "custody.conversion_failed" and p["error"]["finishable"] is True
+    # B12 N14: plain reason, and the one-click switch row does not say Done above the failure
+    assert "macOS did not let orch use the keychain" in p["error"]["message"]
+    st = {x["id"]: x["status"] for x in p["steps"]}
+    assert st["custody"] == "failed" and st["flags"] == "skipped"
     assert p["retry"] == ["custody"] and f.phase == "failed"
     shown = [t for t in ports.terminal.shown if ports.passphrase_seen in t]
     assert len(shown) == 1 and "never on the page" in shown[0]

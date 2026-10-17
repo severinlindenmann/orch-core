@@ -9,7 +9,7 @@ import { fingerprintOf, requestIsConsistent, reviewDigestOf, type HandoffAction,
 import { clickEligible } from '@/api/click'
 import { fakeRequest, spies, state } from '@/test/handoffHarness'
 import { HandoffDialog } from './HandoffDialog'
-import { POLL_MS, SEQUENCE_STALL_MS } from './useHandoff'
+import { GRANT_STALL_MS, POLL_MS, SEQUENCE_STALL_MS } from './useHandoff'
 
 const T = { timeout: 5000 }
 const ACTION: HandoffAction = { action: 'new_sequence', title: 'Plan the launch', type: 'feature', priority: 'high', sections: { summary: 'Why this exists.', context: 'Line one\nLine two' } }
@@ -125,6 +125,52 @@ describe('a ticket and its text on one review (terminal)', () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(SEQUENCE_STALL_MS + POLL_MS * 2)))
     expect(await within(dialog).findByText(/Signing stopped after 2 of 4 signatures/, {}, T)).toBeInTheDocument()
     expect(dialog).toHaveTextContent('stays a draft')
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+  })
+})
+
+describe('a quick task with agent access (terminal)', () => {
+  const withAgent = (): HandoffRequest => {
+    const r = sequenceRequest()
+    const material = { ...r.material, sequence: { ...r.material.sequence!, intent: { ...INTENT, agent: { hours: 24, scope: 'workable' } } } }
+    const digest = reviewDigestOf(material)
+    return { ...r, material, review_digest: digest, fingerprint: fingerprintOf(digest, r.events, 'new') }
+  }
+
+  it('asks for the same word as the terminal: GRANT, not the ticket key', async () => {
+    const request = withAgent()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(dialog).toHaveTextContent('In your terminal you type GRANT to continue.')
+    expect(dialog).not.toHaveTextContent(/you type DEMO-0044\//)
+  })
+
+  it('without agent access the word stays the ticket key and its id tail', async () => {
+    const request = sequenceRequest()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(dialog).toHaveTextContent('you type DEMO-0044/0000000A to continue')
+  })
+
+  it('says in words that the task exists and the agent access was NOT given when the last signature never follows', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const request = withAgent()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValueOnce(state(request)).mockResolvedValue(state(request, { state: 'submitted', seq: 1, event_ids: ['x'], progress: { done: 3, of: 4, last: 'grant' } }))
+    const { onSettled } = mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
+    await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 2)))
+    expect(await within(dialog).findByText(/Task created; agent access was NOT given/, {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('agent access was NOT given: signing stopped at the last signature')
+    expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
     expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
   })
 })

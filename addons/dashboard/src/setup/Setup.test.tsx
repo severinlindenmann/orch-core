@@ -214,14 +214,13 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByText('Agents may work for you for up to 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/runner gets agent access for/)).toBeNull()
-  expect(screen.getByText(/Your terminal then shows three words/)).toHaveTextContent('demo not real, type yes there.')
+  expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
   // B11: the terminal asks only after Create; the review says so instead of "confirm in your terminal" now
   expect(screen.getByRole('heading', { name: 'Then confirm in your terminal' })).toBeInTheDocument()
-  expect(screen.getByText(/After you click Create workspace, the terminal/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })

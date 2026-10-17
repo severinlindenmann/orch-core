@@ -628,7 +628,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       </li>
                     )}
                     <li>
-                      Your terminal then shows three words. If they match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>,
+                      Then the terminal that started setup shows three words. If they match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>,
                       type yes there.
                     </li>
                   </ol>

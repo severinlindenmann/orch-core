@@ -19,8 +19,9 @@ function Value({ children, block = false }: { children: string; block?: boolean 
     </span>)}
   </span>
 }
-/** A person id as the host shows it: `p_181d953f…` (full or cut). */
-const PERSON = /^(p_[0-9a-f]+)(…|\.\.\.)?$/
+/** A person id as the host writes it: `p_181d953f…` (cut) or the full `p_<hex>`. */
+const PERSON = /^p_[0-9a-f]+(…|\.\.\.)?$/
+const shortId = (id: string) => (id.length > 6 ? `${id.slice(0, 6)}…` : id)
 
 /** The members of every workspace the dashboard already loaded (no fetch, no provider needed in tests). */
 export function useKnownMembers(): { person: string; name: string }[] {
@@ -28,17 +29,23 @@ export function useKnownMembers(): { person: string; name: string }[] {
   const all = client?.getQueryData<Workspace[]>(['workspaces']) ?? []
   return all.flatMap(w => w.members.filter(m => !m.name_hidden).map(m => ({ person: m.person, name: m.name })))
 }
-/** The name for a person id, or null when it is not an id or no single known person matches. Never guesses between two. */
-export function personName(value: string | null, members: { person: string; name: string }[]): string | null {
-  const m = value ? PERSON.exec(value) : null
-  if (!m) return null
-  const hits = members.filter(x => (m[2] ? x.person.startsWith(m[1]) : x.person === m[1]))
-  return hits.length === 1 && new Set(hits.map(h => h.name)).size === 1 ? hits[0].name : null
+/**
+ * How a person id reads in the plain view. Names are self-chosen, so the name never stands alone: it comes WITH the short
+ * id, and only for an EXACT full id of a known member (never a prefix). An unknown id, a cut id or a name two different
+ * people share shows the short id plus why there is no name. Null when the value is not a person id.
+ */
+export function personLabel(value: string | null, members: { person: string; name: string }[]): { text: string; full: string | null } | null {
+  if (!value || !PERSON.test(value)) return null
+  const hit = members.find(x => x.person === value)
+  if (!hit) return { text: `${value.endsWith('…') || value.endsWith('...') ? value : shortId(value)} (unknown person)`, full: null }
+  const sharing = new Set(members.filter(x => x.name === hit.name).map(x => x.person)).size
+  if (sharing > 1) return { text: `${shortId(value)} (name shared by ${sharing} members)`, full: value }
+  return { text: `${hit.name} (${shortId(value)})`, full: value }
 }
 export function SignContent({ content }: { content: Content }) {
   const members = useKnownMembers()
-  const shown = (v: string | null) => v === null ? null : personName(v, members) ?? v
-  const named = (content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => v !== null && personName(v, members) !== null)
+  const shown = (v: string | null) => v === null ? null : personLabel(v, members)?.text ?? v
+  const named = (content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null)
   return <div className="max-h-[38vh] space-y-4 overflow-auto text-[13px] [overflow-wrap:anywhere]">
     {content.ticket && <div>
       <p><Raw>{content.ticket.key}</Raw> · …<Raw>{content.ticket.uid_tail}</Raw></p>
@@ -52,7 +59,7 @@ export function SignContent({ content }: { content: Content }) {
     {(content.ticket?.key_note || named.length > 0) && <details className="text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details: ids and keys</summary>
       {content.ticket?.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
-      {[...new Set(named)].map(id => <p key={id}><Raw>{personName(id, members)!}</Raw> = <Raw>{id}</Raw></p>)}
+      {[...new Set(named)].map(id => <p key={id}><Raw>{personLabel(id, members)!.text}</Raw> = <Raw>{id}</Raw></p>)}
     </details>}
   </div>
 }

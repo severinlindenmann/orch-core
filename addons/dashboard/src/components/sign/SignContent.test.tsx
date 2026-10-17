@@ -73,32 +73,38 @@ it('renders every display string in fully populated content', () => {
   expect(screen.getAllByText('—')).toHaveLength(2)
 })
 
-const WS = [{ id: 'w_1', members: [{ person: 'p_181d953fa2b4c6d8', name: 'Severin', role: 'owner' }, { person: 'p_aaaa1111', name: 'Mara', role: 'member' }] }]
-function withNames(ui: React.ReactElement) {
+const SEV = 'p_181d953fa2b4c6d8'
+const MARA = 'p_aaaa1111'
+function withMembers(members: { person: string; name: string }[], fields: { field: string; before: string | null; after: string | null }[], key_note = 'key per host, not proven') {
   const client = new QueryClient()
-  client.setQueryData(['workspaces'], WS)
-  return <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+  client.setQueryData(['workspaces'], [{ id: 'w_1', members }])
+  return render(<QueryClientProvider client={client}><SignContent content={{ headline: 'New ticket', ticket: { key: 'RA-0001', title: '', uid_tail: 'ab12cd34', key_note }, fields_changed: fields }} /></QueryClientProvider>)
 }
+const row = (field: string) => screen.getByText(field).parentElement!
 
-it('shows people by display name, keeps the id under Technical details, and drops the key line from the plain view', () => {
-  render(withNames(<SignContent content={{
-    headline: 'New ticket',
-    ticket: { key: 'RA-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host, not proven' },
-    fields_changed: [{ field: 'owner', before: null, after: 'p_181d953f…' }, { field: 'reviewer', before: 'p_aaaa1111', after: 'p_unknown99…' }],
-  }} />))
-  const plain = screen.getByText('owner').parentElement!
-  expect(plain).toHaveTextContent('owner: — → Severin')
-  expect(plain).not.toHaveTextContent('p_181d953f')
-  expect(screen.getByText('reviewer').parentElement).toHaveTextContent('reviewer: Mara → p_unknown99…') // unknown: the short id
+it('shows a known member as name WITH short id, the full id and the key line only under Technical details', () => {
+  withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: 'p_unknown99' }])
+  expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d…)')
+  expect(row('owner')).not.toHaveTextContent(SEV)
+  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa…) → p_unkn… (unknown person)')
   const details = screen.getByText(/Technical details/).closest('details')!
-  expect(details).toHaveTextContent('Severin = p_181d953f…')
+  expect(details).toHaveTextContent(`Severin (p_181d…) = ${SEV}`)
   expect(details).toHaveTextContent('key per host, not proven')
-  expect(screen.getByText('key per host, not proven').closest('details')).toBe(details)
 })
 
-it('does not guess when a cut id fits two people', () => {
-  const client = new QueryClient()
-  client.setQueryData(['workspaces'], [{ id: 'w', members: [{ person: 'p_abc1', name: 'A' }, { person: 'p_abc2', name: 'B' }] }])
-  render(<QueryClientProvider client={client}><SignContent content={{ headline: 'x', fields_changed: [{ field: 'owner', before: null, after: 'p_abc…' }] }} /></QueryClientProvider>)
-  expect(screen.getByText('owner').parentElement).toHaveTextContent('owner: — → p_abc…')
+it('a cut id never resolves by prefix: it shows as unknown person', () => {
+  withMembers([{ person: SEV, name: 'Severin' }], [{ field: 'owner', before: null, after: 'p_181d953f…' }])
+  expect(row('owner')).toHaveTextContent('owner: — → p_181d953f… (unknown person)')
+  expect(row('owner')).not.toHaveTextContent('Severin')
+})
+
+it('two members with the same display name are told apart by id, with no name shown', () => {
+  withMembers([{ person: 'p_aaaa1111', name: 'Severin' }, { person: 'p_bbbb2222', name: 'Severin' }], [{ field: 'owner', before: 'p_aaaa1111', after: 'p_bbbb2222' }])
+  expect(row('owner')).toHaveTextContent('owner: p_aaaa… (name shared by 2 members) → p_bbbb… (name shared by 2 members)')
+  expect(row('owner')).not.toHaveTextContent('Severin')
+})
+
+it('an id that is not a member of any known workspace says unknown person', () => {
+  withMembers([{ person: SEV, name: 'Severin' }], [{ field: 'owner', before: null, after: 'p_deadbeef01' }])
+  expect(row('owner')).toHaveTextContent('p_dead… (unknown person)')
 })

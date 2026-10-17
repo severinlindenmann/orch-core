@@ -629,7 +629,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     )}
                     <li>
                       Your terminal then shows three words. If they match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw>,
-                      type GRANT there.
+                      type yes there.
                     </li>
                   </ol>
                 </div>

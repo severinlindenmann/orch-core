@@ -730,7 +730,7 @@ def test_presence_is_auth_or_none(tmp_path):
 
 
 def test_after_a_plain_review_the_prompt_is_one_line_and_d_shows_the_technical_block(monkeypatch):
-    """B11-P6 (finding 24): the plain review came first; the passphrase step says `Press d`, and `d` prints the block."""
+    """B11-P6 (finding 24): the passphrase step says `Press d`, and `d` prints the block."""
     written = []
     monkeypatch.setattr(pp, "_open_tty", lambda: (10, 11, lambda: None))
     answers = iter(["d", "phrase-ok-1"])

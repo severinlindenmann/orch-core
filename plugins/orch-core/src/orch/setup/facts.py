@@ -142,7 +142,8 @@ def check_dir(
     if real == home_real or _inside(home_real, real):
         raise SetupError(
             "setup.dir_refused",
-            "your home directory (or a folder above it) cannot be a workspace; cd into your project folder and run orch setup there",
+            "your home directory (or a folder above it) cannot be a workspace; "
+            "cd into your project folder and run orch setup there",
             400,
         )
     for protected in (state_dir, *config_dirs):

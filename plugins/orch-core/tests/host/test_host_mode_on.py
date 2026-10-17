@@ -596,3 +596,56 @@ def test_a_subprocess_orch_host_enable_in_a_test_env_never_reaches_the_service_m
         return
     assert (res.returncode, doc["error"]["code"]) == (9, "host.unavailable"), res
     assert "the service manager is off" in doc["error"]["message"]
+
+
+# --- enable restarts a host that runs an older release --------------------------------------------------------------
+
+
+@pytest.fixture
+def stale_env(tmp_path, monkeypatch, fake):
+    """``orch host enable --dev`` against the fake service manager; the host's reported release and the restart are
+    seams, so nothing reaches launchctl, systemctl or a real process."""
+    short = short_dir()
+    restarts: list[str] = []
+    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: restarts.append(mine) or True)
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "ORCH_STATE_DIR": str(tmp_path / "state"),
+        "ORCH_HOST_RUN_DIR": str(short / "r"),
+    }
+    yield env, restarts
+    fake.stop_host()
+    remove_tree(short)
+
+
+def test_enable_restarts_a_supervised_host_that_runs_an_older_release(stale_env, monkeypatch):
+    from orch.host.release import code_digest
+
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and restarts == [code_digest()]
+    assert data["restarted"] == code_digest() and data["message"] == (
+        f"restarted the host on the new release {code_digest()}"
+    )
+
+
+def test_enable_does_not_restart_a_host_on_the_current_release(stale_env, monkeypatch):
+    from orch.host.release import code_digest
+
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: code_digest())
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and restarts == [] and "restarted" not in data and "message" not in data
+
+
+def test_enable_only_tells_about_a_foreground_host_and_never_restarts_it(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: None)  # an older host: no release in its welcome
+    monkeypatch.setattr(svc.Manager, "active", lambda self: False)  # not started by the service manager
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and restarts == [] and data["restart_needed"] is True
+    assert "not under the service manager" in data["message"]

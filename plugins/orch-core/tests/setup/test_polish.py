@@ -11,8 +11,8 @@ from orch.setup.server import SetupServer
 from .conftest import PROFILE
 from .fakes import FakePorts
 from .test_create import CLICK, run_ok
-from .test_finish import fake_signer as _fs  # noqa: F401
 from .test_finish import PROF, finish_flow, mkfacts
+from .test_finish import fake_signer as _fs  # noqa: F401
 
 INFO = {a.id: a for a in catalog()}
 

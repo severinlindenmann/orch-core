@@ -144,7 +144,7 @@ class SetupServer:
     def ending_line(self, why: str) -> str:
         """The last line on the setup terminal. Only a finished setup says so; every other end (Finish setup later,
         Ctrl-C, hang-up, idle, an error) reads as paused, never as "(done)" (B11 finding 25)."""
-        if why == "done" and self.flow.outcome == "done":
+        if why == "done" and getattr(self.flow, "outcome", "paused") == "done":
             return "setup finished"
         return "setup paused; run orch setup again to continue"
 

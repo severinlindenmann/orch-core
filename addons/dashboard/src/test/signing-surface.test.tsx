@@ -865,12 +865,14 @@ it('setup Create posts the review digest shown with core rows and terminal finge
     let value: unknown = {ok:true}
     if (String(url).endsWith('/state')) value = {
       phase:'profile',mode:'finish',dir:'/demo',dir_name:'demo',suggested:{name:'Demo',prefix:'TST'},
-      addons:[],methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
-      relay:{available:false,enabled:false},missing:['settings'],
+      addons:[{id:'worktrees',title:'Worktrees',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
+      methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
+      relay:{available:false,enabled:false},missing:['addon:worktrees'],labels:{},
+      current:{name:'Demo',prefix:'TST',addons:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
     }
     if (String(url).endsWith('/review')) value = {
       review_id:'demo-review',digest:'demo-bound-digest',fingerprint:['demo','not','real'],
-      items:[{id:'settings',title:'Settings',lines:['Agents: 8 hours'],details:['Exact settings'],volatile:['set at signing']}],
+      items:[{id:'settings',title:'Settings',lines:['Agents: 8 hours'],details:['Exact settings'],volatile:['set at signing'],type:'settings.changed',fields:{set:{grant_hours:8}},placeholders:[],placeholder_details:[]}],
       runner_grant:null,flags:[],risk:null,typed_word:null,tty_confirm:true,
     }
     if (String(url).endsWith('/create')) { posted.push(JSON.parse(String(init?.body))); value = {run_id:'demo-run'} }
@@ -879,7 +881,8 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   })
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
   await screen.findByRole('heading',{name:'Finish setup in demo'})
-  for (let i=0;i<4;i++) fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
+  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
   expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
   fireEvent.click(screen.getByText('Show technical details'))

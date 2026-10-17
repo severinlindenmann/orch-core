@@ -641,11 +641,6 @@ function withReview(patch: Partial<Review>) {
   }
   return { f, api: new SetupAPI('tok', fetcher) }
 }
-async function toReview() {
-  await reveal()
-  await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
-}
 
 test('the summary comes from the review core returned, not from the choices on the page', async () => {
   // The page chose 3 days and one click; core's review says 1 day and a terminal flag: the summary says what core says.

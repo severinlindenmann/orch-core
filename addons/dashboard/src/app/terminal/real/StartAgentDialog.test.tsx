@@ -86,6 +86,14 @@ describe('the preview', () => {
     expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
   })
 
+  it('N16: the risk sentence names the real workspace maximum, not "7 days", on a 3-day workspace', async () => {
+    vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    mount()
+    await screen.findByTestId('agent-cwd', {}, T)
+    await waitFor(() => expect(screen.getByTestId('runner-grant-risk')).toHaveTextContent('(up to 3 days, the length you choose)'))
+    expect(screen.getByTestId('runner-grant-risk')).not.toHaveTextContent('7 days')
+  })
+
   it('says "shared working copy" in the approved words for cwd.kind repo', async () => {
     s.preview.mockResolvedValue(preview({ cwd: { kind: 'repo', repo: 'billing' }, will_create_worktree: false, cwd_path: '/w/billing' }))
     mount()

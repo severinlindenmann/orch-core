@@ -32,6 +32,10 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   const live = grant && Date.parse(grant.until) > now ? grant : null
   const stopped = (attempted || stoppedHere) && runner.isSuccess && !runner.isFetching && !live
   const signed = grants.data?.find(g => g.id === live?.id && g.person === me.data?.person)
+  // The pill names the SOONEST end of the person's own active agent access (runner grant plus listed grants).
+  const ends = live ? [...new Set([Date.parse(live.until), ...(grants.data ?? []).filter(g => g.person === me.data?.person && !g.revoked && g.id !== live.id && Date.parse(g.expires_at) > now).map(g => Date.parse(g.expires_at))])].sort((a, b) => a - b) : []
+  const soonest = live && ends.length ? new Date(ends[0]).toISOString() : live?.until
+  const more = ends.length - 1
   const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }) }
   // The API exposes deposit status, but no deposit retry. Start again opens a fresh signing flow.
   const outcome = () => { setAttempted(true); refresh() }
@@ -47,7 +51,8 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
     setAskStop(false)
   }
   const interrupted = () => {
-    setPartial({ done, total: queue.length })
+    // Nothing stopped yet (cancelled before the first signature): restore the normal pill, no failure state.
+    setPartial(done > 0 ? { done, total: queue.length } : null)
     setQueue([])
     refresh()
   }
@@ -55,7 +60,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   return <div className="agent-access flex min-w-0 items-center gap-2 text-xs">
     <div className="flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-surface px-3 py-1" role="group" aria-label="Agent access">
       {partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button></> : live ? <>
-        <KeyRound className="size-3.5 shrink-0" aria-hidden /><span className="whitespace-nowrap"><span className="agent-access-detail">Agents can work for you until </span><time dateTime={live.until} title={fmtExact(live.until)}>{fmtSlot(live.until)}</time></span>
+        <KeyRound className="size-3.5 shrink-0" aria-hidden /><span className="whitespace-nowrap"><span className="agent-access-detail">Agents can work for you until </span><time dateTime={soonest} title={fmtExact(soonest!)}>{fmtSlot(soonest!)}</time>{more > 0 && <span className="text-text-muted"> (+{more} more)</span>}</span>
         <span>·</span><Button size="xs" variant="ghost" aria-label="Extend agent access" onClick={() => setExtend(true)}>Extend</Button>
       </> : <span>Checking agent access…</span>}
       {!partial && live && <><span>·</span><Button size="xs" variant="ghost" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button></>}

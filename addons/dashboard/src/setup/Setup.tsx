@@ -17,6 +17,18 @@ const voidCopy =
   'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
 const expiredCopy =
   'This session has ended. Run orch setup again to start a new session with new secret words and a new recovery code.'
+/** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
+export function reasonOf(e: unknown): string {
+  if (e instanceof SetupError) return e.code
+  const name = e instanceof Error ? e.name : 'Error'
+  const message = e instanceof Error ? e.message : String(e)
+  return `client: ${name}: ${message.split('#')[0].replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 120)}`
+}
+function report(e: unknown): string {
+  const reason = reasonOf(e)
+  console.error('[orch setup]', reason)
+  return reason
+}
 function clearClipboard() {
   void navigator.clipboard.writeText('').catch(() => {})
 }
@@ -44,6 +56,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [ended, setEnded] = useState(false)
   const [saved, setSaved] = useState(false)
   const [notice, setNotice] = useState('')
+  const [reason, setReason] = useState('')
   const heading = useRef<HTMLHeadingElement>(null)
   const lock = useRef(false)
   const confirmed = useRef(false)
@@ -69,6 +82,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       await fn()
     } catch (e) {
       const code = e instanceof SetupError ? e.code : 'setup.unavailable'
+      if (!(e instanceof SetupError) || code !== 'invalid.input') setReason(report(e))
       if (
         [
           'session.required',
@@ -106,21 +120,29 @@ export function Setup({ api }: { api: SetupAPI }) {
     let active = true
     api
       .call<SetupState>('state')
-      .then((s) => {
+      .then(
+        (s) => ({ s }),
+        (e: unknown) => ({ e }),
+      )
+      .then((r) => {
         if (!active) return
-        setState(s)
-        setProfile((p) => ({
-          ...p,
-          ...s.suggested,
-          addons: s.addons.filter((a) => a.required || a.default).map((a) => a.id),
-        }))
-        if (s.error || s.phase !== 'profile') {
+        if ('e' in r) {
+          setReason(report(r.e))
           setEnded(true)
-          if (!s.error) setError('Return to the terminal to resume setup safely. Run orch setup again if this page was reloaded.')
+          setError(expiredCopy)
+          return
         }
-      })
-      .catch(() => {
-        if (active) {
+        const s = r.s
+        try {
+          const addons = s.addons.filter((a) => a.required || a.default).map((a) => a.id)
+          setState(s)
+          setProfile((p) => ({ ...p, ...s.suggested, addons }))
+          if (s.error || s.phase !== 'profile') {
+            setEnded(true)
+            if (!s.error) setError('Return to the terminal to resume setup safely. Run orch setup again if this page was reloaded.')
+          }
+        } catch (e) {
+          setReason(report(e))
           setEnded(true)
           setError(expiredCopy)
         }
@@ -275,6 +297,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
+      {error && reason && <small className="reason">Reason: {reason}</small>}
       {state?.error && (
         <p role="alert" className="warning">
           <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
@@ -712,11 +735,13 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
   try {
     const api = await session
     root.render(<Setup api={api} />)
-  } catch {
+  } catch (e) {
+    const reason = report(e)
     root.render(
       <main className="setup">
         <h1>Open setup from your terminal</h1>
         <p>{expiredCopy}</p>
+        <small className="reason">Reason: {reason}</small>
       </main>,
     )
   }

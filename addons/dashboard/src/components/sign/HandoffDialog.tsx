@@ -25,6 +25,7 @@ import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
 import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
+import { fmtClock } from '@/lib/time'
 
 interface Words {
   title: string
@@ -336,7 +337,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             )}
             {run.state?.error?.code && (
               <p role="alert" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-                Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
+                Refused: {failedSubmit(run.state.error.code)} The request stays open until {fmtClock(run.request.expires_at)}.
               </p>
             )}
             <HandoffPanel request={run.request} workspace={here ?? null} />

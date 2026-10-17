@@ -58,7 +58,7 @@ class Security:
 
         setup = path == "/setup" or path == "/auth/setup" or path.startswith("/api/setup/")
         host = values(b"host")
-        setup_host = setup or path.startswith("/assets/") or path == "/favicon.svg"
+        setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css")
         allowed = [f"127.0.0.1:{self.port}", f"localhost:{self.port}"] if setup_host else [f"127.0.0.1:{self.port}"]
         origin = f"http://{host[0]}" if len(host) == 1 else ""
         if len(host) != 1 or host[0] not in allowed:

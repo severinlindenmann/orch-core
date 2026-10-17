@@ -1,7 +1,7 @@
 // Agent grant rules shared by the Agents page and the shell (part of the API contract).
 import type { GrantInfo, Role, Workspace } from './types'
 import { atLeast } from './permissions'
-import { fmtClock, fmtDateTime, nowMs } from '@/lib/time'
+import { fmtClock, fmtDateTime, nowMs, sameLocalDay } from '@/lib/time'
 
 /** The longest grant an owner or maintainer signs. */
 export const GRANT_MAX_HOURS = 168
@@ -48,7 +48,7 @@ const SCOPE_WORDS: Record<GrantInfo['scope'], string> = { all: 'all tickets', wo
  * `name` is the person's display name; a grant that ends on another day says the date ("until 10 Oct 09:00").
  */
 export function grantLabel(g: Pick<GrantInfo, 'scope' | 'until'>, name: string, now: number = nowMs()): string {
-  const sameDay = new Date(now).toISOString().slice(0, 10) === g.until.slice(0, 10)
+  const sameDay = sameLocalDay(now, g.until)
   return `${name}'s grant (${SCOPE_WORDS[g.scope] ?? g.scope} · until ${sameDay ? fmtClock(g.until) : fmtDateTime(g.until)})`
 }
 

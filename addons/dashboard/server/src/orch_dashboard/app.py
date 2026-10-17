@@ -32,6 +32,10 @@ SPA_PATH = re.compile(
 )
 
 
+# Every root-level file index.html references (public/ of the UI). A test checks the built index.html against this list.
+ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
+
+
 def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
@@ -162,15 +166,20 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-        elif path in ("", "setup", "favicon.svg") or SPA_PATH.fullmatch(path):
+        elif path in ROOT_FILES:
+            # Files index.html names at the root (favicon, boot-shell css): a fixed list, never a path from the request.
+            candidate = static / path
+            if candidate.is_file():
+                return FileResponse(candidate, headers={"Cache-Control": "no-store"})
+        elif path in ("", "setup") or SPA_PATH.fullmatch(path):
             # The file:// launcher is cross-site too: serve its shell, but forbid
             # automatic session sharing in foreign documents. Missing metadata keeps
             # old-browser compatibility (and cannot protect their foreign loads).
             sites = request.headers.getlist("sec-fetch-site")
             foreign = bool(sites) and sites not in (["none"], ["same-origin"])
-            candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
+            candidate = static / "index.html"
             if candidate.is_file():
-                if path != "favicon.svg" and foreign:
+                if foreign:
                     html = candidate.read_text(encoding="utf-8")
                     marked = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
                     if marked == html:

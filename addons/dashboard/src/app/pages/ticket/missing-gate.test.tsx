@@ -1,0 +1,46 @@
+import { render, screen } from '@testing-library/react'
+import { expect, it } from 'vitest'
+import { availableActions, lackText, primaryAction } from './actions'
+import { GatesStrip } from './Gates'
+
+// B11 (owner run 2, quick task): the plan gate said "Waiting for your approval" with no plan written, and Approve plan
+// was refused with gate.incomplete. Core's completeness rule (`missing`) now decides: never offer Approve while it lacks.
+const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
+
+async function planWaits() {
+  const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
+  doc.status = 'open'
+  doc.gates.requirements.state = 'approved'
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [] }
+  expect(doc.tasks.length).toBeGreaterThan(0)
+  return doc
+}
+
+it('offers Approve plan when core says nothing is missing', async () => {
+  const doc = await planWaits()
+  doc.gates.plan.missing = []
+  expect(availableActions(doc, viewer as never).approve).toContain('plan')
+})
+
+it('never offers Approve for a gate whose plan is missing, and says what it waits for', async () => {
+  const doc = await planWaits()
+  doc.gates.plan.missing = ['plan']
+  const av = availableActions(doc, viewer as never)
+  expect(av.approve).not.toContain('plan')
+  expect(av.requestChanges).not.toContain('plan')
+  expect(primaryAction(av)).not.toMatchObject({ kind: 'approve' })
+  render(<GatesStrip ticket={doc} viewer={viewer as never} />)
+  expect(screen.getByTestId('gate-plan')).toHaveAccessibleName('Plan: Waiting for the agent to write the plan')
+})
+
+it('never offers Approve requirements while acceptance criteria are missing', async () => {
+  const doc = await planWaits()
+  doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['acceptance'] }
+  expect(availableActions(doc, viewer as never).approve).not.toContain('requirements')
+})
+
+it('names what else is missing in plain words', () => {
+  expect(lackText('plan', ['decisions', 'tasks'])).toBe('Waiting for the agent to finish the plan (missing: decisions, tasks)')
+  expect(lackText('requirements', ['requirements', 'acceptance'])).toBe('Waiting for the agent to write the requirements')
+  expect(lackText('plan', ['artifact:design'])).toBe('Waiting for the agent to finish the plan (missing: design)')
+})

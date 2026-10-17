@@ -51,18 +51,28 @@ export interface Available {
   answer: QuestionStatus[]
 }
 
+/** B11: core says an approval still lacks something (e.g. no plan written yet): never offer Approve for it. */
+export const lacks = (g: Pick<GateStatus, 'missing'>) => (g.missing?.length ?? 0) > 0
+
+/** What the gate waits for when it lacks something, in plain words: "Waiting for the agent to write the plan". */
+export function lackText(gate: 'requirements' | 'plan', missing: string[]): string {
+  if (missing.includes(gate)) return `Waiting for the agent to write the ${gate}`
+  const what = missing.map((m) => (m.startsWith('artifact:') ? m.slice('artifact:'.length) : m.replace(/_/g, ' ')))
+  return `Waiting for the agent to finish the ${gate} (missing: ${what.join(', ')})`
+}
+
 /** Human actions the viewer can take now, only where the gate or the needs say so. */
 export function availableActions(t: TicketDocument, viewer: Viewer): Available {
   const approve: Available['approve'] = []
   const requestChanges: GateName[] = []
   if (t.status !== 'done') {
     const req = t.gates.requirements
-    if (req.state !== 'approved' && !!t.body.requirements?.trim() && canApproveGate(t, 'requirements', viewer)) {
+    if (req.state !== 'approved' && !!t.body.requirements?.trim() && !lacks(req) && canApproveGate(t, 'requirements', viewer)) {
       approve.push('requirements')
       requestChanges.push('requirements')
     }
     const plan = t.gates.plan
-    if (plan.state !== 'approved' && req.state === 'approved' && t.tasks.length > 0 && canApproveGate(t, 'plan', viewer)) {
+    if (plan.state !== 'approved' && req.state === 'approved' && t.tasks.length > 0 && !lacks(plan) && canApproveGate(t, 'plan', viewer)) {
       approve.push('plan')
       requestChanges.push('plan')
     }

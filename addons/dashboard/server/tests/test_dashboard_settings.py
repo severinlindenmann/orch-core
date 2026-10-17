@@ -311,6 +311,17 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     assert world.stub.ws and env.store.state.workspace.settings["grant_hours"] == 8  # nothing was written
 
 
+def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, team, host_calls):
+    """B11-P1: on a terminal-approval workspace the runner grant is a hand-off like any other signature."""
+    env, people, grants = team
+    world = worlds(env.owner.ref)
+    # The dev stub serves no `grant` op (the host does): what matters is the request this server sends.
+    got = handoff(world, {"action": "runner_grant", "hours": 24, "scope": "workable"}, 1)
+    assert got.status_code != 422  # the action is part of the hand-off schema now
+    ops = [(c[1]["op"], c[1]["args"]) for c in host_calls if c[0] == "human.prepare"]
+    assert ops == [("grant", {"hours": 24, "scope": "workable", "runner": True})]
+
+
 @pytest.mark.parametrize(
     "body",
     [

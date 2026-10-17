@@ -21,6 +21,7 @@ export function AgentAccess({ ws }: { ws: string }) {
   const [now, setNow] = useState(nowMs)
   const [extend, setExtend] = useState(false)
   const [attempted, setAttempted] = useState(false)
+  const [stoppedHere, setStoppedHere] = useState(false)
   const [askStop, setAskStop] = useState(false)
   const [queue, setQueue] = useState<string[]>([])
   const [done, setDone] = useState(0)
@@ -29,7 +30,7 @@ export function AgentAccess({ ws }: { ws: string }) {
   useEffect(() => { const timer = setInterval(() => setNow(nowMs()), 30_000); return () => clearInterval(timer) }, [])
   const grant = runner.data?.runner?.grant
   const live = grant && Date.parse(grant.until) > now ? grant : null
-  const stopped = attempted && runner.isSuccess && !runner.isFetching && !live
+  const stopped = (attempted || stoppedHere) && runner.isSuccess && !runner.isFetching && !live
   const signed = grants.data?.find(g => g.id === live?.id && g.person === me.data?.person)
   const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }) }
   // The API exposes deposit status, but no deposit retry. Start again opens a fresh signing flow.
@@ -53,7 +54,7 @@ export function AgentAccess({ ws }: { ws: string }) {
   if (!live && !stopped && !extend && !askStop && !partial && queue.length === 0) return null
   return <div className="agent-access flex min-w-0 items-center gap-2 text-xs">
     <div className="flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-surface px-3 py-1" role="group" aria-label="Agent access">
-      {partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button><span className="text-text-muted">Signs new agent access</span></> : live ? <>
+      {partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button></> : live ? <>
         <KeyRound className="size-3.5 shrink-0" aria-hidden /><span className="whitespace-nowrap"><span className="agent-access-detail">Agents can work for you until </span><time dateTime={live.until} title={fmtExact(live.until)}>{fmtSlot(live.until)}</time></span>
         <span>·</span><Button size="xs" variant="ghost" aria-label="Extend agent access" onClick={() => setExtend(true)}>Extend</Button>
       </> : <span>Checking agent access…</span>}
@@ -71,7 +72,7 @@ export function AgentAccess({ ws }: { ws: string }) {
         if (phase !== 'unknown' && phase !== 'attempt_open') interrupted()
         return
       }
-      if (done + 1 === queue.length) { setQueue([]); setAttempted(false) } else setDone(done + 1)
+      if (done + 1 === queue.length) { setQueue([]); setAttempted(false); setStoppedHere(true) } else setDone(done + 1)
       refresh()
     }} onInterrupted={interrupted} onClose={interrupted} />}
   </div>

@@ -360,7 +360,8 @@ PrepareBody = Annotated[
     | MemberAdd
     | MemberRole
     | MemberRemove
-    | GrantRevoke,
+    | GrantRevoke
+    | RunnerGrant,
     Field(discriminator="action"),
 ]
 
@@ -819,19 +820,26 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             planned = plan(gateway, ws, body)
             op = planned.op
+            # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
+            # which needs `runner` so the signer sets label runner (the click path sets it itself).
+            args = planned.args | ({"runner": True} if isinstance(body, RunnerGrant) else {})
 
             def call(idem: str):
                 return human(
                     ws,
                     "human.prepare",
-                    {"op": op, "args": planned.args, "handoff": True},
+                    {"op": op, "args": args, "handoff": True},
                     idem=idem,
                     files=planned.files,
                 )
 
             prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
             response = adapters.handoff.request(
-                prepared, ws, expect_op=op, expect_key=getattr(body, "key", None), expect_events=expected(body)
+                prepared,
+                ws,
+                expect_op=op,
+                expect_key=getattr(body, "key", None),
+                expect_events=expected(body, planned.person),
             )
         except BaseException:
             handoffs.release(token)

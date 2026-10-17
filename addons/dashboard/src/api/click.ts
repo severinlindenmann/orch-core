@@ -89,12 +89,7 @@ export type DepositOutcome = 'confirmed' | 'rejected' | 'unknown'
 export type DepositReason = 'grant.forgotten' | 'grant.not_runner' | 'grant.verbs' | 'grant.expiring' | 'rate.limited' | 'runner.unavailable' | 'other'
 
 /** M7b: the runner grant, a click request of its own (never a terminal hand-off). The signer sets label and verbs. */
-export interface RunnerGrantAction {
-  action: 'runner_grant'
-  extend?: string
-  hours: number
-  scope: 'workable' | 'all'
-}
+export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' }>
 
 /** Every typed action a click request may carry. */
 export type ClickAction = HandoffAction | RunnerGrantAction

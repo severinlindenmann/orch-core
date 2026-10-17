@@ -518,6 +518,10 @@ class HumanOps:
 
         if args.get("handoff") and meta.get("step") != 0:
             raise HostError("invalid.input", "only the first step of a sequence is a hand-off")
+        who = args.get("signer")
+        if who is not None and who.get("auth") not in ("passphrase", "convenience"):
+            # the phone (and a secure enclave) keep separate signatures: no sequence is offered to them
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
         try:
             checked = sequence.check_meta(
                 meta, op=name, args=inner, workspace_id=call.service.workspace_id, person=person

@@ -179,6 +179,51 @@ class WriteSection(Action):
     text: SectionText
 
 
+class NewTicketSequence(Action):
+    """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
+    `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
+    `orch.host.sequence`); this server only relays the intent, the signer builds and checks every event itself."""
+
+    action: Literal["new_sequence"]
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    type: Literal["feature", "bug", "chore", "spike", "epic"] = "feature"
+    priority: Literal["low", "medium", "high", "urgent"] | None = None
+    size: Literal["xs", "s", "m", "l", "xl"] | None = None
+    labels: list[Label] | None = Field(default=None, max_length=16)
+    parent: Key | None = None
+    sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
+
+    def intent(self) -> dict:
+        """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
+        `section.set` normalises them, labels sorted, a default priority left out. A text core refuses is a 422."""
+        from orch.canon.text import TextError, normalize_text
+        from orch.host import sequence
+
+        try:
+            sets: dict = {}
+            if self.priority and self.priority != "medium":
+                sets["priority"] = self.priority
+            if self.size:
+                sets["size"] = self.size
+            if self.labels:
+                sets["labels"] = sorted(set(self.labels))
+            if self.parent and self.type != "epic":
+                sets["parent"] = self.parent
+            sections = {sid: normalize_text(text).strip("\n") for sid, text in self.sections.items()}
+            return sequence.validate_intent(
+                {
+                    "v": 1,
+                    "kind": "new_ticket",
+                    "title": normalize_text(self.title, one_line=True),
+                    "ticket_type": self.type,
+                    "set": sets,
+                    "sections": {sid: t for sid, t in sections.items() if t},
+                }
+            )
+        except (TextError, sequence.SequenceInvalid) as exc:
+            raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
+
+
 # ---- Workspace settings, members and grants (M4, #306) -------------------------------------------------------------
 # Closed and typed like the ticket actions above. `repos` is not an argument of `settings_set`: the Repos addon owns
 # repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
@@ -354,6 +399,7 @@ PrepareBody = Annotated[
     | Reopen
     | Move
     | NewTicket
+    | NewTicketSequence
     | Details
     | WriteSection
     | SettingsSet
@@ -396,6 +442,9 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "move", {"ref": action.key, "to": action.to} | ({"reason": action.reason} if action.reason else {})
         case NewTicket():
             return "new", {"title": action.title, "type": action.type}
+        case NewTicketSequence():
+            intent = action.intent()
+            return "new", {"title": intent["title"], "type": intent["ticket_type"]}
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels is not None:
@@ -453,6 +502,11 @@ def expected(action: Action, person: str | None = None):
         case PolicySet():
             _, args = host_call(action)
             return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
+        case NewTicketSequence():
+            intent = action.intent()
+            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=intent["ticket_type"]) and (
+                person is None or ev[0].get("owner") == person
+            )
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -522,6 +576,8 @@ class Plan:
     files: dict | None
     base: object
     person: str
+    #: B11: the `sequence` meta of `human.prepare` (one review, N signatures), or None
+    sequence: dict | None = None
 
     def idem(self, ws: str, retry: int = 0) -> str:
         return intent_idem(self.person, ws, self.op, self.args, self.base, self.files, retry)
@@ -547,7 +603,16 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = gate_base(data, gate(body))
         elif isinstance(body, Answer):
             base = question_base(data, body.question)
-    return Plan(op, args, host_files(body), base, link.welcome["peer"]["person"])
+    person = link.welcome["peer"]["person"]
+    meta = None
+    if isinstance(body, NewTicketSequence):
+        from orch.host import sequence
+
+        intent = body.intent()
+        digest = sequence.digest_of(ws, person, intent)
+        meta = {"step": 0, "of": len(sequence.steps(intent)), "digest": digest, "intent": intent}
+        base = {"sequence": digest}  # the whole intent is part of the intent's idem
+    return Plan(op, args, host_files(body), base, person, meta)
 
 
 CLICK_ONLY = (
@@ -829,7 +894,12 @@ def register(app: FastAPI, gateway: Gateway):
                 return human(
                     ws,
                     "human.prepare",
-                    {"op": op, "args": args, "handoff": True},
+                    {
+                        "op": op,
+                        "args": args,
+                        "handoff": True,
+                        **({"sequence": planned.sequence} if planned.sequence else {}),
+                    },
                     idem=idem,
                     files=planned.files,
                 )

@@ -24,7 +24,7 @@ MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer 
 MATERIAL_KEYS = {
     "gate": ({"kind", "gate", "input", "policy", "texts", "ticket", "review"},) * 2,
     "question": ({"kind", "ticket", "question", "review"},) * 2,
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
 }
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
 

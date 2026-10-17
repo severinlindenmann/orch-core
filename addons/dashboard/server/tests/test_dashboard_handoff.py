@@ -725,3 +725,52 @@ def test_the_plain_view_is_shown_only_when_the_signers_material_checks_hold(read
         )
     else:
         assert "content" not in got and "headline" not in got and got["material"]["review"]
+
+
+SEQ = {
+    "action": "new_sequence",
+    "title": "Plan the launch",
+    "type": "feature",
+    "priority": "high",
+    "labels": ["b", "a"],
+    "sections": {"summary": "Why this exists.", "context": "Line one\r\nLine two"},
+}
+
+
+def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"]
+    assert sent and sent[-1]["op"] == "new" and sent[-1]["args"] == {"title": "Plan the launch", "type": "feature"}
+    meta = sent[-1]["sequence"]
+    assert meta["step"] == 0 and meta["of"] == 4  # new, set, two sections
+    assert meta["intent"]["set"] == {"labels": ["a", "b"], "priority": "high"}  # sorted; CRLF made LF
+    assert meta["intent"]["sections"]["context"] == "Line one\nLine two"
+    assert got["material"]["sequence"]["intent"] == meta["intent"] and got["events"][0]["type"] == "ticket.created"
+    # the one view carries the ticket AND its written text
+    content = got["content"]
+    assert sorted(s["id"] for s in content["sections"]) == ["context", "summary"]
+    assert content["headline"].startswith("Create ticket")
+    assert any("one confirmation" in n.lower() for n in content["notes"])
+    # a second post of the same intent is the same request (the intent's idem covers the whole intent)
+    again = post(client, token, stub, {**SEQ}).json()
+    assert again["id"] == got["id"]
+    other = post(client, token, stub, {**SEQ, "sections": {"summary": "Another text."}}).json()
+    assert other["id"] != got["id"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sections": {"nonsense": "x"}},
+        {"sections": {"summary": "  "}},
+        {"labels": ["Has Space"]},
+        {"surprise": 1},
+    ],
+)
+def test_a_new_ticket_with_its_text_refuses_a_bad_intent(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ, **change})
+    assert res.status_code in (400, 422), res.text

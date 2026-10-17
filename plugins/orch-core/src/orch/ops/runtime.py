@@ -330,7 +330,9 @@ class Workspace:
                     f"{v1} is a v1 workspace; run `orch import v1` to migrate it",
                     hint=f"orch import v1 {v1}",
                 )
-            raise OrchError("not_found", "no orch workspace here", hint="run orch init in the workspace directory")
+            raise OrchError(
+                "not_found", "no orch workspace here", hint="cd into your project folder and run orch setup there"
+            )
         return root
 
     @property
@@ -859,6 +861,12 @@ class Call:
             from orch.ops import views
 
             hint = f"orch {cli} {mine[0].key}" if mine else views.claim_hint(self)
+            if "task" in ops.get(self.op).input.get("properties", {}):  # task ops take REF/T3, there is no --ref
+                key = mine[0].key if mine else "REF"
+                hint = f"orch {cli} {key}/T3 (the task is written REF/T<n>, for example {key}/T3)"
+                raise OrchError(
+                    "ambiguous_ref", f"name the ticket in the task as REF/T<n>; your claims: {names}", hint=hint
+                )
             raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}", hint=hint)
         view = self.store.ticket(part)
         if view is None or not self.sees(view):

@@ -127,6 +127,11 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
     onClose()
   }
   /** A quick ticket (useQuickCreate has already said so): close, unless a half-written form below stays open. */
+  /** A signed hand-off made the ticket: it is saved, so close without the discard prompt. */
+  const closedAfterCreate = () => {
+    leaving.current = true
+    onClose()
+  }
   const quickCreated = () => {
     if (formDirty.current) return quickRef.current?.focus()
     leaving.current = true
@@ -191,6 +196,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
                   variant="overlay"
                   onDirtyChange={onDirtyChange}
                   onCreated={created}
+                  onClosed={closedAfterCreate}
                   onCancel={requestClose}
                   footerExtra={
                     <Button type="button" variant="ghost" onClick={openFullPage} className="ml-auto">

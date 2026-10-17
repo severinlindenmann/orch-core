@@ -166,7 +166,7 @@
   }
   body {
     @apply bg-bg font-sans text-text antialiased;
-    min-width: 1024px;
+    min-width: 320px;
   }
   code,
   kbd,

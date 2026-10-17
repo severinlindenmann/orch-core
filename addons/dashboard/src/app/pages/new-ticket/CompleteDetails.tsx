@@ -21,7 +21,7 @@ export function stepLines(a: FollowUpAction): string[] {
   ]
 }
 
-export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws: string | undefined; ticketKey: string; steps: FollowUpAction[]; onFinish: () => void; title?: string }) {
+export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws: string | undefined; ticketKey: string; steps: FollowUpAction[]; /** `done`: how many of `steps` were signed before it ended (all of them = finished, fewer = cancelled). */ onFinish: (done: number) => void; title?: string }) {
   const [index, setIndex] = useState(0)
   const step = steps[index]
   if (!step) return null
@@ -36,9 +36,9 @@ export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws:
       action={action}
       confirmLabel={action.action === 'section' ? 'Prepare section' : 'Prepare details'}
       onSettled={(phase) => {
-        if (phase === 'done') (last ? onFinish : () => setIndex(index + 1))()
+        if (phase === 'done') (last ? () => onFinish(steps.length) : () => setIndex(index + 1))()
       }}
-      onClose={onFinish}
+      onClose={() => onFinish(index)}
     >
       <div className="space-y-2 text-[13px] text-text-muted">
         <p>

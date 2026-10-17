@@ -90,6 +90,15 @@ def test_notes_survive_a_corrupt_file_by_asking_for_a_read(ws, cli):
     assert cli("section", "set", "plan", "-m", "v2", "--ref", "1").code == 0
 
 
+def test_a_task_op_without_a_ticket_shows_the_real_syntax(ws, cli):
+    """B11-P6 (finding 36): ``task start`` has no ``--ref``; the refusal names the ``REF/T<n>`` form it does take."""
+    cli("new", "A")
+    r = cli.j("task", "start", "T1")
+    assert r.err_code == "ambiguous_ref"
+    assert "REF/T<n>" in r.doc["error"]["message"] and "--ref" not in r.doc["error"]["message"]
+    assert "DEMO-0001/T3" not in r.doc["error"]["message"] and "/T3" in r.doc["error"]["hint"]
+
+
 # ---------------------------------------------------------------------------------------------- store and model
 
 

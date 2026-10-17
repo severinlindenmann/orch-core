@@ -39,6 +39,12 @@ const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
  * The key "Complete details" may target: the one of the `new` request THIS dialog prepared and watched, and no other.
  * The state must be that request's own (same id, op `new`); anything else gives no key and no follow-up.
  */
+/** The ticket exists but a follow-up signature was cancelled: say what is missing, never "not saved as a ticket". */
+export function unsavedCopy(ticketKey: string, steps: FollowUpAction[]): string {
+  const text = steps.some((s) => s.action === 'section')
+  return `${ticketKey} was created; ${text ? 'its written text' : 'its details'} ${text ? 'is' : 'are'} not saved yet.`
+}
+
 export function ownKey(state: HandoffState | null, request: HandoffRequest | null): string | null {
   return state && request && state.id === request.id && request.op === 'new' && state.op === 'new' ? state.key : null
 }
@@ -260,13 +266,15 @@ export interface NewTicketFormProps {
   onDirtyChange?: (dirty: boolean) => void
   /** Overlay: a ticket was created with Create (the sheet closes and says so). */
   onCreated?: (ticket: TicketDocument) => void
+  /** Overlay: the ticket exists (signed hand-off): close the sheet without asking about unsaved changes. */
+  onClosed?: () => void
   /** Overlay: Cancel. */
   onCancel?: () => void
   /** Overlay: extra buttons in the footer (Open full page). */
   footerExtra?: ReactNode
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onCancel, footerExtra }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -301,6 +309,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
   const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; details: FollowUpAction[]; another: boolean } | null>(null)
   const [followUp, setFollowUp] = useState<{ key: string; steps: FollowUpAction[]; another: boolean } | null>(null)
+  /** A follow-up signature was cancelled: the ticket exists, these steps are not saved yet. */
+  const [unsaved, setUnsaved] = useState<{ key: string; steps: FollowUpAction[]; another: boolean } | null>(null)
   const handoffOn = handoffMode(workspace.id)
 
   const create = useMutation({
@@ -371,6 +381,10 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     writeDraft(key, null)
     setShowRestored(false)
     setHandoffNew(null)
+    // The ticket exists: nothing typed is unsaved any more. Clean at once (the sheet reads this synchronously, before
+    // the next render), so no "Discard unsaved changes?" can appear while the follow-up signature or the close runs.
+    setDraft(EMPTY)
+    onDirtyChange?.(false)
     if (details.length && ticketKey) {
       // The new ticket exists; what `new` could not carry is further signatures, offered not forced.
       setFollowUp({ key: ticketKey, steps: details, another })
@@ -388,7 +402,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     leaving.current = true
     setDraft(EMPTY)
-    if (overlay) onCancel?.()
+    if (overlay) (onClosed ?? onCancel)?.()
     if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
   }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
@@ -549,13 +563,46 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           ws={workspace.id}
           ticketKey={followUp.key}
           steps={followUp.steps}
-          onFinish={() => {
+          onFinish={(done) => {
             const f = followUp
             setFollowUp(null)
             void qc.invalidateQueries()
+            if (done < f.steps.length) return setUnsaved({ ...f, steps: f.steps.slice(done) })
             afterCreate(f.another, f.key)
           }}
         />
+      )}
+
+      {unsaved && (
+        <Dialog open onOpenChange={(o) => !o && (setUnsaved(null), afterCreate(unsaved.another, unsaved.key))}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{unsaved.key} was created</DialogTitle>
+              <DialogDescription data-testid="followup-unsaved">{unsavedCopy(unsaved.key, unsaved.steps)}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const u = unsaved
+                  setUnsaved(null)
+                  afterCreate(u.another, u.key)
+                }}
+              >
+                Open {unsaved.key}
+              </Button>
+              <Button
+                onClick={() => {
+                  const u = unsaved
+                  setUnsaved(null)
+                  setFollowUp(u)
+                }}
+              >
+                Try again
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>

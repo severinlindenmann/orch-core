@@ -32,12 +32,12 @@ it('Devices on a real host: pairing a phone is not available yet, and no pairing
 it('General shows what the host says, marks defaults and lists repositories read only', async () => {
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('button', { name: '8 h' }, T)).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText(/Claim lasts/)).toHaveValue(120)
+  expect(screen.getByLabelText(/Ticket reserved for/)).toHaveValue(120)
   expect(screen.getAllByText(/The default\./).length).toBe(2) // claim and lease; the grant length is not a default here
   const repos = screen.getByRole('list', { name: 'Repositories' })
   expect(within(repos).getByText('main')).toBeInTheDocument()
   expect(within(repos).getByText('https://git.example.test/a/code')).toBeInTheDocument()
-  expect(screen.getByText(/added, changed and removed in the Repos addon/)).toBeInTheDocument()
+  expect(screen.getByText(/has no button or command to add one yet/)).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /repo/i })).not.toBeInTheDocument()
 })
 
@@ -72,7 +72,7 @@ it('changing the grant length opens the hand-off with the typed action, and show
 it('out-of-range durations never reach the host', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Claim lasts/, {}, T)
+  const input = await screen.findByLabelText(/Ticket reserved for/, {}, T)
   await user.clear(input)
   await user.type(input, '999999')
   expect(screen.getByRole('alert')).toHaveTextContent('whole number')
@@ -199,9 +199,9 @@ it('Gates: the code review is never approved by the assignees and always indepen
   show('/w/DEMO/settings/gates')
   expect(await screen.findByRole('heading', { name: 'Gate policies' }, T)).toBeInTheDocument()
   expect(screen.getByText(/ends the approvals already given at that gate/)).toBeInTheDocument()
-  const not = screen.getByRole('group', { name: 'Code review: who may not approve, even if listed above' })
-  expect(within(not).getByRole('checkbox', { name: 'The assignees' })).toBeChecked()
-  expect(within(not).getByRole('checkbox', { name: 'The assignees' })).toBeDisabled()
+  const matrix = screen.getByRole('table', { name: 'Code review: who may approve' })
+  expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeChecked()
+  expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeDisabled()
   expect(screen.getByRole('checkbox', { name: /Code review: approvers independent.*always/ })).toBeDisabled()
   await user.click(screen.getByRole('radio', { name: 'Every ticket' }))
   await user.click(screen.getByRole('button', { name: 'Change code review policy' }))
@@ -217,12 +217,12 @@ it('Gates: another gate changes approvers and count; a policy with no approver i
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
   await screen.findByRole('heading', { name: 'Gate policies' }, T)
-  const who = screen.getByRole('group', { name: 'Plan: who may approve' })
-  await user.click(within(who).getByRole('checkbox', { name: 'Owners' }))
+  const who = screen.getByRole('table', { name: 'Plan: who may approve' })
+  await user.click(within(who).getByRole('checkbox', { name: 'Owners may approve' }))
   expect(screen.getAllByRole('alert')[0]).toHaveTextContent('Pick at least one kind of approver.')
   expect(screen.getByRole('button', { name: 'Change plan policy' })).toBeDisabled()
-  await user.click(within(who).getByRole('checkbox', { name: 'Maintainers' }))
-  await user.click(within(who).getByRole('checkbox', { name: 'Owners' }))
+  await user.click(within(who).getByRole('checkbox', { name: 'Maintainers may approve' }))
+  await user.click(within(who).getByRole('checkbox', { name: 'Owners may approve' }))
   const count = screen.getByLabelText('Plan: approvals needed')
   await user.clear(count)
   await user.type(count, '2')
@@ -331,3 +331,26 @@ it('a viewer role reads the settings and signs nothing', async () => {
 })
 
 void policy
+
+it('Gates: a one-person workspace explains that the verify rule does not block its only member', async () => {
+  state.host.workspaces[0].roster = state.host.workspaces[0].roster.slice(0, 1)
+  show('/w/DEMO/settings/gates')
+  await screen.findByRole('heading', { name: 'Gate policies' }, T)
+  expect(await screen.findByTestId('gate-alone', {}, T)).toHaveTextContent('only member')
+})
+
+it('How I approve: the production api asks the server, so the personal controls appear when it answers (B11 10)', async () => {
+  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
+  state.host.override = (path) =>
+    path.endsWith('/me/sign_default') ? Response.json({ method: 'terminal', is_default: true, allowed: ['terminal', 'click'] }) : undefined
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByLabelText('Default', {}, T)).toBeEnabled()
+  expect(state.host.calls.some((c) => c.path.endsWith('/me/sign_default'))).toBe(true)
+})
+
+it('How I approve: an older server without the route hides the personal controls and says so in one line', async () => {
+  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByText(/Your own way of approving is not available on this host yet/, {}, T)).toBeInTheDocument()
+  expect(screen.queryByLabelText('Default')).toBeNull()
+})

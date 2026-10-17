@@ -221,7 +221,11 @@ def _tty(monkeypatch):
     return shown
 
 
-def _fake_run(seen, url, rc=0):
+CODE = "SECRETCODE0123456789abcdefgh"
+URL = f"http://127.0.0.1:8123/#launch={CODE}&to=%2Fsetup"
+
+
+def _fake_run(seen, url, rc=0, extra=b"", stderr=b""):
     import os
     import subprocess
 
@@ -230,79 +234,88 @@ def _fake_run(seen, url, rc=0):
         fd = int(argv[argv.index("--emit-url-fd") + 1])
         assert kw["pass_fds"] == (fd,)
         if rc == 0:
-            os.write(fd, (url + "\n").encode())
-        return subprocess.CompletedProcess(argv, rc)
+            os.write(fd, (url + "\n").encode() + extra)
+        return subprocess.CompletedProcess(argv, rc, stdout=b"", stderr=stderr)
 
     return run
 
 
-def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monkeypatch):
+def _setup(monkeypatch, run):
     import io
     import subprocess
 
     from orch.cli import dashboard as dash
+
+    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    monkeypatch.setattr(subprocess, "run", run)
+    return io.StringIO(), _tty(monkeypatch)
+
+
+def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monkeypatch):
     from orch.setup import flow as flow_mod
 
     seen = {}
-    url = "http://127.0.0.1:8123/#launch=SECRETCODE&to=%2Fsetup"
-    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
-    monkeypatch.setattr(subprocess, "run", _fake_run(seen, url))
-    err, tty = io.StringIO(), _tty(monkeypatch)
-    assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": "SECRETCODE"})
-    assert err.getvalue() == "" and "SECRETCODE" not in err.getvalue()  # the code never reaches stderr/stdout
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL))
+    assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": CODE}) is True
+    assert err.getvalue() == ""  # the code never reaches stderr/stdout
     ((argv, env),) = seen["calls"]
     assert argv[:3] == ["orch-dashboard", "open", "/setup"] and "--no-browser" not in argv
-    assert "SECRETCODE" not in repr(argv) and "SECRETCODE" not in repr(env)
+    assert CODE not in repr(argv) and CODE not in repr(env)
     lines = "".join(tty).splitlines()
-    assert lines == [f"Open this link in your browser (single use, 5 minutes): {url}"]
+    assert lines == [f"If no browser opened, use this link (single use, 5 minutes): {URL}"]
     assert "#launch=" in lines[0] and "?" not in lines[0]
 
 
-def test_no_browser_passes_the_flag_and_still_prints_the_link(monkeypatch):
-    import io
-    import subprocess
-
-    from orch.cli import dashboard as dash
+def test_no_browser_passes_the_flag_and_always_prints_the_link(monkeypatch):
     from orch.setup import flow as flow_mod
 
     seen = {}
-    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
-    monkeypatch.setattr(subprocess, "run", _fake_run(seen, "http://127.0.0.1:8123/#launch=C&to=%2Fsetup"))
-    err, tty = io.StringIO(), _tty(monkeypatch)
-    assert flow_mod._open_browser({}, err, {}, no_browser=True)
-    assert "--no-browser" in seen["calls"][0][0] and "C&to" not in repr(seen["calls"][0][0])
-    assert "".join(tty).count("Open this link") == 1 and err.getvalue() == ""
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"))
+    assert flow_mod._open_browser({}, err, {}, no_browser=True) == "link"
+    assert "--no-browser" in seen["calls"][0][0] and CODE not in repr(seen["calls"][0][0])
+    assert "".join(tty).startswith("Open this link in your browser (single use, 5 minutes): ") and err.getvalue() == ""
+
+
+def test_a_failed_browser_open_is_reported_apart_from_a_success(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    err, tty = _setup(monkeypatch, _fake_run({}, URL, extra=b"no-browser\n"))
+    assert flow_mod._open_browser({}, err, {}) == "link"
+    assert "Open this link" in "".join(tty)
 
 
 def test_without_a_writable_terminal_no_link_is_shown_anywhere(monkeypatch):
-    import io
-    import subprocess
-
-    from orch.cli import dashboard as dash
     from orch.custody import NoPrompt
     from orch.ops import workspace_init as wi
     from orch.setup import flow as flow_mod
+
+    err, _ = _setup(monkeypatch, _fake_run({}, URL, extra=b"no-browser\n"))
 
     def broken(text):
         raise NoPrompt("no controlling terminal")
 
     monkeypatch.setattr(wi.TERMINAL, "show", broken)
-    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
-    monkeypatch.setattr(subprocess, "run", _fake_run({}, "http://127.0.0.1:8123/#launch=SECRETCODE&to=%2Fsetup"))
-    err = io.StringIO()
     assert flow_mod._open_browser({}, err, {}, no_browser=True) is False
-    assert "SECRETCODE" not in err.getvalue() and "your own terminal" in err.getvalue()
+    assert CODE not in err.getvalue() and "your own terminal" in err.getvalue()
 
 
-def test_a_launcher_that_fails_or_returns_a_bad_line_prints_nothing(monkeypatch):
-    import io
-    import subprocess
-
-    from orch.cli import dashboard as dash
+def test_a_failing_launcher_tail_never_contains_the_code(monkeypatch):
     from orch.setup import flow as flow_mod
 
-    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
-    for run in (_fake_run({}, "", rc=1), _fake_run({}, "http://127.0.0.1:1/?launch=x#launch=y")):
-        monkeypatch.setattr(subprocess, "run", run)
-        err, tty = io.StringIO(), _tty(monkeypatch)
-        assert flow_mod._open_browser({}, err, {}) is False and err.getvalue() == "" and tty == []
+    noisy = f"boom http://127.0.0.1:8123/#launch={CODE}&to=%2Fsetup".encode()
+    err, tty = _setup(monkeypatch, _fake_run({}, URL, rc=1, stderr=noisy))
+    assert flow_mod._open_browser({}, err, {}) is False
+    assert "did not start" in err.getvalue() and CODE not in err.getvalue() and tty == []
+
+
+def test_a_bad_line_from_the_launcher_prints_nothing(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    for bad in (
+        "http://127.0.0.1:1/?launch=x#launch=" + CODE + "&to=%2Fsetup",
+        "http://evil.example/#launch=" + CODE + "&to=%2Fsetup",
+        "http://127.0.0.1:8123/#launch=short&to=%2Fsetup",
+        URL + "\x1b[2J",
+    ):
+        err, tty = _setup(monkeypatch, _fake_run({}, bad))
+        assert flow_mod._open_browser({}, err, {}) is False and CODE not in err.getvalue() and tty == []

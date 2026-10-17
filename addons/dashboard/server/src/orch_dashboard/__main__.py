@@ -3,6 +3,7 @@
 import argparse
 import errno
 import fcntl
+import functools
 import hashlib
 import hmac
 import html
@@ -96,8 +97,21 @@ def control(path, command, kind=None):
         sock.sendall(encode({"command": command, **({"kind": kind} if kind else {})}))
         reply = receive(sock)
     if command == "launch" and isinstance(reply, dict) and "expires_at" not in reply:
-        reply["expires_at"] = asked + (SETUP_CODE_TTL if kind == "setup" else CODE_TTL)  # an older server: a bound
+        reply["expires_at"] = asked + CODE_TTL  # an older server (30 s codes for every kind): a conservative bound
     return reply
+
+
+@functools.lru_cache(maxsize=1)
+def code_digest():
+    """12 hex of a digest of this package's files: a server reports it (``hello``) and a launcher with another digest
+    knows the running server is from another release."""
+    root = Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for file in sorted(p for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        h.update(file.relative_to(root).as_posix().encode() + b"\0")
+        with suppress(OSError):
+            h.update(file.read_bytes())
+    return h.hexdigest()[:12]
 
 
 def stale_socket(path):
@@ -112,12 +126,14 @@ def stale_socket(path):
         sock.settimeout(2)
         try:
             sock.connect(str(path))
+        except FileNotFoundError:
+            return  # a stopping server removed it between lstat and connect: already gone
         except OSError as exc:
             if exc.errno != errno.ECONNREFUSED:
                 raise
         else:
             raise RuntimeError("dashboard already running")
-    path.unlink()
+    path.unlink(missing_ok=True)
 
 
 def redirect_directory(fallback):
@@ -220,6 +236,8 @@ def _serve(directory, lock_fd=None):
                         conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
+                    elif req == {"command": "hello"}:
+                        conn.sendall(encode({"release": code_digest()}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
@@ -281,6 +299,10 @@ def verify_probe(launch, fetch=None):
         raise RuntimeError("dashboard port ownership proof failed; browser was not opened")
 
 
+#: second line on the --emit-url-fd pipe when no browser was (or could be) opened
+NO_BROWSER_MARKER = b"no-browser"
+
+
 def check_url_fd(fd):
     """The caller's pipe/socket for the code-bearing URL: not argv, not the environment, not a file. Anything else
     (a tty, a regular file) is refused, so the code cannot land in a log through a wrong fd."""
@@ -290,6 +312,38 @@ def check_url_fd(fd):
         mode = 0
     if fd < 3 or not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
         raise RuntimeError("--emit-url-fd needs an open pipe")
+
+
+def _running_release(ctl):
+    """The release digest of the server on ``ctl``; ``None`` when none is running (nothing there / refused);
+    ``"?"`` when one answers but does not know ``hello`` (an older release closes the connection)."""
+    try:
+        reply = control(ctl, "hello")
+    except (FileNotFoundError, ConnectionRefusedError):
+        return None
+    except EOFError:
+        return "?"
+    release = reply.get("release") if isinstance(reply, dict) else None
+    return release if isinstance(release, str) and release else "?"
+
+
+def _stop_stale(ctl, wait=RESTART_WAIT):
+    """Stop the server on ``ctl`` through its own ``stop`` command (never a signal), wait (bounded) until the socket
+    is free, then say so. A server that is already gone is fine."""
+    try:
+        control(ctl, "stop")
+    except (FileNotFoundError, ConnectionRefusedError, EOFError):
+        pass
+    except TimeoutError:
+        raise RuntimeError(
+            "an older dashboard is running but does not answer; find it with `pgrep -fl orch_dashboard` and stop it"
+        ) from None
+    deadline = time.monotonic() + wait
+    while not _free(ctl):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("the older dashboard did not stop in time; try again in a moment")
+        time.sleep(0.1)
+    print("restarted the dashboard on the new release")
 
 
 def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False):
@@ -305,12 +359,24 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
+        ctl = directory / "ctl.sock"
+        launch = None
         try:
-            launch = control(directory / "ctl.sock", "launch", kind)
+            running = _running_release(ctl)
+            if running is None:
+                raise FileNotFoundError(errno.ENOENT, "no dashboard running")
+            if running != code_digest():
+                _stop_stale(ctl)  # raises RuntimeError when it will not stop; prints the one-line notice
+            else:
+                launch = control(ctl, "launch", kind)
+        except EOFError:
+            # The server closed the connection: it does not know this request (an older release). Replace it, once.
+            _stop_stale(ctl)
         except OSError as exc:
             if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
                 raise
-            stale_socket(directory / "ctl.sock")
+        if launch is None:
+            stale_socket(ctl)
             child = subprocess.Popen(
                 [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
                 stdin=subprocess.DEVNULL,
@@ -322,10 +388,12 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
                 if child.poll() is not None:
                     raise RuntimeError("dashboard could not start")
                 try:
-                    launch = control(directory / "ctl.sock", "launch", kind)
+                    launch = control(ctl, "launch", kind)
                     break
                 except (FileNotFoundError, ConnectionRefusedError):
                     time.sleep(0.05)
+                except EOFError:
+                    raise RuntimeError("the new dashboard closed the connection; run it again") from None
             else:
                 raise RuntimeError("dashboard did not become ready")
     # Control can become ready just before the HTTP accept loop.
@@ -346,6 +414,7 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     if emit_url_fd is not None:
         os.write(emit_url_fd, (url + "\n").encode())
         if no_browser:
+            os.write(emit_url_fd, NO_BROWSER_MARKER + b"\n")
             return
     # Write exactly the file the server recorded for this code, so its exchange and timer delete that same path.
     if launch.get("redirect_file"):
@@ -372,15 +441,18 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
             with os.fdopen(fd, "w") as file:
                 file.write(
                     '<!doctype html><meta name="referrer" content="no-referrer">'
-                    f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
+                    # ONE navigation: the script; the meta refresh only without JavaScript (both at once load the
+                    # page twice, and the second load presents an already spent single-use code)
                     f"<script>location.replace({json.dumps(url)});</script>"
+                    f'<noscript><meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}"></noscript>'
                 )
             if time.time() >= expires_at - EXPIRY_MARGIN:  # paused between the check and the write
                 raise RuntimeError("the launch code expired before the browser could be opened; run it again")
             # Only the file's path goes to the browser's argv, never the code: argv is readable by every UID (ps).
             if not webbrowser.open(redirect.resolve().as_uri()):
-                if emit_url_fd is not None:  # the caller already has the link: no browser is not a failure
+                if emit_url_fd is not None:  # the caller already has the link: say the browser did not open
                     redirect.unlink(missing_ok=True)
+                    os.write(emit_url_fd, NO_BROWSER_MARKER + b"\n")
                     return
                 raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
         except BaseException:
@@ -453,6 +525,9 @@ def main():
         return 3
     except RunDirectoryError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    except EOFError:
+        print("orch-dashboard: the dashboard closed the connection; run `orch-dashboard restart`", file=sys.stderr)
         return 1
     except (RuntimeError, OSError) as exc:
         # A one-line refusal for the person at the terminal; nothing was started or minted on the refusals above.

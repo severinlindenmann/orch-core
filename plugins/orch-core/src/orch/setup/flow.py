@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets as _secrets
 import threading
 import time
@@ -460,16 +461,17 @@ def default_env(environ: Mapping[str, str]) -> Env:
     )
 
 
+_LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
 USAGE = "usage: orch setup [--no-browser]   (run it in the folder you want to make a workspace; it opens the page)\n"
 
 
-def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> bool:
+def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> Any:
     """Open the dashboard on ``/setup`` and show the same single-use link on the person's own terminal (/dev/tty,
-    never ``err``). The
-    launch code is NOT in any argument or in the environment of a child: the launcher returns the link over a pipe
-    (``--emit-url-fd``, a number only), and it opens the browser through its own 0600 redirect file, never with the
-    code in the browser's argv. ``no_browser`` prints the link only. The code the dashboard server reads is in the 0600
-    file ``<state>/setup/setup.code``, which it deletes when it claims."""
+    never ``err``). The launch code is NOT in any argument or in the environment of a child: the launcher returns the
+    link over a pipe (``--emit-url-fd``, a number only) and opens the browser through its own 0600 redirect file. A
+    missing dashboard says how to install it; one that fails to start says why (its last error line, with any URL
+    fragment removed so no one-time code is ever echoed). Returns ``True`` (browser opened), ``"link"`` (the link was
+    shown but no browser opened) or ``False``."""
     import os
     import subprocess
 
@@ -490,29 +492,38 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
                 check=False,
                 pass_fds=(write_fd,),
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
+            err.write(f"orch setup: the dashboard did not start ({type(exc).__name__})\n")
             return False
         finally:
             os.close(write_fd)
         if res.returncode != 0:
+            text = (res.stderr or b"").decode("utf-8", "replace") + (res.stdout or b"").decode("utf-8", "replace")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            last = re.sub(r"#\S*", "#…", lines[-1])[:300] if lines else f"exit {res.returncode}"
+            err.write(f"orch setup: the dashboard did not start: {last}\n")
             return False
         with os.fdopen(read_fd, "rb", closefd=False) as pipe:
-            line = pipe.read(4097).decode("utf-8", "replace").strip()
+            raw = pipe.read(4097).decode("utf-8", "replace").split("\n")
     finally:
         os.close(read_fd)
-    if not line.startswith("http://127.0.0.1:") or "\n" in line or "?" in line or "#launch=" not in line:
+    line = raw[0].strip()
+    browser_opened = "no-browser" not in [x.strip() for x in raw[1:]]
+    if not _LINK.fullmatch(line):
+        err.write("orch setup: the dashboard returned no usable link\n")
         return False
     # The link carries the single-use code, so it goes to the person's own terminal (/dev/tty) and nowhere else: not
     # ``err`` or stdout, which can be redirected into a file or a CI log (``orch setup 2>log``).
     from orch.custody import NoPrompt
     from orch.ops import workspace_init as wi
 
+    lead = "If no browser opened, use this link" if browser_opened else "Open this link in your browser"
     try:
-        wi.TERMINAL.show(f"Open this link in your browser (single use, 5 minutes): {line}\n")
+        wi.TERMINAL.show(f"{lead} (single use, 5 minutes): {line}\n")
     except (NoPrompt, OSError):
         err.write("orch setup: cannot show the link here; run orch setup in your own terminal\n")
-        return not no_browser  # the browser may still have been opened by the launcher
-    return True
+        return True if browser_opened else False
+    return True if browser_opened else "link"
 
 
 def main(
@@ -571,14 +582,12 @@ def main(
     )
     opener = open_browser or _open_browser
     opened = opener(env, err, launch, no_browser=True) if no_browser else opener(env, err, launch)
-    if opened:
-        err.write(
-            "orch setup: use the link above; this terminal stays with it (Ctrl-C cancels)\n"
-            if no_browser
-            else "orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n"
-        )
+    if opened is True:
+        err.write("orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n")
+    elif opened:
+        err.write("orch setup: no browser was opened; use the link above (Ctrl-C cancels)\n")
     else:
-        err.write("orch setup: could not open the dashboard; install it (pip install orch-dashboard) and run again\n")
+        err.write("orch setup: could not open the setup page (see above); fix that and run orch setup again\n")
         server.stop()
         return 1
     try:

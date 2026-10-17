@@ -374,3 +374,51 @@ test.each(['waiting for terminal', 'waiting for runner'])('shows progress waitin
   expect(await screen.findByRole('status')).toHaveTextContent(
     waiting === 'waiting for terminal' ? 'Confirm in your terminal' : 'Waiting for the agent runner to connect…')
 })
+
+function failing(status: number, code?: string) {
+  const fetcher = vi.fn(
+    async () => new Response(JSON.stringify(code ? { error: { code } } : {}), { status }),
+  ) as unknown as typeof fetch
+  return new SetupAPI('tok', fetcher)
+}
+
+test.each([
+  [410, 'setup.ended'],
+  [401, 'setup.token'],
+])('initial state %i shows Reason: %s', async (status, code) => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(<Setup api={failing(status, code)} />)
+  expect(await screen.findByText(`Reason: ${code}`)).toBeInTheDocument()
+  expect(screen.getByText(/This session has ended/)).toBeInTheDocument()
+  expect(spy).toHaveBeenCalledWith('[orch setup]', code)
+  spy.mockRestore()
+})
+
+test('an HTTP error without a JSON body shows the status', async () => {
+  const fetcher = vi.fn(async () => new Response('nope', { status: 502 })) as unknown as typeof fetch
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(<Setup api={new SetupAPI('tok', fetcher)} />)
+  expect(await screen.findByText('Reason: http.502')).toBeInTheDocument()
+  spy.mockRestore()
+})
+
+test('a client exception while handling state is reported as client:, not an API code', async () => {
+  const fetcher = vi.fn(
+    async () => new Response(JSON.stringify({ ...state, addons: null }), { status: 200 }),
+  ) as unknown as typeof fetch
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(<Setup api={new SetupAPI('tok', fetcher)} />)
+  expect(await screen.findByText(/^Reason: client: TypeError: /)).toBeInTheDocument()
+  expect(spy).toHaveBeenCalledWith('[orch setup]', expect.stringMatching(/^client: TypeError/))
+  spy.mockRestore()
+})
+
+test('a bootstrap failure on mount shows its reason without fragments', async () => {
+  document.body.innerHTML = '<div id="root"></div>'
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const { mount } = await import('./Setup')
+  await mount(Promise.reject(new Error('boom#launch=SECRET')))
+  expect(await screen.findByText('Reason: client: Error: boom')).toBeInTheDocument()
+  expect(document.body.textContent).not.toContain('SECRET')
+  spy.mockRestore()
+})

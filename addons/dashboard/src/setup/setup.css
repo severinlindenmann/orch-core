@@ -294,3 +294,8 @@ body:has(> #root > .setup) {
 .setup .toggle:has(input[type='radio']:checked) {
   border-color: var(--brand);
 }
+.setup .reason {
+  display: block;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}

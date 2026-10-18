@@ -51,9 +51,11 @@ def sniff(data: bytes) -> str | None:
 
 
 class StepBody(BaseModel):
+    """The changed fields of one step. A field that is absent is left as it is on the server (merged per field)."""
+
     model_config = ConfigDict(extra="forbid", strict=True)
-    status: Literal["todo", "pass", "fail_blocking", "fail_non_blocking", "skipped"]
-    note: str = Field(max_length=NOTE_MAX)
+    status: Literal["todo", "pass", "fail_blocking", "fail_non_blocking", "skipped"] | None = None
+    note: str | None = Field(default=None, max_length=NOTE_MAX)
 
 
 class ImageBody(BaseModel):
@@ -93,7 +95,8 @@ class Store:
         return self.root / run
 
     def ensure(self, run: str, images: bool = False) -> Path:
-        _plain_dir(self.root.parent.parent)
+        # The state directory itself may be a symlink (a person's choice); only what we create below it must not be.
+        self.root.parent.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         _plain_dir(self.root.parent)
         _plain_dir(self.root)
         directory = self.run_dir(run)
@@ -104,7 +107,7 @@ class Store:
 
     def load(self, run: str) -> dict:
         directory = self.run_dir(run)
-        if directory.is_symlink() or (directory / "images").is_symlink():
+        if any(p.is_symlink() for p in (self.root.parent, self.root, directory, directory / "images")):
             raise fail("invalid.input", exit=5)
         try:
             doc = json.loads(_read(directory / "notes.json", 4_000_000).decode("utf-8"))
@@ -166,7 +169,12 @@ def register(app, gateway):
         with store.lock:
             doc = store.load(run)
             row = store.step(doc, step)
-            row["status"], row["note"] = body.status, body.note
+            if body.status is None and body.note is None:
+                raise fail("invalid.input", exit=5)
+            if body.status is not None:
+                row["status"] = body.status
+            if body.note is not None:
+                row["note"] = body.note
             store.save(run, doc)
             return {"updated": row["updated"]}
 

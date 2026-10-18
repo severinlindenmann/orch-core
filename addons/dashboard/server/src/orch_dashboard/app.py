@@ -40,12 +40,63 @@ class LaunchCode(BaseModel):
 
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
+# ONE closed list, in the router's own spelling (src/app/router.tsx, `$x` = a parameter). A test walks every route of
+# the router and every real-host settings tab and fails when one is missing here, so a new page cannot forget it.
+SETTINGS_TABS = (
+    "general",
+    "members",
+    "gates",
+    "grants",
+    "addons",
+    "records",
+    "devices",
+)  # HOST_TABS (settings/tabs.ts)
+SPA_ROUTES = (
+    "",  # Today
+    "today",  # older spelling of Today
+    "board",
+    "tickets",
+    "tickets/new",
+    "ticket/$key",
+    "artifacts",
+    "agents",
+    "quick",
+    "drop",
+    "checklist",
+    "worktrees",
+    "activity",
+    "guide",  # ?page=<x> is a query: not part of the path
+    "settings",
+    "settings/$tab",
+    "settings/addon/$name",
+    "settings/addons/$name",
+    "addon/$name/$page",
+)
+# Routes that also open without a workspace in the address (the ticket key names its own workspace) ...
+SPA_BARE = ("ticket/$key", "checklist")
+# ... and the ones that open ONLY without one (urls.ts isWorkspacePath: the checklist is not a workspace page).
+SPA_BARE_ONLY = ("checklist",)
+_PARAM = {
+    "key": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
+    "tab": "(?:" + "|".join(SETTINGS_TABS) + ")",
+    "name": r"[A-Za-z0-9_-]{1,64}",
+    "page": r"[A-Za-z0-9_-]{1,64}",
+}
+
+
+def _spa_pattern(route: str) -> str:
+    return "/".join(_PARAM[seg[1:]] if seg.startswith("$") else re.escape(seg) for seg in route.split("/") if seg)
+
+
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick|activity)"
-    r"|/settings(?:/(?:general|members|gates|grants|records|devices|addons))?"
-    r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
-    r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
-    r"|checklist"
+    "|".join(
+        [
+            r"w/[A-Za-z0-9_-]+(?:/(?:"
+            + "|".join(_spa_pattern(r) for r in SPA_ROUTES if r and r not in SPA_BARE_ONLY)
+            + "))?"
+        ]
+        + [_spa_pattern(r) for r in SPA_BARE]
+    )
 )
 
 

@@ -190,7 +190,10 @@ export function ChecklistPage() {
   const latest = useRef(notes)
   latest.current = notes
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-  const dirty = useRef(new Set<string>())
+  // The fields of each step changed here and not yet saved: only these are sent, and a late first load never replaces them.
+  const dirty = useRef(new Map<string, Set<'status' | 'note'>>())
+  // Every field edited on this page, kept after it was saved: a first load that answers late must not replace them.
+  const touched = useRef(new Map<string, Set<'status' | 'note'>>())
   const chain = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
@@ -198,7 +201,16 @@ export function ChecklistPage() {
     loadRun(RUN_ID).then(
       (s) => {
         if (!live) return
-        setNotes(s.notes)
+        // Edits made before the first load finished stay on top of what the server held.
+        setNotes((local) => {
+          const merged = { ...s.notes }
+          for (const [id, fields] of touched.current) {
+            const mine = local[id] ?? emptyNotes()
+            const base = merged[id] ?? emptyNotes()
+            merged[id] = { ...base, ...(fields.has('status') ? { status: mine.status } : {}), ...(fields.has('note') ? { note: mine.note } : {}), images: [...new Set([...base.images, ...mine.images])] }
+          }
+          return merged
+        })
         setPaths({ path: s.path, images: s.images_path })
         setReady(true)
       },
@@ -217,14 +229,18 @@ export function ChecklistPage() {
     const t = timers.current.get(id)
     if (t) clearTimeout(t)
     timers.current.delete(id)
-    if (!dirty.current.has(id)) return
+    const fields = dirty.current.get(id)
+    if (!fields) return
     dirty.current.delete(id)
     mark(id, 'saving')
     // One request at a time: a later save of a step never overtakes an earlier one.
     chain.current = chain.current.then(async () => {
       const n = latest.current[id] ?? emptyNotes()
+      const patch: { status?: StepStatus; note?: string } = {}
+      if (fields.has('status')) patch.status = n.status
+      if (fields.has('note')) patch.note = n.note
       try {
-        await saveStep(RUN_ID, id, n.status, n.note)
+        await saveStep(RUN_ID, id, patch)
         setProblem(null)
         mark(id, dirty.current.has(id) ? 'saving' : 'saved')
       } catch (e) {
@@ -236,7 +252,7 @@ export function ChecklistPage() {
 
   useEffect(() => {
     const out = timers.current
-    const leave = () => { for (const id of [...dirty.current]) flush(id) }
+    const leave = () => { for (const id of [...dirty.current.keys()]) flush(id) }
     window.addEventListener('pagehide', leave)
     return () => {
       window.removeEventListener('pagehide', leave)
@@ -247,7 +263,12 @@ export function ChecklistPage() {
   const change = useCallback((id: string, patch: Partial<Pick<StepNotes, 'status' | 'note'>>, now = false) => {
     setNotes((m) => ({ ...m, [id]: { ...(m[id] ?? emptyNotes()), ...patch } }))
     latest.current = { ...latest.current, [id]: { ...(latest.current[id] ?? emptyNotes()), ...patch } }
-    dirty.current.add(id)
+    const fields = dirty.current.get(id) ?? new Set<'status' | 'note'>()
+    for (const k of Object.keys(patch) as ('status' | 'note')[]) fields.add(k)
+    dirty.current.set(id, fields)
+    const seen = touched.current.get(id) ?? new Set<'status' | 'note'>()
+    for (const k of fields) seen.add(k)
+    touched.current.set(id, seen)
     const old = timers.current.get(id)
     if (old) clearTimeout(old)
     if (now) flush(id)

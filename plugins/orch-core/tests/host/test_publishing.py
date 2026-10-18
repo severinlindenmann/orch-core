@@ -963,3 +963,13 @@ def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
     assert "orch publish register" in res["error"]["message"]
     assert not (w.base() / "registered.json").exists()
     ok(w.send(staged))  # allowed again: the copy goes, registering first
+
+
+def test_sharing_and_the_publish_server_setting_are_never_a_click_alone():
+    from orch.click.protocol import op_class
+
+    assert op_class("publish.share") == "word"
+    for changed in ({"publish": {"server": SERVER, "share": SHARE}}, {"publish": None}, {"publish": None, "repos": {}}):
+        assert op_class("settings.set", [{"set": changed}]) == "word", changed
+    assert op_class("publish.send") == "terminal" and op_class("publish.revoke") == "terminal"
+    assert op_class("settings.set", [{"set": {"claim_ttl_min": 30}}]) == "click"  # other settings keep their class

@@ -133,6 +133,7 @@ WORD_OPS = frozenset(
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
+        "publish.share",  # P5: lets files leave this computer; never a click alone
     }
 )
 #: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
@@ -147,8 +148,9 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
         for ev in events:
             changed = ev.get("set")
             # B6: sign_methods decides which signatures the workspace accepts: a typed word, like repos
+            # P5: publish decides where shared files go
             if not isinstance(changed, dict) or any(
-                str(k).split(".")[0] in ("repos", "sign_methods", "grant_hours") for k in changed
+                str(k).split(".")[0] in ("repos", "sign_methods", "grant_hours", "publish") for k in changed
             ):
                 return "word"
         return "click"

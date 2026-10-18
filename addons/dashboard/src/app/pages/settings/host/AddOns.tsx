@@ -38,6 +38,13 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
       title: turningOn ? `Turn on ${row.title}` : `Turn off ${row.title}`,
       action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
       autoStart: true,
+      summary: (
+        <p className="text-[13px] text-text-muted">
+          {turningOn
+            ? `${row.title} becomes available to you and your agents in this workspace.`
+            : `${row.title} is switched off for you and your agents in this workspace. What it already saved stays, and you can switch it back on at any time. You will type the add-on's name in your terminal to confirm.`}
+        </p>
+      ),
     })
   }
 

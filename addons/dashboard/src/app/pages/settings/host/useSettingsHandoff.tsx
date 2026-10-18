@@ -13,6 +13,8 @@ export interface HandoffSpec {
   confirmLabel?: string
   hint?: string | null
   form?: ReactNode
+  /** Plain lines shown while reviewing when core's review has nothing under its headline. */
+  summary?: ReactNode
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void): { ask: (spec: HandoffSpec) => void; dialog: ReactNode } {
@@ -26,6 +28,7 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       autoStart={spec.autoStart}
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
+      summary={spec.summary}
       onSettled={(phase) => {
         if (phase !== 'done') return
         onSettled?.()

@@ -2,7 +2,7 @@ import { api } from '@/api/client'
 import type { PhoneRequest } from '@/api/phone'
 import { usePhone } from './usePhone'
 import { OtherWays, PhoneWaiting, useSignMethods } from './SignMethods'
-import { methodLabel, type SignMethod } from '@/api/signing'
+import { methodLabel, type SignContent, type SignMethod } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
@@ -63,6 +63,11 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     default:
       return null
   }
+}
+
+/** Core's review has a headline and nothing under it (a switch with no fields): the page's own plain lines fill the gap. */
+function isBareContent(c: SignContent | null | undefined): boolean {
+  return !!c && !c.summary && !c.sections?.length && !c.acceptance?.length && !c.tasks?.length && !c.fields_changed?.length && !c.note?.length && !c.notes?.length && !c.ticket
 }
 
 export interface HandoffDialogProps {
@@ -266,7 +271,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        {!(click.view?.view.content || run.request?.content) && p.summary}
+        {(!(click.view?.view.content || run.request?.content) || isBareContent(click.view?.view.content ?? run.request?.content)) && p.summary}
         {phoneRun.hint && <PhoneWaiting hint={phoneRun.hint} />}
         {phoneRun.busy && <p role="status">Contacting your phone…</p>}
         {phoneRun.needsPair && phoneRun.hint?.state === 'open' && <p role="alert">Pair a phone first. You can cancel this request and choose another way.</p>}

@@ -457,7 +457,8 @@ test.each([
   render(<Setup api={failing(status, code)} />)
   expect(await screen.findByText(`Reason: ${code}`)).toBeInTheDocument()
   expect(screen.getByText(/This session has ended/)).toBeInTheDocument()
-  expect(spy).toHaveBeenCalledWith('[orch setup]', code)
+  // An ended link is an ordinary outcome the page explains: nothing is written to the console.
+  expect(spy).not.toHaveBeenCalled()
   spy.mockRestore()
 })
 

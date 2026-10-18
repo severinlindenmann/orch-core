@@ -16,7 +16,7 @@ plus the currency (`money`), never a float.
 
 from __future__ import annotations
 
-import json
+import os
 import re
 import threading
 import time
@@ -47,6 +47,7 @@ HOST_KEEPS = 7 * DAY
 MAX_LEDGER = 5000  # runs kept per person and workspace; the oldest go first
 MAX_AGE = 400 * DAY
 MAX_PAGES = 6
+MAX_FILE = 8 * 1024 * 1024
 RECENT = 8
 #: one run longer than this is not believed as a session time (a clock jump): its time counts as unknown
 MAX_RUN = 14 * DAY
@@ -113,11 +114,13 @@ def _path(env=None) -> Path:
 
 
 def _read(path: Path) -> dict:
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-        if doc.get("v") == 1 and isinstance(doc.get("people"), dict):
+    from orch.host.custody import read_json
+
+    try:  # O_NOFOLLOW, regular file, ours, 0600, size cap: the same rules as the write side
+        doc = read_json(path, os.getuid(), limit=MAX_FILE)
+        if isinstance(doc, dict) and doc.get("v") == 1 and isinstance(doc.get("people"), dict):
             return doc
-    except (OSError, ValueError, AttributeError):
+    except Exception:  # noqa: BLE001 - any unsafe or unreadable file: start fresh
         pass
     return {"v": 1, "people": {}}
 
@@ -130,7 +133,12 @@ def remember(person: str, ws: str, facts: list[dict], at: float, env=None) -> di
     path = _path(env)
     with _LOCK:
         doc = _read(path)
-        entry = doc["people"].setdefault(person, {}).setdefault(ws, {})
+        mine = doc["people"].get(person)
+        if not isinstance(mine, dict):
+            mine = doc["people"][person] = {}
+        entry = mine.get(ws)
+        if not isinstance(entry, dict):
+            entry = mine[ws] = {}
         if not isinstance(entry.get("runs"), dict) or type(entry.get("first_seen")) not in (int, float):
             entry.clear()
             entry.update(first_seen=at, runs={})
@@ -144,7 +152,6 @@ def remember(person: str, ws: str, facts: list[dict], at: float, env=None) -> di
             del runs[run]
         path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         write_private(path, doc)
-        path.chmod(0o600)
         return {"first_seen": entry["first_seen"], "runs": dict(runs)}
 
 
@@ -266,9 +273,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             kept[f["run"]] = f
         facts = list(kept.values())
         names = titles(ws)
-        # tickets the host showed in this very list, or the board shows: the rest (an old ledger row of a ticket that
-        # is no longer visible) is folded into "other tickets"
-        shown = {f["ticket"] for f in fresh if f["ticket"]} | set(names)
+        # only tickets on the person's current board are named; every other row (a ticket no longer visible, or a board
+        # that cannot be read) is folded into "other tickets"
+        shown = set(names)
         if query.ticket:
             ok = query.ticket in shown  # a ticket this person cannot see has no numbers here
             facts = [f for f in facts if f["ticket"] == query.ticket and ok]

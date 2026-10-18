@@ -166,8 +166,10 @@ def test_route_gives_time_per_ticket_and_never_tokens_or_cost(client, token, stu
     assert got["available"] and got["scope"] == "your" and got["tokens"] is None and got["cost"] is None
     week = got["windows"]["week"]
     assert (week["runs"], week["ms"]) == (2, 2700 * 1000)
-    assert [r["ticket"] for r in week["tickets"]] == ["DEMO-1", "OTHER-5"]  # the host showed both runs
-    host.runs = host.runs[:1]  # the host forgot R2; only the ledger remembers it, and no one shows OTHER-5 any more
+    # OTHER-5 is not on this person's board: it is never named, even though the host listed the run
+    assert [(r["ticket"], r["other"]) for r in week["tickets"]] == [("DEMO-1", False), (None, True)]
+    assert "OTHER-5" not in json.dumps(week)
+    host.runs = host.runs[:1]  # the host forgot R2; only the ledger remembers it
     again = client.get(f"/api/w/{stub.ws}/usage", headers=hdr(token)).json()["windows"]["week"]
     assert (again["runs"], again["ms"]) == (2, 2700 * 1000)
     assert [(r["ticket"], r["other"]) for r in again["tickets"]] == [("DEMO-1", False), (None, True)]
@@ -204,3 +206,30 @@ def test_route_refuses_while_the_add_on_is_off(client, token, stub, host):
 @pytest.mark.parametrize("query", ["ticket=../x", "ticket=DEMO-1&x=1", "window=all"])
 def test_query_is_closed(client, token, stub, host, query):
     assert client.get(f"/api/w/{stub.ws}/usage?{query}", headers=hdr(token)).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "doc", [{"v": 1, "people": {"p_me": 5}}, {"v": 1, "people": {"p_me": {"w1": []}}}, {"v": 1, "people": []}]
+)
+def test_malformed_ledger_entries_are_reset_not_a_500(tmp_path, doc):
+    env = {"ORCH_STATE_DIR": str(tmp_path)}
+    path = tmp_path / "dashboard" / usage.FILE
+    path.parent.mkdir(mode=0o700)
+    path.write_text(json.dumps(doc))
+    path.chmod(0o600)
+    fs = facts(run(R1, "2026-10-18T10:00:00Z", "2026-10-18T10:30:00Z"))
+    assert list(usage.remember("p_me", "w1", fs, NOW, env)["runs"]) == [R1]
+
+
+def test_ledger_with_open_permissions_or_a_link_is_not_trusted(tmp_path):
+    env = {"ORCH_STATE_DIR": str(tmp_path)}
+    fs = facts(run(R1, "2026-10-18T10:00:00Z", "2026-10-18T10:30:00Z"))
+    usage.remember("p_me", "w1", fs, NOW, env)
+    path = tmp_path / "dashboard" / usage.FILE
+    path.chmod(0o644)
+    assert usage.remember("p_me", "w1", [], NOW, env)["runs"] == {}  # unsafe mode: a fresh ledger
+    other = tmp_path / "elsewhere.json"
+    other.write_text(path.read_text())
+    path.unlink()
+    path.symlink_to(other)
+    assert usage._read(path) == {"v": 1, "people": {}}

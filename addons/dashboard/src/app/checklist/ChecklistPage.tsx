@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent,
 import { ArrowLeft, Check, ClipboardCopy, Copy, ImagePlus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError } from '@/api/testrun'
+import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError, retryable } from '@/api/testrun'
 import { cn } from '@/lib/utils'
 import { copyText } from '../copyLink'
 import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, type ChecklistStep } from './run2'
 import { buildReport, emptyNotes, hasNoteOrFailure, isFailure, STATUS_LABEL } from './report'
 
 const SAVE_DELAY = 700
+const RETRIES = 8
+const RETRY_BASE = 500
 
 type Saving = 'saving' | 'saved' | 'error'
 
@@ -21,6 +23,7 @@ const statusTone: Record<StepStatus, string> = {
 }
 
 function problemText(e: unknown): string {
+  if (e instanceof TestrunError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 408 && e.status !== 429) return 'The dashboard did not accept this change, so it was not saved. Reload the page and try again.'
   if (e instanceof TestrunError && e.status === 401) return 'Your dashboard session ended. Run "orch dashboard open /checklist" in the Terminal, then come back. Nothing you typed here is lost until you reload.'
   return 'Could not reach the dashboard server. Your last change may not be saved.'
 }
@@ -194,6 +197,9 @@ export function ChecklistPage() {
   // Every field edited on this page, kept after it was saved: a first load that answers late must not replace them.
   const touched = useRef(new Map<string, Set<'status' | 'note'>>())
   const chain = useRef<Promise<void>>(Promise.resolve())
+  const attempts = useRef(new Map<string, number>())
+  // Set once the page is gone: a save that fails then is not scheduled again (no timer outlives the page).
+  const gone = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -224,7 +230,7 @@ export function ChecklistPage() {
 
   const mark = (id: string, s: Saving) => setSaving((m) => ({ ...m, [id]: s }))
 
-  const flush = useCallback((id: string) => {
+  const flush = useCallback(function flush(id: string): void {
     const t = timers.current.get(id)
     if (t) clearTimeout(t)
     timers.current.delete(id)
@@ -240,22 +246,36 @@ export function ChecklistPage() {
       if (fields.has('note')) patch.note = n.note
       try {
         await saveStep(RUN_ID, id, patch)
+        attempts.current.delete(id)
         setProblem(null)
         mark(id, dirty.current.has(id) ? 'saving' : 'saved')
       } catch (e) {
+        // A failed save is never dropped: the fields stay unsaved and go again (a stale keep-alive connection, a
+        // restarting server). Only an ended session waits for the person.
+        const again = dirty.current.get(id) ?? new Set<'status' | 'note'>()
+        for (const k of fields) again.add(k)
+        dirty.current.set(id, again)
         setProblem(problemText(e))
         mark(id, 'error')
+        const tries = attempts.current.get(id) ?? 0
+        const ended = e instanceof TestrunError && e.status === 401
+        if (!ended && !gone.current && retryable(e) && tries < RETRIES && !timers.current.has(id)) {
+          attempts.current.set(id, tries + 1)
+          timers.current.set(id, setTimeout(() => flush(id), Math.min(RETRY_BASE * 2 ** tries, 8000)))
+        }
       }
     })
   }, [])
 
   useEffect(() => {
     const out = timers.current
+    gone.current = false
     const leave = () => { for (const id of [...dirty.current.keys()]) flush(id) }
     window.addEventListener('pagehide', leave)
     return () => {
       window.removeEventListener('pagehide', leave)
       for (const id of [...out.keys()]) flush(id)
+      gone.current = true
     }
   }, [flush])
 

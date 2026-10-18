@@ -125,3 +125,14 @@ it('K8: the pill shows the soonest end of all own access, with "+1 more"', async
   await waitFor(() => expect(pill).toHaveTextContent('(+1 more)'))
   expect(pill.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-16T20:00:00.000Z')
 })
+
+it('F8: after a stop the run list is refreshed, and the Stop dialog says a started run needs its own Stop', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const spy = vi.spyOn(client, 'invalidateQueries')
+  render(<QueryClientProvider client={client}><AgentAccess ws="ws" /></QueryClientProvider>)
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+  expect(screen.getByText(/keeps running until you press Stop on it in the agents dock/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign stop runner' }))
+  await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ['runs', 'ws'] }))
+})

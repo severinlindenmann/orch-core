@@ -344,10 +344,11 @@ export function Sidebar() {
           )}
 
           <RailTip label="Test checklist">
-            <Link to="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
+            {/* A full page load: the checklist is its own page outside the shell, so an in-app move would render the old page without its shell for a moment. */}
+            <a href="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
               <ListChecks className="size-4" />
               <span className={label}>Test checklist</span>
-            </Link>
+            </a>
           </RailTip>
 
           {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>

@@ -170,6 +170,29 @@ describe('first save', () => {
   })
 })
 
+describe('a save that fails once', () => {
+  it('is sent again, so a mark is never lost while the note and the picture are saved (first-use loss)', async () => {
+    // The status request fails once (a stale connection); the note saved a moment later must not make it look saved.
+    m.saveStep.mockRejectedValueOnce(new TypeError('network error'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await userEvent.type(screen.getByLabelText('Notes for A2'), 'x')
+    await waitFor(() => expect(m.saveStep.mock.calls.filter((c) => c[2].status === 'pass').length).toBeGreaterThanOrEqual(2), T)
+    expect(m.saveStep.mock.calls.at(-1)).toEqual(['run2', 'A2', expect.objectContaining({ status: 'pass' })])
+    expect((await screen.findAllByText('Saved', {}, T))[0]).toBeInTheDocument()
+  })
+  it('keeps trying while the server answers nothing, and says so', async () => {
+    m.saveStep.mockRejectedValue(new TypeError('network error'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    expect(await screen.findByText('Not saved', {}, T)).toBeInTheDocument()
+    await waitFor(() => expect(m.saveStep.mock.calls.length).toBeGreaterThanOrEqual(2), T)
+    m.saveStep.mockResolvedValue(undefined)
+  })
+})
+
 describe('buildReport', () => {
   it('keeps notes of a step that is no longer in the list', () => {
     const out = buildReport({ H9: { status: 'fail_blocking', note: 'old note', images: [] } }, '/i', '/p')
@@ -178,5 +201,47 @@ describe('buildReport', () => {
   })
   it('says nothing is marked when nothing is', () => {
     expect(buildReport({}, '/i', '/p')).toContain('Nothing marked yet.')
+  })
+})
+
+describe('F8 retry rules', () => {
+  it('does not resend a save the server refused (400/403/404/422) and says so in plain words', async () => {
+    m.saveStep.mockReset()
+    m.saveStep.mockRejectedValue(new testrun.TestrunError(400, 'invalid.input'))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderApp('/checklist')
+      const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+      await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+      expect(await screen.findByText(/did not accept this change/, {}, T)).toBeInTheDocument()
+      await vi.advanceTimersByTimeAsync(60_000) // far past every retry delay
+      expect(m.saveStep).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('resends after a 503', async () => {
+    m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledTimes(2), T)
+  })
+})
+
+describe('keepalive only for small bodies', () => {
+  it('a 20,000-character non-ASCII note (60 KB in UTF-8) is sent with a normal fetch, a short one with keepalive', async () => {
+    const real = await vi.importActual<typeof import('@/api/testrun')>('@/api/testrun')
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await real.saveStep('run2', 'A2', { note: '€'.repeat(20000) })
+      await real.saveStep('run2', 'A2', { note: 'short ü' })
+      const calls = fetchMock.mock.calls as unknown as [string, { keepalive: boolean }][]
+      expect(calls[0][1].keepalive).toBe(false)
+      expect(calls[1][1].keepalive).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

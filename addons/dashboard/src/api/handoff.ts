@@ -245,6 +245,9 @@ export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
  * A's decision; WS8 = last 8 characters of the workspace id; the signer's header keeps the full id). `null` where this dashboard does not know the word.
  */
 export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, workspace?: { prefix: string; id: string } | null): string | null {
+  // A sequence that gives agents access (Extend, Start again, setup): the terminal asks for GRANT, whatever the first step is.
+  const sequence = sequenceWord(request.material)
+  if (sequence) return sequence
   if (request.material.ticket) return null
   if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
     const person = request.events[0]?.person

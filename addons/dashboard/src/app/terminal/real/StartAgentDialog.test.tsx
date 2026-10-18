@@ -121,6 +121,22 @@ describe('the preview', () => {
   })
 })
 
+describe('start settings wording and layout (MR3/MR4)', () => {
+  it('uses plain labels, a Ready to start line, and stacks the form on phones', async () => {
+    mount()
+    expect(await screen.findByTestId('agent-ready', {}, T)).toHaveTextContent('Ready to start')
+    expect(await screen.findByLabelText('Model for helper agents', {}, T)).toBeInTheDocument()
+    expect(screen.getByText('Project folder')).toBeInTheDocument()
+    expect(screen.getByLabelText(/Use this ticket's separate project folder/)).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Check start settings' })).toBeInTheDocument()
+    expect(screen.getByText('Will use')).toBeInTheDocument()
+    expect(screen.getByText('Allow agents to work for you')).toBeInTheDocument()
+    const form = screen.getByLabelText('Agent').closest('form')!
+    expect(form.className).toContain('grid-cols-1')
+    expect(form.className).toContain('sm:grid-cols-[110px_minmax(0,1fr)]')
+  })
+})
+
 describe('model routing', () => {
   it('shows the model the workspace chose, says who chose it, and keeps the command behind Details', async () => {
     s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'workspace' }))
@@ -132,7 +148,7 @@ describe('model routing', () => {
   it('says "the agent\'s own default" when nothing is set', async () => {
     s.preview.mockResolvedValue(preview({ model: null, model_source: 'default' }))
     mount()
-    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('the agent’s own default')
+    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Chosen by the agent app')
   })
 
   it('the model is a choice from the list, never typed text; picking one previews again with that name', async () => {
@@ -142,7 +158,7 @@ describe('model routing', () => {
     s.preview.mockResolvedValue(preview({ model: 'haiku', model_source: 'chosen' }))
     fireEvent.change(pick, { target: { value: 'haiku' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument() // changed since the preview: preview again
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
     await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ model: 'haiku' })))
     expect(await screen.findByTestId('agent-model-line')).toHaveTextContent('Haiku (your choice)')
     fireEvent.click(screen.getByTestId('agent-start'))
@@ -201,7 +217,7 @@ describe('start', () => {
     fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'fix' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument()
     expect(screen.getByTestId('agent-start')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
     await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ mode: 'fix' })), T)
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
   })

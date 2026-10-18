@@ -1,7 +1,8 @@
 // The right-hand side of the explorer: one file as a preview, or its history. Read only: nothing here can change a file.
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Lock } from 'lucide-react'
-import { explorerQueries, lockedText, type FileView } from '@/api/explorer'
+import { useRef } from 'react'
+import { explorerQueries, lockedText, partsOf, type FileView } from '@/api/explorer'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
@@ -63,7 +64,7 @@ function Preview({ file }: { file: FileView }) {
       return (
         <p className="flex items-start gap-2 rounded-md border border-border bg-surface p-3 text-[13px] text-text-muted" data-testid="locked">
           <Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>{lockedText(file.reason)}</span>
+          <span><strong className="block text-text">Why is this locked?</strong>{lockedText(file.reason)}</span>
         </p>
       )
     case 'binary':
@@ -89,6 +90,62 @@ export interface ViewerState {
   sha?: string
 }
 
+/** The file's place as a trail of folder names (text, the last one is the file). */
+function Crumbs({ path }: { path: string }) {
+  const parts = partsOf(path)
+  return (
+    <nav aria-label="Where this file is" className="inline" data-testid="crumbs">
+      <ol className="inline">
+        {parts.map((part, i) => (
+          <li key={i} className="inline" aria-current={i === parts.length - 1 ? 'location' : undefined}>
+            {i > 0 && <span aria-hidden> › </span>}
+            <bdi className={i === parts.length - 1 ? 'font-medium text-text' : ''}>{part}</bdi>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  )
+}
+
+const TABS = ['Preview', 'History'] as const
+
+/** Preview / History tabs: one tab stop, the arrow keys move and choose (the tabs pattern); the panel follows the tab. */
+function ViewTabs({ history, onChange }: { history: boolean; onChange: (patch: Partial<ViewerState>) => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const pick = (t: (typeof TABS)[number]) => onChange({ view: t === 'History' ? 'history' : undefined, sha: undefined })
+  const move = (e: React.KeyboardEvent, i: number) => {
+    const n = e.key === 'ArrowRight' ? (i + 1) % 2 : e.key === 'ArrowLeft' ? (i + 1) % 2 : e.key === 'Home' ? 0 : e.key === 'End' ? 1 : -1
+    if (n < 0) return
+    e.preventDefault()
+    pick(TABS[n])
+    refs.current[n]?.focus()
+  }
+  return (
+    <div role="tablist" aria-label="View" className="inline-flex rounded-md border border-border p-0.5">
+      {TABS.map((t, i) => {
+        const on = (t === 'History') === history
+        return (
+          <button
+            key={t}
+            ref={(el) => { refs.current[i] = el }}
+            type="button"
+            role="tab"
+            id={`explorer-tab-${t}`}
+            aria-selected={on}
+            aria-controls="explorer-panel"
+            tabIndex={on ? 0 : -1}
+            className={cn('min-h-8 rounded px-3 py-1 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand', on ? 'bg-brand-soft text-text' : 'text-text-muted hover:text-text')}
+            onClick={() => pick(t)}
+            onKeyDown={(e) => move(e, i)}
+          >
+            {t}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function Viewer({ ws, state, onChange, onBack }: { ws: string; state: ViewerState; onChange: (patch: Partial<ViewerState>) => void; onBack: () => void }) {
   const q = useQuery(explorerQueries.file(ws, state.root, state.path, state.rev))
   const history = state.view === 'history'
@@ -102,19 +159,10 @@ export function Viewer({ ws, state, onChange, onBack }: { ws: string; state: Vie
         <h2 className="min-w-0 flex-1 break-all text-[14px] font-medium">
           <bdi>{file?.label ?? state.path.split('/').at(-1)}</bdi>
         </h2>
-        <div role="tablist" aria-label="View" className="inline-flex rounded-md border border-border p-0.5">
-          {(['Preview', 'History'] as const).map((t) => {
-            const on = (t === 'History') === history
-            return (
-              <button key={t} role="tab" aria-selected={on} className={cn('rounded px-3 py-1 text-[13px]', on ? 'bg-brand-soft text-text' : 'text-text-muted hover:text-text')} onClick={() => onChange({ view: t === 'History' ? 'history' : undefined, sha: undefined })}>
-                {t}
-              </button>
-            )
-          })}
-        </div>
+        <ViewTabs history={history} onChange={onChange} />
       </div>
       <p className="break-all text-[12px] text-text-muted">
-        <bdi>{state.path}</bdi>
+        <Crumbs path={state.path} />
         {file?.size !== undefined && file.kind !== 'locked' ? ` · ${size(file.size)}` : ''}
         {file?.modified ? ` · changed ${fmtDateTime(file.modified)}` : ''}
       </p>
@@ -126,6 +174,7 @@ export function Viewer({ ws, state, onChange, onBack }: { ws: string; state: Vie
           </Button>
         </p>
       )}
+      <div role="tabpanel" id="explorer-panel" aria-labelledby={`explorer-tab-${history ? 'History' : 'Preview'}`} className="space-y-3">
       {history ? (
         file?.kind === 'locked' ? (
           <Preview file={file} />
@@ -139,6 +188,7 @@ export function Viewer({ ws, state, onChange, onBack }: { ws: string; state: Vie
       ) : (
         <p className="text-[13px] text-text-muted">Loading…</p>
       )}
+      </div>
     </section>
   )
 }

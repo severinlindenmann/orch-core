@@ -40,7 +40,7 @@ it('shows a row per kind of work and agent, all on the agent default, only while
   expect(box).toHaveTextContent('Write requirements and plan')
   expect(box).toHaveTextContent('Read and answer')
   for (const sel of within(box).getAllByRole('combobox')) expect(sel).toHaveValue('')
-  expect(within(box).getByRole('button', { name: 'Continue to sign' })).toBeDisabled() // nothing changed
+  expect(within(box).getByRole('button', { name: 'Review and sign' })).toBeDisabled() // nothing changed
 })
 
 it('is not drawn while the add-on is off', async () => {
@@ -50,7 +50,7 @@ it('is not drawn while the add-on is off', async () => {
   expect(screen.queryByTestId('model-routing')).toBeNull()
 })
 
-it('Continue to sign sends exactly the chosen table, from the closed list, as one signed change', async () => {
+it('Review and sign sends exactly the chosen table, from the closed list, as one signed change', async () => {
   route()
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
@@ -59,7 +59,7 @@ it('Continue to sign sends exactly the chosen table, from the closed list, as on
   expect(claude.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual(['', 'opus', 'sonnet', 'haiku', '', 'opus', 'sonnet', 'haiku', '', 'opus', 'sonnet', 'haiku'])
   await user.selectOptions(within(box).getByLabelText('Do the work', { selector: '#route-claude-code-work' }), 'sonnet')
   await user.selectOptions(within(box).getByLabelText('Read and answer', { selector: '#route-codex-context' }), 'o3')
-  await user.click(within(box).getByRole('button', { name: 'Continue to sign' }))
+  await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
   expect(posted()[0].body).toEqual({ action: 'models_set', models: { 'claude-code': { work: 'sonnet' }, codex: { context: 'o3' } } })
 })
@@ -72,7 +72,7 @@ it('choosing the agent default again clears a row; an empty table clears the set
   const pick = within(box).getByLabelText('Do the work', { selector: '#route-claude-code-work' })
   await waitFor(() => expect(pick).toHaveValue('sonnet'), T)
   await user.selectOptions(pick, '')
-  await user.click(within(box).getByRole('button', { name: 'Continue to sign' }))
+  await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
   expect(posted()[0].body).toEqual({ action: 'models_set', models: {} })
 })
@@ -84,6 +84,31 @@ it('a member can read it but not change it', async () => {
   show('/w/DEMO/settings/addons')
   const box = await screen.findByTestId('model-routing', {}, T)
   for (const sel of within(box).getAllByRole('combobox')) expect(sel).toBeDisabled()
-  expect(within(box).queryByRole('button', { name: 'Continue to sign' })).toBeNull()
-  expect(box).toHaveTextContent('Only owners can change this')
+  expect(within(box).queryByRole('button', { name: 'Review and sign' })).toBeNull()
+  expect(box).toHaveTextContent('Only an owner can change this')
+})
+
+it('MR1: a failed choices read shows Retry instead of nothing, and editing waits for the signed table', async () => {
+  route()
+  let fail = true
+  state.host.override = (path, method) => (path.endsWith('/model-routing') && method === 'GET' ? (fail ? Response.json({ ok: false, error: { code: 'x', message: 'x', retryable: false } }, { status: 500 }) : Response.json(CHOICES)) : undefined)
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByRole('button', { name: 'Retry' }, T))
+  fail = false
+  await user.click(await screen.findByRole('button', { name: 'Retry' }, T))
+  const box = await screen.findByTestId('model-routing', {}, T)
+  for (const sel of within(box).getAllByRole('combobox')) expect(sel).toBeEnabled()
+})
+
+it('MR2/MR5/MR6: explains Agent default, shows the resolved name, one collapsible section per agent, and says when there is nothing to save', async () => {
+  route({ 'claude-code': { work: 'sonnet' } })
+  show('/w/DEMO/settings/addons')
+  const box = await screen.findByTestId('model-routing', {}, T)
+  expect(screen.getByRole('heading', { name: 'Default models' })).toBeInTheDocument()
+  expect(within(box).getByTestId('agent-default-help')).toHaveTextContent('orch does not choose one')
+  expect(within(box).getAllByText('Chosen by the agent app').length).toBeGreaterThan(0)
+  expect(within(box).getByText('Claude').tagName).toBe('SUMMARY')
+  expect(within(box).getByText('Codex').tagName).toBe('SUMMARY')
+  expect(within(box).getByTestId('routing-nochange')).toHaveTextContent('No changes to save')
 })

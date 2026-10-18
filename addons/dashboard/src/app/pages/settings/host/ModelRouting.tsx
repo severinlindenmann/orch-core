@@ -3,6 +3,8 @@
 // start, and you can still pick another one there. "Agent default" passes no model at all.
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { LoadFailed } from '@/components/LoadFailed'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cleanTable, routingQueries, type ModelTable } from '@/api/modelRouting'
 import { queries } from '@/api/queries'
 import type { Workspace } from '@/api/types'
@@ -12,6 +14,7 @@ import { OwnerNote } from '../OwnerNote'
 import { useSettingsHandoff } from './useSettingsHandoff'
 
 const DEFAULT = ''
+const wide = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 640px)').matches
 const same = (a: ModelTable, b: ModelTable) => JSON.stringify(cleanTable(a)) === JSON.stringify(cleanTable(b))
 
 export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner: boolean }) {
@@ -22,21 +25,31 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
   const [draft, setDraft] = useState<ModelTable>(signed)
   useEffect(() => setDraft(settings.data?.models ?? {}), [settings.data?.models])
   const { ask, dialog } = useSettingsHandoff(ws, () => void settings.refetch())
-  if (!choices.data) return null
+  const [openAgents, setOpenAgents] = useState<Record<string, boolean>>({})
+  if (choices.isError) return <Section title="Default models"><LoadFailed what="the model choices" onRetry={() => void choices.refetch()} /></Section>
+  if (!choices.data) return <Section title="Default models"><div data-testid="model-routing-loading" role="status" aria-label="Loading the model choices"><Skeleton className="h-24" /></div></Section>
+  // Editing waits until the signed table has been read: a draft over an unread table could silently undo a setting.
+  const ready = settings.isSuccess
+  const canEdit = owner && ready
   const changed = !same(draft, signed)
   const set = (harness: string, mode: string, model: string) =>
     setDraft((d) => ({ ...d, [harness]: { ...(d as Record<string, Record<string, string>>)[harness], [mode]: model } }))
   return (
-    <Section title="Model routing: which model each kind of work starts on">
+    <Section title="Default models">
       <div className="space-y-3 text-[13px]" data-testid="model-routing">
         <p className="text-text-muted">
-          Start agent begins each kind of work on the model you choose here. You see the model before every start and can pick another one then. Only an owner changes this, and you sign the change with the typed word.
+          Start agent begins each kind of work on the model you choose here. You see the model before every start and can pick another one then. Only an owner can change this, and you review and sign the change.
         </p>
+        <p className="text-[12px] text-text-muted" data-testid="agent-default-help">“Agent default” means the agent app uses its own default model; orch does not choose one.</p>
+        {settings.isPending && <p role="status" className="text-text-muted">Loading your current choices…</p>}
+        {settings.isError && (
+          <p role="alert" className="text-danger">Your current choices could not be loaded, so they cannot be changed right now. <Button size="sm" variant="outline" onClick={() => void settings.refetch()}>Retry</Button></p>
+        )}
         {settings.data && settings.data.available === false && <p className="text-text-muted">This host does not report its settings, so nothing is shown here.</p>}
-        {choices.data.harnesses.map((h) => (
-          <div key={h.id} className="space-y-1" data-testid={`routing-${h.id}`}>
-            <p className="font-medium">{h.label}</p>
-            <dl className="grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] sm:items-center">
+        {choices.data.harnesses.map((h, i) => (
+          <details key={h.id} className="space-y-1 rounded-md border border-border px-3 py-2" data-testid={`routing-${h.id}`} open={openAgents[h.id] ?? (i === 0 || wide())} onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setOpenAgents((p) => (p[h.id] === o ? p : { ...p, [h.id]: o })) }}>
+            <summary className="cursor-pointer font-medium">{h.label}</summary>
+            <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] sm:items-center">
               {choices.data.modes.map((m) => {
                 const id = `route-${h.id}-${m.id}`
                 const value = (draft as Record<string, Record<string, string> | undefined>)[h.id]?.[m.id] ?? DEFAULT
@@ -46,28 +59,30 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
                       <label htmlFor={id} className="text-text-muted">{m.label}</label>
                     </dt>
                     <dd>
-                      <select id={id} className="h-8 w-full max-w-xs rounded border border-border bg-bg px-2" value={value} disabled={!owner} onChange={(e) => set(h.id, m.id, e.target.value)}>
+                      <select id={id} className="h-8 w-full max-w-xs rounded border border-border bg-bg px-2" value={value} disabled={!canEdit} onChange={(e) => set(h.id, m.id, e.target.value)}>
                         <option value={DEFAULT}>Agent default</option>
                         {h.models.map((x) => (
                           <option key={x.id} value={x.id}>{x.label}</option>
                         ))}
                       </select>
+                      {value === DEFAULT && <span className="mt-0.5 block text-[12px] text-text-faint">Chosen by the agent app</span>}
                     </dd>
                   </div>
                 )
               })}
             </dl>
-          </div>
+          </details>
         ))}
         {owner ? (
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" disabled={!changed} onClick={() => ask({ title: 'Choose the models for Start agent', action: { action: 'models_set', models: cleanTable(draft) }, autoStart: true })}>
-              Continue to sign
+            <Button size="sm" disabled={!canEdit || !changed} onClick={() => ask({ title: 'Choose the models for Start agent', action: { action: 'models_set', models: cleanTable(draft) }, autoStart: true })}>
+              Review and sign
             </Button>
+            {!changed && <span className="self-center text-[12px] text-text-muted" data-testid="routing-nochange">No changes to save.</span>}
             {changed && <Button size="sm" variant="ghost" onClick={() => setDraft(signed)}>Undo my changes</Button>}
           </div>
         ) : (
-          <OwnerNote>Only owners can change this.</OwnerNote>
+          <OwnerNote>Only an owner can change this.</OwnerNote>
         )}
         <p className="text-[12px] text-text-muted">If a check on a ticket is failing, Start agent suggests a stronger model. It only suggests: nothing changes until you start.</p>
       </div>

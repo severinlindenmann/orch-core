@@ -139,7 +139,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     } catch (e) {
       if (e instanceof ApiError && e.code === 'launch.changed') {
         // What would run changed since the preview (also a new runner grant): show it again, ask for a new Start.
-        setNote('What would run changed since the preview. Check it again, then start.')
+        setNote('What would run changed since the last check. Check it again, then start.')
         await preview(shown.args)
       } else {
         // The same idem stays: Start again returns the recorded run, never a second one. A lost answer: read the list.
@@ -160,25 +160,25 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
         <DialogDescription data-testid="execution-line">{EXECUTION_LINE}</DialogDescription>
       </DialogHeader>
-      <form className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 text-xs" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
+      <form className="grid grid-cols-1 items-center gap-x-3 gap-y-1.5 text-xs sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
         <Label htmlFor="agent-harness" className="text-xs text-text-muted">Agent</Label>
-        <select id="agent-harness" className="h-7 rounded border border-border bg-bg px-2" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
+        <select id="agent-harness" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
           {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
         <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
-        <select id="agent-mode" className="h-7 rounded border border-border bg-bg px-2" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
+        <select id="agent-mode" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
           {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
         </select>
-        <span />
-        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
+        <span className="hidden sm:block" />
+        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 mb-1 text-text-muted sm:mb-0">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
         {models.length > 0 && (<>
           <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
-          <select id="agent-model" className="h-7 rounded border border-border bg-bg px-2" value={model} onChange={(e) => setModel(e.target.value)}>
+          <select id="agent-model" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
             <option value="">As set for this kind of work</option>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
           {strong && checkFailing && model !== strong && (<>
-            <span />
+            <span className="hidden sm:block" />
             <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
               A check on this ticket is failing. A stronger model may do better.{' '}
               <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
@@ -186,20 +186,21 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
           </>)}
         </>)}
         {harness === 'claude-code' && models.length > 0 && (<>
-          <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Subagent model</Label>
-          <select id="agent-subagent" className="h-7 rounded border border-border bg-bg px-2" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
-            <option value="">the agent's default</option>
+          <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
+          <select id="agent-subagent" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
+            <option value="">Chosen by the agent app</option>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </>)}
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
-        <Input id="agent-label" className="h-7 text-xs" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
-        <span className="text-text-muted">Worktree</span>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Work in the ticket's own worktree when it has a branch</label>
-        {badModel && <p role="alert" className="col-span-2 text-danger">Choose a model from the list.</p>}
-        {stale && shown && <p className="col-span-2 text-text-muted" data-testid="agent-stale">The choices changed: preview again before you start.</p>}
-        <div className="col-span-2 flex justify-end">
-          <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Previewing…' : 'Preview'}</Button>
+        <Input id="agent-label" className="h-9 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
+        <span className="mt-1 text-text-muted sm:mt-0">Project folder</span>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
+        {badModel && <p role="alert" className="text-danger sm:col-span-2">Choose a model from the list.</p>}
+        {stale && shown && <p className="text-text-muted sm:col-span-2" data-testid="agent-stale">The choices changed: check the start settings again before you start.</p>}
+        {!stale && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
+        <div className="flex justify-end sm:col-span-2">
+          <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Checking…' : 'Check start settings'}</Button>
         </div>
       </form>
 
@@ -233,18 +234,18 @@ function PreviewLines({ ws, data, ticket, harness }: { ws: string; data: AgentPr
   const creates = data.will_create_worktree && data.cwd.kind === 'worktree' && where !== null
   return (
     <div className="space-y-2 text-xs" data-testid="agent-preview">
-      <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-        <dt className="text-text-muted">Model</dt>
-        <dd data-testid="agent-model-line">{modelLabel(choices.data, harness, data.model)}{data.model_source === 'workspace' ? ' (set for this kind of work in Settings)' : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
+      <dl className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
+        <dt className="text-text-muted">Will use</dt>
+        <dd data-testid="agent-model-line">{data.model ? modelLabel(choices.data, harness, data.model) : 'Chosen by the agent app'}{data.model_source === 'workspace' ? ' (set for this kind of work in Settings)' : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
       </dl>
       {data.grant && (
-        <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
+        <dl className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
+          <dt className="mt-1 text-text-muted sm:mt-0">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
         </dl>
       )}
       <details data-testid="agent-details">
         <summary className="cursor-pointer text-text-muted">Details</summary>
-        <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
           <dt className="text-text-muted">Runs</dt>
           <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
           <dt className="text-text-muted">In</dt>
@@ -385,7 +386,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const viewOk = view ? depositViewOk(view.view, ws) : false
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
-      <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Runner grant</p>
+      <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Allow agents to work for you</p>
       <p role="note" data-testid="runner-grant-risk" className="text-warning">{maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')}</p>
       {loading && <Skeleton className="h-6" />}
       {grant && !extend && step.kind !== 'polling' && (
@@ -406,11 +407,11 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
         lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
-          <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+          <select id="grant-hours" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
             {lengths.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <Label htmlFor="grant-scope" className="text-xs text-text-muted">Tickets</Label>
-          <select id="grant-scope" disabled={!!extend} className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
+          <select id="grant-scope" disabled={!!extend} className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
             <option value="workable">Tickets you may work on</option>
             <option value="all">All tickets</option>
           </select>

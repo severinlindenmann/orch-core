@@ -23,6 +23,7 @@ const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
+const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
@@ -121,6 +122,17 @@ const dropRoute = createRoute({
   loader: pageLoader(() => [], [DropPage.preload]),
   component: DropPage,
 })
+/** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
+const worktreesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'worktrees',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('worktrees')()
+  },
+  loader: pageLoader(() => [], [WorktreesPage.preload]),
+  component: WorktreesPage,
+})
 /** Activity of a real host (#595): the mock keeps its own addon page; a real host that serves `activity/1` gets this route. */
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -212,7 +224,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, activityRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, worktreesRoute, activityRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

@@ -21,6 +21,7 @@ from . import (
     settings,
     signprefs,
     terminals,
+    worktrees,
 )
 from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
@@ -170,6 +171,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
+    worktrees.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

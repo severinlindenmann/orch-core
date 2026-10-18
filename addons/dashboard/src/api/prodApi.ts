@@ -11,6 +11,7 @@ import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import {
   ApiError,
   type ApiErrorBody,
@@ -202,6 +203,7 @@ const reads = {
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),
 }

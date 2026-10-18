@@ -116,7 +116,9 @@ def _target_ok(target: object, workspace_hex: str) -> str:
     prefix = f"/v1/ws/{workspace_hex}/"
     if not target.startswith(prefix):
         raise SignerRefused("target is outside this workspace's routes")
-    path = target.split("?", 1)[0]
+    path, q, query = target.partition("?")
+    if q and not query:
+        raise SignerRefused("target ends in an empty query")
     # every segment after the workspace is a plain name: the path is already in the form no one needs to normalise
     if not all(_segment_ok(seg) for seg in path[len(prefix) :].split("/")):
         raise SignerRefused("target has an empty, dot or encoded-separator segment")

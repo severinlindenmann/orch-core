@@ -25,7 +25,8 @@ RUNNER_ENABLE = "orch runner enable"
 
 
 def live_runs(gateway: Gateway, ws: str) -> list[dict] | None:
-    """Only the signed-in person's own runs that are starting or running now; ``None`` when the host cannot say (then a switch-off is
+    """The signed-in person's own runs that are starting or running now (the host lists no one else's);
+    ``None`` when the host cannot say (then a switch-off is
     refused: unknown counts as busy)."""
     link = gateway.link(ws)
     if not link.supports("run.list", "run/1"):

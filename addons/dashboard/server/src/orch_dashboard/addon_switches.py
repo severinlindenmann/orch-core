@@ -25,7 +25,7 @@ RUNNER_ENABLE = "orch runner enable"
 
 
 def live_runs(gateway: Gateway, ws: str) -> list[dict] | None:
-    """The caller's runs that are starting or running now; ``None`` when the host cannot say (then a switch-off is
+    """Only the signed-in person's own runs that are starting or running now; ``None`` when the host cannot say (then a switch-off is
     refused: unknown counts as busy)."""
     link = gateway.link(ws)
     if not link.supports("run.list", "run/1"):
@@ -46,13 +46,13 @@ def busy(name: str, runs: list[dict] | None) -> str | None:
         return "Could not check what is running. Try again in a moment."
     if name == "start-agent":
         n = sum(1 for r in runs if r.get("kind") == "agent")
-        what = "an agent is" if n == 1 else f"{n} agents are"
+        what = "an agent of yours is" if n == 1 else f"{n} agents of yours are"
     elif name == "terminals":
         n = sum(1 for r in runs if r.get("kind") == "shell")
-        what = "a terminal is" if n == 1 else f"{n} terminals are"
+        what = "a terminal of yours is" if n == 1 else f"{n} terminals of yours are"
     elif name == "worktrees":
         n = sum(1 for r in runs if (r.get("cwd") or {}).get("kind") == "worktree")
-        what = "one running job uses" if n == 1 else f"{n} running jobs use"
+        what = "one of your running jobs uses" if n == 1 else f"{n} of your running jobs use"
         if n:
             return f"Stop first: {what} a worktree right now."
         return None

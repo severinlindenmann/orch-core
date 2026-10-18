@@ -346,3 +346,13 @@ def test_a_builtin_addon_never_installed_is_put_in_place_by_its_grant(hws, me):
     assert e["name"] == "terminals"
     assert e["package_sha256"] == read_package(hws.root / "addons" / "terminals").digest
     assert me("addon", "grant", "nonexistent").code != 0
+
+
+def test_a_dry_run_and_a_non_owner_install_nothing(hws, me):
+    assert me("addon", "grant", "terminals", "--dry-run").code != 0
+    assert not (hws.root / "addons" / "terminals").exists()
+    m = hws.add_member("maria", "maintainer")
+    hws.act_as(m)
+    r = me("addon", "grant", "terminals", "--json")
+    assert r.code != 0 and r.err_code == "role.denied"
+    assert not (hws.root / "addons" / "terminals").exists()

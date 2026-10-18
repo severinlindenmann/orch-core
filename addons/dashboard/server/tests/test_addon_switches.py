@@ -39,8 +39,8 @@ def test_the_prepared_event_must_name_exactly_that_addon():
 
 def test_an_addon_with_running_work_cannot_be_turned_off():
     runs = [{"kind": "agent", "cwd": {"kind": "worktree"}}, {"kind": "shell", "cwd": {"kind": "workspace"}}]
-    assert "an agent is running" in busy("start-agent", runs)
-    assert "a terminal is running" in busy("terminals", runs)
+    assert "an agent of yours is running" in busy("start-agent", runs)
+    assert "a terminal of yours is running" in busy("terminals", runs)
     assert "worktree" in busy("worktrees", runs)
     assert busy("start-agent", [{"kind": "shell"}]) is None
     assert busy("terminals", []) is None

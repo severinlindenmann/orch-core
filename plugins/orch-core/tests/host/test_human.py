@@ -337,6 +337,8 @@ def test_the_grant_secret_is_drawn_by_the_signer_and_never_reaches_the_host(huma
         __import__("orch.identity", fromlist=["parse_grant"]).parse_grant(signed.secret).secret
     )
     res = ok(human.submit_res(p["request"]["id"], signed.events))
+    local = res["data"].pop("until_local")  # the same moment in this computer's time (the text line shows it)
+    assert local and not local.endswith("Z")
     assert res["data"] == {"grant": ev["grant"], "until": ev["expires_at"], "scope": "workable"}
     secret = signed.secret.partition(".")[2]
     for path in served.lab.state.rglob("*"):  # the host's state: requests, outcomes, keys, logs of the host

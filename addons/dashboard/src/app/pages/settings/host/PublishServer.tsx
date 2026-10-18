@@ -75,7 +75,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
               {reg.at === 'unknown' && 'Not checked yet. It is checked by itself the first time you share; you can check now.'}
               {reg.at === 'busy' && 'Checking…'}
               {reg.at === 'ok' && (reg.result === 'unchanged' ? 'Yes, the server already knew this workspace.' : 'Yes, the server now knows this workspace.')}
-              {reg.at === 'refused' && reg.text}
+              {reg.at === 'refused' && (reg.admin ? 'The publish server does not know this workspace yet.' : reg.text)}
             </p>
             {reg.at === 'refused' && reg.admin && (
               <>

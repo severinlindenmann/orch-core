@@ -36,7 +36,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
   if (!served || !ws || !list.data?.available) return <>{null}{flows}</>
   const data = list.data
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done'
-  const live = data.shares.filter((s) => ['live', 'sending'].includes(effectiveState(s)))
+  const live = data.shares.filter((s) => ['live', 'sending', 'used'].includes(effectiveState(s)))
   return (
     <>
     <section aria-label="Shares" className="space-y-2 rounded-lg border border-border bg-surface p-3" data-testid="ticket-shares">
@@ -67,7 +67,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
                   {s.views !== null ? ` · opened ${s.views} time${s.views === 1 ? '' : 's'}` : ''} · {STATE_TEXT[effectiveState(s)]}
                 </span>
               </span>
-              {mayChange && (
+              {mayChange && effectiveState(s) !== 'used' && (
                 <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Revoke the ${kindText(s.kind, s.view_limit)}`} onClick={() => setRevoking(s)}>
                   Revoke
                 </Button>

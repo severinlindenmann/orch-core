@@ -120,8 +120,8 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-              <table className="w-full text-left text-[13px]" aria-label="Shares">
-                <thead className="text-[11px] uppercase tracking-wide text-text-faint">
+              <table className="block w-full text-left text-[13px] sm:table" aria-label="Shares">
+                <thead className="hidden text-[11px] uppercase tracking-wide text-text-faint sm:table-header-group">
                   <tr>
                     <th className="px-3 py-2 font-medium">Ticket</th>
                     <th className="px-3 py-2 font-medium">Kind</th>
@@ -131,12 +131,12 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
                     <th className="px-3 py-2" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
+                <tbody className="block divide-y divide-border sm:table-row-group">
                   {shares.map((s) => {
                     const state = effectiveState(s)
                     return (
-                      <tr key={s.id} data-share={s.id}>
-                        <td className="px-3 py-2">
+                      <tr key={s.id} data-share={s.id} className="block px-3 py-2 sm:table-row sm:p-0">
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2">
                           {s.ticket ? (
                             <Link to="/ticket/$key" params={{ key: s.ticket }} className="font-mono text-[12px] text-brand hover:underline">
                               {s.ticket}
@@ -156,13 +156,13 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2">{kindText(s.kind, s.view_limit)}</td>
-                        <td className="px-3 py-2">{s.expires_at ? fmtDateTime(s.expires_at) : 'not known'}</td>
-                        <td className="px-3 py-2">{viewsText(s)}</td>
-                        <td className="px-3 py-2">
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2">{kindText(s.kind, s.view_limit)}</td>
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2"><span className="text-text-faint sm:hidden">Ends </span>{s.expires_at ? fmtDateTime(s.expires_at) : 'not known'}</td>
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2"><span className="text-text-faint sm:hidden">Opens </span>{viewsText(s)}</td>
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2">
                           <span className={cn('rounded-full border px-2 py-px text-[11px]', state === 'live' ? 'border-border text-success' : 'border-border text-text-muted')}>{STATE_TEXT[state]}</span>
                         </td>
-                        <td className="px-3 py-2 text-right">
+                        <td className="block py-1 sm:table-cell sm:px-3 sm:py-2 sm:text-right">
                           {mayChange && (state === 'live' || state === 'sending') && (
                             <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Revoke the share of ${s.ticket ?? 'this ticket'}`} onClick={() => onRevoke(s)}>
                               Revoke

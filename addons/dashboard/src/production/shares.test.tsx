@@ -1,3 +1,4 @@
+import { effectiveState } from '@/api/shares'
 import { QueryClient } from '@tanstack/react-query'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -68,6 +69,14 @@ const route = () => {
 }
 const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 afterEach(() => sessionStorage.clear())
+
+it('a show-once link opened as often as allowed reads Used up, not Live', () => {
+  const base = { state: 'live' as const, expires_at: '2999-01-01T00:00:00Z', kind: 'once' as const, view_limit: 1 }
+  expect(effectiveState({ ...base, views: 1 })).toBe('used')
+  expect(effectiveState({ ...base, views: 0 })).toBe('live')
+  expect(effectiveState({ ...base, kind: 'secret', views: 5 })).toBe('live')
+  expect(effectiveState({ ...base, views: null })).toBe('live')
+})
 
 it('lists the shares: kind, end time, opens and state, with Revoke only on a live one; no link anywhere', async () => {
   route()
@@ -242,6 +251,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   const reg = await screen.findByTestId('publish-registration', {}, T)
   await waitFor(() => expect(reg).toHaveTextContent('Ask its admin to allow this workspace'), T)
   expect(reg).not.toHaveTextContent('publish.server_refused')
+  expect((reg.textContent ?? '').match(/Ask its admin/g)).toHaveLength(1)
   expect(within(reg).getByText('Technical details').closest('details')).toHaveTextContent('orch-publish admin ws allow')
   // changing the addresses is a signed hand-off with both addresses
   await user.click(within(box).getByRole('button', { name: 'Change addresses' }))

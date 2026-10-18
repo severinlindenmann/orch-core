@@ -1,7 +1,7 @@
 """Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish,
 estimate), so they install without a clone: ``orch addon manifest <name> --write .`` puts
-``addons/<name>/orch-addon.json`` into a workspace, then ``orch addon grant <name>`` (B5b). The package copies in ``manifests/`` equal
-``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
+``addons/<name>/orch-addon.json`` into a workspace, then ``orch addon grant <name>`` (B5b).
+The package copies in ``manifests/`` equal ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
 
 from __future__ import annotations
 

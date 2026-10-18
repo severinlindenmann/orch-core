@@ -455,6 +455,7 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
         "sign_methods": sign_methods(ctx.service, ws),
+        "models": thaw(ws.settings["models"]) if "models" in ws.settings else None,
         "settings_at": settings_at,
         "policy_at": policy_at,
         "sub_cursor": cursor,
@@ -510,6 +511,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "gates": data["gates"],
         "defaults": data["defaults"],
         "sign_methods": data["sign_methods"],
+        "models": data["models"],
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column != "N":

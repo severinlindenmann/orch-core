@@ -78,6 +78,7 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "gates",
         "defaults",
         "sign_methods",
+        "models",
         "settings_at",
         "policy_at",
         "sub_cursor",
@@ -239,6 +240,7 @@ def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
             "gates",
             "defaults",
             "sign_methods",
+            "models",
             "sub_cursor",
         }  # no settings_at, policy_at
         assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only

@@ -60,8 +60,10 @@ export function spanText(t: UsageTotals): string {
 
 export function runsText(t: UsageTotals): string {
   const n = t.runs === 1 ? '1 run' : `${t.runs} runs`
-  return t.unknown ? `${n} (time not recorded for ${t.unknown})` : n
+  return t.unknown ? `${n} · duration unavailable for ${t.unknown}` : n
 }
 
 export const NOT_REPORTED = 'Not reported'
+/** One line for the whole page: tokens and cost are never shown, so they are not repeated per tile. */
+export const NO_TOKENS_NOTE = "Token counts and cost aren't available."
 export const WINDOW_LABEL = { week: 'Last 7 days', month: 'Last 30 days' } as const

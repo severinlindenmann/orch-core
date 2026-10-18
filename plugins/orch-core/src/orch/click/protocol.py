@@ -141,7 +141,7 @@ WORD_OPS = frozenset(
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
 #: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", "models"})
 _RANK = {"click": 0, "word": 1, "terminal": 2}
 
 

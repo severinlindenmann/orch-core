@@ -27,6 +27,7 @@ import { runsApi, type Run, type RunList } from '@/api/runs'
 import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
+import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { nowMs } from '@/lib/time'
@@ -65,6 +66,9 @@ export const LAYOUT_SCENARIOS = [
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
+  // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
+  'agent-model',
+  'addons-model-routing',
   // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
   'agent-pill',
   'agent-pill-stopped',
@@ -458,6 +462,16 @@ const runList = (scenario: LayoutScenario): RunList => {
   }
 }
 const AGENT_GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const ROUTING_CHOICES: RoutingChoices = {
+  harnesses: [
+    { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
+    { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'gpt-5-codex', label: 'GPT-5 Codex' }, { id: 'gpt-5', label: 'GPT-5' }, { id: 'o3', label: 'o3' }] },
+  ],
+  modes: [
+    { id: 'work', label: 'Do the work' }, { id: 'refine', label: 'Write requirements and plan' }, { id: 'fix', label: 'Fix what was sent back' },
+    { id: 'continue', label: 'Continue' }, { id: 'context', label: 'Read and answer' },
+  ],
+}
 const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   const base: AgentPreview = {
     spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
@@ -466,6 +480,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
     grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
+  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
   if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
@@ -642,6 +657,7 @@ export function resetLayoutPreview() {
   for (const [name, fn] of originals) {
     if (name === 'runs.connect') termTransport.connect = fn as typeof termTransport.connect
     else if (name.startsWith('runs.')) r[name.slice(5)] = fn
+    else if (name === 'routing.choices') (routingApi as unknown as Record<string, unknown>).choices = fn
     else if (name.startsWith('agents.')) (agentsApi as unknown as Record<string, unknown>)[name.slice(7)] = fn
     else a[name] = fn
   }
@@ -693,6 +709,8 @@ function install() {
   const ag = agentsApi as unknown as Record<string, unknown>
   for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
+  originals.set('routing.choices', routingApi.choices)
+  ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
   ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
@@ -733,6 +751,7 @@ function install() {
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
       { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'model-routing', title: 'Model routing', desc: 'Choose which AI model each kind of agent work starts on. You still see the model before every start.', state: current === 'addons-model-routing' ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],
   }))
@@ -745,6 +764,7 @@ function install() {
     gates: {},
     repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
+    models: current === 'addons-model-routing' ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))

@@ -41,6 +41,9 @@ export interface AgentPreview {
   spec: string | null
   ticket: string | null
   display: string | null
+  /** Model routing: the model this start would use (null: the agent's own default) and who chose it. */
+  model?: string | null
+  model_source?: 'chosen' | 'workspace' | 'default' | null
   display_hidden: boolean
   cwd: { kind: 'workspace' | 'repo' | 'worktree' | null; repo?: string; ticket?: string }
   cwd_path: string | null

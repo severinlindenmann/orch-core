@@ -187,6 +187,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'models_set':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { models: Object.keys(body.models as object).length ? body.models : null } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':

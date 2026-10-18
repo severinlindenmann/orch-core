@@ -19,7 +19,10 @@ callers that need a log, a patch of one commit, a file's content at a revision, 
 * runs with the person's system and global git configuration OFF (:func:`orch.gitsafe.isolated_env`), a scratch
   environment (no ``GIT_*`` of the caller), ``cwd="/"``, stdin closed, in its own process group that is killed after
   ``timeout`` seconds or when the output reaches ``max_bytes`` (:func:`run`);
-* cannot reach the network (no fetch/pull/push/clone subcommand exists here), and ``grep`` never enters a submodule.
+* cannot reach the network (no fetch/pull/push/clone subcommand exists here); ``grep`` searches the index
+  (``--cached``: the working tree is never opened, so no symlink there is followed) and never enters a submodule;
+* excludes the explorer's deny list (:data:`DENY_SPECS`, plus the store names the caller passes as ``exclude_top``)
+  with ``:(exclude)`` pathspecs on every operation that takes pathspecs, on top of the caller's own path check.
 
 Residual (documented, same as ``gitsafe``): a ``filter`` driver the PERSON configured globally is never run here (the
 global configuration is off and these operations never check a file out).
@@ -40,18 +43,36 @@ from dataclasses import dataclass
 from orch import gitsafe
 from orch.gitsafe import Unsafe
 
-__all__ = ["OPS", "Result", "command", "run"]
+__all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run"]
 
 _SLOT = re.compile(r"<(rev|file|num|pattern)>")
+
+#: THE deny list of the File Explorer, by name (compared lower-case, at any depth). The dashboard's path guard
+#: (`orch_dashboard.explorer.guard`) imports these, and every git operation below excludes the same names with
+#: ``:(exclude)`` pathspecs ON TOP of the guard's own check (never instead of it), so a path the guard missed still
+#: cannot come out of git. Git internals, orch's store, key material and ``.env`` files.
+DENIED_NAMES = frozenset({".git", ".orch", ".ssh", ".gnupg", ".netrc", "keys.jsonl", ".env"})
+DENIED_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
+DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks")
+_G = ":(exclude,glob,icase)"
+#: pathspecs appended to every operation that takes pathspecs (after ``--``)
+DENY_SPECS = (
+    *(f"{_G}**/{n}" for n in sorted(DENIED_NAMES)),
+    *(f"{_G}**/{n}/**" for n in sorted(DENIED_NAMES)),
+    *(f"{_G}**/{n}*" for n in DENIED_PREFIXES),
+    *(f"{_G}**/*{n}" for n in DENIED_SUFFIXES),
+)
+_TOP_NAME = re.compile(r"[A-Za-z0-9._-]{1,100}")
 #: pins on top of HARDEN for these operations (command scope beats every config file)
 _EXTRA = (
     "-c", "i18n.logOutputEncoding=UTF-8", "-c", "core.quotePath=false", "-c", "log.showSignature=false",
     "-c", "log.mailmap=false", "-c", "log.follow=false", "-c", "log.showRoot=true", "-c", "log.decorate=no",
     "-c", "grep.patternType=fixed", "-c", "grep.extendedRegexp=false", "-c", "grep.fallbackToNoIndex=false",
 )  # fmt: skip
-#: the record format of ``log``/``show``: commit id, author name, author date (strict ISO 8601), subject, body
-_COMMIT = "%H%x1f%aN%x1f%aI%x1f%s"
-_BODY = _COMMIT + "%x1f%b"
+#: the record format of ``log``/``show``: NUL, commit id, NUL, author name, NUL, author date (strict ISO 8601), NUL,
+#: subject (and for ``show``: NUL, body, NUL). A commit message cannot hold a NUL, so a message can never end a field.
+_COMMIT = "%x00%H%x00%aN%x00%aI%x00%s"
+_BODY = _COMMIT + "%x00%b%x00"
 
 
 @dataclass(frozen=True)
@@ -65,24 +86,28 @@ class Op:
 
 _SHOW = ("--no-color", "--no-renames", "--root", "-m", "--first-parent")
 OPS: dict[str, Op] = {
-    # the commits that changed one file, newest first; records start with \x1e
-    "file_log": Op(("log", "--no-color", "--no-renames", f"--format=%x1e{_COMMIT}", "--max-count=<num>",
+    # the commits that changed one file, newest first (see _COMMIT)
+    "file_log": Op(("log", "--no-color", "--no-renames", f"--format={_COMMIT}", "--max-count=<num>",
                     "--skip=<num>", "--end-of-options", "<rev>", "--", ":(literal)<file>")),
     # one commit's patch for one file (a merge: against its first parent), with the commit's record first
-    "commit_file_patch": Op(("show", *_SHOW, f"--format=%x1e{_BODY}%x1e", "-U<num>", *gitsafe._DIFF_FIXED,
+    "commit_file_patch": Op(("show", *_SHOW, f"--format={_BODY}", "-U<num>", *gitsafe._DIFF_FIXED,
                              "--end-of-options", "<rev>", "--", ":(literal)<file>")),
     # the files one commit changed: `<status> NUL <path> NUL ...`
     "commit_names": Op(("show", *_SHOW, "--format=", "--name-status", "-z", *gitsafe._DIFF_FIXED, "--end-of-options",
-                        "<rev>", "--")),
+                        "<rev>", "--", ":(top)")),
+    # the files that differ between two commits (old, new): `<status> NUL <path> NUL ...`
+    "range_names": Op(("diff", "--no-color", "--no-renames", "--name-status", "-z", *gitsafe._DIFF_FIXED,
+                       "--end-of-options", "<rev>", "<rev>", "--", ":(top)")),
     # the difference of one file between two commits (old, new)
     "file_diff": Op(("diff", "--no-color", "--no-renames", "-U<num>", *gitsafe._DIFF_FIXED, "--end-of-options",
                      "<rev>", "<rev>", "--", ":(literal)<file>")),
     # a file as it was at a commit: its size, then its bytes
     "blob_size": Op(("cat-file", "-s", "<rev>:./<file>")),
     "blob": Op(("cat-file", "blob", "<rev>:./<file>")),
-    # a literal search of the tracked files of the working tree (no submodule), `path NUL line NUL text LF`
-    "grep": Op(("grep", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>", "--",
-                ":(top)")),
+    # a literal search of the INDEX (--cached: blobs from the object database, the working tree is not opened, so a
+    # symlink there is never followed), no submodule: `path NUL line NUL text LF`
+    "grep": Op(("grep", "--cached", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>",
+                "--", ":(top)")),
 }  # fmt: skip
 _NUM = re.compile(r"[0-9]{1,6}")
 _BAD_CHAR = re.compile(r"[\x00-\x1f\x7f]")
@@ -120,7 +145,13 @@ def _fill(spec: Op, operand: tuple[str, ...]) -> list[str]:
 
 
 def command(
-    repo: str, op: str, own: Mapping[str, str], *, operand: tuple[str, ...] = (), timeout: float = gitsafe.GATE_SECONDS
+    repo: str,
+    op: str,
+    own: Mapping[str, str],
+    *,
+    operand: tuple[str, ...] = (),
+    exclude_top: tuple[str, ...] = (),
+    timeout: float = gitsafe.GATE_SECONDS,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute). Runs
     :func:`orch.gitsafe.gate` first. Raises :class:`orch.gitsafe.Unsafe` for an unknown operation, an invalid operand
@@ -129,6 +160,10 @@ def command(
     if spec is None:
         raise Unsafe("unknown git operation")
     args = _fill(spec, operand)
+    if "--" in args:  # the deny list as pathspecs, and the caller's store names directly in the repository's top
+        if any(not _TOP_NAME.fullmatch(n) for n in exclude_top):
+            raise Unsafe("invalid exclusion")
+        args += [*DENY_SPECS, *(f":(top,exclude,literal,icase){n}" for n in exclude_top)]
     local = gitsafe.gate(repo, own, timeout=timeout)
     entries = gitsafe._driver_pins(local) if spec.args[0] in ("log", "show", "diff") else []
     argv = gitsafe._argv(repo, args)
@@ -150,12 +185,13 @@ def run(
     own: Mapping[str, str],
     *,
     operand: tuple[str, ...] = (),
+    exclude_top: tuple[str, ...] = (),
     max_bytes: int = 1 << 20,
     timeout: float = 15.0,
 ) -> Result:
     """Run one operation: at most ``max_bytes`` of output, at most ``timeout`` seconds (the whole gate included in the
     caller's budget is not counted: the gate has its own limit). The process group is killed when either is reached."""
-    argv, env = command(repo, op, own, operand=operand)
+    argv, env = command(repo, op, own, operand=operand, exclude_top=exclude_top)
     try:
         proc = subprocess.Popen(  # noqa: S603 - the argv is a fixed template with validated operands
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
@@ -193,3 +229,55 @@ def run(
             proc.wait(timeout=5)
         proc.stdout.close()
     return Result(proc.returncode if proc.returncode is not None else -1, bytes(buf), cut, timed_out)
+
+
+# --- parsers of the output (the formats above), total: a malformed record is dropped, never guessed ---------------
+
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _text(raw: bytes) -> str:
+    return raw.decode("utf-8", "replace")
+
+
+def parse_log(out: bytes) -> list[tuple[str, str, str, str]]:
+    """``(sha, author, date, subject)`` per commit of ``file_log``, newest first."""
+    pieces = out.split(b"\0")[1:]
+    rows = []
+    for i in range(0, len(pieces) - 3, 4):
+        sha, who, when, subject = (_text(p) for p in pieces[i : i + 4])
+        if _SHA.fullmatch(sha):
+            rows.append((sha, who, when, subject.rstrip("\n")))
+    return rows
+
+
+def parse_show(out: bytes) -> tuple[tuple[str, str, str, str, str], str] | None:
+    """``((sha, author, date, subject, body), patch)`` of ``commit_file_patch``, or None if the record is malformed."""
+    pieces = out.split(b"\0", 6)
+    if len(pieces) != 7 or pieces[0] or not _SHA.fullmatch(_text(pieces[1])):
+        return None
+    sha, who, when, subject, body = (_text(p) for p in pieces[1:6])
+    return (sha, who, when, subject, body.rstrip("\n")), _text(pieces[6]).lstrip("\n")
+
+
+def parse_names(out: bytes) -> list[tuple[str, str]]:
+    """``(status letter, path)`` per file of ``commit_names`` / ``range_names`` (``-z`` output)."""
+    fields = out.split(b"\0")
+    rows = []
+    i = 0
+    while i + 1 < len(fields):
+        status = _text(fields[i]).strip()
+        if status[:1].isalpha():
+            rows.append((status[:1], _text(fields[i + 1])))
+        i += 2
+    return rows
+
+
+def parse_grep(out: bytes) -> list[tuple[str, int, str]]:
+    """``(path, line number, text)`` per hit of ``grep`` (``-n -z``: ``path NUL line NUL text LF``)."""
+    rows = []
+    for chunk in out.split(b"\n"):
+        parts = chunk.split(b"\0", 2)
+        if len(parts) == 3 and parts[1].strip().isdigit():
+            rows.append((_text(parts[0]), int(parts[1]), _text(parts[2])))
+    return rows

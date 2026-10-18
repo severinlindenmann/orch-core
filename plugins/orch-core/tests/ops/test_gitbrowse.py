@@ -62,7 +62,7 @@ def world(tmp_path, monkeypatch):
 def test_file_log_lists_only_the_commits_of_that_file_newest_first(world):
     res = world.run("file_log", "50", "0", "HEAD", "a.txt")
     assert res.code == 0 and not res.cut
-    rows = [r.split("\x1f") for r in res.out.decode().split("\x1e") if r.strip()]
+    rows = gitbrowse.parse_log(res.out)
     assert [r[0] for r in rows] == [world.c2, world.c1]
     assert (
         rows[0][1] == "Ann Author" and rows[0][2].startswith("2026-01-02T10:00:00") and rows[0][3].startswith("second")
@@ -71,8 +71,8 @@ def test_file_log_lists_only_the_commits_of_that_file_newest_first(world):
 
 def test_file_log_paging_and_unicode_paths(world):
     res = world.run("file_log", "1", "1", "HEAD", "dir/ünï code.txt")
-    rows = [r for r in res.out.decode().split("\x1e") if r.strip()]
-    assert len(rows) == 1 and rows[0].startswith(world.c1)
+    rows = gitbrowse.parse_log(res.out)
+    assert len(rows) == 1 and rows[0][0] == world.c1
 
 
 def test_the_path_is_literal_never_a_pathspec(world):
@@ -80,7 +80,7 @@ def test_the_path_is_literal_never_a_pathspec(world):
     world.git(world.repo, "add", "-A")
     world.git(world.repo, "commit", "-q", "-m", "glob", n=4)
     got = world.run("file_log", "50", "0", "HEAD", "[ab].txt").out.decode()
-    assert got.count("\x1e") == 1
+    assert len(gitbrowse.parse_log(got.encode())) == 1
     assert world.run("file_log", "50", "0", "HEAD", "*.txt").out == b""
     assert world.run("file_log", "50", "0", "HEAD", ":!a.txt").out == b""
 
@@ -88,12 +88,11 @@ def test_the_path_is_literal_never_a_pathspec(world):
 def test_commit_file_patch_has_the_record_then_only_that_files_diff(world):
     res = world.run("commit_file_patch", "3", world.c3, "dir/ünï code.txt")
     text = res.out.decode()
-    head, _, rest = text.lstrip("\x1e").partition("\x1e")
-    assert head.split("\x1f")[0] == world.c3 and "+beta needle" in rest and "a.txt" not in rest
+    (sha, who, when, subject, body), rest = gitbrowse.parse_show(res.out)
+    assert sha == world.c3 and "+beta needle" in rest and "a.txt" not in rest and text
     # the root commit has a diff too (everything added)
-    first = world.run("commit_file_patch", "3", world.c1, "a.txt").out.decode()
-    assert "+one" in first and "body line" not in first.split("\x1e")[2]
-    assert "body line" in first.split("\x1e")[1]
+    record, patch = gitbrowse.parse_show(world.run("commit_file_patch", "3", world.c1, "a.txt").out)
+    assert "+one" in patch and "body line" not in patch and record[4] == "body line"
 
 
 def test_file_diff_between_two_versions(world):
@@ -119,15 +118,20 @@ def test_output_is_cut_at_max_bytes_and_the_group_is_killed(world):
 def test_grep_is_literal_and_reports_path_line_text(world):
     res = world.run("grep", "needle")
     assert res.code == 0
-    fields = res.out.split(b"\0")
-    assert fields[0] == "dir/ünï code.txt".encode() and fields[1] == b"2" and fields[2].startswith(b"beta needle")
+    assert gitbrowse.parse_grep(res.out) == [("dir/ünï code.txt", 2, "beta needle")]
     assert world.run("grep", "n.*dle").code == 1  # a regex is just text here
     assert world.run("grep", "-e").code == 1  # an option-looking search is just text
 
 
 def test_commit_names_lists_the_files_of_a_commit(world):
-    out = world.run("commit_names", world.c1).out.split(b"\0")
-    assert out[:2] == [b"A", b"a.txt"] and b"A" in out
+    assert gitbrowse.parse_names(world.run("commit_names", world.c1).out) == [
+        ("A", "a.txt"),
+        ("A", "dir/ünï code.txt"),
+    ]
+    assert gitbrowse.parse_names(world.run("range_names", world.c1, world.c3).out) == [
+        ("M", "a.txt"),
+        ("M", "dir/ünï code.txt"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -220,3 +224,60 @@ def test_a_repository_hook_and_filter_never_run(world):
     world.run("file_log", "50", "0", "HEAD", "a.txt")
     world.run("grep", "one")
     assert world.fired() == set()
+
+
+def test_the_deny_list_is_excluded_by_git_itself_on_every_pathspec_operation(world):
+    """On top of the dashboard's own check: a caller that forgot to check a path still gets nothing denied."""
+    r = world.repo
+    for name, text in {
+        ".env": "SECRET=needle",
+        ".env.local": "needle",
+        "deploy/key.pem": "needle",
+        "id_ed25519": "needle",
+        ".orch/config.json": "needle",
+        "events/e1.json": "needle",
+        "sub/.git-notes/x.txt": "needle ok",
+        "keys.jsonl": "needle",
+        "ssh/id_rsa.work": "needle",
+    }.items():
+        (r / name).parent.mkdir(parents=True, exist_ok=True)
+        (r / name).write_text(text + "\n")
+    world.git(r, "add", "-f", "-A")
+    world.git(r, "commit", "-q", "-m", "secrets", n=6)
+    head = world.git(r, "rev-parse", "HEAD")
+
+    def paths(out):
+        return sorted(p for p, _l, _t in gitbrowse.parse_grep(out))
+
+    assert paths(world.run("grep", "needle").out) == ["dir/ünï code.txt", "events/e1.json", "sub/.git-notes/x.txt"]
+    hits = gitbrowse.run(str(r), "grep", os.environ, operand=("needle",), exclude_top=("events",))
+    assert paths(hits.out) == ["dir/ünï code.txt", "sub/.git-notes/x.txt"]
+    names = [p for _s, p in gitbrowse.parse_names(world.run("commit_names", head).out)]
+    assert names == ["events/e1.json", "sub/.git-notes/x.txt"]
+    names = [p for _s, p in gitbrowse.parse_names(world.run("range_names", world.c3, head).out)]
+    assert names == ["events/e1.json", "sub/.git-notes/x.txt"]
+    # a denied file asked for by name has no history, no patch, no diff
+    for denied in (".env", "deploy/key.pem", ".orch/config.json"):
+        assert world.run("file_log", "50", "0", "HEAD", denied).out == b""
+        assert world.run("commit_file_patch", "3", head, denied).out.split(b"\0")[-1].strip() == b""
+        assert world.run("file_diff", "3", world.c3, head, denied).out == b""
+
+
+def test_a_bad_top_exclusion_is_refused(world):
+    for bad in ("a/b", ":(x)", "", "a b", "x" * 101):
+        with pytest.raises(gitsafe.Unsafe):
+            gitbrowse.command(str(world.repo), "grep", os.environ, operand=("x",), exclude_top=(bad,))
+
+
+def test_grep_reads_the_index_not_the_working_tree_and_never_through_a_symlink(world):
+    secret = world.tmp / "outside-secret.txt"
+    secret.write_text("TOPSECRET needle\n")
+    (world.repo / "link.txt").symlink_to(secret)
+    (world.repo / "dirlink").symlink_to(world.tmp)
+    world.git(world.repo, "add", "link.txt", "dirlink")
+    (world.repo / "dir" / "ünï code.txt").write_text("changed in the work tree only: needle3\n")
+    got = world.run("grep", "needle")
+    text = got.out.decode()
+    assert "TOPSECRET" not in text and "needle3" not in text  # not through the link, not the unsaved work tree
+    # git does not even search the link's own text (a path)
+    assert world.run("grep", "outside-secret").out == b""

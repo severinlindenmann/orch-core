@@ -1309,6 +1309,7 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.person_of = person_of
 
+    checks_lock = threading.Lock()
     checks: dict[str, list[float]] = {}  # per bearer token: times of its recent folder checks
 
     @app.post("/api/w/{ws}/repos/check")
@@ -1320,13 +1321,14 @@ def register(app: FastAPI, gateway: Gateway):
         gateway.enabled(ws)
         # At most 20 folder checks a minute per session: this route says what exists on this computer.
         now = time.monotonic()
-        recent = [t for t in checks.get(request.state.token, []) if t > now - 60]
-        if len(recent) >= 20:
-            raise fail("rate.limited")
-        checks[request.state.token] = [*recent, now]
-        if len(checks) > 256:
+        with checks_lock:  # read, check, append and clean up as one step: concurrent requests cannot overshoot
+            recent = [t for t in checks.get(request.state.token, []) if t > now - 60]
+            if len(recent) >= 20:
+                checks[request.state.token] = recent
+                raise fail("rate.limited")
+            checks[request.state.token] = [*recent, now]
             for k in [k for k, v in checks.items() if not v or v[-1] <= now - 60]:
-                del checks[k]
+                del checks[k]  # tokens with no recent check are dropped: the dict stays small
         # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
         human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)

@@ -850,3 +850,14 @@ def test_the_path_check_route_is_rate_limited_per_session(worlds, team):
     body = {"action": "repo_set", "name": "api", "path": "/no/such/folder"}
     codes = [world.post(url, body).status_code for _ in range(22)]
     assert codes[:20] == [400] * 20 and codes[20:] == [503, 503]
+
+
+def test_concurrent_path_checks_cannot_pass_the_limit(worlds, team):
+    from concurrent.futures import ThreadPoolExecutor
+
+    world = worlds(team[0].owner.ref)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    body = {"action": "repo_set", "name": "api", "path": "/no/such/folder"}
+    with ThreadPoolExecutor(8) as pool:
+        codes = list(pool.map(lambda _: world.post(url, body).status_code, range(40)))
+    assert codes.count(400) == 20 and codes.count(503) == 20

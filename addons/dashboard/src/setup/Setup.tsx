@@ -45,7 +45,8 @@ function Reason({ reason }: { reason: string }) {
 }
 function report(e: unknown): string {
   const reason = reasonOf(e)
-  console.error('[orch setup]', reason)
+  // A link that ended or a reload is an ordinary outcome the page explains in words: no console error for it.
+  if (!/^(session\.|setup\.(ended|token|unavailable)|secrets\.)/.test(reason)) console.error('[orch setup]', reason)
   return reason
 }
 function clearClipboard() {

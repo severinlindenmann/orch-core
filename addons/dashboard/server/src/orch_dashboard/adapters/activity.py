@@ -39,21 +39,16 @@ GROUP_OF = {t: g for g, types in GROUP_TYPES.items() for t in types}
 
 GATE = {"requirements": "requirements", "plan": "plan", "verify": "result", "code": "code"}
 
-# Types whose host summary adds something the sentence does not say (a note, a title, an answer).
+# Types whose host summary is something a person wrote (a note, a reason, a comment); the others' summaries are
+# technical ("section requirements", "Q1") and are not shown.
 DETAIL = {
-    "ticket.created",
     "ticket.closed",
     "log.added",
-    "question.asked",
-    "question.answered",
     "task.done",
     "task.blocked",
     "task.skipped",
     "gate.changes_requested",
     "verdict.given",
-    "artifact.added",
-    "artifact.replaced",
-    "ticket.updated",
 }
 
 SIMPLE = {

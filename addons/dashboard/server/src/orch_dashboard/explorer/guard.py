@@ -20,8 +20,9 @@ the single place a later move to host-mediated `fs.*` ops replaces.
 **Deny list** (`deny`; one list, applies to every root, case-insensitive because macOS volumes are):
 git internals (`.git`, at any depth, file or folder), the orch store (`.orch` at any depth; in the legacy layout also
 `.state events tickets addons config.json keys.jsonl AGENTS.orch.md` directly in the workspace folder), key material
-(`*.pem *.key *.p8 *.p12 *.pfx`, `id_rsa`-style private keys, `.ssh`, `.gnupg`, `.netrc`, `keys.jsonl`) and `.env`
-files. A denied entry is **shown locked** in its folder (name and kind of lock, no size, no content); reading, listing,
+(`*.pem *.key *.p8 *.p12 *.pfx`, `id_rsa`-style private keys, `.ssh`, `.gnupg`, `.netrc`, `keys.jsonl`) and every
+`.env*` file. The names live in `orch.gitbrowse` and git excludes the same ones with pathspecs.
+A denied entry is **shown locked** in its folder (name and kind of lock, no size, no content); reading, listing,
 searching or asking for the history of a denied path is `Denied`.
 
 A file or folder name is data: its label for the page replaces invisible or control characters with visible
@@ -36,6 +37,8 @@ import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from orch import gitbrowse
+
 from ..text import hidden
 
 _FLAGS = getattr(os, "O_CLOEXEC", 0)
@@ -49,11 +52,6 @@ MAX_PART = 255
 
 #: directly in the workspace folder, in the legacy layout (config.json next to the folders); in the new layout `.orch`
 LEGACY_STORE = frozenset({".state", "events", "tickets", "addons", "config.json", "keys.jsonl", "agents.orch.md"})
-
-_KEY_SUFFIX = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks")
-_KEY_NAMES = frozenset({"keys.jsonl", ".ssh", ".gnupg", ".netrc"})
-_SSH_KEYS = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
-_ENV_OK = (".example", ".sample", ".template", ".dist", ".defaults")
 
 
 class GuardError(Exception):
@@ -82,19 +80,20 @@ class Unusable(GuardError):
 
 def deny(parts: tuple[str, ...], *, store_names: frozenset[str] = frozenset()) -> str | None:
     """Why this relative path is locked (a short plain phrase), or None. ``store_names`` are the store entries directly
-    in the root (legacy layout; lower-case). The empty path (the root itself) is never locked."""
+    in the root (legacy layout; lower-case). The empty path (the root itself) is never locked. The names are
+    :data:`orch.gitbrowse.DENIED_NAMES` and friends: the same list git excludes with pathspecs."""
     for index, part in enumerate(parts):
         low = part.casefold()
         if low == ".git":
             return "Git internals"
         if low == ".orch" or (index == 0 and low in store_names):
             return "orch's own files"
-        if low in _KEY_NAMES or low.endswith(_KEY_SUFFIX):
-            return "Keys"
-        if low.startswith(_SSH_KEYS) and not low.endswith(".pub"):
-            return "Keys"
-        if low == ".env" or (low.startswith(".env.") and not low.endswith(_ENV_OK)):
+        if low == ".env" or low.startswith(".env."):
             return "Secrets (.env)"
+        if low in gitbrowse.DENIED_NAMES or low.startswith(gitbrowse.DENIED_PREFIXES):
+            return "Keys"
+        if low.endswith(gitbrowse.DENIED_SUFFIXES):
+            return "Keys"
     return None
 
 
@@ -268,13 +267,19 @@ class Root:
             except OSError:
                 raise Missing("There is no such file.") from None
 
-    def is_repo(self) -> bool:
-        """Is the root itself a git working copy (a real ``.git`` entry, not a link)?"""
-        with self.dir(()) as fd:
-            try:
-                return stat.S_ISDIR(os.stat(".git", dir_fd=fd, follow_symlinks=False).st_mode)
-            except OSError:
-                return False
+    def has_git(self, parts: tuple[str, ...]) -> bool:
+        """Does the folder ``parts`` hold its own git working copy (a real ``.git`` folder or file, not a link)?"""
+        try:
+            with self.dir(parts) as fd:
+                mode = os.stat(".git", dir_fd=fd, follow_symlinks=False).st_mode
+                return stat.S_ISDIR(mode) or stat.S_ISREG(mode)
+        except (OSError, GuardError):
+            return False
+
+    def abs(self, parts: tuple[str, ...]) -> str:
+        """The absolute path of ``parts`` below the root, for a program that needs one. Only call it after
+        :meth:`dir` or :meth:`stat_file` accepted the same parts (no link, not denied)."""
+        return os.path.join(self.path, *parts)
 
     def walk_names(
         self, parts: tuple[str, ...], limit: int, skip: frozenset[str]
@@ -310,8 +315,8 @@ class Root:
 def exclude_globs(store: frozenset[str]) -> list[str]:
     """The deny list as ripgrep ``--glob`` exclusions (keeps a search from READING locked files; every hit is also
     re-checked with :func:`deny`, so a glob that misses something cannot leak it)."""
-    names = {".git", ".orch", ".ssh", ".gnupg", ".netrc", ".env", ".env.*", "keys.jsonl", "id_rsa*", "id_dsa*",
-             "id_ecdsa*", "id_ed25519*", *(f"*{s}" for s in _KEY_SUFFIX)}  # fmt: skip
-    out = [f"!{n}" for n in sorted(names)]
+    names = {*gitbrowse.DENIED_NAMES, *(f"{n}*" for n in gitbrowse.DENIED_PREFIXES)}
+    names |= {f"*{n}" for n in gitbrowse.DENIED_SUFFIXES}
+    out = [f"!{n}" for n in sorted(names)] + [f"!{n}/**" for n in sorted(gitbrowse.DENIED_NAMES)]
     out += [f"!/{n}" for n in sorted(store)]  # leading slash: directly in the root only
     return out

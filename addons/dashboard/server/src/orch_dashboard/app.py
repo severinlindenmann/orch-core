@@ -30,6 +30,7 @@ from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
+from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
@@ -65,6 +66,7 @@ SPA_ROUTES = (
     "drop",
     "checklist",
     "worktrees",
+    "explorer",
     "shares",
     "activity",
     "guide",  # ?page=<x> is a query: not part of the path
@@ -232,6 +234,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
     shares.register(app, gateway)
+    explorer_routes.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

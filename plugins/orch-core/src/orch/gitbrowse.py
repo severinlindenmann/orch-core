@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from orch import gitsafe
 from orch.gitsafe import Unsafe
 
-__all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run"]
+__all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
 
 _SLOT = re.compile(r"<(rev|file|num|pattern)>")
 
@@ -192,13 +192,21 @@ def run(
     """Run one operation: at most ``max_bytes`` of output, at most ``timeout`` seconds (the whole gate included in the
     caller's budget is not counted: the gate has its own limit). The process group is killed when either is reached."""
     argv, env = command(repo, op, own, operand=operand, exclude_top=exclude_top)
+    return spawn(argv, env, max_bytes=max_bytes, timeout=timeout)
+
+
+def spawn(
+    argv: list[str], env: Mapping[str, str], *, cwd: str = "/", max_bytes: int = 1 << 20, timeout: float = 15.0
+) -> Result:
+    """Run ``argv`` (built by this module, or a fixed search tool's) with stdin closed in its own process group:
+    at most ``max_bytes`` of output and ``timeout`` seconds, then the group is killed."""
     try:
         proc = subprocess.Popen(  # noqa: S603 - the argv is a fixed template with validated operands
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=dict(env), cwd=cwd,
             start_new_session=True, close_fds=True,
         )  # fmt: skip
     except OSError:
-        raise Unsafe("git cannot be started") from None
+        raise Unsafe("the program cannot be started") from None
     assert proc.stdout is not None
     fd = proc.stdout.fileno()
     deadline = time.monotonic() + timeout

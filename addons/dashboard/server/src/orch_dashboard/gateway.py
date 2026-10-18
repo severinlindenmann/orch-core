@@ -306,6 +306,8 @@ class Gateway:
                     features.append("click")  # the sign panel is offered (the signer has a key and the flag is on)
                 who = link.welcome["peer"]["person"]
                 role = next((m.role for m in roster if m.person == who), "viewer")
+                if role == "owner" and self.addon_on(link, "explorer"):
+                    features.append("explorer")  # the File Explorer: owners only, and only while the add-on is ON
                 count = adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
                 if (
                     not isinstance(show.get("name"), str)

@@ -24,6 +24,25 @@ export function reasonOf(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
   return `client: ${name}: ${message.split('#')[0].replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 120)}`
 }
+/** The cause in plain words; the code itself stays under "Technical details". */
+export function plainReason(code: string): string {
+  if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
+  if (code === 'setup.ended') return 'This setup was already finished or stopped.'
+  if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
+  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this Mac.'
+  return 'Setup could not go on.'
+}
+function Reason({ reason }: { reason: string }) {
+  return (
+    <>
+      <small>{plainReason(reason)}</small>
+      <details className="reason">
+        <summary>Technical details</summary>
+        <small>Reason: {reason}</small>
+      </details>
+    </>
+  )
+}
 function report(e: unknown): string {
   const reason = reasonOf(e)
   console.error('[orch setup]', reason)
@@ -600,7 +619,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
-      {error && reason && <small className="reason">Reason: {reason}</small>}
+      {error && reason && <Reason reason={reason} />}
       {state?.error && (
         <p role="alert" className="warning">
           <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
@@ -1112,7 +1131,7 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
       <main className="setup">
         <h1>Open setup from your terminal</h1>
         <p>{expiredCopy}</p>
-        <small className="reason">Reason: {reason}</small>
+        <Reason reason={reason} />
       </main>,
     )
   }

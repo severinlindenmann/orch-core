@@ -76,6 +76,19 @@ it('Repositories: removing one hands off repo_remove, and a name already listed 
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
 })
 
+it('Repositories: the host\'s refusal of a folder stays in the form, before any signing step', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Add repository' }, T))
+  const form = await screen.findByRole('dialog', {}, T)
+  await user.type(within(form).getByLabelText('Name'), 'api')
+  await user.type(within(form).getByLabelText('Folder on this computer'), '/refused/api')
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  expect(await within(form).findByRole('alert', {}, T)).toHaveTextContent('This folder is not a git repository.')
+  expect(state.host.posts()).toEqual([]) // nothing was prepared
+  expect(screen.getByRole('dialog')).toBe(form)
+})
+
 it('Repositories: removing a repo that tickets link warns with their keys before anything is signed', async () => {
   const user = userEvent.setup()
   state.host.workspaces[0].settings = settingsOf({ repos: [{ name: 'code', default_branch: 'main', remote: null, tickets: ['DEMO-0001', 'DEMO-0004'] }] })

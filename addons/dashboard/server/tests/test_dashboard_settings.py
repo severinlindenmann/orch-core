@@ -824,3 +824,19 @@ def test_an_owner_gets_the_keys_of_the_tickets_that_link_a_repo_and_only_plain_k
         except Exception:
             continue
         raise AssertionError(bad)
+
+
+def test_the_form_can_ask_the_path_check_before_anything_is_prepared(worlds, team, host_calls, tmp_path):
+    world = worlds(team[0].owner.ref)
+    (tmp_path / "api" / ".git").mkdir(parents=True)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    base = {"action": "repo_set", "name": "api"}
+    bad = world.post(url, {**base, "path": "/no/such/folder"})
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input", bad.text
+    assert world.post(url, {**base, "path": str(tmp_path / "api")}).json() == {"ok": True}
+    assert world.post(url, {**base, "path": "/x", "extra": 1}).status_code == 400
+    assert not world.stub.requests.table  # a dry run stores no request
+    for who in ("mara", "tom", "vic"):
+        other = worlds(team[1][who].ref)
+        res = other.post(url, {**base, "path": str(tmp_path / "api")})
+        assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied", (who, res.text)

@@ -265,6 +265,11 @@ export class FakeHost {
     if (rest === 'members') return json(ws.roster)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
+    if (rest === 'repos/check' && method === 'POST') {
+      return String(body?.path).startsWith('/refused')
+        ? json({ ok: false, error: { code: 'invalid.input', message: 'This folder is not a git repository.', retryable: false } }, 400)
+        : json({ ok: true })
+    }
     if (rest === 'handoff' && method === 'POST') {
       const request = prepare(body!)
       this.requests.set(request.id, request)

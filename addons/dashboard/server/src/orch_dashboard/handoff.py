@@ -1309,6 +1309,18 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.person_of = person_of
 
+    @app.post("/api/w/{ws}/repos/check")
+    def check_repo(body: RepoSet, ws: str = Depends(workspace)):
+        """The host's own look at a repository to add, asked from the form before it closes, so a refusal (home folder,
+        not a git folder, inside orch's data, missing, not an owner) stays next to the field. A dry run of the same
+        prepare the hand-off makes: nothing is stored, no request exists, nothing is signed. The same check runs again
+        when the change is really prepared."""
+        gateway.enabled(ws)
+        gateway.check_repo_path(ws, body.path)
+        op, args = host_call(body)
+        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        return {"ok": True}
+
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token

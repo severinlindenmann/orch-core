@@ -276,7 +276,7 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
 export const signCommand = (code: string): string => `orch sign ${code}`
 
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
-export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
+export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused', 'addon.already'])
 /**
  * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
  * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended

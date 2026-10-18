@@ -7,4 +7,4 @@ args:
   --verbose  also show the state directory
 errors:
   not_found (exit 2): run orch init in a workspace | fix: orch describe init
-out: ok status person={person} cursor={cursor}[ grant={grant}][ claim={claim}] / next: {next}
+out: ok status person={person} cursor={cursor}[ grant={grant_local}][ claim={claim}] / next: {next}

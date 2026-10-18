@@ -168,6 +168,18 @@ it('uppercase Greek "ΝΙΚΟ" next to a Latin "NIKO" counts as shared (look-ali
   expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
 
+it('a sharp-s name next to its "ss" spelling counts as shared (same fold as host/personlabel.py)', () => {
+  const a = 'p_aaaa1111222233334444555566667777', b = 'p_bbbb1111222233334444555566667777'
+  withMembers([{ person: a, name: 'Stra\u00DFe' }, { person: b, name: 'Strasse' }], [{ field: 'a', before: a, after: b }])
+  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+})
+
+it('a combining mark that case-folds to a letter (U+0345 -> iota) does not survive as a letter: "Ann\u0345" is a twin of "Anni"', () => {
+  const a = 'p_aaaa1111222233334444555566667777', b = 'p_bbbb1111222233334444555566667777'
+  withMembers([{ person: a, name: 'Ann\u0345' }, { person: b, name: 'Anni' }], [{ field: 'a', before: a, after: b }])
+  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+})
+
 it('a name mixing covered letters with letters the table does not cover is not shown', () => {
   withMembers([{ person: SEV, name: 'Sev\u05D0' }], [{ field: 'owner', before: null, after: SEV }])
   expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')

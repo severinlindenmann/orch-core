@@ -29,7 +29,9 @@ def test_the_default_grant_has_the_d60_terms_and_the_secret_is_shown_once(hws, m
     assert (e["scope"], e["verbs"], e["hours"], e["label"]) == ("workable", "agent", 8, "laptop")
     assert e["actor"]["id"] == hws.owner.ref and e["auth"] == "passphrase" and "sig" in e
     assert e["expires_at"] > e["issued_at"]
-    assert r.first.startswith(f"ok grant.issued {e['grant']} until={e['expires_at']}")
+    from orch.host.signcontent import local_time
+
+    assert r.first == f"ok grant.issued {e['grant']} until {local_time(e['expires_at'], 8)}"  # this computer's time
     value = shown_value(hws)  # shown on the terminal: the seam stands for /dev/tty
     token = parse_grant(value)
     assert token.grant_id == e["grant"] and e["secret_hash"] == canon.grant_secret_hash(token.secret)

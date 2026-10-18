@@ -31,6 +31,8 @@ from .handoff import (
     EditTicket,
     NewTicketSequence,
     PrepareBody,
+    PublishSetup,
+    PublishShare,
     QuickStart,
     RequestId,
     RunnerGrant,
@@ -260,6 +262,18 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
+        if isinstance(body, PublishSetup | PublishShare):
+            # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,
+            # before a slot is taken or the signer is asked (core's op_class also reads `publish.share` as terminal).
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "message": "Sharing files and choosing where they go are signed in your terminal, not with one click.",
+                    "retryable": False,
+                    "reason": "terminal_only",
+                },
+                3,
+            )
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:

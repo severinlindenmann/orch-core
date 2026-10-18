@@ -469,3 +469,25 @@ def test_the_session_lists_publish_only_when_on_and_served(gateway, stub, monkey
     link.rows = [{"name": "publish", "state": "active"}]
     link.cap = False
     assert "publish" not in gateway.features(stub.ws)
+
+
+def test_both_publish_actions_still_prepare_through_the_terminal_hand_off(gateway, stub, monkeypatch):
+    """The hand-off route plans them as `human.prepare` inner ops (`publish.share` needs the host to serve send)."""
+
+    class Link(Host):
+        welcome = {"peer": {"person": "p_me"}, "ops": {"settings.set": 1, "publish.send": 1}}
+
+    link = Link()
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: {"doc": {"labels": []}, "gates": {}})
+    setup = handoff.plan(
+        gateway,
+        stub.ws,
+        handoff.PublishSetup(action="publish_setup", server="http://127.0.0.1:8103", share="http://127.0.0.1:8104"),
+    )
+    assert setup.op == "settings.set" and setup.args["set"]["publish"]["server"] == "http://127.0.0.1:8103"
+    share = handoff.plan(gateway, stub.ws, handoff.PublishShare(action="publish_share", key="DEMO-1", staged_id=STAGED))
+    assert share.op == "publish.share" and share.args == {"staged_id": STAGED}
+    link.welcome = {"peer": {"person": "p_me"}, "ops": {"settings.set": 1}}  # a host that does not serve Publish
+    with pytest.raises(HostError):
+        handoff.plan(gateway, stub.ws, handoff.PublishShare(action="publish_share", key="DEMO-1", staged_id=STAGED))

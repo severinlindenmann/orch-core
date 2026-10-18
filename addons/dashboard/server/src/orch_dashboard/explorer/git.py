@@ -99,6 +99,23 @@ def was_file(repo: Repo) -> bool:
     return res.code == 0 and any(path == repo.file for _s, path in gitbrowse.parse_names(res.out))
 
 
+def _only_the_file(repo: Repo, op: str, *operand: str) -> None:
+    """The change touches exactly the requested FILE and nothing else: a folder (at that commit, or a path that was
+    one) lists its files, which is refused. An empty change is fine (the commit did not touch the file)."""
+    res = _run(repo, op, *operand, repo.file, max_bytes=200_000)
+    if res.code != 0 or res.cut:
+        raise fail("not_found", "That change is not in this repository.", exit=2)
+    if any(path != repo.file for _s, path in gitbrowse.parse_names(res.out)):
+        raise fail("not_found", "History is for files. Choose a file.", exit=2)
+
+
+def _not_a_folder_at(repo: Repo, sha: str) -> None:
+    """At ``sha`` the path is a blob, or absent (added or deleted by that change); never a tree or anything else."""
+    res = _run(repo, "blob_type", sha, repo.file, max_bytes=64)
+    if res.code == 0 and res.out.strip() != b"blob":
+        raise fail("not_found", "History is for files. Choose a file.", exit=2)
+
+
 def log(repo: Repo, skip: int, limit: int) -> dict:
     """The commits that changed the path, newest first: ``{commits, more}``."""
     if not repo.file:
@@ -118,6 +135,8 @@ def log(repo: Repo, skip: int, limit: int) -> dict:
 
 def commit(repo: Repo, sha: str) -> dict:
     """One commit's change to the file: the commit and its patch (cut at :data:`PATCH_MAX`)."""
+    _not_a_folder_at(repo, sha)
+    _only_the_file(repo, "commit_file_names", sha)
     res = _run(repo, "commit_file_patch", "3", sha, repo.file)
     parsed = gitbrowse.parse_show(res.out) if res.code == 0 else None
     if parsed is None:
@@ -138,6 +157,9 @@ def commit(repo: Repo, sha: str) -> dict:
 
 def compare(repo: Repo, a: str, b: str) -> dict:
     """The difference of the file between two commits (``a`` older)."""
+    _not_a_folder_at(repo, a)
+    _not_a_folder_at(repo, b)
+    _only_the_file(repo, "range_file_names", a, b)
     res = _run(repo, "file_diff", "3", a, b, repo.file)
     if res.code != 0:
         raise fail("not_found", "One of those versions is not in this repository.", exit=2)
@@ -149,6 +171,9 @@ def compare(repo: Repo, a: str, b: str) -> dict:
 
 def version(repo: Repo, name: str, sha: str) -> dict:
     """The file as it was at commit ``sha``, described like the working copy."""
+    kind = _run(repo, "blob_type", sha, repo.file, max_bytes=64)
+    if kind.code != 0 or kind.out.strip() != b"blob":
+        raise fail("not_found", "The file does not exist in that version.", exit=2)
     size = _run(repo, "blob_size", sha, repo.file, max_bytes=64)
     if size.code != 0 or not size.out.strip().isdigit():
         raise fail("not_found", "The file does not exist in that version.", exit=2)

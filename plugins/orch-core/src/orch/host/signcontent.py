@@ -611,7 +611,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
     # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
-    # binds none of them. Said in plain words, in one labelled note instead of a suffix on every line.
+    # binds none of them. Said in plain words, each row labelled "(per host)" and listed after the signed rows.
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:

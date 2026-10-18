@@ -69,7 +69,7 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
         ) : (
           <OwnerNote>Only owners can change this.</OwnerNote>
         )}
-        <p className="text-[12px] text-text-muted">If a check on a ticket keeps failing, Start agent suggests a stronger model. It only suggests: nothing changes until you start.</p>
+        <p className="text-[12px] text-text-muted">If a check on a ticket is failing, Start agent suggests a stronger model. It only suggests: nothing changes until you start.</p>
       </div>
       {dialog}
     </Section>

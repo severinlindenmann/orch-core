@@ -47,9 +47,18 @@ def _canon(name: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", _clean(name)).strip())
 
 
+def _map(text: str) -> str:
+    return "".join(_LOOKALIKES.get(c, c) for c in text)
+
+
 def _key(name: str) -> str:
-    folded = "".join(_LOOKALIKES.get(c, c) for c in _canon(name)).lower().upper().lower()
-    return "".join(c for c in unicodedata.normalize("NFD", folded) if not unicodedata.category(c).startswith("M"))
+    """The skeleton two names are compared by. Look-alikes are mapped on the original-case text (Greek capital Ν is N,
+    small ν is v), then case is folded, then NFD drops the marks, then look-alikes are mapped AGAIN: a mark whose case
+    mapping is a letter (U+0345 becomes ι) is a letter only after folding, and must not survive as one. The dashboard's
+    ``nameKey`` does the same steps in the same order."""
+    folded = _map(_canon(name)).lower().upper().lower()
+    bare = "".join(c for c in unicodedata.normalize("NFD", folded) if not unicodedata.category(c).startswith("M"))
+    return _map(bare).lower()
 
 
 def _cat(c: str) -> str:

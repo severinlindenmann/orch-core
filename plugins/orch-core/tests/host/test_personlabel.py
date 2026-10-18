@@ -80,3 +80,9 @@ def test_the_terminal_marks_a_shown_name_as_the_hosts_word_and_keeps_the_id():
 def test_a_sharp_s_twin_is_shared_like_the_dashboard():
     twins = [{"person": A, "name": "Stra\u00dfe"}, {"person": B, "name": "Strasse"}]
     assert personlabel.label(A, twins) == "p_aaaa11112222… (name shared by 2 members)"
+
+
+def test_a_combining_mark_that_case_folds_to_a_letter_does_not_survive_as_one():
+    # U+0345 (combining ypogegrammeni) upper-cases to Greek capital iota: "Ann\u0345" must skeleton like "Anni"
+    twins = [{"person": A, "name": "Ann\u0345"}, {"person": B, "name": "Anni"}]
+    assert personlabel.label(A, twins) == "p_aaaa11112222… (name shared by 2 members)"

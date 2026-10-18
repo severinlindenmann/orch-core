@@ -4,8 +4,8 @@
   "data": {
     "grant": "gr_GRANT",
     "until": "2026-09-21T22:20:01Z",
-    "scope": "workable",
-    "until_local": "Mon 22:20 UTC"
+    "until_local": "Mon 22:20 UTC",
+    "scope": "workable"
   },
   "key": null,
   "seq": 7,

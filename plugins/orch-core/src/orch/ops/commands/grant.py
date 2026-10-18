@@ -19,9 +19,13 @@ def _issued(grant_id: str, event: dict[str, Any]) -> dict[str, Any]:
     in this computer's time with its zone, which the text line shows."""
     from orch.host.signcontent import local_time
 
-    data = {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]}
-    data["until_local"] = local_time(event["expires_at"], event.get("hours")) or event["expires_at"]
-    return data
+    until = event["expires_at"]  # the key order is the schema's: host mode answers in that order
+    return {
+        "grant": grant_id,
+        "until": until,
+        "until_local": local_time(until, event.get("hours")) or until,
+        "scope": event["scope"],
+    }
 
 
 def _verbs(raw: str) -> str | list[str]:

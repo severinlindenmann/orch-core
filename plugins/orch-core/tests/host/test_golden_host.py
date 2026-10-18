@@ -109,6 +109,23 @@ def test_agent_golden_in_host_mode(name, as_json, request):
     _check(agent_golden.GOLDEN / f"{name}.{'json' if as_json else 'txt'}", text)
 
 
+@pytest.fixture(autouse=True)
+def _utc():
+    """Times in the text are this computer's (the host runs in this process): the goldens are in UTC."""
+    import os
+    import time
+
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
 @pytest.mark.parametrize("name", _params(human_golden.CASES, HUMAN_PENDING))
 @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
 def test_human_golden_in_host_mode(name, as_json, request, monkeypatch):

@@ -10,6 +10,7 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { Switch } from '@/components/ui/switch'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
+import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
@@ -91,6 +92,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
           </ul>
         )}
       </Section>
+      {data.data?.add_ons.some((r) => r.id === 'publish' && r.state === 'on') && <PublishServer workspace={workspace} owner={owner} />}
       {dialog}
     </div>
   )

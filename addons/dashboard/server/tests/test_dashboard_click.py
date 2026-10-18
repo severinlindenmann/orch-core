@@ -1860,3 +1860,19 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
     res = prepare(client, token, stub, SEQUENCE)
     assert res.status_code >= 400 and "orch-core" in res.text
     assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "publish_setup", "server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"},
+        {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
+    ],
+)
+def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
+    # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
+    res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
+    assert script.prepared == 0
+    assert client.app.state.handoffs.active == {}

@@ -37,6 +37,9 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const conn = useRef<TermConnection | null>(null)
   const [req, setReq] = useState<AttachRequest>({ mode: initial, take: initial === 'write', n: 0 })
   const [lease, setLease] = useState<LeaseState>('reading')
+  // An ended run is not attached by itself: every page load would use up one of the few attach tickets a minute (and
+  // log a refusal when they run out) for output nobody asked to see. "Show output" attaches it, once.
+  const [replay, setReplay] = useState(() => run.state !== 'exited' && run.state !== 'lost')
   const [status, setStatus] = useState<{ words: string; detail?: string; final: boolean } | null>(null)
   const [paused, setPaused] = useState(false)
   const [lost, setLost] = useState(false)
@@ -74,6 +77,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
     let pausedTimer: ReturnType<typeof setTimeout> | undefined
     const again = (ms: number) => { retry = setTimeout(() => { if (!cancelled) setReq((r) => ({ mode: 'read', take: false, n: r.n + 1 })) }, ms) }
     const start = async () => {
+      if (!replay) return
       let ticket: string
       try {
         ticket = (await runsApi.ticket(ws, run.run, req.mode, req.take)).ticket
@@ -160,7 +164,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
       conn.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws, run.run, req.n])
+  }, [ws, run.run, req.n, replay])
 
   const take = () => setReq((r) => ({ mode: 'write', take: true, n: r.n + 1 }))
   const writing = lease === 'writing'
@@ -175,6 +179,12 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
             {lease === 'lost' ? 'Another tab or device took control of this terminal.' : busy ? 'Another tab or device is controlling this terminal.' : 'Read only.'}
           </span>
           <Button variant="link" size="xs" className="shrink-0" onClick={take}>{lease === 'lost' ? 'Take back' : 'Take control'}</Button>
+        </div>
+      )}
+      {!replay && (
+        <div role="status" className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1 text-xs text-text-muted" data-term-status data-ended-idle>
+          <span className="min-w-0 truncate">This terminal has ended.</span>
+          <Button variant="link" size="xs" className="shrink-0" onClick={() => setReplay(true)}>Show output</Button>
         </div>
       )}
       {status && (

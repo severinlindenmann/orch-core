@@ -71,6 +71,7 @@ def test_closed_route_allowlist():
         "/term",
         "/api/w/{ws}/agents/preview",
         "/api/w/{ws}/agents/start",
+        "/api/w/{ws}/model-routing",
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

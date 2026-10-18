@@ -107,6 +107,8 @@ class Settings(BaseModel):
         out = handler(self)
         if out.get("sign_methods") is None and not self.sign_methods_known:
             out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
+        if out.get("models") is None:
+            out.pop("models", None)  # none set, or an older core: absent
         return out
 
 

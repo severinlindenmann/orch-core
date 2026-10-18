@@ -202,8 +202,13 @@ def test_stripping_is_a_closed_exact_list():
     from orch.setup.steps import KNOWN_WORDING, strip_known_wording
 
     assert strip_known_wording("a " + _FIXED + " b").split() == ["a", "b"]
-    assert strip_known_wording("macOS did not let orch use the keychains") != strip_known_wording(
-        "x"
-    )  # not an exact match
+    glued = "macOS did not let orch use the keychains"
+    assert strip_known_wording(glued) == glued
     assert strip_known_wording(_FIXED.lower()) == _FIXED.lower()
     assert all(len(w) > 20 for w in KNOWN_WORDING)  # whole sentences, never a bare word
+
+
+def test_a_secret_running_into_a_fixed_sentence_edge_is_hidden():
+    assert redact_reason("rando" + _FIXED, ["random"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + "x", ["keychainx"]) == HIDDEN_REASON
+    assert redact_reason("abc" + _FIXED, ["abcmacos"]) == HIDDEN_REASON

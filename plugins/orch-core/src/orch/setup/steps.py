@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import re
 import secrets as _secrets
 import threading
 import time
@@ -281,7 +282,7 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
 
 #: The fixed sentences (and pieces) this flow's own code writes into reasons. A secret word that occurs only inside one
 #: of these is not a leak (a recovery word "use" must not hide "macOS did not let orch use the keychain"). Closed list,
-#: matched exactly and case-sensitively, longest first; add a sentence here only when the code emits it verbatim.
+#: matched exactly, case-sensitively and on whole-word edges, longest first; add only verbatim sentences.
 KNOWN_WORDING = tuple(
     sorted(
         (
@@ -303,7 +304,9 @@ def strip_known_wording(text: str) -> str:
     """``text`` without the fixed sentences of :data:`KNOWN_WORDING` (each replaced by one space, so the neighbours
     stay separated and every check still sees whatever else is there, split or joined as before)."""
     for w in KNOWN_WORDING:
-        text = text.replace(w, " ")
+        pre = r"(?<![A-Za-z0-9])" if w[0].isalnum() else ""
+        post = r"(?![A-Za-z0-9])" if w[-1].isalnum() else ""
+        text = re.sub(pre + re.escape(w) + post, " ", text)
     return text
 
 

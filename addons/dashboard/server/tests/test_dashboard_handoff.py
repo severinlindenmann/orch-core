@@ -1011,7 +1011,7 @@ def test_an_edit_links_repositories_and_the_server_builds_old_to_new_from_the_ho
     repos = {"proj": {"path": "/tmp/f6-proj"}, "other": {"path": "/tmp/f6-other"}}
     p1.store.append(p1.person_event(p1.owner, "workspace", "settings.changed", set={"repos": repos}), log="workspace")
     view = p1.store.ticket("DEMO-0001")
-    was = {k: (list(v) if isinstance(v, (list, tuple)) else dict(v)) for k, v in view.fields["links"].items()}
+    was = {k: (list(v) if isinstance(v, list | tuple) else dict(v)) for k, v in view.fields["links"].items()}
     body = _edit_body(p1, sections={}, links={"repos": ["proj", "other"], "branches": {"proj": "feat/demo-0001"}})
     res = post(client, token, stub, body)
     assert res.status_code == 200, res.text

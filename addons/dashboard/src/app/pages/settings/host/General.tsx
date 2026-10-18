@@ -21,6 +21,7 @@ import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
+import { ReposSection } from './Repos'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -31,7 +32,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   )
 }
 
-/** Workspace identity, the three durations (changed by a hand-off) and the repositories (listed only). */
+/** Workspace identity, the three durations (changed by a hand-off) and (in Repos.tsx) the repositories. */
 export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const settings = useQuery(queries.hostSettings(workspace.id))
   const identity = useQuery(queries.identity(workspace.id))
@@ -175,27 +176,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         )}
       </Section>
 
-      <Section title="Repositories">
-        {!data ? (
-          <p className="text-[13px] text-text-muted">Reading the repositories…</p>
-        ) : !data.available || !data.repos ? (
-          <p className="text-[13px] text-text-muted">This host does not say which repositories there are.</p>
-        ) : data.repos.length === 0 ? (
-          <p className="text-[13px] text-text-muted">No repositories are declared.</p>
-        ) : (
-          <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
-            {data.repos.map((r) => (
-              <li key={r.name} className="flex flex-wrap items-center gap-x-4 gap-y-0.5 py-1.5">
-                <Mono><Raw>{r.name}</Raw></Mono>
-                <span className="text-text-muted">{r.default_branch === null ? 'no default branch' : <Raw>{r.default_branch}</Raw>}</span>
-                {r.remote && <span className="min-w-0 break-all text-text-faint"><Raw>{r.remote}</Raw></span>}
-              </li>
-            ))}
-          </ul>
-        )}
-        {data?.repos_more && <p className="mt-2 text-[12px] text-text-muted">More repositories exist than are listed here.</p>}
-        <p className="mt-2 text-[12px] text-text-muted">Repositories are listed here only. This version of orch has no button or command to add one yet: ask whoever set the workspace up.</p>
-      </Section>
+      <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
       {dialog}
     </div>
   )

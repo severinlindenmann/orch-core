@@ -25,6 +25,7 @@ from typing import Any
 
 __all__ = [
     "CONFIG_SCHEMA",
+    "LEGACY_STORE_FOLDERS",
     "STORE_DIR",
     "WRITE_NEW",
     "Layout",
@@ -40,6 +41,8 @@ __all__ = [
 ]
 
 STORE_DIR = ".orch"
+#: the folders of a store that, in the legacy layout, sit directly in the project folder
+LEGACY_STORE_FOLDERS = (".state", "events", "tickets", "addons", STORE_DIR)
 CONFIG_SCHEMA = "orch.workspace/2"
 _CONFIG_LIMIT = 1 << 20
 

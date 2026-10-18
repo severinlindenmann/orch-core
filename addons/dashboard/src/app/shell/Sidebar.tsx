@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   Files,
+  History,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
@@ -427,4 +428,6 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
+  /** Activity (#595): who did what; listed where the host serves `activity/1`. */
+  { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
 ] as const

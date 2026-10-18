@@ -1869,7 +1869,7 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
         {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
     ],
 )
-def test_where_files_go_and_the_share_signature_are_never_one_click(client, token, stub, script, host_check, rich, body):
+def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
     # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
     res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
     err = res.json()["error"]

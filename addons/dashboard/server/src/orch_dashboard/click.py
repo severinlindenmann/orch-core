@@ -268,7 +268,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise HostError(
                 {
                     "code": "human.click_refused",
-                    "message": "Sharing files and choosing where they go are signed in your terminal, not with one click.",
+                    "message": "Sharing files and choosing where they go are signed in your terminal, not by click.",
                     "retryable": False,
                     "reason": "terminal_only",
                 },

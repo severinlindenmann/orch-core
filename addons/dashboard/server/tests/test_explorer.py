@@ -1033,14 +1033,37 @@ def test_a_search_with_many_multi_link_hits_walks_orch_files_once(get, world, mo
     git(world.proj, "add", "-A")
     git(world.proj, "commit", "-q", "-m", "many links", n=5)
     walks = []
-    real = os.lstat
+    real = os.scandir
+    state = os.path.realpath(world.gateway.state)
 
     def counting(path, *a, **k):
-        if str(path).endswith("/config.json"):  # a store file: the walk visits it once per walk
+        if str(path) == state:  # the state folder is read once per walk
             walks.append(path)
         return real(path, *a, **k)
 
-    monkeypatch.setattr(guard.os, "lstat", counting)
+    monkeypatch.setattr(guard.os, "scandir", counting)
     got = get("/search", q="manylinks").json()
     assert len(got["hits"]) == 24
     assert len(walks) == 1, walks
+
+
+def test_a_symlinked_state_folder_does_not_open_the_hard_link_check(get, world, monkeypatch):
+    real = world.tmp / "real-state"
+    real.mkdir()
+    (real / "keys.jsonl").write_text("KEYMATERIAL\n")
+    link = world.tmp / "state-link"
+    link.symlink_to(real)
+    os.link(real / "keys.jsonl", world.proj / "innocent.txt")
+    monkeypatch.setattr(world.gateway, "state", link)
+    got = get("/file", root="ws", path="innocent.txt")
+    assert got.status_code == 403 and "KEYMATERIAL" not in got.text
+    # the same through a root of another repository
+    os.link(real / "keys.jsonl", world.other / "also.txt")
+    assert get("/file", root="repo:other", path="also.txt").status_code == 403
+
+
+def test_a_starting_place_that_is_not_a_folder_or_file_makes_the_walk_incomplete(world, tmp_path):
+    fifo = tmp_path / "odd"
+    os.mkfifo(fifo)
+    root = guard.Root("ws", "w", os.path.realpath(world.proj), "workspace", forbidden=(str(fifo),))
+    assert root._banned_files[1] is False

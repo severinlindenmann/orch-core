@@ -115,15 +115,15 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
     link = check_access(gateway, ws)
     project, store = gateway.workspace_folder(ws)
     real = os.path.realpath(project)
-    forbidden = {os.fspath(gateway.state), os.fspath(gateway.run)}
+    forbidden = {os.path.realpath(gateway.state), os.path.realpath(gateway.run)}
     try:
         from orch import repopaths
 
-        forbidden.update(repopaths._config_dirs())
+        forbidden.update(os.path.realpath(d) for d in repopaths._config_dirs())
     except Exception:  # noqa: BLE001 - the fixed places below still apply
         pass
     if store is not None:
-        forbidden.add(os.fspath(store))
+        forbidden.add(os.path.realpath(store))
     legacy = frozenset(guard.LEGACY_STORE) if store is None else frozenset()
     show = link.call("workspace.show")
     name = show.get("name") if isinstance(show, dict) and isinstance(show.get("name"), str) else "Workspace"

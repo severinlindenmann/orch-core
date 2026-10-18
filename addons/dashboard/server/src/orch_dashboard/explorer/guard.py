@@ -160,7 +160,11 @@ class Root:
         found: set[tuple[int, int]] = set()
         complete = True
         seen = 0
-        stack = sorted({*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)})  # each once
+        starts = {*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)}
+        # a starting place may itself be a link (a symlinked config folder): follow THAT, once, and only that; links met
+        # inside the walk are never followed. Each real place once.
+        stack = sorted({os.path.realpath(p) for p in starts})
+        top = set(stack)
         while stack:
             path = stack.pop()
             if seen >= WALK_LIMIT:
@@ -175,6 +179,8 @@ class Root:
             seen += 1
             if stat.S_ISREG(st.st_mode):
                 found.add(_identity(st))
+            elif path in top and not stat.S_ISDIR(st.st_mode):
+                complete = False  # a starting place that is neither a folder nor a file: not provably covered
             elif stat.S_ISDIR(st.st_mode):
                 try:
                     with os.scandir(path) as it:

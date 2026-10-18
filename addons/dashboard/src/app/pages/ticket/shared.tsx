@@ -184,9 +184,9 @@ export function ActorIcon({ kind, className }: { kind: 'person' | 'agent' | 'hos
   return <Icon className={cn('size-3.5', className)} aria-label={kind} />
 }
 
-export function Section({ title, aside, children, className }: { title: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
+export function Section({ title, aside, children, className, label, testId }: { title: ReactNode; aside?: ReactNode; children: ReactNode; className?: string; label?: string; testId?: string }) {
   return (
-    <section className={cn('rounded-lg border border-border bg-surface', className)}>
+    <section aria-label={label} data-testid={testId} className={cn('rounded-lg border border-border bg-surface', className)}>
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="flex-1 text-[13px] font-semibold text-text">{title}</h3>
         {aside}

@@ -540,7 +540,7 @@ def test_share_target_refuses_bad_parts_before_quoting(part):
 
 def test_share_target_output_always_passes_the_signer():
     s, _ = mk()
-    for p in ("a b", "é", "a..b", ".hidden", "50%", "x?y", "x#y", "%2e"):
+    for p in ("a b", "é", "a..b", ".hidden", "50%", "x?y", "x#y"):
         s.request("GET", share_target(WS, "shares", "id", "files", p))
 
 
@@ -548,3 +548,5 @@ def test_a_name_that_decodes_to_a_separator_is_refused_even_when_quoted():
     # the literal name "a%2fb" is quoted to a%252fb, which one more decode turns into a/b: refused on purpose
     with pytest.raises(SignerRefused):
         mk()[0].request("GET", share_target(WS, "shares", "a%2fb"))
+    with pytest.raises(SignerRefused):
+        mk()[0].request("GET", share_target(WS, "shares", "%2e"))

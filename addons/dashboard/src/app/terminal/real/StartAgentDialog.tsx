@@ -39,6 +39,15 @@ export const MODE_HELP: Record<AgentMode, string> = {
   context: 'Reads the ticket and the code, so you can ask questions. It changes nothing.',
 }
 
+/** What each mode is called on screen; the developer word stays in the option's Details line. */
+export const MODE_LABEL: Record<AgentMode, string> = {
+  refine: 'Write requirements and plan',
+  work: 'Do the work',
+  fix: 'Fix what was sent back',
+  continue: 'Continue earlier work',
+  context: 'Read and answer questions',
+}
+
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
 const DEPOSIT_POLLS = 5
 const DEPOSIT_POLL_MS = 2000
@@ -148,12 +157,12 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <select id="agent-harness" className="h-7 rounded border border-border bg-bg px-2" value={harness} onChange={(e) => setHarness(e.target.value as Harness)}>
           {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
-        <Label htmlFor="agent-mode" className="text-xs text-text-muted">Mode</Label>
+        <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
         <select id="agent-mode" className="h-7 rounded border border-border bg-bg px-2" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
-          {AGENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+          {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
         </select>
         <span />
-        <p id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]}</p>
+        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
         <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
         <Input id="agent-model" className="h-7 text-xs" placeholder="the agent's default" value={model} autoComplete="off" spellCheck={false} onChange={(e) => setModel(e.target.value)} />
         {harness === 'claude-code' && (<>
@@ -202,7 +211,7 @@ function PreviewLines({ data, ticket }: { data: AgentPreview; ticket?: string })
     <div className="space-y-2 text-xs" data-testid="agent-preview">
       {data.grant && (
         <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-          <dt className="text-text-muted">Runner grant</dt><dd data-testid="agent-grant"><Raw>{data.grant.id}</Raw>, {data.grant.scope} tickets, until {clock(data.grant.until)}</dd>
+          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
         </dl>
       )}
       <details data-testid="agent-details">
@@ -382,7 +391,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         </div>
       )}
       {handoff && workspace && action.hours > 0 && <HandoffDialog ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
-        summary={<p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, choose to hand the grant to the orch runner.</p>}
+        summary={<p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}
         onSettled={(phase, _state, request) => {
           if (phase !== 'done') return
           setHandoff(false)

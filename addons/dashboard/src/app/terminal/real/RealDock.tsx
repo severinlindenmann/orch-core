@@ -4,7 +4,7 @@
 // (feature `agent_start`); the agent's run then appears here like a shell and attaches the same way.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { MoreHorizontal, PanelBottomClose, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
+import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
 import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
@@ -44,7 +44,12 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const right = side === 'right'
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: !!ws })
   const runs = list.data?.runs ?? []
-  const shown = runs.filter((r) => r.kind === 'shell' || r.kind === 'agent')
+  // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
+  const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
+  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !(dismissed.has(r.run) && ended(r)))
+  const endedShown = shown.filter(ended)
+  const dismiss = (ids: string[]) => setDismissed((d) => new Set([...d, ...ids]))
   const [selected, setSelected] = useState<string | null>(null)
   // The run this mount opened itself: its first attach takes the lease (nobody else can hold a run that was just created).
   const [opened, setOpened] = useState<string | null>(null)
@@ -114,7 +119,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
-        {!right && <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} />}
+        {!right && <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />}
         {right && <span className="flex-1" />}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -140,6 +145,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             ) : (
               <DropdownMenuItem disabled={!rightFits} onSelect={() => setPrefs((p) => ({ ...p, side: 'right' }))}>{rightFits ? 'Move to the right' : 'Not enough room — dock at the bottom'}</DropdownMenuItem>
             )}
+            <DropdownMenuItem disabled={endedShown.length === 0} onSelect={() => dismiss(endedShown.map((r) => r.run))}>Clear ended terminals</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
           </DropdownMenuContent>
@@ -150,7 +156,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">
-          <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} />
+          <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
@@ -177,18 +183,21 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   )
 }
 
-function RunTabs({ runs, current, onSelect, doubt }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean> }) {
+function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean>; onDismiss: (id: string) => void }) {
   if (runs.length === 0) return <span className="min-w-0 flex-1 truncate text-xs text-text-faint">No terminal open</span>
   return (
     <div role="tablist" aria-label="Terminals" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
       {runs.map((r, i) => (
-        <button key={r.run} type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
+        <span key={r.run} className="flex shrink-0 items-center">
+        <button type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>
           <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' ? 'bg-success' : 'bg-text-faint')} />
           <span className="tabular-nums text-text-faint">{i + 1}</span>
           <span className="min-w-0 truncate">{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
           <span className="sr-only">{r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
         </button>
+        {r.state !== 'running' && r.state !== 'starting' && <button type="button" aria-label={`Clear ${runName(r)}`} title="Clear this ended terminal" onClick={() => onDismiss(r.run)} className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-text-faint hover:bg-surface-3 hover:text-text"><X className="size-3" aria-hidden /></button>}
+        </span>
       ))}
     </div>
   )
@@ -218,7 +227,7 @@ function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data:
               <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
                 <dt className="text-text-muted">Runs</dt>
                 <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-                {data.login_shell && (<><dt className="text-text-muted">Shell</dt><dd>The program is found and started through your login shell; your shell profile runs first and can change what runs.</dd></>)}
+                {data.login_shell && (<><dt className="text-text-muted">Started like</dt><dd>You would start it yourself in a terminal, so your own shell settings apply first and can change what runs.</dd></>)}
                 {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
               </dl>
             </details>

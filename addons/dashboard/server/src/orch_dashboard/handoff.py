@@ -273,6 +273,18 @@ class PeopleChange(BaseModel):
     remove: list[PersonId] = Field(default_factory=list, max_length=16)
 
 
+class EditLinks(BaseModel):
+    """F6: the repositories (workspace repo names) a ticket is linked to and a branch for some of them. The whole new
+    list: the server compares it with the ticket as read now and builds the old-to-new change from that."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    repos: list[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = Field(max_length=16)
+    branches: dict[
+        Annotated[str, StringConstraints(min_length=1, max_length=100)],
+        Annotated[str, StringConstraints(min_length=1, max_length=200)],
+    ] = Field(default_factory=dict, max_length=16)
+
+
 class EditTicket(Action):
     """B12D (finding N3): an inline edit of an EXISTING ticket on ONE review and ONE confirmation. The page sends what
     it changes and the `head_seq` of the log it showed. This server reads the ticket, refuses an edit of a ticket that
@@ -286,6 +298,7 @@ class EditTicket(Action):
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
     acceptance: EditAcceptance | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
+    links: EditLinks | None = None
 
     def intent(self, data: dict) -> dict:
         """`data` is the host's `ticket.get` of the ticket, read now."""
@@ -331,6 +344,18 @@ class EditTicket(Action):
                 }
                 if not intent["acceptance"]["edit"] and not intent["acceptance"]["add"]:
                     del intent["acceptance"]
+            if self.links is not None:
+                now = doc.get("links") or {"repos": [], "branches": {}, "prs": [], "external": []}
+                was = {
+                    "repos": list(now.get("repos") or []),
+                    "branches": dict(now.get("branches") or {}),
+                    "prs": list(now.get("prs") or []),
+                    "external": list(now.get("external") or []),
+                }
+                repos = sorted(set(self.links.repos))
+                branches = {r: b for r, b in self.links.branches.items() if r in repos}
+                if set(repos) != set(was["repos"]) or branches != was["branches"]:
+                    intent["links"] = {"was": was, "repos": repos, "branches": branches}
             if self.people:
                 intent["people"] = {
                     role: {"add": sorted(set(c.add)), "remove": sorted(set(c.remove))}

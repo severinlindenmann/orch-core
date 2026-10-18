@@ -68,6 +68,7 @@ export const LAYOUT_SCENARIOS = [
   // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
   'agent-pill',
   'agent-pill-stopped',
+  'agent-pill-off',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -345,7 +346,9 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
   const acceptance = (action.acceptance ?? { edit: {}, add: [] }) as { edit: Record<string, string>; add: string[] }
   const people = (action.people ?? {}) as Record<string, { add: string[]; remove: string[] }>
   const peopleRows = Object.entries(people).flatMap(([role, c]) => [...c.add.map((p) => ({ field: `${role}: add`, before: null, after: p })), ...c.remove.map((p) => ({ field: `${role}: remove`, before: null, after: p }))])
-  const of = sections.length + Object.keys(acceptance.edit).length + acceptance.add.length + Object.keys(people).length
+  const links = action.links as { repos: string[]; branches: Record<string, string> } | undefined
+  const linkRows = (links?.repos ?? []).map((repo) => ({ field: `repository ${repo}`, before: 'not linked', after: links?.branches[repo] ? `linked, branch ${links.branches[repo]}` : 'linked, no branch' }))
+  const of = sections.length + Object.keys(acceptance.edit).length + acceptance.add.length + (links ? 1 : 0) + Object.keys(people).length
   const intent = { v: 1, kind: 'edit_ticket', ticket: { key, uid }, ticket_type: 'feature', head: 'sha256:' + 'e'.repeat(64), sections: Object.fromEntries(sections.map(([sid, text]) => [sid, { was: 'sha256:' + '0'.repeat(64), text }])) }
   const first = sections[0] ?? null
   const event = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'e'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.updated', base_rev: { [`body.${first?.[0] ?? 'summary'}`]: 'sha256:' + '0'.repeat(64) }, sections: { [first?.[0] ?? 'summary']: { hash: 'sha256:' + '1'.repeat(64), refs: [] } } }
@@ -374,11 +377,11 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
     headline,
     content: {
       headline,
-      subline: 'its text, acceptance checks and people, as shown below',
+      subline: 'its text, acceptance checks, repositories and people, as shown below',
       ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
-      fields_changed: peopleRows,
+      fields_changed: [...linkRows, ...peopleRows],
       notes: [
         'Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing stops and nothing more is signed.',
         `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
@@ -781,7 +784,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
-  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped')
+  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (

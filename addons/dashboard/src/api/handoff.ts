@@ -29,10 +29,10 @@ export type HandoffAction =
   | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] } }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
-   * criteria to change or add and the people to add or remove. `head_seq` is the log head the page showed: the server
+   * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
-  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
+  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }

@@ -135,7 +135,8 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
 function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
   const branches = Object.entries(ticket.links.branches)
   const pulls = prs ? ticket.links.prs : []
-  if (branches.length === 0 && pulls.length === 0 && ticket.links.external.length === 0) return null
+  const bare = ticket.links.repos.filter((r) => !ticket.links.branches[r]) // F6: linked, no branch named yet
+  if (branches.length === 0 && bare.length === 0 && pulls.length === 0 && ticket.links.external.length === 0) return null
   return (
     <Section title="Code">
       <ul className="space-y-2 text-[13px]">
@@ -144,6 +145,15 @@ function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
             <GitBranch className="mt-0.5 size-3.5 shrink-0 text-text-muted" />
             <span className="min-w-0">
               <span className="block break-all font-mono text-[12px]">{branch}</span>
+              <span className="text-[11px] text-text-faint">{repo}</span>
+            </span>
+          </li>
+        ))}
+        {bare.map((repo) => (
+          <li key={`bare-${repo}`} className="flex items-start gap-2">
+            <GitBranch className="mt-0.5 size-3.5 shrink-0 text-text-muted" />
+            <span className="min-w-0">
+              <span className="block text-[12px] text-text-muted">No branch named yet</span>
               <span className="text-[11px] text-text-faint">{repo}</span>
             </span>
           </li>

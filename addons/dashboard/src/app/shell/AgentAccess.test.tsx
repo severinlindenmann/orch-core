@@ -28,14 +28,28 @@ it('shows the runner expiry and short-grant reminder and opens Extend', async ()
   expect(await screen.findByRole('status')).toHaveTextContent('Agent access ends at 13:00')
   expect(screen.getByRole('button', { name: 'Extend agent access from reminder' })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Extend agent access' }))
-  expect(screen.getByText(/Agents that are running now stop; new agents use the extended access/)).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Extend agent access' })).toBeInTheDocument()
+  expect(screen.getByText(/Choose how long agents may keep working for you/)).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
-it('hides terminal-only access', async () => {
+it('with no agent access at all (also after a reload) the pill offers to let agents work', async () => {
   runner.grant = null
-  const { container } = show()
-  await waitFor(() => expect(agentsApi.runner).toHaveBeenCalled())
-  expect(container).toBeEmptyDOMElement()
+  show()
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents are off')
+  expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Let agents work for you…' }))
+  expect(screen.getByRole('heading', { name: 'Let agents work for you' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
+})
+it('the Stop review says whose access and until when in plain words, the id only under Technical details', async () => {
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
+  await screen.findByRole('button', { name: 'Sign stop runner' })
+  expect(screen.getByText(/This ends the agent access for you, which runs until/)).toBeInTheDocument()
+  const details = screen.getByText('Technical details').closest('details')!
+  expect(details).toHaveTextContent('Access id: runner')
+  expect(screen.getByText(/This ends the agent access/).closest('details')).toBeNull()
 })
 it('confirms Stop and signs each own grant separately with progress', async () => {
   show()

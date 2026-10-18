@@ -24,3 +24,6 @@ interrupted, the next host start (or `orch migrate`) finishes or undoes it.
 - A project that already has its own `.orch/` folder (another tool) cannot be set up as an orch workspace; rename it.
 - Records-enabled workspaces move their records repository with the store only when the host recorded its HEAD.
 - Documents: ticket-format §2 and §10.7, host D-P2-5, harnesses.
+
+**After the move period.** Once you have moved your workspaces, a workspace whose store is still in the project folder is
+refused by every command with one fix, `orch migrate` (which keeps working); nothing is read or written until it is moved.

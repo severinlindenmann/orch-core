@@ -26,6 +26,7 @@ from typing import Any
 __all__ = [
     "CONFIG_SCHEMA",
     "STORE_DIR",
+    "LEGACY_ALLOWED",
     "WRITE_NEW",
     "Layout",
     "LayoutError",
@@ -47,6 +48,13 @@ _CONFIG_LIMIT = 1 << 20
 #: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
 #: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
 WRITE_NEW = True
+
+#: Final state of the move (design step 12): ``False`` = a workspace whose store is still in the project root is
+#: refused wherever a store is opened, with the one fix, ``orch migrate`` (which does not open a legacy store, so it
+#: still works). Discovery, ``orch migrate`` and the host's registry read still SEE a legacy store. The environment
+#: variable ``ORCH_ALLOW_LEGACY_LAYOUT=1`` is the person's explicit escape hatch for a store they have not moved yet
+#: (the layout is as safe as it was; only the default is to ask for the move).
+LEGACY_ALLOWED = os.environ.get("ORCH_ALLOW_LEGACY_LAYOUT") == "1"
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)

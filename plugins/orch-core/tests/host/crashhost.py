@@ -16,6 +16,7 @@ from pathlib import Path
 from orch import layout as _layout
 
 _layout.WRITE_NEW = False  # the crash tests build legacy root stores, like the rest of the suite (tests/conftest.py)
+_layout.LEGACY_ALLOWED = True
 
 
 def die(*_: object, **__: object) -> None:

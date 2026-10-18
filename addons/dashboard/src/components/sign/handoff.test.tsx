@@ -243,9 +243,33 @@ describe('the hand-off dialog (real host)', () => {
     s.get.mockResolvedValue(state(request, { state: 'cancelled' }))
     await mount(PLAN)
     expect(await screen.findByText('Cancelled', {}, { timeout: 9000 })).toBeInTheDocument()
-    expect(screen.getByText('Nothing was signed.')).toBeInTheDocument()
+    expect(screen.getByText(/Nothing was signed\./)).toBeInTheDocument()
     expect(s.prepare).toHaveBeenCalledTimes(1)
   }, 15000)
+
+  it('after a cancelled request, Try again starts a fresh request (a new intent), never the same cancelled one', async () => {
+    const first = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '1' })
+    const second = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2', code: 'AAAA-BBBB' })
+    s.prepare.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    s.get.mockResolvedValueOnce(state(first, { state: 'cancelled' })).mockResolvedValue(state(second))
+    const { user } = await mount(PLAN)
+    expect(await screen.findByText('Cancelled', {}, { timeout: 9000 })).toBeInTheDocument()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign AAAA-BBBB')
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
+  }, 15000)
+
+  it('opening the action again after a cancel asks for a fresh request instead of showing the cancelled one', async () => {
+    const old = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '1' })
+    const fresh = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2', code: 'CCCC-DDDD' })
+    s.prepare.mockResolvedValueOnce({ ...old, state: 'cancelled' }).mockResolvedValueOnce(fresh)
+    s.get.mockResolvedValue(state(fresh))
+    await mount(PLAN)
+    expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign CCCC-DDDD')
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
+    expect(screen.queryByText('Cancelled')).toBeNull()
+  })
 
   it('shows Expired with Start again, and prepares again only when the person asks', async () => {
     const first = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '1' })

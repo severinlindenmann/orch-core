@@ -44,8 +44,6 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
         return f"{tag}/GRANT"
     if op in ("policy.set", "settings.set") and ticket is None:
         return f"{tag}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"
-    if op in ("addon.grant", "addon.purge"):
-        return f"{signer._clean(prepared['events'][0].get('name'))}~{wid[-8:]}"
     return signer.confirm_word(prepared)
 
 

@@ -72,7 +72,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
   const [pinned, setPinned] = useState<string | undefined>(undefined)
   // `retry` is the explicit "do it again" counter of this action; `lost` is a prepare whose answer may have been lost.
-  const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
+  const attempt = useRef<{ sig: string; retry: number; lost: boolean; advanced?: boolean } | null>(null)
+  const prepareRef = useRef<((action: HandoffAction, retryFloor?: number) => Promise<void>) | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -118,6 +119,16 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           // The host's own hashes do not recompute here: do not show it, and ask the host to drop it.
           void api.cancelHandoff(ws, got.id).catch(() => {})
           setPhase('invalid')
+          return
+        }
+        if ((got.state === 'cancelled' || got.state === 'expired') && attempt.current && !attempt.current.advanced && live.current.phase === 'preparing') {
+          // The host gave back the request this same action made earlier, and that one ended unsigned (cancelled by a wrong word or
+          // Cancel in the terminal, or expired): nothing was signed and it can never be signed. Opening the action again is the
+          // person's explicit new start, so ask for a fresh request once instead of showing a dead end.
+          attempt.current.advanced = true
+          attempt.current.retry += 1
+          busy.current = false
+          await prepareRef.current?.(action, 0)
           return
         }
         live.current.request = got
@@ -174,6 +185,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     },
     [ws, setPhase, refetch],
   )
+  prepareRef.current = prepare
 
   const finish = useCallback(
     (next: HandoffPhase, got: HandoffState | null) => {

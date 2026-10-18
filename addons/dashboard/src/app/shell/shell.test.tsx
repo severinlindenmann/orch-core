@@ -18,6 +18,18 @@ describe('app shell', () => {
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
   })
 
+  it('opens the test checklist with a full page load (no in-app move that renders the old page outside its shell)', async () => {
+    renderApp('/')
+    const link = await screen.findByRole('link', { name: 'Test checklist' })
+    expect(link).toHaveAttribute('href', '/checklist')
+    let prevented: boolean | null = null
+    const seen = (e: Event) => { prevented = e.defaultPrevented; e.preventDefault() }
+    document.addEventListener('click', seen)
+    link.click()
+    document.removeEventListener('click', seen)
+    expect(prevented).toBe(false) // a router link would have prevented the default and moved in the app
+  })
+
   it('Pin to sidebar says what happened: already pinned, or pinned', async () => {
     const msg = vi.spyOn(toast, 'message')
     const ok = vi.spyOn(toast, 'success')

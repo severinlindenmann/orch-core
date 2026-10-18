@@ -8,6 +8,7 @@ import asyncio
 import http.client
 import json
 import os
+import re
 import socket
 import stat
 import threading
@@ -225,12 +226,21 @@ def register(app, auth, proxy, port):
             # does: a fresh one-time (30 s) login code in the fragment of the destination, redeemed by the normal
             # bootstrap. The core's {url} is only a destination; nothing else of its body is kept.
             try:
-                await asyncio.to_thread(reply.read, 4097)  # the core's {url} is only "/": discarded
+                data = await asyncio.to_thread(reply.read, 4097)  # the core's {url} is only "/": discarded
             finally:
                 reply.close()
                 conn.close()
+            # The new workspace's id is the one thing kept: the page selects it before it opens the dashboard (otherwise
+            # the dashboard would open the workspace that was selected before). Anything but a plain id is dropped.
+            try:
+                wid = json.loads(data).get("workspace_id")
+            except Exception:
+                wid = None
+            if not (isinstance(wid, str) and re.fullmatch(r"[0-9A-Za-z_-]{1,64}", wid)):
+                wid = None
             fragment = urllib.parse.urlencode({"launch": auth.launch(port)["code"], "to": "/"})
-            return JSONResponse({"url": f"/#{fragment}"}, headers={"Cache-Control": "no-store"})
+            out = {"url": f"/#{fragment}", **({"workspace_id": wid} if wid else {})}
+            return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
         async def chunks():
             try:

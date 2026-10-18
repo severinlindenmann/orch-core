@@ -371,7 +371,7 @@ class SetupFlow:
             "workspace_id", ""
         )
         self._closed = True
-        return {"url": self.e.workspace_url(wid)}
+        return {"url": self.e.workspace_url(wid), "workspace_id": str(wid)}
 
     def cancel_run(self) -> None:
         """Ctrl-C on the setup terminal: the run stops between steps (a conversion in flight is undone)."""

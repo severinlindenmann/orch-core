@@ -368,5 +368,6 @@ def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp
     f = finish_flow(tmp, FakePorts(), box)
     st = f.dispatch("GET", "state", {}, None)[1]
     assert st["missing"] == [] and st["complete"] is True
-    assert f.dispatch("POST", "finish", {}, {})[1]["url"]
+    out = f.dispatch("POST", "finish", {}, {})[1]
+    assert out["url"] and out["workspace_id"]
     assert f.finished and f.outcome == "done"

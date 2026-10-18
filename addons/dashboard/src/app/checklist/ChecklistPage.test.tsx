@@ -27,7 +27,7 @@ describe('run 2 data', () => {
     const ids = ALL_STEPS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^[A-Z][0-9]{1,2}(\.[0-9]{1,2})?$/)
-    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M'])
+    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N'])
     for (const id of ['A1', 'A2', 'B1.1', 'B1.7', 'B2.8', 'B3.9', 'C1', 'C8', 'D6', 'E6', 'F8']) expect(ids).toContain(id)
   })
   it('holds no secret material and no install pin (the lead gives the line)', () => {

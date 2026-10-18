@@ -53,8 +53,12 @@ export type HandoffAction =
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' }
+  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' }
+  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' }
+  /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
+  | { action: 'publish_setup'; server: string; share: string }
+  /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
+  | { action: 'publish_share'; key: string; staged_id: string }
   /** The runner grant, signed in the terminal where one click is not used (`orch sign` hands the secret to the runner). */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
   /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */

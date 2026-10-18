@@ -56,3 +56,18 @@ def test_an_addon_that_needs_dashboard_execution_says_what_to_run():
     assert "Terminals are not turned on" in needs("terminals", {**off, "enabled": True})
     assert needs("terminals", {**off, "enabled": True, "terminals": True}) is None
     assert needs("start-agent", None)  # the host says nothing: not offered
+
+
+def test_publish_is_a_shipped_addon_with_no_machine_precondition_and_plain_words():
+    """P5: Publish is switched like the others (a signed addon.grant), needs no dashboard execution and holds no run."""
+    from orch.setup import facts
+
+    assert isinstance(parse({"action": "addon_grant", "name": "publish"}), AddonGrant)
+    assert host_call(parse({"action": "addon_disable", "name": "publish"})) == ("addon.disable", {"name": "publish"})
+    off = {"enabled": False, "terminals": False, "connected": False}
+    assert needs("publish", off) is None and needs("publish", None) is None
+    assert busy("publish", [{"kind": "agent", "cwd": {"kind": "worktree"}}]) is None
+    listed = {a.id: a for a in facts.catalog(optional=True)}
+    assert "publish" in listed and listed["publish"].title == "Publish"
+    assert "nothing leaves this mac until you sign" in listed["publish"].desc.lower()
+    assert "publish" not in {a.id for a in facts.catalog()}  # the setup wizard does not offer or nag about it

@@ -1,0 +1,15 @@
+{
+  "schema": "orch.addon/2",
+  "name": "publish",
+  "version": "0.1.0",
+  "title": "Publish",
+  "entry": {
+    "cmd": [
+      "orch-publish-addon",
+      "serve"
+    ]
+  },
+  "capabilities": [
+    "network"
+  ]
+}

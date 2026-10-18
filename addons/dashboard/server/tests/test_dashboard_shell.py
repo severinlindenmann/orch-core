@@ -52,6 +52,12 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/worktrees",
         "/api/w/{ws}/worktrees/create",
         "/api/w/{ws}/worktrees/remove",
+        "/api/w/{ws}/shares",
+        "/api/w/{ws}/shares/prepare",
+        "/api/w/{ws}/shares/send",
+        "/api/w/{ws}/shares/revoke",
+        "/api/w/{ws}/shares/discard",
+        "/api/w/{ws}/shares/register",
         "/api/w/{ws}/activity",
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
@@ -320,7 +326,14 @@ def test_every_real_host_settings_tab_is_served(client):
 
 @pytest.mark.parametrize(
     "path",
-    ["/w/DEMO/guide", "/w/DEMO/worktrees", "/w/DEMO/artifacts", "/w/DEMO/addon/guide/main", "/w/DEMO/settings/addon/x"],
+    [
+        "/w/DEMO/guide",
+        "/w/DEMO/worktrees",
+        "/w/DEMO/shares",
+        "/w/DEMO/artifacts",
+        "/w/DEMO/addon/guide/main",
+        "/w/DEMO/settings/addon/x",
+    ],
 )
 def test_reload_addresses_named_by_the_e2e(client, path):
     assert client.get(path).status_code == 200

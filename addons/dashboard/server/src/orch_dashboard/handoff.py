@@ -586,7 +586,7 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees"]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish"]
 
 
 class AddonGrant(Action):
@@ -602,6 +602,44 @@ class AddonDisable(Action):
 
     action: Literal["addon_disable"]
     name: AddonName
+
+
+#: core `publishOrigin` (schemas/common.json): https, or http on this computer only; no path, lower case
+Origin = Annotated[
+    str,
+    StringConstraints(
+        max_length=300,
+        pattern=r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
+        r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)$",
+    ),
+]
+
+
+class PublishSetup(Action):
+    """`settings.set {set:{publish:{server, share}}}`: where shared files are sent and where a link opens. Signed; the
+    review says both addresses in words. Only a person changes it (never an agent), and always in the terminal: it
+    decides where files go."""
+
+    action: Literal["publish_setup"]
+    server: Origin
+    share: Origin
+
+    @model_validator(mode="after")
+    def different(self):
+        if self.server == self.share:
+            raise ValueError("the files and the links use two different addresses")
+        return self
+
+
+class PublishShare(Action):
+    """`publish.share {staged_id}` through `human.prepare`: a person's signature over the exact words the host builds
+    from the staged copy (ticket, kind, days, server, every file with size and hash). The page then calls
+    `POST /shares/send`; the host refuses it without this signature. `key` is the ticket the copy belongs to (the
+    prepared review must be about that ticket). Terminal only: the click signer does not serve this op."""
+
+    action: Literal["publish_share"]
+    key: Key
+    staged_id: Annotated[str, StringConstraints(pattern=r"^ps_[0-9a-f]{32}$")]
 
 
 class GrantRevoke(Action):
@@ -658,6 +696,8 @@ PrepareBody = Annotated[
     | MemberRemove
     | AddonGrant
     | AddonDisable
+    | PublishSetup
+    | PublishShare
     | GrantRevoke
     | RunnerGrant,
     Field(discriminator="action"),
@@ -793,6 +833,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case PublishSetup():
+            return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
+        case PublishShare():
+            return "publish.share", {"staged_id": action.staged_id}
         case RepoSet():
             return "settings.set", {"set": {"repos": {action.name: action.entry()}}}
         case RepoRemove():
@@ -819,6 +863,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
+#: core `orch.publishclient.approval.MARK` (cross-checked by a test): the first line of every share approval
+PUBLISH_MARK = "Publish approval: share files outside this computer"
 DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
 WORKSPACE_OPS = (
     "settings.set",
@@ -851,9 +897,18 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | RepoSet() | RepoRemove():
+        case SettingsSet() | RepoSet() | RepoRemove() | PublishSetup():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
+        case PublishShare():
+            # one `log.added` note on the ticket whose words are the host's approval text for exactly this staged copy
+            return lambda ev: (
+                len(ev) == 1
+                and ev[0].get("type") == "log.added"
+                and isinstance(ev[0].get("text"), str)
+                and ev[0]["text"].startswith(PUBLISH_MARK + "\n")
+                and f"\nStaged copy: {action.staged_id}\n" in ev[0]["text"] + "\n"
+            )
         case PolicySet():
             _, args = host_call(action)
             return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
@@ -970,6 +1025,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
+    if op == "publish.share" and link.welcome.get("ops", {}).get("publish.send") != 1:
+        raise fail(
+            "op.unsupported", "This host does not serve Publish.", exit=1
+        )  # the signed half is useless without it
     base = None
     if data is not None:
         gate = GATE_OF.get(type(body))

@@ -26,6 +26,7 @@ const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
 // The tester's checklist: its own page without the shell, so it works before any workspace exists (orch setup).
 const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'ChecklistPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
+const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
@@ -156,6 +157,17 @@ const worktreesRoute = createRoute({
   loader: pageLoader(() => [], [WorktreesPage.preload]),
   component: WorktreesPage,
 })
+/** Shares of a real host (Publish add-on): listed only while the add-on is ON; the mock keeps its own addon page. */
+const sharesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'shares',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('publish')()
+  },
+  loader: pageLoader(() => [], [SharesPage.preload]),
+  component: SharesPage,
+})
 /** Activity of a real host (#595): the mock keeps its own addon page; a real host that serves `activity/1` gets this route. */
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -247,7 +259,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, activityRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, sharesRoute, activityRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

@@ -365,7 +365,7 @@ class ClickSigner:
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
             inner = self._deposit_args(entry, inner)
-        elif op_class(op) == "terminal":
+        elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
             self._sweep()

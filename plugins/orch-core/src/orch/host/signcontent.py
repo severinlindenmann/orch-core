@@ -300,6 +300,25 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
     return True
 
 
+def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.publish`` (P5): where shared files are sent and where a link opens, in words; ``None``
+    removes the server. ``False`` (the generic row, every byte) when the value is anything else."""
+    if value is None:
+        _row(out, "Publish server", "(removed: nothing can be shared)", before, ctx.note(False))
+        return True
+    if not isinstance(value, Mapping) or set(value) != {"server", "share"}:
+        return False
+    old = before if isinstance(before, Mapping) else {}
+    for key, label in (("server", "Publish: files are sent to"), ("share", "Publish: links open at")):
+        if not isinstance(value[key], str):
+            return False
+        _row(out, label, value[key], old.get(key) or "(none)", ctx.note(False))
+    out.setdefault("notes", []).append(
+        "Files you share go to this server, signed by this workspace. Only a person can change it."
+    )
+    return True
+
+
 _LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
 _LINK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
@@ -666,7 +685,16 @@ def _event(
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
-        out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": _s(ev.get("text"))})
+        from orch.publishclient.approval import MARK
+
+        text = _s(ev.get("text"))
+        if text.startswith(MARK + "\n"):  # P5: a share approval; the words are the whole of what is signed
+            out.setdefault("sections", []).append({"id": "share", "title": "What will be shared", "text": text})
+            out.setdefault("notes", []).append(
+                "Files leave this computer only after you sign. You will see the link once; orch keeps no copy of it."
+            )
+            return f"Share files of {ref} outside this computer"
+        out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": text})
         return f"Add a note to {ref}"
     if typ in ("ticket.closed", "ticket.reopened"):
         if ev.get("text"):
@@ -696,6 +724,8 @@ def _event(
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
+                continue
+            if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours

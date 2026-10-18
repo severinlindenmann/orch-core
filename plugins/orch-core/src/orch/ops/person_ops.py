@@ -67,6 +67,12 @@ _REPO = {
     "required": ["path"],
     "additionalProperties": False,
 }
+_ORIGIN = {
+    "type": "string",
+    "maxLength": 300,
+    "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
+    r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
+}
 _SET = {
     "type": "object",
     "properties": {
@@ -80,6 +86,17 @@ _SET = {
             "minItems": 1,
             "maxItems": 3,
             "contains": {"const": "terminal"},
+        },
+        "publish": {  # the Publish add-on's server: an address pair, or null to remove it
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {"server": _ORIGIN, "share": _ORIGIN},
+                    "required": ["server", "share"],
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ]
         },
         "repos": {
             "type": "object",
@@ -285,6 +302,23 @@ def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the relay pairing continues: orch host relay pair list")
 
 
+def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
+    """``publish.share {staged_id}`` (P5): the person's signature over the exact words of one staged share, as a
+    ``log.added`` note on its ticket. The words come from the host's facts about the staged copy (ticket, kind, days,
+    views, server, every file with size and hash), never from the request, which names only the staged id; the host
+    sends the files only after it finds a note with exactly these words signed by this person."""
+    from orch.publishclient.approval import ApprovalFacts
+
+    h = _Human(ctx, "publish.share")
+    facts = getattr(ctx.prepare, "publish", None)
+    if not isinstance(facts, ApprovalFacts) or facts.staged_id != args["staged_id"]:
+        raise OrchError("human_only", "publish.share is prepared only by the host's publish module, from a staged copy")
+    view = h.ticket(facts.ticket_key)
+    done = h.run({"type": "log.added", "text": facts.text}, view.uid, f"share files of {view.key}",
+                 review=h.header(view))  # fmt: skip
+    return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
+
+
 _PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
 PEOPLE_SET = operation(
     "people.set",
@@ -322,7 +356,22 @@ PAIR_DEVICE = operation(
     ),
     handler=handle_pair_device,
 )
-OPS: dict[str, Operation] = {op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE)}
+PUBLISH_SHARE = operation(
+    "publish.share",
+    "Human only",
+    "Sign the exact words of one staged share (files, server, link kind, days); prepared by the host only.",
+    who="human",
+    props={"staged_id": S("the staged copy (ps_ and 32 hex)", pattern="^ps_[0-9a-f]{32}$")},
+    required=("staged_id",),
+    emits=("log.added",),
+    text="ok {key} log.added seq={seq}\nnext: {next}",
+    data=obj({"staged_id": STR}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_publish_share,
+)
+OPS: dict[str, Operation] = {
+    op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE, PUBLISH_SHARE)
+}
 
 
 def get(name: str) -> Operation:

@@ -20,6 +20,7 @@ from . import (
     phone,
     reads,
     settings,
+    shares,
     signprefs,
     terminals,
     testrun,
@@ -64,6 +65,7 @@ SPA_ROUTES = (
     "drop",
     "checklist",
     "worktrees",
+    "shares",
     "activity",
     "guide",  # ?page=<x> is a query: not part of the path
     "settings",
@@ -229,6 +231,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     agents.register(app, gateway)
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
+    shares.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

@@ -18,10 +18,12 @@ export async function copyText(text: string): Promise<boolean> {
     area.setAttribute('readonly', '')
     area.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
     document.body.append(area)
-    area.select()
-    const ok = document.execCommand?.('copy') ?? false
-    area.remove()
-    return ok
+    try {
+      area.select()
+      return document.execCommand?.('copy') ?? false
+    } finally {
+      area.remove()
+    }
   } catch {
     return false
   }

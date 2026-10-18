@@ -187,6 +187,10 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'publish_setup':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
+    case 'publish_share':
+      return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
     case 'addon_grant':
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'addon_disable':

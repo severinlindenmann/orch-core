@@ -521,7 +521,7 @@ drops. The host never sends it.
 | `publish.not_configured` | 3 | no | stays | a Publish op before an owner signed `settings.set {publish}` (`orch publish setup`); no server is set (P5) | — |
 | `publish.not_approved` | 3 | no | stays | `publish.send` for a staged copy no person signed: no `log.added` note with exactly its words (files, server, kind, days, views) is in the ticket log, signed by the caller, within the hour (P5) | — |
 | `publish.changed` | 3 | no | stays | a staged file or its record changed since `publish.prepare` (size, hash, link, owner, mode), or the staged copy is not valid (P5); prepare again | — |
-| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace card could not be made; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation` or `rejected` (P5) | — |
+| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace's genesis delegation could not be read; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation` or `rejected` (P5) | — |
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
@@ -12994,7 +12994,7 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
 | `publish.revoke {share_id}` | P only | `DELETE` on the server, then the record says `revoked` |
 | `publish.list {ref?, live?}` | P, G (own claimed ticket) | staged copies and shares (never a link or token); `live` (P) adds the server's state and view counts |
 | `publish.discard {staged_id}` | P; G only copies an agent prepared on its claimed ticket | drops a stage |
-| `publish.register` | P only | registers the workspace with the card it presents |
+| `publish.register` | P only | registers the workspace card-free: the genesis delegation and owner key, in a request signed with the publish label |
 
 * **Server setting** is signed state: `settings.set {set: {publish: {server, share}}}` (owner only; `null` removes it). Both
   are origins (`https://host[:port]`, or `http://127.0.0.1`/`localhost` for this computer), different from each other.

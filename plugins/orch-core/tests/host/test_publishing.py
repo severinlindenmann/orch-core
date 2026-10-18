@@ -76,7 +76,7 @@ class FakeServer:
         parts = target.split("/")[4:]  # /v1/ws/<ws>/...
         if method == "POST" and parts == ["register"]:
             self.registered = True
-            return 200, b'{"result":"registered","card_seq":1}'
+            return 200, b'{"workspace":"x","result":"registered"}'
         if method == "GET" and parts == ["shares"]:
             rows = [{"id": k, "state": v["state"], "views": v.get("views", 0)} for k, v in self.shares.items()]
             return 200, json.dumps({"shares": rows}).encode()
@@ -949,3 +949,17 @@ def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
         publishing.TRANSPORT = None
         wd.close()
         wd.lab.close()
+
+
+def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    ok(w.req("publish.register", {}))
+    assert (w.base() / "registered.json").exists()
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 401, "unknown_workspace"))
+    res = w.send(staged)
+    assert err(res) == "publish.server_refused" and "ask its admin to allow it again" in res["error"]["message"]
+    assert "orch publish register" in res["error"]["message"]
+    assert not (w.base() / "registered.json").exists()
+    ok(w.send(staged))  # allowed again: the copy goes, registering first

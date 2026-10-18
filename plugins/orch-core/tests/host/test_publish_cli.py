@@ -242,9 +242,7 @@ def test_an_unknown_workspace_prints_what_the_admin_must_run(monkeypatch):
     def call(target, op, args, env):
         calls.append(op)
         if op == "publish.register":
-            raise OrchError(
-                "publish.server_refused", "the server does not know this workspace yet: its admin must allow it"
-            )
+            raise OrchError("publish.server_refused", "the server no longer knows this workspace; ask its admin")
         return {"workspace": "1" * 32, "owner": "2" * 32}
 
     monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())

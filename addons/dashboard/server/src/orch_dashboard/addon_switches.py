@@ -15,7 +15,7 @@ from .errors import fail
 from .gateway import Gateway
 
 #: the add-ons a person can switch here: shipped inside orch-core, signed with `addon.grant` / `addon.disable`
-SWITCHABLE = ("start-agent", "terminals", "worktrees")
+SWITCHABLE = ("start-agent", "terminals", "worktrees", "publish")
 #: what the dashboard cannot turn off or on at all
 LOCKED = {
     "dashboard": "The dashboard is always on: it is what shows this workspace.",
@@ -86,7 +86,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         can_sign = served.get("addon.grant") == 1 and served.get("addon.disable") == 1
         runs = live_runs(gateway, ws)
         rows = []
-        for info in facts.catalog():
+        for info in facts.catalog(optional=True):
             if info.id in LOCKED:
                 rows.append(
                     {

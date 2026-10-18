@@ -222,7 +222,7 @@ _SET_FIELDS = frozenset(
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos"})
+_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish"})
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
@@ -247,6 +247,16 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and isinstance(e.get("remove"), list)
                 and (len(e["add"]) + len(e["remove"]) > 0)
                 and (e.get("role") != "owner" or (len(e["add"]) == 1 and not e["remove"]))
+            )
+        elif op == "publish.share":  # P5: one note on a ticket, whose words are the host-built approval text
+            from orch.publishclient.approval import MARK
+
+            ok = (
+                e["type"] == "log.added"
+                and log != "workspace"
+                and ticket is not None
+                and isinstance(e.get("text"), str)
+                and e["text"].startswith(MARK + "\n")
             )
         elif op == "settings.set":
             sets = e.get("set")
@@ -513,6 +523,7 @@ _PLAIN = {
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
     "relay.pair_device": "add the paired device {device} to your devices",
+    "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
 }
 
 

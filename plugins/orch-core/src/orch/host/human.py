@@ -426,6 +426,10 @@ class HumanOps:
         capture.sequence = meta
         if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
             capture.pair = pairdevice.facts_for(service, inner)
+        if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
+            from . import publishing
+
+            capture.publish = publishing.facts_for(service, inner, call)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)

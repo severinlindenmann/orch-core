@@ -518,6 +518,11 @@ drops. The host never sends it.
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
 | `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |
 | `unsupported.platform` | 3 | no | stays | `orch worktree` or `orch records` on Windows (D-P2-38) | — |
+| `publish.not_configured` | 3 | no | stays | a Publish op before an owner signed `settings.set {publish}` (`orch publish setup`); no server is set (P5) | — |
+| `publish.not_approved` | 3 | no | stays | `publish.send` for a staged copy no person signed: no `log.added` note with exactly its words (files, server, kind, days, views) is in the ticket log, signed by the caller, within the hour (P5) | — |
+| `publish.changed` | 3 | no | stays | a staged file or its record changed since `publish.prepare` (size, hash, link, owner, mode), or the staged copy is not valid (P5); prepare again | — |
+| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace's genesis delegation could not be read; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation` or `rejected` (P5) | — |
+| `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
 attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;
@@ -12974,3 +12979,45 @@ sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page
 * **Pinned seams updated:** `PassphraseBackend.generated` (called only from `custody.select.setup_backend`),
   `.unlocked(` also in `setup/steps.py`, `stage_convenience(passphrase=...)` also in `setup/steps.py`: the passphrase is the
   one the setup process generated itself, never text from a browser, argument or file.
+
+### 12.15 The Publish add-on (P5, 18 Oct 2026)
+
+Share files of a ticket with a link, on a server the owner chooses (design: orch-publish `pubsrv`, protocol-v2 §12.1).
+The add-on `publish` ships inside orch-core (capability `network`); `addon.grant publish` turns it on, `runner.disabled`
+(`detail.missing: "addon"`) while it is off. Nothing leaves the machine without a person's signature.
+
+| Op | Column | What |
+|---|---|---|
+| `publish.prepare {ref, artifacts[], kind?, days?, views?}` | P; G only on the ticket it claims | copies the named artifacts (by the ticket manifest and digest) into a host-private stage (`<state>/hosts/<ws>/publish/stage/<id>/`, 0700); returns `staged_id` and the exact words a person signs; tags `origin: agent\|person` |
+| `publish.share {staged_id}` (through `human.prepare`/`submit`) | person, signed | one `log.added` note on the ticket whose text the host builds from the stage (ticket, who prepared it, link kind, days, views, **server**, **every file with size and hash**, the manifest hash) |
+| `publish.send {staged_id}` | P only | builds the same words again from the stage and the signed server setting; requires a person-signed note with exactly these words (the caller's, at most an hour old); registers the workspace if needed, uploads the staged bytes (read, hashed, sent), commits, returns the link **once** and wipes the stage |
+| `publish.revoke {share_id}` | P only | `DELETE` on the server, then the record says `revoked` |
+| `publish.list {ref?, live?}` | P, G (own claimed ticket) | staged copies and shares (never a link or token); `live` (P) adds the server's state and view counts |
+| `publish.discard {staged_id}` | P; G only copies an agent prepared on its claimed ticket | drops a stage |
+| `publish.register` | P only | registers the workspace card-free: the genesis delegation and owner key, in a request signed with the publish label |
+
+* **Server setting** is signed state: `settings.set {set: {publish: {server, share}}}` (owner only; `null` removes it). Both
+  are origins (`https://host[:port]`, or `http://127.0.0.1`/`localhost` for this computer), different from each other.
+  A change after a signature voids that signature (the words contain both).
+* **Token.** `secrets.token_bytes(32)` base64url, 43 characters, made in `publish.send`; the server gets only
+  `sha256(token)`. It is held in a 0600 file of the stage until the server commits (so a retry sends the same
+  `token_hash`), then wiped with the stage; never in the log, the outcome store, the audit file or an error. The link is
+  `<share origin>/s/<share id>#t=<token>` (the token is in the fragment).
+* **Registration is card-free** (design §2.6b). `publish.register` sends exactly `{delegation, owner_pk}`, copied from the
+  pinned genesis (`workspace.created.delegation`, `owner.pk_pub`), in a request signed with the publish label; no relay
+  card, WXK or CK exists for publishing and the request is useless at the relay. The binding is permanent: an identical
+  delegation is `unchanged`, any other is 409 `delegation_changed` (reason `conflict`). The server admin pre-binds the
+  workspace: `orch-publish admin --data DIR owners add OWNER` and `ws allow WS OWNER`; `publish.list` carries `workspace`
+  and `owner` so `orch publish setup` can print exactly that when the server answers `unknown_workspace`.
+* **No `SignLedger`** is given to the `PublishSigner`: the server's nonce store refuses a replay, and a file ledger that is
+  rewritten on every request and never pruned would only grow.
+* **Codes.** `publish.not_configured`, `publish.not_approved`, `publish.changed`, `publish.server_refused`
+  (`detail.reason`: `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation`,
+  `rejected`), `publish.unreachable` (retryable). Rate: 10 per minute per person per kind of request.
+* **CLI.** `orch publish setup|register|prepare|share|send|revoke|list|discard` (`orch.cli.publish`). An agent
+  (`ORCH_GRANT`) may `prepare`, `list`, `discard`; the rest is `op.not_allowed` here and again in the host. The link is
+  written to `/dev/tty` only.
+* **Signing class.** `publish.share` and a `settings.set` that touches `publish` are **terminal-only**: never click or one-click,
+  and the dashboard signs them through `orch sign CODE`. `click/protocol.op_class` classes `settings.set` by key
+  (`publish` terminal; `repos`, `sign_methods`, `grant_hours` word) from the request's `set` before prepare (early check) and from
+  the prepared events at sign time; the sign-time class wins (`click/view.py`).

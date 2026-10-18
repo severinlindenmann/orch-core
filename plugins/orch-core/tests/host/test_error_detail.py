@@ -18,6 +18,8 @@ ALLOWED = {
     "sign.convenience_readers": {"reason": "reader_too_old", "devices": ["d_" + "2" * 32]},
     # §11A.17 (D1): the closed reason of a dev-host refusal
     "host.dev_refused": {"reason": "sandbox_workspace"},
+    # P5: why the publish server said no (a closed reason, never its body)
+    "publish.server_refused": {"reason": "unknown_workspace"},
 }
 
 

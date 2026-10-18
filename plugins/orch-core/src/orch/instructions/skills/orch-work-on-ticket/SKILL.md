@@ -6,6 +6,7 @@ description: Use when you claimed or were given an orch ticket to implement: whe
 
 Judgment rules. The loop itself is `orch help work`.
 
+- When the person names a ticket, claim that one by its REF (`orch claim ABC-0001`), not the next free one.
 - Read the ticket (`orch show`) before you change anything: requirements, acceptance criteria, decisions so far. Do not re-ask what a decision already settles.
 - Ask instead of guessing when a requirement reads two ways that lead to different work, when a step cannot be undone or lies outside the ticket, or when the plan needs a choice that belongs to the person. Otherwise decide, and log the decision.
 - Ask once, with options and a recommendation, then wait. If the question does not block you, work on another task meanwhile.

@@ -49,6 +49,7 @@ from jsonschema import Draft202012Validator
 
 from orch.publishclient import approval
 
+from .artifacts import artifact_file
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -391,7 +392,7 @@ def _artifact_bytes(call: Call, view: Any, name: str) -> tuple[bytes, str]:
     if not art.digest:
         raise HostError("not_found", "no such artifact on this ticket")
     service = call.service
-    path = service.entry.store_dir / "tickets" / view.uid / "artifacts" / art.name
+    path = artifact_file(service, view.uid, art.name)
     try:
         fd = service.capabilities().files.open_fd(path, os.O_RDONLY)
     except OSError:

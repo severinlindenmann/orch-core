@@ -329,8 +329,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   })
 
   const submitting = useRef(false)
+  // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
+  const flushAc = useRef<(() => string) | null>(null)
   const submit = async (another: boolean) => {
     if (submitting.current) return
+    const extra = flushAc.current?.() ?? ''
+    const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
+    if (extra) patch({ acceptance: full.acceptance })
     setAttempted(true)
     setServerError(null)
     if (!canCreate) return
@@ -340,27 +345,27 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const made = handoffNewTicket(draft, me.person)
+      const made = handoffNewTicket(full, me.person)
       if ('problem' in made) return setServerError(made.problem)
       return setHandoffNew({ action: made.action, another })
     }
     submitting.current = true
-    const needs = SECTIONS_BY_TYPE[draft.type]
+    const needs = SECTIONS_BY_TYPE[full.type]
     const sections: BodySections = {}
-    for (const [n, text] of Object.entries(draft.sections) as [SectionName, string | undefined][]) if (needs[n] !== 'absent' && text?.trim()) sections[n] = text.trim()
+    for (const [n, text] of Object.entries(full.sections) as [SectionName, string | undefined][]) if (needs[n] !== 'absent' && text?.trim()) sections[n] = text.trim()
     const res = await create
       .mutateAsync({
-        type: draft.type,
-        title: draft.title.trim(),
-        priority: draft.priority,
-        size: draft.size,
-        labels: draft.labels,
-        parent: draft.parent,
-        due: draft.due || null,
-        visibility: draft.visibility,
-        people: draft.people,
+        type: full.type,
+        title: full.title.trim(),
+        priority: full.priority,
+        size: full.size,
+        labels: full.labels,
+        parent: full.parent,
+        due: full.due || null,
+        visibility: full.visibility,
+        people: full.people,
         sections,
-        acceptance: draft.acceptance,
+        acceptance: full.acceptance,
       })
       .catch(() => null)
       .finally(() => {
@@ -483,6 +488,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             onAcceptance={(acceptance) => patch({ acceptance })}
             invalid={attempted ? check.sections : {}}
             collapsible={overlay}
+            flushRef={flushAc}
           />
         </div>
         <aside className="space-y-4" aria-label="Properties">

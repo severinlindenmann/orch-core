@@ -13,6 +13,7 @@ import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { HostRecords } from '@/app/pages/settings/host/Records'
+import { HostAddOns } from '@/app/pages/settings/host/AddOns'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
@@ -40,6 +41,8 @@ import { NewTicketPage } from '@/app/pages/new-ticket'
 import { TicketPage } from '@/app/pages/ticket'
 
 export const LAYOUT_SCENARIOS = [
+  // R2-2: Settings > Add-ons with one of each state.
+  'addons-mixed',
   'quick-normal',
   'quick-many',
   'quick-add',
@@ -720,6 +723,16 @@ function install() {
     opOf.set(made.id, made.op)
     return made
   })
+  set('getAddOns', async () => ({
+    available: true,
+    add_ons: [
+      { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
+      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent is running right now.' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
+    ],
+  }))
   set('getHostSettings', async () => ({
     available: true,
     grant_hours: 8,
@@ -757,7 +770,7 @@ export function LayoutPreview({ name }: { name: string }) {
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
     // The topbar is already mounted and watches this one: it is refetched, not removed.
     void qc.invalidateQueries({ queryKey: ['host-info'] })
     return current
@@ -821,6 +834,12 @@ export function LayoutPreview({ name }: { name: string }) {
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostDevices workspace={workspace} />
+      </SettingsFrame>
+    )
+  if (scenario.startsWith('addons-'))
+    return (
+      <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
+        <HostAddOns workspace={workspace} />
       </SettingsFrame>
     )
   if (scenario.startsWith('records-'))

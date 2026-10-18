@@ -7,7 +7,6 @@ import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
 import type { Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
-import { Raw } from '@/components/sign/visible'
 import { Switch } from '@/components/ui/switch'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
@@ -55,7 +54,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
           <ul aria-label="Add-ons" className="divide-y divide-border">
             {data.data.add_ons.map((row) => {
               const fixed = row.locked !== null
-              const why = fixed ? row.locked : !owner ? 'Only owners can change add-ons.' : row.blocked
+              const why = fixed ? null : !owner ? 'Only owners can change add-ons.' : row.blocked
               // Off and blocked: greyed. On and blocked (work is running): cannot be turned off now.
               const disabled = fixed || !owner || row.blocked !== null
               const on = row.state === 'on'
@@ -63,7 +62,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                 <li key={row.id} data-testid={`addon-${row.id}`} className="flex items-start gap-3 py-3 text-[13px]">
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium"><Raw>{row.title}</Raw></span>
+                      <span className="font-medium">{row.title}</span>
                       <span
                         data-testid={`addon-${row.id}-state`}
                         className={on ? 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-success' : 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-muted'}
@@ -71,7 +70,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                         {fixed ? 'Always on' : STATE_WORD[row.state]}
                       </span>
                     </div>
-                    <p className="text-text-muted"><Raw>{row.desc}</Raw></p>
+                    <p className="text-text-muted">{row.desc}</p>
                     {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
                     {row.state === 'attention' && !why && (
                       <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>

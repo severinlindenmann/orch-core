@@ -242,7 +242,7 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
           <code className="font-mono text-[14px] text-text">
             {request.fingerprint}
           </code>
-          <span className="block text-[12px] text-text-muted">The first 12 hex digits of a hash of this whole request (the operation, its review and its events). Your terminal shows the same value on its “fingerprint:” line.</span>
+          <span className="block text-[12px] text-text-muted">The first 12 hex digits of a fingerprint of the request (a hash over the operation, its review and its events). Your terminal shows the same value on its “fingerprint:” line.</span>
         </dd>
         {request.gate_hash && (
           <>

@@ -1015,9 +1015,9 @@ def _share_text(kind="secret", views=0, days=7, names=("report.md", "data.csv"))
     )
 
 
-def _share_build(text):
+def _share_build(text, op="publish.share"):
     ev = {**sample("log.added"), "text": text}
-    return build({"op": "log.add", "events": [ev], "material": material_for("log.added", ev)})
+    return build({"op": op, "events": [ev], "material": material_for("log.added", ev)})
 
 
 def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_text():
@@ -1072,13 +1072,34 @@ def _extend(**over):
 
 def test_v4_an_extend_is_titled_and_says_running_agents_stop():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
-    assert c["headline"] == "Extend agent access" and c["summary"]["title"] == "Extend agent access"
+    assert c["headline"].startswith("Extend agent access: ") and c["summary"]["title"] == "Extend agent access"
     joined = "\n".join(c["summary"]["lines"])
-    assert "Running agents will stop." in joined and "3 days" in joined and "ends " in joined and "gr_…" in joined
+    assert (
+        "Running agents will stop." in joined
+        and "per host, not signed" in joined
+        and "3 days" in joined
+        and "ends " in joined
+        and "gr_…" in joined
+    )
     assert any(r["field"] == "access taken back" for r in c["fields_changed"])  # the exact rows stay
 
 
 def test_v4_an_extend_with_other_scope_verbs_or_label_keeps_the_generic_review():
     for over in ({"scope": "all"}, {"verbs": "all"}, {"label": "other"}, {"hours": "x"}):
         c = _extend(**over)
-        assert "summary" not in c and c["headline"] != "Extend agent access", over
+        assert "summary" not in c and not c["headline"].startswith("Extend agent access"), over
+
+
+def test_v4_only_one_share_event_of_the_share_op_is_summarised():
+    one_text = _share_text()
+    other = _share_text(names=("other.txt",))
+    ev1, ev2 = ({**sample("log.added"), "text": t} for t in (one_text, other))
+    two = build({"op": "publish.share", "events": [ev1, ev2], "material": material_for("log.added", ev1)})
+    assert "summary" not in two  # the first share's files are never hidden behind the second's summary
+    assert "summary" not in _share_build(one_text, op="log.add")  # not the share op: the text alone
+
+
+def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
+    c = _extend(expires_at="2026-10-21T12:00:00Z")
+    first = signcontent.text(c, signer._clean)[0]
+    assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first

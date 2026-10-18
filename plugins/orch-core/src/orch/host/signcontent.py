@@ -189,45 +189,60 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
-_SHARE_FILE = re.compile(r"- (.+)  \((\d+(?:\.\d+)? ?[A-Za-z]+), sha256 ([0-9a-f]{16})\)")
-_SHARE_HEAD = re.compile(r"Files \((\d+), (\d+(?:\.\d+)? ?[A-Za-z]+)\):")
+_SHARE_SIZE = r"\d+(?:\.\d+)? ?[A-Za-z]+"
+_SHARE_FILE = re.compile(r"- (.+)  \((" + _SHARE_SIZE + r"), sha256 ([0-9a-f]{16})\)")
+_SHARE_HEAD = re.compile(r"Files \((\d+), (" + _SHARE_SIZE + r")\):")
+_SHARE_TICKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 def _share_summary(text: str) -> dict[str, Any] | None:
     """The plain lead of a share approval (the PF1 review): files, who can open them, how long, where they go, read
     from the SIGNED text only (``orch.publishclient.approval.approval_text``). It is a summary that never replaces the
     text: the dashboard shows the whole signed text beside it. ``None`` (no summary, the text alone) as soon as one
-    line is not exactly what that function writes, so an odd value can never be summarised into something it is not."""
+    line is not exactly what that function writes (its own name, origin, staged-id, digest, day and view patterns are
+    reused), so an odd value can never be summarised into something it is not."""
+    from orch.publishclient import approval as ap
+
     lines = text.split("\n")
-    if len(lines) < 11:
+    if len(lines) < 11 or lines[0] != ap.MARK:
         return None
-    fixed = [
-        re.fullmatch(r"Ticket: (\S+)", lines[1]),
-        re.fullmatch(r"Prepared by: (an agent|you)", lines[2]),
-        re.fullmatch(r"Link: a secret link: anyone who has the link can open the files", lines[3])
-        or re.fullmatch(r"Link: a show-once link: it opens at most (\d+) times?", lines[3]),
-        re.fullmatch(r"Works for: (\d+) days?( from the moment the link is made)", lines[4]),
-        re.fullmatch(r"The files are sent to: (\S+)", lines[5]),
-        re.fullmatch(r"The link opens at: (\S+)", lines[6]),
-        _SHARE_HEAD.fullmatch(lines[7]),
-    ]
-    if not all(fixed) or not (lines[-2].startswith("Staged copy: ") and lines[-1].startswith("Manifest: ")):
+    ticket = re.fullmatch(r"Ticket: (\S+)", lines[1])
+    prepared = re.fullmatch(r"Prepared by: (an agent|you)", lines[2])
+    secret = lines[3] == "Link: a secret link: anyone who has the link can open the files"
+    once = re.fullmatch(r"Link: a show-once link: it opens at most (\d+) times?", lines[3])
+    works = re.fullmatch(r"Works for: (\d+) days? from the moment the link is made", lines[4])
+    server = re.fullmatch(r"The files are sent to: (\S+)", lines[5])
+    share = re.fullmatch(r"The link opens at: (\S+)", lines[6])
+    head = _SHARE_HEAD.fullmatch(lines[7])
+    if not (ticket and prepared and (secret or once) and works and server and share and head):
         return None
-    ticket, prepared, link, works, server, share, head = fixed
-    assert ticket and prepared and link and works and server and share and head
+    if not (_SHARE_TICKET.fullmatch(ticket.group(1)) and int(works.group(1)) in ap.DAYS):
+        return None
+    if once and (int(once.group(1)) not in ap.VIEWS or lines[3] != _views_line(int(once.group(1)))):
+        return None
+    nd = int(works.group(1))
+    if lines[4] != f"Works for: {nd} day{'' if nd == 1 else 's'} from the moment the link is made":
+        return None
+    if not (ap._ORIGIN.fullmatch(server.group(1)) and ap._ORIGIN.fullmatch(share.group(1))):
+        return None
+    if not (
+        re.fullmatch(r"Staged copy: " + ap._STAGED.pattern, lines[-2])
+        and re.fullmatch(r"Manifest: sha256:" + ap._HEX64.pattern, lines[-1])
+    ):
+        return None
     rows = lines[8:-2]
     names = []
     for row in rows:
         m = _SHARE_FILE.fullmatch(row)
-        if m is None:
+        if m is None or ap.NAME.fullmatch(m.group(1)) is None:
             return None
         names.append(m.group(1))
-    if len(rows) != int(head.group(1)):
+    if len(rows) != int(head.group(1)) or not 1 <= len(rows) <= ap.LIMITS["files"]:
         return None
     n, days = int(head.group(1)), int(works.group(1))
     who = "Anyone who has the link can open the files"
-    if lines[3].startswith("Link: a show-once"):
-        views = int(link.group(1))
+    if once:
+        views = int(once.group(1))
         who += f", at most {views} time{'' if views == 1 else 's'}"
     out = [
         f"Files: {n} ({head.group(2)}): " + ", ".join(names),
@@ -237,6 +252,10 @@ def _share_summary(text: str) -> dict[str, Any] | None:
         f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
     ]
     return {"title": "Share these files", "lines": out}
+
+
+def _views_line(views: int) -> str:
+    return f"Link: a show-once link: it opens at most {views} time{'' if views == 1 else 's'}"
 
 
 def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
@@ -261,10 +280,16 @@ def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
         f"New access: agents working for you, for {span(hours)}.",
         *([f"The new access ends {until} (your time)."] if until else []),
         f"It replaces the access {_grant_short(old.get('grant'))}, which is taken back when you sign.",
-        "Affected: agents working for you.",
-        "Running agents will stop. New agents use the extended access.",
+        "Affected: agents working for you (per host, not signed).",
+        "Running agents will stop. New agents use the extended access (per host, not signed).",
     ]
-    return {"title": "Extend agent access", "lines": lines}
+    # the headline is all the terminal's plain view prints first: it keeps the length, the end and the replaced access
+    head = (
+        f"Extend agent access: agents working for you, for {span(hours)}"
+        + (f" (until {until}, your time)" if until else "")
+        + f"; takes back {_grant_short(old.get('grant'))}"
+    )
+    return {"title": "Extend agent access", "lines": lines, "headline": head}
 
 
 def _grant_short(value: Any) -> str:
@@ -566,7 +591,7 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     elif kind == "question":
         _question(material, events, ticket, out)
     elif kind == "payload":
-        _payload(material, events, ticket, out, ctx)
+        _payload(material, events, ticket, out, ctx, op=prepared.get("op"))
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
     return {k: v for k, v in out.items() if v not in (None, [], "")}
@@ -711,7 +736,12 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
 
 
 def _payload(
-    material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any], ctx: _Ctx
+    material: Mapping[str, Any],
+    events: list[Mapping[str, Any]],
+    ticket: Any,
+    out: dict[str, Any],
+    ctx: _Ctx,
+    op: Any = None,
 ) -> None:
     before = material.get("before") or {}
     texts = material.get("texts") or {}
@@ -734,11 +764,16 @@ def _payload(
     for gid in [*issued, *revoked]:
         if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
             raise PlainUnavailable("two accesses share one short form")
+    if op == "publish.share" and len(events) == 1 and events[0].get("type") == "log.added":
+        # exactly one share: a mix, or a second share, is never summarised (a summary of one would hide the other)
+        summary = _share_summary(_s(events[0].get("text")))
+        if summary is not None:
+            out["summary"] = summary
     uniq = list(dict.fromkeys(heads))
     extend = _extend_summary(events) if issued and revoked else None
     if extend is not None:
+        out["headline"] = extend.pop("headline")
         out["summary"] = extend
-        out["headline"] = "Extend agent access"
     elif len(uniq) == 1:
         out["headline"] = uniq[0]
     elif len(uniq) <= 3:
@@ -774,9 +809,6 @@ def _event(
         text = _s(ev.get("text"))
         if text.startswith(MARK + "\n"):  # P5: a share approval; the words are the whole of what is signed
             out.setdefault("sections", []).append({"id": "share", "title": "What will be shared", "text": text})
-            summary = _share_summary(text)
-            if summary is not None:
-                out["summary"] = summary
             out.setdefault("notes", []).append(
                 "Files leave this computer only after you sign. You will see the link once; orch keeps no copy of it."
             )

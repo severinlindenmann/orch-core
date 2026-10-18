@@ -210,7 +210,7 @@ function LaneHeader({
           {count}
         </span>
         {emptyNote && <span className="text-[12px] text-text-faint">{emptyNote}</span>}
-        <ColumnSums tickets={tickets} />
+        <ColumnSums tickets={tickets} showMissing={!!epic} />
         {epic && <CardFields ticket={epic} own />}
       </div>
     </div>

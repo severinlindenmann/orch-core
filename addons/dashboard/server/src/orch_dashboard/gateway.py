@@ -107,6 +107,17 @@ class Gateway:
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
 
+    def workspace_folder(self, ws):
+        """``(project folder, store folder or None)`` of workspace ``ws`` from the trusted host registry (None store:
+        the legacy layout, where the store is the project folder itself). The File Explorer's root; browser input never
+        names it."""
+        row = self._pins().get(ws)
+        if row is None or not isinstance(row.get("root"), str) or not row["root"].startswith("/"):
+            raise fail("not_found", exit=2)
+        store = row.get("store")
+        project = Path(row["root"])
+        return project, (project / store if isinstance(store, str) and store else None)
+
     def check_repo_path(self, ws, path):
         """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
         before anything is prepared or signed: the person reads the plain refusal in the dialog. Raises HostError.
@@ -255,6 +266,9 @@ class Gateway:
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")
+        if self.addon_on(link, "estimate"):
+            # Estimate: points on tickets (the ticket's size), shown and set only while the add-on is ON here.
+            features.append("estimate")
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         if link.has("read_ext/2"):
@@ -298,6 +312,8 @@ class Gateway:
                     features.append("click")  # the sign panel is offered (the signer has a key and the flag is on)
                 who = link.welcome["peer"]["person"]
                 role = next((m.role for m in roster if m.person == who), "viewer")
+                if role == "owner" and self.addon_on(link, "explorer"):
+                    features.append("explorer")  # the File Explorer: owners only, and only while the add-on is ON
                 count = adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
                 if (
                     not isinstance(show.get("name"), str)

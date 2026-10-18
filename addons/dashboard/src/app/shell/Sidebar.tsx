@@ -22,6 +22,7 @@ import {
   BookOpen,
   PackageOpen,
   FolderGit2,
+  FolderTree,
   Gauge,
   Share2,
 } from 'lucide-react'
@@ -442,6 +443,8 @@ const CORE_NAV = [
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
   { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
+  { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */

@@ -8,6 +8,7 @@ import { PRIORITY_RANK, PriorityMarker, TypeIcon } from './lib'
 import { fmtWhen } from '@/lib/time'
 import { statusLabel } from '@/app/pages/ticket/shared'
 import { addonActive } from '@/api/addons'
+import { estimateOn, pointsOf } from '@/api/estimate'
 import { useWorkspace } from '@/app/workspace'
 
 type SortKey = 'key' | 'title' | 'status' | 'priority' | 'size' | 'owner' | 'updated_at'
@@ -27,8 +28,9 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'updated_at', dir: -1 })
   // Size or Points, never both (B m14): with Estimate on, its points show in the Addons column and Size steps back.
   const { workspace } = useWorkspace()
-  const showSize = !addonActive(workspace, 'estimate')
-  const columns = showSize ? COLUMNS : COLUMNS.filter((c) => c.key !== 'size')
+  const points = estimateOn(workspace) // a real host: the Size column becomes Points (the same field, in points)
+  const showSize = points || !addonActive(workspace, 'estimate')
+  const columns = (showSize ? COLUMNS : COLUMNS.filter((c) => c.key !== 'size')).map((c) => (points && c.key === 'size' ? { ...c, label: 'Points' } : c))
 
   const rows = useMemo(() => {
     const val = (t: TicketSummary): string | number => {
@@ -98,12 +100,12 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
                   {t.priority ?? '–'}
                 </span>
               </TableCell>
-              {showSize && <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{t.size ?? '–'}</TableCell>}
+              {showSize && <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{points ? (pointsOf(t.size) ?? '–') : (t.size ?? '–')}</TableCell>}
               <TableCell className="py-1.5 text-[12px] text-text-muted">{t.owner ? people.name(t.owner) : '–'}</TableCell>
               <TableCell className="py-1.5 font-mono text-[11px] text-text-faint">{fmtWhen(t.updated_at)}</TableCell>
               <TableCell className="py-1.5">
                 <span className="flex gap-1">
-                  <CardFields ticket={t} />
+                  <CardFields ticket={t} skipPoints />
                 </span>
               </TableCell>
             </TableRow>

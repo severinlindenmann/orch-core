@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "explorer",
+  "version": "0.1.0",
+  "title": "File Explorer",
+  "entry": {"cmd": ["orch-explorer", "serve"]},
+  "capabilities": []
+}

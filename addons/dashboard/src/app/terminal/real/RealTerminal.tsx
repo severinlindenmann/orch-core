@@ -79,8 +79,10 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
         ticket = (await runsApi.ticket(ws, run.run, req.mode, req.take)).ticket
       } catch (e) {
         if (cancelled) return
-        const retryable = e instanceof ApiError && e.status >= 500
-        setStatus({ words: retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
+        // An ended run is never retried: asking again cannot bring it back (and every try is a logged 503).
+        const ended = runRef.current.state === 'exited' || runRef.current.state === 'lost'
+        const retryable = e instanceof ApiError && e.status >= 500 && !ended
+        setStatus({ words: ended ? 'This terminal has ended and its output can no longer be shown.' : retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
         if (retryable) again(BACKOFF_MS[Math.min(failures.current++, BACKOFF_MS.length - 1)])
         return
       }
@@ -124,6 +126,10 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           if (policy.kind === 'take') {
             setLease('busy')
             setStatus(null)
+          } else if (runRef.current.state === 'exited' || runRef.current.state === 'lost') {
+            // The run is over: reconnecting cannot help, so stop asking.
+            setLease('reading')
+            setStatus({ words: endWords(code, end), detail, final: true })
           } else if (policy.kind === 'ticket') {
             setStatus({ words: endWords(code, end), final: false })
             again(250)

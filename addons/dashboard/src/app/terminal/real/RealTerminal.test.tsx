@@ -83,6 +83,14 @@ describe('lease and reconnect', () => {
     expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument()
   })
 
+  it('an ended run is attached once and never retried when the host answers 503', async () => {
+    vi.useFakeTimers()
+    vi.mocked(runsApi.ticket).mockRejectedValue(new (await import('@/api/types')).ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }))
+    render(<RealTerminal ws={WS} run={run({ state: 'exited', replay_until: '2099-01-01T00:00:00Z' })} initial="read" connect={connect} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(runsApi.ticket).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/This terminal has ended/)).toBeInTheDocument()
+  })
   it('a reconnect (4503, 4401, 4429) asks for read again, never for the lease', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)

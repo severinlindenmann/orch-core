@@ -69,8 +69,8 @@ def _rg(root: guard.Root, folder: tuple[str, ...], query: str, budget: int):
         argv += ["--glob", g]
     argv += ["--glob", "!node_modules", "--glob", "!node_modules/**", "-e", query, "--", "."]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "HOME": os.environ.get("HOME", "/")}
-    with root.dir(folder):  # the folder exists, is not denied, and no part of it is a link
-        res = gitbrowse.spawn(argv, env, cwd=root.abs(folder), max_bytes=MAX_BYTES, timeout=SECONDS)
+    with root.dir(folder) as fd:  # the folder exists, is not denied, no part of it is a link; the child starts IN it
+        res = gitbrowse.spawn(argv, env, cwd_fd=fd, max_bytes=MAX_BYTES, timeout=SECONDS)
     hits = []
     for chunk in res.out.split(b"\n"):
         path, sep, rest = chunk.partition(b"\0")

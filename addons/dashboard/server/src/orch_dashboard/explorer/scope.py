@@ -86,6 +86,29 @@ def declared_repos(link, ws: str) -> dict[str, str]:
     return out
 
 
+def _repo_root_ok(root: guard.Root, project: Path, store: Path | None) -> bool:
+    """May a declared repository OUTSIDE the workspace folder be a root? Only a real git working copy that git itself
+    reads from where it stands, and not a place the declaration check refuses (home, `/`, orch's own data), nor a
+    hidden folder or `~/Library` of the home folder (`~/.aws`, `~/.config/gh`): the same refusals as when it is
+    declared, checked again now, because the folder may have changed since."""
+    from orch import repopaths
+    from orch.layout import Layout
+
+    from . import git
+
+    home = os.path.realpath(os.path.expanduser("~"))
+    if root.path.startswith(home.rstrip("/") + "/"):
+        first = root.path[len(home.rstrip("/")) + 1 :].split("/")[0]
+        if first.startswith(".") or first == "Library":
+            return False
+    layout = Layout(project, store, False) if store is not None else Layout.legacy_at(project)
+    try:
+        repopaths.check_declared(layout, root.path)
+        return root.has_git(()) and git.confirmed(root.path)
+    except (repopaths.RepoPathError, guard.GuardError, HostError):
+        return False
+
+
 def open_scope(gateway: Gateway, ws: str) -> Scope:
     link = check_access(gateway, ws)
     project, store = gateway.workspace_folder(ws)
@@ -113,6 +136,9 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
             repos[rname] = ("ws", tuple(target[len(real) :].strip("/").split("/")) if target != real else ())
         else:
             rid = f"{REPO_ROOT_ID}{rname}"
-            roots[rid] = guard.Root(rid, guard.label(rname), target, "repo", frozenset(), tuple(sorted(forbidden)))
+            root = guard.Root(rid, guard.label(rname), target, "repo", frozenset(), tuple(sorted(forbidden)))
+            if not _repo_root_ok(root, project, store):
+                continue  # a "repository" that is any other folder (~/.aws, ~/Library) is not shown
+            roots[rid] = root
             repos[rname] = (rid, ())
     return Scope(ws, roots, repos, link)

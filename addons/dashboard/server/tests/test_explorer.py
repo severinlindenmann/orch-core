@@ -15,6 +15,15 @@ PNG = base64.b64decode(
 SHA = "a" * 40
 
 
+def _use(world, folder):
+    """Make ``folder`` the workspace folder (the root `ws`) of this test, and forget what was confirmed."""
+    world.mp.setattr(world.gateway, "workspace_folder", lambda ws: (folder, None))
+    world.link.repos = {}
+    scope._repos_seen.clear()
+    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
+    git_mod._confirmed.clear()
+
+
 def hdr(token):
     return {"Authorization": f"Bearer {token}", "Origin": ORIGIN}
 
@@ -128,6 +137,7 @@ def world(tmp_path, gateway, monkeypatch, stub):
     monkeypatch.setattr(search, "rg_path", lambda: None)
     w.ws = stub.ws
     w.gateway = gateway
+    w.mp = monkeypatch
     return w
 
 
@@ -446,7 +456,11 @@ def test_ripgrep_is_started_with_no_config_no_follow_and_the_deny_globs(world, m
     globs = [argv[i + 1] for i, a in enumerate(argv) if a == "--glob"]
     for need in ("!.git", "!.orch", "!.env", "!.env.*", "!*.pem", "!/events", "!/config.json", "!id_rsa*"):
         assert need in globs, need
-    assert set(seen["env"]) == {"PATH", "LC_ALL", "HOME"} and seen["kw"]["cwd"] == os.path.realpath(world.proj)
+    assert (
+        set(seen["env"]) == {"PATH", "LC_ALL", "HOME"}
+        and "cwd" not in seen["kw"]
+        and isinstance(seen["kw"]["cwd_fd"], int)
+    )
 
 
 # ---------------------------------------------------------------- git history
@@ -483,11 +497,10 @@ def test_a_file_in_no_repository_has_no_history(get, world):
     plain = world.tmp / "plain"
     plain.mkdir()
     (plain / "f.txt").write_text("x\n")
-    world.link.repos = {"plain": str(plain)}
-    scope._repos_seen.clear()
-    assert get("/history", root="repo:plain", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
-    assert get("/commit", root="repo:plain", path="f.txt", sha=SHA).status_code == 404
-    assert get("/file", root="repo:plain", path="f.txt").json()["history"] is False
+    _use(world, plain)
+    assert get("/history", root="ws", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
+    assert get("/commit", root="ws", path="f.txt", sha=SHA).status_code == 404
+    assert get("/file", root="ws", path="f.txt").json()["history"] is False
 
 
 def test_history_commit_compare_and_versions_refuse_locked_paths(get, world):
@@ -669,7 +682,7 @@ def test_a_gitfile_that_points_outside_the_root_is_not_a_repository(get, world, 
     (sub / ".git").write_text(f"gitdir: {real / '.git'}\n")
     ran = _spy(monkeypatch)
     assert get("/history", root="ws", path="sub/f.txt").json()["repo"] is True  # the workspace's own repository
-    assert all(folder == os.path.realpath(world.proj) for folder, _op in ran), ran  # git never ran in sub
+    assert all(folder != os.path.realpath(world.proj / "sub") for folder, _op in ran), ran  # git never ran in sub
     assert get("/file", root="ws", path="sub/f.txt").json()["history"] is True
     got = get("/history", root="ws", path="sub/f.txt").json()
     assert all(c["subject"] != "leak" for c in got["commits"])
@@ -682,12 +695,11 @@ def test_a_gitfile_that_points_into_the_orch_store_is_not_a_repository(get, worl
     plain.mkdir()
     (plain / "f.txt").write_text("x\n")
     (plain / ".git").write_text(f"gitdir: {orch}\n")
-    world.link.repos = {"plain": str(plain)}
-    scope._repos_seen.clear()
+    _use(world, plain)
     ran = _spy(monkeypatch)
-    assert get("/history", root="repo:plain", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
+    assert get("/history", root="ws", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
     assert ran == []  # git was not even started there
-    assert get("/file", root="repo:plain", path="f.txt").json()["history"] is False
+    assert get("/file", root="ws", path="f.txt").json()["history"] is False
 
 
 def test_a_git_folder_with_a_commondir_is_not_a_repository(get, world, monkeypatch):
@@ -696,10 +708,9 @@ def test_a_git_folder_with_a_commondir_is_not_a_repository(get, world, monkeypat
     (plain / "f.txt").write_text("x\n")
     git(plain, "init", "-q", "-b", "main")
     (plain / ".git" / "commondir").write_text(str(world.proj / ".git") + "\n")
-    world.link.repos = {"plain": str(plain)}
-    scope._repos_seen.clear()
+    _use(world, plain)
     ran = _spy(monkeypatch)
-    assert get("/history", root="repo:plain", path="f.txt").json()["repo"] is False
+    assert get("/history", root="ws", path="f.txt").json()["repo"] is False
     assert ran == []
 
 
@@ -730,7 +741,7 @@ def test_a_normal_repository_is_confirmed_once_and_remembered(get, world, monkey
     ran = _spy(monkeypatch)
     get("/history", root="ws", path="src/app.py")
     get("/history", root="ws", path="src/app.py")
-    assert [op for _f, op in ran].count("layout") == 1
+    assert [op for f, op in ran if f.endswith("/proj")].count("layout") == 1
 
 
 def test_a_tree_or_blob_id_is_not_a_commit_anywhere(get, world):
@@ -764,18 +775,15 @@ def _plain_repo(world, name, link):
     git(folder, "init", "-q", "-b", "main")
     git(folder, "add", "-A")
     git(folder, "commit", "-q", "-m", "mine")
-    world.link.repos = {name: str(folder)}
-    scope._repos_seen.clear()
-    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
-    git_mod._confirmed.clear()
+    _use(world, folder)
     return folder
 
 
 def _refused(get, world, folder, name, monkeypatch):
     ran = _spy(monkeypatch)
-    assert get("/history", root=f"repo:{name}", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
-    assert get("/file", root=f"repo:{name}", path="f.txt").json()["history"] is False
-    assert get("/search", q="x", root=f"repo:{name}").json()["hits"] == [] and ran == []  # git never started there
+    assert get("/history", root="ws", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
+    assert get("/file", root="ws", path="f.txt").json()["history"] is False
+    assert get("/search", q="x", root="ws").json()["hits"] == [] and ran == []  # git never started there
 
 
 def test_a_symlinked_objects_folder_is_not_a_repository(get, world, monkeypatch):
@@ -824,3 +832,130 @@ def test_variables_git_reads_from_the_environment_cannot_move_it(get, world, mon
     assert "not this one" not in str(got)
     assert get("/commit", root="ws", path="src/app.py", sha=world.c2).status_code == 200
     assert "other repo" not in get("/search", q="other repo").text
+
+
+# ---------------------------------------------------------------- the guard and git's pathspecs say the same
+
+
+DENY_WALK = [
+    "src/id_rsa.d/x.txt", "src/.env.d/y.txt", "certs.pem/inner.txt", "a/b/c/id_ed25519.bak/z", "x.key/deep/er/f", "k.p12/f",
+    "w/repo.worktrees/f.txt", "a.kdbx", "login.keychain-db", "x/my.keychain/f", ".aws/credentials", "d/.aws/c/f", ".docker/config.json",
+    ".kube/config", ".npmrc", "p/.pypirc", ".git-credentials", "ID_RSA_work/f", "UP.PEM/x", ".ENV", "src/.Env.Local/q",
+    ".ssh/config", "n/.gnupg/f", "keys.jsonl", "sub/keys.jsonl/f", "sub/.orch/f", "n/.git/config",
+    # fine
+    "src/main.py", "README.md", "env.txt", "key.txt", "pem/readme", "my_id_rsa_notes.txt", "docs/keychain.md", "a/worktrees/f",
+    "src/idrsa/f", ".environment/f", "package.json", "x.pemx/f", "gitignore", ".gitignore", ".github/w.yml",
+]  # fmt: skip
+
+
+def test_git_excludes_exactly_the_paths_the_guard_locks_at_any_depth(tmp_path):
+    from orch import gitbrowse
+
+    repo = tmp_path / "walk"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    for rel in DENY_WALK:
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("x\n")
+    # `.git` paths cannot be added through git: leave them to the guard
+    tracked = [p for p in DENY_WALK if ".git/" not in p and not p.startswith(".git/") and p != ".git"]
+    git(repo, "add", "-f", "--", *tracked)
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "--", ":(top)", *gitbrowse.DENY_SPECS],
+        capture_output=True, text=True, check=True, env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]},
+    ).stdout.split("\n")  # fmt: skip
+    visible = {p for p in listed if p}
+    for rel in tracked:
+        locked = guard.deny(tuple(rel.split("/"))) is not None
+        assert (rel not in visible) == locked, (rel, "git hides it" if rel not in visible else "git shows it")
+
+
+# ---------------------------------------------------------------- history is for one file
+
+
+def test_history_commit_and_compare_take_a_file_never_a_folder(get, world):
+    """A folder's patch would span every file below it, locked-named folders included (the PoC path was `src`)."""
+    deny_dir = world.proj / "src" / "id_rsa.d"
+    deny_dir.mkdir()
+    (deny_dir / "leak.txt").write_text("SECRETLEAK\n")
+    (world.proj / "src" / ".env.d").mkdir()
+    (world.proj / "src" / ".env.d" / "e.txt").write_text("SECRETLEAK\n")
+    git(world.proj, "add", "-f", "-A")
+    git(world.proj, "commit", "-q", "-m", "folders with locked names", n=5)
+    head = git(world.proj, "rev-parse", "HEAD")
+    for path in ("src", "src/id_rsa.d", "src/.env.d", "docs"):
+        assert get("/history", root="ws", path=path).status_code in (403, 404), path
+        assert get("/commit", root="ws", path=path, sha=head).status_code in (403, 404), path
+        assert get("/compare", root="ws", path=path, a=world.c1, b=head).status_code in (403, 404), path
+    for res in (
+        get("/commit", root="ws", path="src", sha=head),
+        get("/compare", root="ws", path="src", a=world.c1, b=head),
+    ):
+        assert "SECRETLEAK" not in res.text
+    # even with the guard out of the way, git does not give those files (the pathspec excludes them)
+    from orch import gitbrowse
+
+    out = gitbrowse.run(str(world.proj), "file_diff", os.environ, operand=("3", world.c1, head, "src")).out
+    assert b"SECRETLEAK" not in out and b"id_rsa.d" not in out
+
+
+def test_a_deleted_file_still_has_history_a_deleted_folder_does_not(get, world):
+    (world.proj / "docs").mkdir()
+    (world.proj / "docs" / "notes.txt").write_text("n\n")
+    git(world.proj, "add", "-A")
+    git(world.proj, "commit", "-q", "-m", "add notes", n=5)
+    (world.proj / "docs" / "notes.txt").unlink()
+    (world.proj / "docs").rmdir()
+    git(world.proj, "commit", "-q", "-am", "remove notes", n=6)
+    assert get("/history", root="ws", path="docs/notes.txt").json()["repo"] is True
+    assert get("/history", root="ws", path="docs").status_code == 404  # no file of that name, and not on disk
+    assert get("/history", root="ws", path="nope.txt").status_code == 404
+
+
+# ---------------------------------------------------------------- which declared folders become roots
+
+
+def test_a_declared_folder_that_is_not_a_plain_repository_is_not_a_root(get, world, monkeypatch):
+    plain = world.tmp / "just-a-folder"
+    plain.mkdir()
+    (plain / "f.txt").write_text("x\n")
+    gitfile = world.tmp / "gitfile-repo"
+    gitfile.mkdir()
+    (gitfile / ".git").write_text("gitdir: /elsewhere\n")
+    home = world.tmp / "fakehome"
+    (home / ".aws").mkdir(parents=True)
+    git(home / ".aws", "init", "-q", "-b", "main")
+    (home / "Library").mkdir()
+    git(home / "Library", "init", "-q", "-b", "main")
+    monkeypatch.setenv("HOME", str(home))
+    world.link.repos = {
+        "other": str(world.other), "plain": str(plain), "gitfile": str(gitfile), "aws": str(home / ".aws"),
+        "lib": str(home / "Library"),
+    }  # fmt: skip
+    scope._repos_seen.clear()
+    assert [r["id"] for r in get("").json()["roots"]] == ["ws", "repo:other"]
+    assert get("/tree", root="repo:aws").status_code == 404
+    assert get("/tree", root="repo:plain").status_code == 404
+
+
+def test_a_hard_link_to_an_orch_file_is_not_readable_under_another_name(get, world):
+    (world.proj / ".state").mkdir(exist_ok=True)
+    (world.proj / ".state" / "secret.json").write_text("KEYMATERIAL\n")
+    os.link(world.proj / ".state" / "secret.json", world.proj / "innocent.txt")
+    os.link(world.proj / "config.json", world.proj / "cfg-copy.txt")
+    for name in ("innocent.txt", "cfg-copy.txt"):
+        got = get("/file", root="ws", path=name)
+        assert "KEYMATERIAL" not in got.text and (got.status_code == 403 or got.json().get("kind") != "text"), name
+    # a hard link between two ordinary files stays readable
+    os.link(world.proj / "README.md", world.proj / "README-2.md")
+    assert get("/file", root="ws", path="README-2.md").json()["kind"] == "markdown"
+
+
+def test_ripgrep_starts_in_the_folder_the_guard_opened_not_in_a_path(world):
+    from orch import gitbrowse
+
+    root = guard.Root("ws", "w", os.path.realpath(world.proj), "workspace")
+    with root.dir(("src",)) as fd:
+        # the folder is replaced by a link AFTER it was opened: the child is still in the opened one
+        res = gitbrowse.spawn(["/bin/ls"], {"PATH": "/bin"}, cwd_fd=fd, max_bytes=1000)
+    assert res.out.decode().split() == ["app.py", "ünï.txt"] or "app.py" in res.out.decode()

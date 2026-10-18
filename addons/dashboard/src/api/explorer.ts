@@ -153,6 +153,7 @@ export const LOCKED_TEXT: Record<string, string> = {
   'Git internals': 'Git’s own files are never shown. Use the History tab of a file instead.',
   "orch's own files": 'orch’s own files (tickets, keys, event logs) are never shown here.',
   Keys: 'Key files are never shown here.',
+  'Ticket worktrees': 'Ticket worktree folders are never shown here.',
   'Secrets (.env)': 'Files with secrets (.env) are never shown here.',
 }
 export const lockedText = (reason: string | null | undefined) => (reason && LOCKED_TEXT[reason]) || 'This file is locked and is never shown here.'

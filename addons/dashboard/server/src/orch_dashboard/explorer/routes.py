@@ -179,14 +179,24 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             raise _refuse(exc) from None
 
     def history_target(sc, query):
+        """History, a commit and a comparison are for ONE FILE: a regular file on disk (no link), or a file git
+        recorded that is gone now. Never a folder (a folder's patch would span every file below it)."""
         root = sc.root(query.root)
         parts = _plain(query.path)
         if not parts:
             raise fail("invalid.input", "Choose a file.", exit=5)
         try:
             repo = git.locate(root, parts)
+            try:
+                st = root.stat_file(parts)
+            except guard.Missing:
+                st = None
         except guard.GuardError as exc:
             raise _refuse(exc) from None
+        if st is not None and not stat.S_ISREG(st.st_mode):
+            raise fail("not_found", "History is for files. Choose a file.", exit=2)
+        if st is None and (repo is None or not git.was_file(repo)):
+            raise fail("not_found", "There is no such file.", exit=2)
         return root, parts, repo
 
     @app.get("/api/w/{ws}/explorer/history")

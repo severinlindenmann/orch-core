@@ -30,17 +30,26 @@ class Repo:
 
 #: repositories whose layout git confirmed, by folder: for this many seconds
 CONFIRM_TTL = 20.0
-_confirmed: dict[str, float] = {}
+_confirmed: dict[tuple[int, int], float] = {}
 
 
 def confirmed(folder: str) -> bool:
-    """Does git itself find its git directory, its common directory and its top at exactly ``<folder>/.git`` and
-    ``folder``? A repository that git reads from somewhere else (a ``.git`` that redirects, a ``commondir``) is not
-    one the guard checked, so it is not used. `HostError` (`observe.unavailable`) when the gate refuses the repo."""
-    now = time.monotonic()
-    if now - _confirmed.get(folder, -1e9) < CONFIRM_TTL:
-        return True
+    """Does git itself find its git directory, its common directory, its top and its objects at exactly
+    ``<folder>/.git``, ``folder`` and ``<folder>/.git/objects``? A repository that git reads from somewhere else (a
+    ``.git`` that redirects, a ``commondir``) is not one the guard checked, so it is not used. ``folder`` must
+    already be a real path (no link in it). Remembered by the identity of its ``.git`` folder. `HostError`
+    (`observe.unavailable`) when the gate refuses the repo."""
     real = os.path.realpath(folder)
+    if real != folder:
+        return False
+    try:
+        st = os.stat(os.path.join(real, ".git"), follow_symlinks=False)
+    except OSError:
+        return False
+    key = (st.st_dev, st.st_ino)
+    now = time.monotonic()
+    if now - _confirmed.get(key, -1e9) < CONFIRM_TTL:
+        return True
     try:
         res = gitbrowse.run(folder, "layout", os.environ, max_bytes=8192, timeout=10.0)
     except gitsafe.Unsafe as exc:
@@ -49,7 +58,7 @@ def confirmed(folder: str) -> bool:
     git_dir = os.path.join(real, ".git")
     if res.code != 0 or lines != [git_dir, git_dir, real, os.path.join(git_dir, "objects")]:
         return False
-    _confirmed[folder] = now
+    _confirmed[key] = now
     return True
 
 
@@ -79,6 +88,15 @@ def _run(repo: Repo, op: str, *operand: str, max_bytes: int = PATCH_MAX, timeout
 
 def _text(value: str, limit: int = 300) -> str:
     return describe.clean_line(value, limit)
+
+
+def was_file(repo: Repo) -> bool:
+    """Did git ever record ``repo.file`` as a FILE (a deleted file, as a row of its own last change)? A folder, or a
+    name that never was a file, has none."""
+    if not repo.file:
+        return False
+    res = _run(repo, "last_change", "HEAD", repo.file, max_bytes=100_000)
+    return res.code == 0 and any(path == repo.file for _s, path in gitbrowse.parse_names(res.out))
 
 
 def log(repo: Repo, skip: int, limit: int) -> dict:

@@ -55,17 +55,36 @@ _SLOT = re.compile(r"<(commit|file|num|pattern)>")
 #: (`orch_dashboard.explorer.guard`) imports these, and every git operation below excludes the same names with
 #: ``:(exclude)`` pathspecs ON TOP of the guard's own check (never instead of it), so a path the guard missed still
 #: cannot come out of git. Git internals, orch's store, key material and ``.env`` files.
-DENIED_NAMES = frozenset({".git", STORE_DIR, ".ssh", ".gnupg", ".netrc", KEYS_FILE, ".env"})
+DENIED_NAMES = frozenset({
+    ".git", STORE_DIR, ".ssh", ".gnupg", ".netrc", KEYS_FILE, ".env", ".git-credentials", ".npmrc", ".pypirc", ".aws",
+    ".docker", ".kube",
+})  # fmt: skip
 DENIED_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
-DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks")
+DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".worktrees")
+DENIED_CONTAINS = (".keychain",)
+
+
+def denied_name(component: str) -> bool:
+    """Is this ONE path component on the deny list (any depth; a denied FOLDER locks everything below it)?"""
+    low = component.casefold()
+    return (
+        low in DENIED_NAMES
+        or low.startswith(DENIED_PREFIXES)
+        or low.endswith(DENIED_SUFFIXES)
+        or any(c in low for c in DENIED_CONTAINS)
+    )
+
+
 _G = ":(exclude,glob,icase)"
-#: pathspecs appended to every operation that takes pathspecs (after ``--``)
-DENY_SPECS = (
-    *(f"{_G}**/{n}" for n in sorted(DENIED_NAMES)),
-    *(f"{_G}**/{n}/**" for n in sorted(DENIED_NAMES)),
-    *(f"{_G}**/{n}*" for n in DENIED_PREFIXES),
-    *(f"{_G}**/*{n}" for n in DENIED_SUFFIXES),
+#: the same list as glob patterns of ONE component; each is excluded as a file/folder AND as everything below it
+DENY_GLOBS = (
+    *sorted(DENIED_NAMES),
+    *(f"{p}*" for p in DENIED_PREFIXES),
+    *(f"*{s}" for s in DENIED_SUFFIXES),
+    *(f"*{c}*" for c in DENIED_CONTAINS),
 )
+#: pathspecs appended to every operation that takes pathspecs (after ``--``)
+DENY_SPECS = (*(f"{_G}**/{g}" for g in DENY_GLOBS), *(f"{_G}**/{g}/**" for g in DENY_GLOBS))
 _TOP_NAME = re.compile(r"[A-Za-z0-9._-]{1,100}")
 #: pins on top of HARDEN for these operations (command scope beats every config file)
 _EXTRA = (
@@ -102,6 +121,10 @@ OPS: dict[str, Op] = {
     # where git itself finds its directories for `repo`: git dir, common dir, top, objects (checked by the caller)
     "layout": Op(("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel",
                   "--git-path", "objects")),
+    # the newest change to a path, as `<status> NUL <path> NUL`: only FILES are listed, so a folder (or a name that was
+    # never a file) has no row with exactly its own path
+    "last_change": Op(("log", "--max-count=1", "--format=", "--name-status", "-z", "--no-renames", "--end-of-options",
+                       "<commit>", "--", ":(literal)<file>")),
     # the files that differ between two commits (old, new): `<status> NUL <path> NUL ...`
     "range_names": Op(("diff", "--no-color", "--no-renames", "--name-status", "-z", *gitsafe._DIFF_FIXED,
                        "--end-of-options", "<commit>", "<commit>", "--", ":(top)")),
@@ -222,13 +245,23 @@ def run(
 
 
 def spawn(
-    argv: list[str], env: Mapping[str, str], *, cwd: str = "/", max_bytes: int = 1 << 20, timeout: float = 15.0
+    argv: list[str],
+    env: Mapping[str, str],
+    *,
+    cwd: str = "/",
+    cwd_fd: int | None = None,
+    max_bytes: int = 1 << 20,
+    timeout: float = 15.0,
 ) -> Result:
     """Run ``argv`` (built by this module, or a fixed search tool's) with stdin closed in its own process group:
-    at most ``max_bytes`` of output and ``timeout`` seconds, then the group is killed."""
+    at most ``max_bytes`` of output and ``timeout`` seconds, then the group is killed. ``cwd_fd``: the child starts in
+    the folder this descriptor holds (``fchdir`` before exec: no path is resolved again, so a folder swapped for a link
+    after the caller checked it is not followed)."""
     try:
         proc = subprocess.Popen(  # noqa: S603 - the argv is a fixed template with validated operands
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=dict(env), cwd=cwd,
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=dict(env),
+            cwd=None if cwd_fd is not None else cwd,
+            preexec_fn=(lambda: os.fchdir(cwd_fd)) if cwd_fd is not None else None,  # noqa: PLW1509
             start_new_session=True, close_fds=True,
         )  # fmt: skip
     except OSError:

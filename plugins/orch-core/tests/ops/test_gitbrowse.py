@@ -373,3 +373,19 @@ def test_a_redirecting_git_file_is_refused_by_the_gate_or_shows_in_the_layout(wo
     except gitsafe.Unsafe:
         return
     assert res.code != 0 or res.out.decode().splitlines()[0] != f"{real}/.git"
+
+
+def test_last_change_lists_only_files_with_their_exact_path(world):
+    r = world.repo
+    assert gitbrowse.parse_names(world.run("last_change", "HEAD", "a.txt").out) == [("M", "a.txt")]
+    assert gitbrowse.parse_names(world.run("last_change", "HEAD", "dir/ünï code.txt").out) == [
+        ("M", "dir/ünï code.txt")
+    ]
+    rows = gitbrowse.parse_names(
+        world.run("last_change", "HEAD", "dir").out
+    )  # a folder: rows of its files, never itself
+    assert rows and all(p != "dir" for _s, p in rows)
+    (r / "a.txt").unlink()
+    world.git(r, "commit", "-q", "-am", "gone", n=8)
+    assert gitbrowse.parse_names(world.run("last_change", "HEAD", "a.txt").out) == [("D", "a.txt")]
+    assert world.run("last_change", "HEAD", "never.txt").out == b""

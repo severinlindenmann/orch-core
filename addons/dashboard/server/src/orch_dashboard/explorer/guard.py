@@ -90,9 +90,9 @@ def deny(parts: tuple[str, ...], *, store_names: frozenset[str] = frozenset()) -
             return "orch's own files"
         if low == ".env" or low.startswith(".env."):
             return "Secrets (.env)"
-        if low in gitbrowse.DENIED_NAMES or low.startswith(gitbrowse.DENIED_PREFIXES):
-            return "Keys"
-        if low.endswith(gitbrowse.DENIED_SUFFIXES):
+        if low.endswith(".worktrees"):
+            return "Ticket worktrees"
+        if gitbrowse.denied_name(part):
             return "Keys"
     return None
 
@@ -142,6 +142,29 @@ class Root:
         for p in self.forbidden:
             with contextlib.suppress(OSError):
                 found.add(_identity(os.stat(p)))
+        return found
+
+    def _banned_files(self) -> set[tuple[int, int]]:
+        """Identities of the files of orch's own folders (the state, run and store folders, and the store files directly
+        in a legacy workspace folder), found by walking them a few levels: a HARD LINK to one of them, made under any
+        name elsewhere, is the same file. Only asked for a file that has more than one name."""
+        found: set[tuple[int, int]] = set()
+        seen = 0
+        stack = [(p, 0) for p in self.forbidden]
+        for name in self.store:
+            stack.append((os.path.join(self.path, name), 0))
+        while stack and seen < 2000:
+            path, depth = stack.pop()
+            try:
+                st = os.lstat(path)
+                seen += 1
+                if stat.S_ISREG(st.st_mode):
+                    found.add(_identity(st))
+                elif stat.S_ISDIR(st.st_mode) and depth < 4:
+                    with os.scandir(path) as it:
+                        stack += [(e.path, depth + 1) for e in it]
+            except OSError:
+                continue
         return found
 
     def _open_root(self) -> int:
@@ -245,6 +268,8 @@ class Root:
                 st = os.fstat(f)
                 if not stat.S_ISREG(st.st_mode):
                     raise Missing("This is not a regular file.")
+                if st.st_nlink > 1 and _identity(st) in self._banned_files():
+                    raise Denied("orch's own files")
                 data = b""
                 while len(data) <= limit:
                     chunk = os.read(f, min(65536, limit + 1 - len(data)))
@@ -336,8 +361,6 @@ class Root:
 def exclude_globs(store: frozenset[str]) -> list[str]:
     """The deny list as ripgrep ``--glob`` exclusions (keeps a search from READING locked files; every hit is also
     re-checked with :func:`deny`, so a glob that misses something cannot leak it)."""
-    names = {*gitbrowse.DENIED_NAMES, *(f"{n}*" for n in gitbrowse.DENIED_PREFIXES)}
-    names |= {f"*{n}" for n in gitbrowse.DENIED_SUFFIXES}
-    out = [f"!{n}" for n in sorted(names)] + [f"!{n}/**" for n in sorted(gitbrowse.DENIED_NAMES)]
+    out = [f"!{g}" for g in gitbrowse.DENY_GLOBS] + [f"!{g}/**" for g in gitbrowse.DENY_GLOBS]
     out += [f"!/{n}" for n in sorted(store)]  # leading slash: directly in the root only
     return out

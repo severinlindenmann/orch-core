@@ -29,10 +29,10 @@ export type HandoffAction =
   | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] } }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
-   * criteria to change or add and the people to add or remove. `head_seq` is the log head the page showed: the server
+   * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
-  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
+  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }
@@ -248,10 +248,15 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
   }
   // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
   if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
-  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (the signer builds the same word).
-  if (request.op === 'addon.grant') {
+  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (core's signer.confirm_word builds the same word; src/test/confirm-words.json pins it).
+  if (request.op === 'addon.grant' || request.op === 'addon.purge') {
     const name = request.events[0]?.name
     return workspace && typeof name === 'string' ? `${name}~${workspace.id.slice(-8)}` : null
+  }
+  // Turning an add-on off: the terminal asks for the add-on's plain name (signer.confirm_word).
+  if (request.op === 'addon.disable') {
+    const name = request.events[0]?.name
+    return typeof name === 'string' ? name : null
   }
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }

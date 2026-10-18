@@ -63,6 +63,10 @@ _FORBIDDEN = frozenset({"seq", "at", "prev", "ws_seq", "host_sig", "sig"})
 _GATE_TYPES = {"gate.approved": None, "gate.changes_requested": None, "verdict.given": "verify"}
 _MEMBER_OPS = frozenset({"member.add", "member.remove", "member.role"})
 _ADDON_OPS = frozenset({"addon.grant", "addon.disable", "addon.purge"})
+#: the addon ops whose typed word is ``<name>~<WS8>``: the ONE definition, shared by the terminal (``orch sign``), the
+#: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page
+#: (addons/dashboard/src/test/confirm-words.json pins all three)
+_ADDON_WS_OPS = frozenset({"addon.grant", "addon.purge"})
 
 
 class SignerRefused(Exception):
@@ -530,7 +534,8 @@ def _clean(value: Any) -> str:
 
 def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None] | None = None) -> str:
     """The word the person types: the ticket key for decisions and ticket ops (``move`` and a ticket ``policy.set``
-    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops,
+    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops (``<name>~<WS8>`` for
+    grant/purge),
     ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
@@ -548,6 +553,8 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
         return "GRANT"
     if op in _MEMBER_OPS:
         return _clean(ev.get("person"))
+    if op in _ADDON_WS_OPS:  # addon names repeat across workspaces: the last 8 of the workspace id disambiguate
+        return f"{_clean(ev.get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
     if op in _ADDON_OPS:
         return _clean(ev.get("name"))
     if op == pairdevice.OP:  # H12c-e: the last eight hex of the device id being added (shown in the review)

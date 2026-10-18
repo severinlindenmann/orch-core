@@ -26,7 +26,6 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 
 from orch.relay import wire
 from orch.relay.pubsign import PublishSigner, SignedPublish
@@ -102,6 +101,14 @@ class Transport:
             conn.close()
 
 
+_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+
+def _quote(part: str) -> str:
+    """Percent-encode the UTF-8 bytes of ``part`` except RFC 3986 unreserved."""
+    return "".join(chr(b) if b in _UNRESERVED else f"%{b:02X}" for b in part.encode("utf-8", "strict"))
+
+
 def share_target(workspace_id: str, *parts: str) -> str:
     """``/v1/ws/<ws>/<part>/<part>...`` with every part percent-encoded (a file path inside a share is one or more
     parts: pass them split on ``/``). A part is a plain name: empty, ``.``, ``..`` and any part holding ``/``, ``\\`` or
@@ -110,7 +117,10 @@ def share_target(workspace_id: str, *parts: str) -> str:
     for p in parts:
         if type(p) is not str or p in ("", ".", "..") or any(c in p for c in "/\\\x00"):
             raise PublishError("bad_path", method="", sent=False)
-    return "/v1/ws/" + workspace_id + "/" + "/".join(quote(p, safe="") for p in parts)
+    try:
+        return "/v1/ws/" + workspace_id + "/" + "/".join(_quote(p) for p in parts)
+    except UnicodeEncodeError:
+        raise PublishError("bad_path", method="", sent=False) from None
 
 
 def _code(body: bytes) -> str:
@@ -161,7 +171,7 @@ class PublishClient:
                 return PublishResponse(status, data)
             code = _code(data)
             if status == 401 and code == "stale_timestamp":
-                if not stale_retried:
+                if not stale_retried and attempt < MAX_ATTEMPTS:
                     stale_retried = True  # one retry, a new ts and nonce from the local clock
                     continue
                 raise PublishError(code, status, method=method, clock_off=True)

@@ -90,3 +90,13 @@ def test_sentences_use_names_and_fall_back_to_a_general_one():
     agent = {"kind": "agent", "id": "claude-code", "for": "p_2"}
     status = adapt.item(raw("status.changed", {"from": "in_progress", "to": "done"}, actor=agent), names)
     assert status["did"] == "moved the ticket from in progress to done" and status["actor"]["for_name"] == "Bo"
+
+
+def test_repo_changes_name_the_repo_and_other_setting_changes_stay_general():
+    def did(data):
+        return adapt.sentence({"type": "settings.changed", "data": data}, lambda p: "x")
+
+    assert did({"keys": ["repos"], "repos": {"web": "set"}}) == "updated repo web"
+    assert did({"keys": ["repos"], "repos": {"api": "removed", "web": "set"}}) == "removed repo api; updated repo web"
+    assert did({"keys": ["claim_ttl_min"]}) == "changed the workspace settings"
+    assert did({"keys": ["repos"], "repos": {"a‮b": "set"}}) == "changed the workspace settings"

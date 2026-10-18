@@ -526,7 +526,6 @@ def test_signer_accepts_plain_and_encoded_names_and_query_dots():
         f"/v1/ws/{WS}/shares/abc/files/a..b",
         f"/v1/ws/{WS}/shares/abc/files/%C3%A9.txt",
         f"/v1/ws/{WS}/shares?path=../x&q=%2e%2e%2f",  # the query is a value, not a path
-        f"/v1/ws/{WS}/shares?",
     ):
         s.request("GET", t)
 
@@ -550,3 +549,18 @@ def test_a_name_that_decodes_to_a_separator_is_refused_even_when_quoted():
         mk()[0].request("GET", share_target(WS, "shares", "a%2fb"))
     with pytest.raises(SignerRefused):
         mk()[0].request("GET", share_target(WS, "shares", "%2e"))
+
+
+def test_network_errors_then_stale_send_at_most_three_times():
+    c, net, _, _ = client(Net(OSError(), OSError(), (401, err("stale_timestamp")), (200, b"{}")))
+    with pytest.raises(PublishError):
+        c.request("PUT", target("shares", "s"))
+    assert len(net.calls) == 3
+
+
+def test_target_ending_in_empty_query_is_refused():
+    s, _ = mk()
+    for t in (f"/v1/ws/{WS}/shares?", f"/v1/ws/{WS}/shares/x?"):
+        with pytest.raises(SignerRefused):
+            s.request("GET", t)
+    s.request("GET", f"/v1/ws/{WS}/shares?a=1")

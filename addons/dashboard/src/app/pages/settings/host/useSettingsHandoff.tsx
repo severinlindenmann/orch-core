@@ -26,7 +26,13 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       autoStart={spec.autoStart}
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
-      onSettled={(phase) => phase === 'done' && onSettled?.()}
+      onSettled={(phase) => {
+        if (phase !== 'done') return
+        onSettled?.()
+        // Signed: the dialog is finished and the page behind it shows the new state. A moment of "Signed" first.
+        const n = spec.n
+        setTimeout(() => setSpec((cur) => (cur && cur.n === n ? null : cur)), 1500)
+      }}
       onClose={() => setSpec(null)}
     >
       {spec.form}

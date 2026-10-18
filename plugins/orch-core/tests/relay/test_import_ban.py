@@ -487,6 +487,14 @@ def test_the_scan_is_recursive(tmp_path):
     assert found["sub/deep.py"] and found["plain/deeper/x.py"]
 
 
+def test_publishclient_package_obeys_the_same_ban():
+    import orch.publishclient
+
+    root = Path(orch.publishclient.__file__).resolve().parent
+    found = scan(root, "orch.publishclient")
+    assert found and all(v == [] for v in found.values()), found
+
+
 def test_the_real_package_is_scanned_recursively():
     assert set(MODULES) == set(PKG.rglob("*.py"))
     assert all(v == [] for v in scan(PKG).values())
@@ -499,12 +507,20 @@ def test_the_ban_allows(src):
 
 def test_signer_holds_no_key_attribute():
     """The key is captured in a closure: no attribute of a RelaySigner is the key object."""
-    from orch.relay import sign
+    from orch.relay import pubsign, sign
 
     from .helpers import Key
 
     k = Key()
-    s = sign.RelaySigner(k, sign.LinkContext(workspace_id="00" * 16, origin="https://relay.example"))
+    signers = (
+        sign.RelaySigner(k, sign.LinkContext(workspace_id="00" * 16, origin="https://relay.example")),
+        pubsign.PublishSigner(k, pubsign.PublishContext("00" * 16, "https://pub.example")),
+    )
+    for s in signers:
+        _assert_no_key(s, k)
+
+
+def _assert_no_key(s, k):
     for name in dir(s):
         if not (name.startswith("__") and name.endswith("__")):
             try:

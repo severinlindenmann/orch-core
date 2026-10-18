@@ -70,7 +70,7 @@ const CODE_TEXT: Record<string, string> = {
   'worktree.exists': 'This ticket already has a worktree for that repository.',
   'worktree.none': 'This ticket has no worktree for that repository.',
   'worktree.dirty': 'The worktree has changes that are not saved in git (or orch cannot check). Commit them first, then remove it.',
-  'worktree.in_use': 'An agent is working in this worktree. Stop it first.',
+  'worktree.in_use': 'An agent run is still attached to this worktree. Stopping agent access does not end a run that already started: open the agents dock at the bottom of the page, press Stop on that run, then remove the worktree.',
   'worktree.branch_in_use': 'That branch is already used by another ticket’s worktree.',
   'worktree.unpinned': 'The folder was made but orch could not take it over safely. Remove it and create it again.',
   'runner.disabled': 'Running commands from the dashboard is switched off for this workspace on this computer, or the Worktrees add-on is not switched on.',

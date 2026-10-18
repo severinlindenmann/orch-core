@@ -36,7 +36,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   const ends = live ? [...new Set([Date.parse(live.until), ...(grants.data ?? []).filter(g => g.person === me.data?.person && !g.revoked && g.id !== live.id && Date.parse(g.expires_at) > now).map(g => Date.parse(g.expires_at))])].sort((a, b) => a - b) : []
   const soonest = live && ends.length ? new Date(ends[0]).toISOString() : live?.until
   const more = ends.length - 1
-  const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }) }
+  const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }); void qc.invalidateQueries({ queryKey: ['runs', ws] }) }
   // The API exposes deposit status, but no deposit retry. Start again opens a fresh signing flow.
   const outcome = () => { setAttempted(true); refresh() }
   const stop = async () => {
@@ -72,7 +72,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
     {extend && <Dialog open onOpenChange={open => { if (!open) setExtend(false) }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{live ? 'Extend agent access' : stopped ? 'Restore agent access' : 'Let agents work for you'}</DialogTitle><DialogDescription>{live ? 'Choose how long agents may keep working for you, then review and sign.' : stopped ? 'Choose how long agents may work for you again, then review and sign.' : 'Choose how long agents may work for you, then review and sign.'}</DialogDescription></DialogHeader>
       <RunnerGrantCard ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={null} extend={live ?? undefined} onChanged={refresh} onOutcome={outcome} />
     </DialogContent></Dialog>}
-    {askStop && <Dialog open onOpenChange={open => { if (!open) setAskStop(false) }}><DialogContent><DialogHeader><DialogTitle>Stop agents working for you?</DialogTitle><DialogDescription>This ends your runner access and all your other listed active agent access. Review and sign each stop separately.</DialogDescription></DialogHeader>
+    {askStop && <Dialog open onOpenChange={open => { if (!open) setAskStop(false) }}><DialogContent><DialogHeader><DialogTitle>Stop agents working for you?</DialogTitle><DialogDescription>This ends your runner access and all your other listed active agent access. Review and sign each stop separately. An agent that is already running can no longer save changes, but it keeps running until you press Stop on it in the agents dock.</DialogDescription></DialogHeader>
       {error && <p role="alert">{error}</p>}<Button variant="ghost" onClick={() => setAskStop(false)}>Cancel</Button><Button disabled={grants.isFetching} onClick={() => void stop()}>Stop agent access</Button>
     </DialogContent></Dialog>}
     {queue[done] && <HandoffDialog key={queue[done].id} ws={ws} title="Stop agent access" action={{ action: 'grant_revoke', grant: queue[done].id }} autoStart summary={<><p role="status">Stopping access {done + 1} of {queue.length}. {done} stopped.</p><p>This ends the agent access for {me.data?.name ?? 'you'}{queue[done].until ? <>, which runs until <time dateTime={queue[done].until}>{fmtSlot(queue[done].until!)}</time></> : ''}.</p><details className="text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Access id: {queue[done].id}</p></details></>} onSettled={phase => {

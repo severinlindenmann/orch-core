@@ -3,8 +3,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Search as SearchIcon } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { explorerQueries, type Hit } from '@/api/explorer'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { explorerQueries, partsOf, type Hit } from '@/api/explorer'
 import { hasFeature } from '@/api/features'
 import { LoadFailed } from '@/components/LoadFailed'
 import { cn } from '@/lib/utils'
@@ -77,6 +77,46 @@ function Results({ ws, q, mode, root, onPick }: { ws: string; q: string; mode: '
   )
 }
 
+/** The folders above a file, as the tree's open keys (`root:path`), so a deep link or a search pick shows where the file is. */
+export function ancestorKeys(root: string, path: string): string[] {
+  const parts = partsOf(path).slice(0, -1)
+  return parts.map((_, i) => `${root}:${parts.slice(0, i + 1).join('/')}`)
+}
+
+const SEARCH_MODES = [['names', 'File names'], ['text', 'Text in files']] as const
+
+/** Two radios with one tab stop; the arrow keys move and choose (the radio group pattern). */
+function ModeRadios({ mode, onMode }: { mode: 'names' | 'text'; onMode: (m: 'names' | 'text') => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const move = (e: React.KeyboardEvent, i: number) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    if (!step) return
+    e.preventDefault()
+    const n = (i + step + SEARCH_MODES.length) % SEARCH_MODES.length
+    onMode(SEARCH_MODES[n][0])
+    refs.current[n]?.focus()
+  }
+  return (
+    <div role="radiogroup" aria-label="Search in" className="flex gap-1 text-[12px]">
+      {SEARCH_MODES.map(([m, text], i) => (
+        <button
+          key={m}
+          ref={(el) => { refs.current[i] = el }}
+          type="button"
+          role="radio"
+          aria-checked={mode === m}
+          tabIndex={mode === m ? 0 : -1}
+          className={cn('min-h-8 rounded-full border px-3 py-1 outline-none focus-visible:ring-2 focus-visible:ring-brand', mode === m ? 'border-brand bg-brand-soft' : 'border-border text-text-muted')}
+          onClick={() => onMode(m)}
+          onKeyDown={(e) => move(e, i)}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function ExplorerPage() {
   usePageHeader('Files')
   const { workspace } = useWorkspace()
@@ -90,6 +130,12 @@ export function ExplorerPage() {
   const [mode, setMode] = useState<'names' | 'text'>('names')
   const q = useDebounced(text.trim())
   const state = useMemo<ViewerState | null>(() => (search.path ? { root: search.root ?? 'ws', path: search.path, rev: search.rev, view: search.view, sha: search.sha } : null), [search])
+  // Show where the chosen file is: open every folder above it (a deep link, a search pick, a ticket's change).
+  useEffect(() => {
+    if (!state) return
+    const keys = ancestorKeys(state.root, state.path)
+    if (keys.length) setOpen((prev) => (keys.every((k) => prev.has(k)) ? prev : new Set([...prev, ...keys])))
+  }, [state])
   if (!workspace || !ws) return null
   if (!served || (info.data && !info.data.available)) {
     return (
@@ -114,6 +160,10 @@ export function ExplorerPage() {
   const searching = q.length > 0
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]" data-testid="explorer">
+      <header className="space-y-0.5 lg:col-span-2">
+        <h1 className="text-lg font-semibold tracking-tight">Files</h1>
+        <p className="text-[13px] text-text-muted">Browse files and past changes. Files cannot be edited here.</p>
+      </header>
       <aside aria-label="Folders" className={cn('min-w-0 space-y-2', state && 'hidden lg:block')}>
         <div className="space-y-1.5">
           <label className="relative block">
@@ -128,18 +178,14 @@ export function ExplorerPage() {
               className="h-9 w-full rounded-md border border-border bg-surface pl-8 pr-2 text-[13px]"
             />
           </label>
-          <div role="radiogroup" aria-label="Search in" className="flex gap-1 text-[12px]">
-            {(['names', 'text'] as const).map((m) => (
-              <button key={m} role="radio" aria-checked={mode === m} className={cn('rounded-full border px-2.5 py-0.5', mode === m ? 'border-brand bg-brand-soft' : 'border-border text-text-muted')} onClick={() => setMode(m)}>
-                {m === 'names' ? 'File names' : 'Text in files'}
-              </button>
-            ))}
-          </div>
+          <ModeRadios mode={mode} onMode={setMode} />
         </div>
         {searching ? (
           <Results ws={ws} q={q} mode={mode} root={undefined} onPick={pick} />
         ) : (
           <div className="space-y-3">
+            {!info.data && <p role="status" className="px-2 text-[13px] text-text-muted" data-testid="roots-loading">Loading folders…</p>}
+            {info.data && roots.length === 0 && <p className="px-2 text-[13px] text-text-muted" data-testid="roots-empty">There are no folders to show in this workspace yet.</p>}
             {roots.map((r) => (
               <section key={r.id} aria-label={r.label} className="space-y-1">
                 <h2 className="px-2 text-[11px] font-medium uppercase tracking-wide text-text-faint">

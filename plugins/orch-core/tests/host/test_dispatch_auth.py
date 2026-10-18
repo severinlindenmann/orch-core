@@ -124,6 +124,15 @@ def test_a_person_sees_restricted_tickets_by_its_mapping_and_an_agent_by_its_gra
     assert ok(c.req("list"))["data"]["count"] == 0
 
 
+def test_a_grant_of_another_workspace_is_refused_here(served):
+    """An agent that points ORCH_WORKSPACE at a workspace other than the one that started it carries a grant this
+    workspace never issued: a write is refused and a read sees only what is open to all."""
+    c = served.client()
+    foreign = "gr_01J9ZP00000000000000000000." + crypto.b64u(b"f" * 32)
+    assert err(c.req("log", {"text": "a note"}, grant=foreign, session=SESSION, idem=True)) == "grant.expired"
+    assert tickets_on_disk(served) == []
+
+
 # --- F4: principals ---------------------------------------------------------------------------------------------------
 
 

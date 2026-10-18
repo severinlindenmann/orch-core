@@ -1,0 +1,105 @@
+"""The Repos add-on's host checks: what a declared path must be, and the read-only look at one (orch.repopaths)."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from orch import repopaths
+from orch.layout import Layout
+
+
+def mk(tmp_path, name="proj", head="ref: refs/heads/main\n"):
+    d = tmp_path / name
+    (d / ".git").mkdir(parents=True)
+    if head is not None:
+        (d / ".git" / "HEAD").write_text(head)
+    return d
+
+
+@pytest.fixture
+def layout(tmp_path):
+    (tmp_path / "ws" / ".orch").mkdir(parents=True)
+    return Layout.new_at(tmp_path / "ws")
+
+
+def refused(layout, path):
+    with pytest.raises(repopaths.RepoPathError) as e:
+        repopaths.check_declared(layout, path)
+    return str(e.value)
+
+
+def test_a_git_folder_is_accepted(layout, tmp_path):
+    repopaths.check_declared(layout, str(mk(tmp_path)))
+    d = tmp_path / "linked"
+    d.mkdir()
+    (d / ".git").write_text("gitdir: /elsewhere\n")  # a linked working copy has a .git FILE
+    repopaths.check_declared(layout, str(d))
+
+
+@pytest.mark.parametrize("bad", ["", "proj", "./proj", "/a/../b", "/a//b", "/a/./b", "/a\nb", None, 3, "x" * 2000])
+def test_a_path_must_be_absolute_and_plain(layout, bad):
+    refused(layout, bad)
+
+
+def test_it_must_exist_be_a_folder_and_a_git_repo(layout, tmp_path):
+    assert "does not exist" in refused(layout, str(tmp_path / "nope"))
+    f = tmp_path / "file"
+    f.write_text("x")
+    assert "not a folder" in refused(layout, str(f))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert "not a git repository" in refused(layout, str(plain))
+    link = tmp_path / "link"
+    link.mkdir()
+    os.symlink(str(plain), str(link / ".git"))  # a .git that is a link is not a repository marker
+    assert "not a git repository" in refused(layout, str(link))
+
+
+def test_not_the_home_folder_nor_the_root(layout, tmp_path, monkeypatch):
+    home = mk(tmp_path, "home")
+    monkeypatch.setenv("HOME", str(home))  # a home folder that is itself a git repo is still refused
+    assert "home folder" in refused(layout, str(home))
+    os.symlink(str(home), str(tmp_path / "homelink"))
+    assert "home folder" in refused(layout, str(tmp_path / "homelink"))  # nor through a link
+    assert "home folder" in refused(layout, "/")
+
+
+def test_not_inside_the_orch_store(layout, tmp_path):
+    inner = layout.store / "records" / "r"
+    (inner / ".git").mkdir(parents=True)
+    assert "orch's own data" in refused(layout, str(layout.store))
+    assert "orch's own data" in refused(layout, str(inner))
+    os.symlink(str(inner), str(tmp_path / "sneaky"))
+    assert "orch's own data" in refused(layout, str(tmp_path / "sneaky"))
+
+
+def test_observe_reads_the_branch_without_git(layout, tmp_path):
+    d = mk(tmp_path, "ws/r1")  # a folder inside the project, declared relative
+    assert repopaths.observe(layout, "r1") == {"state": "present", "branch": "main"}
+    assert repopaths.observe(layout, str(d)) == {"state": "present", "branch": "main"}
+    (d / ".git" / "HEAD").write_text("0123456789abcdef0123456789abcdef01234567\n")
+    assert repopaths.observe(layout, "r1") == {"state": "present", "branch": None}  # detached
+    (d / ".git" / "HEAD").write_text("ref: refs/heads/--upload-pack=x y\n")
+    assert repopaths.observe(layout, "r1")["branch"] is None  # not a branch name
+    assert repopaths.observe(layout, "nope") == {"state": "missing", "branch": None}
+    (tmp_path / "ws" / "plain").mkdir()
+    assert repopaths.observe(layout, "plain") == {"state": "not_git", "branch": None}
+    (tmp_path / "ws" / "file").write_text("x")
+    assert repopaths.observe(layout, "file") == {"state": "missing", "branch": None}
+
+
+def test_observe_never_follows_a_link_for_head(layout, tmp_path):
+    d = mk(tmp_path, "ws/r2", head=None)
+    secret = tmp_path / "secret"
+    secret.write_text("ref: refs/heads/leaked\n")
+    os.symlink(str(secret), str(d / ".git" / "HEAD"))
+    assert repopaths.observe(layout, "r2") == {"state": "not_git", "branch": None}
+    fifo = tmp_path / "ws" / "r3"
+    (fifo / ".git").mkdir(parents=True)
+    os.mkfifo(str(fifo / ".git" / "HEAD"))
+    assert repopaths.observe(layout, "r3") == {"state": "not_git", "branch": None}  # a FIFO never blocks the host
+    (tmp_path / "ws" / "r4").mkdir()
+    os.symlink(str(d), str(tmp_path / "ws" / "r4" / ".git"))
+    assert repopaths.observe(layout, "r4") == {"state": "not_git", "branch": None}  # a linked .git is not followed

@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from orch import repopaths
 from orch.canon import HashError, canonical_policy, check_repo_identity
 from orch.model.types import WORKSPACE
 
@@ -479,6 +480,9 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         page[name] = (
             {"default_branch": raw.get("default_branch")} if linked is not None else _repo_entry(raw, viewer.manager)
         )
+        if linked is None and viewer.manager and viewer.column == "P" and isinstance(raw.get("path"), str):
+            # the person at the keyboard (an owner or maintainer): is the folder there, and which branch (read-only)
+            page[name]["check"] = repopaths.observe(ctx.store.layout, raw["path"])
     if nxt is not None and snap is None:  # a snapshot only when a later page can follow
         snap = ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, viewer.person, data)
     out: dict[str, Any] = {

@@ -217,6 +217,43 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
     return f"{day} {when:%H:%M} {zone}"
 
 
+_REPO_KEYS = frozenset({"path", "remote", "default_branch"})
+
+
+def _repo_words(entry: Any) -> str | None:
+    """One declared repo in the words a person reads; ``None`` when it is not a plain entry (the caller then shows the
+    whole value as it is signed: the plain text must never claim less than the signed bytes, WYSIWYS)."""
+    if not isinstance(entry, Mapping) or not entry.get("path") or set(entry) - _REPO_KEYS:
+        return None
+    if any(not isinstance(v, str) for v in entry.values()):
+        return None
+    text = f"folder {one(entry['path'])}"
+    if entry.get("remote"):
+        text += f" · remote {one(entry['remote'])}"
+    if entry.get("default_branch"):
+        text += f" · main branch {one(entry['default_branch'])}"
+    return text
+
+
+def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.repos`` as one row per repo: added, changed (old -> new) or removed. ``False`` when
+    anything is not plain (then the generic row, with every byte, is shown instead and nothing here was added)."""
+    if not isinstance(value, Mapping) or not value:
+        return False
+    before = before if isinstance(before, Mapping) else {}
+    rows: list[tuple[str, str | None, str]] = []
+    for name, entry in sorted(value.items()):
+        old = before.get(name)
+        new_words = _repo_words(entry) if entry is not None else "removed (the folder and its files stay on disk)"
+        old_words = _repo_words(old) if old is not None else None
+        if new_words is None or (old is not None and old_words is None):
+            return False
+        rows.append((f"repository {one(name)}", old_words, new_words))
+    for field, old_words, new_words in rows:
+        _row(out, field, new_words, old_words, ctx.note(False))
+    return True
+
+
 def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     """The grant review. The plain view of the ordinary grant (scope ``workable``, verbs ``agent``) is one sentence;
     scope, verbs, the grant id and the UTC times are in the technical details (``d``), which carry every signed field.
@@ -529,6 +566,8 @@ def _event(
         return f"Take back the agent access {_s(ev.get('grant'))}"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
+            if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
+                continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
             out.setdefault("notes", []).append(

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from orch import repopaths
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
@@ -168,6 +169,12 @@ def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
+    for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
+        if spec is not None:
+            try:
+                repopaths.check_declared(h.store.layout, spec["path"])
+            except repopaths.RepoPathError as exc:
+                raise OrchError("invalid.input", f"{name}: {exc}") from None
     done = h.run({"type": "settings.changed", "set": changes}, "workspace", "change the workspace settings", review=[])
     return h.workspace_result(done, {"set": sorted(changes)}, "orch show")
 

@@ -629,3 +629,34 @@ def test_notes_are_a_list():
     g = sample("grant.issued")
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
     assert isinstance(c["notes"], list) and "note" not in c
+
+
+def test_settings_repos_read_as_one_plain_row_per_repo(human, served):
+    event = {
+        **sample("settings.changed"),
+        "set": {
+            "repos": {
+                "api": {"path": "/work/api2", "remote": "https://example.org/a/api", "default_branch": "main"},
+                "gone": None,
+                "web": {"path": "/work/web"},
+            }
+        },
+    }
+    mat = material_for("settings.changed", event)
+    mat["before"] = {"repos": {"api": {"path": "/work/api"}, "gone": {"path": "/work/gone"}, "web": None}}
+    c = build({"op": "settings.set", "events": [event], "material": mat})
+    rows = {r["field"]: r for r in c["fields_changed"]}
+    assert rows["repository api"]["before"] == "folder /work/api"
+    assert rows["repository api"]["after"] == (
+        "folder /work/api2 · remote https://example.org/a/api · main branch main"
+    )
+    assert rows["repository gone"]["after"].startswith("removed (the folder and its files stay on disk)")
+    assert rows["repository web"]["before"] is None and rows["repository web"]["after"] == "folder /work/web"
+    assert rows["repository api"]["before_note"] == "per host, not signed"
+
+
+def test_an_unplain_repo_entry_keeps_the_whole_value_row(human, served):
+    event = {**sample("settings.changed"), "set": {"repos": {"api": {"path": "/a", "extra": "x"}}}}
+    c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
+    (row,) = c["fields_changed"]
+    assert row["field"] == "repos" and "extra" in row["after"]

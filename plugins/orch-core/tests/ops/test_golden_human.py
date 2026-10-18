@@ -24,6 +24,23 @@ from tests.ops.test_golden import norm as _norm
 GOLDEN = Path(__file__).parent / "golden_human"
 
 
+@pytest.fixture(autouse=True)
+def _utc():
+    """Times in the human text are this computer's: the golden files are in UTC whatever machine writes or checks them."""
+    import os
+    import time
+
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
 def norm(text: str) -> str:
     text = _norm(text)
     return re.sub(r"sha256:[0-9a-f]{64}", "sha256:HASH", text)

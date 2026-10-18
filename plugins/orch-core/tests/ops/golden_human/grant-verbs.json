@@ -4,7 +4,8 @@
   "data": {
     "grant": "gr_GRANT",
     "until": "2026-09-21T16:20:01Z",
-    "scope": "all"
+    "scope": "all",
+    "until_local": "Mon 16:20 UTC"
   },
   "key": null,
   "seq": 7,

@@ -54,7 +54,10 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     const only = (...keys: string[]) => !!f && Object.keys(f).every((k) => k === 'type' || keys.includes(k))
     if (item.type === 'addon.granted') addons.push(item.title)
     else if (item.id === 'runner_grant' && item.type === 'grant.issued' && f && typeof f.hours === 'number' && typeof f.scope === 'string' && typeof f.verbs === 'string')
-      lines.push(`This Mac’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
+      // the ordinary grant in words (scope and verbs are in the technical details); any other scope or verbs keeps the raw values
+      lines.push(f.scope === 'workable' && f.verbs === 'agent'
+        ? `This Mac’s agent runner may work on all open tickets for ${duration(f.hours)}`
+        : `This Mac’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'

@@ -218,6 +218,13 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
     return f"{day} {when:%H:%M} {zone}"
 
 
+def _when(iso: Any, hours: Any = None) -> Any:
+    """A signed UTC time in this computer's time with the zone, the signed text after it (``Tue 23:45 CEST (2026-…Z)``);
+    anything that is not such a time as it is."""
+    local = local_time(iso, hours)
+    return iso if local is None else f"{local} ({iso})"
+
+
 _REPO_KEYS = frozenset({"path", "remote", "default_branch"})
 #: the three things a repo entry holds and the label each has on its OWN row (never joined into one line, so no value
 #: can pose as another field: a path that reads "/x · remote …" is still one value on the Folder row)
@@ -296,11 +303,18 @@ def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     _row(out, "who can use it", "agents working for you")
     if ev.get("label"):
         _row(out, "label", ev["label"])
-    if not plain or until is None:
-        _row(out, "scope", ev.get("scope"))
-        _row(out, "verbs", ev.get("verbs"))
+    if plain and until is None:
+        # the ordinary grant with its times not known yet (the setup review: they are filled in at signing): what agents
+        # may do in words; scope, verbs and the grant id are in the technical details
         _row(out, "from", ev.get("issued_at"))
         _row(out, "until", ev.get("expires_at"))
+        out.setdefault("notes", []).append("Scope, verbs and grant id are in the technical details.")
+        return f"Agents may work on all open tickets for {span(hours)}"
+    if not plain:
+        _row(out, "scope", ev.get("scope"))
+        _row(out, "verbs", ev.get("verbs"))
+        _row(out, "from", _when(ev.get("issued_at"), hours))
+        _row(out, "until", _when(ev.get("expires_at"), hours))
         _row(out, "grant id", ev.get("grant"))
         out.setdefault("notes", []).append(
             f"Agents can act for you for {span(hours)}, as far as the scope and verbs above allow."
@@ -500,7 +514,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "options", "to", "blocking"}))
+    _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or []}
@@ -508,18 +522,23 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
     out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
     out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
+    if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
+        out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
     if ev.get("text"):
         out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
+    if picked:
+        _row(out, "your choice", answer if _s(picked) in opts else f"{answer} (not one of the options)")
     for o in q.get("options") or []:
         _row(
             out,
             f"option {_s(o.get('key'))}",
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
-    # who it is addressed to and whether it blocks are the host's word: the question hash binds neither
-    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket")):
+    # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
+    # binds none of them
+    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
             _row(out, label, f"{_s(q[k])} (per host, not signed)")
 
@@ -645,14 +664,7 @@ def _event(
         )
         return f"{'Add' if typ == 'artifact.added' else 'Replace'} the file {_s(ev.get('name'))} on {ref}"
     if typ in ("addon.disabled", "addon.purged", "addon.granted"):
-        verb = {"addon.granted": "Grant", "addon.disabled": "Disable", "addon.purged": "Purge"}[typ]
-        if typ == "addon.granted":
-            _row(out, "version", ev.get("version"))
-            _row(out, "package digest", _short(ev.get("package_sha256")))
-            for k in ("capabilities", "artifact_kinds", "fields", "sections"):
-                if ev.get(k) is not None:
-                    _row(out, k.replace("_", " "), ev[k])
-        return f"{verb} the add-on {_s(ev.get('name'))}"
+        return _addon(typ, ev, out)
     if typ == "device.added":
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
@@ -662,6 +674,59 @@ def _event(
         _row(out, "question id", ev.get("qid"))
         return f"Ask a question on {ref}"
     raise PlainUnavailable(f"the plain view does not know the event type {typ}")
+
+
+#: what each capability of the closed list (``orch.addons.manifest.CAPABILITIES``) lets an add-on do, in words
+_CAPABILITY_WORDS = {
+    "serve_http": "serve web pages from this computer",
+    "spawn_agent": "start agents on this computer, as you",
+    "pty": "open terminals on this computer, as you",
+    "network": "use the internet",
+    "git_push": "push your code to remote repositories",
+}
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+_VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
+
+
+def _capability_words(value: Any) -> str | None:
+    """The capabilities of an ``addon.granted`` in words, or ``None`` when any is not on the closed list (or the value
+    is not a list of distinct strings): the rows of the signed values are shown instead."""
+    if not isinstance(value, list) or not all(isinstance(c, str) and c in _CAPABILITY_WORDS for c in value):
+        return None
+    if len(set(value)) != len(value):
+        return None
+    return "; ".join(_CAPABILITY_WORDS[c] for c in value) or "asks for no special permissions"
+
+
+def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
+    """The add-on reviews. The plain view of an add-on that declares nothing but known capabilities (no fields,
+    sections or artifact kinds) is its name, its version and what it may do in words; the package digest and the exact
+    capability names are in the technical details (``d``). Anything else keeps every signed value as a row, so the plain
+    words never claim less than is signed (WYSIWYS)."""
+    name = _s(ev.get("name"))
+    named = _ADDON_NAME.fullmatch(name) is not None
+    nice = name.replace("-", " ").replace("_", " ").capitalize() if named else name
+    if typ == "addon.disabled":
+        return f"Turn off {nice}" if named else f"Disable the add-on {name}"
+    if typ == "addon.purged":
+        return f"Purge the add-on {name}"
+    version = ev.get("version")
+    words = _capability_words(ev.get("capabilities"))
+    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds"))
+    if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
+        _row(out, "add-on", name)
+        _row(out, "version", version)
+        _row(out, "it may", words if ev.get("capabilities") else "nothing beyond what any add-on may do")
+        out.setdefault("notes", []).append(
+            "The package digest and the exact capability names are in the technical details."
+        )
+        return f"Turn on {nice}: " + (f"it may {words}" if ev.get("capabilities") else "it " + words)
+    _row(out, "version", ev.get("version"))
+    _row(out, "package digest", _short(ev.get("package_sha256")))
+    for k in ("capabilities", "artifact_kinds", "fields", "sections"):
+        if ev.get(k) is not None:
+            _row(out, k.replace("_", " "), ev[k])
+    return f"Grant the add-on {name}"
 
 
 def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:
@@ -710,13 +775,29 @@ def _updated(
 # --- the terminal text ---------------------------------------------------------------------------------------------
 
 
-def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: str | None = None) -> list[str]:
+def text(
+    content: Mapping[str, Any],
+    clean: Callable[[Any], str],
+    *,
+    workspace: str | None = None,
+    members: list[Mapping[str, Any]] | None = None,
+) -> list[str]:
     """``content`` as the terminal's plain view. Every value goes through ``clean`` (control characters never reach
     the terminal) and :func:`one` (a line break never starts a line of its own: structure such as ``2. task`` cannot be
-    faked); only a section's text is a block, every line of it under a ``| `` mark."""
+    faked); only a section's text is a block, every line of it under a ``| `` mark.
+
+    ``members`` (the workspace's members as ``{person, name, hidden?}``; ``None`` = not known, ids stay as signed) turns
+    a person id in a row into name and short id by the dashboard's rules (:mod:`orch.host.personlabel`); the full id is
+    in the details of the review."""
 
     def v(value: Any) -> str:
         return clean(one(value))
+
+    def who(value: Any) -> str:
+        from . import personlabel
+
+        said = None if members is None else personlabel.label(value, members)
+        return v(value) if said is None else clean(said)
 
     def block(value: Any) -> list[str]:
         lines = _s(value).split("\n") if value not in (None, "") else ["(empty)"]
@@ -746,12 +827,12 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
             title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
         )
         for c in content["fields_changed"]:
-            new = "(not set)" if c["after"] is None else v(c["after"])
+            new = "(not set)" if c["after"] is None else who(c["after"])
             if c["before"] is None:
                 out.append(f"  {v(c['field'])}: {new}")
             else:
                 note = f" ({v(c['before_note'])})" if c.get("before_note") else ""
-                out.append(f"  {v(c['field'])}: {v(c['before'])}{note} -> {new}")
+                out.append(f"  {v(c['field'])}: {who(c['before'])}{note} -> {new}")
         out.append("")
     for note in content.get("notes") or []:
         out += [v(note), ""]

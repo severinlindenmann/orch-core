@@ -47,7 +47,7 @@ def test_review_has_the_contract_fields_and_plain_rows(flow):
     ids = [i["id"] for i in out["items"]]
     assert ids == ["addon:dashboard", "addon:terminals", "addon:worktrees"]
     term = out["items"][1]
-    assert term["lines"][0] == "Grant the add-on terminals"
+    assert term["lines"][0] == "Turn on Terminals: it may open terminals on this computer, as you"
     assert any("capabilities" in line and "pty" in line for line in term["lines"])
     assert out["digest"].startswith("sha256:") and out["runner_grant"] is None and out["risk"] is None
 

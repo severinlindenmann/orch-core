@@ -8,22 +8,40 @@ from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, flat
 
 
+def _local(iso: str) -> str:
+    """The end of a grant in this computer's time with its zone (``Wed 11:10 CEST``); the text of ``orch status`` shows
+    this, ``--json`` keeps the signed UTC time."""
+    import time
+
+    from orch.host.signcontent import local_time
+
+    try:
+        from datetime import UTC, datetime
+
+        hours = (datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp() - time.time()) / 3600
+    except ValueError:
+        hours = None
+    return local_time(iso, hours) or iso
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "status")
     ws = c.store.state.workspace
     person = c.viewer  # direct mode: the grant's person; host mode: the viewer (column P: the mapped person)
-    grant = None
+    grant = grant_local = None
     name = "unattended"
     if person is not None:
         g = ws.grants.get(c.grant_id) if c.grant_id and c.person is not None else None
         if g is not None:
             grant = f"{c.grant_id} until {g.expires_at}"
+            grant_local = f"{c.grant_id} until {_local(g.expires_at)}"
         m = ws.members.get(person)
         name = m.name if m else person
     mine = c.mine() if ctx.session else []
     data: dict[str, Any] = {"person": flat(name), "cursor": 0}
     if grant:
         data["grant"] = grant
+        data["grant_local"] = grant_local
     lines: list[str] = []
     hints: list[str] = []
     view = None
@@ -67,10 +85,19 @@ OP = operation(
     who="read",
     props={"verbose": B("also show the state directory")},
     pre=("workspace_exists",),
-    text="ok status person={person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
+    text="ok status person={person} cursor={cursor}[ grant={grant_local}][ claim={claim}]\nnext: {next}",
     data=obj(
-        {"person": STR, "grant": STR, "claim": KEY, "cursor": INT, "new_events": INT, "state_dir": STR, "pin": STR},
-        optional=("grant", "claim", "new_events", "state_dir", "pin"),
+        {
+            "person": STR,
+            "grant": STR,
+            "grant_local": STR,
+            "claim": KEY,
+            "cursor": INT,
+            "new_events": INT,
+            "state_dir": STR,
+            "pin": STR,
+        },
+        optional=("grant", "grant_local", "claim", "new_events", "state_dir", "pin"),
     ),
     errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
     handler=handle,

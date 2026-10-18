@@ -700,12 +700,29 @@ class Review(str):
     details_first: bool = False
 
 
+def members_of(call: Callable[..., Any]) -> list[dict[str, Any]]:
+    """The members of the workspace as the host lists them (``member.list``), for the plain view's names. The host's
+    word, never signed: a person id is shown with a name only by :mod:`orch.host.personlabel`'s rules, and the full
+    id stays in the details. Any failure is an empty list (every person is then an "unknown person": short id only)."""
+    try:
+        data = call("member.list", {})["data"]
+        rows = data.get("members") if isinstance(data, Mapping) else None
+        return [
+            {"person": m["person"], "name": m.get("name")}
+            for m in rows or []
+            if isinstance(m, Mapping) and isinstance(m.get("person"), str)
+        ]
+    except Exception:  # noqa: BLE001 - names are a convenience; the review is complete without them
+        return []
+
+
 def plain(
     prepared: Mapping[str, Any],
     workspace: Callable[[str], tuple[str, str] | None],
     *,
     artifacts: str | None = None,
     prefix: str = "",
+    members: list[Mapping[str, Any]] | None = None,
 ) -> Review:
     """B6 (owner decision E): the review in three layers. The plain view is :func:`signcontent.text` of the request's
     own events and material (so it is exactly what is signed); the details are today's full :func:`render`, which
@@ -722,6 +739,7 @@ def plain(
             signcontent.build(prepared, verified=True),
             _clean,
             workspace=f"{known[0]} ({known[1]})" if known is not None else None,
+            members=members,
         )
     except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
         return Review(prefix + full)
@@ -957,7 +975,7 @@ def finish(
         check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
         if files is not None:
             check_uploads(prepared, files)
-        text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix)
+        text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix, members=members_of(call))
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)

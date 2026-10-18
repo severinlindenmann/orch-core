@@ -99,7 +99,7 @@ def sign_sequence(
             now=now,
         )
         resumed = driver.resumable()
-        review = signer.plain(prepared, workspace, prefix=prefix)
+        review = signer.plain(prepared, workspace, prefix=prefix, members=signer.members_of(call))
         if resumed is not None:
             n = sum(1 for s in resumed["steps"] if s["state"] == "landed")
             note = (

@@ -164,6 +164,7 @@ def addon_base(link, name: str, turning_on: bool) -> dict:
         for item in data.get("items") or []:
             if (
                 isinstance(item, dict)
+                and item.get("type") in ("addon.granted", "addon.disabled")
                 and (item.get("data") or {}).get("name") == name
                 and isinstance(item.get("id"), str)
             ):

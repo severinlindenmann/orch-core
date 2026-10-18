@@ -155,3 +155,10 @@ def test_an_unreadable_history_prepares_nothing(gateway, stub, monkeypatch):
 
     with pytest.raises(HostError):
         _plan(gateway, stub, Broken(), monkeypatch, "addon_grant")
+
+
+def test_an_unrelated_event_of_the_same_name_is_not_the_head(gateway, stub, monkeypatch):
+    link = _SwitchLink()
+    before = _plan(gateway, stub, link, monkeypatch, "addon_grant").idem(stub.ws)
+    link.events.append({"id": "9.e", "type": "addon.purged", "data": {"name": "terminals"}})
+    assert _plan(gateway, stub, link, monkeypatch, "addon_grant").idem(stub.ws) == before

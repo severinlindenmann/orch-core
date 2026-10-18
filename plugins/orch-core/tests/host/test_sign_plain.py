@@ -1199,3 +1199,23 @@ def _find_enum(node):
     elif isinstance(node, list):
         for v in node:
             yield from _find_enum(v)
+
+
+def test_g5_repeated_notes_appear_once_and_cancel_notes_merge_in_gate_order():
+    notes = [
+        "This cancels any existing approval of: plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "This cancels any existing approval of: requirements, plan, verify, code. Each one has to be approved again.",
+        "This cancels any existing approval of: plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "One confirmation signs all 3 steps.",
+    ]
+    out = signcontent._dedupe_notes({"headline": "x", "notes": notes})["notes"]
+    assert out == [
+        "This cancels any existing approval of: requirements, plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "One confirmation signs all 3 steps.",
+    ]
+    assert signcontent._dedupe_notes({"headline": "x"}) == {"headline": "x"}
+    odd = "This cancels any existing approval of: wizardry. Each one has to be approved again."
+    assert signcontent._dedupe_notes({"notes": [odd, odd]})["notes"] == [odd]

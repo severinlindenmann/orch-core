@@ -258,18 +258,21 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N1',
         title: 'Switch Publish on',
-        text: 'Open Settings, then Add-ons, and switch Publish on.',
-        see: 'The review says Publish may send files to a server you choose. After you sign, it shows On and a Shares entry appears in the sidebar.',
+        text: 'First install the local publish server (it is not part of the A1 install). Then open Settings, then Add-ons, and switch Publish on.',
+        commands: ['uv tool install "git+https://github.com/severinlindenmann/orch-publish@develop"', 'orch-publish --help'],
+        see: 'The install ends with "Installed 1 executable: orch-publish" and the help lists dev and admin (if not found: uv tool update-shell, then a new Terminal). The review says Publish may send files to a server you choose. After you sign, it shows On and a Shares entry appears in the sidebar.',
       },
       {
         id: 'N2',
         title: 'Start the local server and tell orch about it',
-        text: 'In one Terminal window start the server and leave it running. In a second window run the setup command and sign it. When it is done, the second window prints a line that starts with "orch-publish dev" and ends with --workspace and --owner and long ids. Copy that exact line (it holds your ids; do not type them), press Ctrl-C in the first window and run the copied line there instead. Then continue.',
+        text: 'Window 1: start the server and leave it running (it does not know you yet). Window 2: run the setup command and sign it. The Terminal prints "ok publish setup", then says the server does not know this workspace yet and prints several lines; this is expected (it ends with a non-zero exit). The third of those lines reads "(a local test server instead: restart it with  --owner OWNER --workspace WS=OWNER)": copy the two long ids from it (OWNER is 32 characters, WS is 32 characters; do not type them). Press Ctrl-C in window 1 and start the server again there with the two ids added (third command, your ids in place of OWNER and WS). Then, in window 2, run the last command.',
         commands: [
           'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104',
           'orch publish setup --server http://127.0.0.1:8103 --share http://127.0.0.1:8104',
+          'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104 --owner OWNER --workspace WS=OWNER',
+          'orch publish register',
         ],
-        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup and prints the restart line with your ids. In Settings, Add-ons the same two addresses show under "Publish: where files go".',
+        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup, then the "does not know this workspace yet" lines with your ids. After the restart, "orch publish register" succeeds. In Settings, Add-ons the same two addresses show under "Publish: where files go".',
       },
       {
         id: 'N3',

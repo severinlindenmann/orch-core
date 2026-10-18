@@ -103,3 +103,39 @@ def test_observe_never_follows_a_link_for_head(layout, tmp_path):
     (tmp_path / "ws" / "r4").mkdir()
     os.symlink(str(d), str(tmp_path / "ws" / "r4" / ".git"))
     assert repopaths.observe(layout, "r4") == {"state": "not_git", "branch": None}  # a linked .git is not followed
+
+
+def test_a_linked_git_file_is_followed_and_held_to_the_same_rules(layout, tmp_path):
+    inner = layout.store / "records" / "gitdata"
+    inner.mkdir(parents=True)
+    d = tmp_path / "linked2"
+    d.mkdir()
+    (d / ".git").write_text(f"gitdir: {inner}\n")
+    assert "orch's own data" in refused(layout, str(d))
+    bad = tmp_path / "linked3"
+    bad.mkdir()
+    (bad / ".git").write_text("not a gitdir line\n")
+    assert "not a git repository" in refused(layout, str(bad))
+
+
+def test_the_legacy_layout_refuses_its_store_folders_but_not_other_repos(tmp_path):
+    root = tmp_path / "legacy"
+    for n in ("events", "tickets", "addons", ".state"):
+        (root / n / "sub" / ".git").mkdir(parents=True)
+    layout = Layout.legacy_at(root)
+    for n in ("events", "tickets", "addons", ".state"):
+        assert "orch's own data" in refused(layout, str(root / n))
+        assert "orch's own data" in refused(layout, str(root / n / "sub"))
+    (root / "code" / ".git").mkdir(parents=True)
+    repopaths.check_declared(layout, str(root / "code"))
+
+
+def test_not_under_the_orch_config_or_state_dir(layout, tmp_path, monkeypatch):
+    state = tmp_path / "orchstate"
+    (state / "r" / ".git").mkdir(parents=True)
+    monkeypatch.setenv("ORCH_STATE_DIR", str(state))
+    assert "orch's own data" in refused(layout, str(state / "r"))
+    cfg = tmp_path / "xdg"
+    (cfg / "orch" / "r" / ".git").mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
+    assert "orch's own data" in refused(layout, str(cfg / "orch" / "r"))

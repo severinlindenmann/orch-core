@@ -29,6 +29,7 @@ shown only when a signed event states it (a ``ticket.created``): a gate does not
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -220,6 +221,10 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
 _REPO_KEYS = frozenset({"path", "remote", "default_branch"})
 #: the three things a repo entry holds and the label each has on its OWN row (never joined into one line, so no value
 #: can pose as another field: a path that reads "/x · remote …" is still one value on the Folder row)
+#: the words this view uses for "no value" and "removed": a signed value spelled like one would be ambiguous, so an
+#: entry holding one is not plain and the generic whole-value row shows it instead
+_REPO_MARKERS = ("(none)", "(removed)")
+_REPO_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _REPO_FIELDS = (("path", "folder"), ("remote", "remote"), ("default_branch", "main branch"))
 
 
@@ -231,7 +236,7 @@ def _repo_plain(entry: Any) -> bool:
         and isinstance(entry.get("path"), str)
         and bool(entry["path"])
         and not set(entry) - _REPO_KEYS
-        and all(isinstance(v, str) for v in entry.values())
+        and all(isinstance(v, str) and v not in _REPO_MARKERS for v in entry.values())
     )
 
 
@@ -250,7 +255,11 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
         return False
     before = before if isinstance(before, Mapping) else {}
     for name, entry in value.items():
-        if not isinstance(name, str) or (entry is not None and not _repo_plain(entry)):
+        if (
+            not isinstance(name, str)
+            or not _REPO_NAME.fullmatch(name)
+            or (entry is not None and not _repo_plain(entry))
+        ):
             return False
         if before.get(name) is not None and not _repo_plain(before.get(name)):
             return False
@@ -261,7 +270,15 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
             verdict = "removed (the folder and its files stay on disk)"
         else:
             verdict = "changed" if old is not None else "added"
-        _row(out, who, verdict, None if old is None else "listed", ctx.note(False))
+        # the verdict comes from the host's unsigned `before`, so it is always labelled as such
+        out.setdefault("fields_changed", []).append(
+            {
+                "field": one(who),
+                "before": None if old is None else "listed",
+                "after": verdict,
+                "before_note": ctx.note(False),
+            }
+        )
         for key, label in _REPO_FIELDS:
             after = "(removed)" if entry is None else _repo_value(entry, key)
             _row(out, f"{who}: {label}", after, _repo_value(old, key) if old is not None else "(none)", ctx.note(False))

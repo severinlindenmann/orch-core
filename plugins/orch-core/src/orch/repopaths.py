@@ -6,6 +6,9 @@ read-only look at one.
   (a real ``.git`` folder or file in it, not a link), not the person's home folder, not the root folder and, in the
   ``.orch`` layout, not the orch store or anything inside it. Resolved with symlinks followed, so a link cannot name
   the store or the home folder from outside. It only CHECKS: nothing is written, git is not run.
+  This check runs ONLY when the change is prepared. Nothing re-checks the path when the signed event is applied, and the
+  folder can change afterwards: the safeguard at git time is :func:`orch.gitsafe.gate`, which every orch git command
+  passes (allow-listed repository config, no program, no submodule), not this module.
 * :func:`observe` is the read behind the dashboard's "is it there" column (``workspace.settings``, owners and
   maintainers): ``present`` / ``missing`` / ``not_git`` / ``unreadable`` and the branch git says is checked out. It
   reads ``.git/HEAD`` as a file (no git process, so no hook or config of the repository can run), never follows a
@@ -43,6 +46,32 @@ def _plain(path: Any) -> str:
     return path
 
 
+#: what the legacy layout keeps in the project folder itself: a repository may not be, or sit below, any of these
+_LEGACY_STORE = (".state", "events", "tickets", "addons", ".orch")
+
+
+def _config_dirs() -> list[str]:
+    out = [os.path.expanduser("~/.config/orch")]
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if xdg.startswith("/"):
+        out.append(os.path.join(xdg, "orch"))
+    state = os.environ.get("ORCH_STATE_DIR", "")
+    if state.startswith("/"):
+        out.append(state)
+    return [os.path.realpath(d) for d in out]
+
+
+def _not_orch_data(layout: Layout, real: str) -> None:
+    """Refuse a (resolved) path that is, or is below, orch's own data: the store, and the user's orch config/state."""
+    if layout.legacy:  # the store IS the project folder, whose repos live below it: refuse only its own folders
+        project = os.path.realpath(layout.project)
+        places = [os.path.join(project, n) for n in _LEGACY_STORE]
+    else:
+        places = [os.path.realpath(layout.store)]
+    if any(_inside(real, p) for p in [*places, *_config_dirs()]):
+        raise RepoPathError("A repository cannot be inside orch's own data folder.")
+
+
 def check_declared(layout: Layout, path: Any) -> None:
     """Raise :class:`RepoPathError` unless ``path`` may be declared as a repo folder (see the module text)."""
     p = _plain(path)
@@ -56,16 +85,21 @@ def check_declared(layout: Layout, path: Any) -> None:
     home = os.path.realpath(os.path.expanduser("~"))
     if real in (os.sep, home) or p.rstrip("/") == os.path.expanduser("~").rstrip("/"):
         raise RepoPathError("A repository cannot be your whole home folder (or the root of the disk).")
-    if not layout.legacy:  # in the legacy layout the store IS the project folder, whose repos live below it
-        store = os.path.realpath(layout.store)
-        if _inside(real, store):
-            raise RepoPathError("A repository cannot be inside orch's own data folder.")
+    _not_orch_data(layout, real)
     try:
         mode = os.lstat(os.path.join(real, ".git")).st_mode
     except OSError:
         raise RepoPathError("That folder is not a git repository (it has no .git).") from None
     if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
         raise RepoPathError("That folder is not a git repository (its .git is not a folder or file).")
+    if stat.S_ISREG(mode):  # a linked working copy: where its git data lives must be a plain place too
+        try:
+            target = _gitdir(real)
+        except OSError:
+            target = None
+        if target is None:
+            raise RepoPathError("That folder is not a git repository (its .git file does not name a git folder).")
+        _not_orch_data(layout, os.path.realpath(target))
 
 
 def _read_small(path: str) -> str | None:

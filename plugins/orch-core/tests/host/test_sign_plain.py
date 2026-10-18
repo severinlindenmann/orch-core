@@ -701,3 +701,22 @@ def test_an_unplain_repo_entry_keeps_the_whole_value_row(human, served):
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
     (row,) = c["fields_changed"]
     assert row["field"] == "repos" and "extra" in row["after"]
+
+
+@pytest.mark.parametrize("marker", ["(none)", "(removed)"])
+def test_a_value_spelled_like_a_marker_keeps_the_whole_value_row(human, served, marker):
+    for entry in ({"path": "/x", "default_branch": marker}, {"path": marker}):
+        c, rows = _repo_event_rows(entry)
+        assert list(rows) == ["repos"] and marker in rows["repos"]  # the generic row: every byte, no plain rows
+
+
+def test_a_repo_name_outside_the_host_spelling_keeps_the_whole_value_row(human, served):
+    event = {**sample("settings.changed"), "set": {"repos": {"Bad Name": {"path": "/x"}}}}
+    c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
+    assert [r["field"] for r in c["fields_changed"]] == ["repos"]
+
+
+def test_the_repo_verdict_row_is_always_labelled_per_host(human, served):
+    c, _ = _repo_event_rows({"path": "/x"})  # an add: no old value, the verdict still comes from the host's before
+    verdict = next(r for r in c["fields_changed"] if r["field"] == "repository api")
+    assert verdict["before_note"] == "per host, not signed"

@@ -430,6 +430,19 @@ class RunnerHub:
         self.grants = RunnerGrants(self)
         self._reported_grants: list[dict[str, Any]] = []
 
+    def running_work(self, workspace_id: str) -> dict[str, int]:
+        """Live runs (agent and runner sessions) of the workspace and the terminals attached to them, for the store
+        migration's refusal. A read of memory on the host's own loop state: no await."""
+        live = [
+            r["run"]
+            for r in list(self.store.records.values())
+            if r.get("workspace_id") == workspace_id and r.get("state") in LIVE
+        ]
+        terminals = sum(len((self.term_state.get(run) or {}).get("atts") or []) for run in live)
+        # a start in progress (the launch intent is not a record yet) counts too, whatever workspace it is for
+        unrecorded = [run for run in list(self.starting) if run not in self.store.records]
+        return {"runs": len(live) + len(unrecorded), "terminals": terminals}
+
     # -- state
     @property
     def connected(self) -> bool:

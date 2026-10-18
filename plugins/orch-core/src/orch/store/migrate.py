@@ -86,21 +86,49 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
         os.close(fd)
     if not isinstance(doc, dict) or doc.get("v") != 1 or doc.get("step") not in _STEPS:
         raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
+    names = doc.get("names") or {}
+    if not isinstance(names, dict) or not set(names) <= set(MOVE_NAMES) or not all(_pair(v) for v in names.values()):
+        raise MigrateError("migrate.stuck", "the migrate journal names an entry the migration does not move")
+    if not all(v is None or _pair(v) for v in (doc.get("tmp"), doc.get("root"))):
+        raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
     return doc
+
+
+def _pair(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 2 and all(type(x) is int for x in value)
 
 
 _STEPS = ("planned", "moving", "committed", "done", "rolled_back")
 
 
-def journal_step(state_dir: Path, workspace_id: str) -> str | None:
-    """The step of the migrate journal (``None``: there is none). Raises :class:`MigrateError` (``migrate.stuck``) for
-    one that cannot be read."""
+def _root_matches(doc: dict[str, Any], project: str | os.PathLike[str] | None) -> bool:
+    """The journal belongs to the project at ``project`` (the recorded ``(dev, ino)`` of the project directory). A
+    journal left behind by an unregistered workspace whose id is now registered at another root is not this root's."""
+    if project is None:
+        return True
+    try:
+        st = os.stat(project)
+    except OSError:
+        return False
+    return doc.get("root") == [st.st_dev, st.st_ino]
+
+
+def journal_step(state_dir: Path, workspace_id: str, project: str | os.PathLike[str] | None = None) -> str | None:
+    """The step of the migrate journal (``None``: there is none, or it is for another project directory). Raises
+    :class:`MigrateError` (``migrate.stuck``) for one that cannot be read."""
     doc = _read_journal(_journal_path(state_dir, workspace_id))
-    return None if doc is None else doc["step"]
+    if doc is None or not _root_matches(doc, project):
+        return None
+    return doc["step"]
 
 
 def _write_journal(path: Path, doc: dict[str, Any]) -> None:
-    write_atomic(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode(), mode=0o600)
+    """Replace the journal durably; a file system error is ``migrate.stuck`` (never a bare ``OSError``): at ``planned``
+    nothing has moved, at ``committed`` the next run finishes forward."""
+    try:
+        write_atomic(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode(), mode=0o600)
+    except OSError as exc:
+        raise MigrateError("migrate.stuck", f"the migrate journal cannot be written ({exc.strerror})") from None
 
 
 # ------------------------------------------------------------------------------------------------------ helpers
@@ -205,10 +233,15 @@ def _gitignore(pfd: int) -> bool:
 
 def _rollback(pfd: int, journal: dict[str, Any], jpath: Path) -> None:
     """:func:`_rollback_steps`, with a file system error as ``migrate.stuck`` (never an unhandled ``OSError``)."""
+    base: int | None = None
     try:
-        _rollback_steps(pfd, journal, jpath, _state_base(pfd, journal))
+        base = _state_base(pfd, journal)
+        _rollback_steps(pfd, journal, jpath, base)
     except OSError as exc:
         raise MigrateError("migrate.stuck", f"the rollback could not finish ({exc.strerror}); run it again") from None
+    finally:
+        if base is not None:
+            os.close(base)
 
 
 def _rollback_steps(pfd: int, journal: dict[str, Any], jpath: Path, state_base: int | None) -> None:
@@ -313,6 +346,8 @@ def finish_interrupted(
     fault = fault or (lambda point: None)
     jpath = _journal_path(state_dir, workspace_id)
     journal = _read_journal(jpath)
+    if journal is not None and not _root_matches(journal, project):
+        return "none"  # another project directory's journal: not this root's to complete or undo
     if journal is None or journal["step"] in ("done", "rolled_back"):
         return "none" if journal is None else journal["step"]
     pfd = _open_project(project)
@@ -440,7 +475,15 @@ def _move(
             "migrate.layout", "the directory holds no complete orch store (config.json, events/, tickets/, .state/)"
         )
     before = _digests(pfd)
-    journal: dict[str, Any] = {"v": 1, "step": "planned", "names": names, "digests": before, "tmp": None}
+    pst = os.fstat(pfd)
+    journal: dict[str, Any] = {
+        "v": 1,
+        "step": "planned",
+        "names": names,
+        "digests": before,
+        "tmp": None,
+        "root": [pst.st_dev, pst.st_ino],
+    }
     _write_journal(jpath, journal)
     fault("planned")
     # --- move

@@ -284,6 +284,10 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["migrate"]:  # the store move into .orch/ (B11-P2): the person-side tool, not a registry op
+        from orch.migrate_cli import main as migrate_main
+
+        return migrate_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
         from orch.host.handoff import main as sign_main
 

@@ -357,6 +357,44 @@ class Workspace:
             self._store = self._open(self.require_root())
         return self._store
 
+    def _finish_unfinished_migration(self, root: Path, sd: Path, wid: str) -> None:
+        """Direct mode: a store move that was interrupted (its journal for THIS project directory is not terminal) is
+        completed or rolled back before the store is opened, under ``owner.lock`` (exclusive, briefly); the command then
+        asks to be run again (what was found is stale). Host mode never gets here (the host does it at its start)."""
+        from orch.store import migrate as mg
+
+        if self.hosted or self.files.roots is not None:
+            return
+        try:
+            step = mg.journal_step(sd, wid, root)
+        except mg.MigrateError:
+            return  # an unreadable journal is `orch migrate`'s to report, not every command's
+        if step in (None, "done", "rolled_back"):
+            return
+        from orch.host.errors import HostError
+        from orch.host.ownership import OwnershipLock, is_registered
+
+        if is_registered(sd, wid):  # the host owns the registry write (set_store): it finishes the move at its start
+            raise OrchError(
+                "host.required",
+                "a store move of this workspace is unfinished; the orch host finishes it when it starts",
+                hint="start the host service",
+            )
+        try:
+            with OwnershipLock(sd, wid).exclusive(10.0):
+                mg.finish_interrupted(root, state_dir=sd, workspace_id=wid)
+        except (HostError, mg.MigrateError) as exc:
+            raise OrchError(
+                "retry.later",
+                f"a store move was interrupted and could not be finished yet ({exc})",
+                hint="orch migrate",
+            ) from None
+        raise OrchError(
+            "retry.later",
+            "an interrupted store move was just finished; the workspace was found before it",
+            hint="run the command again",
+        )
+
     def _open(self, root: Path) -> Any:
         from orch.custody import FileBackend
         from orch.host.ownership import DirectGuard
@@ -366,6 +404,7 @@ class Workspace:
         wid = cfg["workspace"]["id"]
         root = self.verify_root()  # Store.open opens below the root by path: it must still be the one found
         sd = state_dir(self.env, self.files)
+        self._finish_unfinished_migration(root, sd, wid)
         host = None
         keys = sd / "hosts" / wid / "keys"
         if keys.is_dir():

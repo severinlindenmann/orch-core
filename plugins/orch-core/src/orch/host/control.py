@@ -524,6 +524,24 @@ class ControlOps:
         self.intents.complete(intent, ok_result({"workspace_id": entry.workspace_id, "migrated": True}))
         return True
 
+    def _refuse_running_work(self, entry: Entry, requests: Any) -> None:
+        """Nothing may be running while the store moves: live or starting agent and runner sessions, open terminals,
+        pending sign requests. Called AFTER the workspace is unserved and under ``owner.lock``, so nothing new can
+        start between this check and the move; each problem is named and nothing was moved (``migrate.refused``).
+        ``requests`` is the request store taken before the unserve (the service is gone afterwards)."""
+        wid = entry.workspace_id
+        work = self.host.runners.running_work(wid)
+        problems: list[str] = []
+        if work["runs"]:
+            problems.append(f"{work['runs']} agent or runner session(s) running")
+        if work["terminals"]:
+            problems.append(f"{work['terminals']} terminal(s) open")
+        pending = requests.open_count() if requests is not None else 0
+        if pending:
+            problems.append(f"{pending} sign request(s) pending")
+        if problems:
+            raise HostError("migrate.refused", "work is in progress: " + ", ".join(problems) + "; nothing was moved")
+
     def _migrate_entry(self, entry: Entry, *, live: bool) -> bool:
         """Run the engine for ``entry`` with the workspace unserved, then serve it again whatever happened. It is
         unserved under ``owner.lock`` (exclusive), so no other control op can serve it again in between."""
@@ -548,6 +566,8 @@ class ControlOps:
             if exc.code == "migrate.refused":
                 raise
             raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
+        service = self.host.services.get(wid)
+        requests = getattr(service, "requests", None)  # a handle before the unserve; counted again after it
         served = False
         try:
             check_tree(Path(entry.root), self.host_uid)
@@ -555,6 +575,7 @@ class ControlOps:
                 if live:
                     served = True
                     self.host.unserve_from_thread(wid)  # drains first: a write in flight finishes and is answered
+                self._refuse_running_work(entry, requests)  # unserved and locked: nothing new can start now
                 result = mg.migrate(
                     entry.root,
                     state_dir=self.state_dir,
@@ -1110,7 +1131,7 @@ class ControlOps:
         out: list[tuple[str, str]] = []
         for entry in self.host.registry.entries():
             try:
-                step = mg.journal_step(self.state_dir, entry.workspace_id)
+                step = mg.journal_step(self.state_dir, entry.workspace_id, entry.root)
                 if step in (None, "done", "rolled_back"):
                     continue
                 out.append(("host.store_migrate", self._finish_migrate_journal(entry.workspace_id, False)))

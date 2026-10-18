@@ -19,6 +19,7 @@ import {
   SquareKanban,
   Zap,
   PackageOpen,
+  FolderGit2,
 } from 'lucide-react'
 import { api } from '@/api/client'
 import { hasFeature, isRealHost } from '@/api/features'
@@ -427,4 +428,6 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
+  /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
+  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
 ] as const

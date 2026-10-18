@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals
+from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals, worktrees
 from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth
@@ -157,6 +157,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     addon_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
+    worktrees.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

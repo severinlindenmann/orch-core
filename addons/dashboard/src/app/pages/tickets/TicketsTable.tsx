@@ -4,6 +4,8 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Lock } from 'lucide-reac
 import { SECTION_LABEL } from '@/api/sections'
 import type { TicketSummary } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
+import { estimateOn, pointsOf } from '@/api/estimate'
+import { useWorkspace } from '@/app/workspace'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { foldedColumns } from '@/lib/columnFold'
@@ -12,7 +14,7 @@ import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
 import { PriorityMarker, TypeIcon } from '../board/lib'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups } from '../board/grouping'
-import { ago, statusLabel } from '../ticket/shared'
+import { agentName, ago, statusLabel } from '../ticket/shared'
 import type { SortKey } from './search'
 
 export interface AddonColumn {
@@ -30,7 +32,7 @@ type Foldable = (typeof FOLDABLE)[number]
 function turnLabel(t: TicketSummary, me: string | undefined, people: BoardPeople): string {
   if (t.status === 'done' || t.turn.who === 'nobody') return 'nobody'
   if (t.turn.who === me) return 'you'
-  if (t.turn.who.startsWith('agent:')) return t.turn.who.slice(6)
+  if (t.turn.who.startsWith('agent:')) return agentName(t.turn.who.slice(6))
   return people.name(t.turn.who)
 }
 
@@ -93,6 +95,9 @@ export function TicketsTable({
   addonColumns: AddonColumn[]
 }) {
   const navigate = useNavigate()
+  const { workspace } = useWorkspace()
+  // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
+  const hasPoints = estimateOn(workspace)
   const body = useRef<HTMLTableSectionElement>(null)
   useEffect(() => {
     if (!focusKey) return
@@ -111,7 +116,7 @@ export function TicketsTable({
   )
   const show = (c: Foldable) => !folded.has(c)
   const hasAddon = addonColumns.length > 0
-  const colSpan = (canSelect ? 1 : 0) + 9 + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
+  const colSpan = (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
   const renderRow = (t: TicketSummary, indent = false) => {
     const isSel = selected.has(t.key)
     const turn = turnLabel(t, me, people)
@@ -176,7 +181,7 @@ export function TicketsTable({
               )}
               {folded.has('addon') && hasAddon && (
                 <span className="flex gap-1">
-                  <CardFields ticket={t} />
+                  <CardFields ticket={t} skipPoints />
                 </span>
               )}
             </div>
@@ -204,13 +209,18 @@ export function TicketsTable({
             <ProgressBar ticket={t} />
           </TableCell>
         )}
+        {hasPoints && (
+          <TableCell className="px-1.5 py-1.5 font-mono text-[12px] text-text-muted" data-testid="points-cell">
+            {t.type === 'epic' ? '' : (pointsOf(t.size) ?? '–')}
+          </TableCell>
+        )}
         <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
           {ago(t.updated_at)}
         </TableCell>
         {hasAddon && show('addon') && (
           <TableCell className="px-1.5 py-1.5">
             <span className="flex flex-wrap gap-1">
-              <CardFields ticket={t} />
+              <CardFields ticket={t} skipPoints />
             </span>
           </TableCell>
         )}
@@ -232,6 +242,7 @@ export function TicketsTable({
             {show('people') && <SortHeader label="People" sort={sort} onSort={onSort} className="w-[52px]" />}
             {show('turn') && <SortHeader label="Turn" sort={sort} onSort={onSort} className="w-[60px]" />}
             {show('progress') && <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />}
+            {hasPoints && <SortHeader label="Points" sort={sort} onSort={onSort} className="w-[56px]" />}
             <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />
             {hasAddon && show('addon') && (
               <TableHead className="h-8 w-[132px] px-1.5 text-[12px] font-medium text-text-muted">

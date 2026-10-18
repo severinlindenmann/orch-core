@@ -16,10 +16,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
-import { alreadySigned, clickEligible, clickReady } from '@/api/click'
+import { alreadyDetails, alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { refusalOf, refusalSentence } from '@/api/refusals'
 import { addFirst, missingOf } from '@/api/gates'
-import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
+import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevices'
 import { ClickBadge, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
@@ -44,7 +44,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
       if (code === 'intent.expired') return { title: 'This attempt is too old; start again', body: error ?? '', tone: 'warn' }
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again to get a new code.', tone: 'warn' }
     case 'already':
-      return { title: 'Already done', body: code === 'intent.done' ? error ?? '' : 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
+      return { title: 'Already done', body: code === 'intent.done' || code === 'addon.already' ? error ?? '' : 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
     case 'changed':
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
@@ -237,6 +237,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
       <DialogContent
+        showCloseButton={!(end || phase === 'waiting')}
         data-handoff-dialog
         className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {
@@ -359,6 +360,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
           <div role={end.tone === 'warn' ? 'alert' : 'status'} data-handoff-end={phase} className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{end.title}</p>
             <p title={run.error?.signed_at ?? undefined} className="text-text-muted"><Raw>{end.body}</Raw></p>
+            {run.error?.code === 'intent.done' && alreadyDetails(run.error) && <TechnicalDetails text={alreadyDetails(run.error)!} />}
             {refusal && p.ws && <RefusalDevices ws={p.ws} ids={refusal.devices} />}
             {refusal && run.error?.message && run.error.message !== run.error.code && (
               <p data-testid="refusal-host-message" className="text-text-faint">

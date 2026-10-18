@@ -948,8 +948,9 @@ def expected(action: Action, person: str | None = None):
         case NewTicketSequence() | QuickStart():
             intent = action.intent()
             kind = intent.get("ticket_type", "chore")
-            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=kind) and (
-                person is None or ev[0].get("owner") == person
+            return lambda ev: (
+                one(ev, "ticket.created", title=intent["title"], ticket_type=kind)
+                and (person is None or ev[0].get("owner") == person)
             )
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
@@ -1053,10 +1054,14 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         op, args = host_call(body, labels)  # the only place an op name is chosen
     if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
         raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
-    if isinstance(body, AddonDisable):
-        from .addon_switches import check_off
+    addon_base_ = None
+    if isinstance(body, AddonDisable | AddonGrant):
+        from .addon_switches import addon_base, check_off
 
-        check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        if isinstance(body, AddonDisable):
+            check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        # the latest switch of this add-on is part of the intent: on, off, on is three requests
+        addon_base_ = addon_base(link, body.name, isinstance(body, AddonGrant))
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
@@ -1071,6 +1076,8 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = gate_base(data, gate(body))
         elif isinstance(body, Answer):
             base = question_base(data, body.question)
+    if addon_base_ is not None:
+        base = addon_base_
     person = link.welcome["peer"]["person"]
     meta = None
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):

@@ -12,4 +12,9 @@ describe('displayName', () => {
     expect(displayName({ workspace: ws, agents: [] }, 'p_sev')).toBe('Severin')
     expect(displayName({ workspace: ws, agents: [] }, 'p_ghost')).toBe('p_ghost')
   })
+  it('never shows a harness id such as orch-cli as a name', () => {
+    expect(displayName({ workspace: ws, agents: [] }, 'orch-cli')).toBe('An agent')
+    expect(displayName({ workspace: ws, agents: [] }, 'agent:orch-cli')).toBe('An agent')
+    expect(displayName({ workspace: ws, agents: [] }, 'agent:claude-code')).toMatch(/Claude/)
+  })
 })

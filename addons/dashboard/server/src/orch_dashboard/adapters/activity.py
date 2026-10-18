@@ -37,6 +37,9 @@ GROUP_TYPES = {
 GROUPS = ("all", *GROUP_TYPES, "workspace")
 GROUP_OF = {t: g for g, types in GROUP_TYPES.items() for t in types}
 
+#: the start of the note a signed Publish share leaves in the ticket's log (see handoff.PUBLISH_MARK)
+PUBLISH_NOTE = "Publish approval:"
+
 GATE = {"requirements": "requirements", "plan": "plan", "verify": "result", "code": "code"}
 
 # Types whose host summary is something a person wrote (a note, a reason, a comment); the others' summaries are
@@ -165,7 +168,11 @@ def item(a: dict, names: dict[str, str]) -> dict:
     title = a.get("title")
     out["title"] = display(title)
     out["title_hidden"] = isinstance(title, str) and hidden(title)
-    if a["type"] in DETAIL and isinstance(a.get("summary"), str) and a["summary"]:
+    summary = a.get("summary")
+    if a["type"] == "log.added" and isinstance(summary, str) and summary.startswith(PUBLISH_NOTE):
+        # The note a share approval leaves on the ticket (its text is cut by the host): say what it is, in words.
+        out["did"] = "approved sharing files outside this computer"
+    elif a["type"] in DETAIL and isinstance(a.get("summary"), str) and a["summary"]:
         out["detail"] = display(a["summary"])
         out["detail_hidden"] = hidden(a["summary"])
     return out

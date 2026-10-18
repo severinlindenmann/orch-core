@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import pty
+import re
 import threading
 import time
 
@@ -29,6 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
 Context
   | the context
@@ -52,6 +54,7 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
 Fields
   type: chore
@@ -64,8 +67,13 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
-    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:])
-    for hidden in ("sha256", "fingerprint", "uid ", "pid ", "self-declared", "policy", "gate input"):
+    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
+    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
+    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+        r"[0-9a-f]{12}", p["fingerprint"]
+    )
+    for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
@@ -79,7 +87,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
 def test_the_plain_view_of_a_new_ticket(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("new", {"title": "Elefant Chart", "type": "chore"})
-    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace("<TAIL>", p["log"][-8:])
+    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace(
+        "<TAIL>", p["log"][-8:]
+    ).replace("<FP>", p["fingerprint"])
 
 
 def test_the_content_comes_from_the_signed_events_and_material_only(human, served):
@@ -1126,3 +1136,66 @@ def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
     first = signcontent.text(c, signer._clean)[0]
     assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first
+
+
+def test_g2_an_estimate_says_points_and_that_it_cancels_approvals(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["size=m"]}))
+    row = c["fields_changed"][0]
+    assert (row["field"], row["after"]) == ("estimate", "3 points (size M)")
+    assert c["headline"].startswith("Change the estimate of DEMO-0001")
+    note = " ".join(c["notes"])
+    assert "cancels any existing approval of: requirements, plan, verify, code." in note
+    assert "approved again" in note
+    assert "cancels" in "\n".join(signcontent.text(c, signer._clean))
+
+
+def test_g2_a_change_that_no_gate_binds_makes_no_cancel_claim(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["priority=high"]}))
+    assert not any("cancels" in n for n in c.get("notes") or [])
+
+
+def _cancel_notes(ev):
+    out: dict = {}
+    signcontent._cancel_note(ev, out)
+    return " ".join(out.get("notes") or [])
+
+
+def test_g2_the_cancel_note_follows_the_cascade_of_later_gates():
+    assert "requirements, plan, verify, code." in _cancel_notes({"sections": {"summary": {}}})
+    assert "verify, code." in _cancel_notes({"sections": {"verification": {}}})
+    assert "of: plan, verify, code." in _cancel_notes({"sections": {"plan": {}}})
+    assert "of: verify, code." in _cancel_notes({"set": {"ticket.links": []}})
+
+
+def test_g2_an_addon_section_or_field_gets_the_generic_note():
+    assert "may also cancel that approval and every later one" in _cancel_notes({"sections": {"estimate.notes": {}}})
+    assert "may also cancel that approval and every later one" in _cancel_notes(
+        {"set": {"ticket.addons.estimate.points": 3}}
+    )
+
+
+def test_g2_the_size_scale_matches_the_schema_and_the_dashboard():
+    import json
+    import re
+    from pathlib import Path
+
+    schema = json.loads((Path(signcontent.__file__).parents[1] / "schema/schemas/ticket.json").read_text())
+    enum = next(_find_enum(schema))["enum"]
+    assert set(enum) == set(signcontent._SIZE_POINTS)
+    ts = Path(__file__).parents[4] / "addons/dashboard/src/api/estimate.ts"
+    if ts.exists():
+        pairs = re.findall(r"size: '(\w+)', points: (\d+)", ts.read_text())
+        assert {k: int(v) for k, v in pairs} == signcontent._SIZE_POINTS
+
+
+def _find_enum(node):
+    if isinstance(node, dict):
+        if node.get("enum") and "xl" in node["enum"]:
+            yield node
+        for v in node.values():
+            yield from _find_enum(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _find_enum(v)

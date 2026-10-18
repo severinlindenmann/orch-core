@@ -3,7 +3,13 @@ import { cn } from '@/lib/utils'
 import { reveal } from './reveal'
 
 export function Diff({ patch, label }: { patch: string; label: string }) {
-  const lines = patch.split('\n')
+  // git's own header lines (diff --git, index, ---, +++) mean nothing to a reader: the file is named above the box.
+  // Only the lines before the first hunk are dropped; inside a hunk a removed "-- text" line must stay.
+  let inHunk = false
+  const lines = patch.split('\n').filter((l) => {
+    if (l.startsWith('@@')) inHunk = true
+    return inHunk || !(l.startsWith('diff ') || l.startsWith('index ') || l.startsWith('--- ') || l.startsWith('+++ '))
+  })
   if (lines.at(-1) === '') lines.pop()
   return (
     <pre aria-label={label} className="max-h-[60vh] overflow-auto rounded-md border border-border bg-surface p-0 font-mono text-[12px] leading-5">

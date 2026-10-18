@@ -1051,6 +1051,38 @@ def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:
             _row(out, f"{label} {k.replace('_', ' ')}", o[k])
 
 
+#: the Estimate add-on's scale (the dashboard's ESTIMATE_SCALE): the signed value stays visible next to the points
+_SIZE_POINTS = {"xs": 1, "s": 2, "m": 3, "l": 5, "xl": 8}
+
+
+def _size_words(value: Any) -> Any:
+    if isinstance(value, str) and value in _SIZE_POINTS:
+        n = _SIZE_POINTS[value]
+        return f"{n} point{'' if n == 1 else 's'} (size {value.upper()})"
+    return value
+
+
+def _cancel_note(ev: Mapping[str, Any], out: dict[str, Any]) -> None:
+    """The gates an approval of which this edit cancels, from core's own binding list (``generations.BOUND_BASE``): a
+    deterministic function of the signed change, so the host's word is not needed. Whether a gate is approved right
+    now is not part of what is signed, so the words say "any existing approval"."""
+    from orch.model.generations import BOUND_BASE, GATES
+
+    paths = {p if p.startswith("ticket.") else "ticket." + p for p in (ev.get("set") or {})}
+    paths |= {"body." + sid for sid in (ev.get("sections") or {})}
+    hit = [g for g in GATES if paths & BOUND_BASE.get(g, set())]
+    # ``generations.settle``: a raise of one gate raises every later gate
+    gates = list(GATES[GATES.index(hit[0]) :]) if hit else []
+    notes = out.setdefault("notes", [])
+    if gates:
+        notes.append(f"This cancels any existing approval of: {', '.join(gates)}. Each one has to be approved again.")
+    if any(p.startswith("ticket.addons.") or ("." in p[len("body.") :] and p.startswith("body.")) for p in paths):
+        notes.append(
+            "An add-on field or section can also be part of an approval; "
+            "if it is, this may also cancel that approval and every later one."
+        )
+
+
 def _updated(
     ev: Mapping[str, Any],
     ref: str,
@@ -1078,10 +1110,14 @@ def _updated(
             names.append("plan")
         elif field == "links" and _links_rows(out, value, before.get(path), ctx.note(path in checked)):
             names.append("repositories")
+        elif field == "size":
+            _row(out, "estimate", _size_words(value), _size_words(before.get(path)), ctx.note(path in checked))
+            names.append("estimate")
         else:
             # `before` is shown as checked only when the event's base_rev binds it; otherwise it is the host's word
             _row(out, field, value, before.get(path), ctx.note(path in checked))
             names.append(field)
+    _cancel_note(ev, out)
     return f"Change the {', '.join(names)} of {ref}" if names else f"Change {ref}"
 
 

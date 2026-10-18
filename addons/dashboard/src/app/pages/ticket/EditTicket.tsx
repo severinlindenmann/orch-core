@@ -344,7 +344,7 @@ export function RepoLinks({
         </ul>
       )}
       {names.length === 0 && ready ? (
-        <p className="text-[12px] text-text-muted">The workspace has no repositories yet. An owner adds them under Settings, Repositories.</p>
+        <p className="text-[12px] text-text-muted">The workspace has no repositories yet. An owner adds them under Settings, General, Repositories.</p>
       ) : free.length > 0 ? (
         <div className="flex items-center gap-2">
           <select aria-label="Repository to link" className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 text-[13px]" value={chosen} onChange={(e) => setPick(e.target.value)}>

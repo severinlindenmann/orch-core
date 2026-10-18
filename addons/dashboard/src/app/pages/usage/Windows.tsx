@@ -18,7 +18,7 @@ export function Tiles({ windows }: { windows: { week: UsageWindow; month: UsageW
               <p className="mt-1 text-lg font-semibold tabular-nums">{spanText(win)}</p>
               <p className="text-[12px] text-text-muted">{runsText(win)}</p>
               {win.running > 0 && <p className="mt-1 text-[12px] text-text-muted">Includes runs still in progress.</p>}
-              {win.counted_since && <p className="mt-1 text-[12px] text-text-muted">Counted since {fmtDay(win.counted_since)}: runs before that were not recorded here.</p>}
+              {win.counted_since && <p className="mt-1 text-[12px] text-text-muted">Counted since {fmtDay(win.counted_since)}, when orch began keeping this record. Any earlier runs are not included.</p>}
             </div>
           )
         })}

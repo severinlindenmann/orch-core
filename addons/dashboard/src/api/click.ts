@@ -144,6 +144,8 @@ export interface ClickProblem {
   /** `rate.limited`: how long to wait. */
   waitMs?: number
   signedAt?: string | null
+  /** Raw host text (ids, hashes) kept out of the sentence: shown folded under "Technical details". */
+  details?: string
   /** H12d-2: the device ids the refusal names (shown by label through `RefusalDevices`, never as ids). */
   devices?: string[]
 }
@@ -173,11 +175,15 @@ export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) 
 
 /** Only server-sourced record facts; never the current form's values. */
 export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>): string {
-  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op ? `${e.op} action` : 'action'
+  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op === 'addon.grant' || e.op === 'addon.disable' ? 'add-on change' : 'action'
   const at = e.signed_at ? Date.parse(e.signed_at) : NaN
   const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago` : '(signing time unavailable from this host)'
-  return `A similar ${thing} was signed ${when}. ${e.summary ?? 'Signed content unavailable from this host.'} Do it again only if you intend a second signature.`
+  // The host's record of what was signed is for the technical details (`alreadyDetails`), never for the sentence.
+  return `A similar ${thing} was signed ${when}. Do it again only if you intend a second signature.`
 }
+
+/** The host's record of the earlier signature, for a folded "Technical details" block only. */
+export const alreadyDetails = (e: Pick<ApiError, 'summary'>): string | undefined => e.summary || undefined
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
 export function clickProblem(e: unknown): ClickProblem {
@@ -196,7 +202,10 @@ export function clickProblem(e: unknown): ClickProblem {
     case DEV_REFUSED:
       return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
     case 'intent.done':
-      return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
+      return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
+    case 'addon.already':
+      // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".
+      return { title: 'Already done', body: e.message, next: 'open' }
     case 'intent.failed':
       return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
     case 'lock.busy':

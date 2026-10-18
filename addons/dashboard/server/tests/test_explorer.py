@@ -78,7 +78,11 @@ class Link:
             return {"rows": rows, "next_page": None}
         if op == "ticket.get":
             t = self.tickets[args["ref"]]
-            return {"pushes": t.get("pushes", []), "tasks": t.get("tasks", [])}
+            return {
+                "pushes": t.get("pushes", []),
+                "tasks": t.get("tasks", []),
+                **({"status": t["status"]} if "status" in t else {}),
+            }
         raise AssertionError(op)
 
 
@@ -593,6 +597,22 @@ def test_files_changed_of_a_ticket_come_from_its_own_events(get, world):
     # locked files in a commit are not listed
     assert not any(p.startswith((".env", ".orch", "events", "keys/server")) or p == "config.json" for p in paths)
     assert get("/ticket/DEMO-9").status_code == 404 or get("/ticket/DEMO-9").json()["files"] == []
+
+
+def test_the_commit_a_branch_was_cut_from_is_not_work_of_an_open_ticket(get, world):
+    # first sight of the branch ("before" empty) at a commit that is already on the repository's own line
+    world.link.tickets = {
+        "DEMO-1": {"title": "Open", "status": "in_progress", "pushes": [{"sha": world.c2, "repo_name": "proj"}]}
+    }
+    assert get("/ticket/DEMO-1").json()["files"] == []
+    assert get("/history", root="ws", path="src/app.py").json()["commits"][0]["tickets"] == []
+    # the same event on a finished ticket (merged work) stays listed
+    links._cache.clear()
+    world.link.tickets["DEMO-1"]["status"] = "done"
+    assert [f["path"] for f in get("/ticket/DEMO-1").json()["files"]] == ["src/app.py"]
+    assert get("/history", root="ws", path="src/app.py").json()["commits"][0]["tickets"] == [
+        {"key": "DEMO-1", "title": "Open"}
+    ]
 
 
 # ---------------------------------------------------------------- the guard itself

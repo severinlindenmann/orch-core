@@ -179,6 +179,7 @@ def _admin_lines(info: Mapping[str, Any], server: str | None) -> list[str]:
         "The server does not know this workspace yet. Its admin must allow it once, on the server:",
         f"  orch-publish admin --data DATA_DIR owners add {owner}",
         f"  orch-publish admin --data DATA_DIR ws allow {ws} {owner}",
+        f"  (a local test server instead: restart it with  --owner {owner} --workspace {ws}={owner})",
         "Then run: orch publish register",
     ]
 
@@ -243,6 +244,13 @@ def _send(target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json
     return 0
 
 
+def _local(iso: Any) -> Any:
+    """A server time in this computer's time with the zone (``--json`` keeps the UTC text)."""
+    from orch.host.signcontent import local_time
+
+    return local_time(iso, 48) or iso
+
+
 def _list_text(data: Mapping[str, Any]) -> str:
     lines = []
     if not data.get("configured"):
@@ -257,7 +265,8 @@ def _list_text(data: Mapping[str, Any]) -> str:
         views = (
             f" views={r.get('views')}/{r.get('view_limit')}" if r.get("kind") == "once" else f" views={r.get('views')}"
         )
-        lines.append(f"share {r['id']} {r['ticket']} {r['kind']} {r['state']} until {r.get('expires_at')}{views}")
+        end = _local(r.get("expires_at"))
+        lines.append(f"share {r['id']} {r['ticket']} {r['kind']} {r['state']} until {end}{views}")
     return "\n".join(lines) if lines else "nothing staged or shared"
 
 

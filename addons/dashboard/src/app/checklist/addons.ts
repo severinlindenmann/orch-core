@@ -264,9 +264,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N2',
         title: 'Start the local server and tell orch about it',
-        text: 'In Terminal start the server with the command you are given (the workspace id and your person id go after --workspace, as WS=PERSON), then set it up.',
+        text: 'In Terminal start the server with the command you are given (the workspace id and your person id go after --workspace, as WS=PERSON, and your person id again after --owner), then set it up.',
         commands: [
-          'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104 --workspace WS=PERSON',
+          'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104 --workspace WS=PERSON --owner PERSON',
           'orch publish setup --server http://127.0.0.1:8103 --share http://127.0.0.1:8104',
         ],
         see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup. In Settings, Add-ons the same two addresses show under "Publish: where files go".',

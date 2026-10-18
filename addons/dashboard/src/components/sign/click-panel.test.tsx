@@ -366,6 +366,14 @@ it('K6: a removed person reads "remove: Severin", never "remove: — → Severin
   expect(row).not.toHaveTextContent('—')
 })
 
+it('E-4: a field that stays as it is shows its value once, without an arrow', () => {
+  render(<QueryClientProvider client={new QueryClient()}><ClickSignPanel answer={answer({ content: { headline: 'x', fields_changed: [{ field: 'repository api: folder (unchanged, per host)', before: null, after: '/work/api' }, { field: 'repository api: main branch', before: 'main', after: 'dev' }] } })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={WS} /></QueryClientProvider>)
+  const row = screen.getByText('repository api: folder (unchanged, per host)').parentElement!
+  expect(row).toHaveTextContent('repository api: folder (unchanged, per host): /work/api')
+  expect(row).not.toHaveTextContent('→')
+  expect(screen.getByText('repository api: main branch').parentElement).toHaveTextContent('main → dev')
+})
+
 describe('people in the content are named from the View\'s own workspace', () => {
   const ID = 'p_181d953f12ab34cd56ef78901234abcd'
   const content = { headline: 'x', fields_changed: [{ field: 'owner', before: null, after: ID }] }

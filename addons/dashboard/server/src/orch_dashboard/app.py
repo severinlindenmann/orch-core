@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals
+from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals, testrun
 from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth
@@ -29,6 +29,7 @@ SPA_PATH = re.compile(
     r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
     r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
+    r"|checklist"
 )
 
 
@@ -157,6 +158,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     addon_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
+    testrun.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

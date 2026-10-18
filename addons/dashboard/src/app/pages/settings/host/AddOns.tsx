@@ -15,8 +15,8 @@ import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
 const STATE_WORD = { on: 'On', off: 'Off', attention: 'Needs approval again' } as const
-type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'estimate'
-const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'estimate']
+type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate'
+const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate']
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const data = useQuery(queries.addOns(workspace.id))

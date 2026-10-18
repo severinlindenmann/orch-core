@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import re
 import secrets as _secrets
 import threading
 import time
@@ -279,14 +280,54 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     return False
 
 
+#: The fixed sentences (and pieces) this flow's own code writes into reasons. A secret word that occurs only inside one
+#: of these is not a leak (a recovery word "use" must not hide "macOS did not let orch use the keychain"). Closed list,
+#: matched exactly, case-sensitively and on whole-word edges, longest first; add only verbatim sentences.
+KNOWN_WORDING = tuple(
+    sorted(
+        (
+            HIDDEN_REASON,
+            "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again",
+            "macOS did not let orch use the keychain",
+            "one-click could not be set up because",
+            "; your key stays as it was",
+            "; your workspace uses the terminal for now. Your passphrase is on your terminal: write it down.",
+            "Your workspace uses the terminal for now: every approval asks for the passphrase below.",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def strip_known_wording(text: str) -> str:
+    """``text`` without the fixed sentences of :data:`KNOWN_WORDING` (each replaced by one space, so the neighbours
+    stay separated and every check still sees whatever else is there, split or joined as before)."""
+    for w in KNOWN_WORDING:
+        start_alnum, end_alnum = w[0].isalnum(), w[-1].isalnum()
+
+        def repl(m: re.Match[str], start_alnum: bool = start_alnum, end_alnum: bool = end_alnum) -> str:
+            # the same notion of "letter" as the secret checks (str.isalnum): a glued edge is not a whole sentence
+            if start_alnum and m.start() > 0 and m.string[m.start() - 1].isalnum():
+                return m.group(0)
+            if end_alnum and m.end() < len(m.string) and m.string[m.end()].isalnum():
+                return m.group(0)
+            return " "
+
+        text = re.sub(re.escape(w), repl, text)
+    return text
+
+
 def redact_reason(text: str, secrets: Iterable[str], limit: int | None = None) -> str:
     """THE one gate for error/reason text of the setup flow. The whole text is checked BEFORE any cut (and the cut
-    result again), so no cut can show part of a secret; a hit replaces the whole text with :data:`HIDDEN_REASON`."""
+    result again), so no cut can show part of a secret; a hit replaces the whole text with :data:`HIDDEN_REASON`.
+    The checks run on the text without our own fixed sentences (:data:`KNOWN_WORDING`); everything else in it, in any
+    encoding, is checked exactly as before."""
     secrets = [x for x in secrets if isinstance(x, str)]
-    if contains_secret(text, secrets):
+    if contains_secret(strip_known_wording(text), secrets):
         return HIDDEN_REASON
     out = text if limit is None else text[:limit]
-    return HIDDEN_REASON if contains_secret(out, secrets) else out
+    return HIDDEN_REASON if contains_secret(strip_known_wording(out), secrets) else out
 
 
 # ================================================================================================== the create sequence

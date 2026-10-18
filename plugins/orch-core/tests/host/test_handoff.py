@@ -196,8 +196,8 @@ def test_the_first_view_of_orch_sign_prints_the_fingerprint_the_dashboard_shows(
     shown = Shown()
     sign(served, human, p["request"]["code"], shown=shown)
     first = shown.plain[0].splitlines()
-    assert first[2] == f"Verification fingerprint: {p['fingerprint']}"  # headline, workspace, then the fingerprint
-    assert 2 < next(i for i, x in enumerate(first) if "the body" in x)
+    at = first.index(f"Verification fingerprint: {p['fingerprint']}")  # headline, "in workspace ...", fingerprint
+    assert first[at - 1].startswith("in workspace ") and at < next(i for i, x in enumerate(first) if "the body" in x)
     assert (
         len(p["fingerprint"]) == 12 and f"fingerprint: {p['fingerprint']}" in shown.texts[0]
     )  # the details keep theirs

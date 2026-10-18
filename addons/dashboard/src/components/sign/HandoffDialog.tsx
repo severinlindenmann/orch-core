@@ -39,7 +39,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'done':
       return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
     case 'cancelled':
-      return { title: 'Cancelled', body: 'Nothing was signed.' }
+      return { title: 'Cancelled', body: 'Nothing was signed. This happens when you cancel in the terminal or the word you typed there was not the one asked for. Try again to get a fresh request.' }
     case 'expired':
       if (code === 'intent.expired') return { title: 'This attempt is too old; start again', body: error ?? '', tone: 'warn' }
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again to get a new code.', tone: 'warn' }
@@ -318,7 +318,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {click.phase === 'cancelled' && (
           <div role="status" data-click-end="cancelled" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
             <p className="font-medium text-text">Cancelled</p>
-            <p className="text-text-muted">Nothing was signed.</p>
+            <p className="text-text-muted">Nothing was signed. Try again to get a fresh request.</p>
           </div>
         )}
 
@@ -405,6 +405,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 </Button>
               </>
             )}
+            {click.phase === 'cancelled' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
             {(click.phase === 'done' || click.phase === 'cancelled') && (
               <Button ref={cancelRef} variant={click.phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>
                 Close
@@ -420,8 +421,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && run.error?.code !== 'sequence.no_access' && (
-              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'failed' || phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
+            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error' || phase === 'cancelled') && p.action && run.error?.code !== 'sequence.no_access' && (
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' || phase === 'cancelled' ? 'Try again' : phase === 'failed' || phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {phase === 'already' && (run.request?.state === 'submitted' || run.error?.code === 'intent.done') && p.action && <Button onClick={again}>Do it again</Button>}
             {end && (

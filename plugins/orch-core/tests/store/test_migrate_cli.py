@@ -45,15 +45,99 @@ def test_an_agent_is_refused(tmp_path: Path) -> None:
     assert code == 3 and "op.not_allowed" in text and (env.root / "config.json").is_file()
 
 
-def test_records_enabled_is_refused_in_direct_mode_too(tmp_path: Path) -> None:
+def _git(root: Path, *argv: str, message: str | None = None) -> None:
+    import subprocess
+
+    base = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(root.parent),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+    }
+    cmd = ["git", "-c", "core.hooksPath=/dev/null", *argv]
+    subprocess.run(
+        cmd, cwd=root, env=base, check=True, capture_output=True, input=message.encode() if message else None
+    )
+
+
+def _records_repo(root: Path, wid: str) -> None:
+    """A dedicated records repository at ``root`` as ``orch records commit`` leaves it: one commit with the exact
+    message shape and the trailer for ``wid``."""
+    _git(root, "init", "-q", "-b", "main", "--template=")
+    (root / ".git" / "info").mkdir(exist_ok=True)
+    (root / ".git" / "info" / "exclude").write_text(".state/\naddons/\n")
+    _git(root, "add", "config.json")
+    msg = f"orch: records ws_seq 1\n\nOrch-Manifest: m_{'0' * 64}\nOrch-Records: {wid}\n"
+    _git(root, "commit", "-q", "-F", "-", message=msg)
+
+
+def test_the_records_repository_moves_with_the_store_and_a_projects_own_git_does_not(tmp_path: Path) -> None:
+    from orch.records.tool import repo_is_ours
+
+    env = _world(tmp_path)
+    assert repo_is_ours(env.root, WS) is False  # no .git
+    _records_repo(env.root, WS)
+    assert repo_is_ours(env.root, WS) is True and repo_is_ours(env.root, "f" * 32) is False
+    from orch.host import records
+
+    records._write_record(
+        env.host_state, WS, os.getuid(), {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}}
+    )
+    head = (env.root / ".git" / "HEAD").read_text()
+    code, text = _cli(env, "--json")
+    assert code == 0, text
+    assert (env.root / ".orch" / ".git" / "HEAD").read_text() == head and not (env.root / ".git").exists()
+    assert repo_is_ours(env.root / ".orch", WS) is True  # the same repository, now beside the records it tracks
+    # the project's own repository (another message) stays where it is
+    env2 = _world(tmp_path / "b")
+    _git(env2.root, "init", "-q", "-b", "main", "--template=")
+    _git(env2.root, "add", "README.md")
+    _git(env2.root, "commit", "-q", "-m", "the project's own first commit")
+    assert repo_is_ours(env2.root, WS) is False
+    code, text = _cli(env2, "--json")
+    assert code == 0, text
+    assert (env2.root / ".git" / "HEAD").is_file() and not (env2.root / ".orch" / ".git").exists()
+
+
+def test_records_enabled_with_an_unidentifiable_repository_is_refused(tmp_path: Path) -> None:
     from orch.host import records
 
     env = _world(tmp_path)
+    (env.root / ".git").mkdir()  # not a repository git's layout accepts
     records._write_record(
         env.host_state, WS, os.getuid(), {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}}
     )
     code, text = _cli(env)
     assert code == 3 and "migrate.refused" in text and (env.root / "config.json").is_file()
+    # not enabled: the same odd .git is the project's and is left alone
+    env2 = _world(tmp_path / "b")
+    (env2.root / ".git").mkdir()
+    assert _cli(env2)[0] == 0 and (env2.root / ".git").is_dir()
+
+
+def test_the_records_tool_resolves_the_store_dir_after_the_move(tmp_path: Path, monkeypatch) -> None:
+    from orch.records.host_link import resolve
+
+    env = _world(tmp_path)
+    _cli(env)
+    monkeypatch.chdir(env.root)
+    e = {"ORCH_STATE_DIR": str(env.host_state), "HOME": str(env.tmp)}
+    r = resolve(e, None, state=env.host_state)
+    try:
+        assert r.root == env.root.resolve() and r.record_root == env.root.resolve() / ".orch"
+    finally:
+        r.close()
+    legacy = _world(tmp_path / "old")
+    monkeypatch.chdir(legacy.root)
+    r = resolve({"ORCH_STATE_DIR": str(legacy.host_state), "HOME": str(legacy.tmp)}, None, state=legacy.host_state)
+    try:
+        assert r.record_root == r.root
+    finally:
+        r.close()
 
 
 def test_no_workspace_here(tmp_path: Path, monkeypatch) -> None:

@@ -559,15 +559,13 @@ class ControlOps:
             raise HostError(exc.code, exc.detail) from None
         finally:
             pins.close()
-        try:  # the records repo (its .git moves with the store) is not handled yet: refuse, fail closed
-            if records._configured(records.read_record(self.state_dir, wid, self.host_uid)):  # noqa: SLF001
-                raise HostError("migrate.refused", "records are enabled for this workspace; nothing was moved")
-        except HostError as exc:
-            if exc.code == "migrate.refused":
-                raise
-            raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
+        move_git = records.migrate_git_plan(self.state_dir, wid, self.host_uid, entry.root)
         service = self.host.services.get(wid)
         requests = getattr(service, "requests", None)  # a handle before the unserve; counted again after it
+        if requests is None:  # no service is loaded: the file-backed request store, opened by path, is the truth
+            from .requests import RequestStore
+
+            requests = RequestStore(self.state_dir, wid, self.host_uid, clock=self.host.clock)
         served = False
         try:
             check_tree(Path(entry.root), self.host_uid)
@@ -582,6 +580,7 @@ class ControlOps:
                     workspace_id=wid,
                     expected_genesis=pin,
                     after_commit=lambda: self.host.registry.set_store(wid, STORE_DIR),
+                    move_git=move_git,
                 )
         except mg.MigrateError as exc:
             if exc.code == "migrate.busy":

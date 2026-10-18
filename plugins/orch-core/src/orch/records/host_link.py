@@ -33,6 +33,13 @@ class Resolved:
     state: Path
     mode: str  # "host" | "direct"
     close: Callable[[], None] = lambda: None
+    #: the store directory (``<root>/.orch``, or the root itself in the legacy layout): where the record files and the
+    #: records repo live. ``root`` stays the project (the registry root, the auto entry's root). ``None``: the root.
+    store: Path | None = None
+
+    @property
+    def record_root(self) -> Path:
+        return self.store if self.store is not None else self.root
 
 
 def _find_here(env: Mapping[str, str]) -> tuple[str | None, Path | None, Any]:
@@ -98,7 +105,13 @@ def resolve(
         if ((cfg or {}).get("workspace") or {}).get("id") != wid:
             raise RecordsError("records.unsupported", "the directory is not this workspace")
         direct = DirectLink(Path(root), wid, state, ident=ident, config=raw, store_pin=pin)
-        return Resolved(wid, Path(root), direct, tips, state, "direct", direct.close)
+        from orch import layout as layout_mod
+
+        try:
+            store_dir = here_ws.store_dir if here_ws is not None and root == here else layout_mod.store_of(root)
+        except layout_mod.LayoutError as exc:
+            raise RecordsError("records.unsupported", str(exc), exit_=3) from None
+        return Resolved(wid, Path(root), direct, tips, state, "direct", direct.close, store_dir)
     host_uid = entry.get("host_uid")
     if type(host_uid) is not int:
         raise RecordsError("records.unsupported", "the host registry entry has no host UID")
@@ -124,4 +137,8 @@ def resolve(
         except hostclient.HostFailure as exc:
             raise RecordsError(exc.code, str(exc.message), hint=exc.hint, exit_=exc.wire_exit) from None
 
-    return Resolved(wid, Path(str(entry.get("root"))), link, tips, state, "host")
+    base = Path(str(entry.get("root")))
+    from orch.layout import STORE_DIR
+
+    store = base / STORE_DIR if entry.get("store") == STORE_DIR else base
+    return Resolved(wid, base, link, tips, state, "host", store=store)

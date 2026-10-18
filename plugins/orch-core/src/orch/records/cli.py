@@ -145,6 +145,9 @@ class _Seam:
 
     def __init__(self, s: dict[str, Any]) -> None:
         self.workspace_id, self.link, self.root = s["workspace_id"], s["link"], Path(s["root"])
+        from orch.layout import store_of
+
+        self.record_root = Path(s["store"]) if s.get("store") else store_of(self.root)
         self.tips = s.get("tips") or ValidatedTips(Path(s["state"]) / "records.json")
         self.state = Path(s.get("state") or self.tips.path.parent)
 
@@ -211,7 +214,7 @@ def _auto_entry(tips: Any, wid: str) -> dict[str, Any] | None:
 
 
 def _do_commit(run: _Run, r: Any, *, push_after: bool, fresh: bool, remote: str) -> dict[str, Any]:
-    repo = run.repo(r.root, remote if push_after else None)
+    repo = run.repo(r.record_root, remote if push_after else None)
     res = commit(repo, r.link, r.workspace_id, fresh=fresh)
     state = "index_differs" if res.get("index") == "differs" else "ok"
     note = {"manifest": res["manifest"], "commit": res["commit"], "pushed": False, "repo": {"state": state}}
@@ -236,7 +239,7 @@ def _do_commit(run: _Run, r: Any, *, push_after: bool, fresh: bool, remote: str)
 
 def _do_push(run: _Run, r: Any) -> dict[str, Any]:
     a = run.args
-    repo = run.repo(r.root, a.remote)
+    repo = run.repo(r.record_root, a.remote)
     if a.initial and not a.yes and not run.confirm(f"Create the records branch on the remote {a.remote}?"):
         raise RecordsError("records.unconfirmed", "not confirmed; nothing pushed (push --initial is terminal only)")
     res = push(repo, r.link, r.workspace_id, r.tips, remote=a.remote, initial=a.initial)
@@ -253,11 +256,11 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
     from .tool import EMPTY_TREE
 
     local: dict[str, Any] = {}
-    if not os.path.lexists(Path(r.root) / ".git"):
+    if not os.path.lexists(Path(r.record_root) / ".git"):
         local["repo"] = {"state": "missing"}
     else:
         try:
-            repo = run.repo(r.root, run.args.remote)
+            repo = run.repo(r.record_root, run.args.remote)
             head = repo.resolve("HEAD")
             # read-only: compares the index with HEAD's tree and writes no object (no write-tree)
             res = repo.run("diff-index", "--cached", "--quiet", head or EMPTY_TREE, check=False)
@@ -282,7 +285,7 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
 def _do_sync_index(run: _Run, r: Any) -> dict[str, Any]:
     from .tool import _read_index, _refresh_index
 
-    repo = run.repo(r.root)
+    repo = run.repo(r.record_root)
     head = repo.resolve("HEAD")
     if head is None:
         raise RecordsError("records.git_state", "the records branch has no commit yet")
@@ -296,7 +299,7 @@ def _do_remote_private(run: _Run, r: Any) -> dict[str, Any]:
     a = run.args
     if a.off:
         return dict(r.link("records.remote_private", {"on": False}))
-    repo = run.repo(r.root, a.remote)
+    repo = run.repo(r.record_root, a.remote)
     url = push_url(repo, a.remote)
     if not a.yes and not run.confirm(TRUST_PROMPT.format(url=url)):
         raise RecordsError("records.unconfirmed", "not confirmed; nothing changed")
@@ -496,8 +499,8 @@ def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
     if a.cmd == "init":
         from .git import pinned_root
 
-        res = init_repo(pinned_root(r.root), env=run.env)
-        run.repo(r.root)  # the result must be a usable dedicated repo
+        res = init_repo(pinned_root(r.record_root), env=run.env)
+        run.repo(r.record_root)  # the result must be a usable dedicated repo
         failed = _note(r.link, {"pushed": False, "repo": {"state": "ok"}})  # records.status: configured
         if failed:
             res["note"] = failed

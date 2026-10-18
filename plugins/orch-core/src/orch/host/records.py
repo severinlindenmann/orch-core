@@ -557,6 +557,25 @@ def _configured(doc: dict[str, Any]) -> bool:
     return any(isinstance(v, dict) and (v.get("repo") or {}).get("state") in _CONFIGURED for v in lasts.values())
 
 
+def migrate_git_plan(state_dir: Path, workspace_id: str, host_uid: int, project: str | os.PathLike[str]) -> bool:
+    """For the store migration: must the project's ``.git`` move into ``.orch`` with the store?
+
+    ``True`` only when that ``.git`` directory is THIS workspace's records repository (its HEAD commit carries the
+    ``Orch-Records`` trailer for this id, :func:`orch.records.tool.repo_is_ours`); the project's own repository is
+    never touched. A records state that cannot be read, or a repository that cannot be identified while records are
+    enabled, is ``migrate.refused`` (nothing moves)."""
+    from orch.records.tool import repo_is_ours
+
+    try:
+        configured = _configured(read_record(state_dir, workspace_id, host_uid))
+    except HostError:
+        raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
+    ours = repo_is_ours(project, workspace_id)
+    if ours is None and configured:
+        raise HostError("migrate.refused", "the records repository cannot be identified; nothing was moved")
+    return ours is True
+
+
 _SCHEME_URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(?:[^/@]*@)?([^/]*)(.*)$", re.S)
 _SCP_URL = re.compile(r"^(?:[^@/:]+@)?([^:/]+):(.*)$", re.S)
 

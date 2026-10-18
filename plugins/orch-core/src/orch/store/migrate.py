@@ -42,6 +42,9 @@ __all__ = ["JOURNAL", "MOVE_NAMES", "TMP_DIR", "MigrateError", "finish_interrupt
 
 #: what moves: every store record and directory of the legacy root layout (design section 1)
 MOVE_NAMES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", "addons", ".state")
+#: moved only when the caller found it to be THIS workspace's records repository (``records.tool.repo_is_ours``)
+GIT_NAME = ".git"
+_ALL_NAMES = (*MOVE_NAMES, GIT_NAME)
 TMP_DIR = ".orch-migrating"
 JOURNAL = "migrate.json"
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -87,7 +90,7 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
     if not isinstance(doc, dict) or doc.get("v") != 1 or doc.get("step") not in _STEPS:
         raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
     names = doc.get("names") or {}
-    if not isinstance(names, dict) or not set(names) <= set(MOVE_NAMES) or not all(_pair(v) for v in names.values()):
+    if not isinstance(names, dict) or not set(names) <= set(_ALL_NAMES) or not all(_pair(v) for v in names.values()):
         raise MigrateError("migrate.stuck", "the migrate journal names an entry the migration does not move")
     if not all(v is None or _pair(v) for v in (doc.get("tmp"), doc.get("root"))):
         raise MigrateError("migrate.stuck", "the migrate journal has an unknown shape")
@@ -415,6 +418,7 @@ def migrate(
     lock_timeout: float = 10.0,
     after_commit: Callable[[], None] | None = None,
     fault: Fault | None = None,
+    move_git: bool = False,
 ) -> dict[str, Any]:
     """Move the legacy store of ``project`` into ``.orch``. The caller holds ``owner.lock`` exclusively around this
     call. Returns ``{"migrated": bool, "names": [...]}`` (``migrated`` false: it was already done). Raises
@@ -437,7 +441,7 @@ def migrate(
         if not found.legacy:
             return {"migrated": False, "names": [], "recovered": step}
         with _lock_in(pfd, lock_timeout):
-            return _move(pfd, project, jpath, state_dir, workspace_id, expected_genesis, after_commit, fault)
+            return _move(pfd, project, jpath, state_dir, workspace_id, expected_genesis, after_commit, fault, move_git)
     finally:
         os.close(pfd)
 
@@ -451,16 +455,17 @@ def _move(
     expected_genesis: str | None,
     after_commit: Callable[[], None] | None,
     fault: Fault,
+    move_git: bool = False,
 ) -> dict[str, Any]:
     # --- plan: every entry below the fd, nothing a link or odd; digests of the logs
     if _lstat(pfd, layout_mod.STORE_DIR) is not None or _lstat(pfd, TMP_DIR) is not None:
         raise MigrateError("migrate.layout", f"{layout_mod.STORE_DIR} or {TMP_DIR} already exists; nothing is moved")
     names: dict[str, list[int]] = {}
-    for name in MOVE_NAMES:
+    for name in (*MOVE_NAMES, *((GIT_NAME,) if move_git else ())):
         st = _lstat(pfd, name)
         if st is None:
             continue
-        want_dir = name in ("events", "tickets", "addons", ".state")
+        want_dir = name in ("events", "tickets", "addons", ".state", GIT_NAME)
         if (
             stat.S_ISLNK(st.st_mode)
             or (stat.S_ISDIR(st.st_mode) != want_dir)

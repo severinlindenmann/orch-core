@@ -20,6 +20,7 @@ import {
   VIEWS,
   adminCommand,
   fmtSize,
+  reachNote,
   isUnknownWorkspace,
   kindText,
   newIdem,
@@ -66,6 +67,7 @@ function Where({ server, share }: { server: string | null; share: string | null 
         </>
       ) : null}
       .
+      {reachNote(server, share) && <span className="mt-1 block">{reachNote(server, share)}</span>}
     </p>
   )
 }
@@ -145,7 +147,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
           <DialogHeader>
             <DialogTitle>Share files</DialogTitle>
             <DialogDescription>
-              Pick files of <Inline>{ticket.key}</Inline>. Nothing leaves this computer until you have read and signed what will be sent.
+              Pick files of <Inline>{ticket.key}</Inline>. Files are uploaded only after you approve.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-[13px]">
@@ -176,24 +178,24 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
               <label className="flex items-start gap-2">
                 <input type="radio" name="share-kind" checked={kind === 'secret'} onChange={() => setKind('secret')} className="mt-0.5" />
                 <span>
-                  Secret link
-                  <span className="block text-[12px] text-text-muted">Anyone who has the link can open the files until it ends or you revoke it.</span>
+                  Anyone with the link
+                  <span className="block text-[12px] text-text-muted">Anyone who has the link can open the files until it ends or you stop sharing.</span>
                 </span>
               </label>
               <label className="flex items-start gap-2">
                 <input type="radio" name="share-kind" checked={kind === 'once'} onChange={() => setKind('once')} className="mt-0.5" />
                 <span>
-                  Show-once link
-                  <span className="block text-[12px] text-text-muted">A secret link that opens only a few times, then stops.</span>
+                  Limited-view link
+                  <span className="block text-[12px] text-text-muted">Anyone with the link can open the files, but only a few times. Then it stops.</span>
                 </span>
               </label>
               {kind === 'once' && (
                 <div className="flex items-center gap-2 pl-6">
-                  <Label htmlFor="share-views">Opens at most</Label>
+                  <Label htmlFor="share-views">Up to</Label>
                   <select id="share-views" className="h-8 rounded border border-border bg-bg px-2" value={views} onChange={(e) => setViews(Number(e.target.value) as Views)}>
                     {VIEWS.map((v) => (
                       <option key={v} value={v}>
-                        {v} time{v === 1 ? '' : 's'}
+                        {v} view{v === 1 ? '' : 's'}
                       </option>
                     ))}
                   </select>
@@ -218,7 +220,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
               Cancel
             </Button>
             <Button onClick={() => void prepare()} disabled={busy || picked.length === 0 || (!!data && !data.configured)}>
-              {busy ? 'Preparing…' : 'Prepare'}
+              {busy ? 'Preparing…' : 'Review selected files'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -241,9 +243,9 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
       >
         <DialogContent className="max-h-[90vh] max-w-md gap-3 overflow-y-auto border-border bg-surface">
           <DialogHeader>
-            <DialogTitle>Ready to sign</DialogTitle>
+            <DialogTitle>Review your share</DialogTitle>
             <DialogDescription>
-              {s.origin === 'agent' ? 'An agent prepared this copy. ' : ''}These files are copied aside. They are sent only after you sign.
+              {s.origin === 'agent' ? 'An agent prepared this copy. ' : ''}Files are uploaded only after you approve.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-[13px]">
@@ -285,7 +287,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
             >
               Cancel
             </Button>
-            <Button onClick={() => setStage({ at: 'sign', staged: s })}>Review and sign</Button>
+            <Button onClick={() => setStage({ at: 'sign', staged: s })}>Continue to approval</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -355,20 +357,21 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
 
 /** The link, once. Only "Done" ends it. Nothing here writes the link anywhere but the screen and the clipboard. */
 export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no')
   const field = useRef<HTMLInputElement>(null)
   useEffect(() => {
     field.current?.select()
   }, [])
   const copy = async () => {
     const ok = await copyText(sent.link)
-    if (ok) setCopied(true)
-    else field.current?.select()
+    setCopied(ok ? 'yes' : 'failed')
+    if (!ok) field.current?.select()
   }
   return (
     <Dialog open>
       <DialogContent
         className="max-w-lg gap-3 border-border bg-surface"
+        showCloseButton={false}
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
         aria-describedby="link-once-note"
@@ -385,17 +388,21 @@ export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
           <div className="flex gap-2">
             <input id="share-link" ref={field} readOnly value={sent.link} className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 font-mono text-[12px]" onFocus={(e) => e.currentTarget.select()} />
             <Button size="sm" variant="secondary" onClick={() => void copy()}>
-              {copied ? <Check className="mr-1 size-3.5" aria-hidden /> : <Copy className="mr-1 size-3.5" aria-hidden />}
-              {copied ? 'Copied' : 'Copy'}
+              {copied === 'yes' ? <Check className="mr-1 size-3.5" aria-hidden /> : <Copy className="mr-1 size-3.5" aria-hidden />}
+              {copied === 'yes' ? 'Copied' : 'Copy'}
             </Button>
           </div>
-          <p role="note" className="font-medium text-warning">
-            You will not see this link again.
+          <p role="status" className="min-h-5 text-[12px]" data-testid="copy-status">
+            {copied === 'yes' && 'Link copied to the clipboard.'}
+            {copied === 'failed' && 'Could not copy automatically. The link is selected: copy it by hand (Ctrl or Cmd + C).'}
           </p>
-          <p className="text-text-muted">orch keeps no copy. If you lose it, revoke this share on the Shares page and share again.</p>
+          <p role="note" className="font-medium text-warning">
+            You can copy this link only now.
+          </p>
+          <p className="text-text-muted">orch keeps no copy. If you lose it, stop sharing on the Shares page and share again.</p>
         </div>
         <DialogFooter>
-          <Button onClick={onDone}>Done</Button>
+          <Button onClick={onDone}>I’ve saved the link — close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

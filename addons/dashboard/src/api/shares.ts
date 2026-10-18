@@ -97,12 +97,12 @@ export const shareQueries = {
 }
 
 export const kindText = (kind: Share['kind'], limit?: number | null): string =>
-  kind === 'secret' ? 'Secret link' : kind === 'once' ? `Show-once, ${limit ?? 1} view${limit === 1 ? '' : 's'}` : 'Unknown'
+  kind === 'secret' ? 'Anyone with the link' : kind === 'once' ? `Limited-view link · up to ${limit ?? 1} view${(limit ?? 1) === 1 ? '' : 's'}` : 'Unknown'
 
 export const STATE_TEXT: Record<ShareState, string> = {
-  live: 'Live',
+  live: 'Active',
   sending: 'Sending',
-  revoked: 'Revoked',
+  revoked: 'Stopped',
   expired: 'Expired',
   unknown: 'Unknown',
 }
@@ -129,7 +129,7 @@ export const fmtSize = (n: number): string => (n < 1024 ? `${n} bytes` : n < 102
 
 /** The server's reasons in words. `unknown_workspace` names the admin step. */
 export const REASON_TEXT: Record<string, string> = {
-  unknown_workspace: 'The publish server does not know this workspace yet. Ask its admin to allow this workspace.',
+  unknown_workspace: 'The sharing server has not allowed this workspace yet. Ask the person who runs the server to allow it.',
   blocked: 'The server’s admin has blocked this workspace.',
   owner_not_allowed: 'The server’s admin has not allowed the owner of this workspace.',
   limit: 'The server refused: a size or count limit is reached.',
@@ -169,4 +169,25 @@ export function shareError(e: unknown): string {
 export const isUnknownWorkspace = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.server_refused' && (e.detail as { reason?: string } | undefined)?.reason === 'unknown_workspace'
 
 /** The command the server's admin runs (`orch-publish admin ws allow WORKSPACE OWNER`). Shown under Technical details. */
+/** Is this address one that opens only on this computer? */
+export const isLoopback = (origin: string | null): boolean => !!origin && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
+
+/** What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known). */
+export function reachNote(server: string | null, share: string | null): string | null {
+  if (!server || !share) return null
+  const s = isLoopback(server)
+  const l = isLoopback(share)
+  const host = (o: string) => o.replace(/^https?:\/\//, '')
+  if (s && l) return 'Local test link: opens only on this computer, so nobody else can use it.'
+  if (l) return `Links open only on this computer, but files are uploaded to ${host(server)}, which other people can reach.`
+  if (s) return `Links open from ${host(share)}, which other people can reach; files are uploaded to this computer only.`
+  return null
+}
+
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`
+
+/** The accessible name of a Stop sharing button: which files, and when the link ends. */
+export function stopName(s: Pick<Share, 'ticket' | 'files' | 'expires_at'>, fmt: (iso: string) => string): string {
+  const files = s.files.length ? `${s.files.length} file${s.files.length === 1 ? '' : 's'}: ${s.files.slice(0, 3).join(', ')}${s.files.length > 3 ? ' and more' : ''}` : `the share of ${s.ticket ?? 'this ticket'}`
+  return `Stop sharing ${files}${s.expires_at ? `, link ends ${fmt(s.expires_at)}` : ''}`
+}

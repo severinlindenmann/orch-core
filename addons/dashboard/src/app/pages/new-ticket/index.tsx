@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { handoffMode } from '@/api/features'
-import { MAX_SECTION_BYTES, type FollowUpAction, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
@@ -22,7 +22,6 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK, TYPE_ICON } from '../board/lib'
 import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
-import { CompleteDetails } from './CompleteDetails'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
 
@@ -30,38 +29,58 @@ const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
 /**
- * A new ticket through the terminal hand-off is one signed event with the title and type (host: key, type, title,
- * owner). What `new` cannot carry follows as further hand-offs ("Complete details", host contract 0.8.1 item 3): one
- * `set` for priority, size, labels and the parent epic, and one `section.set` per written section. What the host has no
- * person op for is said instead of dropped: restricted visibility, people, a due date and acceptance criteria.
+ * A new ticket through the hand-off is ONE review and ONE confirmation (B11, finding 9): the title, the type, the
+ * fields and every written section go to the signer as one intent. The signer signs `ticket.created`, the fields and one
+ * `ticket.updated` per written section, each step checked against the intent; the review shows the ticket AND its text.
+ * B12D (finding N3): acceptance criteria and people (owner, assignees, reviewers) are signed in the same review, as
+ * `ac.add` and `people.set` steps after the text. What the host has no signed operation for is said instead of
+ * dropped: restricted visibility and a due date.
  */
 /**
- * The key "Complete details" may target: the one of the `new` request THIS dialog prepared and watched, and no other.
- * The state must be that request's own (same id, op `new`); anything else gives no key and no follow-up.
+ * The key of the ticket: the one of the `new` request THIS dialog prepared and watched, and no other.
+ * The state must be that request's own (same id, op `new`); anything else gives no key.
  */
 export function ownKey(state: HandoffState | null, request: HandoffRequest | null): string | null {
   return state && request && state.id === request.id && request.op === 'new' && state.op === 'new' ? state.key : null
 }
 
-export function handoffNewTicket(d: Draft): { action: HandoffAction; details: FollowUpAction[] } | { problem: string } {
+/** The people the sequence signs: the creator is already the owner, so naming them again is no change. */
+export function sequencePeople(p: PeopleValue, creator?: string): { owner?: string; assignees?: string[]; reviewers?: string[] } | undefined {
+  const out: { owner?: string; assignees?: string[]; reviewers?: string[] } = {}
+  if (p.owner && p.owner !== creator) out.owner = p.owner
+  if (p.assignees.length) out.assignees = [...new Set(p.assignees)].sort()
+  if (p.reviewers.length) out.reviewers = [...new Set(p.reviewers)].sort()
+  return Object.keys(out).length ? out : undefined
+}
+
+export function handoffNewTicket(d: Draft, creator?: string): { action: HandoffAction } | { problem: string } {
   const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
-  const later = [
-    d.visibility !== 'workspace' && 'restricted visibility',
-    (d.people.owner || d.people.assignees.length || d.people.reviewers.length) && 'people',
-    d.due && 'a due date',
-    d.acceptance.length > 0 && 'acceptance criteria',
-  ].filter(Boolean)
+  const later = [d.visibility !== 'workspace' && 'restricted visibility', d.due && 'a due date'].filter(Boolean)
   const big = written.find(([, t]) => new TextEncoder().encode((t as string).trim()).length > MAX_SECTION_BYTES)
   if (big) return { problem: `${sectionLabel(d.type, big[0])} is longer than ${MAX_SECTION_BYTES / 1024} KiB (counted in UTF-8 bytes). Shorten it before the ticket is created.` }
   if (later.length) return { problem: `A signed new ticket cannot carry ${later.join(', ')} yet: the host has no signed operation for it. Create the ticket first, then add these.` }
-  const fields = { ...(d.priority !== 'medium' ? { priority: d.priority } : {}), ...(d.size ? { size: d.size } : {}), ...(d.labels.length ? { labels: d.labels } : {}), ...(d.parent && d.type !== 'epic' ? { parent: d.parent } : {}) }
-  const details: FollowUpAction[] = Object.keys(fields).length ? [{ action: 'details', key: '', ...fields }] : []
-  for (const [name, text] of written) {
-    // A spike keeps its findings where other types have verification (the form's label says "Findings").
-    const section = d.type === 'spike' && name === 'verification' ? 'findings' : name
-    details.push({ action: 'section', key: '', section, text: (text as string).trim() })
+  const criteria = d.acceptance.map((t) => t.trim()).filter(Boolean)
+  if (criteria.length > MAX_CRITERIA) return { problem: `At most ${MAX_CRITERIA} acceptance criteria can be signed together with a new ticket. Add the rest after the ticket exists.` }
+  // A spike keeps its findings where other types have verification (the form's label says "Findings").
+  const sections = Object.fromEntries(written.map(([name, text]) => [d.type === 'spike' && name === 'verification' ? 'findings' : name, (text as string).trim()]))
+  const people = sequencePeople(d.people, creator)
+  const hasFields = d.priority !== 'medium' || !!d.size || d.labels.length > 0 || !!(d.parent && d.type !== 'epic')
+  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0)
+  if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Leave some sections or criteria for later.` }
+  return {
+    action: {
+      action: 'new_sequence',
+      title: d.title.trim(),
+      type: d.type,
+      ...(d.priority !== 'medium' ? { priority: d.priority } : {}),
+      ...(d.size ? { size: d.size } : {}),
+      ...(d.labels.length ? { labels: d.labels } : {}),
+      ...(d.parent && d.type !== 'epic' ? { parent: d.parent } : {}),
+      sections,
+      ...(criteria.length ? { acceptance: criteria } : {}),
+      ...(people ? { people } : {}),
+    } as HandoffAction,
   }
-  return { action: { action: 'new', title: d.title.trim(), type: d.type }, details }
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
@@ -260,13 +279,15 @@ export interface NewTicketFormProps {
   onDirtyChange?: (dirty: boolean) => void
   /** Overlay: a ticket was created with Create (the sheet closes and says so). */
   onCreated?: (ticket: TicketDocument) => void
+  /** Overlay: the ticket exists (signed hand-off): close the sheet without asking about unsaved changes. */
+  onClosed?: () => void
   /** Overlay: Cancel. */
   onCancel?: () => void
   /** Overlay: extra buttons in the footer (Open full page). */
   footerExtra?: ReactNode
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onCancel, footerExtra }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -299,8 +320,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
   const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; details: FollowUpAction[]; another: boolean } | null>(null)
-  const [followUp, setFollowUp] = useState<{ key: string; steps: FollowUpAction[]; another: boolean } | null>(null)
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean } | null>(null)
   const handoffOn = handoffMode(workspace.id)
 
   const create = useMutation({
@@ -320,9 +340,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const made = handoffNewTicket(draft)
+      const made = handoffNewTicket(draft, me.person)
       if ('problem' in made) return setServerError(made.problem)
-      return setHandoffNew({ action: made.action, details: made.details, another })
+      return setHandoffNew({ action: made.action, another })
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
@@ -366,16 +386,15 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   }
 
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, details: FollowUpAction[] = []) => {
+  const handoffDone = (another: boolean, ticketKey: string | null) => {
     void qc.invalidateQueries()
     writeDraft(key, null)
     setShowRestored(false)
     setHandoffNew(null)
-    if (details.length && ticketKey) {
-      // The new ticket exists; what `new` could not carry is further signatures, offered not forced.
-      setFollowUp({ key: ticketKey, steps: details, another })
-      return
-    }
+    // The ticket exists: nothing typed is unsaved any more. Clean at once (the sheet reads this synchronously, before
+    // the next render), so no "Discard unsaved changes?" can appear while the follow-up signature or the close runs.
+    setDraft(EMPTY)
+    onDirtyChange?.(false)
     afterCreate(another, ticketKey)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
@@ -388,7 +407,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     leaving.current = true
     setDraft(EMPTY)
-    if (overlay) onCancel?.()
+    if (overlay) (onClosed ?? onCancel)?.()
     if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
   }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
@@ -540,21 +559,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           action={handoffNew.action}
           autoStart
           onClose={() => setHandoffNew(null)}
-          onSettled={(phase, state, request) => phase === 'done' && handoffDone(handoffNew.another, ownKey(state, request), handoffNew.details)}
-        />
-      )}
-
-      {followUp && (
-        <CompleteDetails
-          ws={workspace.id}
-          ticketKey={followUp.key}
-          steps={followUp.steps}
-          onFinish={() => {
-            const f = followUp
-            setFollowUp(null)
-            void qc.invalidateQueries()
-            afterCreate(f.another, f.key)
-          }}
+          onSettled={(phase, state, request) => phase === 'done' && handoffDone(handoffNew.another, ownKey(state, request))}
         />
       )}
 

@@ -12,6 +12,9 @@ from pathlib import Path
 # comes first. A file a paused launcher writes after that holds a dead code (and the launcher refuses to write or keep
 # one past `expires_at`); the next server start's sweep removes any leftover.
 CODE_TTL = 30
+# The one-time nonce of `orch setup` lives 5 min: the person may copy the printed link into another terminal or
+# browser. Still single use, and the claim still binds the first browser; only the window to present it is longer.
+SETUP_CODE_TTL = 300
 
 
 class Auth:
@@ -21,22 +24,27 @@ class Auth:
         self.instance = secrets.token_hex(16)
         self.probe_key = secrets.token_hex(32)
         self.codes: dict[str, float] = {}
+        self.setup_codes: set[str] = set()  # codes minted for the setup page: they never open a normal session
         # The exact file handed out per code, so later directory resolution can never change what is deleted.
         self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
+        self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
 
     def probe(self, nonce):
         return hmac.new(bytes.fromhex(self.probe_key), (nonce + self.instance).encode(), hashlib.sha256).hexdigest()
 
-    def launch(self, port):
+    def launch(self, port, setup=False):
         with self.lock:
             now = self.clock()
             for stale in [c for c, until in self.codes.items() if until <= now]:
                 self._forget(stale)
             code = secrets.token_urlsafe(32)
-            self.codes[code] = now + CODE_TTL
+            ttl = SETUP_CODE_TTL if setup else CODE_TTL
+            self.codes[code] = now + ttl
+            if setup:
+                self.setup_codes.add(code)
             payload = {
                 "instance": self.instance,
                 "port": port,
@@ -44,12 +52,12 @@ class Auth:
                 "code": code,
                 # the launcher writes no file, and keeps none, past this; whole seconds (a frame carries no floats),
                 # rounded down so the launcher stops early, never late
-                "expires_at": int(now + CODE_TTL),
+                "expires_at": int(now + ttl),
             }
             if self.directory is not None:
                 self.files[code] = Path(self.redirect_path(code))
                 payload["redirect_file"] = str(self.files[code])
-                timer = threading.Timer(CODE_TTL, lambda: self.expire(code))
+                timer = threading.Timer(ttl, lambda: self.expire(code))
                 timer.daemon = True
                 timer.start()
             return payload
@@ -68,6 +76,7 @@ class Auth:
     def _forget(self, code):
         """Hold ``self.lock``. The code is no longer redeemable and its recorded file is unlinked, once."""
         self.codes.pop(code, None)
+        self.setup_codes.discard(code)
         path = self.files.pop(code, None)
         if path is not None:
             path.unlink(missing_ok=True)
@@ -77,9 +86,27 @@ class Auth:
         with self.lock:
             self._forget(code)
 
+    def exchange_setup(self, nonce):
+        """The one-time browser nonce of ``orch setup`` (a launch code minted for setup): constant-time compare,
+        single use, 5 min. True only for the first browser that presents it; it never opens a normal session."""
+        with self.lock:
+            now = self.clock()
+            found = None
+            for code in self.setup_codes:  # compare against every candidate: no early exit on a prefix
+                if hmac.compare_digest(code.encode(), str(nonce).encode()):
+                    found = code
+            if found is None:
+                self._attempt(now)
+                return False
+            until = self.codes.get(found, 0)
+            self._forget(found)  # single use, whether or not it is still alive
+            return now < until
+
     def exchange(self, code):
         with self.lock:
             now = self.clock()
+            if code in self.setup_codes:
+                return None, 401 if self._attempt(now) else 429  # a setup nonce is not a login code
             until = self.codes.get(code, 0)
             if now >= until:
                 if code in self.codes:
@@ -109,3 +136,20 @@ class Auth:
     def logout(self, token):
         with self.lock:
             self.sessions.pop(token, None)
+
+    def bind_setup(self, token, setup_id):
+        """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.
+
+        Retain only a credential hash and setup id; never any setup request or response body.
+        """
+        with self.lock:
+            self.setup_sessions.clear()  # one setup process / bound browser per local socket
+            self.setup_sessions[hashlib.sha256(token.encode()).hexdigest()] = setup_id
+
+    def valid_setup(self, token):
+        with self.lock:
+            return bool(token) and hashlib.sha256(token.encode()).hexdigest() in self.setup_sessions
+
+    def forget_setup(self, token):
+        with self.lock:
+            self.setup_sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)

@@ -353,7 +353,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 250,
-      "description": "a git branch name: no leading -, HEAD, @, refs/ prefix or Unicode 16.0 Cc/Cf/Co/Zs/Zl/Zp/Cn characters, M* mark at the start of any slash-separated component, variation selectors or named invisible look-alikes (F1 §2) (checked by validate())",
+      "description": "a git branch name: no leading -, HEAD, @, refs/ prefix or Unicode 16.0 Cc/Cf/Co/Zs/Zl/Zp/Cn characters, M* mark at the start of any slash-separated component, variation selectors or named invisible look-alikes (F1 \u00a72) (checked by validate())",
       "pattern": "^(?!-|refs/|(?:HEAD|@)(?![\\s\\S]))[\\s\\S]*(?![\\s\\S])"
     },
     "httpsUrl": {
@@ -932,6 +932,12 @@
         "o",
         "sig"
       ]
+    },
+    "publishOrigin": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "an origin the Publish add-on may send files to: https with a lower-case host and optional port, or http for this computer only (the signer re-checks it)",
+      "pattern": "^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?|http://(?:localhost|127\\.0\\.0\\.1)(?::[1-9][0-9]{0,4})?)(?![\\s\\S])"
     }
   }
 }

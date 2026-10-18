@@ -217,7 +217,7 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
   return (
     <div role="alert" data-testid="pair-blocked" data-code={blocked.code} className="space-y-2 rounded-md border border-warning/40 px-3 py-3 text-[13px]">
       <p className="font-medium">
-        {convenience ? 'A phone cannot be paired while click-to-sign is on for this workspace.' : 'A phone cannot be paired on this workspace now.'}{' '}
+        {convenience ? 'This phone’s orch app is too old to pair with a workspace that uses click-to-sign.' : 'A phone cannot be paired on this workspace now.'}{' '}
         <Mono>{blocked.code}</Mono>
       </p>
       {refusal?.reason && <p data-testid="pair-blocked-reason">{refusalSentence(refusal)}</p>}
@@ -227,18 +227,13 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
       {convenience && (
         <div data-testid="pair-blocked-convenience" className="space-y-2">
           <p data-testid="pair-convenience-off">
-            Turn click-to-sign off first:{' '}
+            Update the orch app on the phone and scan again, or turn click-to-sign off first:{' '}
             {convenienceOffCommand(workspace.prefix) !== null ? (
               <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
             ) : (
               <span data-testid="pair-command-unsafe">run orch host convenience off for this workspace (its prefix has characters that can&apos;t be put in a command safely)</span>
             )}
           </p>
-          {blocked.cause === 'custody' && (
-            <p data-testid="pair-convenience-custody" className="text-text-muted">
-              Your key for this workspace is held for click-to-sign (convenience custody). Turning it off moves signing back to your passphrase key in the terminal.
-            </p>
-          )}
         </div>
       )}
     </div>

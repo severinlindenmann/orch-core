@@ -35,6 +35,7 @@ __all__ = [
     "finish_convenience",
     "forget",
     "read_selection",
+    "setup_backend",
     "stage_convenience",
     "status",
     "undo_staged",
@@ -43,6 +44,22 @@ __all__ = [
 KEY_ID = "dk"
 SELECTION = "custody.json"
 CUSTODIES = ("convenience", "passphrase")
+
+
+class DevHostRefused(CustodyError):
+    """§11A.17.2 F3, D2: no conversion to convenience custody against a dev-pair sandbox's state or with ``HOME``
+    under a sandbox root (``sign.convenience_unavailable``, reason ``dev_host``). The way back stays open."""
+
+    code = "sign.convenience_unavailable"
+
+
+def refuse_dev_host(state_dir: Path) -> None:
+    from orch.devsandbox import click_refusal
+
+    if click_refusal(state_dir, os.environ) is not None:
+        raise DevHostRefused(
+            "dev_host: this is a Simulator dev host or a dev-pair sandbox; convenience custody is never used here"
+        )
 
 
 class Selection(dict):
@@ -178,6 +195,7 @@ def convert_to_convenience(
     selection left at step ``written`` is finished without asking again. The device id and certificate do not change.
     The dashboard's switch runs the same two steps itself (:func:`stage_convenience`, then :func:`finish_convenience`
     under the flag lock)."""
+    refuse_dev_host(state_dir)  # §11A.17.2: before the key store is opened
     store = store if store is not None else _store(state_dir)
     staged = stage_convenience(state_dir, workspace_id, prefix=prefix, store=store, clock=clock)
     return finish_convenience(state_dir, workspace_id, staged, store=store)
@@ -200,6 +218,7 @@ def stage_convenience(
     dashboard never resumes."""
     from orch.identity import device_ref
 
+    refuse_dev_host(state_dir)  # §11A.17.2: before the key store or the selection is touched
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:
@@ -378,3 +397,16 @@ def status(state_dir: Path, workspace_id: str) -> dict[str, Any]:
         except CustodyError as exc:
             return {"custody": "passphrase", "device": None, "gen": 0, "problem": str(exc)[:200]}
     return {"custody": "none", "device": None, "gen": None}
+
+
+def setup_backend(directory: str | Path, passphrase: str) -> Any:
+    """The passphrase backend over ``directory`` for ``orch setup``'s own process, and nobody else's: a full backend
+    (it signs, and unlocks one batch) whose passphrase prompt is answered with ``passphrase`` instead of the terminal.
+    The passphrase is the one the setup process generated in memory itself for this run (never text from a browser or
+    an argument); the only caller is ``orch.setup.steps`` (an AST test pins
+    that, like :meth:`PassphraseBackend.answering`)."""
+    from .passphrase import PassphraseBackend
+
+    if not isinstance(passphrase, str) or not passphrase:
+        raise CustodyError("setup needs the passphrase it generated")
+    return PassphraseBackend.generated(directory, passphrase)

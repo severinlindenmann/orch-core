@@ -12,10 +12,12 @@ import {
   AGENT_MODES, agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, HARNESSES, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
   TERMINAL_ONLY, UPDATE_ORCH, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
-import { DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
+import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
 import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { useSignMethods } from '@/components/sign/SignMethods'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { Inline, Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -23,7 +25,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { queries } from '@/api/queries'
+import { grantDefaultHours, runnerLengths } from '@/api/grants'
+import { fmtDateTime, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
+
+/** One plain line per mode, shown under the choice. */
+export const MODE_HELP: Record<AgentMode, string> = {
+  refine: 'Helps you write the requirements and the plan. It changes no code.',
+  work: 'Works through the ticket: writes the code and submits it for review.',
+  fix: 'Fixes what a reviewer or a check sent back.',
+  continue: 'Picks up where an earlier agent stopped.',
+  context: 'Reads the ticket and the code, so you can ask questions. It changes nothing.',
+}
+
+/** What each mode is called on screen; the developer word stays in the option's Details line. */
+export const MODE_LABEL: Record<AgentMode, string> = {
+  refine: 'Write requirements and plan',
+  work: 'Do the work',
+  fix: 'Fix what was sent back',
+  continue: 'Continue earlier work',
+  context: 'Read and answer questions',
+}
 
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
 const DEPOSIT_POLLS = 5
@@ -31,10 +54,7 @@ const DEPOSIT_POLL_MS = 2000
 
 const same = (a: AgentArgs, b: AgentArgs) => JSON.stringify(a) === JSON.stringify(b)
 const message = (e: unknown) => (e instanceof ApiError ? e.message : 'The dashboard server did not answer.')
-const clock = (stamp: string) => {
-  const t = Date.parse(stamp)
-  return Number.isNaN(t) ? stamp : new Date(t).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
-}
+const clock = fmtDateTime
 
 /** The form's values as `agent.preview`'s arguments: empty optionals left out; the subagent model is Claude Code's only. */
 function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: string; subagent: string; label: string; worktree: boolean }): AgentArgs {
@@ -137,10 +157,12 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <select id="agent-harness" className="h-7 rounded border border-border bg-bg px-2" value={harness} onChange={(e) => setHarness(e.target.value as Harness)}>
           {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
-        <Label htmlFor="agent-mode" className="text-xs text-text-muted">Mode</Label>
-        <select id="agent-mode" className="h-7 rounded border border-border bg-bg px-2" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)}>
-          {AGENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+        <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
+        <select id="agent-mode" className="h-7 rounded border border-border bg-bg px-2" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
+          {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
         </select>
+        <span />
+        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
         <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
         <Input id="agent-model" className="h-7 text-xs" placeholder="the agent's default" value={model} autoComplete="off" spellCheck={false} onChange={(e) => setModel(e.target.value)} />
         {harness === 'claude-code' && (<>
@@ -187,25 +209,32 @@ function PreviewLines({ data, ticket }: { data: AgentPreview; ticket?: string })
   const creates = data.will_create_worktree && data.cwd.kind === 'worktree' && where !== null
   return (
     <div className="space-y-2 text-xs" data-testid="agent-preview">
-      <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-        <dt className="text-text-muted">Runs</dt>
-        <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-        <dt className="text-text-muted">In</dt>
-        <dd data-testid="agent-cwd">
-          {creates ? (
-            <Raw>{worktreeLine(data.cwd.ticket ?? data.ticket ?? ticket ?? '', data.cwd.repo ?? '', where)}</Raw>
-          ) : (
-            <>
-              <span className="block">{data.cwd.kind === 'repo' ? SHARED_COPY : cwdText(data)}</span>
-              {where !== null ? <Raw>{where}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : ''}</span>}
-            </>
-          )}
-        </dd>
-        <dt className="text-text-muted">As</dt>
-        <dd>an agent with your runner grant, not as you</dd>
-        {data.grant && (<><dt className="text-text-muted">Runner grant</dt><dd data-testid="agent-grant"><Raw>{data.grant.id}</Raw>, {data.grant.scope} tickets, until {clock(data.grant.until)}</dd></>)}
-        {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
-      </dl>
+      {data.grant && (
+        <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
+        </dl>
+      )}
+      <details data-testid="agent-details">
+        <summary className="cursor-pointer text-text-muted">Details</summary>
+        <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+          <dt className="text-text-muted">Runs</dt>
+          <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
+          <dt className="text-text-muted">In</dt>
+          <dd data-testid="agent-cwd">
+            {creates ? (
+              <Raw>{worktreeLine(data.cwd.ticket ?? data.ticket ?? ticket ?? '', data.cwd.repo ?? '', where)}</Raw>
+            ) : (
+              <>
+                <span className="block">{data.cwd.kind === 'repo' ? SHARED_COPY : cwdText(data)}</span>
+                {where !== null ? <Raw>{where}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : ''}</span>}
+              </>
+            )}
+          </dd>
+          <dt className="text-text-muted">As</dt>
+          <dd>an agent with your runner grant, not as you</dd>
+          {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px]">{data.env.map((n) => <span key={n}><Inline>{n}</Inline></span>)}</dd></>)}
+        </dl>
+      </details>
       {data.warnings.map((w, i) => <p key={i} role="note" className="text-warning"><Prose inline>{w}</Prose></p>)}
     </div>
   )
@@ -221,23 +250,43 @@ export type GrantStep =
 
 /**
  * The runner grant card: the owner's risk sentence (verbatim), the person's current grant with Forget, or "Issue runner
- * grant" (hours at most 12, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
+ * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
-export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial }: { initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
-  const [hours, setHours] = useState(8)
-  const [scope, setScope] = useState<'workable' | 'all'>('workable')
+export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome }: { extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
+  const workspaces = useQuery(queries.workspaces())
+  const workspace = workspaces.data?.find(w => w.id === ws)
+  // 8 h / 1 / 3 / 7 days, never above the workspace maximum; an Extend never offers less than the access it replaces.
+  // The maximum is the SIGNED setting (`settings.grant_hours`, from the host's settings read): the workspace list does not carry it.
+  const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
+  const maxHours = grantDefaultHours({ grant_hours: hostSettings.data?.grant_hours ?? workspace?.grant_hours })
+  const maxKnown = !workspaces.isPending && !hostSettings.isPending // until both answered, the maximum is a guess: show nothing about it
+  const lengths = runnerLengths(maxHours, extend ? Date.parse(extend.until) - nowMs() : 0)
+  const [selectedHours, setHours] = useState(8)
+  const hours = lengths.some(([h]) => h === selectedHours) ? selectedHours : (lengths[0]?.[0] ?? 0)
+  const [scope, setScope] = useState<'workable' | 'all'>(extend?.scope ?? 'workable')
   const [step, setStep] = useState<GrantStep>(initial ?? { kind: 'idle' })
   const [forgetting, setForgetting] = useState<'ask' | 'busy' | null>(null)
   const [forgetIdem, setForgetIdem] = useState(newIdem)
   const [error, setError] = useState('')
   const click = useClickSign(ws)
   const revoke = useClickSign(ws)
+  // One click only where this workspace really uses it AND the person's method is click; otherwise the same terminal
+  // hand-off as every other signature. The custody itself is still checked by core.
+  const methods = useSignMethods(ws)
+  const oneClick = clickReady(workspace) && !!methods.allowed?.includes('click')
+    && (methods.preference?.method ? methods.preference.method === 'click' : true)
+  const [handoff, setHandoff] = useState(false)
   const changed = useRef(onChanged)
   changed.current = onChanged
+  const outcome = useRef(onOutcome)
+  outcome.current = onOutcome
+  useEffect(() => {
+    if (['polling', 'confirmed', 'rejected', 'unknown'].includes(step.kind)) outcome.current?.()
+  }, [step.kind])
   const grant = runner?.grant ?? null
-  const enabled = runner?.enabled === true
-  const action: ClickAction = { action: 'runner_grant', hours, scope }
+  const enabled = runner?.enabled === true && !!workspace
+  const action: ClickAction = { action: 'runner_grant', hours, scope, ...(extend ? { extend: extend.id } : {}) }
 
   // A signed grant: what the signer says happened to the secret.
   useEffect(() => {
@@ -274,15 +323,17 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
     return () => { stopped = true; clearTimeout(timer) }
   }, [step, ws])
 
-  // A refusal before anything was signed: terminal only (execution off, over 12 h), an older orch, click off.
+  // A refusal before anything was signed: terminal only (execution off, longer than the workspace allows), an older orch, click off.
   useEffect(() => {
     if (click.phase !== 'failed' || !click.problem) return
     setStep({ kind: 'refused', text: refusalText(click.error) ?? click.problem.body })
   }, [click.phase, click.problem, click.error])
 
   const issue = async () => {
+    if (!enabled) return
     setError('')
     setStep({ kind: 'idle' })
+    if (!oneClick) { setHandoff(true); return }
     // "Issue runner grant" again after a refusal is an explicit new attempt (the hook advances the intent's counter).
     if (click.phase === 'failed' || click.phase === 'cancelled') await click.again(action)
     else await click.start(action)
@@ -307,9 +358,9 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
       <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Runner grant</p>
-      <p role="note" data-testid="runner-grant-risk" className="text-warning">{DEPOSIT_RISK}</p>
+      <p role="note" data-testid="runner-grant-risk" className="text-warning">{maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')}</p>
       {loading && <Skeleton className="h-6" />}
-      {grant && step.kind !== 'polling' && (
+      {grant && !extend && step.kind !== 'polling' && (
         <div className="flex flex-wrap items-center gap-2" data-testid="runner-grant-current">
           <span>Your runner holds a grant for {grant.scope} tickets until <time dateTime={grant.until}>{clock(grant.until)}</time>.</span>
           {forgetting === null && <Button size="xs" variant="ghost" onClick={() => setForgetting('ask')}>Forget runner grant</Button>}
@@ -322,22 +373,30 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           )}
         </div>
       )}
+      {extend && <p>Agents that are running now stop; new agents use the extended access.</p>}
       {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
-      {!grant && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor="grant-hours" className="text-xs text-text-muted">Hours</Label>
+      {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
+        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : <div className="flex flex-wrap items-center gap-2">
+          <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => <option key={h} value={h}>{h}</option>)}
+            {lengths.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <Label htmlFor="grant-scope" className="text-xs text-text-muted">Tickets</Label>
-          <select id="grant-scope" className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
-            <option value="workable">workable</option>
-            <option value="all">all</option>
+          <select id="grant-scope" disabled={!!extend} className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
+            <option value="workable">Tickets you may work on</option>
+            <option value="all">All tickets</option>
           </select>
-          <Button size="xs" disabled={!enabled} onClick={() => void issue()} data-testid="runner-grant-issue">Issue runner grant</Button>
-          {!enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
+          <Button size="xs" disabled={!enabled || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
+          {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
         </div>
       )}
+      {handoff && workspace && action.hours > 0 && <HandoffDialog ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
+        summary={<p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}
+        onSettled={(phase, _state, request) => {
+          if (phase !== 'done') return
+          setHandoff(false)
+          setStep({ kind: 'polling', depositId: depositIdOf(request?.id), grant: null })
+        }} onClose={() => setHandoff(false)} />}
       {(click.phase === 'preparing' || click.phase === 'viewing') && <Skeleton className="h-16" />}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
         <ClickSignPanel ws={ws} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
@@ -365,6 +424,8 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
     </section>
   )
 }
+
+const hoursText = (h: number) => h >= 24 && h % 24 === 0 ? `${h / 24} ${h === 24 ? 'day' : 'days'}` : `${h} hours`
 
 /** Revoke the grant (a click request of the existing `grant_revoke` action), when its deposit failed or is unknown. */
 function RevokeStep({ grant, click }: { grant: string; click: ReturnType<typeof useClickSign> }) {

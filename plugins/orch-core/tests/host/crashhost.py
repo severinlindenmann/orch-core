@@ -33,7 +33,7 @@ def patch(point: str) -> None:
     from orch.store import store
 
     if point == "register-before-entry":
-        registry.Registry.add = die
+        registry.Registry._add = die
     elif point in {"register-after-entry", "unregister-after-remove", "bootstrap-after-register"}:
         registry_complete = intents.IntentStore.complete
 

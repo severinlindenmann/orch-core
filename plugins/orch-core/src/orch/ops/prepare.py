@@ -60,6 +60,11 @@ class Capture:
     #: H12c-e: ``relay.pair_device``'s facts from R6 (:class:`orch.identity.pairdevice.PairDeviceFacts`), set by the
     #: host before the handler runs; the material of the request is built from them (kind ``relay.pair_device``)
     pair: Any = None
+    #: P5: ``publish.share``'s facts from the host (:class:`orch.publishclient.approval.ApprovalFacts`), built from the
+    #: staged copy before the handler runs; the words that are signed come from them, never from the request
+    publish: Any = None
+    #: batch 11 (finding 9): the checked ``sequence`` meta of ``human.prepare`` (one step of a signer's sequence)
+    sequence: dict[str, Any] | None = None
 
     @property
     def actor(self) -> dict[str, Any]:

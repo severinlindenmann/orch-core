@@ -1,7 +1,7 @@
 // "Sign in the dashboard" (section 0.8.6 item 3a): the owner's switch. The server and the signer are faked: what is
 // sent, what is shown, and that the passphrase is never kept in the form after a refusal.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { ClickCard } from '@/api/click'
@@ -14,9 +14,11 @@ const HOSTILE = { ...workspace, prefix: 'X;rm -rf ~' } as unknown as Workspace
 const OFF: ClickCard = { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true }
 const ON: ClickCard = { custody: 'convenience', enabled: true, available: true, switchable: true }
 
+let qcOf: QueryClient
 function mount(card: ClickCard, owner = true, ws: Workspace = workspace) {
   vi.spyOn(api, 'clickStatus').mockResolvedValue(card)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  qcOf = qc
   return render(
     <QueryClientProvider client={qc}>
       <SigningCard workspace={ws} owner={owner} />
@@ -47,7 +49,7 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeDisabled()
     fireEvent.change(field, { target: { value: 'my passphrase' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions are signed here/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
     expect(sw).toHaveBeenCalledWith(WS, { on: true, passphrase: 'my passphrase' })
     expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
   })
@@ -61,6 +63,17 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('That passphrase was refused. Nothing changed.')
     expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
     expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
+  })
+
+  it('a dev sandbox host refusing the switch says why, and an unknown reason stays generic', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'dev_host' } }))
+    mount(OFF)
+    await typeAndSubmit()
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/off on a dev sandbox host/)
+    sw.mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'brand_new_reason' } }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(screen.getByTestId('signing-error')).not.toHaveTextContent(/brand_new/))
   })
 
   it('too many wrong passphrases name the wait', async () => {
@@ -161,10 +174,39 @@ describe('Sign in the dashboard', () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.terminal_needed', message: 'x', retryable: false }))
     mount(OFF)
     const status = vi.mocked(api.clickStatus)
-    await typeAndSubmit()
-    await screen.findByTestId('signing-error')
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    // the signer now says the key is already in the key store (the reload after the refusal reads this)
     status.mockResolvedValue({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // the refetched state replaces the stale form: the terminal-on view, no form, no error
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
+    expect(screen.queryByTestId('signing-error')).toBeNull()
+  })
+
+  it('after "result unknown", the form closes once the reloaded card differs, and keeps no passphrase (#580)', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new TypeError('fetch failed'))
+    mount(OFF)
+    const status = vi.mocked(api.clickStatus)
+    await typeAndSubmit('never kept')
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/Reloading the card/)
+    // the reload found the same card: the form stays, with its message
+    await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
+    expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
+    expect(screen.getByTestId('signing-error')).toBeInTheDocument()
+    // a later reload shows the switch did happen
+    status.mockResolvedValue(ON)
+    await act(async () => {
+      await qcOf.invalidateQueries({ queryKey: ['click-status', WS] })
+    })
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
+    expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
+    expect(screen.queryByTestId('signing-error')).toBeNull()
+    expect(screen.queryByText(/Reloading the card/)).toBeNull()
+    expect(document.body.innerHTML).not.toContain('never kept')
   })
 
   it('a timeout does not claim nothing changed (M2)', async () => {
@@ -203,9 +245,19 @@ describe('Sign in the dashboard', () => {
     let settle: (c: ClickCard) => void = () => {}
     const sw = vi.spyOn(api, 'switchClick').mockImplementation(() => new Promise((r) => (settle = r)))
     mount(OFF)
-    await typeAndSubmit()
-    fireEvent.click(screen.getByRole('button', { name: /Turn on/ }))
-    fireEvent.submit(screen.getByLabelText(/Your passphrase/).closest('form')!)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    const form = screen.getByLabelText(/Your passphrase/).closest('form')!
+    // Both submits arrive inside one act(): React has not re-rendered in between, so `busy` is still false for the
+    // second one. Only the ref guard stops it (without the guard this sends twice while `busy` still works).
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(sw).toHaveBeenCalledTimes(1)
+    // and once `busy` has rendered, the controls are off and a further submit still sends nothing
+    expect(screen.getByLabelText(/Your passphrase/)).toBeDisabled()
+    fireEvent.submit(form)
     expect(sw).toHaveBeenCalledTimes(1)
     settle(ON)
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On/))
@@ -221,4 +273,18 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
     expect(document.body.innerHTML).not.toContain('typed then left')
   })
+})
+
+it('describes the Other ways menu and keeps the full risk notice for older acknowledgements', async () => {
+  mount({ ...ON, risk_ack: null })
+  await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('Other ways'))
+  expect(screen.getByTestId('click-risk')).toHaveTextContent('Convenience signing:')
+})
+
+it('shows the ISO risk acknowledgement as a date in Settings', async () => {
+  const at = '2026-10-16T18:30:00Z'
+  mount({ ...ON, risk_ack: at })
+  const notice = await screen.findByText(/Risk notice acknowledged on/)
+  expect(notice.querySelector('time')).toHaveAttribute('datetime', at)
+  expect(notice).toHaveTextContent('16 Oct 18:30') // local zone (UTC in tests), the shared formatter
 })

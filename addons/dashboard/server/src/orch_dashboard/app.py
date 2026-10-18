@@ -9,10 +9,28 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, reads, settings, terminals
+from . import (
+    activity_routes,
+    adapters,
+    addon_routes,
+    addon_switches,
+    agents,
+    click,
+    handoff,
+    phone,
+    reads,
+    settings,
+    shares,
+    signprefs,
+    terminals,
+    testrun,
+    worktrees,
+)
+from .adapters.setup import SetupProxy
+from .adapters.setup import register as register_setup
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
-from .gateway import Gateway
+from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
 
@@ -23,14 +41,72 @@ class LaunchCode(BaseModel):
 
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
+# ONE closed list, in the router's own spelling (src/app/router.tsx, `$x` = a parameter). A test walks every route of
+# the router and every real-host settings tab and fails when one is missing here, so a new page cannot forget it.
+SETTINGS_TABS = (
+    "general",
+    "members",
+    "gates",
+    "grants",
+    "addons",
+    "records",
+    "devices",
+)  # HOST_TABS (settings/tabs.ts)
+SPA_ROUTES = (
+    "",  # Today
+    "today",  # older spelling of Today
+    "board",
+    "tickets",
+    "tickets/new",
+    "ticket/$key",
+    "artifacts",
+    "agents",
+    "quick",
+    "drop",
+    "checklist",
+    "worktrees",
+    "shares",
+    "activity",
+    "guide",  # ?page=<x> is a query: not part of the path
+    "settings",
+    "settings/$tab",
+    "settings/addon/$name",
+    "settings/addons/$name",
+    "addon/$name/$page",
+)
+# Routes that also open without a workspace in the address (the ticket key names its own workspace) ...
+SPA_BARE = ("ticket/$key", "checklist")
+# ... and the ones that open ONLY without one (urls.ts isWorkspacePath: the checklist is not a workspace page).
+SPA_BARE_ONLY = ("checklist",)
+_PARAM = {
+    "key": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
+    "tab": "(?:" + "|".join(SETTINGS_TABS) + ")",
+    "name": r"[A-Za-z0-9_-]{1,64}",
+    "page": r"[A-Za-z0-9_-]{1,64}",
+}
+
+
+def _spa_pattern(route: str) -> str:
+    return "/".join(_PARAM[seg[1:]] if seg.startswith("$") else re.escape(seg) for seg in route.split("/") if seg)
+
+
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
-    r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
-    r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
+    "|".join(
+        [
+            r"w/[A-Za-z0-9_-]+(?:/(?:"
+            + "|".join(_spa_pattern(r) for r in SPA_ROUTES if r and r not in SPA_BARE_ONLY)
+            + "))?"
+        ]
+        + [_spa_pattern(r) for r in SPA_BARE]
+    )
 )
 
 
-def create_app(port: int, gateway=None, auth=None, static=None):
+# Every root-level file index.html references (public/ of the UI). A test checks the built index.html against this list.
+ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
+
+
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
@@ -108,6 +184,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def workspaces():
         return gateway.workspaces()
 
+    @app.get("/api/host")
+    def host():
+        return gateway.host_info()
+
     def identity_row(ws):
         link = gateway.enabled(ws)
         return adapters.me(
@@ -137,13 +217,21 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             "runner": who.runner,
         }
 
+    register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
     settings.register(app, gateway)
+    addon_switches.register(app, gateway)
+    signprefs.register(app, gateway)
+    phone.register(app, gateway)
     addon_routes.register(app, gateway)
+    activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
+    testrun.register(app, gateway)
+    worktrees.register(app, gateway)
+    shares.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")
@@ -153,15 +241,20 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-        elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
+        elif path in ROOT_FILES:
+            # Files index.html names at the root (favicon, boot-shell css): a fixed list, never a path from the request.
+            candidate = static / path
+            if candidate.is_file():
+                return FileResponse(candidate, headers={"Cache-Control": "no-store"})
+        elif path in ("", "setup") or SPA_PATH.fullmatch(path):
             # The file:// launcher is cross-site too: serve its shell, but forbid
             # automatic session sharing in foreign documents. Missing metadata keeps
             # old-browser compatibility (and cannot protect their foreign loads).
             sites = request.headers.getlist("sec-fetch-site")
             foreign = bool(sites) and sites not in (["none"], ["same-origin"])
-            candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
+            candidate = static / "index.html"
             if candidate.is_file():
-                if path != "favicon.svg" and foreign:
+                if foreign:
                     html = candidate.read_text(encoding="utf-8")
                     marked = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
                     if marked == html:

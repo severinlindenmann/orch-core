@@ -222,6 +222,9 @@ def status(state_dir: str | os.PathLike[str]) -> dict[str, Any]:
     if not keys_dir(state_dir).is_dir():
         return {"present": False, "custody": None}
     info = load(state_dir)
+    from . import primary_register as reg
+
+    stored, rel = reg.read_cert(state_dir), reg.read_relay(state_dir)
     return {
         "present": True,
         "custody": info.custody,
@@ -229,8 +232,8 @@ def status(state_dir: str | os.PathLike[str]) -> dict[str, Any]:
         "dk_sig_pub": crypto.b64u(info.dk_sig_pub),
         "dk_kx_pub": crypto.b64u(info.dk_kx_pub),
         "purposes": list(info.purposes),
-        "certificate": None,
-        "relay": None,
+        "certificate": None if stored is None else {"registered": stored["registered"], "label": stored.get("label")},
+        "relay": None if rel is None else {k: rel.get(k) for k in ("origin", "person_id", "device_id")},
     }
 
 

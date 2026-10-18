@@ -152,7 +152,7 @@
         "code": "transition.refused",
         "exit": 3,
         "retryable": false,
-        "hint": "orch show --section current_state",
+        "hint": "orch show REF",
         "fix": [
           "orch",
           "show"

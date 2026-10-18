@@ -42,7 +42,7 @@ def test_reads_need_a_session(client, stub, p1):
         assert client.get(f"/api/w/{stub.ws}/{path}").status_code == 401
 
 
-def test_the_owner_reads_the_settings_with_defaults_marked_and_no_repo_path(worlds, team, p1):
+def test_the_owner_reads_the_settings_with_defaults_marked_and_the_repo_path_the_host_sent(worlds, team, p1):
     env, people, grants = team
     env.tick()
     env.store.append(
@@ -70,9 +70,10 @@ def test_the_owner_reads_the_settings_with_defaults_marked_and_no_repo_path(worl
     assert got["defaults"] == ["claim_ttl_min", "lease_ttl_min"]  # only the unset ones are marked as defaults
     assert set(got["gates"]) == {"requirements", "plan", "verify", "code"}
     assert got["gates"]["code"]["independent"] is True and "assignees" in got["gates"]["code"]["not"]
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": "https://git.example.test/a/code"}]
+    (repo,) = got["repos"]
+    assert (repo["name"], repo["default_branch"], repo["remote"]) == ("code", "main", "https://git.example.test/a/code")
+    assert repo["path"] == "/srv/secret-place/code"  # the host sent it to an owner; a member never gets it (below)
     assert got["settings_at"]["by"] == env.owner.ref and got["policy_at"] is None
-    assert "secret-place" not in json.dumps(got)  # the path is never forwarded, even to an owner
 
 
 def test_a_member_gets_names_and_branches_only(worlds, team):
@@ -97,7 +98,7 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None}]
+    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 
@@ -120,7 +121,7 @@ def test_a_host_without_the_settings_cap_says_unavailable_and_nothing_is_guessed
     assert "settings_read" not in world.get("/api/session").json()["features"]
 
 
-def test_the_repo_adapter_strips_credentials_and_forwards_no_path():
+def test_the_repo_adapter_strips_credentials_and_forwards_only_the_path_and_check_the_host_sent():
     first = {
         "settings": {
             "grant_hours": 8,
@@ -142,13 +143,20 @@ def test_the_repo_adapter_strips_credentials_and_forwards_no_path():
         ("b", None),
         ("c", "local:c"),
     ]
-    assert "tok" not in got.model_dump_json() and "/p/a" not in got.model_dump_json()
+    assert "tok" not in got.model_dump_json()
+    assert [r.path for r in got.repos] == ["/p/a", None, None]
+    first["settings"]["repos"]["a"]["check"] = {"state": "present", "branch": "main"}
+    assert adapters.settings.settings(first, [], False).repos[0].check.branch == "main"
+    for bad in ({"state": "odd"}, {"state": "present", "branch": f"ma{chr(0x202E)}in"}, "present"):
+        first["settings"]["repos"]["a"]["check"] = bad
+        with pytest.raises(Exception):
+            adapters.settings.settings(first, [], False)
 
 
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda d: d["settings"].update(grant_hours=25),
+        lambda d: d["settings"].update(grant_hours=169),
         lambda d: d["settings"].update(claim_ttl_min=14),
         lambda d: d["settings"].update(lease_ttl_min="60"),
         lambda d: d.update(gates={"requirements": {"approvers": ["owner"]}}),
@@ -311,12 +319,51 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     assert world.stub.ws and env.store.state.workspace.settings["grant_hours"] == 8  # nothing was written
 
 
+def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, team, host_calls):
+    """B11-P1: on a terminal-approval workspace the runner grant is a hand-off like any other signature."""
+    env, people, grants = team
+    world = worlds(env.owner.ref)
+    # The dev stub serves no `grant` op (the host does): what matters is the request this server sends.
+    got = handoff(world, {"action": "runner_grant", "hours": 24, "scope": "workable"}, 1)
+    assert got.status_code != 422  # the action is part of the hand-off schema now
+    ops = [(c[1]["op"], c[1]["args"]) for c in host_calls if c[0] == "human.prepare"]
+    assert ops == [("grant", {"hours": 24, "scope": "workable", "runner": True})]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"label": "other"},
+        {"hours": 25},
+        {"verbs": "all"},
+        {"scope": "all"},
+        {"extra": 1},
+        {"actor": {"kind": "person", "id": "p_other"}},
+    ],
+)
+def test_a_prepared_runner_grant_that_differs_from_the_request_is_refused(change):
+    """B11-P1: a host-prepared grant.issued with another label, hours, verbs, scope, field or person is never shown."""
+    from orch_dashboard.handoff import RunnerGrant, expected
+
+    good = {
+        "type": "grant.issued",
+        "label": "runner",
+        "verbs": "agent",
+        "hours": 24,
+        "scope": "workable",
+        "actor": {"kind": "person", "id": "p_me"},
+    }
+    check = expected(RunnerGrant(action="runner_grant", hours=24, scope="workable"), "p_me")
+    assert check([good])
+    assert not check([{**good, **change}])
+
+
 @pytest.mark.parametrize(
     "body",
     [
         {"action": "settings_set"},
         {"action": "settings_set", "grant_hours": 0},
-        {"action": "settings_set", "grant_hours": 25},
+        {"action": "settings_set", "grant_hours": 169},
         {"action": "settings_set", "claim_ttl_min": 14},
         {"action": "settings_set", "claim_ttl_min": 1441},
         {"action": "settings_set", "lease_ttl_min": 4},
@@ -694,3 +741,73 @@ def test_typed_one_line_texts_refuse_bidi_and_invisible_characters(worlds, team,
         body = {"action": "grant_revoke", "grant": "gr_" + "0" * 26, field: value}
     res = handoff(world, body)
     assert res.status_code == 400
+
+
+def test_repo_set_and_remove_are_typed_settings_changes(worlds, team, host_calls, tmp_path):
+    world = worlds(team[0].owner.ref)
+    (tmp_path / "api" / ".git").mkdir(parents=True)
+    path = str(tmp_path / "api")
+    res = handoff(world, {"action": "repo_set", "name": "api", "path": "/no/such/folder"})
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"  # the host looks at the path
+    res = handoff(world, {"action": "repo_set", "name": "api", "path": path, "default_branch": "main"})
+    assert res.status_code == 200, res.text
+    want = {"repos": {"api": {"path": path, "default_branch": "main"}}}
+    assert res.json()["events"][0]["type"] == "settings.changed" and res.json()["events"][0]["set"] == want
+    assert [c for c in host_calls if c[0] == "human.prepare"][-1][1]["args"] == {"set": want}
+    res = handoff(world, {"action": "repo_remove", "name": "api"}, 2)
+    assert res.status_code == 200, res.text
+    assert res.json()["events"][0]["set"] == {"repos": {"api": None}}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "repo_set", "name": "Api", "path": "/x"},
+        {"action": "repo_set", "name": "api", "path": "relative/dir"},
+        {"action": "repo_set", "name": "api", "path": ""},
+        {"action": "repo_set", "name": "api", "path": "/x\u202ey"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "https://user:tok@git.example.test/a"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "git@git.example.test:a.git"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "http://git.example.test/a"},
+        {"action": "repo_set", "name": "api", "path": "/x", "extra": 1},
+        {"action": "repo_set", "name": "api"},
+        {"action": "repo_remove", "name": "../x"},
+        {"action": "repo_remove"},
+    ],
+)
+def test_repo_actions_are_closed_and_typed(worlds, team, body):
+    world = worlds(team[0].owner.ref)
+    res = handoff(world, body)
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert "tok" not in res.text and world.stub.requests.table == {}
+
+
+def test_f8_the_repo_path_check_runs_before_any_request_and_says_why_in_plain_words(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch_dashboard.errors import HostError
+    from orch_dashboard.gateway import Gateway
+
+    home = tmp_path / "home"
+    root = tmp_path / "proj"
+    (root / ".orch").mkdir(parents=True)
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    home.mkdir()
+    ws = "a" * 32
+    me = SimpleNamespace(_pins=lambda: {ws: {"root": str(root), "store": ".orch"}})
+
+    def refusal(path):
+        with pytest.raises(HostError) as exc:
+            Gateway.check_repo_path(me, ws, path)
+        return exc.value.error["message"]
+
+    assert "home folder" in refusal(str(home))
+    assert "not a git repository" in refusal(str(tmp_path / "plain"))
+    assert "orch's own data folder" in refusal(str(root / ".orch"))
+    assert "does not exist" in refusal(str(tmp_path / "nope"))
+    Gateway.check_repo_path(me, ws, str(tmp_path / "repo"))  # a real git folder passes
+    Gateway.check_repo_path(
+        SimpleNamespace(_pins=lambda: {}), ws, str(home)
+    )  # a workspace not known here: the host decides

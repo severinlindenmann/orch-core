@@ -43,6 +43,7 @@ __all__ = [
     "KEY_ID",
     "Human",
     "iso",
+    "device_backend",
     "keys_dir",
     "open_backend",
     "review_prompt",
@@ -65,6 +66,40 @@ def open_backend(directory: Path) -> Backend:
     """The backend over the key directory: the passphrase backend with its terminal prompt and its scrypt floor. Tests
     replace this function; nothing in production passes a prompt callback."""
     return get_backend("passphrase", directory)
+
+
+NO_KEY = "this machine holds no device key of yours for this workspace"
+
+
+def device_backend(state_dir: Path, workspace_id: str, *, convenience: bool = False) -> Backend:
+    """The one lookup of this person's device key for a workspace, for every signing path (the CLI's human ops, the
+    pairing and genesis-pin commands, the hosted ``Human``). The key is where ``orch init`` put it (:func:`keys_dir`,
+    the passphrase backend) unless the person moved it to convenience custody (``custody.select``), in which case the
+    passphrase file is gone and the selection names the backend. Only the hosted path (``convenience=True``: the host
+    checks the flag at prepare, bind and submit) may use that backend; direct mode and the genesis pin are
+    passphrase-only and refuse a key in one-click custody. Refuses with ``custody.no_key`` when there is none."""
+    from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
+    from orch.custody.select import device_backend as resolve
+    from orch.custody.select import read_selection
+
+    try:
+        sel = read_selection(state_dir, workspace_id)
+        if sel is not None and (sel["custody"] == "convenience" or sel["transition"] is not None):
+            if not convenience:
+                raise OrchError(
+                    "custody.no_key",
+                    f"{NO_KEY} that this command may use: the key is in one-click custody",
+                    hint="use the dashboard or `orch host register`, or `orch keys custody passphrase --in-place`",
+                )
+            return resolve(state_dir, workspace_id)[0]
+    except KeyNotFound:
+        raise OrchError("custody.no_key", NO_KEY) from None
+    except (BackendUnavailable, CustodyError) as exc:
+        raise OrchError("custody.no_key", f"{NO_KEY} ({str(exc)[:200]})") from None
+    directory = keys_dir(state_dir, workspace_id)
+    if not (directory / KEY_FILE).is_file():  # looked at first: opening the backend would create the directory
+        raise OrchError("custody.no_key", NO_KEY)
+    return open_backend(directory)
 
 
 def show_secret(text: str) -> None:
@@ -115,23 +150,45 @@ def review_prompt(text: str, expect: str) -> bool:
     try:
         if not os.isatty(fd):
             raise NoPrompt("/dev/tty is not a terminal")
-        prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
-        os.write(fd, ("\n=== orch: read before you sign ===\n" + text + prompt).encode())
+        details = getattr(text, "details", "") or ""  # B6: a plain view with the full review behind `d`
+        if not details:
+            prompt = f"Type {expect} and Enter to continue; anything else stops: "
+        else:
+            prompt = f"Type {expect} to continue (d = details): "
+        shown = text
+        if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
+            shown, details = details, ""
+        os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
+        b6_view = bool(details)  # only a B6 review (plain view, full one behind d)
+        seen_details = bool(getattr(text, "details", "")) and not details  # --details: the full review came first
         import termios
 
-        termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
-        line = bytearray()
-        try:
-            while True:
-                c = os.read(fd, 1)
-                if not c:
-                    return False  # end of input: no newline came
-                if c == b"\n":
-                    break
-                line += c
-        except (KeyboardInterrupt, OSError):
-            return False
-        return bytes(line).strip().decode("utf-8", "replace") == expect
+        while True:
+            termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
+            line = bytearray()
+            try:
+                while True:
+                    c = os.read(fd, 1)
+                    if not c:
+                        return False  # end of input: no newline came
+                    if c == b"\n":
+                        break
+                    line += c
+            except (KeyboardInterrupt, OSError):
+                return False
+            answer = bytes(line).strip().decode("utf-8", "replace")
+            if details and answer == "d":  # the full review, then the same question
+                os.write(fd, ("\n=== details ===\n" + details + prompt).encode())
+                details = ""  # shown once; a second `d` is an answer that stops
+                seen_details = True
+                continue
+            if answer == expect and b6_view:
+                from orch.custody.passphrase import note_plain_review
+
+                note_plain_review(
+                    hint=not seen_details
+                )  # one-shot: the next passphrase prompt only, and only after a confirmed review
+            return answer == expect
     finally:
         os.close(fd)
 
@@ -199,10 +256,7 @@ class Human:
     def backend(self) -> Backend:
         if self._backend is None:
             wid = self.workspace_id
-            directory = keys_dir(self.call.ws.state_dir, wid)
-            if not (directory / KEY_FILE).is_file():  # looked at first: opening the backend would create the directory
-                raise OrchError("custody.no_key", "this machine holds no device key of yours for this workspace")
-            self._backend = open_backend(directory)
+            self._backend = device_backend(self.call.ws.state_dir, wid)
         return self._backend
 
     @property
@@ -280,7 +334,7 @@ class Human:
         if git.worktrees is None and not copy.registered:
             from orch.host.worktrees import worktree_path
 
-            declared = git.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            declared = git.repo_path(self.store.layout, self.store.state.workspace.repos, name)
             if declared is not None and os.path.lexists(worktree_path(os.fspath(declared), self.store.workspace_id,
                                                                       view.key)):  # fmt: skip
                 return f"{name}: the ticket has a worktree on disk but no registration (git-pins.json is missing)"
@@ -308,7 +362,7 @@ class Human:
                 except (ValueError, OSError) as exc:  # a pin file that cannot be read: fail closed
                     out.append(f"{name}: the worktree registrations cannot be read ({exc})")
                     continue
-            copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
+            copy = git.ticket_copy(self.store.layout, self.store.state.workspace.repos, view.uid, name)
             path = copy.path
             if self.ctx.prepare is None and git.reader is None:
                 # direct mode (Codex #439): the copy the person was shown is the one the precommit reads

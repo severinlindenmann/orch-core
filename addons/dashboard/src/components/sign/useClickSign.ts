@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
   | 'idle'
@@ -24,12 +25,13 @@ export type ClickPhase =
   | 'failed'
 
 export interface ClickRun {
+  retry: number
   phase: ClickPhase
   prepared: ClickPrepared | null
   view: ClickViewAnswer | null
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
@@ -114,13 +116,15 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction) => {
+    async (action: ClickAction, retryFloor = 0) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
+      // An explicit change of signing method advances the shared action intent.
+      attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
       const { retry } = attempt.current
       attempt.current.lost = false
       try {
@@ -201,7 +205,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     const expires = Date.parse(prepared.expires_at)
     const deadline = (Number.isNaN(expires) ? Date.now() + 600_000 : expires) + 30_000
     const stillOpen = () => {
-      const when = Number.isNaN(expires) ? '' : ` It expires at ${new Date(expires).toLocaleTimeString()}.`
+      const when = Number.isNaN(expires) ? '' : ` It expires at ${fmtClock(new Date(expires).toISOString())}.`
       setSettleNote(`Still not settled.${when} Check the ticket's activity before doing anything else; nothing is offered until it settles.`)
     }
     const check = async (last = false) => {
@@ -326,5 +330,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
+  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
 }

@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
 let sonnerPatched = 0
+const styleHooks = new Set<string>()
 
 export default defineConfig(({ command }) => ({
   // Absolute asset paths: the app owns real paths (/w/DEMO/settings/addon/x), so a reload there must still find /assets.
@@ -25,6 +26,43 @@ export default defineConfig(({ command }) => ({
       if (command !== 'build') return
       const inGraph = [...this.getModuleIds()].some((id) => /node_modules\/sonner\//.test(id))
       if (inGraph && sonnerPatched !== 1) throw new Error(`sonner is bundled but ${sonnerPatched} modules were patched (expected 1): its entry path changed, update vite.config.ts`)
+    },
+  }, {
+    // The server's CSP is `style-src 'self'`: a <style> element with text, or a style="" attribute, is blocked (B11 34).
+    // Three libraries inject one anyway (react-style-singleton for the scroll lock of every modal dialog, and xterm's
+    // DOM renderer for its two per-terminal rules). Their css goes into constructable stylesheets instead (src/lib/cssom.ts),
+    // which the CSP allows; the element they would have used becomes a <span>, because even an empty <style> is blocked. Each replacement must
+    // match exactly once: a library update that moves the code fails the build instead of silently re-opening the hole.
+    name: 'csp-no-inline-style',
+    transform(code, id) {
+      const set = 'globalThis.__orchSetCss'
+      const swap = (from: string, to: string) => {
+        if (code.split(from).length !== 2) throw new Error(`csp-no-inline-style: ${id} no longer contains ${JSON.stringify(from)} exactly once: update vite.config.ts`)
+        code = code.replace(from, to)
+      }
+      if (/node_modules\/@xterm\/xterm\/lib\/xterm\.js$/.test(id)) {
+        // The element is made a <span> (a <style> element is blocked even when empty) and its css is adopted.
+        swap('this._themeStyleElement=this._document.createElement("style")', 'this._themeStyleElement=this._document.createElement("span")')
+        swap('this._dimensionsStyleElement=this._document.createElement("style")', 'this._dimensionsStyleElement=this._document.createElement("span")')
+        swap('this._themeStyleElement.textContent=t', `${set}(this._themeStyleElement,t)`)
+        swap('this._dimensionsStyleElement.textContent=t', `${set}(this._dimensionsStyleElement,t)`)
+        styleHooks.add('xterm')
+        return { code, map: null }
+      }
+      if (/node_modules\/react-style-singleton\/dist\/es2015\/singleton\.js$/.test(id)) {
+        swap("document.createElement('style')", "document.createElement('span')")
+        swap('tag.appendChild(document.createTextNode(css));', `${set}(tag, css);`)
+        swap('stylesheet.parentNode.removeChild(stylesheet);', 'stylesheet.parentNode.removeChild(stylesheet); globalThis.__orchDropCss(stylesheet);')
+        styleHooks.add('singleton')
+        return { code, map: null }
+      }
+      return null
+    },
+    buildEnd() {
+      if (command !== 'build') return
+      const ids = [...this.getModuleIds()]
+      const need = [['xterm', /node_modules\/@xterm\/xterm\/lib\/xterm\.js$/], ['singleton', /node_modules\/react-style-singleton\/dist\/es2015\/singleton\.js$/]] as const
+      for (const [name, re] of need) if (ids.some((i) => re.test(i)) && !styleHooks.has(name)) throw new Error(`csp-no-inline-style: ${name} is bundled but was not patched: update vite.config.ts`)
     },
   }, {
     name: 'production-entry',

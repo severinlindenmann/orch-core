@@ -35,8 +35,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import signer
+from . import sequence, signer
 from .errors import HostError
+from .sequence import Sessions
 
 __all__ = ["NOTICE", "CODE", "main", "normalise_code", "sign_code"]
 
@@ -59,6 +60,26 @@ def normalise_code(text: str) -> str:
     if not CODE.fullmatch(raw):
         raise HostError("invalid.input", "a hand-off code is 8 characters, like 7F3K-Q2MA")
     return raw
+
+
+def _deliver(
+    call: Callable[..., Any],
+    secret: str,
+    request_id: str,
+    choose: Callable[[str], str] | None,
+    show_secret: Callable[[str], None],
+) -> list[str]:
+    """A sequence's runner grant, after its commit: to the orch runner when the person chooses it on their own
+    terminal, else shown there once (the same choice as a single grant, H11c)."""
+    if choose is not None:
+        try:
+            wanted = choose(DEPOSIT_PROMPT)
+        except Exception:  # noqa: BLE001 - no terminal to ask on: shown
+            wanted = "s"
+        if wanted == "r":
+            return signer.deposit_lines(signer.hand_over(call, secret, request_id[3:]))
+    show_secret(signer.secret_text(secret))
+    return []
 
 
 def _local_files(prepared: Mapping[str, Any], files: Mapping[str, bytes]) -> None:
@@ -94,6 +115,9 @@ def sign_code(
     resolved: list[dict[str, Any]] | None = None,
     files: Mapping[str, bytes] | None = None,
     choose: Callable[[str], str] | None = None,
+    sessions: Any = None,
+    now: Callable[[], float] | None = None,
+    notice: bool = True,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -109,6 +133,37 @@ def sign_code(
         raise HostError("not_found", f"no pending request of yours has the code {code} in this workspace")
     request_id = found[0]["id"]
     prepared = call("human.get", {"request_id": request_id, "signer": {"device": device, "auth": backend.auth}})["data"]
+
+    if (prepared.get("material") or {}).get("sequence") is not None:
+        # batch 11, finding 9: the first request of a sequence is signed with its steps, on one review and one
+        # confirmation (host/sequence.py); a client without the session store cannot do that
+        from . import sequence_terminal
+        from .control_client import new_idem
+
+        if sessions is None:
+            signer._refuse("this request is a sequence of signatures and this client cannot sign sequences")
+        if files:
+            signer._refuse("a sequence carries no files")
+        req = prepared.get("request") or {}
+        if req.get("id") != request_id or req.get("code") != code:
+            signer._refuse("the host answered with another request than the code names")
+        return sequence_terminal.sign_sequence(
+            call,
+            prepared,
+            request_id,
+            backend=backend,
+            key_id=key_id,
+            workspace_id=workspace_id,
+            person=person,
+            device=device,
+            workspace=workspace,
+            confirm=confirm,
+            sessions=sessions,
+            new_idem=new_idem,
+            prefix=f"{NOTICE}\n\n" if notice else "",
+            deliver=lambda secret, rid: _deliver(call, secret, rid, choose, show_secret),
+            **({} if now is None else {"now": now}),
+        )
 
     def on_secret(secret: str) -> list[str]:
         """H11c: a runner grant (label ``runner``) may go to the orch runner instead of the screen; the person
@@ -147,7 +202,7 @@ def sign_code(
         files={n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} if files else None,
         artifacts="checked" if files else "unseen",
         before=before,
-        prefix=f"{NOTICE}\n\n",
+        prefix=f"{NOTICE}\n\n" if notice else "",
         on_secret=on_secret,
     )
 
@@ -168,6 +223,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="NAME=PATH",
         help="compare the request's artifact NAME with your local file PATH before you sign",
     )
+    p.add_argument("--details", action="store_true", help="show the full review (hashes, ids) before the question")
     p.add_argument("--json", action="store_true")
     return p
 
@@ -309,12 +365,17 @@ def main(
     err = sys.stderr if err is None else err
     args = _parser().parse_args(argv)
     err.write(NOTICE + "\n")
+    # N13: on one terminal the warning is read once (here, before anything else); the review carries it only when
+    # stderr is somewhere else (a pipe, a file), so the person at the terminal still sees it before signing
+    on_tty = bool(getattr(err, "isatty", lambda: False)())
     conn: Connection | None = None
     try:
-        if env.get("ORCH_GRANT"):
+        if "ORCH_GRANT" in env:
             raise HostError("human_only", "orch sign is a person's command; an agent never signs")
         code = normalise_code(args.code)
         files = _read_files(args.file)
+        if args.details:  # B6: the full review first; the plain view and `d` otherwise (signer.plain reads it)
+            os.environ["ORCH_SIGN_DETAILS"] = "1"
         state = args.state.resolve() if args.state is not None else state_dir(env)
         uid = os.getuid()
         entries = _own_workspaces(state, uid, args.workspace)
@@ -345,7 +406,14 @@ def main(
             resolved=found,
             files=files or None,
             choose=human.secret_destination,
+            sessions=Sessions(state),
+            notice=not on_tty,
         )
+    except sequence.Aborted as exc:
+        text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"
+        if exc.landed:
+            text += "; what was signed stays in the ticket as a draft"
+        return _fail(out, args.json, HostError("human.request_mismatch", text))
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
     except HostError as exc:
@@ -363,7 +431,8 @@ def main(
         out.write(json.dumps({"ok": True, "result": result}, sort_keys=True) + "\n")
     else:
         on = f" on {result['key']}" if result.get("key") else ""
-        out.write(f"signed {found[0]['op']}{on}: seq {result.get('seq')}\n")
+        more = f" ({result['steps']} signatures)" if result.get("steps") else ""
+        out.write(f"signed {found[0]['op']}{on}{more}: seq {result.get('seq')}\n")
     return 0
 
 

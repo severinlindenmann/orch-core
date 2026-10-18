@@ -17,7 +17,10 @@ core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
 ``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. What can still run: a driver the **person**
 configured globally or system-wide (e.g. ``filter=lfs`` after ``git lfs install``) when an attribute selects it, as
-the person, exactly as when they run git; :func:`read_git` turns system and global config off, so nothing runs there.
+the person, exactly as when they run git: :func:`run_git` is the one documented exception to
+:data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`). :func:`read_git` is isolated like every read
+(:func:`orch.gitsafe.command`: an operation of the closed set, system and global config off), so nothing runs
+there.
 
 **Confinement (H11d).** The worktree path must be exactly ``<repo>.worktrees/<WS8>-<KEY>`` (strict name regex, no
 ``..``, no NUL). The parent of the repo and ``<repo>.worktrees`` are opened from ``/`` one component at a time with
@@ -45,7 +48,7 @@ import re
 import signal
 import stat
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import gitsafe
@@ -63,7 +66,10 @@ NEUTRAL = list(gitsafe.NEUTRAL)
 
 
 def git_env(own: Mapping[str, str]) -> dict[str, str]:
-    """The child's whole environment: built from scratch (never the runner's ``GIT_*``)."""
+    """The environment of :func:`run_git`'s worktree commands: built from scratch (never the runner's ``GIT_*``), with
+    the person's system and global configuration **on**: the documented exception to
+    :data:`orch.gitsafe.ISOLATION` (their checkout filters must run). Read-only commands use
+    :func:`orch.gitsafe.isolated_env` instead."""
     env = {k: own[k] for k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME") if k in own}
     env.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
     env.update(
@@ -302,6 +308,11 @@ def run_git(
             _gated(conf.path, own, "the worktree")
         if conf.fd >= 0:
             conf.check_cwd()
+        # The one exception to orch.gitsafe.ISOLATION ("no git invocation by orch reads configuration the person or a
+        # repo controls, except through an explicit allow-list"), listed in its site table: the repo's own config is
+        # gated above, but the person's system and global config stays on (git_env) by design. A worktree add or
+        # remove is a checkout in the person's own repo, as the person: it must run their checkout filters (the smudge
+        # of `git lfs install`) exactly as `git worktree add` in their terminal would.
         out = _spawn(argv, own, timeout, log, op)
         if conf.fd >= 0:
             conf.after(op)
@@ -344,23 +355,25 @@ def _spawn(
 
 
 def read_git(
-    repo: str, args: Sequence[str], own: Mapping[str, str], *, timeout: float = GIT_SECONDS, gated: bool = False
+    repo: str,
+    op: str,
+    own: Mapping[str, str],
+    *,
+    rev: str | None = None,
+    timeout: float = GIT_SECONDS,
+    strip: bool = True,
 ) -> str | None:
-    """A read-only git command for the direct-mode tool, hardened exactly as :func:`run_git` (the gate of
-    :mod:`orch.gitsafe` first, the same ``NEUTRAL`` config, the same from-scratch environment, no network, own process
-    group, 30 s) and, since nothing here needs the person's filters, also with the system and global config off.
-    Stdout stripped; ``None`` when git fails, times out or is missing. Raises :class:`orch.gitsafe.Unsafe` when the
-    repository's own config could make git run a program (git is then not started). ``repo`` is a verified absolute
-    path (``-C``). ``gated``: the caller ran :func:`orch.gitsafe.gate` on ``repo`` right before (``tree_dirty``)."""
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` for the direct-mode tool (``commit`` of ``rev``, ``status``,
+    ``index_flags``, ``staged_tree``), isolated like every read (:func:`orch.gitsafe.command`: the gate first, every
+    time; a populated submodule refused for ``status``; no free argv; system and global config off; own process
+    group, 30 s). Stdout stripped (unless ``strip`` is off); ``None`` when git fails, times out or is missing. Raises
+    :class:`orch.gitsafe.Unsafe` when the operation, its operand or the repository is refused (git is then not
+    started). ``repo`` is a verified absolute path (``-C``)."""
     _clean_abs(repo)
-    if not gated:
-        gitsafe.gate(repo, own)
-    env = git_env(own)
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
+    argv, env = gitsafe.command(repo, op, own, operand=rev)
     try:
-        proc = subprocess.Popen(  # noqa: S603 - fixed argv
-            ["git", *NEUTRAL, "--no-optional-locks", "-C", repo, *args],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
+        proc = subprocess.Popen(  # noqa: S603 - an operation of orch.gitsafe.OPS
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
             start_new_session=True, close_fds=True,
         )  # fmt: skip
     except OSError:
@@ -373,23 +386,24 @@ def read_git(
         with contextlib.suppress(Exception):
             proc.communicate(timeout=5)
         return None
-    return out.decode("utf-8", "replace").strip() if proc.returncode == 0 else None
+    if proc.returncode != 0:
+        return None
+    text = out.decode("utf-8", "surrogateescape")
+    return text.strip() if strip else text
 
 
 def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
     """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told):
-    the gate of :mod:`orch.gitsafe` and :func:`orch.gitsafe.submodules` first (a populated submodule is
-    :class:`orch.gitsafe.Unsafe`: its state is unknown, never "clean"), then ``status --porcelain`` plus the files git
-    is told to ignore (``skip-worktree``, ``assume-unchanged``). ``--ignore-submodules=dirty`` (not ``all``: a staged
-    gitlink change, index against HEAD, must still show) stays as defence in depth: once no submodule is checked out
-    there is nothing for it to hide."""
+    ``status`` (which refuses a populated submodule, :class:`orch.gitsafe.Unsafe`: its state is unknown, never
+    "clean", and never opens a submodule), a staged gitlink change (index against ``HEAD``: ``status`` hides
+    submodules), and the files git is told to ignore (``skip-worktree``, ``assume-unchanged``)."""
     _clean_abs(repo)
-    gitsafe.gate(repo, own)
-    gitsafe.submodules(repo, own)
-    status = read_git(repo, ["status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=dirty"], own,
-                      gated=True)  # fmt: skip
-    listing = read_git(repo, ["ls-files", "-v"], own, gated=True)
-    if status is None or listing is None:
+    status = read_git(repo, "status", own)
+    staged = read_git(repo, "staged_tree", own, strip=False)  # the whole repository
+    listing = read_git(repo, "index_flags", own)
+    if status is None or staged is None or listing is None:
         return None
-    hidden = [ln[2:] for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
-    return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)
+    lines = [status] if status else []
+    lines += [f"staged submodule change: {p}" for p in gitsafe.gitlinks(staged.encode("utf-8", "surrogateescape"))]
+    lines += [f"hidden change flag: {ln[2:]}" for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
+    return "\n".join(lines)

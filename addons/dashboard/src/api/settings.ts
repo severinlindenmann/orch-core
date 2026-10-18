@@ -1,3 +1,4 @@
+import { GRANT_MAX_HOURS } from './grants'
 // Reduced workspace settings (M4, #306): the types the server serves (`server/src/orch_dashboard/adapters/settings.py`)
 // and the pure rules the page shares. A field the host did not send is `null` (unknown), never a default of ours.
 import type { Role } from './types'
@@ -34,14 +35,60 @@ export interface Stamp {
   by: string
 }
 
+/** What the host saw at a repo's folder just now (read-only). Only an owner or maintainer gets it. */
+export interface HostRepoCheck {
+  state: 'present' | 'missing' | 'not_git' | 'unreadable'
+  branch: string | null
+}
+
 export interface HostRepo {
   name: string
   default_branch: string | null
   remote: string | null
+  /** The declared folder: only when the host sent it (owners and maintainers). */
+  path?: string | null
+  check?: HostRepoCheck | null
+}
+
+/** The host's own spelling of a repo name, a canonical remote (https, no login) and what a path must look like first. */
+export const REPO_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
+const REPO_REMOTE = /^https:\/\/[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?\/[^\s@?#]{0,1000}$/
+const HIDDEN = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/
+
+export interface RepoDraft {
+  name: string
+  path: string
+  remote: string
+  branch: string
+}
+
+/** Why a repo form cannot be sent yet (the host checks the folder itself; this only stops what is plainly wrong). */
+export function repoProblems(d: RepoDraft): Partial<Record<keyof RepoDraft, string>> {
+  const out: Partial<Record<keyof RepoDraft, string>> = {}
+  if (!REPO_ID.test(d.name)) out.name = 'Use lowercase letters, digits, dots and dashes (up to 64), starting with a letter or digit.'
+  if (!d.path.startsWith('/') || d.path.length > 1024 || HIDDEN.test(d.path) || d.path.split('/').includes('..') || d.path.includes('//')) out.path = 'Write the full path of the folder, starting with / (no ".." in it).'
+  if (d.remote !== '' && (!REPO_REMOTE.test(d.remote) || HIDDEN.test(d.remote))) out.remote = 'A remote is an https:// address without a login, or leave it empty.'
+  if (d.branch !== '' && (d.branch.length > 255 || HIDDEN.test(d.branch) || /\s/.test(d.branch))) out.branch = 'A branch name is one word, or leave it empty.'
+  return out
+}
+
+/** The host's look at a folder in the words a person uses. */
+export function repoCheckWords(c: HostRepoCheck): string {
+  switch (c.state) {
+    case 'present':
+      return c.branch ? `In place, on branch ${c.branch}` : 'In place, not on a branch'
+    case 'missing':
+      return 'Folder not found'
+    case 'not_git':
+      return 'The folder is not a git repository'
+    default:
+      return 'The folder cannot be read'
+  }
 }
 
 /** `available: false` is a host without `settings/1`: everything else is then unknown. */
 export interface HostSettings {
+  sign_methods?: import('./signing').SignMethod[] | null
   available: boolean
   grant_hours: number | null
   claim_ttl_min: number | null
@@ -56,9 +103,9 @@ export interface HostSettings {
 }
 
 export const DURATIONS = [
-  { key: 'grant_hours', label: 'Agent grant length', unit: 'hours', min: 1, max: 24 },
-  { key: 'claim_ttl_min', label: 'Claim lasts without activity', unit: 'minutes', min: 15, max: 1440 },
-  { key: 'lease_ttl_min', label: 'Task lease lasts without activity', unit: 'minutes', min: 5, max: 1440 },
+  { key: 'grant_hours', label: 'Agent access length', unit: 'hours', min: 1, max: GRANT_MAX_HOURS, hint: 'The longest a new agent access lasts.' },
+  { key: 'claim_ttl_min', label: 'Ticket reserved for', unit: 'minutes', min: 15, max: 1440, hint: 'When an agent takes a ticket and goes quiet, it is freed for others after this long.' },
+  { key: 'lease_ttl_min', label: 'Single task held for', unit: 'minutes', min: 5, max: 1440, hint: 'When a helper working on one task goes quiet, the task is freed after this long.' },
 ] as const
 export type DurationKey = (typeof DURATIONS)[number]['key']
 
@@ -173,3 +220,13 @@ export function certProblem(raw: string): string | null {
   }
   return null
 }
+
+/** The four device levels, in the words a person uses. */
+export const SCOPE_HELP: Record<string, string> = {
+  look: 'read tickets and the log',
+  decide: 'approve, request changes and answer',
+  operate: 'change members, settings and grants',
+  type: 'type into terminals',
+}
+/** A person or device id without its tail: `p_` and the first 12 hex digits. The full id stays in a tooltip. */
+export const shortId = (id: string): string => (id.length > 16 ? `${id.slice(0, 14)}…` : id)

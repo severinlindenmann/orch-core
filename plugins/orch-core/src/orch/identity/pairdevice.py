@@ -300,8 +300,6 @@ def check_material(
         raise PairDeviceInvalid("event", "the event is not device.added")
     if set(event) - _ENVELOPE != _EVENT_PAYLOAD:
         raise PairDeviceInvalid("event", "device.added carries exactly device and cert")
-    if event.get("auth") == "convenience":
-        raise PairDeviceInvalid("auth", "relay.pair_device is never signed with convenience custody")
     o = _cert_o(event["cert"])
     if "p_" + o["person_id"] != person:
         raise PairDeviceInvalid("cert", "the certificate is not of the signer's person")

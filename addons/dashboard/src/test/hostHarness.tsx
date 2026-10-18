@@ -53,6 +53,8 @@ export interface FakeWs {
   quick?: unknown | ((q: URLSearchParams) => unknown)
   /** What `GET /records` answers (M6); absent: the route is not served. */
   records?: unknown
+  /** What `GET /add-ons` answers (R2-2). */
+  addOns?: import('@/api/addOnSwitches').AddOnsData
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -68,7 +70,7 @@ export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
       verify: policy({ approvers: ['reviewers'], not: ['assignees'] }),
       code: policy({ approvers: ['maintainer', 'owner'], not: ['assignees'], applies: 'off', independent: true }),
     },
-    repos: [{ name: 'code', default_branch: 'main', remote: 'https://git.example.test/a/code' }],
+    repos: [{ name: 'code', default_branch: 'main', remote: 'https://git.example.test/a/code', path: '/srv/code', check: { state: 'present', branch: 'main' } }],
     repos_more: false,
     settings_at: null,
     policy_at: null,
@@ -155,6 +157,13 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       const set = Object.fromEntries(['grant_hours', 'claim_ttl_min', 'lease_ttl_min'].filter((k) => k in body).map((k) => [k, body[k]]))
       return workspaceRequest('settings.set', { type: 'settings.changed', set }, { before: Object.fromEntries(Object.keys(set).map((k) => [k, 'HOST-BEFORE-VALUE'])) })
     }
+    case 'repo_set': {
+      const { path, remote, default_branch } = body as Record<string, string | undefined>
+      const entry = { path, ...(remote ? { remote } : {}), ...(default_branch ? { default_branch } : {}) }
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { repos: { [body.name as string]: entry } } })
+    }
+    case 'repo_remove':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { repos: { [body.name as string]: null } } })
     case 'policy_set':
       return workspaceRequest('policy.set', { type: 'policy.changed', gates: { [body.gate as string]: body.policy } })
     case 'member_add':
@@ -165,6 +174,9 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       )
     case 'new':
       return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.type ?? 'feature', title: body.title } })
+    case 'quick_start':
+    case 'new_sequence':
+      return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.action === 'quick_start' ? 'chore' : body.type, title: body.title } })
     case 'details':
       return workspaceRequest('set', { type: 'ticket.updated', ticket: body.key, labels: body.labels })
     case 'close':
@@ -175,6 +187,14 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'publish_setup':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
+    case 'publish_share':
+      return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
+    case 'addon_grant':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
+    case 'addon_disable':
+      return workspaceRequest('addon.disable', { type: 'addon.disabled', name: body.name })
     case 'grant_revoke':
       return workspaceRequest('grant.revoke', { type: 'grant.revoked', grant: body.grant, ...(body.reason ? { reason: body.reason } : {}) })
     default:
@@ -243,6 +263,7 @@ export class FakeHost {
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
+    if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
     if (rest === 'handoff' && method === 'POST') {
       const request = prepare(body!)

@@ -257,6 +257,17 @@ def main(
         from orch.cli.dashboard import main as dashboard_main
 
         return dashboard_main(args[1:], env=env, err=err)
+    if args[:2] == [
+        "addon",
+        "manifest",
+    ]:  # the manifests shipped in the package (orch.addons.builtin): offline, no store
+        from orch.addons.builtin import main as manifest_main
+
+        return manifest_main(args[2:], out=out, err=err)
+    if args[:1] == ["setup"]:  # one command to a working workspace and its onboarding page (B9): not a registry op
+        from orch.setup.flow import main as setup_main
+
+        return setup_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 
@@ -273,10 +284,22 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["publish"]:  # the Publish add-on (P5): a host client, not a registry op
+        from orch.cli.publish import main as publish_main
+
+        return publish_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["migrate"]:  # the store move into .orch/ (B11-P2): the person-side tool, not a registry op
+        from orch.migrate_cli import main as migrate_main
+
+        return migrate_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
         from orch.host.handoff import main as sign_main
 
         return sign_main(args[1:], env=env, out=out, err=err)
+    if args[:2] == ["quick", "start"]:  # B11 step (ii): a person's quick task on one review (a host client, like sign)
+        from orch.host.quickstart import main as start_main
+
+        return start_main(args[2:], env=env, out=out, err=err)
     if args[:2] == ["quick", "add"]:
         # H11f: the composite (new, then set labels=quick); `quick list` is a registry read like any other
         def step(argv: list[str], step_out: TextIO, step_err: TextIO) -> int:
@@ -355,7 +378,12 @@ def main(
         target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
         if target is not None:
             hosted = True
-            res = run_hosted(parsed, ctx, target)
+            hostclient.forget_host()
+            try:
+                res = run_hosted(parsed, ctx, target)
+            finally:
+                if (stale := hostclient.stale_host_warning()) is not None:
+                    err.write(stale + "\n")
         else:
             res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent

@@ -16,29 +16,76 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('heading', { name: 'General' }, T)).toBeInTheDocument()
   const nav = within(screen.getByRole('navigation', { name: 'Settings' }))
-  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Devices'])
+  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Add-ons', 'Devices'])
   expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
 
 it('Devices on a real host: pairing a phone is not available yet, and no pairing request is made', async () => {
   show('/w/DEMO/settings/devices')
-  expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone is not available on this host yet.')
+  expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
   expect(state.host.calls.filter((c) => /pair|device/.test(c.path))).toEqual([])
   expect(state.host.posts()).toEqual([])
   expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
 })
 
-it('General shows what the host says, marks defaults and lists repositories read only', async () => {
+it('General shows what the host says, marks defaults and lists repositories with what the host sees on disk', async () => {
   show('/w/DEMO/settings/general')
-  expect(await screen.findByLabelText(/Agent grant length/, {}, T)).toHaveValue(8)
-  expect(screen.getByLabelText(/Claim lasts/)).toHaveValue(120)
+  expect(await screen.findByRole('button', { name: '8 h' }, T)).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByLabelText(/Ticket reserved for/)).toHaveValue(120)
   expect(screen.getAllByText(/The default\./).length).toBe(2) // claim and lease; the grant length is not a default here
   const repos = screen.getByRole('list', { name: 'Repositories' })
-  expect(within(repos).getByText('main')).toBeInTheDocument()
   expect(within(repos).getByText('https://git.example.test/a/code')).toBeInTheDocument()
-  expect(screen.getByText(/added, changed and removed in the Repos addon/)).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: /repo/i })).not.toBeInTheDocument()
+  expect(within(repos).getByText('/srv/code')).toBeInTheDocument()
+  expect(screen.getByTestId('repo-check-code')).toHaveTextContent('In place, on branch main')
+  expect(screen.getByRole('button', { name: 'Add repository' })).toBeInTheDocument() // an owner on a host that serves settings.set
+})
+
+it('Repositories: adding one validates in the form, then hands the typed action to the signer', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Add repository' }, T))
+  const form = await screen.findByRole('dialog', {}, T)
+  await user.type(within(form).getByLabelText('Name'), 'api')
+  await user.type(within(form).getByLabelText('Folder on this computer'), 'relative/dir')
+  await user.type(within(form).getByLabelText(/Remote/), 'https://user:tok@git.example.test/a')
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  expect(within(form).getAllByRole('alert').length).toBe(2) // the folder and the remote; nothing was sent
+  expect(state.host.posts()).toEqual([])
+  await user.clear(within(form).getByLabelText('Folder on this computer'))
+  await user.type(within(form).getByLabelText('Folder on this computer'), '/work/api')
+  await user.clear(within(form).getByLabelText(/Remote/))
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_set', name: 'api', path: '/work/api' }])
+})
+
+it('Repositories: removing one hands off repo_remove, and a name already listed is refused in the form', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Add repository' }, T))
+  const form = await screen.findByRole('dialog', {}, T)
+  await user.type(within(form).getByLabelText('Name'), 'code')
+  await user.type(within(form).getByLabelText('Folder on this computer'), '/x')
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  expect(within(form).getByRole('alert')).toHaveTextContent('already in the list')
+  await user.click(within(form).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Remove code' }))
+  await within(await screen.findByRole('dialog', {}, T)).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
+})
+
+it('Repositories: a member sees the list and no way to change it', async () => {
+  state.host.workspaces[0].role = 'member'
+  state.host.workspaces[0].me = TOM
+  state.host.workspaces[0].settings = settingsOf({ repos: [{ name: 'code', default_branch: 'main', remote: null }] })
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByRole('list', { name: 'Repositories' }, T)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Add repository' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Remove code' })).toBeNull()
+  expect(screen.queryByTestId('repo-check-code')).toBeNull()
+  expect(screen.getByText('Only owners can add, change or remove repositories.')).toBeInTheDocument()
 })
 
 it('a host without the settings cap says so and shows no value', async () => {
@@ -52,13 +99,12 @@ it('a host without the settings cap says so and shows no value', async () => {
 it('changing the grant length opens the hand-off with the typed action, and shows the host material, not the form', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
-  await user.clear(input)
-  await user.type(input, '12')
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
+  await user.click(input)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12 }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 168 }])
   expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
   expect(dialog).toHaveTextContent('Change to the workspace settings')
   expect(dialog).toHaveTextContent('In your terminal you type DEMO~aaaaaaaa/SETTINGS to continue.')
@@ -73,10 +119,10 @@ it('changing the grant length opens the hand-off with the typed action, and show
 it('out-of-range durations never reach the host', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByLabelText(/Ticket reserved for/, {}, T)
   await user.clear(input)
-  await user.type(input, '25')
-  expect(screen.getByRole('alert')).toHaveTextContent('whole number from 1 to 24')
+  await user.type(input, '999999')
+  expect(screen.getByRole('alert')).toHaveTextContent('whole number')
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   expect(state.host.posts()).toEqual([])
 })
@@ -85,7 +131,7 @@ it('a member sees the settings and cannot save them', async () => {
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
   expect(input).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   expect(screen.getByText('Only owners can save.')).toBeInTheDocument()
@@ -94,7 +140,7 @@ it('a member sees the settings and cannot save them', async () => {
 it('a host that does not list settings.set cannot change settings: the control says why', async () => {
   state.host.workspaces[0].features = READS
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
   expect(input).toBeDisabled()
   expect(screen.getByText('This host cannot change settings yet.')).toBeInTheDocument()
 })
@@ -200,9 +246,9 @@ it('Gates: the code review is never approved by the assignees and always indepen
   show('/w/DEMO/settings/gates')
   expect(await screen.findByRole('heading', { name: 'Gate policies' }, T)).toBeInTheDocument()
   expect(screen.getByText(/ends the approvals already given at that gate/)).toBeInTheDocument()
-  const not = screen.getByRole('group', { name: 'Code review: who may not approve, even if listed above' })
-  expect(within(not).getByRole('checkbox', { name: 'The assignees' })).toBeChecked()
-  expect(within(not).getByRole('checkbox', { name: 'The assignees' })).toBeDisabled()
+  const matrix = screen.getByRole('table', { name: 'Code review: who may approve' })
+  expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeChecked()
+  expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeDisabled()
   expect(screen.getByRole('checkbox', { name: /Code review: approvers independent.*always/ })).toBeDisabled()
   await user.click(screen.getByRole('radio', { name: 'Every ticket' }))
   await user.click(screen.getByRole('button', { name: 'Change code review policy' }))
@@ -218,12 +264,12 @@ it('Gates: another gate changes approvers and count; a policy with no approver i
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
   await screen.findByRole('heading', { name: 'Gate policies' }, T)
-  const who = screen.getByRole('group', { name: 'Plan: who may approve' })
-  await user.click(within(who).getByRole('checkbox', { name: 'Owners' }))
+  const who = screen.getByRole('table', { name: 'Plan: who may approve' })
+  await user.click(within(who).getByRole('checkbox', { name: 'Owners may approve' }))
   expect(screen.getAllByRole('alert')[0]).toHaveTextContent('Pick at least one kind of approver.')
   expect(screen.getByRole('button', { name: 'Change plan policy' })).toBeDisabled()
-  await user.click(within(who).getByRole('checkbox', { name: 'Maintainers' }))
-  await user.click(within(who).getByRole('checkbox', { name: 'Owners' }))
+  await user.click(within(who).getByRole('checkbox', { name: 'Maintainers may approve' }))
+  await user.click(within(who).getByRole('checkbox', { name: 'Owners may approve' }))
   const count = screen.getByLabelText('Plan: approvals needed')
   await user.clear(count)
   await user.type(count, '2')
@@ -332,3 +378,26 @@ it('a viewer role reads the settings and signs nothing', async () => {
 })
 
 void policy
+
+it('Gates: a one-person workspace explains that the verify rule does not block its only member', async () => {
+  state.host.workspaces[0].roster = state.host.workspaces[0].roster.slice(0, 1)
+  show('/w/DEMO/settings/gates')
+  await screen.findByRole('heading', { name: 'Gate policies' }, T)
+  expect(await screen.findByTestId('gate-alone', {}, T)).toHaveTextContent('only member')
+})
+
+it('How I approve: the production api asks the server, so the personal controls appear when it answers (B11 10)', async () => {
+  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
+  state.host.override = (path) =>
+    path.endsWith('/me/sign_default') ? Response.json({ method: 'terminal', is_default: true, allowed: ['terminal', 'click'] }) : undefined
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByLabelText('Default', {}, T)).toBeEnabled()
+  expect(state.host.calls.some((c) => c.path.endsWith('/me/sign_default'))).toBe(true)
+})
+
+it('How I approve: an older server without the route hides the personal controls and says so in one line', async () => {
+  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByText(/Your own way of approving is not available on this host yet/, {}, T)).toBeInTheDocument()
+  expect(screen.queryByLabelText('Default')).toBeNull()
+})

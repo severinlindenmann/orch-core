@@ -48,6 +48,7 @@ from .custody import check_tree, check_workspace_files
 from .errors import HostError
 from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
+from .phonehints import HintStore
 from .registry import Entry
 from .relayid import RelayIdentity
 from .requests import RequestStore
@@ -143,6 +144,8 @@ class WorkspaceService:
         self.journal_failed = ""
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
+        #: B10 Part B: the unsigned phone-approval hints (``<state>/hosts/<ws>/phone-hints.json``)
+        self.phone_hints = HintStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
         self.outcomes.prepared = self._prepared
         #: blobs (§0.10, H4a2): ``<state>/hosts/<ws>/blobs/``; the host shares one quota among its workspaces
@@ -168,6 +171,10 @@ class WorkspaceService:
         #: why no relay worker runs (``host.status.relay``): ``not_linked``, ``stopped``, the R6 gate, ``start_failed:
         #: <code>``, ``convenience_events_present``, ``relay_thread_stuck``, …; ``None`` while one runs or before open
         self.relay_reason: str | None = None
+        #: §11A.17: the host's :class:`orch.host.devmode.DevHost` (``None`` on a normal host) and whether this
+        #: workspace passed the dev gate at its last fresh check (serve, and every column-R L2)
+        self.dev: Any = None
+        self.dev_ok = False
 
     @property
     def workspace_id(self) -> str:
@@ -196,7 +203,7 @@ class WorkspaceService:
             if os.path.realpath(self.entry.root) != self.entry.root:
                 raise HostError("custody.unsafe_mode", f"{self.entry.root} now resolves elsewhere")
             check_tree(Path(self.entry.root), self.host_uid)
-            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid)
+            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid, store=self.entry.store)
             pin = HostPins(self.state_dir, wid).genesis()
             if pin is None:
                 raise HostError("trust.genesis_mismatch", "no genesis pin for this workspace")
@@ -212,6 +219,9 @@ class WorkspaceService:
                 clock=self.clock,
                 load="lazy",
             )
+            if store.layout.legacy != (self.entry.store is None):  # version skew or a half-done migrate: refuse
+                store.close()
+                raise HostError("custody.unsafe_mode", "the store layout differs from the registry entry")
         except (HostError, StoreError, OSError, ValueError, KeyError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
             return
@@ -224,6 +234,11 @@ class WorkspaceService:
             self.sync_git()  # pins at workspace open (F7), under this workspace's principal
             try:
                 self.outcomes.open()
+                from .relaypair import register as pair_register
+
+                # R6c (11A.15.19 item 13): the relay.pair_device source BEFORE human.recover, so an interrupted
+                # pairing submit rolls forward through R6's hooks; R6's own open-time recovery runs here too
+                pair_register(self)
                 if self.requests is not None:
                     from .human import recover
 
@@ -360,7 +375,7 @@ class WorkspaceService:
         store = self.store
         if store is None:
             return
-        journal = self.journal or Journal(self.entry.workspace_id, self.entry.root, self.cursors)
+        journal = self.journal or Journal(self.entry.workspace_id, self.entry.store_dir, self.cursors)
         if audit:
             self.state, self.cause = "degraded", "the subscription journal is being rebuilt"
             LOG.warning(
@@ -383,13 +398,51 @@ class WorkspaceService:
                 self._judge()
             return
         self.journal, self.journal_failed = journal, ""
-        store.before_append, store.on_commit = journal.check, journal.committed
+        store.before_append, store.on_commit = journal.check, self._committed_hook(journal)
         if self.store is not None:
             self._judge()
         if audit:
             self._relay_audit()
         if self.publish is not None:
             self.publish(batch)
+
+    #: event types whose commit can revoke a device (11A.9, 11A.5 "Wake chaining (B1)"): the relay unpublished
+    #: consumer re-judges its ledger at once after one of these
+    _REVOKING_COMMITS = frozenset({"device.revoked", "member.removed", "restore"})
+
+    def _committed_hook(self, journal: Any) -> Callable[[str, dict[str, Any]], None]:
+        """``Store.on_commit``: the journal's, then the relay wakes (11A.5 "Wake chaining (B1)"): the publisher on every
+        append (it publishes now, not at its next idle check), the membership thread (it re-plans) and the
+        unpublished consumer after a commit that can revoke. Called inside the store's critical section; the wakes only
+        set events and never raise."""
+        committed = journal.committed
+
+        def hook(log: str, event: dict[str, Any]) -> None:
+            try:
+                committed(log, event)
+            finally:
+                self._relay_wake(event)
+
+        return hook
+
+    def _relay_wake(self, event: Any) -> None:
+        worker = self.relay
+        if worker is None:
+            return
+        try:
+            wake = getattr(getattr(worker, "publisher", None), "wake", None)  # NoPublisher has none
+            if callable(wake):
+                wake()
+            for companion in getattr(worker, "companions", ()):  # R6b's membership thread re-plans on any commit
+                wake = getattr(companion, "wake", None)
+                if callable(wake):
+                    wake()
+            if isinstance(event, dict) and event.get("type") in self._REVOKING_COMMITS:
+                wake = getattr(getattr(worker, "unpublished", None), "wake", None)
+                if callable(wake):
+                    wake()
+        except Exception:  # noqa: BLE001 - a wake is a hint: never fail the store's commit
+            LOG.exception("relay wake of %s failed", self.workspace_id)
 
     def _relay_audit(self) -> None:
         """§11A.6 "Foreign appends": after a refresh that loaded events this host did not append, a running relay
@@ -482,7 +535,7 @@ class WorkspaceService:
             self.auth = None
             return
         try:
-            self.auth = build_auth(self.store, self.entry.root)
+            self.auth = build_auth(self.store, self.entry.store_dir)
         except (StoreError, OSError, ValueError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
             self.auth = None
@@ -550,7 +603,7 @@ class WorkspaceService:
                     )
                 except (OSError, ValueError, Unavailable):
                     git = None  # an unreadable pin file is never replaced by fresh pins: git is denied (fail closed)
-            self.caps = Capabilities.host((self.entry.root,), env={}, clock=self.clock, git=git)
+            self.caps = Capabilities.host((os.fspath(self.entry.store_dir),), env={}, clock=self.clock, git=git)
         return self.caps
 
     def sync_git(self) -> None:
@@ -566,7 +619,7 @@ class WorkspaceService:
             return
         repos = self.store.state.workspace.repos
         declared = tuple(
-            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.root, repos, n)) is not None)
+            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.layout, repos, n)) is not None)
         )
         now = time.monotonic()
         if declared == self._git_declared and now < self._git_retry_at:
@@ -967,7 +1020,7 @@ class WorkspaceGate:
         """The column's refusal from the snapshot, or ``None`` (allowed, or the snapshot cannot say: stale)."""
         service = self.host.services.get(self.workspace_id)
         auth = service.auth if service is not None else None
-        if service is None or auth is None or service.closing or not auth.fresh(service.entry.root):
+        if service is None or auth is None or service.closing or not auth.fresh(service.entry.store_dir):
             return None
         now = service.clock()
         verified = auth.verify((frame.get("auth") or {}).get("grant"), now)

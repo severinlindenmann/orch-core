@@ -99,6 +99,15 @@ def main() -> None:
                                 hash="sha256:" + "0" * 64, option="yes", based_on="sha256:" + "1" * 64)  # fmt: skip
             run("answer_write", {"op": "answer", "args": {"log": m["args"]["log"], "events": [ans]}, "idem": ans["id"]},
                 "an answer write: relay.submit of one device-signed question.answered (scope decide)")  # fmt: skip
+            # -- D1 (11A.17): a convenience-signed answer on a host without the dev gate --
+            conv = w.phone.event(m["args"]["log"], "question.answered", eid=ulid(T0), question="Q2",
+                                 hash="sha256:" + "0" * 64, option="yes", based_on="sha256:" + "1" * 64,
+                                 auth="convenience")  # fmt: skip
+            run("answer_convenience_refused",
+                {"op": "answer", "args": {"log": m["args"]["log"], "events": [conv]}, "idem": conv["id"]},
+                "auth convenience on a normal host or a real workspace (no Simulator dev gate, 11A.17): "
+                "op.not_allowed (14.6 P5), D; only a dev host's sandbox workspace admits it, and whoami.relay.dev "
+                "says so")  # fmt: skip
             run(
                 "ticket_key_not_next",
                 w.new_ticket(key="DEMO-0007"),
@@ -146,6 +155,29 @@ def main() -> None:
             run("already_done_on_a_read", {"op": "whoami", "args": {}},
                 "stamped before the host (re)started: already_done {status: unknown}; on a read: re-issue, new rid",
                 setup=[{"do": "clock", "ms": 1000}, {"do": "restart"}], ts_ms=T0 + 500)  # fmt: skip
+            # -- B10 Part B (phase 1): gate decisions on the phone, and the two reads it needs --
+            gate = {"gate_gen": 1, "hash": "sha256:" + "2" * 64, "policy_hash": "sha256:" + "3" * 64}
+            ap = w.phone.event(m["args"]["log"], "gate.approved", eid=ulid(T0), gate="requirements", **gate,
+                               based_on="sha256:" + "1" * 64, auth="secure-enclave-unlocked")  # fmt: skip
+            run("approve_write", {"op": "approve", "args": {"log": m["args"]["log"], "events": [ap]}, "idem": ap["id"]},
+                "B10 phase 1: relay.submit of one device-signed gate.approved on requirements (scope decide); the "
+                "fake host commits it, the real one judges gate_gen, hash, policy_hash (gate.stale)")  # fmt: skip
+            ch = w.phone.event(m["args"]["log"], "gate.changes_requested", eid=ulid(T0), gate="plan", **gate,
+                               text="Please split the plan.", based_on="sha256:" + "1" * 64,
+                               auth="secure-enclave-unlocked")  # fmt: skip
+            run("changes_write", {"op": "changes", "args": {"log": m["args"]["log"], "events": [ch]}, "idem": ch["id"]},
+                "B10 phase 1: gate.changes_requested on plan, with the person's text")  # fmt: skip
+            ac = w.phone.event(m["args"]["log"], "gate.approved", eid=ulid(T0), gate="code", **gate,
+                               based_on="sha256:" + "1" * 64, auth="secure-enclave-unlocked")  # fmt: skip
+            run("approve_code_refused",
+                {"op": "approve", "args": {"log": m["args"]["log"], "events": [ac]}, "idem": ac["id"]},
+                "B10 phase 1: a decision on the code gate (host-stamped source_sha) is op.not_allowed, D")  # fmt: skip
+            run("phone_requests", {"op": "phone.requests", "args": {}},
+                "B10: the viewer's own open phone-approval hints (the fake host echoes; the real answer is "
+                "{requests:[{id, uid, ref, title, gate, gate_gen, created_at, expires_at}], now})")  # fmt: skip
+            run("gate_input", {"op": "gate.input", "args": {"ref": m["args"]["log"], "gate": "requirements"}},
+                "B10: the gate-hash input G the phone recomputes (the fake host echoes; the real answer is "
+                "{ref, gate, gen, hash, policy_hash, input})")  # fmt: skip
             # -- round 3 (14.6 P3/P7 codes, review M2/I3) --
             m5 = w.new_ticket()
             m5["args"]["events"][0]["ws_seq"] = 1

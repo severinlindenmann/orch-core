@@ -430,6 +430,19 @@ class RunnerHub:
         self.grants = RunnerGrants(self)
         self._reported_grants: list[dict[str, Any]] = []
 
+    def running_work(self, workspace_id: str) -> dict[str, int]:
+        """Live runs (agent and runner sessions) of the workspace and the terminals attached to them, for the store
+        migration's refusal. A read of memory on the host's own loop state: no await."""
+        live = [
+            r["run"]
+            for r in list(self.store.records.values())
+            if r.get("workspace_id") == workspace_id and r.get("state") in LIVE
+        ]
+        terminals = sum(len((self.term_state.get(run) or {}).get("atts") or []) for run in live)
+        # a start in progress (the launch intent is not a record yet) counts too, whatever workspace it is for
+        unrecorded = [run for run in list(self.starting) if run not in self.store.records]
+        return {"runs": len(live) + len(unrecorded), "terminals": terminals}
+
     # -- state
     @property
     def connected(self) -> bool:
@@ -1048,10 +1061,10 @@ class RunnerHub:
         # the terminals switch off
         if await asyncio.wrap_future(service.submit(missing, service, self)) is not None:
             return "runner.disabled"
-        if not auth.fresh(service.entry.root):
+        if not auth.fresh(service.entry.store_dir):
             await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
             auth = getattr(service, "auth", None)
-        if auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
+        if auth is None or auth.stamp is None or not auth.fresh(service.entry.store_dir):
             raise _Undecided
         pseudo = SimpleNamespace(column=info.get("column", "P"), person=info["person"], uid=info.get("uid", -1),
                                  workspace_id=info["workspace_id"], grant=info.get("grant"),
@@ -1161,11 +1174,11 @@ class RunnerHub:
                 rec = await sub.queue.get()
                 service = self.host.services.get(sub.workspace_id)
                 auth = getattr(service, "auth", None)
-                if service is not None and auth is not None and not auth.fresh(service.entry.root):
+                if service is not None and auth is not None and not auth.fresh(service.entry.store_dir):
                     # as the bus: never deliver on a snapshot older than the log (F5); the worker refreshes it
                     await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
                     auth = getattr(service, "auth", None)
-                if service is None or auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
+                if service is None or auth is None or auth.stamp is None or not auth.fresh(service.entry.store_dir):
                     self.end_sub(sub, "reset")
                     return
                 reason = self.host.bus.principal_end(sub, auth, service.clock())  # type: ignore[arg-type]

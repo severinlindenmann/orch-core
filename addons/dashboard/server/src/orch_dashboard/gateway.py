@@ -10,7 +10,7 @@ from pathlib import Path
 from . import adapters
 from .adapters.addons import runner
 from .click_signer import Signer
-from .errors import fail
+from .errors import HostError, fail
 from .hostlink import HostLink
 from .text import hidden
 
@@ -67,7 +67,28 @@ def read_pins(path):
 
 
 # The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
-WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WRITE_OPS = (
+    "move",
+    "settings.set",
+    "policy.set",
+    "member.add",
+    "member.role",
+    "member.remove",
+    "grant.revoke",
+    "addon.grant",
+    "addon.disable",
+)
+
+
+#: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
+PUBLISH_FEATURE_OPS = (
+    "publish.list",
+    "publish.prepare",
+    "publish.send",
+    "publish.revoke",
+    "publish.discard",
+    "publish.register",
+)
 
 
 class Gateway:
@@ -85,6 +106,24 @@ class Gateway:
             return read_pins(self.state / "host/workspaces.json")
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
+
+    def check_repo_path(self, ws, path):
+        """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
+        before anything is prepared or signed: the person reads the plain refusal in the dialog. Raises HostError.
+        The host checks again when the request is made (this is the same function, on this computer)."""
+        from orch import repopaths
+        from orch.layout import Layout
+
+        row = self._pins().get(ws)
+        if row is None or not isinstance(row.get("root"), str):
+            return  # not known here: the host's own check still runs
+        store = row.get("store")
+        project = Path(row["root"])
+        layout = Layout(project, project / store, False) if isinstance(store, str) else Layout.legacy_at(project)
+        try:
+            repopaths.check_declared(layout, path)
+        except repopaths.RepoPathError as exc:
+            raise HostError({"code": "invalid.input", "message": str(exc), "retryable": False}, exit=5) from None
 
     def link(self, ws):
         with self.lock:
@@ -121,11 +160,36 @@ class Gateway:
             raise fail("addon.disabled", exit=3)
         return link
 
+    #: the last state `addon.list` gave per (link, add-on): a transient error keeps it instead of reading as off
+    _addon_seen: dict = {}
+
+    @classmethod
+    def addon_on(cls, link, name) -> bool:
+        """Is the shipped add-on `name` granted and enabled here (`addon.list` state `active`)? An answer that cannot be
+        read keeps the last known state (a dropped host must not hide the page, or a half-finished share, for a
+        moment); with none known it counts as off."""
+        welcome = getattr(link, "welcome", None)
+        ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
+        key = (ws or id(link), name)
+        try:
+            rows = link.call("addon.list")["addons"]
+        except (HostError, KeyError, TypeError):
+            return cls._addon_seen.get(key, False)
+        on = any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
+        cls._addon_seen[key] = on
+        return on
+
     def features(self, ws):
         link = self.enabled(ws)
         features = []
         requirements = {
             "quick": [("quick.list", "quick/1")],
+            # Worktrees (H11d, section 12.7): one git worktree per ticket and repo.
+            "worktrees": [
+                ("worktree.list", "worktree/1"),
+                ("worktree.create", "worktree/1"),
+                ("worktree.remove", "worktree/1"),
+            ],
             "records": [("records.status", "records/1")],
             "identity": [
                 ("whoami", "ops/1"),
@@ -185,6 +249,9 @@ class Gateway:
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
                 features.append(feature)
+        if all(link.supports(op, "publish/1") for op in PUBLISH_FEATURE_OPS) and self.addon_on(link, "publish"):
+            # Publish (P6): the page and the ticket's Shares box exist only while the add-on is ON for this workspace.
+            features.append("publish")
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         if link.has("read_ext/2"):
@@ -212,7 +279,6 @@ class Gateway:
                 self.control = HostLink.connect(self.run / "control/host.sock", os.getuid(), None)
             rows = self.control.call("host.list")["workspaces"]
         result = []
-        from .errors import HostError
 
         signer = self.click.status()  # custody, enabled, available, problem per workspace; empty without a signer
         for row in rows:
@@ -256,6 +322,14 @@ class Gateway:
                 # No untrusted title or principal is fabricated when the host is unavailable.
                 result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
         return result
+
+    def host_info(self):
+        """The host-level dev facts (core D1, #582) from the last `host.list`, checked: `dev` and `alarms`, each absent
+        when the host sends none. Never more than the closed shape below reaches the page."""
+        with self.lock:
+            if self.control is None or self.control.sock.fileno() < 0:
+                self.control = HostLink.connect(self.run / "control/host.sock", os.getuid(), None)
+            return adapters.host_info(self.control.call("host.list"))
 
     def call(self, ws, op, args=None):
         return self.enabled(ws).call(op, args)

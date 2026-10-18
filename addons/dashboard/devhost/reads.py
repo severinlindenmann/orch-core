@@ -8,17 +8,21 @@ these ops.
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import time
 from collections.abc import Mapping
 
+from orch import canon
 from orch.ops import views as p1_views
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store import observe
 from orch.store.render import HEADINGS, thaw
 
 from orch_dashboard.errors import fail
+
+_LOG = logging.getLogger("orch_dashboard.devhost")
 
 STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
 PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -636,6 +640,8 @@ def get(host, store, views, args, person):
         "sections": {s: texts.get(s, "") for s in sections},
     }
     all_events = store.events(v.uid)
+    # as core's `doc.head` (v1.7): the seq and the head hash of the log's last event (the edit sequence chains on it)
+    doc["head"] = {"seq": all_events[-1]["seq"], "head": canon.event_head(all_events[-1])}
     events = store.events(v.uid, after=since, limit=limit + 1)
     more = len(events) > limit
     events = events[:limit]
@@ -856,6 +862,28 @@ def _unified_files(text):
     return files
 
 
+DIFF_UNAVAILABLE = "diff unavailable"
+
+
+def _diff_part(name: str, out: str | None) -> str:
+    """One part of a repo's diff; ``None`` (git failed, was refused or timed out) is the error the Changes tab shows
+    as "Diff unavailable", never an empty diff."""
+    if out is None:
+        _LOG.warning("%s for a linked repo (git failed, was refused or timed out)", DIFF_UNAVAILABLE)
+        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git could not produce it in time", exit=3)
+    return out
+
+
+def _lookup(name: str, path, op: str, rev):
+    """A revision lookup of ``observe.lookup``: its answer, or ``None`` for git's honest "no result"; no answer at all
+    (a refusal, a timeout, a failure) is "diff unavailable"."""
+    try:
+        return observe.lookup(path, op, rev=rev)
+    except observe.NoAnswer as exc:
+        _LOG.warning("%s: no answer from the %s lookup (%s)", DIFF_UNAVAILABLE, op, exc)
+        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git did not answer ({op})", exit=3) from None
+
+
 def diff(store, views, args):
     if set(args) - {"ref", "repo", "context", "max_bytes"}:
         raise bad("unknown argument")
@@ -872,28 +900,36 @@ def diff(store, views, args):
     sources, files, parts, truncated = [], [], [], False
     for name in wanted:
         branch = links["branches"].get(name)
-        path = observe.repo_path(store.root, store.state.workspace.repos, name)
+        path = observe.repo_path(store.layout, store.state.workspace.repos, name)
         if not branch or path is None or not path.is_dir():
             raise fail("observe.unavailable", f"{name}: no working copy or branch", exit=3)
         identity = observe.repo_identity(path, name)
         recorded = next((e for e in v.source_list if e["repo"] == identity), None)
         if recorded is None:
             raise fail("observe.unavailable", f"{name}: the host has not observed a branch head", exit=3)
-        head = observe.git(path, "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}")
+        # operations of orch.gitsafe.OPS only (#546): no free git arguments. The revision lookups tell git's honest
+        # "no result" (None) from no answer at all (a refusal, a timeout, a failure: NoAnswer), which is "diff
+        # unavailable", never a diff against some other base (Opus R8-L2 on #561).
+        head = _lookup(name, path, "commit", f"refs/heads/{branch}")
         # Bound to D58: the head shown is the source_sha a verdict would sign. A branch that moved since the host
         # observed it is refused, never shown as if it were that commit.
         if head != recorded["sha"]:
             raise fail("observe.unavailable", f"{name}: the branch moved since it was observed", exit=3)
         default = next(
-            (b for b in ("main", "master") if observe.git(path, "rev-parse", "--verify", "-q", f"refs/heads/{b}")), None
+            (f"refs/heads/{b}" for b in ("main", "master") if _lookup(name, path, "ref", f"refs/heads/{b}")), None
         )
-        base = observe.git(path, "merge-base", head, default) if default else None
-        base = base or observe.git(path, "rev-parse", "--verify", "-q", f"{head}^")
+        base = _lookup(name, path, "merge_base", (head, default)) if head and default else None
+        if not base and head:  # git answered: no default branch, or no common ancestor; never silently (#546)
+            code = "git.no_default_branch" if not default else "git.no_merge_base"
+            _LOG.warning("merge base unavailable, using the parent commit (%s)", code)
+            base = _lookup(name, path, "parent", head)
         if not base:
             raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
         sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})
-        numstat = observe.git(path, "diff", "--numstat", "-M50%", base, head) or ""
-        names = observe.git(path, "diff", "--name-status", "-M50%", base, head) or ""
+        # A diff git could not produce (failed, refused or past its timeout) is "diff unavailable", never "no changes"
+        # or an empty patch (#561 R7-M1): observe.git answers None then, "" only for a real empty diff.
+        numstat = _diff_part(name, observe.git(path, "diff_numstat", rev=(base, head)))
+        names = _diff_part(name, observe.git(path, "diff_names", rev=(base, head)))
         status = {}
         for line in names.splitlines():
             code, *paths = line.split("\t")
@@ -904,7 +940,7 @@ def diff(store, views, args):
                 real = next((p for p in status if real.endswith(p)), real)
             code, old = status.get(real, ("M", None))
             files.append({**f, "path": real, "repo": name, "status": code, "old_path": old})
-        text = observe.git(path, "diff", f"-U{context}", "-M50%", base, head, strip=False) or ""
+        text = _diff_part(name, observe.git(path, "diff_patch", rev=(str(context), base, head), strip=False))
         parts.append(text)
     unified = "".join(parts)
     if len(unified.encode()) > limit:

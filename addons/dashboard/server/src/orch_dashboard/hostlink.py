@@ -35,6 +35,9 @@ CAPS = [
     "run/1",
     "term/1",
     "reader/1",
+    "phone/1",
+    "worktree/1",
+    "publish/1",
 ]
 OPS = {
     name: 1
@@ -81,12 +84,38 @@ OPS = {
         # H12d-2 (section 0.8.6 item 9.11): the readers and their levels, a read of cap `reader/1`. Never
         # `reader.declare`: a declaration comes from the device itself.
         "reader.list",
+        "phone.request",
+        "phone.cancel",
+        "phone.status",
+        # Worktrees (H11d, section 12.7): the list is a read; create and remove are dashboard-direct writes (Tier A,
+        # no signature: the host's own gate, column and rate limit apply) the routes call with an idem.
+        "worktree.list",
+        "worktree.create",
+        "worktree.remove",
+        # Publish (P5/P6, design-publish-addon 2.2): list is a read; the others are person writes the routes call
+        # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
+        # plain op: it is the inner op of a signed hand-off (handoff.py).
+        "publish.list",
+        "publish.prepare",
+        "publish.send",
+        "publish.revoke",
+        "publish.discard",
+        "publish.register",
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
 #: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
 #: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
 FORBIDDEN = frozenset({"grant.deposit"})
+WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove"}
+PUBLISH_OPS = {
+    "publish.list",
+    "publish.prepare",
+    "publish.send",
+    "publish.revoke",
+    "publish.discard",
+    "publish.register",
+}
 TERM_OPS = {"term.preview", "term.open", "term.attach", "attach.cancel"}
 
 QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
@@ -278,7 +307,9 @@ class HostLink:
         if write and not dry_run and not idem:
             raise ValueError("every write requires its logical call's idem")
         cap = (
-            "control/1"
+            "phone/1"
+            if op.startswith("phone.")
+            else "control/1"
             if op == "host.list"
             else "sub/1"
             if op.startswith("sub.")
@@ -300,6 +331,10 @@ class HostLink:
             if op in RUN_OPS
             else "term/1"
             if op in TERM_OPS
+            else "worktree/1"
+            if op in WORKTREE_OPS
+            else "publish/1"
+            if op in PUBLISH_OPS
             else "reader/1"
             if op == "reader.list"
             else "query/1"

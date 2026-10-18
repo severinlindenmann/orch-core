@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -292,10 +293,10 @@ def test_cli_init_host_refuses_a_non_empty_directory_before_calling_the_host(
     lab, tmp_path, monkeypatch, term, passphrases, recording
 ):
     root = fresh_root(tmp_path, "work")
-    (root / "README.md").write_text("x")
+    (root / ".orch").mkdir()
     with pytest.raises(OrchError) as e:
         wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
-    assert e.value.code == "invalid.input" and "empty directory" in e.value.message
+    assert e.value.code == "invalid.input" and "orch's own .orch" in e.value.message
     assert recording.sent == [] and term.shown == []  # no host call, no secret shown
 
 
@@ -330,17 +331,57 @@ def test_cli_init_host_passes_a_host_refusal_on_and_drops_its_device_key(
 # --- 3. bootstrap refusals: non-empty root, foreign owner, an id not from wsk_create ---------------------------
 
 
-def test_bootstrap_refuses_a_non_empty_root_and_changes_nothing(lab, tmp_path):
+def test_bootstrap_refuses_a_root_that_holds_store_names_and_changes_nothing(lab, tmp_path):
     owner, root = Person(), fresh_root(tmp_path)
     (root / "keep.txt").write_text("x")
+    (root / "tickets").mkdir()
     with lab.host() as h, h.client() as c:
         created = ok(c.call("host.wsk_create"))["data"]
         idem = new_idem()
         assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=idem)) == "invalid.input"
         assert err(c.call("host.outcome", {"idem": idem})) == "outcome.unknown_idem"  # refused before the intent
         assert ok(c.call("host.list"))["data"]["workspaces"] == []
-    assert os.listdir(root) == ["keep.txt"]
+    assert sorted(os.listdir(root)) == ["keep.txt", "tickets"]
     assert (lab.state / "hosts" / created["workspace_id"] / "keys" / "wsk.filekey.json").is_file()
+
+
+def test_bootstrap_accepts_an_existing_project_and_rollback_keeps_its_files(lab, tmp_path, monkeypatch):
+    from orch.store import StoreError, store
+
+    owner, root = Person(), fresh_root(tmp_path)
+    (root / "README.md").write_text("mine")
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x")
+    real_append = store.Store.append
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+
+        def boom(self, *a, **k):
+            raise StoreError("chain.broken", "no")
+
+        monkeypatch.setattr(store.Store, "append", boom)
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())) == "chain.broken"
+        assert sorted(os.listdir(root)) == ["README.md", "src"]  # only the store's own names went
+        assert (root / "src" / "a.py").read_text() == "x"
+        monkeypatch.setattr(store.Store, "append", real_append)
+        created = ok(c.call("host.wsk_create"))["data"]
+        ok(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem()))
+    assert (root / "config.json").is_file() and (root / "README.md").read_text() == "mine"
+
+
+def test_bootstrap_refuses_a_project_config_json_by_name_and_never_writes_over_it(lab, tmp_path):
+    # finding B11-2: the host is the durable place of the rule; a project's own config.json is a named collision
+    owner, root = Person(), fresh_root(tmp_path)
+    (root / "config.json").write_text('{"name": "my-app"}')
+    (root / "events").mkdir()
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        res = c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())
+    assert err(res) == "invalid.input"
+    message = res["error"]["message"]
+    assert "already has its own config.json, events/" in message and "orch files" not in message
+    assert sorted(os.listdir(root)) == ["config.json", "events"] and os.listdir(root / "events") == []
+    assert (root / "config.json").read_text() == '{"name": "my-app"}'
 
 
 def test_bootstrap_refuses_a_root_owned_by_another_uid(lab, tmp_path, monkeypatch):
@@ -564,7 +605,7 @@ def _assert_kept_and_unvoided(lab, wid, message):
     assert "void" not in message and "nothing was created" not in message
 
 
-@pytest.mark.parametrize("failure", ["lock.busy", "RuntimeError in registry.add"])
+@pytest.mark.parametrize("failure", ["lock.busy", "RuntimeError in registry._add"])
 def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device_key_is_kept(
     lab, tmp_path, monkeypatch, term, passphrases, recording, failure
 ):
@@ -583,7 +624,7 @@ def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device
         Flaky.exclusive = _once(OwnershipLock.exclusive, busy)
         monkeypatch.setattr(control, "OwnershipLock", Flaky)
     else:
-        monkeypatch.setattr(registry.Registry, "add", _once(registry.Registry.add, RuntimeError("disk full")))
+        monkeypatch.setattr(registry.Registry, "_add", _once(registry.Registry._add, RuntimeError("disk full")))
     root = fresh_root(tmp_path, "work")
     with lab.host() as h:
         res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
@@ -783,3 +824,35 @@ def test_the_key_sweep_skips_an_id_being_bootstrapped_and_deletes_it_afterwards(
             assert (lab.state / "hosts" / wid / "keys").is_dir()
         ok(c.call("host.wsk_create"))
         assert not (lab.state / "hosts" / wid).exists()
+
+
+def test_rollback_leaves_a_directory_the_user_made_after_validation(lab, tmp_path, monkeypatch):
+    from orch.store import StoreError, store
+
+    owner, root = Person(), fresh_root(tmp_path)
+
+    def append(self, *a, **k):  # the user replaces tickets/ with their own while the bootstrap runs
+        shutil.rmtree(root / "tickets")
+        (root / "tickets").mkdir()
+        (root / "tickets" / "mine.txt").write_text("keep")
+        raise StoreError("chain.broken", "no")
+
+    monkeypatch.setattr(store.Store, "append", append)
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())) == "chain.broken"
+    assert (root / "tickets" / "mine.txt").read_text() == "keep"
+    assert not (root / "events").exists() and not (root / ".state").exists()
+
+
+def test_clean_root_removes_only_recorded_entries(tmp_path):
+    from orch.host.control import ControlOps as Control
+
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "events").mkdir()
+    (root / "tickets").mkdir()
+    (root / "tickets" / "mine").write_text("x")
+    recorded = {"events": [os.lstat(root / "events").st_dev, os.lstat(root / "events").st_ino]}
+    Control._clean_root(str(root), recorded, None)
+    assert not (root / "events").exists() and (root / "tickets" / "mine").exists()

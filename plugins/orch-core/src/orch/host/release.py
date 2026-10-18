@@ -17,6 +17,7 @@ interpreter's environment is trusted like any other code of the host UID (same-U
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import importlib
 import json
@@ -28,7 +29,15 @@ import stat
 import sys
 from pathlib import Path
 
-__all__ = ["ReleaseError", "default_version", "install_release", "preload", "purge_releases", "releases_dir"]
+__all__ = [
+    "ReleaseError",
+    "code_digest",
+    "default_version",
+    "install_release",
+    "preload",
+    "purge_releases",
+    "releases_dir",
+]
 
 LAUNCHER = """import sys
 from pathlib import Path
@@ -73,6 +82,14 @@ def _files(source: Path) -> list[Path]:
 
 def _manifest(source: Path) -> dict[str, str]:
     return {str(rel): hashlib.sha256((source / rel).read_bytes()).hexdigest() for rel in _files(source)}
+
+
+@functools.lru_cache(maxsize=1)
+def code_digest() -> str:
+    """12 hex of the digest of the running code tree (the tail of :func:`default_version`). A host reports it in its
+    welcome; a CLI with another digest knows the host runs a different release (B5b)."""
+    tree = json.dumps(_manifest(_package_dir()), sort_keys=True).encode()
+    return hashlib.sha256(tree).hexdigest()[:12]
 
 
 def default_version(source: Path | None = None) -> str:

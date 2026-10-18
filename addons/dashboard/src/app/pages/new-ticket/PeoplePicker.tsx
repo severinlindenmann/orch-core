@@ -47,6 +47,7 @@ export function PeoplePicker({
   onPeople,
   visibility,
   onVisibility,
+  showVisibility = true,
 }: {
   members: Member[]
   /** The person creating the ticket: a restricted ticket always starts with them (and the owners). */
@@ -55,6 +56,8 @@ export function PeoplePicker({
   onPeople: (p: PeopleValue) => void
   visibility: Visibility
   onVisibility: (v: Visibility) => void
+  /** The edit of an existing ticket leaves visibility alone (the host has no signed operation for it yet). */
+  showVisibility?: boolean
 }) {
   const doers = members.filter((m) => can(m.role, 'ticket.act'))
   const restricted = typeof visibility === 'object'
@@ -76,7 +79,7 @@ export function PeoplePicker({
       <Row label="Reviewers">
         <Chips label="Reviewers" members={doers} value={people.reviewers} onChange={(reviewers) => onPeople({ ...people, reviewers })} />
       </Row>
-      <Row label="Visibility">
+      {showVisibility && <Row label="Visibility">
         <select
           aria-label="Visibility"
           className={fieldCls}
@@ -87,7 +90,7 @@ export function PeoplePicker({
           <option value="restricted">Restricted to…</option>
         </select>
         {typeof visibility === 'object' && <Chips label="Can see this ticket" members={members} value={visibility.restricted} onChange={(restrictedTo) => onVisibility({ restricted: restrictedTo })} />}
-      </Row>
+      </Row>}
     </div>
   )
 }

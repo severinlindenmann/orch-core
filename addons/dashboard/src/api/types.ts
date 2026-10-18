@@ -295,6 +295,7 @@ export interface Claim {
 }
 
 export interface GateStatus {
+  gen?: number | null
   state: 'pending' | 'approved' | 'invalidated' | 'changes_requested'
   /** `presence` is absent for a charter approval (no person was present; the charter was signed when the epic started). */
   approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean; source_sha?: string }[]
@@ -305,6 +306,8 @@ export interface GateStatus {
   /** Real host: the gate waits for a person now / has no approver who can act. `eligible` lists only people who see the ticket. */
   waiting?: boolean
   blocked?: boolean
+  /** Real host: what an approval of requirements or plan still lacks (core's completeness rule), e.g. ["plan"]. */
+  missing?: string[]
   eligible?: string[]
   note?: string
   /** Hash of the gated content as it is now. */

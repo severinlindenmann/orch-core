@@ -16,6 +16,8 @@ export const HOST_TABS = [
   { id: 'members', label: 'Members' },
   { id: 'gates', label: 'Gates' },
   { id: 'grants', label: 'Grants' },
+  /** Switch the shipped add-ons on and off (each change is signed). */
+  { id: 'addons', label: 'Add-ons' },
   /** Only where the host serves `records/1` (M6). */
   { id: 'records', label: 'Records', feature: 'records' },
   /** Pair a phone and the paired devices (proposed `pair/1`). Always listed: without the ops it says "not available". */

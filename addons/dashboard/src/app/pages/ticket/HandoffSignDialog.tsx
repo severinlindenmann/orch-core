@@ -105,6 +105,8 @@ export function HandoffSignDialog({
 
   return (
     <HandoffDialog
+      phoneRequest={(action.kind === 'approve' || action.kind === 'request_changes') && (action.gate === 'requirements' || action.gate === 'plan') && typeof ticket.gates[action.gate].gen === 'number'
+        ? { ref: ticket.key, gate: action.gate, gate_gen: ticket.gates[action.gate].gen! } : undefined}
       title={title}
       ws={ws}
       action={request}

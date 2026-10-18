@@ -83,6 +83,18 @@ describe('a request must be what it says it is', () => {
   })
 })
 
+describe('typed words shared with orch-core', () => {
+  it('the hand-off page shows the word the terminal accepts, for every shared case', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    const shared = (await import('@/test/confirm-words.json')).default
+    const material = { kind: 'payload' as const, ticket: null, review: [] }
+    for (const c of shared.cases) {
+      const events = [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...c.event }]
+      expect(workspaceConfirmWord({ op: c.op, events, material }, shared.workspace), c.op).toBe(c.word)
+    }
+  })
+})
+
 describe('workspace operations (M4)', () => {
   const material = { kind: 'payload' as const, ticket: null, review: [] }
   const ev = (over: Record<string, unknown>) => [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...over }]
@@ -93,6 +105,12 @@ describe('workspace operations (M4)', () => {
     expect(workspaceConfirmWord({ op: 'member.add', events: ev({ person: 'p_new' }), material })).toBe('p_new')
     expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
     expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
+  })
+  it('a sequence that gives agents access (Extend, Start again) shows GRANT, as the terminal asks', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    const sequence = { intent: { agent: { days: 3 } } } as never
+    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence } })).toBe('GRANT')
+    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence: { intent: { agent: null } } as never } })).toBeNull()
   })
   it('nothing is promised for operations whose signer word is not settled, or for a ticket', async () => {
     const { workspaceConfirmWord } = await import('./handoff')

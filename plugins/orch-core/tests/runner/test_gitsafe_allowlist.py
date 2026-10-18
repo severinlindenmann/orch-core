@@ -276,24 +276,26 @@ def test_plain_rebase_switches_pass(key):
 
 
 def test_no_lazy_fetch_in_every_scrubbed_environment():
-    from orch.store import observe
-
     assert gitsafe.gate_env({})["GIT_NO_LAZY_FETCH"] == "1"
     assert wtgit.git_env({})["GIT_NO_LAZY_FETCH"] == "1"
-    calls = []
+    # store/observe.git, ops/health._git and wtgit.read_git share orch.gitsafe's isolation (#546)
+    assert gitsafe.isolated_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    assert "protocol.allow=never" in gitsafe._argv("/", ["status"])
 
-    def fake(argv, **kw):
-        calls.append((argv, kw["env"]))
-        raise OSError
 
-    import subprocess
+def test_a_status_submodule_summary_is_refused():
+    """A summary opens submodules: no allowed key may change what an operation opens (#561)."""
+    assert gitsafe.exec_risk([(L, "status.submoduleSummary", "true")]) == "status.submoduleSummary"
 
-    orig = subprocess.run
-    subprocess.run = fake
-    try:
-        observe.git(Path("/"), "status")
-    finally:
-        subprocess.run = orig
-    argv, env = calls[0]
-    assert env["GIT_NO_LAZY_FETCH"] == "1"
-    assert "protocol.allow=never" in argv
+
+@pytest.mark.parametrize(
+    "key", ["diff.external", "diff.x.textconv", "diff.x.command", "diff.submodule", "diff.relative"]
+)
+def test_the_gate_tolerates_every_diff_key_which_the_operations_neutralise(world, key):  # noqa: F811
+    """orch-52 on #561: git-lfs and editors set ``diff.*``; the gate tolerates it (every diff operation pins it), while
+    the shared allow-list (``exec_risk``, the records tool) still refuses the program-running keys."""
+    root, repo, own, args = world
+    _git(repo, "config", key, "/nonexistent/prog")
+    gitsafe.gate(str(repo), own)
+    runs_a_program = key in ("diff.external", "diff.x.textconv", "diff.x.command")
+    assert gitsafe.exec_risk([(L, key, "x")]) == (key if runs_a_program else None)

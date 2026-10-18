@@ -5,20 +5,21 @@ from another read. A field the host leaves out is `None` (unknown), never zero o
 withholds by role (a repo's `path` and `remote` for anyone but an owner or maintainer, other people's grants for anyone
 but an owner) simply is not in the answer, and the UI says nothing about it.
 
-Two things are held back on purpose. A repo's `path` is never forwarded (the Repos addon owns repo editing, and a
-local path belongs to its owner's machine). A `remote` is shown only as a canonical identity without credentials.
+Two things are held to the host's word. A repo's `path` and `check` (is the folder there, which branch) are forwarded
+only when the host sent them, which it does for an owner or maintainer at the keyboard and nobody else; they are never
+asked for another way. A `remote` is shown only as a canonical identity without credentials.
 """
 
 import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_serializer
 
 from ..errors import fail
 from ..text import hidden
 from .shell import safe_name
 
 GATES = ("requirements", "plan", "verify", "code")
-DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
+DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
@@ -44,10 +45,23 @@ class Stamp(BaseModel):
     by: str
 
 
+REPO_STATES = ("present", "missing", "not_git", "unreadable")
+
+
+class RepoCheck(BaseModel):
+    """What the host saw at the repo's folder just now (read-only): the folder and the branch checked out."""
+
+    state: str
+    branch: str | None = None
+
+
 class Repo(BaseModel):
     name: str
     default_branch: str | None
     remote: str | None = None
+    #: the declared folder: only when the host sent it (owners and maintainers); otherwise absent, never guessed
+    path: str | None = None
+    check: RepoCheck | None = None
 
 
 class Settings(BaseModel):
@@ -57,12 +71,23 @@ class Settings(BaseModel):
     grant_hours: int | None = None
     claim_ttl_min: int | None = None
     lease_ttl_min: int | None = None
+    #: B6: the workspace's allowed ways to sign (`terminal` always). Absent when the host did not say (an older core).
+    sign_methods: list[str] | None = None
+    #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
+    sign_methods_known: bool = Field(default=False, exclude=True)
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
     repos_more: bool = False
     settings_at: Stamp | None = None
     policy_at: Stamp | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unknown_sign_methods(self, handler):
+        out = handler(self)
+        if out.get("sign_methods") is None and not self.sign_methods_known:
+            out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
+        return out
 
 
 def unavailable() -> Settings:
@@ -135,7 +160,20 @@ def repo(name, entry) -> Repo:
     branch = entry.get("default_branch")
     if branch is not None and not (isinstance(branch, str) and BRANCH.fullmatch(branch) and not hidden(branch)):
         raise bad()
-    return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")))  # `path` is never forwarded
+    path = entry.get("path")
+    if path is not None and not (isinstance(path, str) and 0 < len(path) <= 1024 and not hidden(path)):
+        raise bad()
+    check = entry.get("check")
+    if check is not None:
+        got = check.get("branch") if isinstance(check, dict) else 0
+        if (
+            not isinstance(check, dict)
+            or check.get("state") not in REPO_STATES
+            or not (got is None or (isinstance(got, str) and BRANCH.fullmatch(got) and not hidden(got)))
+        ):
+            raise bad()
+        check = RepoCheck(state=check["state"], branch=got)
+    return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")), path=path, check=check)
 
 
 def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
@@ -154,11 +192,20 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         defaults = first["defaults"]
         if not isinstance(defaults, list) or any(d not in DURATIONS for d in defaults):
             raise bad()
+        methods = first.get("sign_methods")
+        if methods is not None and (
+            not isinstance(methods, list)
+            or "terminal" not in methods
+            or any(m not in ("terminal", "click", "phone", "touchid") for m in methods)
+        ):
+            raise bad()
         repos: list[Repo] = []
         for page in [first, *more_pages]:
             repos += [repo(n, e) for n, e in sorted(page["settings"]["repos"].items())]
         return Settings(
             **out,
+            sign_methods=methods,
+            sign_methods_known="sign_methods" in first,
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

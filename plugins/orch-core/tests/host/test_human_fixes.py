@@ -20,6 +20,7 @@ from orch.host.control_client import new_idem
 from orch.host.errors import HostError
 from orch.host.requests import GRANT_EXPIRE_SECONDS, MAX_PENDING
 from orch.identity import certs
+from orch.layout import Layout
 from tests.host import human_helpers
 from tests.host.human_helpers import err, ok
 from tests.host.test_human import TwoNotes, logged, outcome, ready, record, requests_dir, tick
@@ -200,7 +201,7 @@ class FakeGit:
     def ticket_copy(self, root, repos, uid, name):  # H11d: the declared copy (no registration)
         from orch.ops.caps import WorkingCopy
 
-        return WorkingCopy(root / name, 0, None, False, None)
+        return WorkingCopy(root.project / name, 0, None, False, None)
 
     def symbolic_head(self, path):
         return "refs/heads/feat/x"
@@ -224,11 +225,15 @@ def _view(branch="feat/x"):
 
 
 def _copies(tmp_path):
-    return [FakeGit().ticket_copy(tmp_path, {}, "u1", "proj").binding("u1", "proj")]
+    return [FakeGit().ticket_copy(Layout.legacy_at(tmp_path), {}, "u1", "proj").binding("u1", "proj")]
 
 
 def _store(tmp_path):
-    return SimpleNamespace(root=tmp_path, state=SimpleNamespace(workspace=SimpleNamespace(repos={"proj": {}})))
+    return SimpleNamespace(
+        root=tmp_path,
+        layout=Layout.legacy_at(tmp_path),
+        state=SimpleNamespace(workspace=SimpleNamespace(repos={"proj": {}})),
+    )
 
 
 def test_the_source_list_is_reread_through_git_at_submit(tmp_path):

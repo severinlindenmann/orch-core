@@ -111,3 +111,20 @@ describe('ticket: Changes while the host is busy', () => {
     }
   })
 })
+
+// #561 R7-M1: a diff git could not produce (failed or timed out) is "Diff unavailable", never an empty diff.
+describe('ticket: a diff that cannot be read', () => {
+  it('says "Diff unavailable" and draws no diff', async () => {
+    const spy = vi.spyOn(api, 'getChanges').mockImplementation(() =>
+      Promise.reject(new ApiError(409, { code: 'observe.unavailable', message: 'proj: diff unavailable: git could not produce it in time', retryable: false })),
+    )
+    try {
+      const { user } = renderApp('/ticket/DEMO-0042')
+      await user.click(await screen.findByRole('tab', { name: /Changes/ }, T))
+      expect(await screen.findByRole('alert', {}, T)).toHaveTextContent('Diff unavailable')
+      expect(screen.queryByLabelText('Diff')).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})

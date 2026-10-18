@@ -347,3 +347,66 @@ def test_typeahead_before_the_review_confirms_nothing():
     os.kill(pid, signal.SIGKILL)
     os.waitpid(pid, 0)
     assert "RESULT False" in out, out
+
+
+class _B6Text(str):
+    """What a B6 SignContent looks like to ``review_prompt``: the plain view, the full review as ``details``."""
+
+    details = "technical: yes\n"
+    details_first = False
+
+
+def _review(monkeypatch, text, typed):
+    import os
+    import termios
+
+    from orch.ops import human
+
+    master, slave = os.openpty()
+    os.write(master, typed)
+    monkeypatch.setattr(human, "open_tty", lambda flags: os.dup(slave))
+    monkeypatch.setattr(termios, "tcflush", lambda *a: None)
+    try:
+        return human.review_prompt(text, "DEMO-0001")
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def _provider_prompts(monkeypatch):
+    from orch.custody import passphrase as pp
+
+    written = []
+    monkeypatch.setattr(pp, "_open_tty", lambda: (10, 11, lambda: None))
+    monkeypatch.setattr(pp, "_read_secret", lambda r, w, prompt: (written.append(prompt), "phrase-ok-1")[1])
+    pp.tty_passphrase_provider(pp.PassphraseRequest("unlock", "dk", "", "ab" * 16, (("type", "gate.approved"),)))
+    return written[0]
+
+
+def test_the_hint_is_on_the_prompt_line_and_gone_once_the_details_were_read(monkeypatch):
+    from orch.custody import passphrase as pp
+
+    monkeypatch.setitem(pp._PLAIN_REVIEW, "shown", False)
+    assert _review(monkeypatch, _B6Text("plain\n"), b"DEMO-0001\n") is True
+    assert "Press d for technical details\nPassphrase: " in _provider_prompts(monkeypatch)
+    assert _review(monkeypatch, _B6Text("plain\n"), b"d\nDEMO-0001\n") is True  # the details were just shown
+    again = _provider_prompts(monkeypatch)
+    assert "d = technical" not in again and "type: gate.approved" not in again
+    assert "type: gate.approved" in _provider_prompts(monkeypatch)  # one-shot
+
+
+def test_only_a_confirmed_b6_review_shortens_the_next_passphrase_prompt_once(monkeypatch):
+    from orch.custody import passphrase as pp
+
+    monkeypatch.setitem(pp._PLAIN_REVIEW, "shown", False)
+    # a local review (no details behind `d`): the passphrase step keeps the full block
+    assert _review(monkeypatch, "title: close\n", b"DEMO-0001\n") is True
+    assert "type: gate.approved" in _provider_prompts(monkeypatch)
+    # a declined B6 review: the next signature in this process does not inherit it
+    assert _review(monkeypatch, _B6Text("plain\n"), b"no\n") is False
+    assert "type: gate.approved" in _provider_prompts(monkeypatch)
+    # a confirmed B6 review: one line plus `d`, for that one prompt only
+    assert _review(monkeypatch, _B6Text("plain\n"), b"DEMO-0001\n") is True
+    first = _provider_prompts(monkeypatch)
+    assert "Press d for technical details" in first and "type: gate.approved" not in first
+    assert "type: gate.approved" in _provider_prompts(monkeypatch)

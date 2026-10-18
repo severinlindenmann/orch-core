@@ -7,7 +7,7 @@ const T = { timeout: 4000 }
 describe('guide page', () => {
   it('shows Getting around, opens Keyboard shortcuts and lists g b', async () => {
     const { user, container } = renderApp('/addon/guide/guide', { viewer: 'p_sev' })
-    expect(await screen.findByRole('heading', { name: 'Getting around' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Start here' }, T)).toBeInTheDocument()
     expect(screen.getByText('Current')).toBeInTheDocument() // the chip marks the open page and does not echo the "Open" button
     const item = screen.getByText('Keyboard shortcuts').closest('li')!
     await user.click(within(item).getByRole('button', { name: 'Open' }))
@@ -15,11 +15,11 @@ describe('guide page', () => {
   })
   it('a viewer can open pages', async () => {
     const { user } = renderApp('/addon/guide/guide', { viewer: 'p_tom' })
-    const item = (await screen.findByText('Questions', {}, T)).closest('li')!
+    const item = (await screen.findByText('Approving things', {}, T)).closest('li')!
     const open = within(item).getByRole('button', { name: 'Open' })
     await waitFor(() => expect(open).toBeEnabled(), T)
     await user.click(open)
-    await screen.findByRole('heading', { name: 'Questions' }, T)
+    await screen.findByRole('heading', { name: 'Approving things' }, T)
   })
 })
 
@@ -29,7 +29,7 @@ describe('? opens the Help sheet', () => {
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board'), T)
     await user.keyboard('?')
     const sheet = await screen.findByRole('dialog', { name: 'Help' }, T)
-    expect(await within(sheet).findByRole('heading', { name: 'Tickets and sections' }, T)).toBeInTheDocument()
+    expect(await within(sheet).findByRole('heading', { name: 'Today, Board and Tickets' }, T)).toBeInTheDocument()
     const frame = sheet.querySelector('section[data-addon="guide"]')!
     expect(frame).not.toBeNull()
     expect(within(frame as HTMLElement).getByRole('img', { name: /From addon: guide/ })).toBeInTheDocument()
@@ -42,9 +42,9 @@ describe('? opens the Help sheet', () => {
     await screen.findByRole('heading', { level: 1 }, T)
     await user.keyboard('?')
     const sheet = await screen.findByRole('dialog', { name: 'Help' }, T)
-    await within(sheet).findByRole('heading', { name: 'Gates and approvals' }, T)
+    await within(sheet).findByRole('heading', { name: 'A ticket and quick tasks' }, T)
     await user.click(within(sheet).getByRole('link', { name: 'Open the guide' }))
-    expect(await screen.findByRole('heading', { name: 'Gates and approvals' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'A ticket and quick tasks' }, T)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Guide'), T)
     expect(screen.queryByRole('dialog', { name: 'Help' })).not.toBeInTheDocument()
   })

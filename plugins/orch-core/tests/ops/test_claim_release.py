@@ -47,6 +47,7 @@ def test_a_second_session_is_refused_and_can_take_over_with_a_reason(ws, cli):
     cli("claim", "1")
     r = other.j("claim", "1")
     assert (r.code, r.err_code) == (4, "claim.held")
+    assert "orch claim DEMO-0001 --takeover --reason TEXT" in r.doc["error"]["message"]  # B11-P6 (finding 36)
     r = other.j("claim", "1", "--takeover")
     assert (r.code, r.err_code) == (5, "invalid.input") and "--reason" in r.doc["error"]["message"]
     r = other.j("claim", "1", "--takeover", "--reason", "the first one stalled")
@@ -126,3 +127,15 @@ def test_handoff_is_all_or_nothing(ws, cli):
     n = len(ws.read_events(uid))
     r = cli.j("handoff", "-m", "bad \x07 text")
     assert r.code != 0 and len(ws.read_events(uid)) == n
+
+
+def test_claim_refuses_task_refs_but_not_ticket_keys_that_start_with_t(ws, cli):
+    make(cli, "A")
+    for task in ("T1", "T12", "DEMO-0001/T1", "1/T3"):
+        r = cli.j("claim", task)
+        assert (r.code, r.err_code) == (5, "invalid.input"), task
+        assert "ticket REF, not a task" in r.doc["error"]["message"], task
+    # a workspace prefix beginning with T is a ticket key: it reaches the lookup (not_found here: DEMO workspace)
+    for key in ("TESTO-0001", "T-0001", "TX-0001"):
+        r = cli.j("claim", key)
+        assert r.err_code != "invalid.input" and "not a task" not in r.out, key

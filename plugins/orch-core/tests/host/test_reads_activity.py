@@ -174,7 +174,7 @@ def test_workspace_log_data_holds_only_the_fields_of_its_table(w):
     items = flat(pages(w.client(), {"scope": "workspace", "limit": 200}))
     table = {
         "workspace.created": {"owner"}, "member.added": {"person", "role"}, "role.changed": {"person", "role"},
-        "policy.changed": {"gates"}, "settings.changed": {"keys"}, "device.revoked": {"person", "device"},
+        "policy.changed": {"gates"}, "settings.changed": {"keys", "repos"}, "device.revoked": {"person", "device"},
         "grant.issued": {"grant", "person", "scope", "expires_at"},
     }  # fmt: skip
     seen = set()
@@ -186,7 +186,7 @@ def test_workspace_log_data_holds_only_the_fields_of_its_table(w):
     for word in ("secret_hash", "revocation", "label", "cert", "reason", "/secret/path", "pk_pub", "sig"):
         assert word not in body, word
     (settings,) = [i for i in items if i["type"] == "settings.changed"]
-    assert settings["data"] == {"keys": ["claim_ttl_min", "repos"]}  # key names only
+    assert settings["data"] == {"keys": ["claim_ttl_min", "repos"], "repos": {"x": "set"}}  # names only, never paths
     (revoked,) = [i for i in items if i["type"] == "device.revoked"]
     assert revoked["data"]["person"] == third.ref and revoked["data"]["device"] == third.device
 

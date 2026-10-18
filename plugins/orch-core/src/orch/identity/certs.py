@@ -28,6 +28,7 @@ from .errors import Refused
 
 __all__ = [
     "REVOKE_REASONS",
+    "revoke_strength",
     "SCOPE_ORDER",
     "SKEW_MS",
     "check_cert",
@@ -52,6 +53,15 @@ __all__ = [
 SKEW_MS = 300_000
 SCOPE_ORDER = ["look", "decide", "operate", "type"]
 REVOKE_REASONS = ("lost", "retired", "compromised")
+_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}
+
+
+def revoke_strength(reason: str) -> int:
+    """THE reason-strength order of a revocation (§5.10): ``compromised`` (2) > ``lost`` = ``retired`` (1). One
+    definition for the model's upgrade rule, the store's completeness and evidence rules and R4's settling; an unknown
+    reason raises ``KeyError`` (callers hold verified reasons only)."""
+    return _STRENGTH[reason]
+
 
 _KIND_LABEL = {
     "device_cert": "sig_device_cert",

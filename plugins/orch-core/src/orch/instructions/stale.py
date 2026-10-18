@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from .agents_md import INSTRUCTIONS_REV, stamp_rev
-from .harness import AGENTS_FILE, SKILLS_DIR, UnsafePath, safe_read
+from .harness import AGENTS_FILE, SKILLS_DIR, UnsafePath, agents_rel, safe_read
 from .skills import SIDECAR_NAME, SkillError, builtin_skills, check_sidecar
 
 __all__ = ["stale_findings"]
@@ -22,12 +22,14 @@ def _tuple(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in version.split("."))
 
 
-def stale_findings(root: Path) -> list[dict[str, str]]:
+def stale_findings(root: Path, store: Path | None = None) -> list[dict[str, str]]:
     """``[{"where", "what"}]`` for every installed instruction file that is missing, unstamped, older or newer than
-    this CLI's generator; empty when everything is current."""
+    this CLI's generator; empty when everything is current. Two roots: ``AGENTS.orch.md`` is read from ``store`` (the
+    ``.orch`` directory, or the project itself in the legacy layout; ``None``: ``root``), the skills from the project
+    ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them)."""
     out: list[dict[str, str]] = []
     try:
-        text = safe_read(root, AGENTS_FILE)
+        text = safe_read(root, agents_rel(root, store))
     except UnsafePath as e:
         out.append({"where": AGENTS_FILE, "what": str(e).split(": ", 1)[1]})
     except (OSError, UnicodeDecodeError):

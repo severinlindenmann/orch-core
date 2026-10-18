@@ -38,6 +38,7 @@ OP = operation(
         err("host.busy"),
         err("custody.unsafe_mode"),
         err("host.unavailable"),
+        err("host.dev_refused"),  # orch-v2-host 11A.17: the host refuses a dev-pair sandbox (or a dev host a real one)
     ),
     handler=handle,
 )

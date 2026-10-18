@@ -271,3 +271,42 @@ def test_rollback_detection_is_per_pair(tmp_path):
     store.close()
     store = env.open()
     assert "workspace" in store.diverged and device in store.diverged["workspace"].detail
+
+
+# -- equal strength never replaces (R4 round 4: N23/N24, the single `revoke_strength`) -----------------------------
+
+
+def _rec(pins: HostPins, person: Person, key: bytes):
+    return next(r for r in pins.revocations() if pair(r) == (certs.device_ref(key), _pid(person)))
+
+
+def test_an_equal_strength_forwarded_item_keeps_the_earliest_forwarded_record(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    p, key = Person(), _key()
+    assert _note(pins, p, key, at=_at(0), reason="lost", members=[p])
+    assert _note(pins, p, key, at=_at(5), reason="retired", members=[p])  # lost = retired: equal strength
+    rec = _rec(pins, p, key)
+    assert rec["at"] == _at(0) and rec["reason"] == "lost"
+    assert _note(pins, p, key, at=_at(9), reason="compromised", members=[p])  # stronger: replaces
+    assert _rec(pins, p, key)["reason"] == "compromised"
+
+
+def test_an_equal_strength_forwarded_item_never_becomes_the_upgrade_of_a_chain_record(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    p, key = Person(), _key()
+    assert _note(pins, p, key, at=_at(0), reason="lost", chain=True)
+    assert _note(pins, p, key, at=_at(3), reason="retired", members=[p])  # equal strength: no upgrade
+    assert "upgrade" not in _rec(pins, p, key)
+    assert _note(pins, p, key, at=_at(4), reason="compromised", members=[p])  # stronger: kept beside the chain record
+    rec = _rec(pins, p, key)
+    assert rec["reason"] == "lost" and rec["upgrade"]["reason"] == "compromised"
+
+
+def test_an_equal_strength_chain_record_keeps_the_earliest_of_the_highest_reason(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    p, key = Person(), _key()
+    assert _note(pins, p, key, at=_at(0), reason="lost", chain=True)
+    assert _note(pins, p, key, at=_at(7), reason="retired", chain=True)
+    assert _rec(pins, p, key)["at"] == _at(0)
+    assert _note(pins, p, key, at=_at(8), reason="compromised", chain=True)
+    assert _rec(pins, p, key)["reason"] == "compromised"

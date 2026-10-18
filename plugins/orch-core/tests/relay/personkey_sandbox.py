@@ -10,8 +10,8 @@ It implements :class:`orch.custody.personkey.PersonKeySource` with the productio
 (:func:`orch.custody.personkey.check_payload`) and the production label-key derivation, so the dev path exercises
 the same contract as :class:`~orch.custody.personkey.RecoveryCodeSource`; only where the code comes from differs.
 
-**Manifest check (minimal, for orch-29).** ``tests/relay/owner.py`` is not on develop yet, so this module carries its
-own check: ``<root>`` is a real directory (``lstat``, no symbolic link) owned by this user and not group- or
+**Manifest check.** Since D1 (§11A.17) the check is :func:`orch.devsandbox.check_manifest`, shared with ``dev-pair``
+and the dev host: ``<root>`` is a real directory (``lstat``, no symbolic link) owned by this user and not group- or
 world-accessible; ``<root>/.orch-dev-sandbox`` is a regular file opened with ``O_NOFOLLOW`` through the root's
 directory descriptor, owned by this user, mode 0600, JSON with a non-empty ``id`` and ``root: {st_dev, st_ino}``
 equal to the root's. When ``owner.py`` and ``dev-pair`` land, they should share :func:`check_manifest` (or replace it
@@ -85,26 +85,14 @@ def _read_private(dir_fd: int, name: str) -> bytearray:
 
 
 def check_manifest(root: str | os.PathLike[str]) -> dict[str, Any]:
-    """The sandbox manifest of ``root``, or :class:`SandboxRefused`."""
-    fd, st = _dir_fd(Path(root))
+    """The sandbox manifest of ``root``, or :class:`SandboxRefused`: the shared production check
+    :func:`orch.devsandbox.check_manifest` (moved there for §11A.17, so ``dev-pair`` and the dev host use one check)."""
+    from orch import devsandbox
+
     try:
-        raw = _read_private(fd, MANIFEST)
-    finally:
-        os.close(fd)
-    try:
-        doc = json.loads(bytes(raw))
-    except ValueError:
-        raise SandboxRefused("the sandbox manifest is not JSON") from None
-    pin = doc.get("root") if isinstance(doc, dict) else None
-    if (
-        not isinstance(doc, dict)
-        or type(doc.get("id")) is not str
-        or not doc["id"]
-        or not isinstance(pin, dict)
-        or (pin.get("st_dev"), pin.get("st_ino")) != (st.st_dev, st.st_ino)
-    ):
-        raise SandboxRefused("the sandbox manifest does not name this root")
-    return doc
+        return devsandbox.check_manifest(root)
+    except devsandbox.SandboxRefused as exc:
+        raise SandboxRefused(str(exc)) from None
 
 
 def make_sandbox(root: str | os.PathLike[str], code: str) -> dict[str, Any]:

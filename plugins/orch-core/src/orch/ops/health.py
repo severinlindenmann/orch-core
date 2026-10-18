@@ -22,10 +22,11 @@ import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import SubprocessError
+from subprocess import DEVNULL, SubprocessError
 from typing import Any
 
-from orch import canon
+from orch import canon, gitsafe
+from orch.layout import StorePin
 from orch.ops.caps import Capabilities, CapabilityDenied, Files
 from orch.store import Store, StoreError
 from orch.store import render as store_render
@@ -73,6 +74,7 @@ def _open(
     findings: list[Finding],
     ident: tuple[int, int] | None = None,
     config: bytes | None = None,
+    store_pin: StorePin | None = None,
 ) -> InspectStore | None:
     pins = HostPins(state_dir, wid)
     try:
@@ -90,6 +92,7 @@ def _open(
             load="all",
             ident=ident,  # the root discovery found, by its fd: every read below goes through it (#516)
             config=config,  # the config.json bytes discovery checked, not a second read by path
+            store_pin=store_pin,
         )
     except StoreError as e:
         findings.append(Finding("error", "workspace", e.code, e.detail))
@@ -139,6 +142,7 @@ def inspect(
     sees: Callable[[Any], bool] | None = None,
     ident: tuple[int, int] | None = None,
     config: bytes | None = None,
+    store_pin: StorePin | None = None,
 ) -> tuple[list[Finding], Store | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
     (checkpoint presence, pins, index, repositories, orphan keys).
@@ -159,7 +163,7 @@ def inspect(
         store.load_all()
     else:
         assert state_dir is not None
-        s = _open(root, wid, state_dir, out, ident, config)
+        s = _open(root, wid, state_dir, out, ident, config, store_pin)
     if s is None:
         return out, None
     # direct mode reads the workspace through the store's pinned root; host mode through the host's Files
@@ -443,7 +447,7 @@ def _index(s: InspectStore) -> list[Finding]:
 def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
-        p = caps.git.repo_path(root, s.state.workspace.repos, name)  # host mode: lexical, no I/O
+        p = caps.git.repo_path(s.layout, s.state.workspace.repos, name)  # host mode: lexical, no I/O
         if caps.files.roots is not None:
             # Host mode: never stat a path outside the root; the reader child opens the repo under its pins.
             try:
@@ -533,12 +537,34 @@ def repair(
 # ---------------------------------------------------------------------------------------------------- commit check
 
 
-def _git(root: Path, *args: str, caps: Capabilities) -> bytes | None:
+def _gate(root: Path, caps: Capabilities) -> str | None:
+    """The invariant of :mod:`orch.gitsafe` on the workspace's repository (#546): why orch does not run git there, or
+    ``None``. Where the handler has no process capability (host mode), nothing is checked: :func:`_git` then runs
+    nothing either."""
+    if not caps.exec.enabled:
+        return None
     try:
+        gitsafe.gate(os.path.abspath(root), caps.env)
+    except gitsafe.Unsafe as exc:
+        return exc.reason
+    return None
+
+
+def _git(root: Path, op: str, *, caps: Capabilities, path: str | None = None) -> bytes | None:
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` (``staged_raw``, ``staged_blob`` of ``path``), isolated
+    (:func:`orch.gitsafe.command`, #546: the gate again, no free argv, system and global configuration off, none of
+    the person's configuration, hooks, fsmonitor, network, pager, external diff and textconv off, an environment built
+    from scratch), spawned through ``caps.exec``. ``None`` when it is refused or fails; with no process capability
+    (host mode) nothing runs."""
+    if not caps.exec.enabled:
+        return None
+    try:
+        argv, env = gitsafe.command(os.path.abspath(root), op, caps.env, operand=path)
         done = caps.exec.run(
-            ["git", "-C", str(root), *args], capture_output=True, timeout=30, check=False, start_new_session=True
-        )
-    except (OSError, SubprocessError):
+            argv, capture_output=True, timeout=30, check=False, start_new_session=True, env=env, cwd="/",
+            stdin=DEVNULL,
+        )  # fmt: skip
+    except (gitsafe.Unsafe, OSError, SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
 
@@ -550,7 +576,10 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
     out: list[Finding] = []
-    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative", caps=caps)
+    refused = _gate(root, caps)
+    if refused is not None:
+        return [Finding("error", "git", "git.unavailable", f"orch does not run git here: {refused}")]
+    raw = _git(root, "staged_raw", caps=caps)
     if raw is None:
         return [Finding("error", "git", "git.unavailable", "git cannot list the staged files here")]
     st = s.state
@@ -587,7 +616,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
             continue
-        blob = _git(root, "show", f":{rel}", caps=caps)
+        blob = _git(root, "staged_blob", caps=caps, path=rel)
         if blob is None:
             out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
             continue

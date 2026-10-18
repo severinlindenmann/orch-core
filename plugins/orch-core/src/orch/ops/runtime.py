@@ -39,7 +39,9 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon, discovery
+from orch import layout as layout_mod
 from orch.canon.text import TextError, normalize_text
+from orch.layout import Layout, LayoutError, StorePin
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -86,16 +88,44 @@ def state_dir(env: Mapping[str, str], files: Files | None = None) -> Path:
 
 
 def _config(path: Path, files: Files) -> dict[str, Any] | None:
-    """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one. Direct mode reads it through
-    :func:`orch.discovery.read_config` (``O_NOFOLLOW`` fds below the root); host mode through the host ``Files``,
-    itself an ``O_NOFOLLOW`` fd walk from the host's roots."""
+    """``config.json`` of the workspace whose project is ``path``, or ``None`` if ``path`` is not one. Direct mode reads
+    it through :func:`orch.discovery.read_config` (``O_NOFOLLOW`` fds below the root); host mode through the host
+    ``Files``, itself an ``O_NOFOLLOW`` fd walk from the host's roots."""
     if files.roots is None:
         return discovery.read_config(path)
+    found = _hosted_layout(path, files)
+    return found[1] if found is not None else None
+
+
+def _hosted_layout(path: Path, files: Files) -> tuple[Layout, dict[str, Any]] | None:
+    """Host mode: the layout and ``config.json`` of the project ``path``, through the host ``Files``. An orch config in
+    the root and in ``.orch/`` is :class:`LayoutError`."""
+
+    def read(p: Path) -> dict[str, Any] | None:
+        try:
+            doc = json.loads(files.read_bytes(p))
+        except (OSError, ValueError, RecursionError, CapabilityDenied):
+            return None
+        return discovery.v2_config(doc if isinstance(doc, dict) else None)
+
+    orch_dir = path / layout_mod.STORE_DIR
     try:
-        doc = json.loads(files.read_bytes(path / "config.json"))
-    except (OSError, ValueError, RecursionError, CapabilityDenied):
-        return None
-    return discovery.v2_config(doc if isinstance(doc, dict) else None)
+        present = files.lexists(orch_dir)
+    except CapabilityDenied:
+        present = False
+    if present:  # a link or a file there is refused like in direct mode, never read around
+        try:
+            files.listdir(orch_dir)
+        except (OSError, CapabilityDenied):
+            raise LayoutError(
+                f"{layout_mod.STORE_DIR} is not a real directory (a link or a file); refusing to use this project",
+                hint=f"rename or remove {layout_mod.STORE_DIR}: orch keeps its store in a real directory",
+            ) from None
+    old, new = read(path / "config.json"), read(orch_dir / "config.json")
+    layout_mod.check_single_store(legacy=old is not None, new=new is not None)
+    if new is not None:
+        return Layout.new_at(path), new
+    return (Layout.legacy_at(path), old) if old is not None else None
 
 
 def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:
@@ -105,21 +135,32 @@ def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: 
     there or in its ``orchestrator/`` is reported; walking up, the first directory that is a v2 or a v1 workspace wins,
     so a v1 workspace nested under a v2 one is never opened as the v2 ancestor. Host mode (files with roots) never
     detects v1 and reads only through the host ``Files`` (no identity: those reads are confined by the host)."""
+    try:
+        return _discover(env, cwd, files)
+    except LayoutError as exc:
+        raise OrchError("invalid.input", str(exc), hint=exc.hint or "a project holds one orch store") from None
+
+
+def _discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:
     explicit = env.get("ORCH_WORKSPACE")
     if files.roots is not None:
 
         def hosted(p: Path) -> discovery.Found | None:
-            cfg = _config(p, files)
-            return discovery.Found(p, False, cfg) if cfg else None
+            got = _hosted_layout(p, files)
+            return discovery.Found(p, False, got[1], layout=got[0]) if got is not None else None
 
         if explicit:
-            return hosted(Path(explicit))
+            path = Path(explicit)
+            if path.name == layout_mod.STORE_DIR:  # the alias: ORCH_WORKSPACE=<project>/.orch
+                alias = hosted(path.parent)
+                if alias is not None and alias.layout is not None and alias.layout.store == path:
+                    return alias
+            return hosted(path)
         here = Path(files.getcwd() if cwd is None else cwd).resolve()
         for d in (here, *here.parents):
-            for cand in (d, d / "orchestrator"):
-                found = hosted(cand)
-                if found is not None:
-                    return found
+            found = hosted(d)
+            if found is not None:
+                return found
         return None
     start = explicit if explicit else (files.getcwd() if cwd is None else cwd)
     return discovery.locate(start, explicit=bool(explicit))
@@ -165,8 +206,9 @@ def visible_to(person: str | None, view: Any) -> bool:
     return person is not None and isinstance(vis, Mapping) and person in vis.get("restricted", ())
 
 
-def records_dir(root: Path) -> Path:
-    return root / ".state" / "sessions"
+def records_dir(layout: Layout) -> Path:
+    """The session records: ``<store>/.state/sessions`` (the layout, never a bare root, so it is the store's)."""
+    return layout.store / ".state" / "sessions"
 
 
 class Workspace:
@@ -214,14 +256,47 @@ class Workspace:
 
     @property
     def root(self) -> Path | None:
+        """The **project** root, NOT the store directory (that is :attr:`store_dir`). The name is kept for the many
+        callers; while the store is the project (legacy layout) the two are equal, so a caller that reads store files
+        under ``root`` is only correct for the legacy layout and moves to :attr:`store_dir` in design steps 4 and 5."""
         if not self._looked:
             found = discover(self.env, self._cwd, self.files)
             self._looked = True
             if found is not None and found.v1:
                 self._v1 = found.path
             elif found is not None:
-                self._root, self._found = found.path, found
+                self._root, self._found = found.project, found
         return self._root
+
+    @property
+    def layout(self) -> Layout | None:
+        """Project and store directory of the workspace as discovery found them (``None`` without a workspace; the
+        hosted view, which discovers nothing, is the legacy layout of its injected root until the host learns
+        ``.orch``, design step 3)."""
+        root = self.root
+        if root is None:
+            return None
+        found = self._found
+        if found is not None and found.layout is not None:
+            return found.layout
+        injected = getattr(self._store, "layout", None) if self.hosted else None  # the host's own store knows
+        return injected if isinstance(injected, Layout) else Layout.legacy_at(root)
+
+    @property
+    def project(self) -> Path | None:
+        """The project root (where agents and terminals work; the registry ``root``)."""
+        return self.root
+
+    @property
+    def store_pin(self) -> StorePin | None:
+        """What discovery saw of the store (``.orch``'s identity, or legacy), for the open that follows."""
+        return self._found.store_pin if self.root is not None and self._found is not None else None
+
+    @property
+    def store_dir(self) -> Path | None:
+        """The directory that holds ``config.json``, ``tickets/`` and ``.state/`` (``.orch``; legacy: the project)."""
+        layout = self.layout
+        return layout.store if layout is not None else None
 
     @property
     def config(self) -> dict[str, Any] | None:
@@ -268,7 +343,12 @@ class Workspace:
                     f"{v1} is a v1 workspace; run `orch import v1` to migrate it",
                     hint=f"orch import v1 {v1}",
                 )
-            raise OrchError("not_found", "no orch workspace here", hint="run orch init in the workspace directory")
+            raise OrchError(
+                "not_found",
+                "no orch workspace here",
+                hint="cd into your project folder and run orch setup there",
+                fix=[],  # N18: setup is for a person; no command for an agent to run (and not `orch describe init`)
+            )
         return root
 
     @property
@@ -276,6 +356,44 @@ class Workspace:
         if self._store is None:
             self._store = self._open(self.require_root())
         return self._store
+
+    def _finish_unfinished_migration(self, root: Path, sd: Path, wid: str) -> None:
+        """Direct mode: a store move that was interrupted (its journal for THIS project directory is not terminal) is
+        completed or rolled back before the store is opened, under ``owner.lock`` (exclusive, briefly); the command then
+        asks to be run again (what was found is stale). Host mode never gets here (the host does it at its start)."""
+        from orch.store import migrate as mg
+
+        if self.hosted or self.files.roots is not None:
+            return
+        try:
+            step = mg.journal_step(sd, wid, root)
+        except mg.MigrateError:
+            return  # an unreadable journal is `orch migrate`'s to report, not every command's
+        if step in (None, "done", "rolled_back"):
+            return
+        from orch.host.errors import HostError
+        from orch.host.ownership import OwnershipLock, is_registered
+
+        if is_registered(sd, wid):  # the host owns the registry write (set_store): it finishes the move at its start
+            raise OrchError(
+                "host.required",
+                "a store move of this workspace is unfinished; the orch host finishes it when it starts",
+                hint="start the host service",
+            )
+        try:
+            with OwnershipLock(sd, wid).exclusive(10.0):
+                mg.finish_interrupted(root, state_dir=sd, workspace_id=wid)
+        except (HostError, mg.MigrateError) as exc:
+            raise OrchError(
+                "retry.later",
+                f"a store move was interrupted and could not be finished yet ({exc})",
+                hint="orch migrate",
+            ) from None
+        raise OrchError(
+            "retry.later",
+            "an interrupted store move was just finished; the workspace was found before it",
+            hint="run the command again",
+        )
 
     def _open(self, root: Path) -> Any:
         from orch.custody import FileBackend
@@ -286,6 +404,7 @@ class Workspace:
         wid = cfg["workspace"]["id"]
         root = self.verify_root()  # Store.open opens below the root by path: it must still be the one found
         sd = state_dir(self.env, self.files)
+        self._finish_unfinished_migration(root, sd, wid)
         host = None
         keys = sd / "hosts" / wid / "keys"
         if keys.is_dir():
@@ -306,6 +425,7 @@ class Workspace:
             guard=DirectGuard(sd, wid) if self.files.roots is None else None,
             config=self._found.raw if self._found is not None and self._found.raw else None,
             ident=self.ident,  # the root fd is checked against what discovery saw; everything below goes through it
+            store_pin=self.store_pin,
         )
 
 
@@ -549,7 +669,9 @@ class Projection:
         code = "conflict.section" if path.startswith("body.") else "conflict.field"
         what = path[5:] if path.startswith("body.") else path[len("ticket.") :]
         if noted is None:
-            raise OrchError(code, f"{what} was not read in this session: orch show --section {what}", retryable=True)
+            # only a body section has a `--section`; a field (acceptance, ...) is read with the whole ticket (N10)
+            how = f"orch show --section {what}" if path.startswith("body.") else f"orch show {self.view.key}"
+            raise OrchError(code, f"{what} was not read in this session: {how}", retryable=True)
         if noted != path_hash(self.view, path):
             raise OrchError(code, f"{what} changed since you read it", retryable=True)
         return noted
@@ -712,9 +834,9 @@ class Call:
     @property
     def notes(self) -> Notes:
         if self._notes is None:
-            root = self.ws.root
+            layout = self.ws.layout
             self._notes = Notes(
-                records_dir(root) if root else None, self.ctx.session, self.ctx.caps.files, self.ctx.principal
+                records_dir(layout) if layout else None, self.ctx.session, self.ctx.caps.files, self.ctx.principal
             )
         return self._notes
 
@@ -747,7 +869,8 @@ class Call:
         out: list[str] = []
         session = self.ctx.session or ""
         while session:
-            directory = records_dir(self.ws.root) if self.ws.root else None
+            layout = self.ws.layout
+            directory = records_dir(layout) if layout else None
             out += Notes(directory, session, self.ctx.caps.files, self.ctx.principal).claims()
             session = session.rpartition(".")[0]
         return list(dict.fromkeys(out))
@@ -796,6 +919,12 @@ class Call:
             from orch.ops import views
 
             hint = f"orch {cli} {mine[0].key}" if mine else views.claim_hint(self)
+            if "task" in ops.get(self.op).input.get("properties", {}):  # task ops take REF/T3, there is no --ref
+                key = mine[0].key if mine else "REF"
+                hint = f"orch {cli} {key}/T3 (the task is written REF/T<n>, for example {key}/T3)"
+                raise OrchError(
+                    "ambiguous_ref", f"name the ticket in the task as REF/T<n>; your claims: {names}", hint=hint
+                )
             raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}", hint=hint)
         view = self.store.ticket(part)
         if view is None or not self.sees(view):

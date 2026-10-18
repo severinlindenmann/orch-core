@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronRight, CircleDashed, CircleDot, MessageSquareWarni
 import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { availableActions, GATE_LABEL, policyText } from './actions'
+import { availableActions, GATE_LABEL, lackText, policyText } from './actions'
 import { fmtDay, fmtExact, Mono, presenceLabel, type Viewer } from './shared'
 
 /** The gates this ticket shows: the code review only where it applies (or once it was signed). */
@@ -11,6 +11,9 @@ const gatesOf = (t: TicketDocument): GateName[] =>
 
 /** The words for a verdict nobody reviewed: auto-approved under the factory charter (owner decision 2026-10-10). */
 export const CHARTER_VERDICT = 'Verdict: via the factory charter — no person reviewed this'
+
+// Phase 1 phone decisions have no authentication label (the reader declaration covers answers only).
+const phoneDecision = (a: GateStatus['approvals'][number]) => a.via === 'phone' || a.presence === 'secure-enclave-unlocked'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone', factory_charter: 'the factory charter' }
 
@@ -22,6 +25,7 @@ function stepState(name: GateName, gate: GateStatus, ticket: TicketDocument, min
   if (gate.state === 'approved') return { text: 'Approved', tone: 'success', Icon: CheckCircle2 }
   if (gate.state === 'changes_requested') return { text: 'Changes requested', tone: 'danger', Icon: MessageSquareWarning }
   if (gate.state === 'invalidated') return { text: 'Invalidated', tone: 'warning', Icon: ShieldAlert }
+  if ((name === 'requirements' || name === 'plan') && gate.missing?.length) return { text: lackText(name, gate.missing), tone: 'neutral', Icon: CircleDashed }
   if (mine) return { text: name === 'verify' ? 'Waiting for your verdict' : name === 'code' ? 'Waiting for your review' : 'Waiting for your approval', tone: 'warning', Icon: CircleDot }
   const ready =
     name === 'verify'
@@ -49,7 +53,7 @@ function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}
           {a.source_sha ? ` · commit ${a.source_sha}` : ''}
           {' · '}
-          {a.sig_ok === undefined ? (
+          {phoneDecision(a) ? <span className="text-text-muted">as reported by your Mac</span> : a.sig_ok === undefined ? (
             <span className="text-text-muted">signature not checked</span>
           ) : (
             <span className={a.sig_ok ? 'text-success' : 'text-danger'}>{a.sig_ok ? 'verified signature' : 'signature failed'}</span>
@@ -100,8 +104,10 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                 <div key={i}>
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
-                    {fmtExact(a.at)} · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
-                    {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
+                    {fmtExact(a.at)}
+                    {phoneDecision(a) ? ' · as reported by your Mac' : <> · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                      {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
+                    </>}
                   </dd>
                 </div>
               ))}

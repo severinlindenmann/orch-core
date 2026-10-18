@@ -357,3 +357,25 @@ describe('rail details and gate details (G3 review)', () => {
     expect(within(pop).queryByText(/presence password/)).toBeNull()
   })
 })
+
+
+it.each([{ via: 'phone' as const, sig_ok: true }, { presence: 'secure-enclave-unlocked' }])('shows phone decisions without authentication or strength labels: %j', async metadata => {
+  const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
+  doc.gates.plan.approvals = [{ by: 'p_sev', at: '2026-10-08T09:44:00Z', ...metadata }]
+  const viewer = { person: 'p_sev', role: 'owner' as const, members: [], name: () => 'Severin', ready: true }
+  const user = (await import('@testing-library/user-event')).default.setup()
+  render(<GatesStrip ticket={doc} viewer={viewer as never} />)
+  await user.click(screen.getByTestId('gate-plan'))
+  const pop = await screen.findByRole('dialog', { name: /Plan/ })
+  expect(pop.textContent).not.toMatch(/verified|presence|secure-enclave|signature|signed on phone/i)
+  expect(within(pop).getByText(/Approved by Severin/)).toHaveTextContent('as reported by your Mac')
+})
+
+describe('F8: agent names on the ticket', () => {
+  it('names a known harness, and "An agent" for any other id (never "orch-cli")', async () => {
+    const { agentName } = await import('./shared')
+    expect(agentName('claude-code')).toBe('Claude Code')
+    expect(agentName('codex')).toBe('Codex')
+    expect(agentName('orch-cli')).toBe('An agent')
+  })
+})

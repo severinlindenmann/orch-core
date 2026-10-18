@@ -73,7 +73,7 @@ def read_required(service: Any) -> int:
     """``required_reader`` for a read: 1 while the flag is on or the durable mark is set (no history scan)."""
     from orch.ops.readers import convenience_seen
 
-    if convenience.enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if convenience.flag_or_gate(service):  # §11A.17.4: the dev gate as the flag
         return 1
     return 1 if convenience_seen(service.state_dir, service.workspace_id) else 0
 

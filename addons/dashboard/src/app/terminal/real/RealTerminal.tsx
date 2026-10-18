@@ -1,6 +1,8 @@
 // One real terminal (M7a): xterm per section 12.6.7 (termView), the WebSocket of section 12.6.6 (termProtocol) and the
 // lease of section 12.6.5. Read-only by default; "Take control" asks for the lease with take:true; a reconnect, a
-// remount or a focus change never asks for it by itself. Retry is decided by the close code alone.
+// remount or a focus change never asks for it by itself. The one exception is the first attach of the tab that just
+// started this run (`initial: 'write'`, B12A N5): nobody else can hold a run that was created a moment ago, so that tab
+// asks for the lease outright instead of showing "Read only". Retry is decided by the close code alone.
 
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/api/types'
@@ -25,7 +27,7 @@ export type LeaseState = 'reading' | 'writing' | 'busy' | 'lost'
 export function RealTerminal({ ws, run, initial, connect = termTransport.connect }: {
   ws: string
   run: Run
-  /** The first attach of this mount: read, except right after the person opened this shell (write, never take). */
+  /** The first attach of this mount: read, except right after this tab started the shell (write, and it takes the lease). */
   initial: 'read' | 'write'
   /** Tests pass a fake socket. */
   connect?: typeof connectTerm
@@ -33,13 +35,14 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<TermView | null>(null)
   const conn = useRef<TermConnection | null>(null)
-  const [req, setReq] = useState<AttachRequest>({ mode: initial, take: false, n: 0 })
+  const [req, setReq] = useState<AttachRequest>({ mode: initial, take: initial === 'write', n: 0 })
   const [lease, setLease] = useState<LeaseState>('reading')
   const [status, setStatus] = useState<{ words: string; detail?: string; final: boolean } | null>(null)
   const [paused, setPaused] = useState(false)
   const [lost, setLost] = useState(false)
   const [exit, setExit] = useState<{ code: number | null; signal: string | null } | null>(null)
   const failures = useRef(0)
+  const focused = useRef(false)
   const runRef = useRef(run)
   runRef.current = run
 
@@ -76,8 +79,10 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
         ticket = (await runsApi.ticket(ws, run.run, req.mode, req.take)).ticket
       } catch (e) {
         if (cancelled) return
-        const retryable = e instanceof ApiError && e.status >= 500
-        setStatus({ words: retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
+        // An ended run is never retried: asking again cannot bring it back (and every try is a logged 503).
+        const ended = runRef.current.state === 'exited' || runRef.current.state === 'lost'
+        const retryable = e instanceof ApiError && e.status >= 500 && !ended
+        setStatus({ words: ended ? 'This terminal has ended and its output can no longer be shown.' : retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
         if (retryable) again(BACKOFF_MS[Math.min(failures.current++, BACKOFF_MS.length - 1)])
         return
       }
@@ -91,6 +96,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           v?.setWriter(r.writer)
           v?.ready(r)
           setLease(r.writer ? 'writing' : runRef.current.writer ? 'busy' : 'reading')
+          // K7: the tab that just opened this terminal types into it at once (once per mount; a reconnect never steals focus).
+          if (r.writer && initial === 'write' && !focused.current) { focused.current = true; v?.term.focus() }
           if (r.writer) {
             const size = v?.fit()
             if (size) c.resize(size.cols, size.rows)
@@ -119,6 +126,10 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           if (policy.kind === 'take') {
             setLease('busy')
             setStatus(null)
+          } else if (runRef.current.state === 'exited' || runRef.current.state === 'lost') {
+            // The run is over: reconnecting cannot help, so stop asking.
+            setLease('reading')
+            setStatus({ words: endWords(code, end), detail, final: true })
           } else if (policy.kind === 'ticket') {
             setStatus({ words: endWords(code, end), final: false })
             again(250)

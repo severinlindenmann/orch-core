@@ -4,6 +4,7 @@ no redirects, no environment proxies, and redaction. Fault injection against the
 from __future__ import annotations
 
 import logging
+import socket
 import ssl
 import threading
 import time
@@ -824,3 +825,242 @@ def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
     assert tried == [dead]
     assert len(installed) == 1  # the loop stopped at the error itself: no socket was even made for the second address
     assert not _accepted(listener)
+
+
+# -- a kept connection the relay has closed (uvicorn closes an idle keep-alive after 5 s) -----------------------------
+
+
+class _ClosingServer:
+    """Answers each request on a connection with a keep-alive 200, then closes that connection ``close_after`` seconds
+    later (0: at once, the client sees a dead connection on its next request); counts connections and requests."""
+
+    def __init__(self) -> None:
+        import socket
+
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(8)
+        self.conns = 0
+        self.requests = 0
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def origin(self) -> str:
+        return f"http://127.0.0.1:{self.srv.getsockname()[1]}"
+
+    def _run(self) -> None:
+        while True:
+            try:
+                s, _ = self.srv.accept()
+            except OSError:
+                return
+            self.conns += 1
+            threading.Thread(target=self._serve, args=(s,), daemon=True).start()
+
+    def _serve(self, s) -> None:
+        buf = b""
+        try:
+            while b"\r\n\r\n" not in buf:
+                d = s.recv(4096)
+                if not d:
+                    return
+                buf += d
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            length = next(
+                (int(x.split(b":")[1]) for x in head.split(b"\r\n") if x.lower().startswith(b"content-length:")), 0
+            )
+            while len(rest) < length:  # the whole request is read: an unread byte at close would make the FIN a RST
+                d = s.recv(4096)
+                if not d:
+                    return
+                rest += d
+            self.requests += 1
+            s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}")
+            s.shutdown(socket.SHUT_WR)
+        finally:
+            s.close()  # no `Connection: close` was announced: the client believes the connection is alive
+
+    def close(self) -> None:
+        self.srv.close()
+
+
+def test_a_connection_idle_past_the_reuse_limit_is_replaced_before_sending():
+    srv = _ClosingServer()
+    clock = [0.0]
+    c = http.RelayConn(srv.origin(), mono=lambda: clock[0])
+    try:
+        assert call(c).status == 200
+        clock[0] += http.IDLE_REUSE_S + 0.5  # proactive: the connection is dropped without trying it
+        assert call(c).status == 200
+        assert srv.conns == 2 and srv.requests == 2
+    finally:
+        c.close()
+        srv.close()
+
+
+def test_a_reused_connection_the_peer_closed_is_reopened_and_resent_once_within_the_deadline():
+    srv = _ClosingServer()
+    clock = [0.0]
+    c = http.RelayConn(srv.origin(), mono=lambda: clock[0])
+    try:
+        assert call(c).status == 200
+        time.sleep(0.2)  # the server has closed its end; the clock says the connection is fresh (reactive path)
+        # The OS decides whether the request on the closed connection meets a clean EOF (RemoteDisconnected: resent
+        # once) or a reset (never resent after the send: the caller gets a TransportError and retries itself). The
+        # property under test is safety: the server never processes the request twice, and the next call works.
+        try:
+            second = call(c).status
+        except http.TransportError:
+            second = None
+        assert srv.requests == (2 if second == 200 else 1)
+        clock[0] += http.IDLE_REUSE_S + 1  # the server closes after every answer: the next call must start afresh
+        assert call(c).status == 200
+        assert srv.requests <= 3
+    finally:
+        c.close()
+        srv.close()
+
+
+def test_a_fresh_connection_that_fails_is_not_retried():
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    seen = []
+
+    def run() -> None:
+        while True:
+            try:
+                s, _ = srv.accept()
+            except OSError:
+                return
+            seen.append(1)
+            s.recv(4096)
+            s.close()  # no answer at all, on a connection that was never reused
+
+    threading.Thread(target=run, daemon=True).start()
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        with pytest.raises(http.TransportError):
+            call(c)
+        assert len(seen) == 1
+    finally:
+        c.close()
+        srv.close()
+
+
+def _server(second: str):
+    """Per connection, the first request is answered fully (keep-alive). What happens to the SECOND request on that
+    connection (``second``): ``rst_after_first``: the connection is reset right after the first answer (the client's
+    next write fails); ``fin``: the request is read, then a clean close with no bytes;
+    ``partial_status``: ``HTTP/1.1 2``
+    (no CRLF), 0.3 s, RST; ``partial_headers``: a full status line and half a header, RST. Counts parsed requests."""
+    import socket
+    import struct
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    hits = []
+    rst = struct.pack("ii", 1, 0)
+
+    def serve(s) -> None:
+        n = 0
+        buf = b""
+        while True:
+            while b"\r\n\r\n" not in buf:
+                d = s.recv(4096)
+                if not d:
+                    return
+                buf += d
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            length = next(
+                (int(x.split(b":")[1]) for x in head.split(b"\r\n") if x.lower().startswith(b"content-length:")), 0
+            )
+            while (
+                len(rest) < length
+            ):  # the COMPLETE request is read: an unread byte at close would turn the FIN into a RST
+                d = s.recv(4096)
+                if not d:
+                    return
+                rest += d
+            buf = b""
+            hits.append(1)
+            n += 1
+            if n == 1:
+                s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                if second == "rst_after_first":
+                    time.sleep(0.05)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    s.close()
+                    return
+                continue
+            if second == "partial_status":
+                s.sendall(b"HTTP/1.1 2")
+                time.sleep(0.3)
+            elif second == "partial_headers":
+                s.sendall(b"HTTP/1.1 200 OK\r\nContent-Le")
+                time.sleep(0.1)
+            if second == "fin":
+                s.shutdown(socket.SHUT_WR)  # a clean FIN on every OS
+            else:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, rst)
+            s.close()
+            return
+
+    def run() -> None:
+        while True:
+            try:
+                s, _ = srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=serve, args=(s,), daemon=True).start()
+
+    threading.Thread(target=run, daemon=True).start()
+    return srv, hits
+
+
+def _second_call(second: str, *, resend_ok: bool = True):
+    srv, hits = _server(second)
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        assert call(c).status == 200
+        time.sleep(0.2)
+        if second == "rst_after_first":
+            c._last_used = c._mono()
+        try:
+            r = c.request("POST", "/v2/x", route="POST /v2/x", headers={}, body=b"{}", deadline_s=5.0, cap=1024,
+                          resend_ok=resend_ok)  # fmt: skip
+            return r, hits
+        except http.TransportError as e:
+            return e, hits
+    finally:
+        c.close()
+        srv.close()
+
+
+@pytest.mark.parametrize("second", ["partial_status", "partial_headers"])
+def test_a_reset_after_the_request_was_sent_is_never_resent(second):
+    r, hits = _second_call(second)
+    assert isinstance(r, http.TransportError)
+    assert len(hits) == 2  # the first request, and the second exactly once: never sent a third time
+
+
+def test_a_clean_close_after_the_request_was_read_is_resent_once_on_a_new_connection():
+    r, hits = _second_call("fin")
+    assert not isinstance(r, Exception) and r.status == 200
+    assert len(hits) == 3  # first, the second (read, then FIN), its one resend
+
+
+def test_a_reset_while_sending_on_a_reused_connection_is_resent_once():
+    r, hits = _second_call("rst_after_first")
+    assert not isinstance(r, Exception) and r.status == 200
+    assert len(hits) == 2  # the first request; the second never arrived on the dead connection, its resend did
+
+
+@pytest.mark.parametrize("second", ["fin", "rst_after_first"])
+def test_resend_off_never_resends(second):
+    r, hits = _second_call(second, resend_ok=False)
+    assert isinstance(r, http.TransportError)
+    assert len(hits) <= 2 and (second == "rst_after_first" or len(hits) == 2)

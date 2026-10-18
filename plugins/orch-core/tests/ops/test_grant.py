@@ -29,7 +29,9 @@ def test_the_default_grant_has_the_d60_terms_and_the_secret_is_shown_once(hws, m
     assert (e["scope"], e["verbs"], e["hours"], e["label"]) == ("workable", "agent", 8, "laptop")
     assert e["actor"]["id"] == hws.owner.ref and e["auth"] == "passphrase" and "sig" in e
     assert e["expires_at"] > e["issued_at"]
-    assert r.first.startswith(f"ok grant.issued {e['grant']} until={e['expires_at']}")
+    from orch.host.signcontent import local_time
+
+    assert r.first == f"ok grant.issued {e['grant']} until {local_time(e['expires_at'], 8)}"  # this computer's time
     value = shown_value(hws)  # shown on the terminal: the seam stands for /dev/tty
     token = parse_grant(value)
     assert token.grant_id == e["grant"] and e["secret_hash"] == canon.grant_secret_hash(token.secret)
@@ -69,11 +71,15 @@ def test_verbs_scope_and_hours(hws, me):
     e = issued(hws)[-1]
     assert (e["hours"], e["scope"], e["verbs"]) == (2, "all", ["task.done", "log"])
     assert me("grant", "--hours", "0", "--json").err_code == "invalid.input"
-    assert me("grant", "--hours", "25", "--json").err_code == "invalid.input"
+    assert me("grant", "--hours", "169", "--json").err_code == "invalid.input"
+    assert me("grant", "--days", "8", "--json").err_code == "invalid.input"
+    assert me("grant", "--days", "2", "--hours", "3", "--json").err_code == "invalid.input"  # alternatives
+    assert me("grant", "--hours", "25").code == 0  # B8: owners go up to 168 h
+    assert me("grant", "--days", "7").code == 0
     assert me("grant", "--verbs", "approve", "--json").err_code == "invalid.input"  # a human operation is never granted
     assert me("grant", "--verbs", "task", "--json").err_code == "invalid.input"  # exact operation names only
     assert me("grant", "--verbs", "Bad Name", "--json").err_code == "invalid.input"
-    assert len(hws.shown_secrets) == 1  # the refusals showed no secret
+    assert len(hws.shown_secrets) == 3  # the refusals showed no secret (three grants were made)
 
 
 def test_a_member_gets_workable_grants_up_to_the_workspace_hours(hws, me):

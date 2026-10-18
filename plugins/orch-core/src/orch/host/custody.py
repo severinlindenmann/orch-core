@@ -16,6 +16,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from orch.layout import STORE_DIR
 from orch.store.fsio import write_atomic
 
 from ._unix import UnsafePath, check_acl
@@ -27,6 +28,7 @@ __all__ = [
     "ensure_private_dir",
     "read_json",
     "root_key",
+    "store_name",
     "same_or_inside",
     "unsafe",
     "write_private",
@@ -178,14 +180,19 @@ def _lstat_owned(path: Path, host_uid: int) -> os.stat_result | None:
     return info
 
 
-def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_uid: int) -> None:
+def check_workspace_files(
+    state_dir: Path, workspace_id: str, root: Path, host_uid: int, *, store: str | None = None
+) -> None:
     """D-P2-17 for one workspace's custody list, beyond the paths :func:`check_tree` walks.
 
     * ``hosts/<ws>/keys/`` is 0700 and every key file a regular 0600 file of the host UID (a key others could read
       is already compromised, so it is refused, never repaired);
     * every other file in ``hosts/<ws>/`` (the genesis pin, noted revocations, checkpoints) and ``outcomes/``,
       ``requests/``, ``blobs/`` there: owned by the host UID, writable by nobody else;
-    * the workspace's ``events/``, ``tickets/`` and ``.state/``: owned by the host UID, group-readable at most.
+    * the workspace's ``events/``, ``tickets/`` and ``.state/``: owned by the host UID, group-readable at most;
+    * ``store`` (``".orch"``, the registry entry's key; ``None``: legacy, the store is ``root``): ``root/.orch`` itself
+      is a real directory of the host UID that no one else can write (an entry with a store never silently passes
+      because the checks looked at the project root), and the three directories above are looked at below it.
     """
     hosts = Path(state_dir) / "hosts" / workspace_id
     keys = hosts / "keys"
@@ -225,7 +232,45 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
             item = _lstat_owned(hosts / name, host_uid)
             if item is not None and stat.S_IMODE(item.st_mode) & 0o022:
                 raise unsafe(f"{hosts / name}: writable by another principal")
+    base = Path(root)
+    if store is not None:
+        if store != STORE_DIR:
+            raise unsafe(f"{store}: not a store directory name")
+        base = Path(root) / store
+        item = _lstat_owned(base, host_uid)
+        if item is None:
+            raise unsafe(f"{base}: the registered store directory is missing")
+        if not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022:
+            raise unsafe(f"{base}: writable by another principal")
+        try:  # the ACL (macOS) and the owner, on the opened directory itself, as for every component of the root path
+            dfd = os.open(base, _FLAGS)
+        except OSError as exc:
+            raise unsafe(f"{base}: {exc.strerror or exc}") from None
+        try:
+            if os.fstat(dfd).st_uid != host_uid:
+                raise unsafe(f"{base}: not owned by the host UID {host_uid}")
+            _check_component(dfd, base, host_uid, last=True)
+        finally:
+            os.close(dfd)
     for name in ("events", "tickets", ".state"):
-        item = _lstat_owned(Path(root) / name, host_uid)
+        item = _lstat_owned(base / name, host_uid)
         if item is not None and (not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022):
-            raise unsafe(f"{Path(root) / name}: writable by another principal")
+            raise unsafe(f"{base / name}: writable by another principal")
+
+
+def store_name(root: str | os.PathLike[str]) -> str | None:
+    """The registry ``store`` value of the project at ``root`` as it is on disk (``".orch"``; ``None``: legacy or no
+    store yet). A layout that cannot be placed (two stores, a linked ``.orch``) is refused."""
+    from orch import layout as layout_mod
+
+    try:
+        fd = os.open(root, _FLAGS)
+    except OSError as exc:
+        raise unsafe(f"{root}: {exc.strerror or exc}") from None
+    try:
+        found = layout_mod.resolve(fd, root)
+    except layout_mod.LayoutError as exc:
+        raise unsafe(str(exc)) from None
+    finally:
+        os.close(fd)
+    return None if found is None or found.legacy else STORE_DIR

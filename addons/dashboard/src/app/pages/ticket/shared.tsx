@@ -1,3 +1,4 @@
+import { findHarness, harnessForAgent } from '@/api/harnesses'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Bot, Cpu, User } from 'lucide-react'
@@ -47,10 +48,9 @@ export function displayName(members: Member[], id: string | null | undefined): s
   return agentName(id)
 }
 
+/** The harness name when the agent id is one this dashboard knows, else "An agent": ids like "orch-cli" mean nothing to a person (same rule as Activity). */
 export function agentName(id: string): string {
-  if (id === 'claude-code') return 'Claude Code'
-  if (id === 'codex') return 'Codex'
-  return id
+  return findHarness(harnessForAgent(id))?.label ?? 'An agent'
 }
 
 const AVATAR_TONES = ['bg-brand-soft text-brand', 'bg-info-soft text-info', 'bg-warning-soft text-warning', 'bg-success-soft text-success']

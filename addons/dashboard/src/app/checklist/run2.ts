@@ -2,9 +2,6 @@
 // Step ids match the sections and numbers of that file (A1, B1.3, C5 ...); the server accepts ids of the form
 // [A-Z]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
 
-/** The commit of `develop` the install line of A1 is pinned to. The lead updates this when develop moves on. */
-export const INSTALL_PIN = '3ef3132fd8a2267fa39c6f5ee26f1a3b4ac1267f'
-
 import { ADDON_SECTIONS } from './addons'
 
 export const RUN_ID = 'run2'
@@ -51,7 +48,6 @@ export const RUN2_INTRO = [
 export const RUN2_KNOWN_GAPS = [
   'Quick tasks do not close by themselves yet (auto-close comes after this run). Close them by hand.',
   'The .orch folder move is coming later: a project that already has its own config.json or events/ is refused by setup.',
-  'Repos cannot be added in the dashboard yet, so linking a repo to a ticket (E1) is limited.',
   'Phone pairing only works through the CLI (see F). Setup and Settings do not offer it.',
 ]
 
@@ -76,11 +72,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
     steps: [
       {
         id: 'A1',
-        title: 'Install with one line',
-        text: 'Needs uv, Node 24, git 2.32+. It builds the dashboard, about 20 s. This line is pinned to one develop commit (see the note at the bottom of the page).',
-        commands: [
-          `uv tool install --force --with "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core@${INSTALL_PIN}#subdirectory=addons/dashboard/server" "git+https://github.com/severinlindenmann/orch-core@${INSTALL_PIN}#subdirectory=plugins/orch-core"`,
-        ],
+        title: 'Install with the line from the lead',
+        text: 'The lead gives you the exact install line (it points to one tested version). Paste it in the Terminal. It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
         see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
@@ -334,7 +327,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
     title: 'Agents',
     where: 'Dashboard, workspace RA; needs claude or codex logged in on this Mac',
     intro:
-      'Add-ons (start-agent, terminals, worktrees) and the runner were turned on in setup. Repos cannot be added in the dashboard yet (known gap), so step E1 is limited: report what you see.',
+      'Add-ons (start-agent, terminals, worktrees) and the runner were turned on in setup. Repos are added in Settings (section I below), so do section I before E1 if you have not yet.',
     introCommands: ['claude plugin marketplace add severinlindenmann/orch-core', 'claude plugin install orch-core@orch-core'],
     steps: [
       {
@@ -344,7 +337,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
           'mkdir ~/orch-run2-repo && cd ~/orch-run2-repo && git init && git commit --allow-empty -m init',
           `orch set RA-0001 links='{"repos":["repo"],"branches":{"repo":"feat/x"}}'`,
         ],
-        text: 'In Settings, declare it as a repo of RA (name repo). Link it to RA-0001 with the second command (with a grant).',
+        text: 'In Settings, General, Repositories, add it as a repo of RA (name repo; see section I). Link it to RA-0001 with the second command (with a grant).',
         warn: 'The worktree steps follow D60 code; report what you see. The Claude plugin line above needs private repo access.',
       },
       {

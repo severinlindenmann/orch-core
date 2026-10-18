@@ -25,6 +25,9 @@ const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
 // The tester's checklist: its own page without the shell, so it works before any workspace exists (orch setup).
 const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'ChecklistPage')
+const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
+const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
+const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -130,6 +133,38 @@ const dropRoute = createRoute({
   component: DropPage,
 })
 const checklistRoute = createRoute({ getParentRoute: () => rootRoute, path: 'checklist', loader: pageLoader(() => [], [ChecklistPage.preload]), component: ChecklistPage })
+/** The guide of a real host (fixed pages in the bundle). The mock keeps its guide addon page. */
+const guideRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'guide',
+  validateSearch: (s: Record<string, unknown>): { page?: string } => (typeof s.page === 'string' ? { page: s.page } : {}),
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [GuidePage.preload, addonNodes]),
+  component: GuidePage,
+})
+/** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
+const worktreesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'worktrees',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('worktrees')()
+  },
+  loader: pageLoader(() => [], [WorktreesPage.preload]),
+  component: WorktreesPage,
+})
+/** Activity of a real host (#595): the mock keeps its own addon page; a real host that serves `activity/1` gets this route. */
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'activity',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [ActivityPage.preload]),
+  component: ActivityPage,
+})
 const layoutPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '__layout/$name',
@@ -211,7 +246,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, activityRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

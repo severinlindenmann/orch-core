@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError } from '@/api/testrun'
 import { cn } from '@/lib/utils'
 import { copyText } from '../copyLink'
-import { ALL_STEPS, INSTALL_PIN, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, type ChecklistStep } from './run2'
+import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, type ChecklistStep } from './run2'
 import { buildReport, emptyNotes, hasNoteOrFailure, isFailure, STATUS_LABEL } from './report'
 
 const SAVE_DELAY = 700
@@ -394,9 +394,6 @@ export function ChecklistPage() {
           </ul>
         </section>
 
-        <p className="mt-8 border-t border-border pt-3 text-xs text-text-faint">
-          The install line in A1 is pinned to develop commit <code className="font-mono">{INSTALL_PIN.slice(0, 8)}</code>; the lead updates it when develop moves on.
-        </p>
       </div>
     </div>
   )

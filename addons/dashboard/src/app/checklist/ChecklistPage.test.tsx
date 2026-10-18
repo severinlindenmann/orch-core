@@ -4,8 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
-import { ADDON_SECTIONS } from './addons'
-import { ALL_STEPS, INSTALL_PIN, RUN2_SECTIONS } from './run2'
+import { ALL_STEPS, RUN2_SECTIONS } from './run2'
 import { buildReport } from './report'
 
 vi.mock('@/api/testrun', async (orig) => {
@@ -28,15 +27,13 @@ describe('run 2 data', () => {
     const ids = ALL_STEPS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^[A-Z][0-9]{1,2}(\.[0-9]{1,2})?$/)
-    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', ...ADDON_SECTIONS.map((x) => x.id)])
+    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M'])
     for (const id of ['A1', 'A2', 'B1.1', 'B1.7', 'B2.8', 'B3.9', 'C1', 'C8', 'D6', 'E6', 'F8']) expect(ids).toContain(id)
   })
-  it('pins A1 to a full commit and holds no secret material', () => {
-    expect(INSTALL_PIN).toMatch(/^[0-9a-f]{40}$/)
-    const a1 = ALL_STEPS.find((s) => s.id === 'A1')!
-    expect(a1.commands![0]).toContain(`orch-core@${INSTALL_PIN}#subdirectory=addons/dashboard/server`)
+  it('holds no secret material and no install pin (the lead gives the line)', () => {
     const all = JSON.stringify(RUN2_SECTIONS)
-    expect(all).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY|ORCH_GRANT=[A-Za-z0-9_-]{16,}|\.p8/)
+    expect(all).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY|ORCH_GRANT=[A-Za-z0-9_-]{16,}|\.p8|uv tool install/)
+    expect(ALL_STEPS.find((s) => s.id === 'A1')!.text).toMatch(/lead gives you the exact install line/)
   })
 })
 
@@ -47,7 +44,7 @@ describe('the checklist page', () => {
     expect(await screen.findByText(PATH, {}, T)).toBeInTheDocument()
     expect(screen.getByText(/Your notes are saved in/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Known gaps/ })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Install with one line' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Install with the line from the lead' })).toBeInTheDocument()
     expect(screen.getAllByRole('radiogroup')).toHaveLength(ALL_STEPS.length)
     // standalone: no dashboard sidebar around it
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
@@ -91,7 +88,7 @@ describe('the checklist page', () => {
     expect(screen.getByRole('heading', { name: 'Edit a ticket' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Agent verbs need a grant for your shell' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Human approval (no grant)' })).toBeNull()
-    expect(screen.queryByRole('heading', { name: 'Install with one line' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Install with the line from the lead' })).toBeNull()
   })
 
   it('adds a pasted screenshot, shows it with its path, and removes it', async () => {
@@ -134,7 +131,7 @@ describe('the checklist page', () => {
   it('works when the server is unreachable (still shows every step)', async () => {
     m.loadRun.mockRejectedValue(new Error('down'))
     renderApp('/checklist')
-    expect(await screen.findByRole('heading', { name: 'Install with one line' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Install with the line from the lead' }, T)).toBeInTheDocument()
     expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
 

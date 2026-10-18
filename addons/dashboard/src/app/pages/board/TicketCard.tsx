@@ -5,6 +5,8 @@ import { Bot, CircleAlert, Lock } from 'lucide-react'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { AddonContributionView, useSlot } from '@/addon-ui'
 import { can } from '@/api/permissions'
+import { estimateOn, pointsOf, pointsText } from '@/api/estimate'
+import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -17,18 +19,32 @@ export interface BoardPeople {
   epicTitle: (key: string) => string | undefined
 }
 
+/** A ticket's points on its card (Estimate on a real host): the size, as a number. */
+function EstimateChip({ points }: { points: number }) {
+  return (
+    <span title={pointsText(points)} aria-label={pointsText(points)} className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" data-testid="estimate-chip">
+      {points}
+    </span>
+  )
+}
+
 /** The addon fields of a card (estimate...). `own`: an epic's own value, drawn as one dashed pill with an "own" label, so it never reads as part of a sum beside it. */
-export function CardFields({ ticket, own }: { ticket: TicketSummary; own?: boolean }) {
+export function CardFields({ ticket, own, skipPoints }: { ticket: TicketSummary; own?: boolean; skipPoints?: boolean }) {
   const items = useSlot('board.card_field', { ticket })
   const readOnly = !can(useRole(), 'addon.action')
+  const { workspace } = useWorkspace()
+  const points = estimateOn(workspace) && !skipPoints ? pointsOf(ticket.size) : null
   const shown = items.filter((c) => {
     if (c.waiting) return false // a field that reads addon state appears once it has loaded
     if (c.guarded) return true // its `when` held (e.g. a landing chip read from the addon's state)
     const data = ticket.addons?.[c.addon]
     return data && Object.keys(data).length > 0
   })
-  if (shown.length === 0) return null
-  const views = shown.map((c) => <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact bare readOnly={readOnly} />)
+  if (shown.length === 0 && points === null) return null
+  const views = [
+    ...(points === null ? [] : [<EstimateChip key="estimate" points={points} />]),
+    ...shown.map((c) => <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact bare readOnly={readOnly} />),
+  ]
   if (!own) return <>{views}</>
   return (
     <span title="The epic's own estimate, not a sum of its children" className="inline-flex items-center gap-1 rounded-full border border-dashed border-border-strong pl-1.5">

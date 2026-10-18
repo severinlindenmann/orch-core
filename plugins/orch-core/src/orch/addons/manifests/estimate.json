@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "estimate",
+  "version": "0.1.0",
+  "title": "Estimate",
+  "entry": {"cmd": ["orch-estimate", "serve"]},
+  "capabilities": []
+}

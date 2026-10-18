@@ -70,7 +70,8 @@ it('renders every display string in fully populated content', () => {
   expect(screen.getByLabelText('Checked')).toBeVisible()
   expect(screen.getByLabelText('Unchecked')).toBeVisible()
   expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
-  expect(screen.getAllByText('—')).toHaveLength(2)
+  expect(screen.getAllByText('—')).toHaveLength(1) // the missing before-value
+  expect(screen.getAllByText('(not set)')).toHaveLength(1) // the missing after-value
 })
 
 const SEV = 'p_181d953f12ab34cd56ef78901234abcd'

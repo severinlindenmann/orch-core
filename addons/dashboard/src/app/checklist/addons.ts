@@ -325,6 +325,50 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
     ],
   },
   {
+    id: 'O',
+    title: 'Estimate',
+    where: 'Browser, test workspace only',
+    intro: 'Give tickets a size in points (1, 2, 3, 5 or 8) and see the total on the board and on epics. Points are the ticket\'s size, so nothing else is stored.',
+    steps: [
+      {
+        id: 'O1',
+        title: 'Switch Estimate on',
+        text: 'Open Settings, then Add-ons, and switch Estimate on.',
+        see: 'A review for Estimate that lists no special permissions (none). After you sign, the switch shows On. Before that, no ticket shows points or an Estimate box.',
+      },
+      {
+        id: 'O2',
+        title: 'Estimate a ticket',
+        text: 'Open a ticket that is not done. In the right column find the Estimate box and press 3.',
+        see: 'A review that says "Estimate: 3 points". After signing, the box says "3 points" and the Details row says Points: 3 points (not Size). The number 3 is greyed because it is already chosen.',
+      },
+      {
+        id: 'O3',
+        title: 'Change it and take it away',
+        text: 'Press 8, sign. Then press "Not estimated", sign.',
+        see: 'The box follows each change ("8 points", then "Not estimated yet"). Nothing is deleted from the ticket\'s history.',
+      },
+      {
+        id: 'O4',
+        title: 'Board cards and column totals',
+        text: 'Estimate three tickets in the same column (for example 2, 3 and 5), then open the Board.',
+        see: 'Each estimated card has a small round number. The column head shows the total (10 pts); a card without an estimate shows no number and adds nothing.',
+      },
+      {
+        id: 'O5',
+        title: 'An epic adds up its children',
+        text: 'Make an epic with three tickets, estimate two of them (3 and 5), and open the epic and the Board.',
+        see: 'The epic\'s Estimate box says "8 points in this epic · 1 not estimated". On the Board the epic\'s row shows "8 pts · 1 not estimated". A ticket closed as "won\'t do" is not counted.',
+      },
+      {
+        id: 'O6',
+        title: 'List view and switching off',
+        text: 'Open Tickets as a list: the Points column. Then switch Estimate off in Settings, Add-ons.',
+        see: 'The list shows 1 to 8 (or –) under Points. After switching off, the Points column, chips, totals and the Estimate box are gone and the plain Size comes back; the sizes stay on the tickets.',
+      },
+    ],
+  },
+  {
     id: 'P',
     title: 'Usage',
     where: 'Browser and Terminal, on this Mac, test workspace only',

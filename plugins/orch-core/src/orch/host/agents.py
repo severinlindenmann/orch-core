@@ -327,7 +327,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             pairs.append(f"{repo}={path}")
         if pairs:
             env_fixed["ORCH_WORKTREES"] = ":".join(pairs)
-        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub):
+        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub, "claude-code"):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = sub
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
         # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path

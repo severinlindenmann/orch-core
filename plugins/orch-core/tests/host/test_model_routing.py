@@ -133,3 +133,36 @@ def test_the_review_says_the_models_in_words_and_the_unset_ones_as_default(human
     assert rows["Codex: Fix what was sent back"]["after"] == "o3"
     assert rows["Claude: Read and answer"]["after"] == "Harness default"
     assert len(rows) == 10
+
+
+def test_the_runner_takes_a_model_flag_only_from_the_harness_closed_list():
+    import pytest as _pt
+
+    from orch.runner.config import RunnerConfig
+    from orch.runner.link import LOGIN_EXEC, SpawnError, registry_argv
+
+    own = {"SHELL": "/bin/sh"}
+    cfg = RunnerConfig()
+    login = ["$SHELL", "-l", "-c", LOGIN_EXEC]
+    assert registry_argv([*login, "claude", "--model", "sonnet", "go"], own, cfg)[-3:] == ["--model", "sonnet", "go"]
+    assert registry_argv([*login, "codex", "--model", "o3", "go"], own, cfg)
+    assert registry_argv([*login, "claude", "go"], own, cfg)  # no model: the agent default
+    for bad in (["claude", "--model", "gpt-5"], ["codex", "--model", "opus"], ["claude", "--model", "--yolo", "x"],
+                ["claude", "go", "--model", "opus"], ["claude", "--model"]):  # fmt: skip
+        with _pt.raises(SpawnError):
+            registry_argv([*login, *bad], own, cfg)
+
+
+def test_a_stored_before_that_is_not_a_plain_table_falls_back_to_the_generic_row():
+    out: dict = {}
+
+    class Ctx:
+        def note(self, _):
+            return None
+
+    assert (
+        signcontent._models_rows(out, {"claude-code": {"work": "opus"}}, {"claude-code": {"work": "--x"}}, Ctx())
+        is False
+    )
+    assert signcontent._models_rows(out, {"claude-code": {"work": "opus"}}, "junk", Ctx()) is False
+    assert signcontent._models_rows(out, {"claude-code": {"work": "opus"}}, None, Ctx()) is True

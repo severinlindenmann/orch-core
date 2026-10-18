@@ -12,6 +12,8 @@ __all__ = ["MODEL_CHOICES", "MODEL_LABELS", "ROUTE_MODES"]
 #: ``None`` ("harness default") is not a name: no ``--model`` is passed.
 MODEL_CHOICES: dict[str, tuple[str, ...]] = {
     "claude-code": ("fable", "opus", "sonnet", "haiku"),
+    # TODO(owner): the Codex ids wait for the owner's confirmation; edit ONLY this tuple and the two JSON schemas
+    # (event.settings.changed.json, workspace.json; test_model_routing pins them equal).
     "codex": ("gpt-5.4", "gpt-5-codex", "gpt-5", "o3"),
 }
 MODEL_LABELS = {

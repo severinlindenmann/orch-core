@@ -348,6 +348,8 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
 
     if value is not None and not plain(value):
         return False
+    if before is not None and not plain(before):
+        return False  # the host's current value is not a plain table: the generic row shows every byte
     new = value or {}
     old = before if plain(before) else {}
     for harness, hword in _HARNESS_WORDS.items():

@@ -204,7 +204,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       </form>
 
       {loading && !data && <Skeleton className="h-24" />}
-      {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={harness} />}
+      {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
       {note && <p role="status" className="text-xs text-warning" data-testid="agent-changed">{note}</p>}
       {data?.blocked && !noGrant && (
         <div role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger" data-testid="agent-blocked">

@@ -482,7 +482,9 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     linked = _linked_repos(ctx) if viewer.column == "N" else None  # each page re-applies the current visibility
     page: dict[str, Any] = {}
     nxt: int | None = None
-    keyboard = linked is None and viewer.manager and viewer.column == "P"  # the person at the keyboard (R is not served)
+    keyboard = (
+        linked is None and viewer.manager and viewer.column == "P"
+    )  # the person at the keyboard (R is not served)
     keys_of = _linking_tickets(ctx) if keyboard else {}
     for i in range(start, len(names)):
         name = names[i]

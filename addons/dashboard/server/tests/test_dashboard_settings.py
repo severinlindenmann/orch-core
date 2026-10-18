@@ -98,7 +98,9 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None, "tickets": None}]
+    assert got["repos"] == [
+        {"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None, "tickets": None}
+    ]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 

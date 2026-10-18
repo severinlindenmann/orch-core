@@ -178,7 +178,11 @@ def repo(name, entry) -> Repo:
         check = RepoCheck(state=check["state"], branch=got)
     linking = entry.get("linked_by")
     if linking is not None:
-        if not (isinstance(linking, list) and len(linking) <= 12 and all(isinstance(k, str) and TICKET_KEY.fullmatch(k) for k in linking)):
+        if not (
+            isinstance(linking, list)
+            and len(linking) <= 12
+            and all(isinstance(k, str) and TICKET_KEY.fullmatch(k) for k in linking)
+        ):
             raise bad()
     return Repo(
         name=name, default_branch=branch, remote=remote(entry.get("remote")), path=path, check=check, tickets=linking

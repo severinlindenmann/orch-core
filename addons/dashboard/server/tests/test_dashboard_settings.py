@@ -42,7 +42,7 @@ def test_reads_need_a_session(client, stub, p1):
         assert client.get(f"/api/w/{stub.ws}/{path}").status_code == 401
 
 
-def test_the_owner_reads_the_settings_with_defaults_marked_and_no_repo_path(worlds, team, p1):
+def test_the_owner_reads_the_settings_with_defaults_marked_and_the_repo_path_the_host_sent(worlds, team, p1):
     env, people, grants = team
     env.tick()
     env.store.append(
@@ -70,9 +70,10 @@ def test_the_owner_reads_the_settings_with_defaults_marked_and_no_repo_path(worl
     assert got["defaults"] == ["claim_ttl_min", "lease_ttl_min"]  # only the unset ones are marked as defaults
     assert set(got["gates"]) == {"requirements", "plan", "verify", "code"}
     assert got["gates"]["code"]["independent"] is True and "assignees" in got["gates"]["code"]["not"]
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": "https://git.example.test/a/code"}]
+    (repo,) = got["repos"]
+    assert (repo["name"], repo["default_branch"], repo["remote"]) == ("code", "main", "https://git.example.test/a/code")
+    assert repo["path"] == "/srv/secret-place/code"  # the host sent it to an owner; a member never gets it (below)
     assert got["settings_at"]["by"] == env.owner.ref and got["policy_at"] is None
-    assert "secret-place" not in json.dumps(got)  # the path is never forwarded, even to an owner
 
 
 def test_a_member_gets_names_and_branches_only(worlds, team):
@@ -97,7 +98,9 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None}]
+    assert got["repos"] == [
+        {"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}
+    ]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 
@@ -120,7 +123,7 @@ def test_a_host_without_the_settings_cap_says_unavailable_and_nothing_is_guessed
     assert "settings_read" not in world.get("/api/session").json()["features"]
 
 
-def test_the_repo_adapter_strips_credentials_and_forwards_no_path():
+def test_the_repo_adapter_strips_credentials_and_forwards_only_the_path_and_check_the_host_sent():
     first = {
         "settings": {
             "grant_hours": 8,
@@ -142,7 +145,14 @@ def test_the_repo_adapter_strips_credentials_and_forwards_no_path():
         ("b", None),
         ("c", "local:c"),
     ]
-    assert "tok" not in got.model_dump_json() and "/p/a" not in got.model_dump_json()
+    assert "tok" not in got.model_dump_json()
+    assert [r.path for r in got.repos] == ["/p/a", None, None]
+    first["settings"]["repos"]["a"]["check"] = {"state": "present", "branch": "main"}
+    assert adapters.settings.settings(first, [], False).repos[0].check.branch == "main"
+    for bad in ({"state": "odd"}, {"state": "present", "branch": f"ma{chr(0x202e)}in"}, "present"):
+        first["settings"]["repos"]["a"]["check"] = bad
+        with pytest.raises(Exception):
+            adapters.settings.settings(first, [], False)
 
 
 @pytest.mark.parametrize(
@@ -733,3 +743,38 @@ def test_typed_one_line_texts_refuse_bidi_and_invisible_characters(worlds, team,
         body = {"action": "grant_revoke", "grant": "gr_" + "0" * 26, field: value}
     res = handoff(world, body)
     assert res.status_code == 400
+
+
+def test_repo_set_and_remove_are_typed_settings_changes(worlds, team, host_calls):
+    world = worlds(team[0].owner.ref)
+    res = handoff(world, {"action": "repo_set", "name": "api", "path": "/work/api", "default_branch": "main"})
+    assert res.status_code == 200, res.text
+    want = {"repos": {"api": {"path": "/work/api", "default_branch": "main"}}}
+    assert res.json()["events"][0]["type"] == "settings.changed" and res.json()["events"][0]["set"] == want
+    assert next(c for c in host_calls if c[0] == "human.prepare")[1]["args"] == {"set": want}
+    res = handoff(world, {"action": "repo_remove", "name": "api"}, 2)
+    assert res.status_code == 200, res.text
+    assert res.json()["events"][0]["set"] == {"repos": {"api": None}}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "repo_set", "name": "Api", "path": "/x"},
+        {"action": "repo_set", "name": "api", "path": "relative/dir"},
+        {"action": "repo_set", "name": "api", "path": ""},
+        {"action": "repo_set", "name": "api", "path": "/x\u202ey"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "https://user:tok@git.example.test/a"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "git@git.example.test:a.git"},
+        {"action": "repo_set", "name": "api", "path": "/x", "remote": "http://git.example.test/a"},
+        {"action": "repo_set", "name": "api", "path": "/x", "extra": 1},
+        {"action": "repo_set", "name": "api"},
+        {"action": "repo_remove", "name": "../x"},
+        {"action": "repo_remove"},
+    ],
+)
+def test_repo_actions_are_closed_and_typed(worlds, team, body):
+    world = worlds(team[0].owner.ref)
+    res = handoff(world, body)
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert "tok" not in res.text and world.stub.requests.table == {}

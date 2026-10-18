@@ -631,7 +631,7 @@ def test_notes_are_a_list():
     assert isinstance(c["notes"], list) and "note" not in c
 
 
-def test_settings_repos_read_as_one_plain_row_per_repo(human, served):
+def test_settings_repos_read_as_labelled_rows_per_repo(human, served):
     event = {
         **sample("settings.changed"),
         "set": {
@@ -646,13 +646,54 @@ def test_settings_repos_read_as_one_plain_row_per_repo(human, served):
     mat["before"] = {"repos": {"api": {"path": "/work/api"}, "gone": {"path": "/work/gone"}, "web": None}}
     c = build({"op": "settings.set", "events": [event], "material": mat})
     rows = {r["field"]: r for r in c["fields_changed"]}
-    assert rows["repository api"]["before"] == "folder /work/api"
-    assert rows["repository api"]["after"] == (
-        "folder /work/api2 · remote https://example.org/a/api · main branch main"
+    assert rows["repository api"]["after"] == "changed" and rows["repository web"]["after"] == "added"
+    assert rows["repository gone"]["after"] == "removed (the folder and its files stay on disk)"
+    assert (rows["repository api: folder"]["before"], rows["repository api: folder"]["after"]) == (
+        "/work/api",
+        "/work/api2",
     )
-    assert rows["repository gone"]["after"].startswith("removed (the folder and its files stay on disk)")
-    assert rows["repository web"]["before"] is None and rows["repository web"]["after"] == "folder /work/web"
+    assert (rows["repository api: remote"]["before"], rows["repository api: remote"]["after"]) == (
+        "(none)",
+        "https://example.org/a/api",
+    )
+    assert rows["repository api: main branch"]["after"] == "main"
+    assert (
+        rows["repository web: remote"]["after"] == "(none)" and rows["repository web: main branch"]["after"] == "(none)"
+    )
+    assert (
+        rows["repository gone: folder"]["before"] == "/work/gone"
+        and rows["repository gone: folder"]["after"] == "(removed)"
+    )
     assert rows["repository api"]["before_note"] == "per host, not signed"
+
+
+def _repo_event_rows(entry):
+    event = {**sample("settings.changed"), "set": {"repos": {"api": entry}}}
+    c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
+    return c, {r["field"]: r["after"] for r in c["fields_changed"]}
+
+
+def test_a_repo_value_cannot_pose_as_another_field(human, served):
+    spoof = "/x \u00b7 remote git@good:org/r \u00b7 main branch trunk"
+    c, rows = _repo_event_rows({"path": spoof, "remote": "https://example.org/real"})
+    assert rows["repository api: folder"] == spoof  # one value on the Folder row, whole
+    assert rows["repository api: remote"] == "https://example.org/real"  # the real remote has its own row
+    assert rows["repository api: main branch"] == "(none)"
+    assert not any("git@good" in v for k, v in rows.items() if not k.endswith(": folder"))
+
+
+def test_a_repo_newline_and_bidi_never_reach_a_row_raw(human, served):
+    c, rows = _repo_event_rows({"path": "/x\n/y", "remote": "https://e.org/a\u202eb", "default_branch": "m\x00ain"})
+    assert "\n" not in rows["repository api: folder"] and "/x ⏎ /y" == rows["repository api: folder"]
+    text = "\n".join(signcontent.text(c, signer._clean))
+    for bad in ("\u202e", "\x00"):
+        assert bad not in text
+    assert text.count("repository api: remote") == 1
+
+
+def test_an_empty_repo_remote_is_none_not_blank(human, served):
+    c, rows = _repo_event_rows({"path": "/x", "remote": "", "default_branch": ""})
+    assert rows["repository api: remote"] == "(none)" and rows["repository api: main branch"] == "(none)"
 
 
 def test_an_unplain_repo_entry_keeps_the_whole_value_row(human, served):

@@ -5,8 +5,9 @@ from another read. A field the host leaves out is `None` (unknown), never zero o
 withholds by role (a repo's `path` and `remote` for anyone but an owner or maintainer, other people's grants for anyone
 but an owner) simply is not in the answer, and the UI says nothing about it.
 
-Two things are held back on purpose. A repo's `path` is never forwarded (the Repos addon owns repo editing, and a
-local path belongs to its owner's machine). A `remote` is shown only as a canonical identity without credentials.
+Two things are held to the host's word. A repo's `path` and `check` (is the folder there, which branch) are forwarded
+only when the host sent them, which it does for an owner or maintainer at the keyboard and nobody else; they are never
+asked for another way. A `remote` is shown only as a canonical identity without credentials.
 """
 
 import re
@@ -44,10 +45,23 @@ class Stamp(BaseModel):
     by: str
 
 
+REPO_STATES = ("present", "missing", "not_git", "unreadable")
+
+
+class RepoCheck(BaseModel):
+    """What the host saw at the repo's folder just now (read-only): the folder and the branch checked out."""
+
+    state: str
+    branch: str | None = None
+
+
 class Repo(BaseModel):
     name: str
     default_branch: str | None
     remote: str | None = None
+    #: the declared folder: only when the host sent it (owners and maintainers); otherwise absent, never guessed
+    path: str | None = None
+    check: RepoCheck | None = None
 
 
 class Settings(BaseModel):
@@ -146,7 +160,20 @@ def repo(name, entry) -> Repo:
     branch = entry.get("default_branch")
     if branch is not None and not (isinstance(branch, str) and BRANCH.fullmatch(branch) and not hidden(branch)):
         raise bad()
-    return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")))  # `path` is never forwarded
+    path = entry.get("path")
+    if path is not None and not (isinstance(path, str) and 0 < len(path) <= 1024 and not hidden(path)):
+        raise bad()
+    check = entry.get("check")
+    if check is not None:
+        got = check.get("branch") if isinstance(check, dict) else 0
+        if (
+            not isinstance(check, dict)
+            or check.get("state") not in REPO_STATES
+            or not (got is None or (isinstance(got, str) and BRANCH.fullmatch(got) and not hidden(got)))
+        ):
+            raise bad()
+        check = RepoCheck(state=check["state"], branch=got)
+    return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")), path=path, check=check)
 
 
 def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:

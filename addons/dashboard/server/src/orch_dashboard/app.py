@@ -9,8 +9,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, addon_switches, agents, click, handoff, phone, reads, settings
-from . import signprefs, terminals
+from . import (
+    adapters,
+    addon_routes,
+    addon_switches,
+    agents,
+    click,
+    handoff,
+    phone,
+    reads,
+    settings,
+    signprefs,
+    terminals,
+)
 from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth

@@ -36,6 +36,7 @@ import os
 import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from orch import gitbrowse
 
@@ -149,6 +150,7 @@ class Root:
                 found.add(_identity(os.stat(p)))
         return found
 
+    @cached_property
     def _banned_files(self) -> tuple[set[tuple[int, int]], bool]:
         """``(identities, complete)``: the files of EVERY orch-owned place of the workspace (the state and run folders,
         the store folder, and the legacy store files directly in the workspace folder, :attr:`orch`), found by walking
@@ -158,7 +160,7 @@ class Root:
         found: set[tuple[int, int]] = set()
         complete = True
         seen = 0
-        stack = [*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)]
+        stack = sorted({*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)})  # each once
         while stack:
             path = stack.pop()
             if seen >= WALK_LIMIT:
@@ -186,7 +188,7 @@ class Root:
         be) one of orch's own files is `Denied`. Every path that returns or searches content calls this through
         :meth:`stat_file` or :meth:`read`."""
         if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
-            ids, complete = self._banned_files()
+            ids, complete = self._banned_files
             if not complete or _identity(st) in ids:
                 raise Denied("orch's own files")
 

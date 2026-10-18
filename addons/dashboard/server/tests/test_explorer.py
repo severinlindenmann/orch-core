@@ -1024,3 +1024,23 @@ def test_a_path_that_is_a_file_now_but_was_a_folder_at_that_commit_is_refused(ge
     # than the file is refused, so those deletions are never shown either
     res = get("/commit", root="ws", path="thing", sha=new)
     assert res.status_code == 404 and "INNERSECRET" not in res.text
+
+
+def test_a_search_with_many_multi_link_hits_walks_orch_files_once(get, world, monkeypatch):
+    for i in range(12):
+        (world.proj / f"m{i}.txt").write_text("manylinks needle\n")
+        os.link(world.proj / f"m{i}.txt", world.proj / f"n{i}.txt")
+    git(world.proj, "add", "-A")
+    git(world.proj, "commit", "-q", "-m", "many links", n=5)
+    walks = []
+    real = os.lstat
+
+    def counting(path, *a, **k):
+        if str(path).endswith("/config.json"):  # a store file: the walk visits it once per walk
+            walks.append(path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(guard.os, "lstat", counting)
+    got = get("/search", q="manylinks").json()
+    assert len(got["hits"]) == 24
+    assert len(walks) == 1, walks

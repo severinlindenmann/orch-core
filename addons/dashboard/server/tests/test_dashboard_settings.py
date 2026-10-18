@@ -98,9 +98,7 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [
-        {"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}
-    ]
+    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 
@@ -149,7 +147,7 @@ def test_the_repo_adapter_strips_credentials_and_forwards_only_the_path_and_chec
     assert [r.path for r in got.repos] == ["/p/a", None, None]
     first["settings"]["repos"]["a"]["check"] = {"state": "present", "branch": "main"}
     assert adapters.settings.settings(first, [], False).repos[0].check.branch == "main"
-    for bad in ({"state": "odd"}, {"state": "present", "branch": f"ma{chr(0x202e)}in"}, "present"):
+    for bad in ({"state": "odd"}, {"state": "present", "branch": f"ma{chr(0x202E)}in"}, "present"):
         first["settings"]["repos"]["a"]["check"] = bad
         with pytest.raises(Exception):
             adapters.settings.settings(first, [], False)
@@ -745,13 +743,17 @@ def test_typed_one_line_texts_refuse_bidi_and_invisible_characters(worlds, team,
     assert res.status_code == 400
 
 
-def test_repo_set_and_remove_are_typed_settings_changes(worlds, team, host_calls):
+def test_repo_set_and_remove_are_typed_settings_changes(worlds, team, host_calls, tmp_path):
     world = worlds(team[0].owner.ref)
-    res = handoff(world, {"action": "repo_set", "name": "api", "path": "/work/api", "default_branch": "main"})
+    (tmp_path / "api" / ".git").mkdir(parents=True)
+    path = str(tmp_path / "api")
+    res = handoff(world, {"action": "repo_set", "name": "api", "path": "/no/such/folder"})
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"  # the host looks at the path
+    res = handoff(world, {"action": "repo_set", "name": "api", "path": path, "default_branch": "main"})
     assert res.status_code == 200, res.text
-    want = {"repos": {"api": {"path": "/work/api", "default_branch": "main"}}}
+    want = {"repos": {"api": {"path": path, "default_branch": "main"}}}
     assert res.json()["events"][0]["type"] == "settings.changed" and res.json()["events"][0]["set"] == want
-    assert next(c for c in host_calls if c[0] == "human.prepare")[1]["args"] == {"set": want}
+    assert [c for c in host_calls if c[0] == "human.prepare"][-1][1]["args"] == {"set": want}
     res = handoff(world, {"action": "repo_remove", "name": "api"}, 2)
     assert res.status_code == 200, res.text
     assert res.json()["events"][0]["set"] == {"repos": {"api": None}}

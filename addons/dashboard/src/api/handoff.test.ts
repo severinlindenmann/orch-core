@@ -106,6 +106,12 @@ describe('workspace operations (M4)', () => {
     expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
     expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
   })
+  it('a sequence that gives agents access (Extend, Start again) shows GRANT, as the terminal asks', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    const sequence = { intent: { agent: { days: 3 } } } as never
+    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence } })).toBe('GRANT')
+    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence: { intent: { agent: null } } as never } })).toBeNull()
+  })
   it('nothing is promised for operations whose signer word is not settled, or for a ticket', async () => {
     const { workspaceConfirmWord } = await import('./handoff')
     expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material })).toBeNull() // no prefix known

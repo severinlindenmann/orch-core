@@ -780,3 +780,34 @@ def test_repo_actions_are_closed_and_typed(worlds, team, body):
     res = handoff(world, body)
     assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
     assert "tok" not in res.text and world.stub.requests.table == {}
+
+
+def test_f8_the_repo_path_check_runs_before_any_request_and_says_why_in_plain_words(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch_dashboard.errors import HostError
+    from orch_dashboard.gateway import Gateway
+
+    home = tmp_path / "home"
+    root = tmp_path / "proj"
+    (root / ".orch").mkdir(parents=True)
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    home.mkdir()
+    ws = "a" * 32
+    me = SimpleNamespace(_pins=lambda: {ws: {"root": str(root), "store": ".orch"}})
+
+    def refusal(path):
+        with pytest.raises(HostError) as exc:
+            Gateway.check_repo_path(me, ws, path)
+        return exc.value.error["message"]
+
+    assert "home folder" in refusal(str(home))
+    assert "not a git repository" in refusal(str(tmp_path / "plain"))
+    assert "orch's own data folder" in refusal(str(root / ".orch"))
+    assert "does not exist" in refusal(str(tmp_path / "nope"))
+    Gateway.check_repo_path(me, ws, str(tmp_path / "repo"))  # a real git folder passes
+    Gateway.check_repo_path(
+        SimpleNamespace(_pins=lambda: {}), ws, str(home)
+    )  # a workspace not known here: the host decides

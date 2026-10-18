@@ -370,3 +370,12 @@ it.each([{ via: 'phone' as const, sig_ok: true }, { presence: 'secure-enclave-un
   expect(pop.textContent).not.toMatch(/verified|presence|secure-enclave|signature|signed on phone/i)
   expect(within(pop).getByText(/Approved by Severin/)).toHaveTextContent('as reported by your Mac')
 })
+
+describe('F8: agent names on the ticket', () => {
+  it('names a known harness, and "An agent" for any other id (never "orch-cli")', async () => {
+    const { agentName } = await import('./shared')
+    expect(agentName('claude-code')).toBe('Claude Code')
+    expect(agentName('codex')).toBe('Codex')
+    expect(agentName('orch-cli')).toBe('An agent')
+  })
+})

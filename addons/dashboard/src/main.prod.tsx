@@ -1,3 +1,4 @@
+import './lib/zodJitless'
 import { bootstrapSetup, isSetupPage } from './api/setup'
 import { bootstrap } from './api/bootstrap'
 import './lib/cssom'

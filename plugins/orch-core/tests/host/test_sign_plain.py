@@ -568,10 +568,8 @@ def test_a_question_shows_its_options_and_labels_what_the_question_hash_does_not
     c = build({"op": "answer", "events": [ev], "material": material})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["option a"] == "Left (cost 1d)" and rows["option b"] == "Right"
-    assert (
-        rows["addressed to"].endswith("(per host, not signed)")
-        and rows["blocks the ticket"] == "true (per host, not signed)"
-    )
+    assert rows["addressed to (per host)"] == "p_" + "7" * 32 and rows["blocks the ticket (per host)"] == "yes"
+    assert c["fields_title"] == "About this question"  # no "- ->" before values
     assert c["headline"].startswith("Answer “Which way?” on DEMO-0001") and c["headline"].endswith("with Left")
     material["question"]["future"] = 1
     with pytest.raises(signcontent.PlainUnavailable):
@@ -846,7 +844,7 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["your choice"] == "Hello"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option"] == "hello (per host, not signed)"
+    assert rows["recommended option (per host)"] == "Hello"
     assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
     assert c["ticket"]["key"] == "RA-0001"
     view = "\n".join(signcontent.text(c, signer._clean))
@@ -930,3 +928,44 @@ def test_f7_a_question_with_the_same_option_key_twice_falls_back():
     q["material"]["question"]["options"].append({"key": "hello", "label": "Other"})
     with pytest.raises(signcontent.PlainUnavailable):
         build(q)
+
+
+def _stop(grant: str, reason: str | None = None) -> dict:
+    ev = {"type": "grant.revoked", "actor": sample("grant.issued")["actor"], "grant": grant}
+    return {**ev, "reason": reason} if reason else ev
+
+
+def test_f8_a_stop_names_the_access_by_its_first_and_last_characters():
+    gid = "gr_01M57ABCDEFGHJKMNPQRZMPS4"
+    ev = _stop(gid)
+    c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
+    assert c["headline"] == "Take back the agent access gr_…" + gid[-10:]
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["access taken back"] == "gr_…" + gid[-10:]
+    assert gid not in "\n".join(signcontent.text(c, signer._clean)) + c["headline"]  # the full id is in the details
+
+
+def test_f8_an_extend_shows_both_accesses_and_refuses_the_plain_view_for_the_same_id():
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA"}
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    c = build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert (
+        rows["new access"] == "gr_…" + new["grant"][-10:] and rows["access taken back"] == "gr_…" + old["grant"][-10:]
+    )
+    same = _stop(new["grant"], "extended")
+    with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
+        build({"op": "grant", "events": [new, same], "material": material_for("grant.issued", new)})
+
+
+def test_f8_a_stop_without_a_usable_id_shows_the_value_as_it_is():
+    ev = _stop("x")
+    c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
+    assert c["headline"] == "Take back the agent access x"
+
+
+def test_f8_two_different_accesses_with_one_short_form_are_refused_in_the_plain_view():
+    new = {**sample("grant.issued"), "grant": "gr_0AAAAAAAAAAAAAAAAAAAAAAAAA"}
+    old = _stop("gr_0BBBBBBBBBBAAAAAAAAAAAAAAA"[:3] + "1" + "gr_0AAAAAAAAAAAAAAAAAAAAAAAAA"[4:], "extended")
+    assert old["grant"][-10:] == new["grant"][-10:] and old["grant"] != new["grant"]
+    with pytest.raises(signcontent.PlainUnavailable):
+        build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})

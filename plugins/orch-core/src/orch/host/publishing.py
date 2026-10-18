@@ -72,6 +72,8 @@ PUBLISH_CAPS = ["publish/1"]
 ADDON = "publish"
 PER_MINUTE = 10
 MAX_STAGED = 20
+AGENT_STAGES = 3
+STAGE_BYTES = 200 * 1024 * 1024
 MAX_RECORDS = 500
 #: a staged copy no one finished with is dropped after this; a signature is good for a shorter time
 STAGE_KEEP = 24 * 3600
@@ -383,7 +385,7 @@ def _ticket(call: Call, ref: str) -> Any:
     return Viewer.of(call).ticket(call.service.store, ref)
 
 
-def _artifact_bytes(call: Call, view: Any, name: str) -> tuple[bytes, str]:
+def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes, str]:
     """One artifact of the ticket, by the ticket manifest and its digest (as ``artifact.get``): opened without following
     a link, one hard link, a regular file, hashed to the digest the log names."""
     from .visibility import Viewer
@@ -401,6 +403,8 @@ def _artifact_bytes(call: Call, view: Any, name: str) -> tuple[bytes, str]:
         info = os.fstat(handle.fileno())
         if info.st_size > approval.LIMITS["file_bytes"]:
             raise HostError("quota.host", f"{art.name} is over {approval.human_size(approval.LIMITS['file_bytes'])}")
+        if info.st_size > room:  # before a byte is read: the stage cap (workspace) and the share cap
+            raise HostError("quota.host", "the staged copies would use too much room: discard some")
         data = handle.read(approval.LIMITS["file_bytes"] + 1)
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
     if digest != art.digest:
@@ -429,12 +433,24 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     files: list[dict[str, Any]] = []
     blobs: list[bytes] = []
     total = 0
+    stages = _stages(service)
+    if call.column.name != "P" and sum(1 for m in stages if m.get("origin") == "agent") >= AGENT_STAGES:
+        raise HostError("quota.host", f"an agent may have {AGENT_STAGES} staged copies at most: ask a person")
+    if len(stages) >= MAX_STAGED:
+        raise HostError("quota.host", f"at most {MAX_STAGED} staged copies wait at once: discard some")
+    used = sum(f["size"] for m in stages for f in m.get("files", []))
+    lowered = [n.lower() for n in args["artifacts"]]
+    if len(set(lowered)) != len(lowered):
+        raise HostError(
+            "invalid.input", "two file names differ only in upper and lower case: the server would merge them"
+        )
     for name in args["artifacts"]:
         try:
             approval.check_name(name)
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
-        data, digest = _artifact_bytes(call, view, name)
+        room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
+        data, digest = _artifact_bytes(call, view, name, room)
         total += len(data)
         if total > approval.LIMITS["share_bytes"]:
             raise HostError(
@@ -505,7 +521,17 @@ def facts_for(service: WorkspaceService, args: dict[str, Any], call: Call) -> ap
     meta = _load_stage(service, args["staged_id"])
     _verify_stage(service, meta)
     view = _ticket(call, meta["ticket"]["uid"])
+    _may_share(call, view)
     return approval.ApprovalFacts(meta["staged_id"], view.key, _text(service, meta, cfg))
+
+
+def _may_share(call: Call, view: Any) -> None:
+    """Who may sign a share: the ticket owner, workspace owners and maintainers (as ``policy.set`` on a ticket)."""
+    from orch.model import claims
+
+    core = call.service.store.state._core
+    if call.viewer is None or not claims.may_manage(core.ws, core.tickets[view.uid], call.viewer):
+        raise HostError("role.denied", "sharing is for the ticket owner, owners and maintainers")
 
 
 def _signed_approval(call: Call, meta: dict[str, Any], text: str) -> bool:
@@ -517,19 +543,25 @@ def _signed_approval(call: Call, meta: dict[str, Any], text: str) -> bool:
     if head is None:
         return False
     now = call.service.clock()
-    for ev in reversed(store.events(uid, after=max(head - 200, 0))):
-        if ev.get("type") != "log.added" or ev.get("text") != text:
-            continue
-        actor = ev.get("actor") or {}
-        at = _epoch(ev.get("at"))
-        if (
-            actor.get("kind") == "person"
-            and actor.get("id") == call.viewer
-            and at is not None
-            and 0 <= now - at <= APPROVAL_VALID
-            and ev.get("sig")
-        ):
-            return True
+    top = head
+    while top > 0:  # newest first, in chunks, until the notes are older than a signature stays good
+        low = max(top - 200, 0)
+        for ev in reversed(store.events(uid, after=low, limit=top - low)):
+            at = _epoch(ev.get("at"))
+            if at is not None and now - at > APPROVAL_VALID:
+                return False
+            if ev.get("type") != "log.added" or ev.get("text") != text:
+                continue
+            actor = ev.get("actor") or {}
+            if (
+                actor.get("kind") == "person"
+                and actor.get("id") == call.viewer
+                and at is not None
+                and 0 <= now - at <= APPROVAL_VALID
+                and ev.get("sig")
+            ):
+                return True
+        top = low
     return False
 
 
@@ -584,6 +616,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         return plan
     meta = _load_stage(service, args["staged_id"])
     view = _ticket(call, meta["ticket"]["uid"])
+    _may_share(call, view)
     if view.uid != meta["ticket"]["uid"]:
         raise HostError("publish.changed", "the staged copy belongs to another ticket")
     text = _text(service, meta, cfg)
@@ -607,6 +640,12 @@ def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if call.column.name != "P" and (meta["origin"] != "agent" or not _claim_ok(call, view)):
         raise HostError("op.not_allowed", "an agent discards only the copies it prepared, on its own ticket")
     _gate(call)
+    if os.path.lexists(_stage_dir(service, meta["staged_id"]) / "send.json"):
+        raise HostError(
+            "publish.changed",
+            "this copy was already being sent and may be live on the server: revoke the share "
+            f"{meta['share_id']} (orch publish revoke), then discard",
+        )
     with _MU:
         if (service.workspace_id, meta["staged_id"]) in _SENDING:
             raise HostError("lock.busy", "this copy is being sent", retry_after_ms=1000)
@@ -874,6 +913,23 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             token_hash_hex=send["token_hash"],
             files=meta["files"],
         )
+        rec = {
+            "id": meta["share_id"],
+            "ticket": meta["ticket"]["uid"],
+            "kind": meta["kind"],
+            "state": "live",
+            "expires_at": _iso(send["expires_ms"] / 1000),
+            "view_limit": meta["views"],
+            "views": 0,
+            "files": [f["name"] for f in meta["files"]],
+            "created_at": _iso(service.clock()),
+            "server": cfg["server"],
+            "origin": meta["origin"],
+            "approved_by": plan["person"],
+        }
+        with _MU:  # a share can go live from here on (a lost commit answer): revoke must find it, with no token in it
+            rows = [r for r in _records(service) if r.get("id") != rec["id"]]
+            _save_records(service, [*rows, {**rec, "state": "sending"}])
         if "card" in plan:
             _register(call, {**plan, "op": "publish.register"})
         for attempt in (0, 1):
@@ -889,23 +945,9 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
         flow.commit(client, service.workspace_id, meta["share_id"])
         link = f"{cfg['share']}/s/{meta['share_id']}#t={token}"
-        rec = {
-            "id": meta["share_id"],
-            "ticket": meta["ticket"]["uid"],
-            "kind": meta["kind"],
-            "state": "live",
-            "expires_at": _iso(send["expires_ms"] / 1000),
-            "view_limit": meta["views"],
-            "views": 0,
-            "files": [f["name"] for f in meta["files"]],
-            "created_at": _iso(service.clock()),
-            "server": cfg["server"],
-            "origin": meta["origin"],
-            "approved_by": plan["person"],
-        }
         with _MU:
             rows = [r for r in _records(service) if r.get("id") != rec["id"]]
-            _save_records(service, [*rows, rec])
+            _save_records(service, [*rows, {**rec, "state": "live"}])
         _audit(
             call,
             "publish.share",

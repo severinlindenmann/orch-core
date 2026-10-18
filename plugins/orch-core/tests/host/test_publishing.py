@@ -804,3 +804,96 @@ def test_the_ops_are_all_declared_and_versioned():
     }  # fmt: skip
     assert all(v == 1 for v in PUBLISH_OPS.values())
     assert sha(b"x").startswith("sha256:") and stored  # the helpers this module shares with the artifact tests
+
+
+# -- review fixes (Opus on #685) -------------------------------------------------------------------------------------
+
+
+def test_a_share_that_went_live_with_a_lost_commit_answer_can_be_revoked(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    for _ in range(3):  # the commit goes through on the server but its answer never arrives
+        w.server.fail.append(("POST", r"/commit$", 0, ""))
+    real = w.server.__call__
+
+    def commit_lands(scheme, netloc, method, target, headers, body, timeout):
+        if method == "POST" and target.endswith("/commit"):
+            real(scheme, netloc, method, target, headers, body, timeout)  # the server commits
+            raise OSError("answer lost")
+        return real(scheme, netloc, method, target, headers, body, timeout)
+
+    w.server.fail.clear()
+    publishing.TRANSPORT = commit_lands
+    res = w.send(staged)
+    assert err(res) == "publish.unreachable"
+    (row,) = ok(w.req("publish.list", {}))["data"]["shares"]
+    assert row["state"] == "sending" and "token" not in json.dumps(row)
+    (share_id,) = w.server.shares
+    assert w.server.shares[share_id]["state"] == "live"
+    ok(w.req("publish.revoke", {"share_id": row["id"]}))
+    assert w.server.shares[share_id]["state"] == "revoked"
+    assert ok(w.req("publish.list", {}))["data"]["shares"][0]["state"] == "revoked"
+
+
+def test_a_copy_that_may_be_live_is_not_discarded(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    for _ in range(3):
+        w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))
+    assert err(w.send(staged)) == "publish.unreachable"
+    res = w.req("publish.discard", {"staged_id": staged})
+    assert err(res) == "publish.changed" and "revoke" in res["error"]["message"]
+    assert w.stage_dir(staged).exists()
+
+
+def test_only_the_ticket_owner_or_a_manager_may_sign_a_share(w, served):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    member = served.lab.add_member()
+    store = served.lab.ws.other()
+    try:
+        state = store.state
+        service = SimpleNamespace(store=SimpleNamespace(state=state))
+        view = store.ticket(key)
+        publishing._may_share(SimpleNamespace(service=service, viewer=served.lab.owner), view)  # an owner may
+        with pytest.raises(HostError) as exc:
+            publishing._may_share(SimpleNamespace(service=service, viewer=member.ref), view)
+        assert exc.value.code == "role.denied"
+        with pytest.raises(HostError):
+            publishing._may_share(SimpleNamespace(service=service, viewer=None), view)
+    finally:
+        store.close()
+
+
+def test_stage_room_is_checked_before_artifacts_are_read(w, monkeypatch):
+    uid, key = w.ticket_with(**{"report.md": REPORT, "b.md": REPORT + b"b"})
+    monkeypatch.setattr(publishing, "STAGE_BYTES", len(REPORT) + 5)
+    monkeypatch.setattr(publishing, "PER_MINUTE", 100)
+    w.prepare(key, "report.md")
+    assert err(w.req("publish.prepare", {"ref": key, "artifacts": ["b.md"]})) == "quota.host"
+
+
+def test_an_agent_may_have_three_staged_copies_at_most(w, monkeypatch):
+    monkeypatch.setattr(publishing, "PER_MINUTE", 100)
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    agent = w.served.client()
+    ok(agent.req("claim", {"ref": key}, grant=w.served.grant, session=SESSION, idem=True))
+    for _ in range(publishing.AGENT_STAGES):
+        ok(
+            agent.req(
+                "publish.prepare", {"ref": key, "artifacts": ["report.md"]}, grant=w.served.grant, session=SESSION
+            )
+        )
+    res = agent.req("publish.prepare", {"ref": key, "artifacts": ["report.md"]}, grant=w.served.grant, session=SESSION)
+    assert err(res) == "quota.host"
+    w.prepare(key, "report.md")  # a person is not held to the agent limit
+
+
+def test_names_that_differ_only_in_case_are_refused(w):
+    uid, key = w.ticket_with(**{"Report.md": REPORT, "report.md": REPORT})
+    assert err(w.req("publish.prepare", {"ref": key, "artifacts": ["Report.md", "report.md"]})) == "invalid.input"

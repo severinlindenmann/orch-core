@@ -130,7 +130,7 @@ describe('start', () => {
   it('a changed choice must be previewed again before Start', async () => {
     mount()
     await screen.findByTestId('agent-preview', {}, T)
-    fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'fix' } })
+    fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'fix' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument()
     expect(screen.getByTestId('agent-start')).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
@@ -431,6 +431,6 @@ it('Start agent folds the technical lines into Details and explains each mode', 
   expect(details).not.toHaveAttribute('open')
   expect(within(details).getByText('Runs')).toBeInTheDocument()
   expect(screen.getByTestId('agent-mode-help')).toHaveTextContent(/Works through the ticket/)
-  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'refine' } })
+  fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'refine' } })
   expect(screen.getByTestId('agent-mode-help')).toHaveTextContent(/changes no code/)
 })

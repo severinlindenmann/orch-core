@@ -62,7 +62,7 @@ describe('the gate', () => {
 
   it('pair-unavailable says so and calls nothing', async () => {
     open('pair-unavailable')
-    expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone is not available on this host yet.')
+    expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
     expect(pairPreviewForTests.fixture()!.calls).toEqual([])
   })
 })

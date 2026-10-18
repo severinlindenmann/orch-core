@@ -27,7 +27,8 @@ const SELECT =
 export function actorName(a: ActivityRow['actor']): string {
   if (a.kind === 'person') return a.name || 'Someone'
   if (a.kind === 'agent') {
-    const label = findHarness(harnessForAgent(a.id))?.label ?? a.id
+    // The harness name when known; "orch-cli" and other ids are not names a person knows.
+    const label = findHarness(harnessForAgent(a.id))?.label ?? 'An agent'
     return a.for_name ? `${label} for ${a.for_name}` : label
   }
   return a.kind === 'addon' ? a.id : 'orch'

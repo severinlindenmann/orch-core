@@ -126,6 +126,20 @@ describe('the real dock', () => {
     expect(screen.queryByTestId('term')).toBeNull()
   })
 
+  it('ended terminals can be cleared one by one or all at once; running ones stay', async () => {
+    const ended = { state: 'exited' as const, replay_until: '2099-01-01T00:00:00Z', exit: { code: 0, signal: null, at: '2026-01-01T00:00:00Z', reason: 'exited' as const, cleanup: 'complete' as const } }
+    list = { ...list, runs: [run('E1', { ...ended, ticket: 'RA-0001' }), run('E2', { ...ended, ticket: 'RA-0002' }), run('R1', { label: 'Live one' })] }
+    mount()
+    await screen.findByRole('tab', { name: /Live one/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear RA-0001 Shell' }))
+    expect(screen.queryByRole('tab', { name: /RA-0001/ })).toBeNull()
+    expect(screen.getByRole('tab', { name: /RA-0002/ })).toBeInTheDocument()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Dock menu' }), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear ended terminals' }))
+    expect(screen.queryByRole('tab', { name: /RA-0002/ })).toBeNull()
+    expect(screen.getByRole('tab', { name: /Live one/ })).toBeInTheDocument()
+  })
+
   it('Start agent is not available when the host does not serve agent_start', async () => {
     setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
     mount()

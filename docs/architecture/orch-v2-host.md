@@ -1117,7 +1117,7 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
     | `device.added`, `device.removed` | `{person, device}` |
     | `device.revoked` | `{person, device}` (no `reason`, no `revocation`) |
     | `policy.changed` | `{gates:[Gate]}` |
-    | `settings.changed` | `{keys:[str]}` (the names in `set`, never repo paths or remotes) |
+    | `settings.changed` | `{keys:[str]}` (the names in `set`, never repo paths or remotes); with `set.repos` also `repos:{name:"set"|"removed"}` (repo names only) |
     | `grant.issued` | `{grant, person, scope, expires_at}` |
     | `grant.revoked` | `{grant, person}` |
     | `addon.granted`, `addon.disabled`, `addon.purged` | `{name}` (`addon.granted` adds `version`) |

@@ -74,7 +74,9 @@ def prompt(mode: str | None, key: str | None, instructions: str | None = None) -
         return f"Run orch show {key} --section current_state, then wait for my instructions."
     if mode not in MODE_TEXT:
         raise HostError("launch.invalid", "mode is not one of refine, work, fix, continue, context")
-    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow {instructions or 'AGENTS.orch.md'}."
+    from orch.instructions.harness import AGENTS_FILE
+
+    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow {instructions or AGENTS_FILE}."
 
 
 def launch_argv(

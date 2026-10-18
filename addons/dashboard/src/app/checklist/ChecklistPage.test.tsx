@@ -170,6 +170,28 @@ describe('first save', () => {
   })
 })
 
+describe('a save that fails once', () => {
+  it('is sent again, so a mark is never lost while the note and the picture are saved (first-use loss)', async () => {
+    // The status request fails once (a stale connection); the note saved a moment later must not make it look saved.
+    m.saveStep.mockRejectedValueOnce(new TypeError('network error'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await userEvent.type(screen.getByLabelText('Notes for A2'), 'x')
+    await waitFor(() => expect(m.saveStep.mock.calls.filter((c) => c[2].status === 'pass').length).toBeGreaterThanOrEqual(2), T)
+    expect(m.saveStep.mock.calls.at(-1)).toEqual(['run2', 'A2', expect.objectContaining({ status: 'pass' })])
+    expect((await screen.findAllByText('Saved', {}, T))[0]).toBeInTheDocument()
+  })
+  it('keeps trying while the server answers nothing, and says so', async () => {
+    m.saveStep.mockRejectedValue(new TypeError('network error'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    expect(await screen.findByText('Not saved', {}, T)).toBeInTheDocument()
+    await waitFor(() => expect(m.saveStep.mock.calls.length).toBeGreaterThanOrEqual(2), T)
+  })
+})
+
 describe('buildReport', () => {
   it('keeps notes of a step that is no longer in the list', () => {
     const out = buildReport({ H9: { status: 'fail_blocking', note: 'old note', images: [] } }, '/i', '/p')

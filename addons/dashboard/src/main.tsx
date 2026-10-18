@@ -1,3 +1,4 @@
+import './lib/zodJitless'
 import { bootstrapSetup, isSetupPage } from './api/setup'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

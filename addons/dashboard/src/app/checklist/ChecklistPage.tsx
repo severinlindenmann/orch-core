@@ -9,6 +9,8 @@ import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS
 import { buildReport, emptyNotes, hasNoteOrFailure, isFailure, STATUS_LABEL } from './report'
 
 const SAVE_DELAY = 700
+const RETRIES = 8
+const RETRY_BASE = 500
 
 type Saving = 'saving' | 'saved' | 'error'
 
@@ -194,6 +196,7 @@ export function ChecklistPage() {
   // Every field edited on this page, kept after it was saved: a first load that answers late must not replace them.
   const touched = useRef(new Map<string, Set<'status' | 'note'>>())
   const chain = useRef<Promise<void>>(Promise.resolve())
+  const attempts = useRef(new Map<string, number>())
 
   useEffect(() => {
     let live = true
@@ -224,7 +227,7 @@ export function ChecklistPage() {
 
   const mark = (id: string, s: Saving) => setSaving((m) => ({ ...m, [id]: s }))
 
-  const flush = useCallback((id: string) => {
+  const flush = useCallback(function flush(id: string): void {
     const t = timers.current.get(id)
     if (t) clearTimeout(t)
     timers.current.delete(id)
@@ -240,11 +243,23 @@ export function ChecklistPage() {
       if (fields.has('note')) patch.note = n.note
       try {
         await saveStep(RUN_ID, id, patch)
+        attempts.current.delete(id)
         setProblem(null)
         mark(id, dirty.current.has(id) ? 'saving' : 'saved')
       } catch (e) {
+        // A failed save is never dropped: the fields stay unsaved and go again (a stale keep-alive connection, a
+        // restarting server). Only an ended session waits for the person.
+        const again = dirty.current.get(id) ?? new Set<'status' | 'note'>()
+        for (const k of fields) again.add(k)
+        dirty.current.set(id, again)
         setProblem(problemText(e))
         mark(id, 'error')
+        const tries = attempts.current.get(id) ?? 0
+        const ended = e instanceof TestrunError && e.status === 401
+        if (!ended && tries < RETRIES && !timers.current.has(id)) {
+          attempts.current.set(id, tries + 1)
+          timers.current.set(id, setTimeout(() => flush(id), Math.min(RETRY_BASE * 2 ** tries, 8000)))
+        }
       }
     })
   }, [])

@@ -28,12 +28,12 @@ export class TestrunError extends Error {
   }
 }
 
-async function call(method: string, path: string, body?: unknown): Promise<Response> {
+async function call(method: string, path: string, body?: unknown, keepalive = false): Promise<Response> {
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers['content-type'] = 'application/json'
-  const res = await fetch(path, { method, headers, credentials: 'omit', redirect: 'error', cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body) })
+  const res = await fetch(path, { method, headers, credentials: 'omit', redirect: 'error', cache: 'no-store', keepalive, body: body === undefined ? undefined : JSON.stringify(body) })
   if (!res.ok) {
     let code = 'error'
     try {
@@ -54,7 +54,7 @@ export async function loadRun(run: string): Promise<TestrunState> {
 
 /** Saves only the fields that changed; the server merges them into the step it holds (an absent field stays as it is). */
 export async function saveStep(run: string, step: string, patch: { status?: StepStatus; note?: string }): Promise<void> {
-  await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, patch)
+  await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, patch, true)
 }
 
 function toBase64(file: Blob): Promise<string> {

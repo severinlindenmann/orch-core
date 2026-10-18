@@ -1,9 +1,11 @@
 // The tester's checklist of e2e RUN 2 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
 // Step ids match the sections and numbers of that file (A1, B1.3, C5 ...); the server accepts ids of the form
-// [A-G]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
+// [A-Z]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
 
 /** The commit of `develop` the install line of A1 is pinned to. The lead updates this when develop moves on. */
 export const INSTALL_PIN = '3ef3132fd8a2267fa39c6f5ee26f1a3b4ac1267f'
+
+import { ADDON_SECTIONS } from './addons'
 
 export const RUN_ID = 'run2'
 
@@ -66,7 +68,7 @@ export const RUN2_REPORT_HELP = {
     'Clean up when finished (the host line only if the Mac is not used for other things): phone Settings, "Leave Live"; unset ORCH_GRANT; delete ~/orch-invite; the test folders may stay.',
 }
 
-export const RUN2_SECTIONS: ChecklistSection[] = [
+const CORE_SECTIONS: ChecklistSection[] = [
   {
     id: 'A',
     title: 'Install',
@@ -462,6 +464,12 @@ export const RUN2_SECTIONS: ChecklistSection[] = [
     ],
   },
 ]
+
+/**
+ * Core sections A-F, then the add-on sections (./addons.ts). Notes are stored by step id, so adding, renaming or
+ * reordering steps never loses a note; keep an id once it has been used.
+ */
+export const RUN2_SECTIONS: ChecklistSection[] = [...CORE_SECTIONS, ...ADDON_SECTIONS]
 
 export const ALL_STEPS: ChecklistStep[] = RUN2_SECTIONS.flatMap((s) => s.steps)
 export const STEP_IDS = new Set(ALL_STEPS.map((s) => s.id))

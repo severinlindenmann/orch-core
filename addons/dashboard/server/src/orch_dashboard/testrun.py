@@ -24,8 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .errors import fail
 
 RUN = r"^[a-z0-9][a-z0-9-]{0,31}$"
-STEP = r"^[A-G][0-9]{1,2}(?:\.[0-9]{1,2})?$"
-IMAGE = r"^[A-G][0-9]{1,2}(?:\.[0-9]{1,2})?-[0-9a-f]{12}\.(?:png|jpg|webp)$"
+STEP = r"^[A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?$"
+IMAGE = r"^[A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?-[0-9a-f]{12}\.(?:png|jpg|webp)$"
 STATUSES = ("todo", "pass", "fail_blocking", "fail_non_blocking", "skipped")
 NOTE_MAX = 20_000
 IMAGE_MAX = 5 * 1024 * 1024

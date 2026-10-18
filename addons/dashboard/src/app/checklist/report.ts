@@ -31,5 +31,14 @@ export function buildReport(notes: Record<string, StepNotes>, imagesPath: string
     if (n.images.length) lines.push('', 'Screenshots:', ...n.images.map((name) => `- ${imagesPath}/${name}`))
     lines.push('')
   }
+  // Notes of steps that are no longer in the list (a step was renamed or removed) are never dropped from the report.
+  const known = new Set(ALL_STEPS.map((s) => s.id))
+  for (const [id, n] of Object.entries(notes)) {
+    if (known.has(id) || !hasContent(n)) continue
+    lines.push(`## ${id} (not in the current list): ${STATUS_LABEL[n.status]}`)
+    if (n.note.trim()) lines.push('', n.note.trim())
+    if (n.images.length) lines.push('', 'Screenshots:', ...n.images.map((name) => `- ${imagesPath}/${name}`))
+    lines.push('')
+  }
   return lines.join('\n').trimEnd() + '\n'
 }

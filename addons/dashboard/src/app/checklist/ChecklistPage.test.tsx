@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
+import { ADDON_SECTIONS } from './addons'
 import { ALL_STEPS, INSTALL_PIN, RUN2_SECTIONS } from './run2'
 import { buildReport } from './report'
 
@@ -26,8 +27,8 @@ describe('run 2 data', () => {
   it('has unique ids the server accepts, and every section of the source file', () => {
     const ids = ALL_STEPS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const id of ids) expect(id).toMatch(/^[A-G][0-9]{1,2}(\.[0-9]{1,2})?$/)
-    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
+    for (const id of ids) expect(id).toMatch(/^[A-Z][0-9]{1,2}(\.[0-9]{1,2})?$/)
+    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', ...ADDON_SECTIONS.map((x) => x.id)])
     for (const id of ['A1', 'A2', 'B1.1', 'B1.7', 'B2.8', 'B3.9', 'C1', 'C8', 'D6', 'E6', 'F8']) expect(ids).toContain(id)
   })
   it('pins A1 to a full commit and holds no secret material', () => {
@@ -155,6 +156,11 @@ describe('the checklist page', () => {
 })
 
 describe('buildReport', () => {
+  it('keeps notes of a step that is no longer in the list', () => {
+    const out = buildReport({ H9: { status: 'fail_blocking', note: 'old note', images: [] } }, '/i', '/p')
+    expect(out).toContain('## H9 (not in the current list): Failed, blocking')
+    expect(out).toContain('old note')
+  })
   it('says nothing is marked when nothing is', () => {
     expect(buildReport({}, '/i', '/p')).toContain('Nothing marked yet.')
   })

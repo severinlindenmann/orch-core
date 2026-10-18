@@ -67,7 +67,12 @@ def test_notes_roundtrip_and_path_is_reported(client, h, gateway):
     assert oct(file.parent.stat().st_mode & 0o777) == "0o700"
 
 
-@pytest.mark.parametrize("step", ["../x", "A", "H1", "A1.2.3", "a1", "A1%2F..", "A1.", "%2e%2e"])
+def test_add_on_step_ids_are_accepted(client, h):
+    assert put(client, h, step="H1.1").status_code == 200
+    assert put(client, h, step="Z12").status_code == 200
+
+
+@pytest.mark.parametrize("step", ["../x", "A", "1A", "AA1", "A1.2.3", "a1", "A1%2F..", "A1.", "%2e%2e"])
 def test_bad_step_ids_are_refused(client, h, step):
     assert put(client, h, step=step).status_code in (400, 404, 405)
 

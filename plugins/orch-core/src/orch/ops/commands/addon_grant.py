@@ -12,15 +12,13 @@ from orch.ops.errors import OrchError
 from orch.ops.human import Human
 
 
-def _install_builtin(h: Human, root: Any, name: str, directory: Path) -> None:
+def _install_builtin(h: Human, root: Any, name: str) -> None:
     """An add-on that ships inside orch-core and was never installed here (left off at setup, now turned on from the
     dashboard): put its own manifest in place, the same bytes setup writes. Only a missing package is filled in, never
     one that exists; the signed grant covers the digest of what was written, so the person signs exactly this package.
 
     Nothing is written for a ``--dry-run`` or for anyone but a workspace owner (``role.denied``, the model's rule for
     ``addon.granted``). A failed write removes the empty directory it made and says why."""
-    import os
-
     from orch.addons import builtin
 
     if name not in builtin.NAMES or h.ctx.dry_run:
@@ -29,12 +27,8 @@ def _install_builtin(h: Human, root: Any, name: str, directory: Path) -> None:
     if member is None or member.role != "owner":
         raise OrchError("role.denied", "turning an addon on is for workspace owners")
     try:
-        builtin.write_manifest(str(root), name, builtin.manifest_bytes(name))
+        builtin.install_missing(str(root), name)
     except (OSError, ValueError) as e:
-        try:
-            os.rmdir(directory)  # only an empty directory this attempt made; a package is never removed
-        except OSError:
-            pass
         raise OrchError("invalid.input", f"cannot install addons/{name}: {type(e).__name__}") from None
 
 
@@ -53,7 +47,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     except PackageError as e:
         raise OrchError("invalid.input", str(e)) from None
     if not Path(directory).exists():
-        _install_builtin(h, root, name, Path(directory))
+        _install_builtin(h, root, name)
     if not Path(directory).is_dir():
         raise OrchError("not_found", f"no package at addons/{name}", hint=f"put the addon in addons/{name}/")
     try:

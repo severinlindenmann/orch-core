@@ -165,6 +165,8 @@ Some pages are added by add-ons, small extras that an owner can switch on. You s
 - **Activity**: a time line of what happened across the workspace: who did what, and when. Times are in your local time.
 - **Repos**: the project folders this workspace works on (see Repositories).
 - **Shares**: links to ticket files, from the Publish add-on (see Shares and Publish).
+- **Usage**: how long agents worked on each ticket (time and runs; tokens and cost say "Not reported").
+- **Files**: look through the workspace's files and their history, read only, for owners.
 - **Add-ons**: in **Settings, Add-ons**, an owner switches add-ons on or off. Turning one on shows what it may do and asks for approval first. An orange **A** marks anything an add-on added.
 
 If you do not see one of these yet, it is not available on your host. Do not worry, nothing is missing from the core tool.
@@ -283,5 +285,7 @@ export const GUIDE_ROUTES: HelpRoute[] = [
   { match: '/worktrees*', page: 'worktrees' },
   { match: '/shares*', page: 'shares' },
   { match: '/activity*', page: 'more-tools' },
+  { match: '/usage*', page: 'more-tools' },
+  { match: '/explorer*', page: 'more-tools' },
   { match: '/repos*', page: 'repos' },
 ]

@@ -139,7 +139,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     } catch (e) {
       if (e instanceof ApiError && e.code === 'launch.changed') {
         // What would run changed since the preview (also a new runner grant): show it again, ask for a new Start.
-        setNote('What would run changed since the last check. Check it again, then start.')
+        setNote('What would run changed since the last check. It has been checked again: read it, then start.')
         await preview(shown.args)
       } else {
         // The same idem stays: Start again returns the recorded run, never a second one. A lost answer: read the list.
@@ -198,7 +198,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
         {badModel && <p role="alert" className="text-danger sm:col-span-2">Choose a model from the list.</p>}
         {stale && shown && <p className="text-text-muted sm:col-span-2" data-testid="agent-stale">The choices changed: check the start settings again before you start.</p>}
-        {!stale && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
+        {!stale && !note && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
         <div className="flex justify-end sm:col-span-2">
           <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Checking…' : 'Check start settings'}</Button>
         </div>

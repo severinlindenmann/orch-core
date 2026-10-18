@@ -959,3 +959,68 @@ def test_ripgrep_starts_in_the_folder_the_guard_opened_not_in_a_path(world):
         # the folder is replaced by a link AFTER it was opened: the child is still in the opened one
         res = gitbrowse.spawn(["/bin/ls"], {"PATH": "/bin"}, cwd_fd=fd, max_bytes=1000)
     assert res.out.decode().split() == ["app.py", "ünï.txt"] or "app.py" in res.out.decode()
+
+
+# ---------------------------------------------------------------- scan follow-ups: hard links, fail closed, folders at a commit
+
+
+def _keys_and_link(world, link="notes.txt"):
+    (world.proj / "keys.jsonl").write_text("KEYMATERIAL needle\n")
+    os.link(world.proj / "keys.jsonl", world.proj / link)
+    git(world.proj, "add", "-f", "-A")
+    git(world.proj, "commit", "-q", "-m", "keys by another name", n=5)
+
+
+def test_a_hard_link_to_keys_is_not_found_by_search_with_git_or_ripgrep(get, world, tmp_path, monkeypatch):
+    _keys_and_link(world)
+    assert "KEYMATERIAL" not in get("/search", q="KEYMATERIAL").text  # git grep --cached
+    fake = tmp_path / "bin" / "rg"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\nprintf '%s\\0%s\\n' './notes.txt' '1:KEYMATERIAL needle'\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(search, "rg_path", lambda: str(fake))
+    got = get("/search", q="KEYMATERIAL", root="ws")
+    assert got.json()["engine"] == "rg" and got.json()["hits"] == [] and "KEYMATERIAL" not in got.text
+    assert get("/file", root="ws", path="notes.txt").status_code == 403
+
+
+def test_when_the_walk_of_orch_files_is_cut_short_every_multi_link_file_is_locked(get, world, monkeypatch):
+    os.link(world.proj / "README.md", world.proj / "README-2.md")
+    assert get("/file", root="ws", path="README-2.md").json()["kind"] == "markdown"  # complete walk: not an orch file
+    monkeypatch.setattr(guard, "WALK_LIMIT", 1)
+    assert get("/file", root="ws", path="README-2.md").status_code == 403  # incomplete: fail closed
+    assert get("/file", root="ws", path="src/app.py").json()["kind"] == "text"  # a file with one name is unaffected
+
+
+def test_a_hard_link_in_a_repository_root_to_a_legacy_store_file_is_locked(get, world):
+    (world.proj / "keys.jsonl").write_text("KEYMATERIAL\n")
+    os.link(world.proj / "keys.jsonl", world.other / "innocent.txt")
+    got = get("/file", root="repo:other", path="innocent.txt")
+    assert got.status_code == 403 and "KEYMATERIAL" not in got.text
+    assert get("/file", root="repo:other", path="o.txt").json()["kind"] == "text"
+
+
+def test_a_path_that_is_a_file_now_but_was_a_folder_at_that_commit_is_refused(get, world):
+    (world.proj / "thing").mkdir()
+    (world.proj / "thing" / "inner.txt").write_text("INNERSECRET\n")
+    git(world.proj, "add", "-A")
+    git(world.proj, "commit", "-q", "-m", "thing is a folder", n=5)
+    old = git(world.proj, "rev-parse", "HEAD")
+    (world.proj / "thing" / "inner.txt").unlink()
+    (world.proj / "thing").rmdir()
+    (world.proj / "thing").write_text("now a file\n")
+    git(world.proj, "add", "-A")
+    git(world.proj, "commit", "-q", "-m", "thing is a file", n=6)
+    new = git(world.proj, "rev-parse", "HEAD")
+    assert get("/history", root="ws", path="thing").status_code == 200
+    for res in (
+        get("/commit", root="ws", path="thing", sha=old),
+        get("/compare", root="ws", path="thing", a=old, b=new),
+        get("/compare", root="ws", path="thing", a=new, b=old),
+        get("/file", root="ws", path="thing", rev=old),
+    ):
+        assert res.status_code == 404 and "INNERSECRET" not in res.text
+    # the change that turned the folder into a file also removed the folder's files: a patch naming any other path
+    # than the file is refused, so those deletions are never shown either
+    res = get("/commit", root="ws", path="thing", sha=new)
+    assert res.status_code == 404 and "INNERSECRET" not in res.text

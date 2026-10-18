@@ -47,6 +47,8 @@ _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _FLAGS
 
 #: folder entries listed per folder; a larger folder says so
 MAX_ENTRIES = 3000
+#: entries the walk of orch's own folders visits before it gives up (then every multi-link file is locked)
+WALK_LIMIT = 50_000
 MAX_PATH_PARTS = 64
 MAX_PART = 255
 
@@ -136,6 +138,9 @@ class Root:
     kind: str
     store: frozenset[str] = frozenset()
     forbidden: tuple[str, ...] = field(default=())
+    #: every other orch-owned place of the workspace (the legacy store files in the workspace folder), absolute: given
+    #: to EVERY root of the workspace, repository roots included, so a hard link to one is found wherever it is
+    orch: tuple[str, ...] = field(default=())
 
     def _banned(self) -> set[tuple[int, int]]:
         found = set()
@@ -144,28 +149,46 @@ class Root:
                 found.add(_identity(os.stat(p)))
         return found
 
-    def _banned_files(self) -> set[tuple[int, int]]:
-        """Identities of the files of orch's own folders (the state, run and store folders, and the store files directly
-        in a legacy workspace folder), found by walking them a few levels: a HARD LINK to one of them, made under any
-        name elsewhere, is the same file. Only asked for a file that has more than one name."""
+    def _banned_files(self) -> tuple[set[tuple[int, int]], bool]:
+        """``(identities, complete)``: the files of EVERY orch-owned place of the workspace (the state and run folders,
+        the store folder, and the legacy store files directly in the workspace folder, :attr:`orch`), found by walking
+        them without a depth limit but with an entry limit (:data:`WALK_LIMIT`). ``complete`` is False when the limit
+        was reached or a folder could not be read: the caller then treats every file with more than one name as locked
+        (fail closed). A HARD LINK to one of these files, made under any name anywhere, is the same file."""
         found: set[tuple[int, int]] = set()
+        complete = True
         seen = 0
-        stack = [(p, 0) for p in self.forbidden]
-        for name in self.store:
-            stack.append((os.path.join(self.path, name), 0))
-        while stack and seen < 2000:
-            path, depth = stack.pop()
+        stack = [*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)]
+        while stack:
+            path = stack.pop()
+            if seen >= WALK_LIMIT:
+                return found, False
             try:
                 st = os.lstat(path)
-                seen += 1
-                if stat.S_ISREG(st.st_mode):
-                    found.add(_identity(st))
-                elif stat.S_ISDIR(st.st_mode) and depth < 4:
-                    with os.scandir(path) as it:
-                        stack += [(e.path, depth + 1) for e in it]
-            except OSError:
+            except FileNotFoundError:
                 continue
-        return found
+            except OSError:
+                complete = False
+                continue
+            seen += 1
+            if stat.S_ISREG(st.st_mode):
+                found.add(_identity(st))
+            elif stat.S_ISDIR(st.st_mode):
+                try:
+                    with os.scandir(path) as it:
+                        stack += [e.path for e in it]
+                except OSError:
+                    complete = False
+        return found, complete
+
+    def _check_links(self, st: os.stat_result) -> None:
+        """THE hard-link check: a regular file with more than one name that is (or, when the walk was incomplete, may
+        be) one of orch's own files is `Denied`. Every path that returns or searches content calls this through
+        :meth:`stat_file` or :meth:`read`."""
+        if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+            ids, complete = self._banned_files()
+            if not complete or _identity(st) in ids:
+                raise Denied("orch's own files")
 
     def _open_root(self) -> int:
         """The root folder as a descriptor, after the checks that make it a folder the explorer may show."""
@@ -268,8 +291,7 @@ class Root:
                 st = os.fstat(f)
                 if not stat.S_ISREG(st.st_mode):
                     raise Missing("This is not a regular file.")
-                if st.st_nlink > 1 and _identity(st) in self._banned_files():
-                    raise Denied("orch's own files")
+                self._check_links(st)
                 data = b""
                 while len(data) <= limit:
                     chunk = os.read(f, min(65536, limit + 1 - len(data)))
@@ -288,9 +310,11 @@ class Root:
             raise Denied(reason)
         with self.dir(parts[:-1]) as fd:
             try:
-                return os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
+                st = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
             except OSError:
                 raise Missing("There is no such file.") from None
+            self._check_links(st)
+            return st
 
     #: files that move where git reads its objects or its history from: a repository that has one is not used
     _REDIRECTS = (

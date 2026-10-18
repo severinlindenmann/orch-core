@@ -19,6 +19,8 @@ from ..gateway import Gateway
 from . import guard
 
 ADDON = "explorer"
+#: the store entries directly in a legacy workspace folder, spelled as they are on disk
+LEGACY_FILES = (".state", "events", "tickets", "addons", "config.json", "keys.jsonl", "AGENTS.orch.md")
 REPO_ROOT_ID = "repo:"
 #: repositories declared in the settings, per workspace, for this long (the decision about WHO may read is not cached)
 REPOS_TTL = 15.0
@@ -125,8 +127,9 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
     legacy = frozenset(guard.LEGACY_STORE) if store is None else frozenset()
     show = link.call("workspace.show")
     name = show.get("name") if isinstance(show, dict) and isinstance(show.get("name"), str) else "Workspace"
+    orch = tuple(sorted(os.path.join(real, n) for n in LEGACY_FILES)) if store is None else ()
     roots = {
-        "ws": guard.Root("ws", guard.label(name), real, "workspace", legacy, tuple(sorted(forbidden))),
+        "ws": guard.Root("ws", guard.label(name), real, "workspace", legacy, tuple(sorted(forbidden)), orch),
     }
     repos: dict[str, tuple[str, tuple[str, ...]]] = {}
     for rname, folder in sorted(declared_repos(link, ws).items()):
@@ -136,7 +139,7 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
             repos[rname] = ("ws", tuple(target[len(real) :].strip("/").split("/")) if target != real else ())
         else:
             rid = f"{REPO_ROOT_ID}{rname}"
-            root = guard.Root(rid, guard.label(rname), target, "repo", frozenset(), tuple(sorted(forbidden)))
+            root = guard.Root(rid, guard.label(rname), target, "repo", frozenset(), tuple(sorted(forbidden)), orch)
             if not _repo_root_ok(root, project, store):
                 continue  # a "repository" that is any other folder (~/.aws, ~/Library) is not shown
             roots[rid] = root

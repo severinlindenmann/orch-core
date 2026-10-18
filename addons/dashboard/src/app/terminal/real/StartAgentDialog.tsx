@@ -282,7 +282,7 @@ export type GrantStep =
  * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
-export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome }: { extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
+export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome, onConfirmed }: { onConfirmed?: () => void; extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
   const workspaces = useQuery(queries.workspaces())
   const workspace = workspaces.data?.find(w => w.id === ws)
   // 8 h / 1 / 3 / 7 days, never above the workspace maximum; an Extend never offers less than the access it replaces.
@@ -310,8 +310,12 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   changed.current = onChanged
   const outcome = useRef(onOutcome)
   outcome.current = onOutcome
+  const confirmed = useRef(onConfirmed)
+  confirmed.current = onConfirmed
   useEffect(() => {
     if (['polling', 'confirmed', 'rejected', 'unknown'].includes(step.kind)) outcome.current?.()
+    // A signed and delivered grant ends the dialog that hosts this card (Extend), so a second click cannot extend again.
+    if (step.kind === 'confirmed') confirmed.current?.()
   }, [step.kind])
   const grant = runner?.grant ?? null
   const enabled = runner?.enabled === true && !!workspace

@@ -33,18 +33,25 @@ def _read(link, key: str) -> tuple[set[str], list[dict]]:
     data = link.call("ticket.get", {"ref": key, "log_limit": 1})
     shas: set[str] = set()
     pushes = []
+    # An open ticket's first sight of its branch (no "before") may be the commit the branch was cut from, which is not
+    # work of this ticket: the readers check that against the repository (git.on_head) before they show it.
+    still_open = data.get("status") not in (None, "done", "closed")
     for p in data.get("pushes") or []:
         if isinstance(p, dict) and isinstance(p.get("sha"), str) and SHA.fullmatch(p["sha"]):
             shas.add(p["sha"])
             before = p.get("before") if isinstance(p.get("before"), dict) else {}
             old = before.get("sha") if isinstance(before.get("sha"), str) and SHA.fullmatch(before["sha"]) else None
             repo = display(p.get("repo_name"))
-            pushes.append({"repo": repo, "sha": p["sha"], "before": old, "via": "push"})
+            pushes.append(
+                {"repo": repo, "sha": p["sha"], "before": old, "via": "push", "baseline": old is None and still_open}
+            )
     for t in data.get("tasks") or []:
         r = t.get("receipt") if isinstance(t, dict) else None
         if isinstance(r, dict) and isinstance(r.get("commit"), str) and SHA.fullmatch(r["commit"]):
             shas.add(r["commit"])
-            pushes.append({"repo": display(r.get("repo")), "sha": r["commit"], "before": None, "via": "task"})
+            pushes.append(
+                {"repo": display(r.get("repo")), "sha": r["commit"], "before": None, "via": "task", "baseline": False}
+            )
     return shas, pushes
 
 
@@ -90,14 +97,18 @@ def refresh(link, ws: str) -> dict:
         return fresh
 
 
-def chips(link, ws: str, shas: list[str]) -> dict[str, list[dict]]:
-    """``sha -> [{key, title}]`` for the commits of one history page."""
+def chips(link, ws: str, shas: list[str], *, is_base=None) -> dict[str, list[dict]]:
+    """``sha -> [{key, title}]`` for the commits of one history page. ``is_base(sha)`` says a commit is one a ticket's
+    branch was cut from (already on the repository's own line): that is no work of the ticket."""
     want = {s for s in shas if SHA.fullmatch(s)}
     out: dict[str, list[dict]] = {}
     if not want:
         return out
-    for _uid, (_stamp, key, title, found, _pushes) in refresh(link, ws).items():
+    for _uid, (_stamp, key, title, found, pushes) in refresh(link, ws).items():
         for sha in found & want:
+            own = [p for p in pushes if p["sha"] == sha]
+            if is_base is not None and not any(not p["baseline"] for p in own) and is_base(sha):
+                continue
             out.setdefault(sha, []).append({"key": key, "title": title})
     return {s: sorted(rows, key=lambda r: r["key"]) for s, rows in out.items()}
 

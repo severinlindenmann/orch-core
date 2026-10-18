@@ -6,6 +6,11 @@ import { ADDON_SECTIONS } from './addons'
 
 export const RUN_ID = 'run2'
 
+/** The lead fills this in before the owner run: the full commit id (40 characters) of the tested build of develop. */
+export const INSTALL_PIN = 'PASTE-THE-COMMIT-ID-FROM-THE-LEAD-HERE'
+const REPO = 'https://github.com/severinlindenmann/orch-core'
+export const INSTALL_LINE = `uv tool install --force --with "orch-dashboard @ git+${REPO}@${INSTALL_PIN}#subdirectory=addons/dashboard/server" "git+${REPO}@${INSTALL_PIN}#subdirectory=plugins/orch-core"`
+
 export interface ChecklistStep {
   id: string
   /** Short heading; the text below it is the instruction. */
@@ -35,14 +40,14 @@ export interface ChecklistSection {
 }
 
 export const RUN2_TITLE = 'Test checklist: end-to-end run 2'
-export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install from develop (updated 18 Oct 2026, after batches 11 and 12)'
+export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 18 Oct 2026: core A to F, add-ons H to R, the last run before yours)'
 
 export const RUN2_INTRO = [
   'You test on this Mac (Battlepad, user severin) with a real install from develop, in NEW empty test folders. Never your real projects.',
   'Lens: you are not a developer. Note what is confusing, not only what breaks.',
   'Items marked with a warning could not be verified from code or docs. Each step shows a "next:" line when something is left; if it differs, follow it and report it.',
   'Never paste or photograph the secret words, recovery code, passphrase, QR or invite. (Test words you paste to the lead are fine.)',
-  'Run order: A, B, C, D, E, then F (phone), G (report). All times on screen are your local time.',
+  'Run order: A, B, C, D, E, then the add-ons H to R. F (phone) is optional and needs the iPhone ready. At the end press "Copy report" and send it to the lead. All times on screen are your local time.',
 ]
 
 export const RUN2_KNOWN_GAPS = [
@@ -73,7 +78,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'A1',
         title: 'Install with the line from the lead',
-        text: 'The lead gives you the exact install line (it points to one tested version). Paste it in the Terminal. It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
+        text: 'Copy the install line below and paste it in the Terminal (the lead checks that its commit id is filled in: it points to one tested version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
+        commands: [INSTALL_LINE],
         see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
@@ -303,15 +309,17 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'Grant, close, reopen and the rest',
         commands: [
           'orch grant --days 3 --label x',
+          'orch new "Second ticket"',
           'orch close RA-0002 --resolution wont_do -m test',
-          'orch reopen',
           'orch inbox',
           'orch next',
           'orch search Owner',
-          'orch log',
+          'orch log "A note from the checklist" --ref RA-0001',
+          'unset ORCH_GRANT ORCH_SESSION',
+          'orch reopen RA-0002 -m test',
           'orch grant --days 8',
         ],
-        text: 'After "orch grant --days 3" the dashboard pill shows the soonest end (local time). Create RA-0002 first, to close it. "orch grant --days 8" must be refused (max 7 days).',
+        text: 'Run "orch grant --days 3 --label x", then copy the printed ORCH_GRANT= value into "export ORCH_GRANT=<value>" and run the ORCH_SESSION line from D2 again; the next five commands are agent commands and need both. "orch new" creates RA-0002 (so there is one to close). The dashboard pill then shows the soonest end (local time). Reopening is a person\'s decision, so "unset" first: "orch reopen" asks for your passphrase. "orch grant --days 8" must be refused (max 7 days).',
       },
       {
         id: 'D6',
@@ -335,9 +343,10 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'Make a repo to work in',
         commands: [
           'mkdir ~/orch-run2-repo && cd ~/orch-run2-repo && git init && git commit --allow-empty -m init',
+          'orch show RA-0001 --full',
           `orch set RA-0001 links='{"repos":["repo"],"branches":{"repo":"feat/x"}}'`,
         ],
-        text: 'In Settings, General, Repositories, add it as a repo of RA (name repo; see section I). Link it to RA-0001 with the second command (with a grant).',
+        text: 'In Settings, General, Repositories, add it as a repo of RA (name repo; see section I). Then link it to RA-0001: the last two commands need a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2). "orch show RA-0001 --full" prints a lot: ignore it, it only has to be read first.',
         warn: 'The worktree steps follow D60 code; report what you see. The Claude plugin line above needs private repo access.',
       },
       {

@@ -1,10 +1,10 @@
 """The tester's checklist of an end-to-end run: per-step status, notes and screenshots, kept on this computer.
 
-Files live under ``<state>/dashboard/testrun/<run>/``: ``notes.json`` and ``images/``. Nothing here talks to a workspace
-or the host, so the page works before ``orch setup``. Every route sits behind the normal dashboard session (Security checks
-the bearer token, the Origin of writes and the JSON content type). Names that reach the file system are matched
-against fixed patterns, never joined from free text.
-"""
+Files live under ``<state>/dashboard/testrun/<run>/``: ``notes.json`` and ``images/``. Nothing here talks to a
+workspace or the host, so the page works before ``orch setup``. Every route sits behind the normal dashboard session
+(Security checks the bearer token, the Origin of writes and the JSON content type). Names that reach the file system
+are matched against fixed patterns, never joined from free text.
+
 
 import base64
 import binascii

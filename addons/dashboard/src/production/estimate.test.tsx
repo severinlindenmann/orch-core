@@ -104,6 +104,14 @@ it('G2: the box warns before choosing when approvals exist, and says nothing whe
   expect(await within(box).findByTestId('estimate-cancels')).toHaveTextContent('Changing the estimate cancels the approval of the requirements, the code. You will have to approve them again.')
 })
 
+it('G2: a gate that has some of its approvals in is warned about too', async () => {
+  const gates = ticket.gates as Record<string, Record<string, unknown>>
+  serve({ size: 'm', gates: { ...gates, plan: { ...gates.plan, state: 'pending', needed: 2, approvals: [{ by: 'p_x', at: '2026-10-18T10:00:00Z' }] } } })
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await within(await screen.findByTestId('ticket-estimate', {}, T)).findByTestId('estimate-cancels')).toHaveTextContent('approval of the plan')
+})
+
 it('G2: no warning without an approval', async () => {
   serve({ size: 'm' })
   window.innerWidth = 1400

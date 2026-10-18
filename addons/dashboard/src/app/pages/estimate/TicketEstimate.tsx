@@ -15,6 +15,7 @@ import { Section } from '../ticket/shared'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 
+const GATE_ORDER = ['requirements', 'plan', 'verify', 'code'] as const
 const GATE_WORDS = { requirements: 'the requirements', plan: 'the plan', verify: 'the checks', code: 'the code' } as const
 
 type Pick = SizeName | 'none'
@@ -45,9 +46,10 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
   const epic = ticket.type === 'epic'
   const points = pointsOf(ticket.size)
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done' && ticket.status !== 'closed'
-  // The size is part of what the requirements, plan, verification and code approvals cover (core's binding list), so a
-  // changed estimate cancels every approval already given on this ticket. Say so before a value is chosen.
-  const approved = (['requirements', 'plan', 'verify', 'code'] as const).filter((g) => ticket.gates?.[g]?.state === 'approved')
+  // The size is part of what every gate's approval covers (core's binding list), and a raise of one gate raises the later
+  // ones too, so a new estimate cancels every approval on this ticket, a partly collected one (2 of 3) included. The
+  // gates come from the ticket's own data, not from a list kept here.
+  const approved = GATE_ORDER.filter((g) => ticket.gates?.[g]?.state === 'approved' || (ticket.gates?.[g]?.approvals?.length ?? 0) > 0)
   const action: HandoffAction | null = pick ? { action: 'details', key: ticket.key, size: pick, via: 'estimate' } : null
   const wording = pick === 'none' ? 'No estimate' : pointsText(ESTIMATE_SCALE.find((s) => s.size === pick)?.points ?? 0)
   return (

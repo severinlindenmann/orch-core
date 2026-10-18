@@ -1070,12 +1070,17 @@ def _cancel_note(ev: Mapping[str, Any], out: dict[str, Any]) -> None:
 
     paths = {p if p.startswith("ticket.") else "ticket." + p for p in (ev.get("set") or {})}
     paths |= {"body." + sid for sid in (ev.get("sections") or {})}
-    gates = [g for g in GATES if paths & BOUND_BASE.get(g, set())]
+    hit = [g for g in GATES if paths & BOUND_BASE.get(g, set())]
+    # ``generations.settle``: a raise of one gate raises every later gate
+    gates = list(GATES[GATES.index(hit[0]) :]) if hit else []
     notes = out.setdefault("notes", [])
     if gates:
         notes.append(f"This cancels any existing approval of: {', '.join(gates)}. Each one has to be approved again.")
-    if any(p.startswith("ticket.addons.") for p in paths):
-        notes.append("An add-on field can also be part of an approval; if it is, that approval is cancelled too.")
+    if any(p.startswith("ticket.addons.") or ("." in p[len("body.") :] and p.startswith("body.")) for p in paths):
+        notes.append(
+            "An add-on field or section can also be part of an approval; "
+            "if it is, this may also cancel that approval and every later one."
+        )
 
 
 def _updated(

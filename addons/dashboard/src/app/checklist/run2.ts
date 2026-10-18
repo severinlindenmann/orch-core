@@ -6,11 +6,6 @@ import { ADDON_SECTIONS } from './addons'
 
 export const RUN_ID = 'run2'
 
-/** The lead fills this in before the owner run: the full commit id (40 characters) of the tested build of develop. */
-export const INSTALL_PIN = 'PASTE-THE-COMMIT-ID-FROM-THE-LEAD-HERE'
-const REPO = 'https://github.com/severinlindenmann/orch-core'
-export const INSTALL_LINE = `uv tool install --force --with "orch-dashboard @ git+${REPO}@${INSTALL_PIN}#subdirectory=addons/dashboard/server" "git+${REPO}@${INSTALL_PIN}#subdirectory=plugins/orch-core"`
-
 export interface ChecklistStep {
   id: string
   /** Short heading; the text below it is the instruction. */
@@ -78,8 +73,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'A1',
         title: 'Install with the line from the lead',
-        text: 'Copy the install line below and paste it in the Terminal (the lead checks that its commit id is filled in: it points to one tested version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
-        commands: [INSTALL_LINE],
+        text: 'Use the install line the lead sent you (it names the exact version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
         see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
@@ -265,43 +259,52 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'D2',
         title: 'Agent verbs need a grant for your shell',
-        text: 'Type the word and the passphrase. Copy the printed ORCH_GRANT= value (shown once) with "export ORCH_GRANT=<value>", then run the ORCH_SESSION line below. Never paste the value anywhere else, and never into a note.',
+        text: 'Type the word and the passphrase. Copy the printed ORCH_GRANT= value (shown once) with "export ORCH_GRANT=<value>", then run the ORCH_SESSION line below. Never paste the value anywhere else, and never into a note. You already have RA-0001 (C2) and RA-0002 (C5), so "orch new" makes the next number: RA-0003 in the lines below. If it prints another key, use that key instead of RA-0003 in D2, D3, D4 and D5.',
         commands: [
           'orch grant --days 1 --label cli',
           "export ORCH_SESSION=s_01$(python3 -c 'import secrets;print(secrets.token_hex(12).upper())')",
           'orch new "Owner CLI test" --type feature --priority high',
-          'orch ac add "It works" --ref RA-0001',
-          'orch section set requirements --ref RA-0001 -m "Do the thing"',
+          'orch ac add "It works" --ref RA-0003',
+          'orch section set requirements --ref RA-0003 -m "Do the thing"',
         ],
         points: ['New: --days 1..7 (--hours still works, up to 168). Do the same for the sections context and out_of_scope.'],
-        see: '"ok RA-0001 ticket.created" ...',
+        see: '"ok RA-0003 ticket.created" (or the next free number), then one "ok" line per command.',
       },
       {
         id: 'D3',
         title: 'Human approval (no grant)',
-        commands: ['unset ORCH_GRANT ORCH_SESSION', 'orch approve requirements --ref RA-0001'],
+        text: 'A person signs, so the grant must not be set for this command. "env -u" runs it without the grant and keeps your grant for D4.',
+        commands: ['env -u ORCH_GRANT -u ORCH_SESSION orch approve requirements --ref RA-0003'],
         points: [
-          'The NEW terminal view: first a headline ("Approve the requirements of RA-0001 . Owner CLI test"), then the text and checklist, then "Type RA-0001/XXXXXXXX to continue (d = details)".',
+          'The NEW terminal view: first a headline ("Approve the requirements of RA-0003 . Owner CLI test"), then the text and checklist, then "Type RA-0003/XXXXXXXX to continue (d = details)".',
           'Press d: the long technical dump appears (hashes etc.); the plain view must not contain raw JSON.',
           'Then the plain passphrase step (names what you sign; d = details). Host, runner and grant commands print plain lines, not raw JSON.',
         ],
-        see: '"ok RA-0001 gate.approved requirements"',
+        see: '"ok RA-0003 gate.approved requirements"',
       },
       {
         id: 'D4',
         title: 'Lifecycle as an agent, then as a human',
-        text: 'Agent (grant again): claim, plan, tasks, decisions, an artifact. Human: approve the plan. Agent: submit. Human: verdict pass.',
+        text: 'Needs the grant and ORCH_SESSION from D2 still set in this Terminal. Agent: claim, plan, verification, a task, evidence. Human: approve the plan (with "env -u", as in D3). Agent: submit. Human: verdict pass. Use your own key in place of RA-0003 if D2 printed another one.',
         commands: [
-          'orch claim',
-          'orch approve plan',
-          'orch submit',
-          'orch verdict pass -m ok',
+          'orch claim RA-0003',
+          'orch section set plan --ref RA-0003 -m "One step"',
+          'orch section set verification --ref RA-0003 -m "Run it and look at the result"',
+          'orch task add "Do the thing" --proves AC1 --ref RA-0003',
+          'orch task start T1',
+          'echo "it works" > ~/orch-run2-a/check.log',
+          'orch artifact add ~/orch-run2-a/check.log --kind log --ac AC1 --ref RA-0003',
+          'orch task done T1',
+          'env -u ORCH_GRANT -u ORCH_SESSION orch approve plan --ref RA-0003',
+          'orch submit RA-0003',
+          'env -u ORCH_GRANT -u ORCH_SESSION orch verdict pass --ref RA-0003 -m ok',
         ],
         points: [
-          'Agent commands: orch section set plan, orch task add / start / done, orch section set decisions, orch artifact add FILE --kind log --ac AC1.',
+          'The plan must be approved before "orch submit", and every acceptance criterion needs evidence (the artifact line) first.',
           'NEW: "verdict pass" now works for you as the only member, even though you claimed it (was blocking in run 1).',
-          'The code gate is off by default (no "approve code"). "orch request-changes" sends it back. --dry-run tests a write.',
+          'The code gate is off by default (no "approve code"). "orch request-changes --ref RA-0003" sends it back. --dry-run tests a write.',
         ],
+        see: '"ok RA-0003 claim.taken", "ok RA-0003 gate.approved plan", "ok RA-0003 ticket.submitted testing", then "verdict.given".',
         warn: 'If you still get "role.denied gate.not_eligible": BLOCKING.',
       },
       {
@@ -310,16 +313,16 @@ const CORE_SECTIONS: ChecklistSection[] = [
         commands: [
           'orch grant --days 3 --label x',
           'orch new "Second ticket"',
-          'orch close RA-0002 --resolution wont_do -m test',
+          'orch close RA-0004 --resolution wont_do -m test',
           'orch inbox',
           'orch next',
           'orch search Owner',
           'orch log "A note from the checklist" --ref RA-0001',
           'unset ORCH_GRANT ORCH_SESSION',
-          'orch reopen RA-0002 -m test',
+          'orch reopen RA-0004 -m test',
           'orch grant --days 8',
         ],
-        text: 'Run "orch grant --days 3 --label x", then copy the printed ORCH_GRANT= value into "export ORCH_GRANT=<value>" and run the ORCH_SESSION line from D2 again; the next five commands are agent commands and need both. "orch new" creates RA-0002 (so there is one to close). The dashboard pill then shows the soonest end (local time). Reopening is a person\'s decision, so "unset" first: "orch reopen" asks for your passphrase. "orch grant --days 8" must be refused (max 7 days).',
+        text: 'Run "orch grant --days 3 --label x", then copy the printed ORCH_GRANT= value into "export ORCH_GRANT=<value>" and run the ORCH_SESSION line from D2 again; the next five commands are agent commands and need both. "orch new" creates the next key, RA-0004 (so there is one to close; use the key it prints). The dashboard pill then shows the soonest end (local time). Reopening is a person\'s decision, so "unset" first: "orch reopen" asks for your passphrase. "orch grant --days 8" must be refused (max 7 days).',
       },
       {
         id: 'D6',

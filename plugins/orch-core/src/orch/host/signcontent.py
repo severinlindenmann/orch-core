@@ -627,7 +627,7 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         from . import sequence
 
         try:
-            return sequence.build_content(prepared, verified=verified)
+            return _dedupe_notes(sequence.build_content(prepared, verified=verified))
         except sequence.SequenceInvalid as exc:
             raise PlainUnavailable(str(exc)) from None
     ticket = _ticket(material, events)
@@ -644,7 +644,41 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         _payload(material, events, ticket, out, ctx, op=prepared.get("op"))
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
-    return {k: v for k, v in out.items() if v not in (None, [], "")}
+    return _dedupe_notes({k: v for k, v in out.items() if v not in (None, [], "")})
+
+
+_CANCEL_HEAD, _CANCEL_TAIL = "This cancels any existing approval of: ", ". Each one has to be approved again."
+
+
+def _dedupe_notes(content: dict[str, Any]) -> dict[str, Any]:
+    """Each note once: a review of several events (a sequence, a new ticket) would otherwise repeat the same sentence.
+    Only exact repeats go. The cancel notes that differ only in their gate list become one note at the place of the
+    first, naming the union of the gates in gate order; every other note keeps its text and its place."""
+    notes = content.get("notes")
+    if not notes:
+        return content
+    from orch.model.generations import GATES
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    cancel_at: int | None = None
+    cancelled: set[str] = set()
+    for note in notes:
+        if isinstance(note, str) and note.startswith(_CANCEL_HEAD) and note.endswith(_CANCEL_TAIL):
+            names = {g.strip() for g in note[len(_CANCEL_HEAD) : -len(_CANCEL_TAIL)].split(",")}
+            if names <= set(GATES):
+                cancelled |= names
+                if cancel_at is None:
+                    cancel_at = len(kept)
+                    kept.append("")  # filled below
+                continue
+        if note not in seen:
+            seen.add(note)
+            kept.append(note)
+    if cancel_at is not None:
+        kept[cancel_at] = _CANCEL_HEAD + ", ".join(g for g in GATES if g in cancelled) + _CANCEL_TAIL
+    content["notes"] = kept
+    return content
 
 
 class _Ctx:

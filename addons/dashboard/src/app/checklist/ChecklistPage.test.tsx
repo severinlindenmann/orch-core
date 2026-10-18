@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
-import { ALL_STEPS, INSTALL_LINE, INSTALL_PIN, RUN2_SECTIONS } from './run2'
+import { ALL_STEPS, RUN2_SECTIONS } from './run2'
 import { buildReport } from './report'
 
 vi.mock('@/api/testrun', async (orig) => {
@@ -30,11 +30,13 @@ describe('run 2 data', () => {
     expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R'])
     for (const id of ['A1', 'A2', 'B1.1', 'B1.7', 'B2.8', 'B3.9', 'C1', 'C8', 'D6', 'E6', 'F8']) expect(ids).toContain(id)
   })
-  it('holds no secret material; the install line carries one placeholder for the lead to fill', () => {
+  it('holds no secret material; A1 names no fake install command and no placeholder', () => {
     const all = JSON.stringify(RUN2_SECTIONS)
     expect(all).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY|ORCH_GRANT=[A-Za-z0-9_-]{16,}|\.p8/)
-    expect(INSTALL_LINE).toContain(INSTALL_PIN)
-    expect(ALL_STEPS.find((s) => s.id === 'A1')!.commands).toEqual([INSTALL_LINE])
+    expect(all).not.toContain('PASTE-THE-COMMIT')
+    const a1 = ALL_STEPS.find((s) => s.id === 'A1')!
+    expect(a1.commands).toBeUndefined()
+    expect(a1.text).toContain('Use the install line the lead sent you (it names the exact version).')
   })
 })
 

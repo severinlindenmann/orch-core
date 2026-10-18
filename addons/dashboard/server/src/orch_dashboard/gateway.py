@@ -10,7 +10,7 @@ from pathlib import Path
 from . import adapters
 from .adapters.addons import runner
 from .click_signer import Signer
-from .errors import fail
+from .errors import HostError, fail
 from .hostlink import HostLink
 from .text import hidden
 
@@ -80,6 +80,17 @@ WRITE_OPS = (
 )
 
 
+#: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
+PUBLISH_FEATURE_OPS = (
+    "publish.list",
+    "publish.prepare",
+    "publish.send",
+    "publish.revoke",
+    "publish.discard",
+    "publish.register",
+)
+
+
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
@@ -130,6 +141,15 @@ class Gateway:
         if not any(a["name"] == "dashboard" and a["enabled"] is True for a in addons):
             raise fail("addon.disabled", exit=3)
         return link
+
+    @staticmethod
+    def addon_on(link, name) -> bool:
+        """Is the shipped add-on `name` granted and enabled here (`addon.list` state `active`)? Unreadable: off."""
+        try:
+            rows = link.call("addon.list")["addons"]
+        except (HostError, KeyError, TypeError):
+            return False
+        return any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
 
     def features(self, ws):
         link = self.enabled(ws)
@@ -201,6 +221,9 @@ class Gateway:
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
                 features.append(feature)
+        if all(link.supports(op, "publish/1") for op in PUBLISH_FEATURE_OPS) and self.addon_on(link, "publish"):
+            # Publish (P6): the page and the ticket's Shares box exist only while the add-on is ON for this workspace.
+            features.append("publish")
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         if link.has("read_ext/2"):
@@ -228,7 +251,6 @@ class Gateway:
                 self.control = HostLink.connect(self.run / "control/host.sock", os.getuid(), None)
             rows = self.control.call("host.list")["workspaces"]
         result = []
-        from .errors import HostError
 
         signer = self.click.status()  # custody, enabled, available, problem per workspace; empty without a signer
         for row in rows:

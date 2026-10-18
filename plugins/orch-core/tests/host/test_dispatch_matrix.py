@@ -17,13 +17,13 @@ from orch.host.columns import Column, refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
+from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.terms import TERM_OPS
-from orch.host.publishing import PUBLISH_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok

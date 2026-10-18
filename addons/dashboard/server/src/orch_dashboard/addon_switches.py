@@ -86,7 +86,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         can_sign = served.get("addon.grant") == 1 and served.get("addon.disable") == 1
         runs = live_runs(gateway, ws)
         rows = []
-        for info in facts.catalog():
+        for info in facts.catalog(optional=True):
             if info.id in LOCKED:
                 rows.append(
                     {

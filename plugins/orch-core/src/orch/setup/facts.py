@@ -55,7 +55,12 @@ class AddonInfo:
         }
 
 
-def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
+#: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
+#: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
+OPTIONAL = frozenset({"publish"})
+
+
+def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
     """The "Agents may" list. The add-ons whose host code ships inside orch-core come with their capabilities from their
     own manifest (the same bytes ``addon.grant`` will read). The dashboard is locked on and IS an event: its grant is
     what makes the workspace show up in the dashboard. Quick tasks are plain tickets and need no setting (a flag with
@@ -83,7 +88,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []
-    for name in ("dashboard", *(n for n in builtin.NAMES if n != "dashboard")):
+    for name in ("dashboard", *(n for n in builtin.NAMES if n != "dashboard" and (optional or n not in OPTIONAL))):
         doc = json.loads(read(name))
         title, desc, runner, terms = texts[name]
         out.append(

@@ -682,6 +682,11 @@ def _event(
             for k in ("capabilities", "artifact_kinds", "fields", "sections"):
                 if ev.get(k) is not None:
                     _row(out, k.replace("_", " "), ev[k])
+            if isinstance(ev.get("capabilities"), list) and "network" in ev["capabilities"]:
+                out.setdefault("notes", []).append(
+                    "Network: this add-on may send data to a server over the internet. Each thing it sends still needs "
+                    "your own signature."
+                )
         return f"{verb} the add-on {_s(ev.get('name'))}"
     if typ == "device.added":
         _row(out, "device", ev.get("device"))

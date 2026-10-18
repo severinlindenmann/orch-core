@@ -300,6 +300,31 @@ def test_a_bad_server_setting_is_refused_before_anything_is_signed(bare, human, 
     assert not res["ok"]
 
 
+def test_the_builtin_manifest_is_installed_and_granted_like_the_other_addons(bare, human):
+    """``addon.grant publish`` (signed) puts the shipped manifest in place and turns the add-on on: no clone needed."""
+    from orch.addons import builtin
+
+    assert "publish" in builtin.NAMES and json.loads(builtin.manifest_bytes("publish"))["capabilities"] == ["network"]
+    bare.configure()
+    assert err(bare.req("publish.list", {})) == "runner.disabled"
+    prepared = human.prepare("addon.grant", {"name": "publish"})
+    content = signcontent.build(prepared, verified=True)
+    assert content["headline"] == "Grant the add-on publish"
+    assert {"field": "capabilities", "before": None, "after": '["network"]'} in content["fields_changed"] or any(
+        r["field"] == "capabilities" and "network" in r["after"] for r in content["fields_changed"]
+    )
+    assert any("send data to a server over the internet" in n and "your own signature" in n for n in content["notes"])
+    signed = human.sign(prepared)
+    ok(human.submit_res(prepared["request"]["id"], signed.events))
+    assert (Path(bare.ws.root) / "addons" / "publish" / "orch-addon.json").read_bytes() == builtin.manifest_bytes(
+        "publish"
+    )
+    assert ok(bare.req("publish.list", {}))["data"]["configured"] is True  # the gate is open
+    off = human.prepare("addon.disable", {"name": "publish"})
+    ok(human.submit_res(off["request"]["id"], human.sign(off).events))
+    assert err(bare.req("publish.list", {})) == "runner.disabled"
+
+
 # -- prepare ---------------------------------------------------------------------------------------------------------
 
 

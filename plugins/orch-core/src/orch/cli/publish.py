@@ -255,14 +255,13 @@ def main(
         a = _parser().parse_intermixed_args(argv)
         if env.get("ORCH_GRANT") and a.cmd not in _AGENT_OK:
             raise PubError("op.not_allowed", _PERSON_ONLY_MESSAGE)
+        _check_shape(a)  # everything that needs no host fails here, before a socket or a key is touched
         target = _target(env)
         if a.cmd == "setup":
             return _setup(a, target, env, out)
         if a.cmd == "register":
             return _register(target, env, out)
         if a.cmd == "prepare":
-            if len(a.rest) < 2:
-                raise PubError("invalid.input", _USAGE, 2)
             ref, files = a.rest[0], a.rest[1:]
             args: dict[str, Any] = {"ref": ref, "artifacts": files, "days": a.days}
             if a.once is not None:
@@ -282,8 +281,6 @@ def main(
             )
             return 0
         if a.cmd in ("share", "send", "discard"):
-            if len(a.rest) != 1:
-                raise PubError("invalid.input", _USAGE, 2)
             staged = a.rest[0]
             if a.cmd == "discard":
                 _call(target, "publish.discard", {"staged_id": staged}, env)
@@ -297,15 +294,16 @@ def main(
                         5,
                     )
                 _sign(target, "publish.share", {"staged_id": staged})
+                try:
+                    return _send(target, staged, env, out, as_json)
+                except (PubError, OrchError):
+                    out.write(f"your signature stays good for an hour: orch publish send {staged}\n")
+                    raise
             return _send(target, staged, env, out, as_json)
         if a.cmd == "revoke":
-            if len(a.rest) != 1:
-                raise PubError("invalid.input", _USAGE, 2)
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")
             return 0
-        if len(a.rest) > 1:
-            raise PubError("invalid.input", _USAGE, 2)
         data = _call(
             target,
             "publish.list",
@@ -320,10 +318,20 @@ def main(
         return fail(PubError(exc.code, str(exc.message), getattr(exc, "wire_exit", 3), getattr(exc, "hint", None)))
 
 
-def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: TextIO) -> int:
+def _check_shape(a: argparse.Namespace) -> None:
+    """The counts and values of a command's arguments (no host needed)."""
+    want = {"prepare": (2, 10**6), "share": (1, 1), "send": (1, 1), "revoke": (1, 1), "discard": (1, 1),
+            "list": (0, 1), "register": (0, 0), "setup": (0, 0)}[a.cmd]  # fmt: skip
+    if not want[0] <= len(a.rest) <= want[1]:
+        raise PubError("invalid.input", _USAGE, 2)
+    if a.cmd == "setup":
+        _check_setup(a)
+
+
+def _check_setup(a: argparse.Namespace) -> None:
     from orch.relay import wire
 
-    if a.rest or not a.server or not a.share_addr:
+    if not a.server or not a.share_addr:
         raise PubError("invalid.input", _USAGE, 2)
     for what, value in (("--server", a.server), ("--share", a.share_addr)):
         try:
@@ -340,6 +348,9 @@ def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: Text
             "--server and --share must be two different addresses (shared files open on their own address)",
             5,
         )
+
+
+def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: TextIO) -> int:
     if not _tty_ok():
         raise PubError("invalid.input", "no terminal to sign on: run this in a terminal; nothing was signed", 5)
     _sign(target, "settings.set", {"set": {"publish": {"server": a.server, "share": a.share_addr}}})

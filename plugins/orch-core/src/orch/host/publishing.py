@@ -177,6 +177,12 @@ def _put_json(path: Path, doc: Any) -> None:
     _write(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode())
 
 
+def _now_ms(service: WorkspaceService) -> int:
+    """The host's clock in milliseconds: what the server's expiry is measured from (a seam for the real-server test,
+    whose lab clock is made up)."""
+    return int(service.clock() * 1000)
+
+
 def _iso(t: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
@@ -854,7 +860,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             token = _token()
             send = {
                 "token_hash": flow.token_hash(token),
-                "expires_ms": int(service.clock() * 1000) + meta["days"] * 86_400_000,
+                "expires_ms": _now_ms(service) + meta["days"] * 86_400_000,
             }
             _write(token_path, token.encode())
             _put_json(send_path, send)

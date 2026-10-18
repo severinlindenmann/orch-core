@@ -126,6 +126,12 @@ class Gateway:
         features = []
         requirements = {
             "quick": [("quick.list", "quick/1")],
+            # Worktrees (H11d, section 12.7): one git worktree per ticket and repo.
+            "worktrees": [
+                ("worktree.list", "worktree/1"),
+                ("worktree.create", "worktree/1"),
+                ("worktree.remove", "worktree/1"),
+            ],
             "records": [("records.status", "records/1")],
             "identity": [
                 ("whoami", "ops/1"),

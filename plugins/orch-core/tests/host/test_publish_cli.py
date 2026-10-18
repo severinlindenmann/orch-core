@@ -254,3 +254,19 @@ def test_an_unknown_workspace_prints_what_the_admin_must_run(monkeypatch):
     assert f"orch-publish admin --data DATA_DIR owners add {'2' * 32}" in out
     assert f"orch-publish admin --data DATA_DIR ws allow {'1' * 32} {'2' * 32}" in out
     assert "Then run: orch publish register" in out
+
+
+def test_setup_with_the_addon_off_saves_and_says_what_is_next(monkeypatch):
+    from orch.ops.errors import OrchError
+
+    def call(target, op, args, env):
+        raise OrchError("runner.disabled", "Publish is off")
+
+    signed = []
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_tty_ok", lambda: True)
+    monkeypatch.setattr(publish, "_sign", lambda t, op, args: signed.append((op, args)) or {})
+    monkeypatch.setattr(publish, "_call", call)
+    code, out = run(["setup", "--server", SERVER, "--share", SHARE], {})
+    assert signed == [("settings.set", {"set": {"publish": {"server": SERVER, "share": SHARE}}})]
+    assert code == 3 and out.startswith("ok publish setup\n") and "Turn it on in Settings, Add-ons" in out

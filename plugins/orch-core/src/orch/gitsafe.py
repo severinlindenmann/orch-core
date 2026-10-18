@@ -89,6 +89,11 @@ prune``)                                                worktree) plus :data:`NE
 ``gitread/*``                                           no git process (a pure-Python reader in a sandbox)
 ======================================================  ===========================================================
 
+``orch.gitbrowse`` (the dashboard's File Explorer, #491) is a second CLOSED set of read-only operations (``log``,
+``show``, ``diff``, ``cat-file``, ``grep``) built on this module's pieces (:func:`gate`, :data:`HARDEN`,
+:func:`isolated_env`, the diff pins, :func:`_check`): same gate, same isolation, its own fixed templates and operand
+slots. It adds no row above because it adds no way to run git outside :func:`gate`.
+
 Two keys are on the allow-list only because a command-scope ``-c`` in :data:`NEUTRAL` overrides them on every command
 and command scope always wins: ``core.hooksPath`` (husky and similar tools set it in the local config) and a boolean
 ``core.fsmonitor`` (``true``/``false``: git's built-in daemon, no configured program). A non-boolean

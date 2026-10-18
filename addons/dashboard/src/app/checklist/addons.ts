@@ -406,4 +406,53 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
     ],
   },
+  {
+    id: 'R',
+    title: 'File Explorer',
+    where: 'Browser; as an owner, in a test workspace that has a git project folder',
+    steps: [
+      {
+        id: 'R1',
+        title: 'Switch it on',
+        text: 'Open Settings, then Add-ons, and switch on "File Explorer". Sign as usual.',
+        see: 'The line says: look through this workspace\'s files and their history, read only, only owners see it. A "Files" entry appears in the left menu. Switch it off again: the entry goes and nothing is deleted. Switch it on for the next steps.',
+      },
+      {
+        id: 'R2',
+        title: 'Look around',
+        text: 'Open Files. Open a folder, then a text file, a README.md and a picture.',
+        see: 'The folder opens in place. The file shows with line numbers; the README shows as formatted text (any HTML in it is shown as nothing, never run); the picture shows. A big or non-text file says so and shows no preview.',
+      },
+      {
+        id: 'R3',
+        title: 'Locked entries',
+        text: 'Look at the top folder of the project and click on what is locked (a .git folder, the orch files, a .env file if you made one).',
+        see: 'They are listed with a lock and "Locked", not hidden. They cannot be opened. Nothing of their content is shown anywhere.',
+      },
+      {
+        id: 'R4',
+        title: 'Find a file and text',
+        text: 'Type part of a file name in the search box. Then press "Text in files" and search for a word from a file.',
+        see: 'Names: matching files, best first. Text: the lines with the file name and line number; clicking a line opens the file. Nothing from locked files. Without ripgrep a note says it searches saved files only.',
+      },
+      {
+        id: 'R5',
+        title: 'History of a file',
+        text: 'Open a file that has been committed and press History. Click one change, then tick two changes.',
+        see: 'The changes are listed (who, when, what). One change shows what it changed in green and red. Two ticked show the difference between those versions. "Open the file as it was then" shows the older text with a notice and a way back.',
+      },
+      {
+        id: 'R6',
+        title: 'Ticket links',
+        text: 'On a ticket where an agent pushed a branch or finished a task with a commit, open the ticket page and look at the box "Files changed". Click a file.',
+        see: 'The files of that work are listed; clicking opens the explorer on that file, on that change. In the file\'s History that change carries the ticket number; clicking it opens the ticket. A commit that only mentions a ticket in its message has no number.',
+      },
+      {
+        id: 'R7',
+        title: 'Only owners',
+        text: 'Sign in as a member who is not an owner (or ask the lead) and look at the left menu. Then switch the add-on off as the owner and reload.',
+        see: 'A member sees no "Files" entry, and opening its address says it is off or for owners. After switching it off, nobody sees it.',
+      },
+    ],
+  },
 ]

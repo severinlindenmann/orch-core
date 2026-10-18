@@ -28,6 +28,7 @@ const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'Check
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
+const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
@@ -158,6 +159,24 @@ const worktreesRoute = createRoute({
   loader: pageLoader(() => [], [WorktreesPage.preload]),
   component: WorktreesPage,
 })
+/** File Explorer of a real host (add-on, owners only): listed only while the add-on is ON; the server refuses anyone else. */
+const explorerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'explorer',
+  validateSearch: (s: Record<string, unknown>): { root?: string; path?: string; rev?: string; view?: 'history'; sha?: string } => ({
+    ...(typeof s.root === 'string' ? { root: s.root } : {}),
+    ...(typeof s.path === 'string' ? { path: s.path } : {}),
+    ...(typeof s.rev === 'string' ? { rev: s.rev } : {}),
+    ...(s.view === 'history' ? { view: 'history' as const } : {}),
+    ...(typeof s.sha === 'string' ? { sha: s.sha } : {}),
+  }),
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('explorer')()
+  },
+  loader: pageLoader(() => [], [ExplorerPage.preload]),
+  component: ExplorerPage,
+})
 /** Shares of a real host (Publish add-on): listed only while the add-on is ON; the mock keeps its own addon page. */
 const sharesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -271,7 +290,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

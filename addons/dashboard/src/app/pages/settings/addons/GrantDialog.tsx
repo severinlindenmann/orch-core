@@ -113,7 +113,10 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
               <span className="text-text-muted">{explain(c)}</span>
             </li>
           ))}
-          {!caps.length && <li className="text-text-muted">Asks for no capabilities.</li>}
+          {!caps.length && addon.name === 'explorer' && (
+            <li className="text-text-muted">It lets owners read every file of this workspace and its declared repositories, and their git history (read only; keys, .env files, .git and orch&apos;s own files stay locked).</li>
+          )}
+          {!caps.length && addon.name !== 'explorer' && <li className="text-text-muted">Asks for no capabilities.</li>}
         </ul>
       </div>
     </SignPrompt>

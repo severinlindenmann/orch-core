@@ -786,6 +786,29 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     assert signcontent.ADDON_TRUST in none["notes"]
 
 
+def _explorer_digest():
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: builtin.manifest_bytes("explorer")})
+
+
+def test_the_builtin_file_explorer_says_that_it_lets_owners_read_files():
+    c = build(_addon(name="explorer", capabilities=[], package_sha256=_explorer_digest()))
+    assert c["headline"] == (
+        "Turn on File Explorer: owners can read this workspace's files and git history in the dashboard"
+    )
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["it lets owners"] == (
+        "read every file of this workspace and its declared repositories, and their git history "
+        "(read only; keys, .env files, .git and orch's own files stay locked)"
+    )
+    assert "declares no capabilities" not in flat(c) and signcontent.ADDON_TRUST in c["notes"]
+    # the name alone is not enough: another package called explorer keeps the plain "declares no capabilities" words
+    other = build(_addon(name="explorer", capabilities=[], package_sha256="sha256:" + "bb" * 32))
+    assert other["headline"] == "Turn on Explorer: it declares no capabilities"
+
+
 @pytest.mark.parametrize(
     "change",
     [

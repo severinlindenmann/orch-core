@@ -41,6 +41,7 @@ select = ["E", "F", "I", "UP"]
 # Long prose lines in the real-host kit and tests (prompts, reasons and findings read better unwrapped).
 "tests/realhost_kit.py" = ["E501"]
 "tests/test_realhost.py" = ["E501"]
+"tests/test_explorer.py" = ["E501"]
 "tests/test_realhost_click.py" = ["E501"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]

@@ -15,7 +15,7 @@ from .errors import fail
 from .gateway import Gateway
 
 #: the add-ons a person can switch here: shipped inside orch-core, signed with `addon.grant` / `addon.disable`
-SWITCHABLE = ("start-agent", "terminals", "worktrees", "publish", "usage", "estimate")
+SWITCHABLE = ("start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer")
 #: what the dashboard cannot turn off or on at all
 LOCKED = {
     "dashboard": "The dashboard is always on: it is what shows this workspace.",

@@ -14,7 +14,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TextIO
 
-NAMES = ("start-agent", "terminals", "worktrees", "dashboard", "publish", "usage", "estimate")
+NAMES = ("start-agent", "terminals", "worktrees", "dashboard", "publish", "usage", "estimate", "explorer")
 
 
 def manifest_bytes(name: str) -> bytes:

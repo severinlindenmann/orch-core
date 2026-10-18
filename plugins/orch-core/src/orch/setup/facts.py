@@ -57,7 +57,7 @@ class AddonInfo:
 
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -94,6 +94,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "estimate": (
             "Estimate",
             "Give tickets a size in points and see the total on epics and board columns. Points are the ticket's size.",
+            False,
+            False,
+        ),
+        "explorer": (
+            "File Explorer",
+            "Look through this workspace's files and their history in the dashboard. Read only; only owners see it.",
             False,
             False,
         ),

@@ -143,44 +143,67 @@ def test_ordinary_text_still_passes():
     assert redact_reason("the host said no (code 42)", s.held()) == "the host said no (code 42)"
 
 
-# ---- word collisions: a secret word that is also an ordinary word of the fixed wording is not a leak ----
+# ---- word collisions: a secret word inside OUR OWN fixed sentence is not a leak; anywhere else it still is ----
 
 _FIXED = "macOS did not let orch use the keychain"
 
 
-def test_a_secret_word_inside_the_fixed_wording_does_not_hide_the_reason():
-    # pairs of adjacent short words ("use"+"the") and one-word secrets of 6+ letters ("keychain") collide with prose
+def test_a_secret_word_inside_a_fixed_sentence_does_not_hide_the_reason():
     for secrets in (
-        ["use", "the", "let", "orch", "did", "macos"],  # words under 6 letters are never checked alone
-        ["the let zoo use abandon orch", "orch", "use"],  # words present, but never as an adjacent pair in the order
-        ["letorch", "usethe"],  # a joined pair must be one token
-        ["x y z"],
+        ["use the let orch did not macos unlock zoo", "use", "the", "let", "orch", "did", "macos"],
+        ["abandon use the keychain", "keychain", "use", "the", "usethe", "letorch", "notlet"],
+        ["orchuse thekeychain keychain"],
     ):
         assert redact_reason(_FIXED, secrets) == _FIXED, secrets
-    # a recovery word of 6+ letters that is a substring of other words / across a word boundary of the prose
-    assert (
-        redact_reason("macOS did not let orch use the keychain", ["notlet", "chain", "ouseth", "orchuse", "keychains"])
-        == _FIXED
-    )
-    assert redact_reason(_FIXED, ["keychain"]) == HIDDEN_REASON  # but a whole matching token is still hidden
+    full = "one-click could not be set up because " + _FIXED + "; your key stays as it was"
+    held = ["use the keychain", "keychain", "stays as it was now", "uses", "terminal"]
+    assert redact_reason(full, held, 400) == full
 
 
-def test_real_leaks_stay_hidden_even_with_colliding_words():
-    code = "use the let orch did not macos keychain spoon tray"
-    held = [code, *code.split()]
-    # prose that merely contains the same words one by one, far apart, is fine; the whole code is not
-    assert redact_reason(code, held) == HIDDEN_REASON
-    assert redact_reason(code.replace(" ", "\n"), held) == HIDDEN_REASON
-    assert redact_reason("spoon is not a token here", ["spoon", "tray"]) == "spoon is not a token here"  # < 6 letters
-    # one 6+ letter word and word pairs as whole tokens / joined / adjacent
-    assert redact_reason("it said keychain!", ["keychain"]) == HIDDEN_REASON
-    assert redact_reason("x use.the y", ["use the"]) == HIDDEN_REASON
-    assert redact_reason("x usethe y", ["use the"]) == HIDDEN_REASON
-    # encoded single recovery words
+def test_a_secret_word_anywhere_else_still_hides_the_text():
+    held = ["keychain", "spoon tray", "use the let orch", "usethe"]
+    for text in (
+        "macOS did not let orch use the keychain; the word was keychain",  # the word again outside the sentence
+        "macOS did not let orch use the keychain spoon tray",  # a pasted pair outside
+        _FIXED + " and then use the let orch",  # the whole secret outside
+        _FIXED + " (usethe)",
+    ):
+        assert redact_reason(text, held) == HIDDEN_REASON, text
+    # secret words only in the fixed part are fine; the same secret split by line breaks elsewhere is not
+    assert redact_reason(_FIXED + "\nuse\nthe\nlet\norch", ["use the let orch"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + " ok", ["use the let orch"]) == _FIXED + " ok"
+
+
+def test_encoded_secrets_next_to_a_fixed_sentence_are_hidden():
     import base64
     import urllib.parse
 
     w = "keychain"
-    for f in (w.encode().hex(), w.encode().hex().upper(), base64.b64encode(w.encode()).decode(), urllib.parse.quote(w)):
-        assert redact_reason(f"err {f} end", [w]) == HIDDEN_REASON, f
-    assert redact_reason("blob " + base64.b64encode(b"qq" + w.encode() + b"zz").decode(), [w]) == HIDDEN_REASON
+    code = "use the let orch spoon tray"
+    for sec in (w, code):
+        b = sec.encode()
+        for f in (
+            b.hex(),
+            base64.b64encode(b).decode(),
+            urllib.parse.quote(sec),
+            urllib.parse.quote_plus(sec),
+            sec.replace(" ", "%20"),
+        ):
+            assert redact_reason(f"{_FIXED}: {f}", [sec, *sec.split()]) == HIDDEN_REASON, f
+    # a base64 secret split by spaces / line breaks (whitespace-removed comparison)
+    for sec in (w, code):
+        enc = base64.b64encode(b"q" + sec.encode() + b"zz").decode()
+        split = " ".join(enc[i : i + 4] for i in range(0, len(enc), 4))
+        assert redact_reason(f"{_FIXED}\n{split}", [sec, *sec.split()]) == HIDDEN_REASON, sec
+        assert redact_reason(f"{_FIXED}\n" + "\n".join(split.split()), [sec, *sec.split()]) == HIDDEN_REASON, sec
+
+
+def test_stripping_is_a_closed_exact_list():
+    from orch.setup.steps import KNOWN_WORDING, strip_known_wording
+
+    assert strip_known_wording("a " + _FIXED + " b").split() == ["a", "b"]
+    assert strip_known_wording("macOS did not let orch use the keychains") != strip_known_wording(
+        "x"
+    )  # not an exact match
+    assert strip_known_wording(_FIXED.lower()) == _FIXED.lower()
+    assert all(len(w) > 20 for w in KNOWN_WORDING)  # whole sentences, never a bare word

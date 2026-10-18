@@ -233,55 +233,36 @@ def _b64_forms(b: bytes) -> list[str]:
     return out
 
 
-#: a one-word secret at least this long is also matched inside longer text (no ordinary word is that long)
-_LONG_WORD = 12
-
-
 def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     """True when ``text`` holds a secret. For each secret (the passphrase, the recovery code, each recovery word):
 
-    * the whole secret in whitespace-removed or letters/digits-only lower-case form;
-    * any single word of it of at least 6 characters, and any two consecutive words, each only as WHOLE tokens of the
-      text (a pair: two adjacent tokens, or one token of both run together). A secret word that merely occurs inside
-      other words or across a word boundary of the fixed product wording ("did not let orch use the keychain") is
-      not a leak;
+    * the whole secret, or any run of its words, in whitespace-removed or letters/digits-only lower-case form;
+    * any single word of it of at least 6 characters (so a single recovery word of 6+ letters triggers), and any two
+      consecutive words joined, as whole tokens or run together;
     * its hex, base64 (standard / URL-safe, any alignment) and URL-encoded (%20, +) forms; URL-encoded text is also
-      decoded before the comparison. A secret that is ONE short word (a recovery word) is matched only as a whole
-      token; its base64 form is compared on the text as written, so ordinary words cannot join into it.
+      decoded before the comparison.
 
     Fails closed on odd input: a non-str secret is ignored, never raised on."""
     texts = {text, urllib.parse.unquote(text), urllib.parse.unquote_plus(text)}
     forms = [_forms(t) for t in texts]
-    tok_lists = [_tokens(t) for t in texts]
-    toks = [set(tl) for tl in tok_lists]
-    adj = {(a, b) for tl in tok_lists for a, b in zip(tl, tl[1:], strict=False)}
+    toks = [set(_tokens(t)) for t in texts]
     raw_nows = ["".join(t.split()) for t in texts]
     for sec in secrets:
         if not isinstance(sec, str) or not sec.strip():
             continue
         s_ws, s_an = _forms(sec)
-        words = _tokens(sec)
-        if len(words) == 1 and len(s_an) < _LONG_WORD:
-            if len(s_an) >= _MIN_SECRET and any(s_an in tk for tk in toks):
-                return True
-            raw = sec.encode("utf-8", "replace")
-            if any(raw.hex() in t_ws for t_ws, _ in forms):
-                return True
-            for e in _b64_forms(raw):
-                if any(e in t for t in texts):
-                    return True
-            continue
         for t_ws, t_an in forms:
             if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
                 return True
             if len(s_an) >= _MIN_SECRET and s_an in t_an:
                 return True
+        words = _tokens(sec)
         for w in words:
             if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
                 return True
         for w1, w2 in zip(words, words[1:], strict=False):
             pair = w1 + w2
-            if len(pair) >= _MIN_SECRET and ((w1, w2) in adj or any(pair in tk for tk in toks)):
+            if len(pair) >= _MIN_SECRET and any(pair in t_an for _, t_an in forms):
                 return True
         raw = sec.encode("utf-8", "replace")
         hexed = {raw.hex(), "".join(sec.split()).encode("utf-8", "replace").hex()}
@@ -298,14 +279,44 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     return False
 
 
+#: The fixed sentences (and pieces) this flow's own code writes into reasons. A secret word that occurs only inside one
+#: of these is not a leak (a recovery word "use" must not hide "macOS did not let orch use the keychain"). Closed list,
+#: matched exactly and case-sensitively, longest first; add a sentence here only when the code emits it verbatim.
+KNOWN_WORDING = tuple(
+    sorted(
+        (
+            HIDDEN_REASON,
+            "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again",
+            "macOS did not let orch use the keychain",
+            "one-click could not be set up because",
+            "; your key stays as it was",
+            "; your workspace uses the terminal for now. Your passphrase is on your terminal: write it down.",
+            "Your workspace uses the terminal for now: every approval asks for the passphrase below.",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def strip_known_wording(text: str) -> str:
+    """``text`` without the fixed sentences of :data:`KNOWN_WORDING` (each replaced by one space, so the neighbours
+    stay separated and every check still sees whatever else is there, split or joined as before)."""
+    for w in KNOWN_WORDING:
+        text = text.replace(w, " ")
+    return text
+
+
 def redact_reason(text: str, secrets: Iterable[str], limit: int | None = None) -> str:
     """THE one gate for error/reason text of the setup flow. The whole text is checked BEFORE any cut (and the cut
-    result again), so no cut can show part of a secret; a hit replaces the whole text with :data:`HIDDEN_REASON`."""
+    result again), so no cut can show part of a secret; a hit replaces the whole text with :data:`HIDDEN_REASON`.
+    The checks run on the text without our own fixed sentences (:data:`KNOWN_WORDING`); everything else in it, in any
+    encoding, is checked exactly as before."""
     secrets = [x for x in secrets if isinstance(x, str)]
-    if contains_secret(text, secrets):
+    if contains_secret(strip_known_wording(text), secrets):
         return HIDDEN_REASON
     out = text if limit is None else text[:limit]
-    return HIDDEN_REASON if contains_secret(out, secrets) else out
+    return HIDDEN_REASON if contains_secret(strip_known_wording(out), secrets) else out
 
 
 # ================================================================================================== the create sequence

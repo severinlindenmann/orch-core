@@ -68,6 +68,7 @@ export const LAYOUT_SCENARIOS = [
   // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
   'agent-pill',
   'agent-pill-stopped',
+  'agent-pill-off',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -783,7 +784,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
-  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped')
+  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (

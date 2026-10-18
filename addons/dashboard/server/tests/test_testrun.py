@@ -215,3 +215,49 @@ def test_a_failed_save_leaves_no_image_behind(client, h, gateway, monkeypatch):
     assert upload(client, h, PNG).status_code == 500
     images = gateway.state / "dashboard" / "testrun" / "run2" / "images"
     assert list(images.iterdir()) == []
+
+
+def test_concurrent_first_saves_of_different_steps_all_persist(client, h):
+    from concurrent.futures import ThreadPoolExecutor
+
+    jobs = [("A1", {"status": "pass"}), ("B1.1", {"note": "n1"}), ("C2", {"status": "fail_blocking", "note": "n2"})]
+
+    def go(job):
+        step, body = job
+        return client.put(f"/api/testrun/run2/steps/{step}", json=body, headers=h).status_code
+
+    with ThreadPoolExecutor(6) as pool:
+        codes = list(pool.map(go, jobs * 4 + [("D1", {"status": "skipped"})]))
+        up = pool.submit(upload, client, h, PNG, "image/png", "E1")
+        assert up.result().status_code == 200
+    assert set(codes) == {200}
+    notes = client.get("/api/testrun/run2", headers=h).json()["notes"]
+    assert notes["A1"]["status"] == "pass"
+    assert notes["B1.1"]["note"] == "n1"
+    assert (notes["C2"]["status"], notes["C2"]["note"]) == ("fail_blocking", "n2")
+    assert notes["D1"]["status"] == "skipped"
+    assert len(notes["E1"]["images"]) == 1
+
+
+def test_a_partial_save_keeps_the_other_field(client, h):
+    put(client, h, step="C1", status="pass", note="kept")
+    assert client.put("/api/testrun/run2/steps/C1", json={"status": "fail_blocking"}, headers=h).status_code == 200
+    assert client.put("/api/testrun/run2/steps/C1", json={}, headers=h).status_code == 400
+    row = client.get("/api/testrun/run2", headers=h).json()["notes"]["C1"]
+    assert (row["status"], row["note"]) == ("fail_blocking", "kept")
+
+
+def test_a_symlinked_state_dir_still_saves_but_a_symlinked_testrun_is_refused(tmp_path):
+    from orch_dashboard.testrun import Store
+
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    store = Store(link)
+    store.save("run2", {"version": 1, "steps": {"A1": {"status": "pass", "note": "", "images": []}}})
+    assert store.load("run2")["steps"]["A1"]["status"] == "pass"
+    (real / "dashboard" / "testrun").rename(real / "dashboard" / "moved")
+    (real / "dashboard" / "testrun").symlink_to(real / "dashboard" / "moved")
+    with pytest.raises(Exception):  # noqa: B017, PT011  (HostError invalid.input)
+        store.load("run2")

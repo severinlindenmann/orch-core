@@ -16,10 +16,12 @@ export const queryClient = new QueryClient({ defaultOptions: { queries: { staleT
 
 /** Lists the features the server serves, then draws the app. The router is built after them: its guards read them. */
 function App() {
-  const features = useQuery({ queryKey: ['session'], queryFn: session })
+  // The tester's checklist needs no host and asks it for nothing; its link back to the dashboard is a full page load.
+  const onChecklist = location.pathname === CHECKLIST_PATH
+  const features = useQuery({ queryKey: ['session'], queryFn: session, enabled: !onChecklist })
   // The tester's checklist needs no host: before `orch host enable` or `orch setup` the feature list can be refused
   // (no host registry yet), and the checklist still opens, with no feature on.
-  const checklistOnly = !!features.error && location.pathname === CHECKLIST_PATH
+  const checklistOnly = onChecklist || (!!features.error && location.pathname === CHECKLIST_PATH)
   const router = useMemo(() => {
     if (!features.data && !checklistOnly) return null
     setFeatures(features.data ?? { features: [] })

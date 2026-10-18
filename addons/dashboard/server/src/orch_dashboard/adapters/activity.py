@@ -94,6 +94,19 @@ def display(value):
     return value if isinstance(value, str) and not hidden(value) else None
 
 
+def repo_sentence(repos) -> str | None:
+    """"updated repo x" / "removed repo y" from the host's `repos` ({name: "set" | "removed"}); None when it names none.
+    The event alone cannot tell a new repo from a changed one, so a set is "updated"."""
+    if not isinstance(repos, dict):
+        return None
+    parts = []
+    for name, how in sorted(repos.items()):
+        shown = display(name)
+        if shown and how in ("set", "removed"):
+            parts.append(f"{'removed' if how == 'removed' else 'updated'} repo {shown}")
+    return "; ".join(parts) or None
+
+
 def sentence(item: dict, name_of) -> str:
     """What happened, in words, after the actor's name. Unknown types and unsafe fields get a general sentence."""
     kind, data = item["type"], item.get("data") or {}
@@ -123,6 +136,8 @@ def sentence(item: dict, name_of) -> str:
     if kind in ("device.added", "device.removed", "device.revoked"):
         verb = "added" if kind == "device.added" else "removed"
         return f"{verb} a device of {name_of(data.get('person'))}" if data.get("person") else f"{verb} a device"
+    if kind == "settings.changed":
+        return repo_sentence(data.get("repos")) or SIMPLE[kind]
     if kind in ("addon.granted", "addon.disabled", "addon.purged"):
         verb = {"addon.granted": "turned on", "addon.disabled": "turned off", "addon.purged": "removed"}[kind]
         name = display(data.get("name"))

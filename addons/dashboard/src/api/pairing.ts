@@ -148,7 +148,7 @@ export interface PairingApi {
   subscribe: (ws: string, onItem: (item: PairItem) => void) => () => void
 }
 
-export const PAIR_UNAVAILABLE = 'Pairing a phone is not available on this host yet.'
+export const PAIR_UNAVAILABLE = 'Pairing a phone comes later. For now you approve on this computer, in the terminal.'
 
 const unavailable = (): Promise<never> =>
   Promise.reject(new ApiError(404, { code: 'pair.unavailable', message: PAIR_UNAVAILABLE, retryable: false }))

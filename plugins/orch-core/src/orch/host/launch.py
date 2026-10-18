@@ -64,7 +64,7 @@ def check_model(field: str, value: Any) -> str | None:
     return None
 
 
-def prompt(mode: str | None, key: str | None) -> str | None:
+def prompt(mode: str | None, key: str | None, instructions: str | None = None) -> str | None:
     """The prompt argument, one element; ``None`` without a mode."""
     if mode is None:
         return None
@@ -74,11 +74,18 @@ def prompt(mode: str | None, key: str | None) -> str | None:
         return f"Run orch show {key} --section current_state, then wait for my instructions."
     if mode not in MODE_TEXT:
         raise HostError("launch.invalid", "mode is not one of refine, work, fix, continue, context")
-    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow AGENTS.orch.md."
+    from orch.instructions.harness import AGENTS_FILE
+
+    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow {instructions or AGENTS_FILE}."
 
 
 def launch_argv(
-    harness: str, mode: str | None, model: str | None, key: str | None, config: RunnerConfig
+    harness: str,
+    mode: str | None,
+    model: str | None,
+    key: str | None,
+    config: RunnerConfig,
+    instructions: str | None = None,
 ) -> tuple[list[str], bool, str | None]:
     """``(argv, login_shell, program)``. ``shell`` is ``["$SHELL", "-l"]`` (the runner substitutes its own ``SHELL``);
     a harness is ``[$SHELL, "-l", "-c", LOGIN_EXEC, program, …]``, or with ``login_shell: false`` the absolute program
@@ -95,7 +102,7 @@ def launch_argv(
     rest: list[str] = []
     if model is not None:
         rest += ["--model", model]
-    text = prompt(mode, key)
+    text = prompt(mode, key, instructions)
     if text is not None:
         rest.append(text)
     if config.login_shell:

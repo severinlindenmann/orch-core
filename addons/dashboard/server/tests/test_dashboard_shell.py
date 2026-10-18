@@ -1,9 +1,11 @@
 import os
+import re
+from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
 
-from orch_dashboard.app import create_app
+from orch_dashboard.app import SETTINGS_TABS, SPA_BARE_ONLY, create_app
 from orch_dashboard.errors import HostError, host_response
 from orch_dashboard.gateway import read_pins
 
@@ -279,3 +281,57 @@ def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypa
     config = app._telemetry
     assert not any(config[k] for k in ("tracing", "metrics", "logs", "operation_spans", "auto_configure"))
     assert app._native_telemetry.enabled() is False
+
+
+ROUTER = Path(__file__).resolve().parents[2] / "src" / "app" / "router.tsx"
+TABS_TS = Path(__file__).resolve().parents[2] / "src" / "app" / "pages" / "settings" / "tabs.ts"
+NOT_SERVED = {"__layout/$name"}  # the mockup's layout preview: never on a real host
+SAMPLE = {"$key": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
+
+
+def _client_routes():
+    src = ROUTER.read_text()
+    paths = re.findall(r"createRoute\(\{[^}]*?\bpath:\s*'([^']*)'", src, re.S)
+    assert len(paths) >= 15, paths  # the walk found the router's routes
+    return paths
+
+
+def _sample(path):
+    return "/".join(SAMPLE.get(seg, seg) for seg in path.split("/") if seg)
+
+
+def test_every_client_route_is_served_on_reload(client):
+    for route in _client_routes():
+        if route in NOT_SERVED:
+            continue
+        tail = _sample(route)
+        url = f"/{tail}" if route in SPA_BARE_ONLY else f"/w/DEMO/{tail}".rstrip("/")
+        res = client.get(url)
+        assert res.status_code == 200 and "main-hash.js" in res.text, (route, url)
+
+
+def test_every_real_host_settings_tab_is_served(client):
+    block = TABS_TS.read_text().split("export const HOST_TABS")[1].split("] as const")[0]
+    tabs = re.findall(r"id:\s*'([a-z]+)'", block)
+    assert tabs and set(tabs) == set(SETTINGS_TABS), tabs
+    for tab in tabs:
+        assert client.get(f"/w/DEMO/settings/{tab}").status_code == 200, tab
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/w/DEMO/guide", "/w/DEMO/worktrees", "/w/DEMO/artifacts", "/w/DEMO/addon/guide/main", "/w/DEMO/settings/addon/x"],
+)
+def test_reload_addresses_named_by_the_e2e(client, path):
+    assert client.get(path).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/w/DEMO/guide/x/y", "/w/DEMO/__layout/x", "/guide", "/worktrees"])
+def test_api_and_unknown_stay_404(client, path):
+    assert client.get(path).status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/api/nope", "/api/w/DEMO/guide", "/api/w/DEMO/worktrees/x"])
+def test_unknown_api_paths_stay_json_404(client, token, path):
+    res = client.get(path, headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 404 and "main-hash.js" not in res.text

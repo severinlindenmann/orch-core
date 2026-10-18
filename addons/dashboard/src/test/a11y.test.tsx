@@ -23,7 +23,7 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['activity/activity', /Activity/, /events today/],
   ['widgets/widgets', /Widgets/, /Agents can put small charts/],
   ['start-agent/start', /Start agent/, /Start an agent session on a ticket/],
-  ['guide/guide', /Guide/, /Getting around/],
+  ['guide/guide', /Guide/, /Start here/],
   ['factory/factory', /AI Factory/, /Children used/],
   ['schedules/schedules', /Schedules/, /Check inbox/],
 ]

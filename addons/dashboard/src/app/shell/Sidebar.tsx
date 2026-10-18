@@ -18,6 +18,7 @@ import {
   ShieldOff,
   SquareKanban,
   Zap,
+  BookOpen,
   PackageOpen,
 } from 'lucide-react'
 import { api } from '@/api/client'
@@ -427,4 +428,6 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
+  /** The guide of a real host: fixed pages in the bundle, so any host serves it. */
+  { to: '/guide', label: 'Guide', icon: BookOpen, feature: 'today', real: true },
 ] as const

@@ -39,7 +39,7 @@ This dashboard is where you see the tickets, watch the agents and approve what n
 
 ## Your first time
 
-Setting up happens once per folder. In a terminal in your project folder, run \`orch setup\`. It opens a page in your browser and walks you through six steps: who you are, what agents may do, how you want to approve things, your secret words, and a last look before it creates your workspace.
+Setting up happens once per folder. In a terminal in your project folder, run \`orch setup\`. It opens a page in your browser and walks you through a few steps: who you are, what agents may do, how you want to approve things, your secret words, and a last look before it creates your workspace.
 
 ## Your secret words
 

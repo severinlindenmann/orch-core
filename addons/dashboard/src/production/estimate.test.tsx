@@ -95,6 +95,24 @@ it('the ticket shows its points and picking another one asks for one signed size
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'details', key: 'DEMO-0001', size: 'l', via: 'estimate' }])
 })
 
+it('G2: the box warns before choosing when approvals exist, and says nothing when none do', async () => {
+  const gates = ticket.gates as Record<string, Record<string, unknown>>
+  serve({ size: 'm', gates: { ...gates, requirements: { ...gates.requirements, state: 'approved' }, code: { ...gates.code, state: 'approved' } } })
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  const box = await screen.findByTestId('ticket-estimate', {}, T)
+  expect(await within(box).findByTestId('estimate-cancels')).toHaveTextContent('Changing the estimate cancels the approval of the requirements, the code. You will have to approve them again.')
+})
+
+it('G2: no warning without an approval', async () => {
+  serve({ size: 'm' })
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  const box = await screen.findByTestId('ticket-estimate', {}, T)
+  expect(within(box).getByRole('button', { name: '5 points' })).toBeInTheDocument()
+  expect(within(box).queryByTestId('estimate-cancels')).toBeNull()
+})
+
 it('clearing says "Clear estimate", reviews "No estimate", and the Estimate box is a section like Details and Code', async () => {
   serve({ size: 'm' })
   window.innerWidth = 1400

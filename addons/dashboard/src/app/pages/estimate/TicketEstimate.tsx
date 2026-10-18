@@ -15,6 +15,8 @@ import { Section } from '../ticket/shared'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 
+const GATE_WORDS = { requirements: 'the requirements', plan: 'the plan', verify: 'the checks', code: 'the code' } as const
+
 type Pick = SizeName | 'none'
 
 function EpicRollup({ ws, epic }: { ws: string; epic: string }) {
@@ -43,6 +45,9 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
   const epic = ticket.type === 'epic'
   const points = pointsOf(ticket.size)
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done' && ticket.status !== 'closed'
+  // The size is part of what the requirements, plan, verification and code approvals cover (core's binding list), so a
+  // changed estimate cancels every approval already given on this ticket. Say so before a value is chosen.
+  const approved = (['requirements', 'plan', 'verify', 'code'] as const).filter((g) => ticket.gates?.[g]?.state === 'approved')
   const action: HandoffAction | null = pick ? { action: 'details', key: ticket.key, size: pick, via: 'estimate' } : null
   const wording = pick === 'none' ? 'No estimate' : pointsText(ESTIMATE_SCALE.find((s) => s.size === pick)?.points ?? 0)
   return (
@@ -58,6 +63,11 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
           {mayChange && (
             <>
               <p className="text-[12px] text-text-muted">Points compare size, not hours. Choose a value to review and approve the change.</p>
+              {approved.length > 0 && (
+                <p className="text-[12px] text-warning" data-testid="estimate-cancels">
+                  Changing the estimate cancels the approval of {approved.map((g) => GATE_WORDS[g]).join(', ')}. You will have to approve {approved.length === 1 ? 'it' : 'them'} again.
+                </p>
+              )}
               <div role="group" aria-label="Set the estimate" className="flex flex-wrap gap-1.5">
                 {ESTIMATE_SCALE.map((s) => {
                   const on = ticket.size === s.size
@@ -97,6 +107,7 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
           summary={
             <p>
               Estimate: <strong>{wording}</strong>
+              {approved.length > 0 && <span className="block text-warning">This cancels the approval of {approved.map((g) => GATE_WORDS[g]).join(', ')}.</span>}
             </p>
           }
           ws={ws}

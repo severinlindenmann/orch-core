@@ -304,9 +304,17 @@ def strip_known_wording(text: str) -> str:
     """``text`` without the fixed sentences of :data:`KNOWN_WORDING` (each replaced by one space, so the neighbours
     stay separated and every check still sees whatever else is there, split or joined as before)."""
     for w in KNOWN_WORDING:
-        pre = r"(?<![A-Za-z0-9])" if w[0].isalnum() else ""
-        post = r"(?![A-Za-z0-9])" if w[-1].isalnum() else ""
-        text = re.sub(pre + re.escape(w) + post, " ", text)
+        start_alnum, end_alnum = w[0].isalnum(), w[-1].isalnum()
+
+        def repl(m: re.Match[str], start_alnum: bool = start_alnum, end_alnum: bool = end_alnum) -> str:
+            # the same notion of "letter" as the secret checks (str.isalnum): a glued edge is not a whole sentence
+            if start_alnum and m.start() > 0 and m.string[m.start() - 1].isalnum():
+                return m.group(0)
+            if end_alnum and m.end() < len(m.string) and m.string[m.end()].isalnum():
+                return m.group(0)
+            return " "
+
+        text = re.sub(re.escape(w), repl, text)
     return text
 
 

@@ -212,3 +212,9 @@ def test_a_secret_running_into_a_fixed_sentence_edge_is_hidden():
     assert redact_reason("rando" + _FIXED, ["random"]) == HIDDEN_REASON
     assert redact_reason(_FIXED + "x", ["keychainx"]) == HIDDEN_REASON
     assert redact_reason("abc" + _FIXED, ["abcmacos"]) == HIDDEN_REASON
+
+
+def test_non_ascii_letters_glued_to_a_fixed_sentence_are_hidden():
+    assert redact_reason("caf\u00e9" + _FIXED, ["caf\u00e9macos"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + "\u00e9", ["keychain\u00e9"]) == HIDDEN_REASON
+    assert redact_reason("\ufb01" + _FIXED, ["\ufb01macos"]) == HIDDEN_REASON

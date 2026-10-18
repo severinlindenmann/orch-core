@@ -22,18 +22,26 @@ export interface TestrunState {
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
 export const IMAGE_MAX = 5 * 1024 * 1024
 
+/** Whether sending the same save again can help: a network error (no status), a timeout, a rate limit or a server error. */
+export const retryable = (e: unknown): boolean => !(e instanceof TestrunError) || e.status === 408 || e.status === 429 || e.status >= 500
+
 export class TestrunError extends Error {
   constructor(public status: number, public code: string) {
     super(code)
   }
 }
 
+/** A keepalive request may carry at most 64 KB in the browser: bigger bodies use a normal fetch. */
+export const KEEPALIVE_MAX = 60_000
+
 async function call(method: string, path: string, body?: unknown, keepalive = false): Promise<Response> {
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers['content-type'] = 'application/json'
-  const res = await fetch(path, { method, headers, credentials: 'omit', redirect: 'error', cache: 'no-store', keepalive, body: body === undefined ? undefined : JSON.stringify(body) })
+  const payload = body === undefined ? undefined : JSON.stringify(body)
+  const small = payload === undefined || new TextEncoder().encode(payload).length <= KEEPALIVE_MAX
+  const res = await fetch(path, { method, headers, credentials: 'omit', redirect: 'error', cache: 'no-store', keepalive: keepalive && small, body: payload })
   if (!res.ok) {
     let code = 'error'
     try {

@@ -190,10 +190,10 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
 
 
 def _grant_short(value: Any) -> str:
-    """A grant id by its first and last characters (``gr_01M5…ZMPS4``): enough to tell two grants apart on the screen;
-    the full id is in the technical details."""
+    """A grant id as ``gr_…`` and its last 10 characters: enough to tell two grants apart on the screen; the full id is
+    in the technical details. Two different ids with one short form are refused by the caller (:func:`_payload`)."""
     text = _s(value)
-    return f"{text[:7]}…{text[-5:]}" if len(text) > 14 else text
+    return f"gr_…{text[-10:]}" if len(text) > 14 else text
 
 
 def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
@@ -594,19 +594,18 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
     # binds none of them. Said in plain words, in one labelled note instead of a suffix on every line.
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
-    unsigned = []
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
             value = q[k]
-            words = (
-                "the ticket owner"
-                if value == "ticket_owner"
-                else ("yes" if value is True else "no" if value is False else opts.get(_s(value), _s(value)))
-            )
-            _row(out, label, words)
-            unsigned.append(label)
-    if unsigned:
-        out.setdefault("notes", []).append(f"Per host, not signed: {', '.join(unsigned)}.")
+            if value == "ticket_owner":
+                words = "the ticket owner"
+            elif value is True or value is False:
+                words = "yes" if value else "no"
+            elif k == "recommended":
+                words = opts.get(_s(value), _s(value))
+            else:
+                words = _s(value)
+            _row(out, f"{label} (per host)", words)  # the host's word: the question hash binds none of these
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
@@ -632,6 +631,10 @@ def _payload(
             raise PlainUnavailable("the access to be taken back is the one being given")
         for new in issued:
             _row(out, "new access", _grant_short(new))
+    shown = {}
+    for gid in [*issued, *revoked]:
+        if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
+            raise PlainUnavailable("two accesses share one short form")
     uniq = list(dict.fromkeys(heads))
     if len(uniq) == 1:
         out["headline"] = uniq[0]
@@ -682,7 +685,9 @@ def _event(
         return _grant_issued(ev, out)
     if typ == "grant.revoked":
         _row(out, "access taken back", _grant_short(ev.get("grant")))
-        out.setdefault("notes", []).append("The full access id is in the technical details.")
+        note = "The full access id is in the technical details."
+        if note not in out.setdefault("notes", []):
+            out["notes"].append(note)
         if ev.get("reason") == "extended":  # B8: the old half of an Extend
             out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
         if ev.get("reason"):

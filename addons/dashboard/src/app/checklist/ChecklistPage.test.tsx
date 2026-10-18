@@ -202,3 +202,39 @@ describe('buildReport', () => {
     expect(buildReport({}, '/i', '/p')).toContain('Nothing marked yet.')
   })
 })
+
+describe('F8 retry rules', () => {
+  it('does not resend a save the server refused (400/403/404/422) and says so in plain words', async () => {
+    m.saveStep.mockRejectedValue(new testrun.TestrunError(400, 'invalid.input'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    expect(await screen.findByText(/did not accept this change/, {}, T)).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(m.saveStep).toHaveBeenCalledTimes(1)
+  })
+  it('resends after a 503', async () => {
+    m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledTimes(2), T)
+  })
+})
+
+describe('keepalive only for small bodies', () => {
+  it('a 20,000-character non-ASCII note (60 KB in UTF-8) is sent with a normal fetch, a short one with keepalive', async () => {
+    const real = await vi.importActual<typeof import('@/api/testrun')>('@/api/testrun')
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await real.saveStep('run2', 'A2', { note: '€'.repeat(20000) })
+      await real.saveStep('run2', 'A2', { note: 'short ü' })
+      const calls = fetchMock.mock.calls as unknown as [string, { keepalive: boolean }][]
+      expect(calls[0][1].keepalive).toBe(false)
+      expect(calls[1][1].keepalive).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

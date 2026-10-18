@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent,
 import { ArrowLeft, Check, ClipboardCopy, Copy, ImagePlus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError } from '@/api/testrun'
+import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError, retryable } from '@/api/testrun'
 import { cn } from '@/lib/utils'
 import { copyText } from '../copyLink'
 import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, type ChecklistStep } from './run2'
@@ -23,6 +23,7 @@ const statusTone: Record<StepStatus, string> = {
 }
 
 function problemText(e: unknown): string {
+  if (e instanceof TestrunError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 408 && e.status !== 429) return 'The dashboard did not accept this change, so it was not saved. Reload the page and try again.'
   if (e instanceof TestrunError && e.status === 401) return 'Your dashboard session ended. Run "orch dashboard open /checklist" in the Terminal, then come back. Nothing you typed here is lost until you reload.'
   return 'Could not reach the dashboard server. Your last change may not be saved.'
 }
@@ -256,7 +257,7 @@ export function ChecklistPage() {
         mark(id, 'error')
         const tries = attempts.current.get(id) ?? 0
         const ended = e instanceof TestrunError && e.status === 401
-        if (!ended && tries < RETRIES && !timers.current.has(id)) {
+        if (!ended && retryable(e) && tries < RETRIES && !timers.current.has(id)) {
           attempts.current.set(id, tries + 1)
           timers.current.set(id, setTimeout(() => flush(id), Math.min(RETRY_BASE * 2 ** tries, 8000)))
         }

@@ -52,17 +52,18 @@ export function useColumnSums(tickets: TicketSummary[]): ColumnSumItem[] {
 }
 
 /**
- * Estimate on a real host: the sum of the cards' points. `showMissing` (an epic's lane) also says how many children have
- * none, in the words "n not estimated"; elsewhere that count is in the tooltip only.
+ * Estimate on a real host: the sum of the cards' points and, in words, how many cards have none ("n not estimated"),
+ * so a total never reads as complete when it is not. `showMissing` (an epic's lane) also shows a lane whose children
+ * have no points at all.
  */
 function EstimateSum({ tickets, showMissing }: { tickets: TicketSummary[]; showMissing: boolean }) {
   const r = rollup(tickets)
   if (r.estimated === 0 && !(showMissing && r.notEstimated > 0)) return null
   const missing = r.notEstimated > 0 ? notEstimatedText(r.notEstimated) : ''
   return (
-    <span aria-label="Sum of points" title={[pointsText(r.total), missing].filter(Boolean).join(' · ')} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-[11px] text-text-muted" data-testid="estimate-sum">
-      {r.total} {r.total === 1 ? 'pt' : 'pts'}
-      {showMissing && missing && <span className="font-sans text-text-faint"> · {missing}</span>}
+    <span aria-label={`Sum of points${missing ? `, ${missing}` : ''}`} title={[pointsText(r.total), missing].filter(Boolean).join(' · ')} className="inline-flex items-center gap-1 font-mono text-[11px] text-text-muted" data-testid="estimate-sum">
+      <span className="whitespace-nowrap">{r.total} {r.total === 1 ? 'pt' : 'pts'}</span>
+      {missing && <span className="font-sans text-text-faint" data-testid="estimate-missing"> · {missing}</span>}
     </span>
   )
 }

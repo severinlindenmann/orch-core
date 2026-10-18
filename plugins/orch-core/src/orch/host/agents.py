@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from .errors import HostError
-from .launch import LOGIN_NOTICE, check_model, display, launch_argv
+from .launch import HARNESSES, LOGIN_NOTICE, check_model, display, launch_argv, routed_model
 from .visibility import Viewer
 
 if TYPE_CHECKING:
@@ -50,6 +50,8 @@ __all__ = ["AGENT_OPS", "ADDON", "complete", "plan", "serve"]
 
 AGENT_OPS: dict[str, int] = {"agent.preview": 1, "agent.start": 1}
 ADDON = "start-agent"
+#: Model routing: while this add-on is on, the workspace's signed ``settings.models`` picks a start's model
+ROUTING = "model-routing"
 #: §0.11 (v1.6): 8 agent runs per person per workspace, 16 per person, 64 per runner
 AGENTS_PER_WORKSPACE = 8
 AGENTS_PER_PERSON = 16
@@ -275,18 +277,26 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     except ConfigError as exc:
         config = RunnerConfig()
         p.block("launch.invalid", str(exc))
-    for name, value in (("model", model), ("subagent_model", sub)):
-        bad = check_model(name, value)
+    source = "chosen" if model is not None else "default"
+    if agent and model is None and mode is not None and harness in HARNESSES and _addon(service, ROUTING):
+        # the host chooses, from the owner's signed setting; the person's review binds it (it is in the spec digest)
+        model, problem = routed_model(service.store.state.workspace.settings, harness, mode)
+        if problem is not None:
+            p.block("launch.invalid", problem)
+        elif model is not None:
+            source = "workspace"
+    for name, value, of in (("model", model, harness), ("subagent_model", sub, "claude-code")):
+        bad = check_model(name, value, of)
         if bad:
             p.block("launch.invalid", bad)
     if sub is not None and harness != "claude-code":
         p.block("launch.invalid", "subagent_model is for claude-code only")
     if mode is not None and key is None and p.blocked is None:
         p.block("launch.invalid", f"mode {mode} needs a ticket")
+    argv_model = model if not check_model("model", model, harness) else None  # never an unchecked name in an argv
     argv, login, program = ["$SHELL", "-l"], False, None
     try:
-        argv, login, program = launch_argv(harness, mode, model if not check_model("model", model) else None, key,
-                                           config)  # fmt: skip
+        argv, login, program = launch_argv(harness, mode, argv_model, key, config)
     except HostError as exc:
         p.block(exc.code, exc.message)
     if login and not _shell_ok():
@@ -317,7 +327,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             pairs.append(f"{repo}={path}")
         if pairs:
             env_fixed["ORCH_WORKTREES"] = ":".join(pairs)
-        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub):
+        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub, "claude-code"):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = sub
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
         # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
@@ -327,8 +337,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             lay = service.store.layout
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
             if at.isascii() and at.isprintable():
-                argv, login, program = launch_argv(harness, mode, model if not check_model("model", model) else None,
-                                                   key, config, instructions=at)  # fmt: skip
+                argv, login, program = launch_argv(harness, mode, argv_model, key, config, instructions=at)
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None
@@ -352,8 +361,9 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     digest = hashlib.sha256(
         json.dumps(
             {"v": 2, "kind": "agent" if agent else "shell", "harness": harness, "mode": mode, "model": model,
-             "subagent_model": sub, "argv": argv, "login_shell": login, "cwd": where["cwd"], "pin": pin_view,
-             "gen": where.get("gen"), "env_names": env_names, "env_fixed": env_fixed,
+             "model_source": source, "subagent_model": sub, "argv": argv, "login_shell": login,
+             "cwd": where["cwd"], "pin": pin_view, "gen": where.get("gen"), "env_names": env_names,
+             "env_fixed": env_fixed,
              "grant": grant["id"] if grant else None, "as_person": not agent},
             sort_keys=True, separators=(",", ":"),
         ).encode()
@@ -362,9 +372,9 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         {*env_names, *env_fixed, "TERM", "COLORTERM", *(("ORCH_GRANT", "ORCH_SESSION") if agent else ())}
     )
     out: dict[str, Any] = {
-        "spec": digest, "argv": argv, "display": display(argv), "login_shell": login, "program": program,
-        "cwd": where["cwd"], "cwd_path": where["path"], "env": shown_env, "blocked": p.blocked,
-        "warnings": p.warnings[:8],
+        "spec": digest, "model": model, "model_source": source, "argv": argv, "display": display(argv),
+        "login_shell": login, "program": program, "cwd": where["cwd"], "cwd_path": where["path"],
+        "env": shown_env, "blocked": p.blocked, "warnings": p.warnings[:8],
         "_launch": {"argv": argv, "env_names": env_names, "env_fixed": env_fixed, "cwd": where["pin"],
                     "create": where["create"], "ticket": key, "login_shell": login,
                     "grant": grant["id"] if grant else None},
@@ -416,7 +426,7 @@ def serve(call: Call) -> dict[str, Any]:
         raise HostError("launch.changed", "what agent.start would start differs from the preview: preview again")
     return ok_result({
         "run": run, "idem": str(idem), "spec": found["spec"], "launch": found["_launch"], "person": person,
-        "harness": args["harness"], "mode": args["mode"], "model": args.get("model"),
+        "harness": args["harness"], "mode": args["mode"], "model": found["model"],
         "subagent_model": args.get("subagent_model"), "label": args.get("label"), "cwd": found["cwd"],
         "cols": args.get("cols", 120), "rows": args.get("rows", 40),
     })  # fmt: skip

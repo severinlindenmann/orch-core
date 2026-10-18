@@ -407,6 +407,49 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
     ],
   },
   {
+    id: 'Q',
+    title: 'Model routing',
+    where: 'Browser; Settings, Add-ons; a test workspace with Start agents on',
+    steps: [
+      {
+        id: 'Q1',
+        title: 'Switch Model routing on',
+        text: 'Open Settings, then Add-ons, and switch Model routing on.',
+        see: 'The usual review and typed word. Afterwards a "Model routing" box appears under the list: for Claude and Codex, one row per kind of work (Do the work, Write requirements and plan, Fix what was sent back, Continue, Read and answer), each set to "Agent default".',
+      },
+      {
+        id: 'Q2',
+        title: 'Choose a model for one kind of work',
+        text: 'Set Claude, "Do the work", to Sonnet and press Continue to sign.',
+        see: 'A review with one row per kind of work and agent: Sonnet for the one you changed, "Harness default" for the others, each with what it was before. You type the word shown, and the box shows Sonnet after signing.',
+      },
+      {
+        id: 'Q3',
+        title: 'Start agent preselects it',
+        text: 'Open a ticket, press Start agent, keep "Do the work" and look at the Model line.',
+        see: 'The Model line says "Sonnet (set for this kind of work in Settings)". Under Details the command contains --model sonnet. Choosing "Fix what was sent back" shows "the agent\'s own default" (nothing is set for it).',
+      },
+      {
+        id: 'Q4',
+        title: 'Pick another model for this start only',
+        text: 'In the same dialog choose Haiku under Model.',
+        see: 'The preview asks you to preview again; afterwards the Model line says "Haiku (your choice)". Settings still shows Sonnet.',
+      },
+      {
+        id: 'Q5',
+        title: 'A failing check suggests a stronger model',
+        text: 'On a ticket with a task whose check failed, open Start agent.',
+        see: 'A line "A check on this ticket is failing. A stronger model may do better." with a button. Nothing changes until you press it and start; it is only a suggestion.',
+      },
+      {
+        id: 'Q6',
+        title: 'Switch it off',
+        text: 'Switch Model routing off in Add-ons, then open Start agent on the same ticket.',
+        see: 'The Model line says "the agent\'s own default" and the command has no --model. The saved choices are kept for when you switch it on again.',
+      },
+    ],
+  },
+  {
     id: 'R',
     title: 'File Explorer',
     where: 'Browser; as an owner, in a test workspace that has a git project folder',

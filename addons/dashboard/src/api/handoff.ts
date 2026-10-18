@@ -42,6 +42,8 @@ export type HandoffAction =
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** Model routing: the model per agent and mode (`settings.set` of `models`, the typed word). An empty table clears it. */
+  | { action: 'models_set'; models: import('./modelRouting').ModelTable }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */
@@ -54,8 +56,8 @@ export type HandoffAction =
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
+  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
+  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
   | { action: 'publish_setup'; server: string; share: string }
   /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */

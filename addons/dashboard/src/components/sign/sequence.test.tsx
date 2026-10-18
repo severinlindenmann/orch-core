@@ -90,7 +90,7 @@ describe('a ticket and its text on one review (terminal)', () => {
     expect(s.prepare.mock.calls[0][1]).toEqual(ACTION)
     expect(within(dialog).getByRole('heading', { name: /Create DEMO-0044: Plan the launch/ })).toBeInTheDocument()
     expect(dialog).toHaveTextContent('and its text (2 sections)')
-    expect(dialog).toHaveTextContent('The terminal shows the same code:')
+    expect(dialog).toHaveTextContent('Verification fingerprint:')
     expect(dialog).toHaveTextContent('Why this exists.')
     expect(dialog).toHaveTextContent('Line two')
     expect(dialog).toHaveTextContent('One confirmation signs all 4 steps')

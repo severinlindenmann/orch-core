@@ -2,7 +2,7 @@ import { QueryClientContext } from '@tanstack/react-query'
 import { useContext, type ReactNode } from 'react'
 import type { Workspace } from '@/api/types'
 import type { SignContent as Content } from '@/api/signing'
-import { Raw } from './visible'
+import { Inline, Prose, Raw } from './visible'
 
 export function SignDetails({ children }: { children: ReactNode }) {
   return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
@@ -110,7 +110,8 @@ export function SignContent({ content, ws }: { content: Content; ws?: string }) 
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
-  return <div className="max-h-[38vh] space-y-4 overflow-auto text-[13px] [overflow-wrap:anywhere]">
+  const summary = content.summary
+  const rest = <>
     {content.ticket && <div>
       <p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>
       {content.ticket.title && <Value>{content.ticket.title}</Value>}
@@ -119,11 +120,24 @@ export function SignContent({ content, ws }: { content: Content; ws?: string }) 
     {!!content.acceptance?.length && <section><h3 className="text-text-muted">Acceptance criteria</h3><ul className="space-y-1">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Raw>{a.id}</Raw> · <Value>{a.text}</Value></li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="text-text-muted">Plan tasks</h3><ol className="list-decimal space-y-2 pl-5">{content.tasks.map(t => <li key={t.n} value={t.n}><Raw>{t.id}</Raw> · <Value>{t.title}</Value>{t.verify?.map((v,i) => <p key={i} className="font-mono text-[12px]">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
     {!!content.fields_changed?.length && <section><h3 className="text-text-muted"><Raw>{content.fields_title ?? 'Changed fields'}</Raw></h3>{content.fields_changed.map(f => <p key={f.field}><Raw>{f.field}</Raw>: {(content.fields_title || /: (add|remove)$/.test(f.field)) && f.before == null ? null : <><Shown value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown value={f.after} members={members} empty="(not set)" /></p>)}</section>}
-    {[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i}><Value>{note}</Value></p>)}
+    {[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-text"><Prose inline>{note}</Prose></p>)}
     {(content.ticket?.key_note || ids.length > 0) && <details className="text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details: ids and keys</summary>
       {content.ticket?.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
       {ids.map(id => <p key={id}><Person parts={personLabel(id, members)!} /> = <Raw>{id}</Raw></p>)}
     </details>}
+  </>
+  return <div className="max-h-[38vh] space-y-4 overflow-auto text-[13px] [overflow-wrap:anywhere]">
+    {summary ? <>
+      <section data-testid="sign-summary" aria-label={summary.title} className="space-y-1.5">
+        <h3 className="text-[14px] font-medium text-text"><Inline>{summary.title}</Inline></h3>
+        <ul className="list-disc space-y-1 pl-5 text-text">{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>
+        <p className="text-[12px] text-text-muted">This summary is worked out from the signed values below. Those exact values are what you sign, and they are shown in full.</p>
+      </section>
+      <details open data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-2">
+        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Exact signed details</summary>
+        <div className="mt-2 space-y-4">{rest}</div>
+      </details>
+    </> : rest}
   </div>
 }

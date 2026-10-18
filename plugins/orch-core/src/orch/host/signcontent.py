@@ -189,6 +189,84 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
+_SHARE_FILE = re.compile(r"- (.+)  \((\d+(?:\.\d+)? ?[A-Za-z]+), sha256 ([0-9a-f]{16})\)")
+_SHARE_HEAD = re.compile(r"Files \((\d+), (\d+(?:\.\d+)? ?[A-Za-z]+)\):")
+
+
+def _share_summary(text: str) -> dict[str, Any] | None:
+    """The plain lead of a share approval (the PF1 review): files, who can open them, how long, where they go, read
+    from the SIGNED text only (``orch.publishclient.approval.approval_text``). It is a summary that never replaces the
+    text: the dashboard shows the whole signed text beside it. ``None`` (no summary, the text alone) as soon as one
+    line is not exactly what that function writes, so an odd value can never be summarised into something it is not."""
+    lines = text.split("\n")
+    if len(lines) < 11:
+        return None
+    fixed = [
+        re.fullmatch(r"Ticket: (\S+)", lines[1]),
+        re.fullmatch(r"Prepared by: (an agent|you)", lines[2]),
+        re.fullmatch(r"Link: a secret link: anyone who has the link can open the files", lines[3])
+        or re.fullmatch(r"Link: a show-once link: it opens at most (\d+) times?", lines[3]),
+        re.fullmatch(r"Works for: (\d+) days?( from the moment the link is made)", lines[4]),
+        re.fullmatch(r"The files are sent to: (\S+)", lines[5]),
+        re.fullmatch(r"The link opens at: (\S+)", lines[6]),
+        _SHARE_HEAD.fullmatch(lines[7]),
+    ]
+    if not all(fixed) or not (lines[-2].startswith("Staged copy: ") and lines[-1].startswith("Manifest: ")):
+        return None
+    ticket, prepared, link, works, server, share, head = fixed
+    assert ticket and prepared and link and works and server and share and head
+    rows = lines[8:-2]
+    names = []
+    for row in rows:
+        m = _SHARE_FILE.fullmatch(row)
+        if m is None:
+            return None
+        names.append(m.group(1))
+    if len(rows) != int(head.group(1)):
+        return None
+    n, days = int(head.group(1)), int(works.group(1))
+    who = "Anyone who has the link can open the files"
+    if lines[3].startswith("Link: a show-once"):
+        views = int(link.group(1))
+        who += f", at most {views} time{'' if views == 1 else 's'}"
+    out = [
+        f"Files: {n} ({head.group(2)}): " + ", ".join(names),
+        f"Who can open them: {who}.",
+        f"The link works for {days} day{'' if days == 1 else 's'} from the moment it is made.",
+        f"The files are sent to {server.group(1)}; the link opens at {share.group(1)}.",
+        f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
+    ]
+    return {"title": "Share these files", "lines": out}
+
+
+def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """The plain lead of an Extend (the ordinary runner grant plus the take-back of the access it replaces, B8).
+    Only for exactly that shape; anything else keeps the generic review (nothing here may claim less than is signed)."""
+    kinds = [e.get("type") for e in events]
+    if sorted(map(str, kinds)) != ["grant.issued", "grant.revoked"]:
+        return None
+    new = next(e for e in events if e.get("type") == "grant.issued")
+    old = next(e for e in events if e.get("type") == "grant.revoked")
+    hours = new.get("hours")
+    if (
+        old.get("reason") != "extended"
+        or new.get("label") != "runner"
+        or new.get("scope") != "workable"
+        or new.get("verbs") != "agent"
+        or type(hours) is not int
+    ):
+        return None
+    until = local_time(new.get("expires_at"), hours)
+    lines = [
+        f"New access: agents working for you, for {span(hours)}.",
+        *([f"The new access ends {until} (your time)."] if until else []),
+        f"It replaces the access {_grant_short(old.get('grant'))}, which is taken back when you sign.",
+        "Affected: agents working for you.",
+        "Running agents will stop. New agents use the extended access.",
+    ]
+    return {"title": "Extend agent access", "lines": lines}
+
+
 def _grant_short(value: Any) -> str:
     """A grant id as ``gr_…`` and its last 10 characters: enough to tell two grants apart on the screen; the full id is
     in the technical details. Two different ids with one short form are refused by the caller (:func:`_payload`)."""
@@ -221,7 +299,9 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
         return None
     zone = when.tzname() or "UTC"
     day = (
-        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 24 else _DAYS[when.weekday()]
+        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}"
+        if type(hours) is int and hours > 24
+        else _DAYS[when.weekday()]
     )
     return f"{day} {when:%H:%M} {zone}"
 
@@ -655,7 +735,11 @@ def _payload(
         if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
             raise PlainUnavailable("two accesses share one short form")
     uniq = list(dict.fromkeys(heads))
-    if len(uniq) == 1:
+    extend = _extend_summary(events) if issued and revoked else None
+    if extend is not None:
+        out["summary"] = extend
+        out["headline"] = "Extend agent access"
+    elif len(uniq) == 1:
         out["headline"] = uniq[0]
     elif len(uniq) <= 3:
         out["headline"] = " and ".join(uniq)
@@ -690,6 +774,9 @@ def _event(
         text = _s(ev.get("text"))
         if text.startswith(MARK + "\n"):  # P5: a share approval; the words are the whole of what is signed
             out.setdefault("sections", []).append({"id": "share", "title": "What will be shared", "text": text})
+            summary = _share_summary(text)
+            if summary is not None:
+                out["summary"] = summary
             out.setdefault("notes", []).append(
                 "Files leave this computer only after you sign. You will see the link once; orch keeps no copy of it."
             )

@@ -29,7 +29,9 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       onSettled={(phase) => {
         if (phase !== 'done') return
         onSettled?.()
-        setSpec(null) // signed: the dialog is finished, the page behind it shows the new state
+        // Signed: the dialog is finished and the page behind it shows the new state. A moment of "Signed" first.
+        const n = spec.n
+        setTimeout(() => setSpec((cur) => (cur && cur.n === n ? null : cur)), 1500)
       }}
       onClose={() => setSpec(null)}
     >

@@ -1,16 +1,18 @@
 """P4: ``PublishSigner`` and ``PublishClient`` (design-publish-addon §2.4, protocol-v2 §12.1).
 
-Vectors: ``suites.2.publish`` of the vendored relay corpus (``tests/relay/vectors/vectors_v2.json.xz``, the relay's
-``tests/vectors_v2.json``): one signed example (``signed_bytes`` + headers) and the ``cases`` of the server check order.
-orch-publish (P1) pins the same file's bytes, so a byte difference between the two repos fails in both."""
+Vectors: ``tests/publish/vectors/publish_v2.json``, byte for byte orch-publish's ``tests/vectors/publish_v2.json`` (P1),
+which is the suite-2 subset of orch-relay ``tests/vectors_v2.json``. Pinned by sha256 in ``vectors/SOURCE`` and checked
+against the relay corpus vendored in ``tests/relay/vectors``, so a drift in either repo fails here."""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import json
 import logging
 import re
+from pathlib import Path
 
 import pytest
 
@@ -21,9 +23,12 @@ from orch.relay.sign import SignerRefused
 from tests.relay import corpus
 from tests.relay.helpers import Key, MemLedger
 
-V = corpus.S2["publish"]
+VEC_DIR = Path(__file__).resolve().parent / "vectors"
+VEC_BYTES = (VEC_DIR / "publish_v2.json").read_bytes()
+VEC = json.loads(VEC_BYTES)
+V = VEC["publish"]
 WS = V["headers"]["Orch-Workspace"]
-WSK_PUB = corpus.pub("wsk_a.sig")
+WSK_PUB = bytes.fromhex(VEC["keys"]["wsk_a.sig"]["pub"])
 ORIGIN = "https://pub.dev.severin.io"
 SECRET = "TOKEN-SENTINEL-zQ9x-secret"
 
@@ -51,6 +56,15 @@ def mk(origin=ORIGIN, **kw):
 
 def unb64u(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def test_vector_file_is_the_pinned_copy_of_the_relay_vectors():
+    pin = dict(line.split(": ", 1) for line in (VEC_DIR / "SOURCE").read_text().splitlines())
+    assert hashlib.sha256(VEC_BYTES).hexdigest() == pin["sha256"]
+    assert V == corpus.S2["publish"]  # the same publish block as the vendored relay corpus
+    assert VEC["ids"] == corpus.S2["ids"]
+    assert VEC["keys"]["wsk_a.sig"]["pub"] == corpus.KEYS["wsk_a.sig"]["pub"]
+    assert VEC["source"]["repo"] == "orch-relay" and len(VEC["source"]["sha256"]) == 64
 
 
 # --- vectors -----------------------------------------------------------------------------------------------------

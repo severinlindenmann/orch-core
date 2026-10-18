@@ -131,6 +131,14 @@ OPS: dict[str, Op] = {
     # the difference of one file between two commits (old, new)
     "file_diff": Op(("diff", "--no-color", "--no-renames", "-U<num>", *gitsafe._DIFF_FIXED, "--end-of-options",
                      "<commit>", "<commit>", "--", ":(literal)<file>")),
+    # what a path is at a commit: `blob`, `tree`, ... (the caller needs `blob`; nothing is read)
+    "blob_type": Op(("cat-file", "-t", "<commit>:./<file>")),
+    # the files ONE commit changed under exactly this path (a folder would list its files; a file lists itself)
+    "commit_file_names": Op(("show", *_SHOW, "--format=", "--name-status", "-z", *gitsafe._DIFF_FIXED,
+                             "--end-of-options", "<commit>", "--", ":(literal)<file>")),
+    # the same between two commits
+    "range_file_names": Op(("diff", "--no-color", "--no-renames", "--name-status", "-z", *gitsafe._DIFF_FIXED,
+                            "--end-of-options", "<commit>", "<commit>", "--", ":(literal)<file>")),
     # a file as it was at a commit: its size, then its bytes
     "blob_size": Op(("cat-file", "-s", "<commit>:./<file>")),
     "blob": Op(("cat-file", "blob", "<commit>:./<file>")),

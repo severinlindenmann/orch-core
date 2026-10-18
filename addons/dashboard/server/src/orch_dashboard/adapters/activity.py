@@ -95,7 +95,7 @@ def display(value):
 
 
 def repo_sentence(repos) -> str | None:
-    """ "updated repo x" / "removed repo y" from the host's `repos` ({name: "set" | "removed"}); None when it names none.
+    """Sentences for a repo change from the host's `repos` ({name: "set" | "removed"}); None when it names none.
     The event alone cannot tell a new repo from a changed one, so a set is "updated"."""
     if not isinstance(repos, dict):
         return None

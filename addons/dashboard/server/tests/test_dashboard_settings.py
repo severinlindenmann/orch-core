@@ -818,8 +818,8 @@ def test_f8_the_repo_path_check_runs_before_any_request_and_says_why_in_plain_wo
 def test_an_owner_gets_the_keys_of_the_tickets_that_link_a_repo_and_only_plain_keys():
     from orch_dashboard.adapters import settings as adapter
 
-    entry = {"default_branch": "main", "path": "/x", "linked_by": ["DEMO-0001", "TQ-2"]}
-    assert adapter.repo("code", entry).tickets == ["DEMO-0001", "TQ-2"]
+    entry = {"default_branch": "main", "path": "/x", "linked_by": ["DEMO-0001", "TQ-2", "DEMO-12345678901"]}
+    assert adapter.repo("code", entry).tickets == ["DEMO-0001", "TQ-2", "DEMO-12345678901"]
     for bad in (["no key"], ["DEMO-1\n"], [f"DEMO-{i}" for i in range(13)], "DEMO-1"):
         try:
             adapter.repo("code", {**entry, "linked_by": bad})
@@ -842,3 +842,11 @@ def test_the_form_can_ask_the_path_check_before_anything_is_prepared(worlds, tea
         other = worlds(team[1][who].ref)
         res = other.post(url, {**base, "path": str(tmp_path / "api")})
         assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied", (who, res.text)
+
+
+def test_the_path_check_route_is_rate_limited_per_session(worlds, team):
+    world = worlds(team[0].owner.ref)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    body = {"action": "repo_set", "name": "api", "path": "/no/such/folder"}
+    codes = [world.post(url, body).status_code for _ in range(22)]
+    assert codes[:20] == [400] * 20 and codes[20:] == [503, 503]

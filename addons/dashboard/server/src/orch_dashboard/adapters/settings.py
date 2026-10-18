@@ -30,7 +30,7 @@ WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 # F1 5.7: a canonical identity is `https://host[:port]/path` or `local:<name>`, and carries no userinfo.
 REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
-TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
+TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,18}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 #: a grant's label (common.json `label`): `runner` marks the runner grant (H11c-2); anything else is shown as text

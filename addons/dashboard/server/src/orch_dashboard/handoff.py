@@ -1309,14 +1309,25 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.person_of = person_of
 
+    checks: dict[str, list[float]] = {}  # per bearer token: times of its recent folder checks
+
     @app.post("/api/w/{ws}/repos/check")
-    def check_repo(body: RepoSet, ws: str = Depends(workspace)):
+    def check_repo(body: RepoSet, request: Request, ws: str = Depends(workspace)):
         """The host's own look at a repository to add, asked from the form before it closes, so a refusal (home folder,
         not a git folder, inside orch's data, missing, not an owner) stays next to the field. A dry run of the same
         prepare the hand-off makes: nothing is stored, no request exists, nothing is signed. The same check runs again
         when the change is really prepared."""
         gateway.enabled(ws)
-        gateway.check_repo_path(ws, body.path)
+        # At most 20 folder checks a minute per session: this route says what exists on this computer.
+        now = time.monotonic()
+        recent = [t for t in checks.get(request.state.token, []) if t > now - 60]
+        if len(recent) >= 20:
+            raise fail("rate.limited")
+        checks[request.state.token] = [*recent, now]
+        if len(checks) > 256:
+            for k in [k for k, v in checks.items() if not v or v[-1] <= now - 60]:
+                del checks[k]
+        # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
         human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
         return {"ok": True}

@@ -132,14 +132,20 @@ class Details(Action):
     action: Literal["details"]
     key: Key
     priority: Literal["low", "medium", "high", "urgent"] | None = None
-    size: Literal["xs", "s", "m", "l", "xl"] | None = None
+    #: "none" takes the size away (core `set size=none`); the Estimate add-on's "not estimated"
+    size: Literal["xs", "s", "m", "l", "xl", "none"] | None = None
     labels: list[Label] | None = Field(default=None, min_length=0, max_length=16)
     parent: Key | None = None
+    #: the Estimate box names itself: then the size is all this carries and the add-on must be ON (see `plan`).
+    #: Not signed and not sent to the host; the host sees an ordinary `set size=...`.
+    via: Literal["estimate"] | None = None
 
     @model_validator(mode="after")
     def something(self):
         if self.priority is None and self.size is None and self.labels is None and self.parent is None:
             raise ValueError("details change at least one field")
+        if self.via == "estimate" and (self.size is None or self.priority or self.labels is not None or self.parent):
+            raise ValueError("an estimate changes the size and nothing else")
         return self
 
 
@@ -608,7 +614,7 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "model-routing"]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing"]
 
 
 class AddonGrant(Action):
@@ -1043,6 +1049,8 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
+    if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
+        raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
     if isinstance(body, AddonDisable):
         from .addon_switches import check_off
 

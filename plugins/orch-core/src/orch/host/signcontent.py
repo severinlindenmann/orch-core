@@ -857,6 +857,27 @@ def _capability_words(value: Any) -> str | None:
     return "; ".join(_CAPABILITY_WORDS[c] for c in value) or ""
 
 
+#: the built-in File Explorer reads project files inside the dashboard server, which no capability word names. Its grant
+#: review says so in its own words (matched by name AND the digest of the built-in package, never by name alone)
+EXPLORER_HEADLINE = "Turn on File Explorer: owners can read this workspace's files and git history in the dashboard"
+EXPLORER_ROW = (
+    "read every file of this workspace and its declared repositories, and their git history "
+    "(read only; keys, .env files, .git and orch's own files stay locked)"
+)
+
+
+def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    try:
+        return ev.get("name") == "explorer" and ev.get("package_sha256") == package_digest(
+            {MANIFEST_FILE: builtin.manifest_bytes("explorer")}
+        )
+    except (ValueError, OSError):
+        return False
+
+
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     """The add-on reviews. The plain view of an add-on that declares nothing but known capabilities (no fields,
     sections or artifact kinds) is its name, its version and what it may do in words; the package digest and the exact
@@ -875,10 +896,16 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
-        _row(out, "it says it will", words or "(declares no capabilities)")
+        explorer = not words and _is_builtin_explorer(ev)
+        if explorer:
+            _row(out, "it lets owners", EXPLORER_ROW)
+        else:
+            _row(out, "it says it will", words or "(declares no capabilities)")
         notes = out.setdefault("notes", [])
         notes.append(ADDON_TRUST)
         notes.append("The package digest and the exact capability names are in the technical details.")
+        if explorer:
+            return EXPLORER_HEADLINE
         return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))

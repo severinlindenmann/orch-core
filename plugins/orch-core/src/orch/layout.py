@@ -26,6 +26,7 @@ from typing import Any
 __all__ = [
     "CONFIG_SCHEMA",
     "LEGACY_STORE_FOLDERS",
+    "KEYS_FILE",
     "STORE_DIR",
     "WRITE_NEW",
     "Layout",
@@ -41,6 +42,8 @@ __all__ = [
 ]
 
 STORE_DIR = ".orch"
+#: the file of a store that holds its keys (named here so a deny list elsewhere does not spell it)
+KEYS_FILE = "keys.jsonl"
 #: the folders of a store that, in the legacy layout, sit directly in the project folder
 LEGACY_STORE_FOLDERS = (".state", "events", "tickets", "addons", STORE_DIR)
 CONFIG_SCHEMA = "orch.workspace/2"

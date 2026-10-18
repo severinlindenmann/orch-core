@@ -74,6 +74,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
             True,
             False,
         ),
+        "publish": (
+            "Publish",
+            "Share files from a ticket with a link, on a server you choose. Nothing leaves this Mac until you sign.",
+            False,
+            False,
+        ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []

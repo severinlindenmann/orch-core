@@ -266,6 +266,14 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if "terminal" not in methods:
             return Refusal(Code.SETTINGS_INVALID, "sign_methods always contains terminal")
         ws.settings["sign_methods"] = [m for m in SIGN_METHODS if m in methods]
+    if "publish" in s:  # the Publish add-on's server: one signed place for shared files to go; null removes it
+        server = s["publish"]
+        if server is None:
+            ws.settings.pop("publish", None)
+        else:
+            if server["server"] == server["share"]:
+                return Refusal(Code.SETTINGS_INVALID, "publish: the share address must differ from the server address")
+            ws.settings["publish"] = dict(server)
     return None
 
 

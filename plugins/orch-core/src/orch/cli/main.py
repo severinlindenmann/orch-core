@@ -284,6 +284,10 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["publish"]:  # the Publish add-on (P5): a host client, not a registry op
+        from orch.cli.publish import main as publish_main
+
+        return publish_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["migrate"]:  # the store move into .orch/ (B11-P2): the person-side tool, not a registry op
         from orch.migrate_cli import main as migrate_main
 

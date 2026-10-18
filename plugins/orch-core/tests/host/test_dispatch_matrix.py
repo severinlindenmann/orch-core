@@ -23,6 +23,7 @@ from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.terms import TERM_OPS
+from orch.host.publishing import PUBLISH_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
@@ -78,6 +79,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
+    host |= set(PUBLISH_OPS)  # P5
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -93,7 +95,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "settings.set",
         "people.set",
         "relay.pair_device",
-    }  # H12c-e, B12D
+        "publish.share",
+    }  # H12c-e, B12D, P5
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -191,6 +194,13 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("pg_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
+        elif op in PUBLISH_OPS:  # P5: prepare and discard P and G, list reads, send/revoke/register P only
+            want = {
+                "publish.prepare": ("pg_write", "write"),
+                "publish.discard": ("pg_write", "write"),
+                "publish.list": ("pg_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert kind == want
         elif op in AGENT_OPS:  # H11c: P only
             assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
         elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only
@@ -390,7 +400,7 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
     rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
     for line in rest.splitlines():
-        m = re.match(r"\| `((?:worktree\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m and m.group(1) not in {r[0] for r in rows}:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows

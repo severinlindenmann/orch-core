@@ -98,6 +98,12 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
     "unsupported.platform": (3, False),
+    # P5, the Publish add-on (design-publish-addon)
+    "publish.not_configured": (3, False),
+    "publish.not_approved": (3, False),
+    "publish.changed": (3, False),
+    "publish.server_refused": (3, False),
+    "publish.unreachable": (9, True),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),
@@ -154,6 +160,18 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "run.limit": {"which": ("agent_ws", "agent_person", "shell_person", "runner")},
     "launch.no_grant": {"reason": ("none", "expiring", "scope", "revoked")},
     "runner.disabled": {"missing": ("addon", "machine", "terminals")},
+    "publish.server_refused": {
+        "reason": (
+            "unknown_workspace",
+            "blocked",
+            "owner_not_allowed",
+            "limit",
+            "conflict",
+            "clock",
+            "card",
+            "rejected",
+        )  # fmt: skip
+    },
     "ticket.key_not_next": {"next_key": None},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)

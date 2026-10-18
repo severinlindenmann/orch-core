@@ -94,6 +94,8 @@ from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
+from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
+from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
 from .runnergrants import GRANT_OPS
@@ -215,6 +217,7 @@ def served_ops() -> dict[str, int]:
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
+    out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
     return out
@@ -260,6 +263,10 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("pg_read", "read")
     if name in WORKTREE_OPS:  # H11d: P and G (G only on its claimed ticket, checked by the op), never N
         return ("pg_read", "read") if name == "worktree.list" else ("pg_write", "write")
+    if name in PUBLISH_OPS:  # P5: prepare and discard P and G (G on its claimed ticket); send, revoke, register P only
+        if name == "publish.list":
+            return ("pg_read", "read")
+        return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -392,7 +399,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKTREE_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *WORKTREE_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -446,6 +453,10 @@ class RegistryBackend:
             from . import worktrees
 
             return await worktrees.execute(call, result)
+        if op in PUBLISH_NETWORK_OPS or op == "publish.list":  # P5: the server calls, off the workspace worker
+            from . import publishing
+
+            return await publishing.execute(call, result)
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -626,6 +637,10 @@ class RegistryBackend:
                 from . import worktrees
 
                 result = worktrees.serve(call)
+            elif op in PUBLISH_OPS:
+                from . import publishing
+
+                result = publishing.serve(call)
             elif op in FILE_OPS or op in GIT_OPS or op in QUICK_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:

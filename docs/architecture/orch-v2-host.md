@@ -518,6 +518,11 @@ drops. The host never sends it.
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
 | `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |
 | `unsupported.platform` | 3 | no | stays | `orch worktree` or `orch records` on Windows (D-P2-38) | — |
+| `publish.not_configured` | 3 | no | stays | a Publish op before an owner signed `settings.set {publish}` (`orch publish setup`); no server is set (P5) | — |
+| `publish.not_approved` | 3 | no | stays | `publish.send` for a staged copy no person signed: no `log.added` note with exactly its words (files, server, kind, days, views) is in the ticket log, signed by the caller, within the hour (P5) | — |
+| `publish.changed` | 3 | no | stays | a staged file or its record changed since `publish.prepare` (size, hash, link, owner, mode), or the staged copy is not valid (P5); prepare again | — |
+| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace card could not be made; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `card` or `rejected` (P5) | — |
+| `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
 attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;

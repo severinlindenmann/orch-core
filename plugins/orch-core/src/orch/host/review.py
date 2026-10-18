@@ -68,6 +68,8 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "people.set": frozenset({"people.changed"}),
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
     "relay.pair_device": frozenset({"device.added"}),
+    # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
+    "publish.share": frozenset({"log.added"}),
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 

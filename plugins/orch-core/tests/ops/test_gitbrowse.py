@@ -166,11 +166,12 @@ def test_no_operand_can_become_an_option_or_leave_the_repo(world, op, operand):
 def test_every_operation_has_fixed_arguments_with_end_of_options_and_separators():
     for name, spec in gitbrowse.OPS.items():
         args = spec.args
-        if "<rev>" in "".join(args) and ":" not in "".join(a for a in args if "<rev>" in a):
+        assert "<rev>" not in "".join(args), name  # only <commit>: resolved as a commit, never a tree or a blob
+        if "<commit>" in "".join(args) and ":" not in "".join(a for a in args if "<commit>" in a):
             assert "--end-of-options" in args, name
         if "<file>" in "".join(args) and args[0] in ("log", "show", "diff"):
             assert args[args.index("--") + 1].startswith(":(literal)"), name
-        assert args[0] in {"log", "show", "diff", "cat-file", "grep"}
+        assert args[0] in {"log", "show", "diff", "cat-file", "grep", "rev-parse"}
 
 
 def test_a_hostile_global_config_starts_no_program(world):
@@ -281,3 +282,39 @@ def test_grep_reads_the_index_not_the_working_tree_and_never_through_a_symlink(w
     assert "TOPSECRET" not in text and "needle3" not in text  # not through the link, not the unsaved work tree
     # git does not even search the link's own text (a path)
     assert world.run("grep", "outside-secret").out == b""
+
+
+def test_only_commits_are_read_never_a_tree_or_a_blob_or_a_path_in_the_revision(world):
+    """A tree id or a blob id (of any file, a denied one included) is not a revision here; neither is `rev:path`."""
+    r = world.repo
+    (r / "secret.txt").write_text("TOPSECRET needle\n")
+    world.git(r, "add", "secret.txt")
+    world.git(r, "commit", "-q", "-m", "secret", n=7)
+    head = world.git(r, "rev-parse", "HEAD")
+    tree = world.git(r, "rev-parse", "HEAD^{tree}")
+    blob = world.git(r, "rev-parse", "HEAD:secret.txt")
+    old_blob = world.git(r, "rev-parse", f"{world.c1}:a.txt")
+    for bad in (tree, blob, old_blob, world.git(r, "rev-parse", "HEAD:dir")):
+        assert world.run("blob", bad, "secret.txt").code != 0
+        assert world.run("blob_size", bad, "secret.txt").code != 0
+        assert world.run("file_diff", "3", bad, head, "secret.txt").out == b""
+        assert world.run("file_diff", "3", head, bad, "secret.txt").out == b""
+        assert world.run("file_log", "5", "0", bad, "secret.txt").out == b""
+        assert world.run("commit_file_patch", "3", bad, "secret.txt").out == b""
+        assert world.run("range_names", bad, head).out == b""
+        assert world.run("commit_names", bad).out == b""
+    # a diff between two blobs is the leak this closes: plain git does it, gitbrowse does not
+    plain = subprocess.run(["git", "-C", str(r), "diff", old_blob, blob], capture_output=True, text=True)
+    assert plain.returncode == 0 and "TOPSECRET" in plain.stdout
+    for bad in ("HEAD:secret.txt", f"{head}:secret.txt", f"{head}^{{tree}}", "HEAD^{tree}", f"{world.c1}..{head}",
+                f"{head}~1", f"{head}^", "main", "refs/tags/x", "refs/heads/../x", f"{head}\n--all"):  # fmt: skip
+        with pytest.raises(gitsafe.Unsafe):
+            gitbrowse.command(str(r), "blob", os.environ, operand=(bad, "secret.txt"))
+        with pytest.raises(gitsafe.Unsafe):
+            gitbrowse.command(str(r), "file_diff", os.environ, operand=("3", bad, head, "secret.txt"))
+
+
+def test_a_commit_resolves_in_every_form_the_dashboard_uses(world):
+    assert world.run("blob", "HEAD", "a.txt").out == b"one\ntwo\n"
+    assert world.run("blob", world.c1, "a.txt").out == b"one\n"
+    assert world.run("blob", "refs/heads/main", "a.txt").out == b"one\ntwo\n"

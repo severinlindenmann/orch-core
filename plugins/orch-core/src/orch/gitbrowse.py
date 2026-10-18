@@ -11,10 +11,11 @@ callers that need a log, a patch of one commit, a file's content at a revision, 
   ``--no-pager``, ``--no-optional-locks``, ``-C <repo>``, and for ``log``/``show``/``diff`` ``--no-ext-diff
   --no-textconv`` plus the diff pins of ``gitsafe`` (every ``diff.*`` knob, every diff driver's ``binary``/
   ``xfuncname``/``funcname``);
-* takes only validated operands, each in a slot of the template: ``<rev>`` (``HEAD``, a full commit id or
-  ``refs/heads/<name>``, always after ``--end-of-options``), ``<file>`` (a path below the repository: no leading
+* takes only validated operands, each in a slot of the template: ``<commit>`` (``HEAD``, a full id or
+  ``refs/heads/<name>``, written ``<rev>^{commit}`` so git refuses a tree, a blob or a tag; always after
+  ``--end-of-options``, or the front of ``<commit>:./<file>``), ``<file>`` (a path below the repository: no leading
   ``/``, no ``.``/``..``/empty component, no control characters; always behind ``:(literal)`` after ``--``, or in the
-  object name ``<rev>:./<file>``), ``<num>`` (digits) and ``<pattern>`` (a literal search text, always the value of
+  object name ``<commit>:./<file>``), ``<num>`` (digits) and ``<pattern>`` (a literal search text, always the value of
   ``-e``). No caller can add a global option, a subcommand or an option of its own;
 * runs with the person's system and global git configuration OFF (:func:`orch.gitsafe.isolated_env`), a scratch
   environment (no ``GIT_*`` of the caller), ``cwd="/"``, stdin closed, in its own process group that is killed after
@@ -45,7 +46,7 @@ from orch.gitsafe import Unsafe
 
 __all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
 
-_SLOT = re.compile(r"<(rev|file|num|pattern)>")
+_SLOT = re.compile(r"<(commit|file|num|pattern)>")
 
 #: THE deny list of the File Explorer, by name (compared lower-case, at any depth). The dashboard's path guard
 #: (`orch_dashboard.explorer.guard`) imports these, and every git operation below excludes the same names with
@@ -88,22 +89,24 @@ _SHOW = ("--no-color", "--no-renames", "--root", "-m", "--first-parent")
 OPS: dict[str, Op] = {
     # the commits that changed one file, newest first (see _COMMIT)
     "file_log": Op(("log", "--no-color", "--no-renames", f"--format={_COMMIT}", "--max-count=<num>",
-                    "--skip=<num>", "--end-of-options", "<rev>", "--", ":(literal)<file>")),
+                    "--skip=<num>", "--end-of-options", "<commit>", "--", ":(literal)<file>")),
     # one commit's patch for one file (a merge: against its first parent), with the commit's record first
     "commit_file_patch": Op(("show", *_SHOW, f"--format={_BODY}", "-U<num>", *gitsafe._DIFF_FIXED,
-                             "--end-of-options", "<rev>", "--", ":(literal)<file>")),
+                             "--end-of-options", "<commit>", "--", ":(literal)<file>")),
     # the files one commit changed: `<status> NUL <path> NUL ...`
     "commit_names": Op(("show", *_SHOW, "--format=", "--name-status", "-z", *gitsafe._DIFF_FIXED, "--end-of-options",
-                        "<rev>", "--", ":(top)")),
+                        "<commit>", "--", ":(top)")),
+    # where git itself finds its directories for `repo`: git dir, common dir, top (checked by the caller)
+    "layout": Op(("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel")),
     # the files that differ between two commits (old, new): `<status> NUL <path> NUL ...`
     "range_names": Op(("diff", "--no-color", "--no-renames", "--name-status", "-z", *gitsafe._DIFF_FIXED,
-                       "--end-of-options", "<rev>", "<rev>", "--", ":(top)")),
+                       "--end-of-options", "<commit>", "<commit>", "--", ":(top)")),
     # the difference of one file between two commits (old, new)
     "file_diff": Op(("diff", "--no-color", "--no-renames", "-U<num>", *gitsafe._DIFF_FIXED, "--end-of-options",
-                     "<rev>", "<rev>", "--", ":(literal)<file>")),
+                     "<commit>", "<commit>", "--", ":(literal)<file>")),
     # a file as it was at a commit: its size, then its bytes
-    "blob_size": Op(("cat-file", "-s", "<rev>:./<file>")),
-    "blob": Op(("cat-file", "blob", "<rev>:./<file>")),
+    "blob_size": Op(("cat-file", "-s", "<commit>:./<file>")),
+    "blob": Op(("cat-file", "blob", "<commit>:./<file>")),
     # a literal search of the INDEX (--cached: blobs from the object database, the working tree is not opened, so a
     # symlink there is never followed), no submodule: `path NUL line NUL text LF`
     "grep": Op(("grep", "--cached", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>",
@@ -116,8 +119,11 @@ _BAD_CHAR = re.compile(r"[\x00-\x1f\x7f]")
 def _check(kind: str, value: object) -> str:
     if not isinstance(value, str) or not value:
         raise Unsafe("invalid git operand")
-    if kind == "rev":
-        return gitsafe._check("rev", value)
+    if kind == "commit":
+        # a revision of gitsafe's closed forms (HEAD, a full id, refs/heads/<name>: no ':', '^', '..', '~'), and then
+        # resolved AS A COMMIT: a tree id, a blob id or a tag is refused by git, so a diff between two blobs or a
+        # `<tree>:<path>` lookup can never reach content that pathspecs and the path check do not govern
+        return gitsafe._check("rev", value) + "^{commit}"
     if kind == "num":
         if not _NUM.fullmatch(value):
             raise Unsafe("invalid number")

@@ -15,6 +15,7 @@ import shutil
 
 from orch import gitbrowse, gitsafe
 
+from ..errors import HostError
 from . import git as history
 from . import guard, preview
 
@@ -85,8 +86,11 @@ def _rg(root: guard.Root, folder: tuple[str, ...], query: str, budget: int):
 
 
 def _git(root: guard.Root, folder: tuple[str, ...], query: str, budget: int):
-    repo = history.Repo(root.abs(()), (), "", tuple(sorted(root.store)) if root.kind == "workspace" else ())
-    if not root.has_git(()):
+    try:
+        repo = history.locate(root, ("x",))  # the repository AT the root (confirmed), or none
+    except HostError:
+        return [], False
+    if repo is None or repo.prefix:
         return [], False
     try:
         res = gitbrowse.run(repo.folder, "grep", os.environ, operand=(query,), exclude_top=repo.exclude_top,

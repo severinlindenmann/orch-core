@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .. import reads
-from ..errors import fail
+from ..errors import HostError, fail
 from ..gateway import Gateway
 from . import git, guard, links, preview, search
 from . import scope as scopes
@@ -147,7 +147,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         repo = None
         try:
             repo = git.locate(root, parts)
-        except guard.GuardError:
+        except (guard.GuardError, HostError):
             pass
         return {**base, **out, "modified": _iso(st.st_mtime), "history": repo is not None}
 
@@ -244,7 +244,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 continue
             try:
                 repo = git.locate(root, (*prefix, "x"))
-            except guard.GuardError:
+            except (guard.GuardError, HostError):
                 continue
             if repo is None:
                 continue

@@ -268,11 +268,19 @@ class Root:
                 raise Missing("There is no such file.") from None
 
     def has_git(self, parts: tuple[str, ...]) -> bool:
-        """Does the folder ``parts`` hold its own git working copy (a real ``.git`` folder or file, not a link)?"""
+        """Does the folder ``parts`` hold its own git working copy: a real ``.git`` FOLDER (not a link) with no
+        ``commondir`` file? A ``.git`` FILE (``gitdir: <elsewhere>``) is refused: it can send git to a git directory
+        outside the root or inside a forbidden folder; so does a ``commondir`` file in the folder. The caller
+        (`git.locate`) additionally asks git where it finds its directories and requires exactly these."""
         try:
             with self.dir(parts) as fd:
-                mode = os.stat(".git", dir_fd=fd, follow_symlinks=False).st_mode
-                return stat.S_ISDIR(mode) or stat.S_ISREG(mode)
+                if not stat.S_ISDIR(os.stat(".git", dir_fd=fd, follow_symlinks=False).st_mode):
+                    return False
+                try:
+                    os.stat(".git/commondir", dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return True
+                return False
         except (OSError, GuardError):
             return False
 

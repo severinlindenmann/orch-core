@@ -8,6 +8,7 @@ working tree is never followed. Every text git returns (names, subjects) is data
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 
 from orch import gitbrowse, gitsafe
@@ -27,16 +28,41 @@ class Repo:
     exclude_top: tuple[str, ...]
 
 
+#: repositories whose layout git confirmed, by folder: for this many seconds
+CONFIRM_TTL = 20.0
+_confirmed: dict[str, float] = {}
+
+
+def confirmed(folder: str) -> bool:
+    """Does git itself find its git directory, its common directory and its top at exactly ``<folder>/.git`` and
+    ``folder``? A repository that git reads from somewhere else (a ``.git`` that redirects, a ``commondir``) is not
+    one the guard checked, so it is not used. `HostError` (`observe.unavailable`) when the gate refuses the repo."""
+    now = time.monotonic()
+    if now - _confirmed.get(folder, -1e9) < CONFIRM_TTL:
+        return True
+    real = os.path.realpath(folder)
+    try:
+        res = gitbrowse.run(folder, "layout", os.environ, max_bytes=8192, timeout=10.0)
+    except gitsafe.Unsafe as exc:
+        raise fail("observe.unavailable", exc.reason, exit=4) from None
+    lines = res.out.decode("utf-8", "surrogateescape").splitlines()
+    if res.code != 0 or lines != [os.path.join(real, ".git"), os.path.join(real, ".git"), real]:
+        return False
+    _confirmed[folder] = now
+    return True
+
+
 def locate(root: guard.Root, parts: tuple[str, ...]) -> Repo | None:
     """The repository that holds ``parts`` (a file or a folder), or None. `Denied` for a locked path."""
     if reason := guard.deny(parts, store_names=root.store):
         raise guard.Denied(reason)
     for n in range(len(parts) - 1, -1, -1):
         if root.has_git(parts[:n]):
+            folder = root.abs(parts[:n])
+            if not confirmed(folder):
+                return None
             top = tuple(sorted(x for x in root.store if n == 0)) if root.kind == "workspace" else ()
-            return Repo(root.abs(parts[:n]), parts[:n], "/".join(parts[n:]), top)
-    if not parts and root.has_git(()):
-        return Repo(root.abs(()), (), "", ())
+            return Repo(folder, parts[:n], "/".join(parts[n:]), top)
     return None
 
 

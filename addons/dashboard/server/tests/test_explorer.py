@@ -637,3 +637,116 @@ def test_the_nav_feature_exists_only_while_the_addon_is_on_for_an_owner(p1, gate
     typ = event.pop("type")
     p1.store.append(p1.person_event(p1.owner, "workspace", typ, **event), log="workspace")
     assert "explorer" in gateway.workspaces()[0].features
+
+
+# ---------------------------------------------------------------- a .git that redirects git
+
+
+def _spy(monkeypatch):
+    from orch import gitbrowse
+
+    ran = []
+    real = gitbrowse.run
+
+    def run(repo, op, *a, **k):
+        ran.append((repo, op))
+        return real(repo, op, *a, **k)
+
+    monkeypatch.setattr(gitbrowse, "run", run)
+    return ran
+
+
+def test_a_gitfile_that_points_outside_the_root_is_not_a_repository(get, world, monkeypatch):
+    real = world.tmp / "elsewhere"
+    real.mkdir()
+    git(real, "init", "-q", "-b", "main")
+    (real / "leak.txt").write_text("LEAK needle\n")
+    git(real, "add", "-A")
+    git(real, "commit", "-q", "-m", "leak")
+    sub = world.proj / "sub"
+    sub.mkdir()
+    (sub / "f.txt").write_text("x\n")
+    (sub / ".git").write_text(f"gitdir: {real / '.git'}\n")
+    ran = _spy(monkeypatch)
+    assert get("/history", root="ws", path="sub/f.txt").json()["repo"] is True  # the workspace's own repository
+    assert all(folder == os.path.realpath(world.proj) for folder, _op in ran), ran  # git never ran in sub
+    assert get("/file", root="ws", path="sub/f.txt").json()["history"] is True
+    got = get("/history", root="ws", path="sub/f.txt").json()
+    assert all(c["subject"] != "leak" for c in got["commits"])
+    assert "LEAK" not in get("/search", q="LEAK").text
+
+
+def test_a_gitfile_that_points_into_the_orch_store_is_not_a_repository(get, world, monkeypatch):
+    orch = world.proj / ".orch"
+    plain = world.tmp / "plain"
+    plain.mkdir()
+    (plain / "f.txt").write_text("x\n")
+    (plain / ".git").write_text(f"gitdir: {orch}\n")
+    world.link.repos = {"plain": str(plain)}
+    scope._repos_seen.clear()
+    ran = _spy(monkeypatch)
+    assert get("/history", root="repo:plain", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
+    assert ran == []  # git was not even started there
+    assert get("/file", root="repo:plain", path="f.txt").json()["history"] is False
+
+
+def test_a_git_folder_with_a_commondir_is_not_a_repository(get, world, monkeypatch):
+    plain = world.tmp / "plain2"
+    plain.mkdir()
+    (plain / "f.txt").write_text("x\n")
+    git(plain, "init", "-q", "-b", "main")
+    (plain / ".git" / "commondir").write_text(str(world.proj / ".git") + "\n")
+    world.link.repos = {"plain": str(plain)}
+    scope._repos_seen.clear()
+    ran = _spy(monkeypatch)
+    assert get("/history", root="repo:plain", path="f.txt").json()["repo"] is False
+    assert ran == []
+
+
+def test_a_repository_git_reads_from_somewhere_else_is_not_used(get, world, monkeypatch):
+    """Even a real .git folder: git must find its directories exactly there (it is asked, not assumed)."""
+    from orch import gitbrowse
+
+    real = gitbrowse.run
+
+    def lying(repo, op, *a, **k):
+        res = real(repo, op, *a, **k)
+        if op == "layout":
+            return gitbrowse.Result(0, b"/elsewhere/.git\n/elsewhere/.git\n/elsewhere\n", False)
+        return res
+
+    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
+    git_mod._confirmed.clear()
+    monkeypatch.setattr(gitbrowse, "run", lying)
+    assert get("/history", root="ws", path="src/app.py").json() == {"repo": False, "commits": [], "more": False}
+    git_mod._confirmed.clear()
+
+
+def test_a_normal_repository_is_confirmed_once_and_remembered(get, world, monkeypatch):
+    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
+    git_mod._confirmed.clear()
+    ran = _spy(monkeypatch)
+    get("/history", root="ws", path="src/app.py")
+    get("/history", root="ws", path="src/app.py")
+    assert [op for _f, op in ran].count("layout") == 1
+
+
+def test_a_tree_or_blob_id_is_not_a_commit_anywhere(get, world):
+    """40 hex characters of the right shape that name a tree or a blob: refused by git, never read."""
+    tree = git(world.proj, "rev-parse", "HEAD^{tree}")
+    blob = git(world.proj, "rev-parse", "HEAD:src/app.py")
+    secret_blob = git(world.proj, "rev-parse", "HEAD:.orch/config.json")
+    for bad in (tree, blob, secret_blob):
+        for res in (
+            get("/commit", root="ws", path="src/app.py", sha=bad),
+            get("/compare", root="ws", path="src/app.py", a=bad, b=world.c2),
+            get("/compare", root="ws", path="src/app.py", a=world.c1, b=bad),
+            get("/file", root="ws", path="src/app.py", rev=bad),
+        ):
+            assert res.status_code == 404, (bad, res.text)
+            assert "needle" not in res.text and "print(" not in res.text
+        # and a denied path never gets that far
+        assert get("/file", root="ws", path=".orch/config.json", rev=bad).json()["kind"] == "locked"
+    for bad in ("HEAD:.orch/config.json", f"{world.c1}..{world.c2}", f"{world.c2}:src/app.py", f"{world.c2}^{{tree}}"):
+        assert get("/file", root="ws", path="src/app.py", rev=bad).status_code == 400
+        assert get("/compare", root="ws", path="src/app.py", a=bad, b=world.c2).status_code == 400

@@ -57,7 +57,7 @@ class AddonInfo:
 
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish"})
+OPTIONAL = frozenset({"publish", "estimate"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -82,6 +82,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "publish": (
             "Publish",
             "Share files from a ticket with a link, on a server you choose. Nothing leaves this Mac until you sign.",
+            False,
+            False,
+        ),
+        "estimate": (
+            "Estimate",
+            "Give tickets a size in points and see the total on epics and board columns. Points are the ticket's size.",
             False,
             False,
         ),

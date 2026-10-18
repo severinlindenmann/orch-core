@@ -1,6 +1,6 @@
-"""Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish), so they
-install without a clone: ``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a
-workspace, then ``orch addon grant <name>`` (B5b). The package copies in ``manifests/`` equal
+"""Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish,
+estimate), so they install without a clone: ``orch addon manifest <name> --write .`` puts
+``addons/<name>/orch-addon.json`` into a workspace, then ``orch addon grant <name>`` (B5b). The package copies in ``manifests/`` equal
 ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TextIO
 
-NAMES = ("start-agent", "terminals", "worktrees", "dashboard", "publish")
+NAMES = ("start-agent", "terminals", "worktrees", "dashboard", "publish", "estimate")
 
 
 def manifest_bytes(name: str) -> bytes:

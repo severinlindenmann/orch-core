@@ -51,9 +51,12 @@ def _config_dirs() -> list[str]:
     xdg = os.environ.get("XDG_CONFIG_HOME", "")
     if xdg.startswith("/"):
         out.append(os.path.join(xdg, "orch"))
-    state = os.environ.get("ORCH_STATE_DIR", "")
-    if state.startswith("/"):
-        out.append(state)
+    try:  # the product's own answer (a relative ORCH_STATE_DIR is made absolute there)
+        from orch.ops.runtime import state_dir
+
+        out.append(os.fspath(state_dir(os.environ)))
+    except Exception:  # no HOME and nothing configured: the fixed places above still apply
+        pass
     return [os.path.realpath(d) for d in out]
 
 
@@ -99,13 +102,14 @@ def check_declared(layout: Layout, path: Any) -> None:
 
 
 def _read_small(path: str) -> str | None:
-    """The first bytes of a regular file, never through a link, never blocking; ``None`` otherwise."""
+    """A small regular file (at most ``_MAX_HEAD`` bytes), never through a link, never blocking; ``None`` otherwise."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _MAX_HEAD:  # a longer file is never read cut short
             return None
         return os.read(fd, _MAX_HEAD).decode("utf-8", "replace")
     except OSError:
@@ -124,7 +128,7 @@ def _gitdir(work: str) -> str | None:
         if text and text.startswith("gitdir:"):
             line = text[7:].strip().split("\n")[0]
             if line and "\0" not in line:
-                return os.path.normpath(os.path.join(work, line))
+                return os.path.realpath(os.path.join(work, line))  # links resolved first, never `..` against a link
     return None
 
 

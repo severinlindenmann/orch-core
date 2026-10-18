@@ -139,3 +139,54 @@ def test_not_under_the_orch_config_or_state_dir(layout, tmp_path, monkeypatch):
     (cfg / "orch" / "r" / ".git").mkdir(parents=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
     assert "orch's own data" in refused(layout, str(cfg / "orch" / "r"))
+
+
+def _linked(tmp_path, name, gitdir_line):
+    d = tmp_path / name
+    d.mkdir()
+    (d / ".git").write_text(gitdir_line)
+    return str(d)
+
+
+def test_a_real_git_worktree_is_accepted(layout, tmp_path):
+    main = mk(tmp_path, "main")
+    wt_git = main / ".git" / "worktrees" / "x"
+    wt_git.mkdir(parents=True)
+    repopaths.check_declared(layout, _linked(tmp_path, "wt", f"gitdir: {wt_git}\n"))
+
+
+def test_a_relative_gitdir_is_resolved_against_the_folder(layout, tmp_path):
+    main = mk(tmp_path, "main2")
+    (main / ".git" / "worktrees" / "y").mkdir(parents=True)
+    repopaths.check_declared(layout, _linked(tmp_path, "wt2", "gitdir: ../main2/.git/worktrees/y\n"))
+    inner = layout.store / "records" / "gd"
+    inner.mkdir(parents=True)
+    rel = os.path.relpath(inner, tmp_path / "wt3")
+    assert "orch's own data" in refused(layout, _linked(tmp_path, "wt3", f"gitdir: {rel}\n"))
+
+
+def test_a_long_gitdir_line_is_refused_not_checked_cut_short(layout, tmp_path):
+    inner = layout.store / "records" / "gd"
+    inner.mkdir(parents=True)
+    line = f"gitdir: {layout.project}/" + "./" * 400 + f"{layout.store.name}/records/gd\n"
+    assert len(line) > 600
+    assert "not a git repository" in refused(layout, _linked(tmp_path, "wt4", line))
+
+
+def test_a_gitdir_through_a_link_and_dotdot_is_resolved_before_the_checks(layout, tmp_path):
+    inner = layout.store / "records" / "gd"
+    inner.mkdir(parents=True)
+    deep = tmp_path / "a" / "b" / "c" / "d"
+    deep.mkdir(parents=True)
+    os.symlink(str(deep), str(tmp_path / "l"))
+    # lexically l/../.. is tmp_path/.. ; through the link it is tmp_path/a/b, so the target differs from the lexical one
+    target = os.path.relpath(inner, tmp_path / "a" / "b")
+    line = f"gitdir: {tmp_path}/l/../../{target}\n"
+    assert "orch's own data" in refused(layout, _linked(tmp_path, "wt5", line))
+
+
+def test_a_relative_state_dir_is_made_absolute_like_the_product_does(layout, tmp_path, monkeypatch):
+    (tmp_path / "rel" / "r" / ".git").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ORCH_STATE_DIR", "rel")
+    assert "orch's own data" in refused(layout, str(tmp_path / "rel" / "r"))

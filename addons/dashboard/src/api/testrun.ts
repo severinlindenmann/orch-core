@@ -52,8 +52,9 @@ export async function loadRun(run: string): Promise<TestrunState> {
   return (await (await call('GET', base(run))).json()) as TestrunState
 }
 
-export async function saveStep(run: string, step: string, status: StepStatus, note: string): Promise<void> {
-  await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, { status, note })
+/** Saves only the fields that changed; the server merges them into the step it holds (an absent field stays as it is). */
+export async function saveStep(run: string, step: string, patch: { status?: StepStatus; note?: string }): Promise<void> {
+  await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, patch)
 }
 
 function toBase64(file: Blob): Promise<string> {

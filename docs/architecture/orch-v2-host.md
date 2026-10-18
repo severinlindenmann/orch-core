@@ -11864,7 +11864,7 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 (§12.6.2), `attach.end {att, reason}`, `grant.put {deposit_id, workspace_id, person, grant, secret, until}`,
 `grant.drop {grant}`, `git {op:"worktree.add"|"worktree.remove", repo_pin, path, branch, base, force, generation}`.
 
-- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_HARNESS`,
+- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_HARNESS`,
   `CLAUDE_CODE_SUBAGENT_MODEL`); `grant` is an id the runner resolves in its own store. The host never sends a secret
   except once in `grant.put`.
 - The runner validates every command as defence in depth (registry program or `$SHELL`, pin, sizes). `runner.hello`
@@ -12080,7 +12080,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 | `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `ORCH_HOST_RUN_DIR` | if set | if set | the runner unit's (written by `orch runner enable` from the host unit's values) |
 | `ORCH_SESSION` | `s_<ULID>` drawn by the runner | never | runner |
 | `ORCH_GRANT` | the runner grant | **never** | the runner's grant store |
-| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKTREE`, `ORCH_WORKTREES`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
+| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
 | `pass_env` names from `<person state>/runner.json` | ✓ | ✓ | terminal-only config; values from the runner's environment |
 
 - `pass_env` refuses names matching `LD_*`, `DYLD_*`, `PYTHON*`, `GIT_*`, `ORCH_*`, `BASH_ENV`, `ENV`, `ZDOTDIR`,

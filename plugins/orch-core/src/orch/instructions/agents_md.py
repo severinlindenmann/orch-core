@@ -20,7 +20,7 @@ AGENTS_MAX_LINES = 40
 FORMAT_VERSION = "2.0"
 #: Bumped whenever the text of ``AGENTS.orch.md`` or of a built-in skill changes. The stamp on the first line carries
 #: it; an installed file with a lower number is stale (``orch check``, the session-start text).
-INSTRUCTIONS_REV = 2
+INSTRUCTIONS_REV = 3
 
 _MARKER = re.compile(r"\{orch:([a-z_.]+)\}")
 _STAMP = re.compile(r"^orch v\d+\.\d+ \(instructions r(\d+)\)")
@@ -40,7 +40,7 @@ _TEMPLATE = (
     "and `{orch:artifact.add}` (without --ac) work.",
     "",
     "## Working on a ticket",
-    "1. Run `{call:work:claim}`, then `{orch:show}`.",
+    "1. Run `{call:work:claim}`, then `{orch:show}`. If the person named a ticket: `{orch:claim} ABC-0001`, not --next.",
     "2. Read the ticket, then run `{call:work:task.next}`.",
     "3. Do the task; record it with `{call:work:task.done}` (the real task id).",
     "4. Give every AC evidence: a task receipt, or `{orch:artifact.add} --ac AC1`.",

@@ -3,11 +3,12 @@
 // request. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { adminCommand, isUnknownWorkspace, newIdem, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { copyText } from '@/app/copyLink'
 import type { Workspace } from '@/api/types'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
@@ -24,6 +25,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
   const [editing, setEditing] = useState(false)
   const [server, setServer] = useState('')
   const [share, setShare] = useState('')
+  const [copyNote, setCopyNote] = useState('')
   const [reg, setReg] = useState<Registration>({ at: 'unknown' })
   const { ask, dialog } = useSettingsHandoff(ws, () => void list.refetch())
   if (!data) return null
@@ -61,6 +63,11 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
         ) : (
           <p className="text-warning">No server is set up yet, so nothing can be shared.</p>
         )}
+        {data.configured && reachNote(data.server, data.share) && (
+          <p data-testid="publish-local-note" className="text-text-muted">
+            {reachNote(data.server, data.share)}
+          </p>
+        )}
         {owner ? (
           <Button size="sm" variant="secondary" onClick={() => { setServer(data.server ?? ''); setShare(data.share ?? ''); setEditing(true) }}>
             {data.configured ? 'Change addresses' : 'Set up'}
@@ -79,7 +86,18 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
             </p>
             {reg.at === 'refused' && reg.admin && (
               <>
-                <p>Ask its admin to allow this workspace, then check again.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void copyText(`Please allow this workspace on the sharing server:\n${adminCommand(data.workspace, data.owner)}`).then((ok) => setCopyNote(ok ? 'Setup details copied.' : 'Could not copy. Open Technical details and copy the line by hand.'))}
+                  >
+                    Copy setup details for the server administrator
+                  </Button>
+                  <span role="status" className="text-[12px] text-text-muted">
+                    {copyNote}
+                  </span>
+                </div>
                 <details className="text-[12px] text-text-muted">
                   <summary className="cursor-pointer select-none">Technical details</summary>
                   <p className="mt-1">The server’s admin runs:</p>
@@ -89,7 +107,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
             )}
             {owner && (
               <Button size="sm" variant="ghost" disabled={reg.at === 'busy'} onClick={() => void register()}>
-                Check now
+                {reg.at === 'unknown' ? 'Check now' : 'Check again'}
               </Button>
             )}
           </div>
@@ -124,7 +142,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
                   ask({ title: 'Choose where shared files go', action: { action: 'publish_setup', server, share }, autoStart: true })
                 }}
               >
-                Continue to sign
+                Review and sign
               </Button>
             </DialogFooter>
           </DialogContent>

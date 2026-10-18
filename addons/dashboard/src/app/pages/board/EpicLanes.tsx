@@ -156,7 +156,7 @@ function LaneHeader({
   const name = epic ? `${epic.key} ${epic.title}` : title
   return (
     <div className="col-span-full mt-1 rounded-lg border border-border bg-surface-2">
-      <div className="sticky left-0 flex w-max max-w-full items-center gap-2 px-2 py-1.5">
+      <div className="sticky left-0 flex w-max max-w-full flex-wrap max-sm:max-w-[calc(100vw-6rem)] items-center gap-x-2 gap-y-1 px-2 py-1.5">
         {canToggle ? (
           <button
             type="button"
@@ -190,7 +190,7 @@ function LaneHeader({
             >
               {epic.key}
             </button>
-            <h3 className="min-w-0 max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
+            <h3 className="min-w-0 max-w-[420px] truncate text-[13px] font-semibold text-text max-sm:max-w-[min(420px,calc(100vw-9rem))]" title={epic.title}>
               {epic.title}
             </h3>
           </>

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import pty
+import re
 import threading
 import time
 
@@ -29,6 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
 Context
   | the context
@@ -52,6 +54,7 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
 Fields
   type: chore
@@ -64,8 +67,13 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
-    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:])
-    for hidden in ("sha256", "fingerprint", "uid ", "pid ", "self-declared", "policy", "gate input"):
+    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
+    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
+    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+        r"[0-9a-f]{12}", p["fingerprint"]
+    )
+    for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
@@ -79,7 +87,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
 def test_the_plain_view_of_a_new_ticket(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("new", {"title": "Elefant Chart", "type": "chore"})
-    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace("<TAIL>", p["log"][-8:])
+    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace(
+        "<TAIL>", p["log"][-8:]
+    ).replace("<FP>", p["fingerprint"])
 
 
 def test_the_content_comes_from_the_signed_events_and_material_only(human, served):

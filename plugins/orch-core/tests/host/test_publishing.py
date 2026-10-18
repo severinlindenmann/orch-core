@@ -76,7 +76,7 @@ class FakeServer:
         parts = target.split("/")[4:]  # /v1/ws/<ws>/...
         if method == "POST" and parts == ["register"]:
             self.registered = True
-            return 200, b'{"result":"registered","card_seq":1}'
+            return 200, b'{"workspace":"x","result":"registered"}'
         if method == "GET" and parts == ["shares"]:
             rows = [{"id": k, "state": v["state"], "views": v.get("views", 0)} for k, v in self.shares.items()]
             return 200, json.dumps({"shares": rows}).encode()
@@ -949,3 +949,31 @@ def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
         publishing.TRANSPORT = None
         wd.close()
         wd.lab.close()
+
+
+def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    ok(w.req("publish.register", {}))
+    assert (w.base() / "registered.json").exists()
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 401, "unknown_workspace"))
+    res = w.send(staged)
+    assert err(res) == "publish.server_refused" and "ask its admin to allow it again" in res["error"]["message"]
+    assert "orch publish register" in res["error"]["message"]
+    assert not (w.base() / "registered.json").exists()
+    ok(w.send(staged))  # allowed again: the copy goes, registering first
+
+
+def test_everything_that_sends_or_redirects_is_terminal_only_never_click_or_word():
+    from orch.click.protocol import op_class
+
+    for op in ("publish.share", "publish.send", "publish.revoke", "publish.register"):
+        assert op_class(op) == "terminal", op
+    for changed in ({"publish": {"server": SERVER, "share": SHARE}}, {"publish": None}, {"publish": None, "repos": {}}):
+        assert op_class("settings.set", [{"set": changed}]) == "terminal", changed  # at sign time
+        assert op_class("settings.set", None, {"set": changed}) == "terminal", changed  # early, before prepare
+    assert op_class("settings.set", None, {"set": {"repos": {}}}) == "word"
+    assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "word"
+    assert op_class("settings.set", [{"set": {"claim_ttl_min": 30}}]) == "click"  # other settings keep their class
+    assert op_class("settings.set", None, {"set": {"claim_ttl_min": 30}}) == "click"

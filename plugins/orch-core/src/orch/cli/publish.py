@@ -191,7 +191,7 @@ def _register(target: Any, env: Mapping[str, str], out: TextIO) -> int:
     try:
         got = _call(target, "publish.register", {}, env)
     except OrchError as exc:
-        if exc.code == "publish.server_refused" and "does not know this workspace" in str(exc.message):
+        if exc.code == "publish.server_refused" and "knows this workspace" in str(exc.message):
             info = _call(target, "publish.list", {}, env)
             out.write("\n".join(_admin_lines(info, None)) + "\n")
             return 3

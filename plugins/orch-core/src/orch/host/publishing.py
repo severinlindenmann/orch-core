@@ -783,7 +783,11 @@ def _refused(exc: Any) -> HostError:
     elif code == "delegation_changed":
         reason, text = "conflict", "the server holds another delegation for this workspace: its admin must unbind it"
     elif code == "unknown_workspace":
-        reason, text = "unknown_workspace", "the server does not know this workspace yet: its admin must allow it"
+        reason, text = (
+            "unknown_workspace",
+            "the server no longer knows this workspace; ask its admin to allow it again, "
+            "then run orch publish register",
+        )
     elif code == "workspace_blocked":
         reason, text = "blocked", "the server's admin blocked this workspace"
     elif code == "owner_not_allowed":
@@ -822,6 +826,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(_live(call, plan))
         return ok_result(_send(call, plan))
     except PublishError as exc:
+        if exc.code == "unknown_workspace":  # the cached "registered" is stale: register again next time
+            with contextlib.suppress(OSError):
+                os.unlink(_base(call.service) / "registered.json")
         err = _refused(exc)
         _audit(
             call,

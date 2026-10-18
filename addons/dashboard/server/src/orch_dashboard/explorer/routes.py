@@ -199,6 +199,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             raise fail("not_found", "There is no such file.", exit=2)
         return root, parts, repo
 
+    def base_of(repo):
+        return lambda sha: git.on_head(repo, sha)
+
     @app.get("/api/w/{ws}/explorer/history")
     def history(query: Annotated[HistoryQuery, Query()], ws: str = Depends(reads.workspace)):
         sc = open_(ws)
@@ -207,7 +210,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             return {"repo": False, "commits": [], "more": False}
         got = git.log(repo, query.skip, query.limit)
         try:
-            tickets = links.chips(sc.link, ws, [c["sha"] for c in got["commits"]])
+            tickets = links.chips(sc.link, ws, [c["sha"] for c in got["commits"]], is_base=base_of(repo))
         except Exception:  # noqa: BLE001 - chips are a courtesy: the history still shows
             tickets = {}
         for c in got["commits"]:
@@ -222,7 +225,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             raise fail("not_found", "This file is not in a git repository.", exit=2)
         got = git.commit(repo, query.sha)
         try:
-            got["tickets"] = links.chips(sc.link, ws, [got["sha"]]).get(got["sha"], [])
+            got["tickets"] = links.chips(sc.link, ws, [got["sha"]], is_base=base_of(repo)).get(got["sha"], [])
         except Exception:  # noqa: BLE001
             got["tickets"] = []
         return got
@@ -259,6 +262,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             if repo is None:
                 continue
             try:
+                if c.get("baseline") and git.on_head(repo, c["sha"]):
+                    continue  # the commit the branch was cut from: not work of this ticket
                 changed = git.commit_files(repo, c["sha"], c["before"])
             except Exception:  # noqa: BLE001
                 continue

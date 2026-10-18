@@ -75,3 +75,8 @@ def test_the_terminal_marks_a_shown_name_as_the_hosts_word_and_keeps_the_id():
     for value, want in TABLE[1:]:  # every other row is id-only and reads as the dashboard's
         if "(" in want and "name per host" not in want and want.startswith("p_"):
             assert personlabel.label(value, MEMBERS, unsigned_name=True) == want
+
+
+def test_a_sharp_s_twin_is_shared_like_the_dashboard():
+    twins = [{"person": A, "name": "Stra\u00dfe"}, {"person": B, "name": "Strasse"}]
+    assert personlabel.label(A, twins) == "p_aaaa11112222… (name shared by 2 members)"

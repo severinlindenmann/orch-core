@@ -213,7 +213,7 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
         return None
     zone = when.tzname() or "UTC"
     day = (
-        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 144 else _DAYS[when.weekday()]
+        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 24 else _DAYS[when.weekday()]
     )
     return f"{day} {when:%H:%M} {zone}"
 
@@ -353,7 +353,7 @@ def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         _row(out, "from", ev.get("issued_at"))
         _row(out, "until", ev.get("expires_at"))
         out.setdefault("notes", []).append("Scope, verbs and grant id are in the technical details.")
-        return f"Agents may work on all open tickets for {span(hours)}"
+        return f"Agents may work on any ticket you can see, as you, for {span(hours)}"
     if not plain:
         _row(out, "scope", ev.get("scope"))
         _row(out, "verbs", ev.get("verbs"))
@@ -365,7 +365,7 @@ def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         )
         return f"Give agents access for {span(hours)} (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
     out.setdefault("notes", []).append("Scope, verbs, grant id and the exact times (UTC) are in the technical details.")
-    return f"Agents may work on all open tickets for {span(hours)} (until {until}, your time)"
+    return f"Agents may work on any ticket you can see, as you, for {span(hours)} (until {until}, your time)"
 
 
 def _acceptance(items: Any) -> list[dict[str, Any]]:
@@ -561,6 +561,9 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
+    keys = [_s(o.get("key")) for o in q.get("options") or []]
+    if len(set(keys)) != len(keys):
+        raise PlainUnavailable("a question with the same option key twice")
     opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or []}
     picked = ev.get("option")
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
@@ -732,6 +735,10 @@ _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 
 
+#: said in EVERY plain add-on review: the capabilities are declared, not enforced (add-ons are not sandboxed)
+ADDON_TRUST = "An add-on runs its own code on this computer as you; turn it on only if you trust it."
+
+
 def _capability_words(value: Any) -> str | None:
     """The capabilities of an ``addon.granted`` in words, or ``None`` when any is not on the closed list (or the value
     is not a list of distinct strings): the rows of the signed values are shown instead."""
@@ -739,7 +746,7 @@ def _capability_words(value: Any) -> str | None:
         return None
     if len(set(value)) != len(value):
         return None
-    return "; ".join(_CAPABILITY_WORDS[c] for c in value) or "asks for no special permissions"
+    return "; ".join(_CAPABILITY_WORDS[c] for c in value) or ""
 
 
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
@@ -760,11 +767,11 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
-        _row(out, "it may", words if ev.get("capabilities") else "nothing beyond what any add-on may do")
-        out.setdefault("notes", []).append(
-            "The package digest and the exact capability names are in the technical details."
-        )
-        return f"Turn on {nice}: " + (f"it may {words}" if ev.get("capabilities") else "it " + words)
+        _row(out, "it says it will", words or "(declares no capabilities)")
+        notes = out.setdefault("notes", [])
+        notes.append(ADDON_TRUST)
+        notes.append("The package digest and the exact capability names are in the technical details.")
+        return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):

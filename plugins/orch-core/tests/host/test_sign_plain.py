@@ -382,7 +382,7 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert "scope" not in rows and rows["who can use it"] == "agents working for you"  # K4: scope/verbs are in words
-    assert c["headline"].startswith("Agents may work on all open tickets for 7 hours (until ")
+    assert c["headline"].startswith("Agents may work on any ticket you can see, as you, for 7 hours (until ")
     m = sample("member.added")
     c = build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
@@ -428,7 +428,10 @@ def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, mon
     request = {"op": "grant", "events": [g], "material": material_for("grant.issued", g)}
     _tz(monkeypatch, "Europe/Zurich")
     c = build(request)
-    assert c["headline"] == "Agents may work on all open tickets for 1 day (until Wed 23:45 CEST, your time)"
+    assert (
+        c["headline"]
+        == "Agents may work on any ticket you can see, as you, for 1 day (until Wed 23:45 CEST, your time)"
+    )
     assert [(r["field"], r["after"]) for r in c["fields_changed"]] == [
         ("who can use it", "agents working for you"),
         ("label", "marker-label"),
@@ -467,7 +470,7 @@ def test_f7_the_ordinary_grant_with_times_set_at_signing_says_what_agents_may_do
     _tz(monkeypatch, "UTC")
     g = {**sample("grant.issued"), "hours": 72, "issued_at": "set at signing", "expires_at": "set at signing"}
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
-    assert c["headline"] == "Agents may work on all open tickets for 3 days"
+    assert c["headline"] == "Agents may work on any ticket you can see, as you, for 3 days"
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert "scope" not in rows and "verbs" not in rows and "grant id" not in rows
     assert rows["until"] == "set at signing"  # the signed value is still on a row
@@ -495,13 +498,13 @@ def test_k4_the_details_still_carry_every_signed_field_of_the_grant(human, serve
     for value in (ev["grant"], ev["scope"], ev["issued_at"], ev["expires_at"], "agent"):
         assert value in review.details
         assert value not in review.body if hasattr(review, "body") else True
-    assert "Agents may work on all open tickets for 1 day (until " in str(review)
+    assert "Agents may work on any ticket you can see, as you, for 1 day (until " in str(review)
 
 
 def test_b8_lengths_read_as_days_and_hours_in_the_headline_and_the_settings_note(human, served):
     g = {**sample("grant.issued"), "hours": 72}
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
-    assert c["headline"].startswith("Agents may work on all open tickets for 3 days (")
+    assert c["headline"].startswith("Agents may work on any ticket you can see, as you, for 3 days (")
     assert signcontent.span(8) == "8 hours" and signcontent.span(24) == "1 day" and signcontent.span(168) == "7 days"
     event = {**sample("settings.changed"), "set": {"grant_hours": 168}}
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
@@ -764,19 +767,25 @@ def _addon(**change):
 
 def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():
     c = build(_addon())
-    assert c["headline"] == "Turn on Terminals: it may open terminals on this computer, as you"
+    assert c["headline"] == "Turn on Terminals: it says it will open terminals on this computer, as you"
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows == {"add-on": "terminals", "version": "0.1.0", "it may": "open terminals on this computer, as you"}
+    assert rows == {
+        "add-on": "terminals",
+        "version": "0.1.0",
+        "it says it will": "open terminals on this computer, as you",
+    }
+    assert signcontent.ADDON_TRUST in c["notes"]
     shown = flat(c) + "\n".join(signcontent.text(c, signer._clean))
     for raw in ("aa" * 6, "{}", "(none)", "pty"):
         assert raw not in shown
     assert "package digest" not in {r["field"] for r in c["fields_changed"]}
     assert "technical details" in " ".join(c["notes"])
     two = build(_addon(name="start-agent", capabilities=["pty", "spawn_agent"]))
-    assert two["headline"].startswith("Turn on Start agent: it may open terminals")
+    assert two["headline"].startswith("Turn on Start agent: it says it will open terminals")
     assert "start agents on this computer" in two["headline"]
     none = build(_addon(name="worktrees", capabilities=[]))
-    assert none["headline"] == "Turn on Worktrees: it asks for no special permissions"
+    assert none["headline"] == "Turn on Worktrees: it declares no capabilities"
+    assert signcontent.ADDON_TRUST in none["notes"]
 
 
 @pytest.mark.parametrize(
@@ -799,7 +808,7 @@ def test_f7_an_addon_with_anything_odd_keeps_every_signed_value_as_a_row(change)
     fields = {r["field"] for r in c["fields_changed"]}
     assert {"version", "package digest", "capabilities"} <= fields
     assert c["headline"].startswith("Grant the add-on ")
-    assert "it may" not in fields
+    assert "it says it will" not in fields
 
 
 def test_f7_turning_an_addon_off_is_plain():
@@ -914,3 +923,10 @@ def test_f7_a_host_name_never_replaces_or_hides_the_id():
             {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}, signer._clean
         )
     )
+
+
+def test_f7_a_question_with_the_same_option_key_twice_falls_back():
+    q = _answer()
+    q["material"]["question"]["options"].append({"key": "hello", "label": "Other"})
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(q)

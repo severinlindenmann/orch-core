@@ -261,7 +261,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('This Mac’s agent runner may work on all open tickets for 3 days')).toBeInTheDocument()
+  expect(screen.getByText('This Mac’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
@@ -779,7 +779,7 @@ test('the runner line comes from the signed grant item, not from review.runner_g
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('may work on all open tickets for 1 day')
+  expect(summary).toHaveTextContent('may work on any ticket you can see, as you, for 1 day')
   expect(summary).not.toHaveTextContent(/7 days|everything/)
 })
 
@@ -879,7 +879,7 @@ test('F7: an unusual runner grant keeps its raw scope and verbs in the summary l
     items: [{ id: 'runner_grant', type: 'grant.issued', title: 'x', fields: { type: 'grant.issued', hours: 72, scope, verbs } }],
     flags: [],
   }) as unknown as Parameters<typeof summarize>[0]
-  expect(summarize(grant('workable', 'agent')).lines).toEqual(['This Mac’s agent runner may work on all open tickets for 3 days'])
+  expect(summarize(grant('workable', 'agent')).lines).toEqual(['This Mac’s agent runner may work on any ticket you can see, as you, for 3 days'])
   expect(summarize(grant('all', 'agent')).lines).toEqual(['This Mac’s agent runner gets agent access for 3 days (scope all, verbs agent)'])
   expect(summarize(grant('workable', 'task.done')).lines[0]).toContain('verbs task.done')
 })

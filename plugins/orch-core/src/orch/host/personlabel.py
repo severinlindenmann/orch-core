@@ -48,7 +48,7 @@ def _canon(name: str) -> str:
 
 
 def _key(name: str) -> str:
-    folded = "".join(_LOOKALIKES.get(c, c) for c in _canon(name)).lower()
+    folded = "".join(_LOOKALIKES.get(c, c) for c in _canon(name)).lower().upper().lower()
     return "".join(c for c in unicodedata.normalize("NFD", folded) if not unicodedata.category(c).startswith("M"))
 
 

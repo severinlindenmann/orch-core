@@ -608,7 +608,7 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "model-routing"]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "model-routing"]
 
 
 class AddonGrant(Action):

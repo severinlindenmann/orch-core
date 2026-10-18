@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "usage",
+  "version": "0.1.0",
+  "title": "Usage",
+  "entry": {"cmd": ["orch-usage", "serve"]},
+  "capabilities": []
+}

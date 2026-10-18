@@ -254,6 +254,9 @@ class Gateway:
             features.append("publish")
         if "agent_start" in features and self.addon_on(link, "model-routing"):
             features.append("model_routing")  # Model routing (add-on on): the Settings section and the model choice
+        if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
+            # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
+            features.append("usage")
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         if link.has("read_ext/2"):

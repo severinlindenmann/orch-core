@@ -24,12 +24,12 @@ OTHER = "s_01J9ZP0000000000000000000T"
 class Ws(Env):
     live = False  # True: the clock is the wall clock (the binary under test reads the real one)
 
-    def __init__(self, tmp_path: Path, *, live: bool = False) -> None:
+    def __init__(self, tmp_path: Path, *, live: bool = False, ws_id: str = WS) -> None:
         import time
 
-        super().__init__(tmp_path, clock_start=int(time.time()) if live else 1_790_000_000)
+        super().__init__(tmp_path, clock_start=int(time.time()) if live else 1_790_000_000, ws_id=ws_id)
         self.live = live
-        keys = self.host_state / "hosts" / WS / "keys"
+        keys = self.host_state / "hosts" / ws_id / "keys"
         self.host_backend = FileBackend(keys)
         self.wsk_pub = self.host_backend.create("wsk")
         self.signer = BackendSigner(self.host_backend, "wsk")

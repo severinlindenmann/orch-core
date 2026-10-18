@@ -21,7 +21,7 @@ function Row({ r }: { r: UsageTicketRow }) {
           {r.ticket}
         </Link>
       ) : null}
-      <span className="min-w-0 max-w-full flex-1 basis-48 break-words">
+      <span className="min-w-0 max-w-full flex-1 basis-48 break-words max-sm:flex-none max-sm:basis-auto">
         {r.ticket ? r.title ? <Inline>{r.title}</Inline> : <span className="text-text-faint">title not shown</span> : r.other ? 'Other tickets' : 'Not on a ticket'}
       </span>
       <span className="tabular-nums">{spanText(r)}</span>

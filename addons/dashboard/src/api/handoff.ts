@@ -248,10 +248,15 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
   }
   // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
   if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
-  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (the signer builds the same word).
-  if (request.op === 'addon.grant') {
+  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (core's signer.confirm_word builds the same word; src/test/confirm-words.json pins it).
+  if (request.op === 'addon.grant' || request.op === 'addon.purge') {
     const name = request.events[0]?.name
     return workspace && typeof name === 'string' ? `${name}~${workspace.id.slice(-8)}` : null
+  }
+  // Turning an add-on off: the terminal asks for the add-on's plain name (signer.confirm_word).
+  if (request.op === 'addon.disable') {
+    const name = request.events[0]?.name
+    return typeof name === 'string' ? name : null
   }
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }

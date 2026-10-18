@@ -83,6 +83,18 @@ describe('a request must be what it says it is', () => {
   })
 })
 
+describe('typed words shared with orch-core', () => {
+  it('the hand-off page shows the word the terminal accepts, for every shared case', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    const shared = (await import('@/test/confirm-words.json')).default
+    const material = { kind: 'payload' as const, ticket: null, review: [] }
+    for (const c of shared.cases) {
+      const events = [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...c.event }]
+      expect(workspaceConfirmWord({ op: c.op, events, material }, shared.workspace), c.op).toBe(c.word)
+    }
+  })
+})
+
 describe('workspace operations (M4)', () => {
   const material = { kind: 'payload' as const, ticket: null, review: [] }
   const ev = (over: Record<string, unknown>) => [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...over }]

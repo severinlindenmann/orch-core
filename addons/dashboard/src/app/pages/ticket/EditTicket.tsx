@@ -4,7 +4,7 @@
 // when the ticket has changed since, and the signer signs one ordinary event per change, each checked against the
 // reviewed intent. Nothing here signs or names an op: it builds the typed `edit_sequence` action.
 import { Pencil, Plus, X } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { handoffMode } from '@/api/features'
@@ -82,6 +82,11 @@ export function buildEdit(
 /** The button and the dialog. Offered where the viewer may change the ticket and the host signs it. */
 export function EditTicket({ ticket, viewer }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'> }) {
   const [open, setOpen] = useState(false)
+  // The signed edit moves the ticket's seq before the hand-off reports "signed": re-keying the dialog then would throw
+  // away its finish (it would reopen as a fresh form), so the key is held while a signing is under way.
+  const [busy, setBusy] = useState(false)
+  const keySeq = useRef(ticket.head.seq)
+  if (!busy) keySeq.current = ticket.head.seq
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   // Only where the host signs (hand-off), for a member, on a ticket that is not finished, read in full (a head to chain on).
@@ -92,12 +97,12 @@ export function EditTicket({ ticket, viewer }: { ticket: TicketDocument; viewer:
         <Pencil />
         Edit text, checks and people
       </Button>
-      {open && <EditDialog key={ticket.head.seq} ticket={ticket} viewer={viewer} onClose={() => setOpen(false)} />}
+      {open && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} onBusy={setBusy} onClose={() => setOpen(false)} />}
     </>
   )
 }
 
-function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; onClose: () => void }) {
+function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; onClose: () => void; onBusy: (busy: boolean) => void }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
@@ -109,6 +114,7 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
   const [people, setPeople] = useState<PeopleValue>(() => ({ owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] }))
   const [signing, setSigning] = useState<Edit | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
   const acId = useId()
   const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people }, mayEditPeople), [ticket, sections, criteria, added, people, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')

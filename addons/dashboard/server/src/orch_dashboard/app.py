@@ -22,6 +22,7 @@ from . import (
     settings,
     signprefs,
     terminals,
+    testrun,
     worktrees,
 )
 from .adapters.setup import SetupProxy
@@ -44,6 +45,7 @@ SPA_PATH = re.compile(
     r"|/settings(?:/(?:general|members|gates|grants|records|devices|addons))?"
     r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
+    r"|checklist"
 )
 
 
@@ -174,6 +176,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
+    testrun.register(app, gateway)
     worktrees.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 

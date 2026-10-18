@@ -1,0 +1,252 @@
+// Sections for add-ons and the combined test, appended after F in run2.ts (ids H, I, J ...; steps H1, H2 ...).
+// To add one: push a ChecklistSection here. Ids are free text of the form [A-Z]<n>[.<n>] (the server checks that).
+// Notes are stored by step id, so adding or reordering steps here never loses a note. Keep an id once it was used.
+import type { ChecklistSection } from './run2'
+
+export const ADDON_SECTIONS: ChecklistSection[] = [
+  {
+    id: 'H',
+    title: 'Add-ons in Settings',
+    where: 'Browser; workspace RA',
+    steps: [
+      {
+        id: 'H1',
+        title: 'Look at the list',
+        text: 'Open Settings, then Add-ons.',
+        see: 'A list with Dashboard (Always on), Start agents, Terminals, Worktrees and Quick tasks (Always on), each with one plain line and On or Off.',
+      },
+      {
+        id: 'H2',
+        title: 'Switch an add-on on',
+        text: 'Find an add-on you left off during setup (for example Worktrees) and switch it on.',
+        see: 'The same review and sign step as other settings. You type the word shown on screen (the add-on name, a ~ and the end of the workspace id), and the review says what the add-on may do. After signing the switch shows On.',
+      },
+      {
+        id: 'H3',
+        title: 'Switch it off again',
+        see: 'One review and one confirmation (no typed word). Afterwards the switch shows Off and nothing is deleted.',
+      },
+      {
+        id: 'H4',
+        title: 'Terminals or Start agents with execution off',
+        text: 'Look at Terminals or Start agents while running work from the dashboard is still switched off.',
+        commands: ['orch runner enable'],
+        see: 'The switch is greyed and the line beside it says to run "orch runner enable" in your Terminal first.',
+      },
+      {
+        id: 'H5',
+        title: 'Cannot switch off while work is running',
+        text: 'Start an agent or a terminal, then open Add-ons and try to switch that add-on off.',
+        see: 'The switch is greyed with "Stop first: ... running right now". Stop the work, reload, and it can be switched off.',
+      },
+      {
+        id: 'H6',
+        title: 'Reload after a change',
+        text: 'Reload the page after any change.',
+        see: 'The state shown matches what you signed (On stays On).',
+      },
+    ],
+  },
+  {
+    id: 'I',
+    title: 'Repos',
+    where: 'Browser; Settings, General, Repositories',
+    steps: [
+      {
+        id: 'I1',
+        title: 'Look at the repository list',
+        text: 'Open Settings, General, and scroll to "Repositories".',
+        see: 'Each repository with its folder and, next to the name, a plain status: "In place, on branch main", "Folder not found" or "The folder is not a git repository".',
+      },
+      {
+        id: 'I2',
+        title: 'Add a repository',
+        text: 'Click "Add repository". Write a name (for example "demo") and the full folder path of a real git folder on this Mac, leave the rest empty and click "Review and sign". Sign it in the Terminal as shown.',
+        see: 'A signing window that lists "repository demo: added", then Folder, Remote and Main branch on their own lines ("(none)" where you left it empty). After signing the list shows the new repository as "In place".',
+      },
+      {
+        id: 'I3',
+        title: 'A wrong folder is refused',
+        text: 'Click "Add repository" again with a folder that does not exist, and once with a folder that is not a git repository. Also try a relative path like "code/api".',
+        see: 'Refused before anything is signed, with a plain sentence ("That folder does not exist on this computer" or "That folder is not a git repository"). The relative path is refused in the form itself.',
+      },
+      {
+        id: 'I4',
+        title: 'Change a repository',
+        text: 'Click the pencil next to a repository, change its folder or main branch, click "Review and sign" and sign.',
+        see: 'The signing window shows the old value and the new value side by side for each line. After signing the list shows the change.',
+      },
+      {
+        id: 'I5',
+        title: 'Remove a repository',
+        text: 'Click the trash can next to a repository and sign.',
+        see: 'The review says "removed (the folder and its files stay on disk)". After signing it is gone from the list, and its folder is still on your disk.',
+      },
+      {
+        id: 'I6',
+        title: 'As a member, not an owner',
+        optional: true,
+        text: 'If you have a member who is not an owner, sign in as that member and open the same page.',
+        see: 'The list is there but no Add, pencil or trash buttons, and the line "Only owners can add, change or remove repositories."',
+      },
+    ],
+  },
+  {
+    id: 'J',
+    title: 'Worktrees',
+    where: 'Browser; the Worktrees page',
+    intro:
+      'A worktree is a ticket\'s own folder, so agents on different tickets do not disturb each other. Needs the Worktrees add-on on, "orch runner enable" done, and a ticket linked to a repo with a branch (see E1).',
+    steps: [
+      {
+        id: 'J1',
+        title: 'The Worktrees page',
+        text: 'Click "Worktrees" in the left menu.',
+        see: 'A list of tickets that have their own folder (or "No ticket has its own worktree yet"). Folder and branch only behind "Technical details". Times in your local time.',
+      },
+      {
+        id: 'J2',
+        title: 'The box on a ticket',
+        text: 'Open a ticket that has a repo and a branch and look at the right column.',
+        see: 'A "Worktree" box saying "Shared working copy" with an "Add worktree" button.',
+      },
+      {
+        id: 'J3',
+        title: 'Create a worktree',
+        text: 'Press "Add worktree", then "Create worktree".',
+        see: 'The box says "Ready, no unsaved changes" and the ticket appears on the Worktrees page. A refusal is one plain sentence (for example runner off, or no branch yet).',
+      },
+      {
+        id: 'J4',
+        title: 'Remove with unsaved changes',
+        text: 'Change a file in that folder ("Technical details" shows where), reload the Worktrees page, press Remove and confirm.',
+        see: '"1 changed file" first, then a refusal saying the changes are not saved in git. Nothing is deleted.',
+      },
+      {
+        id: 'J5',
+        title: 'Remove a clean worktree',
+        text: 'Commit or undo the change, press Remove and confirm.',
+        see: 'The worktree leaves the page and the ticket box returns to "Shared working copy". The branch still exists.',
+      },
+      {
+        id: 'J6',
+        title: 'The folder is gone',
+        text: 'Create a worktree again, delete its folder in Finder, then reload the page.',
+        see: '"Folder is gone" with a sentence saying to remove it here and create it again.',
+      },
+    ],
+  },
+  {
+    id: 'K',
+    title: 'Activity',
+    where: 'Browser; the Activity page',
+    steps: [
+      {
+        id: 'K1',
+        title: 'The Activity page',
+        text: 'Click "Activity" in the left menu.',
+        see: 'A list of what happened, grouped under "Today, <date>" and earlier days, newest first. Each line reads like "Severin closed the ticket on RA-0001", with the ticket title under it and the time (your local time) on the right.',
+      },
+      {
+        id: 'K2',
+        title: 'Open a ticket from a line',
+        text: 'Click a ticket key in a line.',
+        see: 'That ticket opens.',
+      },
+      {
+        id: 'K3',
+        title: 'Filters',
+        text: 'In the filter bar pick "Agents only" under Who, then pick "Reviews" under What.',
+        see: 'Only lines by agents, then only approvals and verdicts. "Clear filters" appears and puts everything back.',
+      },
+      {
+        id: 'K4',
+        title: 'Filter by ticket',
+        text: 'Type a ticket key such as RA-0001 in the Ticket box, then try a made-up word.',
+        see: 'Only that ticket\'s lines. The made-up word shows "A ticket looks like RA-0001" and does nothing else.',
+      },
+      {
+        id: 'K5',
+        title: 'Show older',
+        text: 'Scroll to the bottom of a long list and click "Show older".',
+        see: 'Older days are added below, none repeated. The button disappears at the end.',
+      },
+      {
+        id: 'K6',
+        title: 'New lines appear by themselves',
+        text: 'Make a new note on a ticket (you or an agent), then come back to Activity within half a minute.',
+        see: 'The new line appears at the top without reloading by hand.',
+      },
+    ],
+  },
+  {
+    id: 'L',
+    title: 'Guide',
+    where: 'Browser; the Guide page and the ? help',
+    steps: [
+      {
+        id: 'L1',
+        title: 'Open the Guide',
+        text: 'Open the dashboard on a real workspace. Look for "Guide" at the bottom of the main sidebar list and click it.',
+        see: 'The nine pages in the left list, "Start here" first.',
+      },
+      {
+        id: 'L2',
+        title: 'Approving things',
+        text: 'Click "Approving things".',
+        see: 'It names the Terminal way, "orch sign CODE", and says Phone is coming later.',
+      },
+      {
+        id: 'L3',
+        title: 'Help on a page',
+        text: 'Go to Board and press ? (a question mark).',
+        see: 'A Help sheet on the right with "Today, Board and Tickets". Click "Open the guide": the full guide opens on that page.',
+      },
+      {
+        id: 'L4',
+        title: 'Help on a ticket',
+        text: 'Open any ticket and press ?.',
+        see: '"A ticket and quick tasks".',
+      },
+      {
+        id: 'L5',
+        title: 'Coming later',
+        text: 'Open "Coming later".',
+        see: 'Relay, phone and quick tasks that close themselves are listed as not working yet.',
+      },
+    ],
+  },
+  {
+    id: 'M',
+    title: 'Everything together',
+    where: 'Browser, in workspace RA, with a real repo',
+    intro: 'One run through the pieces that now work together. Use the repo folder from E1 (or any small git folder) and a logged-in claude or codex.',
+    steps: [
+      {
+        id: 'M1',
+        title: 'Create a ticket',
+        text: 'Make a new ticket with text, acceptance checks and people (as in C2), sign it, and approve its requirements (as in C4).',
+        see: 'The ticket opens and "Approve requirements" is done.',
+      },
+      {
+        id: 'M2',
+        title: 'Add a repo and link it',
+        text: 'In Settings, General, Repositories, add the repo (as in I2). Then link it to the new ticket with a branch.',
+        commands: [`orch set <TICKET> links='{"repos":["repo"],"branches":{"repo":"feat/together"}}'`],
+        see: 'The repo shows "In place". The ticket shows the repo and the branch (replace <TICKET> by the ticket key; use a grant as in D2).',
+      },
+      {
+        id: 'M3',
+        title: 'Start an agent with a worktree',
+        text: 'On the ticket press "Add worktree" (as in J3), then "Start agent": pick the harness and mode Work, Start.',
+        see: 'A run appears and a terminal opens. The agent works in the ticket\'s own folder (the worktree), not in the shared copy, and the Worktrees page lists the ticket.',
+      },
+      {
+        id: 'M4',
+        title: 'Watch it in Activity',
+        text: 'Open Activity while the agent works.',
+        see: 'The agent\'s steps (claimed, notes, tasks) appear as new lines at the top without reloading, each opening the ticket when clicked.',
+      },
+    ],
+  },
+]

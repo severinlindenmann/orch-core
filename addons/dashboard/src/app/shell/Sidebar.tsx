@@ -342,6 +342,13 @@ export function Sidebar() {
             </RailTip>
           )}
 
+          <RailTip label="Test checklist">
+            <Link to="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
+              <ListChecks className="size-4" />
+              <span className={label}>Test checklist</span>
+            </Link>
+          </RailTip>
+
           {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
             <div
               className={cn(

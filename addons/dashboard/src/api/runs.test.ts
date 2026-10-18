@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 import { invalidateLive } from './useLiveUpdates'
-import { cleanupDoubt, mergeRunItems, newIdem, outputGone, type Run, type RunList } from './runs'
+import { cleanupDoubt, mergeRunItems, newIdem, markNoReplay, outputGone, type Run, type RunList } from './runs'
 
 const WS = 'a'.repeat(32)
 const run = (id: string, rev: number, over: Partial<Run> = {}): Run => ({
@@ -30,6 +30,12 @@ describe('runs', () => {
     expect(outputGone(run('r', 1, { state: 'exited', replay_until: '2026-10-14T13:00:00Z' }), now)).toBe(false)
     expect(outputGone(run('r', 1, { state: 'exited', replay_until: '2026-10-14T11:00:00Z' }), now)).toBe(true)
     expect(outputGone(run('r', 1, { state: 'lost', replay_until: null }), now)).toBe(true)
+    // an attach that failed once for an ended run is not tried again on later page loads
+    const kept = run('rk', 1, { state: 'exited', replay_until: '2026-10-14T13:00:00Z' })
+    expect(outputGone(kept, now)).toBe(false)
+    markNoReplay('rk')
+    expect(outputGone(kept, now)).toBe(true)
+    expect(outputGone(run('rk', 1), now)).toBe(false) // a running run is never "gone"
     expect([cleanupDoubt('incomplete'), cleanupDoubt('unknown'), cleanupDoubt('complete'), cleanupDoubt(null)]).toEqual([true, true, false, false])
     for (let i = 0; i < 50; i++) expect(newIdem()).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
   })

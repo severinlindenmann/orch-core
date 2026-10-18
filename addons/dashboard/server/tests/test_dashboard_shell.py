@@ -30,6 +30,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/changes",
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
         "/api/w/{ws}/handoff",
+        "/api/w/{ws}/repos/check",
         "/api/w/{ws}/handoff/{request_id}",
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/click/prepare",

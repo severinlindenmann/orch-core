@@ -150,6 +150,15 @@ def test_an_owner_gets_path_and_remote_and_null_for_what_is_not_set(w):
     assert got["proj"]["check"] == {"state": "missing", "branch": None}  # /srv/proj is not on this machine
 
 
+def test_an_owner_is_told_which_visible_tickets_link_a_repo(w):
+    seed_repos(w)
+    _, key = w.ticket("links proj")
+    c = w.client()
+    link(w, c, key, "proj")
+    got = ok(c.req("workspace.settings"))["settings"]["repos"]
+    assert got["proj"]["linked_by"] == [key] and "linked_by" not in got["bare"]
+
+
 def test_a_member_gets_only_the_name_and_default_branch(wq):
     seed_repos(wq)
     got = ok(wq.client().req("workspace.settings"))

@@ -144,7 +144,28 @@ export function mergeRunItems(client: QueryClient, ws: string, items: RunItem[])
 /** "Output no longer kept": an ended run whose ring is gone (or was never kept). The dock does not try to attach. */
 export function outputGone(run: Run, now = Date.now()): boolean {
   if (run.state === 'running' || run.state === 'starting') return false
-  return run.replay_until === null || Date.parse(run.replay_until) <= now
+  return run.replay_until === null || Date.parse(run.replay_until) <= now || noReplay(run.run)
+}
+
+/**
+ * The host lists an ended run's output as kept for an hour, but the runner may not have it (it restarted, or the ring is
+ * gone). The first failed attach of an ended run is remembered for this browser tab, so no later page load asks again
+ * (every ask is a logged 503/4xx in the console).
+ */
+const NO_REPLAY = 'orch.noreplay.'
+export function noReplay(run: string): boolean {
+  try {
+    return sessionStorage.getItem(NO_REPLAY + run) === '1'
+  } catch {
+    return false
+  }
+}
+export function markNoReplay(run: string): void {
+  try {
+    sessionStorage.setItem(NO_REPLAY + run, '1')
+  } catch {
+    /* private window: the next page load asks once more */
+  }
 }
 
 /** "Some processes may still be running" after a stop whose cleanup was not complete. */

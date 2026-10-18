@@ -105,6 +105,8 @@ describe('workspace operations (M4)', () => {
     expect(workspaceConfirmWord({ op: 'member.add', events: ev({ person: 'p_new' }), material })).toBe('p_new')
     expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
     expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
+    // Extend / Start again / a runner grant: the terminal asks for GRANT
+    expect(workspaceConfirmWord({ op: 'grant', events: ev({}), material })).toBe('GRANT')
   })
   it('a sequence that gives agents access (Extend, Start again) shows GRANT, as the terminal asks', async () => {
     const { workspaceConfirmWord } = await import('./handoff')

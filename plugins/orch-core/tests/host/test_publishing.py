@@ -907,3 +907,46 @@ def test_an_agent_may_have_three_staged_copies_at_most(w, monkeypatch):
 def test_names_that_differ_only_in_case_are_refused(w):
     uid, key = w.ticket_with(**{"Report.md": REPORT, "report.md": REPORT})
     assert err(w.req("publish.prepare", {"ref": key, "artifacts": ["Report.md", "report.md"]})) == "invalid.input"
+
+
+def test_an_old_approval_among_many_other_events_is_still_found_and_a_stale_one_is_not(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+
+    def pile(store):
+        for i in range(publishing.SCAN_CHUNK + 55):  # more notes than one scan chunk, all newer than the approval
+            w.ws.tick()
+            store.append(w.ws.person_event(w.ws.owner, uid, "log.added", text=f"note {i}"), log=uid)
+
+    w.served.append(pile)
+    assert ok(w.send(staged))["data"]["share_id"]
+    # and a signature older than the window is refused, however many events came after it
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.served.append(pile)
+    w.served.lab.ws.clock[0] += publishing.APPROVAL_VALID + 60
+    assert err(w.send(staged)) == "publish.not_approved"
+
+
+def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
+    from tests.host.live_helpers import world
+
+    wd = world(tmp_path, map_to="quinn")
+    try:
+        quinn = Human(wd, wd.quinn)
+        w = World(wd, quinn)  # quinn's own connection
+        w.addon()
+        w.configure()
+        uid, key = w.ticket_with(**{"report.md": REPORT})  # made by the owner's agent: quinn does not own it
+        staged = w.prepare(key, "report.md")["staged_id"]  # anyone who sees the ticket may stage
+        for role in ("member", "viewer"):
+            if role == "viewer":
+                wd.person_event("role.changed", person=wd.quinn.ref, role="viewer")
+            assert err(quinn.prepare_res("publish.share", {"staged_id": staged})) == "role.denied", role
+        wd.person_event("role.changed", person=wd.quinn.ref, role="maintainer")
+        assert quinn.prepare("publish.share", {"staged_id": staged})["op"] == "publish.share"
+    finally:
+        publishing.TRANSPORT = None
+        wd.close()
+        wd.lab.close()

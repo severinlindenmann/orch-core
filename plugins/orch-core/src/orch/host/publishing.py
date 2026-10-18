@@ -73,6 +73,7 @@ ADDON = "publish"
 PER_MINUTE = 10
 MAX_STAGED = 20
 AGENT_STAGES = 3
+SCAN_CHUNK = 200
 STAGE_BYTES = 200 * 1024 * 1024
 MAX_RECORDS = 500
 #: a staged copy no one finished with is dropped after this; a signature is good for a shorter time
@@ -545,7 +546,7 @@ def _signed_approval(call: Call, meta: dict[str, Any], text: str) -> bool:
     now = call.service.clock()
     top = head
     while top > 0:  # newest first, in chunks, until the notes are older than a signature stays good
-        low = max(top - 200, 0)
+        low = max(top - SCAN_CHUNK, 0)
         for ev in reversed(store.events(uid, after=low, limit=top - low)):
             at = _epoch(ev.get("at"))
             if at is not None and now - at > APPROVAL_VALID:

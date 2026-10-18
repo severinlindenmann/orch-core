@@ -20,7 +20,7 @@ import {
   VIEWS,
   adminCommand,
   fmtSize,
-  isLoopback,
+  reachNote,
   isUnknownWorkspace,
   kindText,
   newIdem,
@@ -67,9 +67,7 @@ function Where({ server, share }: { server: string | null; share: string | null 
         </>
       ) : null}
       .
-      {(isLoopback(server) || isLoopback(share)) && (
-        <span className="mt-1 block">Local test link: opens only on this computer, so nobody else can use it.</span>
-      )}
+      {reachNote(server, share) && <span className="mt-1 block">{reachNote(server, share)}</span>}
     </p>
   )
 }

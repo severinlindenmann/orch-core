@@ -3,7 +3,7 @@
 // request. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { adminCommand, isLoopback, isUnknownWorkspace, newIdem, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -63,9 +63,9 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
         ) : (
           <p className="text-warning">No server is set up yet, so nothing can be shared.</p>
         )}
-        {data.configured && (isLoopback(data.server) || isLoopback(data.share)) && (
+        {data.configured && reachNote(data.server, data.share) && (
           <p data-testid="publish-local-note" className="text-text-muted">
-            Local test link: opens only on this computer, so nobody else can use these links.
+            {reachNote(data.server, data.share)}
           </p>
         )}
         {owner ? (

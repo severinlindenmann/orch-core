@@ -172,6 +172,18 @@ export const isUnknownWorkspace = (e: unknown): boolean => e instanceof ApiError
 /** Is this address one that opens only on this computer? */
 export const isLoopback = (origin: string | null): boolean => !!origin && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
 
+/** What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known). */
+export function reachNote(server: string | null, share: string | null): string | null {
+  if (!server || !share) return null
+  const s = isLoopback(server)
+  const l = isLoopback(share)
+  const host = (o: string) => o.replace(/^https?:\/\//, '')
+  if (s && l) return 'Local test link: opens only on this computer, so nobody else can use it.'
+  if (l) return `Links open only on this computer, but files are uploaded to ${host(server)}, which other people can reach.`
+  if (s) return `Links open from ${host(share)}, which other people can reach; files are uploaded to this computer only.`
+  return null
+}
+
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`
 
 /** The accessible name of a Stop sharing button: which files, and when the link ends. */

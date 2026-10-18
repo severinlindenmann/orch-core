@@ -6,7 +6,7 @@ from orch.ops import views
 from orch.ops._dsl import BOOL, REF, STR, B, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call
+from orch.ops.runtime import _TASK_ONLY, Call
 from orch.schema import SECTIONS_BY_TYPE
 
 
@@ -17,7 +17,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("invalid.input", "--reason goes with --takeover")
     with c.locked():
         if explicit is not None:
-            if explicit.partition("/")[0].startswith("T"):
+            if "/" in explicit or _TASK_ONLY.fullmatch(explicit):
                 raise OrchError("invalid.input", "claim takes a ticket REF, not a task")
             view = c.resolve(explicit)
         else:

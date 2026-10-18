@@ -699,13 +699,20 @@ def test_settings_repos_read_as_labelled_rows_per_repo(human, served):
 def test_a_repo_change_shows_unchanged_fields_once_without_an_arrow(human, served):
     event = {
         **sample("settings.changed"),
-        "set": {"repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "dev"}}},
+        "set": {
+            "repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "dev"}}
+        },
     }
     mat = material_for("settings.changed", event)
-    mat["before"] = {"repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "main"}}}
+    mat["before"] = {
+        "repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "main"}}
+    }
     c = build({"op": "settings.set", "events": [event], "material": mat})
     rows = {r["field"]: r for r in c["fields_changed"]}
-    assert (rows["repository api: main branch"]["before"], rows["repository api: main branch"]["after"]) == ("main", "dev")
+    assert (rows["repository api: main branch"]["before"], rows["repository api: main branch"]["after"]) == (
+        "main",
+        "dev",
+    )
     for label, value in (("folder", "/work/api"), ("remote", "https://example.org/a/api")):
         row = rows[f"repository api: {label} (unchanged, per host)"]
         assert row["before"] is None and row["after"] == value  # the signed value stays on the screen

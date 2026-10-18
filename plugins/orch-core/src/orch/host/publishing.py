@@ -203,7 +203,9 @@ def _gate(call: Call) -> None:
 
 
 def _config(service: WorkspaceService) -> dict[str, str]:
-    cfg = service.store.state.workspace.settings.get("publish")
+    from orch.store.render import thaw
+
+    cfg = thaw(service.store.state.workspace.settings.get("publish"))
     if not isinstance(cfg, dict) or not isinstance(cfg.get("server"), str) or not isinstance(cfg.get("share"), str):
         raise HostError(
             "publish.not_configured",
@@ -643,7 +645,9 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             | {"ticket": view.key, "created_at": _iso(meta["created"])}
         )
     ws = store.state.workspace
-    cfg = ws.settings.get("publish")
+    from orch.store.render import thaw
+
+    cfg = thaw(ws.settings.get("publish"))
     out: dict[str, Any] = {
         "configured": isinstance(cfg, dict),
         "server": cfg.get("server") if isinstance(cfg, dict) else None,

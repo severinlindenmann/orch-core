@@ -14,6 +14,12 @@ from orch_dashboard.auth import Auth
 from orch_dashboard.gateway import Gateway
 from orch_dashboard.hostlink import HostLink
 
+from orch import layout as _layout
+
+# These tests build their workspaces with the store in the project root (the legacy layout, still supported), like
+# orch-core's own suite; WRITE_NEW is the shipped default for NEW workspaces (.orch/).
+_layout.WRITE_NEW = False
+
 PORT = 43210
 ORIGIN = f"http://127.0.0.1:{PORT}"
 

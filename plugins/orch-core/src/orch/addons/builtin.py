@@ -111,7 +111,9 @@ def install_missing(workspace: str, name: str) -> None:
 
 def _drop_empty(workspace: str, name: str) -> None:
     """``rmdir addons/<name>`` relative to the ``addons`` directory's descriptor (no path walk to redirect)."""
-    path = Path(os.path.abspath(workspace)) / "addons"
+    from orch.addons.install import ADDONS_DIR
+
+    path = Path(os.path.abspath(workspace)) / ADDONS_DIR
     try:
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:

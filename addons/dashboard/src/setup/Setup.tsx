@@ -508,9 +508,17 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
   }
   async function finish() {
-    const result = await api.call<{ url: string }>('finish', {})
+    const result = await api.call<{ url: string; workspace_id?: string }>('finish', {})
     const url = new URL(result.url, location.origin)
     if (url.origin !== location.origin || !url.pathname.startsWith('/')) throw new Error('destination')
+    // The dashboard opens the workspace it remembers: make that the new one (same key as app/workspace.tsx).
+    if (typeof result.workspace_id === 'string' && result.workspace_id) {
+      try {
+        localStorage.setItem('orch.workspace', result.workspace_id)
+      } catch {
+        /* storage unavailable: the dashboard picks its own */
+      }
+    }
     drop()
     api.forget()
     location.assign(url.pathname + url.search + url.hash)

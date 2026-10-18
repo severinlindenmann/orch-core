@@ -299,7 +299,7 @@ def test_real_core_claim_and_proxy(tmp_path):
         def dispatch(self, method, route, query, body):
             if route == "finish":
                 self.finished = True
-                return 200, {"url": "/"}
+                return 200, {"url": "/", "workspace_id": "8f1c2d3e-0000-4000-8000-00000000aaaa"}
             return 200, {"route": route, "query": query, "body": body}
 
     with tempfile.TemporaryDirectory(prefix="b9-core-", dir="/tmp") as directory:
@@ -319,7 +319,10 @@ def test_real_core_claim_and_proxy(tmp_path):
                 res = client.get("/api/setup/progress?run_id=demo-run", headers=headers)
                 assert res.json()["query"] == {"run_id": "demo-run"}
                 assert res.headers["cache-control"] == "no-store"
-                url = client.post("/api/setup/finish", json={}, headers=headers).json()["url"]
+                done = client.post("/api/setup/finish", json={}, headers=headers).json()
+                url = done["url"]
+                # F1: the new workspace's id reaches the page, so it can select it before the dashboard opens
+                assert done["workspace_id"] == "8f1c2d3e-0000-4000-8000-00000000aaaa"
                 login = urllib.parse.parse_qs(urllib.parse.urlsplit(url).fragment)
                 assert url.startswith("/#launch=") and login["to"] == ["/"]
                 # the code opens a normal session once; the setup scope is gone

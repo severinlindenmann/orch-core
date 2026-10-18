@@ -144,7 +144,7 @@ function fake(
             }
           : {}),
       }
-    if (path === 'finish') result = { url: '/' }
+    if (path === 'finish') result = { url: '/', workspace_id: 'ws-new-2' }
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
@@ -385,10 +385,13 @@ test('successful progress offers the workspace, while finish mode never reveals 
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
+  localStorage.setItem('orch.workspace', 'ws-old') // the dashboard already knows another workspace
   const assign = vi.fn()
   vi.stubGlobal('location', { origin: location.origin, assign })
   fireEvent.click(screen.getByRole('button', { name: 'Open your workspace →' }))
   await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
+  // F1: a second workspace's setup selects the NEW workspace, not the one remembered before
+  expect(localStorage.getItem('orch.workspace')).toBe('ws-new-2')
   expect(f.calls.some((c) => c.path.startsWith('secrets/'))).toBe(false)
 })
 

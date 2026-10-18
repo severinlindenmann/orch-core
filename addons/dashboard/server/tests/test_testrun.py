@@ -58,10 +58,10 @@ def test_notes_roundtrip_and_path_is_reported(client, h, gateway):
     assert put(client, h, note="the page was blank").status_code == 200
     assert put(client, h, step="A1", status="fail_blocking", note="").status_code == 200
     out = client.get("/api/testrun/run2", headers=h).json()
-    assert out["path"] == str(gateway.state / "testrun" / "run2")
+    assert out["path"] == str(gateway.state / "dashboard" / "testrun" / "run2")
     assert out["notes"]["B1.4"]["note"] == "the page was blank"
     assert out["notes"]["A1"]["status"] == "fail_blocking"
-    file = gateway.state / "testrun" / "run2" / "notes.json"
+    file = gateway.state / "dashboard" / "testrun" / "run2" / "notes.json"
     assert json.loads(file.read_text())["steps"]["B1.4"]["status"] == "pass"
     assert oct(file.stat().st_mode & 0o777) == "0o600"
     assert oct(file.parent.stat().st_mode & 0o777) == "0o700"
@@ -77,7 +77,7 @@ def test_bad_step_ids_are_refused(client, h, step):
     assert put(client, h, step=step).status_code in (400, 404, 405)
 
 
-@pytest.mark.parametrize("run", ["..", "Run2", "a/b", "x" * 40, "-a"])
+@pytest.mark.parametrize("run", ["..", "Run2", "a/b", "x" * 40, "-a", "run", "run1234", "run2x"])
 def test_bad_run_ids_are_refused(client, h, run):
     assert client.get(f"/api/testrun/{run}", headers=h).status_code in (400, 404, 405)
 
@@ -96,7 +96,7 @@ def test_image_roundtrip_per_type_and_delete(client, h, gateway):
         assert res.status_code == 200, res.text
         name = res.json()["name"]
         assert name.startswith("C5-") and name.endswith("." + ext)
-        file = gateway.state / "testrun" / "run2" / "images" / name
+        file = gateway.state / "dashboard" / "testrun" / "run2" / "images" / name
         assert res.json()["path"] == str(file) and file.read_bytes() == raw
         assert oct(file.stat().st_mode & 0o777) == "0o600"
         got = client.get(f"/api/testrun/run2/images/{name}", headers=h)
@@ -146,14 +146,14 @@ def test_image_names_cannot_escape(client, h, name):
 
 def test_a_file_the_notes_do_not_list_is_not_served(client, h, gateway):
     assert upload(client, h, PNG).status_code == 200
-    stray = gateway.state / "testrun" / "run2" / "images" / "C5-aaaaaaaaaaaa.png"
+    stray = gateway.state / "dashboard" / "testrun" / "run2" / "images" / "C5-aaaaaaaaaaaa.png"
     stray.write_bytes(PNG)
     assert client.get("/api/testrun/run2/images/C5-aaaaaaaaaaaa.png", headers=h).status_code == 404
 
 
 def test_a_symlinked_image_is_not_served(client, h, gateway, tmp_path):
     name = upload(client, h, PNG).json()["name"]
-    file = gateway.state / "testrun" / "run2" / "images" / name
+    file = gateway.state / "dashboard" / "testrun" / "run2" / "images" / name
     secret = tmp_path / "secret.png"
     secret.write_bytes(b"secret")
     os.unlink(file)
@@ -163,7 +163,7 @@ def test_a_symlinked_image_is_not_served(client, h, gateway, tmp_path):
 
 def test_corrupt_notes_are_never_overwritten(client, h, gateway):
     put(client, h)
-    file = gateway.state / "testrun" / "run2" / "notes.json"
+    file = gateway.state / "dashboard" / "testrun" / "run2" / "notes.json"
     file.write_text("{not json")
     assert client.get("/api/testrun/run2", headers=h).status_code == 500
     assert put(client, h).status_code == 500
@@ -173,3 +173,45 @@ def test_corrupt_notes_are_never_overwritten(client, h, gateway):
 def test_the_checklist_page_is_a_dashboard_address(client):
     assert client.get("/checklist").status_code == 200
     assert client.get("/w/DEMO/checklist").status_code == 404
+
+
+def test_a_symlinked_run_or_images_dir_is_refused(client, h, gateway, tmp_path):
+    assert put(client, h).status_code == 200
+    run = gateway.state / "dashboard" / "testrun" / "run2"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (run / "images").symlink_to(elsewhere)
+    assert upload(client, h, PNG).status_code == 400
+    assert client.get("/api/testrun/run2", headers=h).status_code == 400
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_step_rows_are_capped(client, h, monkeypatch):
+    from orch_dashboard import testrun
+
+    monkeypatch.setattr(testrun, "STEP_ROWS_MAX", 2)
+    assert put(client, h, step="A1").status_code == 200
+    assert put(client, h, step="A2").status_code == 200
+    assert put(client, h, step="A3").status_code == 400
+    assert put(client, h, step="A1", note="again").status_code == 200  # an existing row is still editable
+
+
+def test_total_image_bytes_are_capped(client, h, monkeypatch):
+    from orch_dashboard import testrun
+
+    monkeypatch.setattr(testrun, "RUN_BYTES_MAX", len(PNG) * 2)
+    assert upload(client, h, PNG).status_code == 200
+    assert upload(client, h, PNG).status_code == 200
+    assert upload(client, h, PNG).status_code == 400
+
+
+def test_a_failed_save_leaves_no_image_behind(client, h, gateway, monkeypatch):
+    from orch_dashboard import testrun
+
+    def boom(self, run, doc):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(testrun.Store, "save", boom)
+    assert upload(client, h, PNG).status_code == 500
+    images = gateway.state / "dashboard" / "testrun" / "run2" / "images"
+    assert list(images.iterdir()) == []

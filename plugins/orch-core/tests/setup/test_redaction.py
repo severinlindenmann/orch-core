@@ -141,3 +141,46 @@ def test_encoded_forms_are_hidden():
 def test_ordinary_text_still_passes():
     s, _, _ = _held()
     assert redact_reason("the host said no (code 42)", s.held()) == "the host said no (code 42)"
+
+
+# ---- word collisions: a secret word that is also an ordinary word of the fixed wording is not a leak ----
+
+_FIXED = "macOS did not let orch use the keychain"
+
+
+def test_a_secret_word_inside_the_fixed_wording_does_not_hide_the_reason():
+    # pairs of adjacent short words ("use"+"the") and one-word secrets of 6+ letters ("keychain") collide with prose
+    for secrets in (
+        ["use", "the", "let", "orch", "did", "macos"],  # words under 6 letters are never checked alone
+        ["the let zoo use abandon orch", "orch", "use"],  # words present, but never as an adjacent pair in the order
+        ["letorch", "usethe"],  # a joined pair must be one token
+        ["x y z"],
+    ):
+        assert redact_reason(_FIXED, secrets) == _FIXED, secrets
+    # a recovery word of 6+ letters that is a substring of other words / across a word boundary of the prose
+    assert (
+        redact_reason("macOS did not let orch use the keychain", ["notlet", "chain", "ouseth", "orchuse", "keychains"])
+        == _FIXED
+    )
+    assert redact_reason(_FIXED, ["keychain"]) == HIDDEN_REASON  # but a whole matching token is still hidden
+
+
+def test_real_leaks_stay_hidden_even_with_colliding_words():
+    code = "use the let orch did not macos keychain spoon tray"
+    held = [code, *code.split()]
+    # prose that merely contains the same words one by one, far apart, is fine; the whole code is not
+    assert redact_reason(code, held) == HIDDEN_REASON
+    assert redact_reason(code.replace(" ", "\n"), held) == HIDDEN_REASON
+    assert redact_reason("spoon is not a token here", ["spoon", "tray"]) == "spoon is not a token here"  # < 6 letters
+    # one 6+ letter word and word pairs as whole tokens / joined / adjacent
+    assert redact_reason("it said keychain!", ["keychain"]) == HIDDEN_REASON
+    assert redact_reason("x use.the y", ["use the"]) == HIDDEN_REASON
+    assert redact_reason("x usethe y", ["use the"]) == HIDDEN_REASON
+    # encoded single recovery words
+    import base64
+    import urllib.parse
+
+    w = "keychain"
+    for f in (w.encode().hex(), w.encode().hex().upper(), base64.b64encode(w.encode()).decode(), urllib.parse.quote(w)):
+        assert redact_reason(f"err {f} end", [w]) == HIDDEN_REASON, f
+    assert redact_reason("blob " + base64.b64encode(b"qq" + w.encode() + b"zz").decode(), [w]) == HIDDEN_REASON

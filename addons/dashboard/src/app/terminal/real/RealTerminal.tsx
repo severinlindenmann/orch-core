@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/api/types'
-import { runsApi, type Run } from '@/api/runs'
+import { markNoReplay, runsApi, type Run } from '@/api/runs'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { BACKOFF_MS, closePolicy, endWords, termTransport, type connectTerm, type TermConnection, type TermEnd } from './termProtocol'
@@ -82,6 +82,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
         // An ended run is never retried: asking again cannot bring it back (and every try is a logged 503).
         const ended = runRef.current.state === 'exited' || runRef.current.state === 'lost'
         const retryable = e instanceof ApiError && e.status >= 500 && !ended
+        if (ended) markNoReplay(runRef.current.run)
         setStatus({ words: ended ? 'This terminal has ended and its output can no longer be shown.' : retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
         if (retryable) again(BACKOFF_MS[Math.min(failures.current++, BACKOFF_MS.length - 1)])
         return
@@ -130,6 +131,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
             // The run is over: reconnecting cannot help, so stop asking.
             setLease('reading')
             setStatus({ words: endWords(code, end), detail, final: true })
+            if (code === 4422 || end?.code === 'term.not_attachable') markNoReplay(runRef.current.run)
           } else if (policy.kind === 'ticket') {
             setStatus({ words: endWords(code, end), final: false })
             again(250)

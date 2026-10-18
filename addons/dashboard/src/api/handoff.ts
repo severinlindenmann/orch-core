@@ -265,6 +265,8 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
     const name = request.events[0]?.name
     return typeof name === 'string' ? name : null
   }
+  // Agent access (Extend, Start again, a plain runner grant): the signer's word is GRANT (signer.confirm_word, op "grant").
+  if (request.op === 'grant') return 'GRANT'
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }
 

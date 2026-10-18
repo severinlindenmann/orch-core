@@ -323,3 +323,168 @@ def test_an_edit_is_signed_through_the_terminal_path_with_a_batch_unlock(human, 
     rig2 = Rig(human, tmp_path / "edit2", intent2)
     p2 = handoff_first(rig2)
     assert terminal(rig2, human.served, Shown(), p2["request"]["code"])["key"] == key2
+
+
+# --- F6: link repositories to a ticket (one review with the rest of the edit) ----------------------------------------
+
+
+@pytest.fixture
+def repo_lab(lab):
+    """``proj`` and ``other`` are in ``settings.repos`` (``ws.repo`` appends the setting) before the host runs."""
+    ws = lab.ws
+    ws.store = ws.other()
+    try:
+        ws.repo("proj")
+        ws.repo("other")
+    finally:
+        ws.store.close()
+        ws.store = None
+    return lab
+
+
+def links_of(human, key):
+    return doc(human, key)["doc"]["links"]
+
+
+def link_intent(human, key, repos, branches, **over):
+    was = links_of(human, key)
+    return edit_intent(human, key, links={"was": was, "repos": repos, "branches": branches}, **over)
+
+
+def test_an_edit_links_a_repository_with_a_branch_in_one_review(repo_lab, human, tmp_path):
+    key = made(human, tmp_path)
+    was = canon.section_hash("One line.")
+    intent = link_intent(
+        human,
+        key,
+        ["proj"],
+        {"proj": "feat/x"},
+        sections={"summary": {"was": was, "text": "Linked."}},
+    )
+    rig = Rig(human, tmp_path / "edit", intent)
+    first = rig.first()
+    human.check(first)
+    content = signcontent.build(first, verified=True)
+    rows = [r for r in content["fields_changed"] if r["field"] == "repository proj"]
+    assert rows == [{"field": "repository proj", "before": "not linked", "after": "linked, branch feat/x"}]
+    assert "repository" not in str(content["fields_changed"]).replace("repository proj", "")
+    assert "proj: not linked -> linked, branch feat/x" in "\n".join(sequence.intent_lines(rig.intent, str))
+    assert sequence.confirm_kind(rig.intent) == "click"
+    out = rig.driver().run(first)
+    assert out["landed"] == 2
+    lk = links_of(human, key)
+    assert lk["repos"] == ["proj"] and lk["branches"] == {"proj": "feat/x"}
+    # a second edit changes the branch and unlinks nothing; a third unlinks
+    rig2 = Rig(human, tmp_path / "edit2", link_intent(human, key, ["other", "proj"], {"proj": "feat/y"}))
+    rig2.driver().run(rig2.first())
+    assert links_of(human, key)["repos"] == ["other", "proj"]
+    rig3 = Rig(human, tmp_path / "edit3", link_intent(human, key, ["other"], {}))
+    rig3.driver().run(rig3.first())
+    lk = links_of(human, key)
+    assert lk["repos"] == ["other"] and lk["branches"] == {}
+
+
+def test_an_unknown_repository_is_refused_by_the_host(repo_lab, human, tmp_path):
+    key = made(human, tmp_path)
+    rig = Rig(human, tmp_path / "edit", link_intent(human, key, ["nope"], {}))
+    op, args = sequence.step_args(rig.intent, 0, None)
+    res = human.c.req("human.prepare", {"op": op, "args": args, "signer": human.signer, "sequence": rig.meta0()})
+    assert res["error"]["code"] == "invalid.input" and "nope" in res["error"]["message"], res["error"]
+    assert links_of(human, key)["repos"] == []
+
+
+def test_a_viewer_cannot_prepare_the_links_but_a_member_can(tmp_path):
+    """The role check is the ordinary ``set`` rule of the model, inside the same prepare (a link is the event that
+    ``orch set links=`` makes): a viewer is refused, a member who may edit the ticket gets it prepared and signs it."""
+    from tests.host.live_helpers import world
+
+    w = world(tmp_path, map_to="quinn")
+    try:
+        quinn = human_helpers.Human(w, w.quinn)
+        w.person_event("settings.changed", set={"repos": {"proj": {"path": str(tmp_path / "proj")}}})
+        uid, key = w.ticket()
+        w.person_event("role.changed", person=w.quinn.ref, role="viewer")
+        rig = Rig(quinn, tmp_path / "edit", link_intent(quinn, key, ["proj"], {"proj": "feat/x"}))
+        op, args = sequence.step_args(rig.intent, 0, None)
+        body = {"op": op, "args": args, "signer": quinn.signer, "sequence": rig.meta0()}
+        res = quinn.c.req("human.prepare", body)
+        assert human_helpers.err(res) == "invalid.input" and "a viewer cannot write" in res["error"]["message"]
+        w.person_event("role.changed", person=w.quinn.ref, role="member")
+        rig = Rig(quinn, tmp_path / "edit2", link_intent(quinn, key, ["proj"], {"proj": "feat/x"}))
+        out = rig.driver().run(rig.first())
+        assert out["landed"] == 1
+        assert links_of(quinn, key)["branches"] == {"proj": "feat/x"}
+    finally:
+        w.close()
+        w.lab.close()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"repos": ["proj"], "branches": {"other": "x"}},  # a branch for a repository that is not linked
+        {"repos": ["proj", "proj"], "branches": {}},
+        {"repos": ["b", "a"], "branches": {}},  # not sorted
+        {"repos": ["proj"], "branches": {"proj": "has space"}},
+        {"repos": ["proj"], "branches": {"proj": "-leading"}},
+        {"repos": ["proj"], "branches": {"proj": "a..b"}},
+        {"repos": ["proj"], "branches": {"proj": "HEAD"}},
+        {"repos": ["proj"], "branches": {"proj": "x\ny"}},
+        {"repos": ["proj"], "branches": {"proj": ""}},
+        {"repos": ["../x"], "branches": {}},
+        {"repos": [], "branches": {}},  # nothing changes
+        {"repos": ["proj"], "branches": {}, "extra": 1},
+    ],
+)
+def test_malformed_links_are_refused(bad):
+    was = {"repos": [], "branches": {}, "prs": [], "external": []}
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": "DEMO-0001", "uid": "0" * 26},
+        "ticket_type": "feature",
+        "head": "sha256:" + "0" * 64,
+        "sections": {},
+        "links": {"was": was, **bad},
+    }
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
+def test_links_cannot_unlink_a_repository_with_a_pull_request():
+    was = {"repos": ["proj"], "branches": {}, "prs": [{"repo": "proj", "url": "https://x/1"}], "external": []}
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": "DEMO-0001", "uid": "0" * 26},
+        "ticket_type": "feature",
+        "head": "sha256:" + "0" * 64,
+        "sections": {},
+        "links": {"was": was, "repos": [], "branches": {}},
+    }
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
+def test_a_host_that_changes_the_links_step_aborts_before_the_signature(repo_lab, human, tmp_path):
+    key = made(human, tmp_path)
+    intent = link_intent(
+        human,
+        key,
+        ["proj"],
+        {"proj": "feat/x"},
+        acceptance={"was": [{"id": "AC1", "text": "First check"}], "edit": {}, "add": ["Second"]},
+    )
+    rig = Rig(human, tmp_path / "edit", intent)
+    first = rig.first()
+    real = rig.prepare
+
+    def evil(op, args, meta):
+        if op == "set":
+            return real(op, {**args, "pairs": ['links={"repos":["other"],"branches":{}}']}, meta)
+        return real(op, args, meta)
+
+    rig.port.prepare = evil
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    assert links_of(human, key)["repos"] == []

@@ -186,8 +186,10 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "people"}:
-        raise SequenceInvalid("an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance and people")
+    if not base <= set(intent) <= base | {"acceptance", "people", "links"}:
+        raise SequenceInvalid(
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, links and people"
+        )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
     ticket, ttype, head = intent["ticket"], intent["ticket_type"], intent["head"]
@@ -235,6 +237,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     }
     if "acceptance" in intent:
         out["acceptance"] = _edit_acceptance(intent["acceptance"])
+    if "links" in intent:
+        out["links"] = _edit_links(intent["links"])
     if "people" in intent:
         out["people"] = _edit_people(intent["people"])
     if len(steps(out)) > MAX_STEPS:
@@ -272,6 +276,77 @@ def _edit_acceptance(value: Any) -> dict[str, Any]:
         out_edit[aid] = text
     out_add = [_one_line(t, "a criterion", 200) for t in add]
     return {"was": out_was, "edit": out_edit, "add": out_add}
+
+
+_LINK_KEYS = ("repos", "branches", "prs", "external")
+_REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+MAX_REPOS = 16
+
+
+def _link_repos(value: Any, what: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) > MAX_REPOS
+        or any(not isinstance(x, str) or not _REPO_NAME.fullmatch(x) for x in value)
+        or value != sorted(set(value))
+    ):
+        raise SequenceInvalid(f"{what}: up to {MAX_REPOS} repository names, sorted, no repeats")
+    return list(value)
+
+
+def _link_branches(value: Any, repos: list[str], what: str) -> dict[str, str]:
+    """``{repo: branch}`` for linked repos only; every branch is a valid git branch name (the rule the log applies)."""
+    from orch.schema import SchemaError, _check_ref
+
+    if not isinstance(value, Mapping) or not set(value) <= set(repos):
+        raise SequenceInvalid(f"{what}: a branch only for a linked repository")
+    out: dict[str, str] = {}
+    for repo in sorted(value):
+        branch = value[repo]
+        if not isinstance(branch, str) or not 1 <= len(branch) <= 200 or branch != branch.strip():
+            raise SequenceInvalid(f"{what}: the branch of {repo} is 1 to 200 characters")
+        try:
+            _check_ref("sequence", ("links", "branches", repo), "refs/heads/" + branch)
+        except SchemaError:
+            raise SequenceInvalid(f"{what}: {branch[:60]!r} is not a valid branch name") from None
+        out[repo] = branch
+    return out
+
+
+def _edit_links(value: Any) -> dict[str, Any]:
+    """``{was, repos, branches}``: the whole links value the person saw (its hash is the edit's ``base_rev``) and the
+    repositories and branches it becomes. The pull requests and external links the person did not touch stay as they
+    were; a repository that has a pull request cannot be unlinked here."""
+    if not isinstance(value, Mapping) or set(value) != {"was", "repos", "branches"}:
+        raise SequenceInvalid("links is {was, repos, branches}")
+    was = value["was"]
+    if not isinstance(was, Mapping) or set(was) != set(_LINK_KEYS):
+        raise SequenceInvalid("links.was is the links value that was reviewed")
+    was_repos = _link_repos(was["repos"], "links.was")
+    was_branches = _link_branches(was["branches"], was_repos, "links.was")
+    if not isinstance(was["prs"], list) or not isinstance(was["external"], list):
+        raise SequenceInvalid("links.was: prs and external are lists")
+    repos = _link_repos(value["repos"], "links")
+    branches = _link_branches(value["branches"], repos, "links")
+    if any(not isinstance(p, Mapping) or p.get("repo") not in repos for p in was["prs"]):
+        raise SequenceInvalid("a repository with a pull request cannot be unlinked here")
+    if repos == was_repos and branches == was_branches:
+        raise SequenceInvalid("links: nothing changes")
+    return {
+        "was": {
+            "repos": was_repos,
+            "branches": was_branches,
+            "prs": copy.deepcopy(was["prs"]),
+            "external": copy.deepcopy(was["external"]),
+        },
+        "repos": repos,
+        "branches": branches,
+    }
+
+
+def _links_after(links: Mapping[str, Any]) -> dict[str, Any]:
+    """The links value after the edit: the reviewed one with the new repositories and branches."""
+    return {**copy.deepcopy(dict(links["was"])), "repos": list(links["repos"]), "branches": dict(links["branches"])}
 
 
 def _edit_people(value: Any) -> dict[str, Any]:
@@ -446,6 +521,10 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
             out.append({"op": "ac.edit", "args": {"ac": aid, "text": text}, "kind": "ac", "ref": True})
         for text in ac["add"]:
             out.append({"op": "ac.add", "args": {"text": text}, "kind": "ac", "ref": True})
+    if "links" in intent:
+        lk = intent["links"]
+        pair = "links=" + canon.dumps({"repos": lk["repos"], "branches": lk["branches"]}).decode()
+        out.append({"op": "set", "args": {"pairs": [pair]}, "kind": "links", "ref": True})
     for role in PEOPLE_ROLES:
         if role in intent.get("people", {}):
             ch = intent["people"][role]
@@ -503,6 +582,12 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
         }
     step = plan[k]
     op = step["op"]
+    if step["kind"] == "links":
+        return {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.links": canon.value_hash(intent["links"]["was"])},
+            "set": {"ticket.links": _links_after(intent["links"])},
+        }
     if op == "set":
         sets = {f"ticket.{key}": copy.deepcopy(v) for key, v in intent["set"].items()}
         return {
@@ -796,6 +881,9 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     new_material: dict[str, Any] = {"kind": "payload", "ticket": material.get("ticket"), "review": []}
     if texts:
         new_material["texts"] = texts
+    if intent["kind"] == EDIT and "links" in intent:
+        # the links the person reviewed: bound by the base_rev of the links event (the hash of exactly this value)
+        new_material["before"] = {"ticket.links": copy.deepcopy(intent["links"]["was"])}
     from orch.host import review
 
     new_material["review"] = [review.of(e, new_material) for e in events]
@@ -824,7 +912,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {key}"
-        content["subline"] = "its text, acceptance checks and people, as shown below"
+        content["subline"] = "its text, acceptance checks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
@@ -832,6 +920,8 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         for aid, text in intent.get("acceptance", {}).get("edit", {}).items():
             was = next((a["text"] for a in intent["acceptance"]["was"] if a["id"] == aid), "")
             notes.append(f"{signcontent.one(aid)}: {signcontent.one(was)} -> {signcontent.one(text)}")
+        if "links" in intent:
+            notes.append("Repositories: the links shown below replace the repositories and branches now on the ticket.")
         if "owner" in intent.get("people", {}):
             notes.append("The owner is set last. After that you may no longer be able to change this ticket yourself.")
         notes.append(
@@ -900,6 +990,24 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
     return out
 
 
+def _link_changes(lk: Mapping[str, Any]) -> list[str]:
+    """One plain line per repository whose link or branch changes: ``name: not linked -> linked, branch b``."""
+
+    def word(repos: list[str], branches: Mapping[str, str], name: str) -> str:
+        if name not in repos:
+            return "not linked"
+        return f"linked, branch {branches[name]}" if name in branches else "linked, no branch"
+
+    was = lk["was"]
+    names = sorted(set(was["repos"]) | set(lk["repos"]))
+    out = []
+    for n in names:
+        old, new = word(was["repos"], was["branches"], n), word(lk["repos"], lk["branches"], n)
+        if old != new:
+            out.append(f"{n}: {old} -> {new}")
+    return out
+
+
 def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list[str]:
     """The intent in plain words, for a terminal prompt that has no SignContent."""
     from orch.host.signcontent import one
@@ -924,6 +1032,9 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
                 f"acceptance {clean(a)}: {clean(one(old.get(a, '')))} -> {clean(one(t))}" for a, t in ac["edit"].items()
             ]
             lines += [f"acceptance added: {clean(one(t))}" for t in ac["add"]]
+        lk = intent.get("links")
+        if lk:
+            lines += [f"repository: {clean(one(x))}" for x in _link_changes(lk)]
         for role, ch in (intent.get("people") or {}).items():
             lines += [f"{clean(role)} add: {clean(who)}" for who in ch["add"]]
             lines += [f"{clean(role)} remove: {clean(who)}" for who in ch["remove"]]

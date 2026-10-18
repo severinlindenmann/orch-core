@@ -10,7 +10,7 @@ from pathlib import Path
 from . import adapters
 from .adapters.addons import runner
 from .click_signer import Signer
-from .errors import fail
+from .errors import HostError, fail
 from .hostlink import HostLink
 from .text import hidden
 
@@ -95,6 +95,24 @@ class Gateway:
             return read_pins(self.state / "host/workspaces.json")
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
+
+    def check_repo_path(self, ws, path):
+        """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
+        before anything is prepared or signed: the person reads the plain refusal in the dialog. Raises HostError.
+        The host checks again when the request is made (this is the same function, on this computer)."""
+        from orch import repopaths
+        from orch.layout import Layout
+
+        row = self._pins().get(ws)
+        if row is None or not isinstance(row.get("root"), str):
+            return  # not known here: the host's own check still runs
+        store = row.get("store")
+        project = Path(row["root"])
+        layout = Layout(project, project / store, False) if isinstance(store, str) else Layout.legacy_at(project)
+        try:
+            repopaths.check_declared(layout, path)
+        except repopaths.RepoPathError as exc:
+            raise HostError({"code": "invalid.input", "message": str(exc), "retryable": False}, exit=5) from None
 
     def link(self, ws):
         with self.lock:

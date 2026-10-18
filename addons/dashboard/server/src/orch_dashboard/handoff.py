@@ -1261,6 +1261,10 @@ def register(app: FastAPI, gateway: Gateway):
         with handoffs.lock:
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
         try:
+            if isinstance(
+                body, RepoSet
+            ):  # the host's path check, before any request exists (plain refusal in the dialog)
+                gateway.check_repo_path(ws, body.path)
             planned = plan(gateway, ws, body)
             op = planned.op
             # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,

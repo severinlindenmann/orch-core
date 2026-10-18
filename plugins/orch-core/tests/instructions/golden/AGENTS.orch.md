@@ -9,7 +9,8 @@ Without ORCH_GRANT the person must run `orch grant`; until then only `orch ask`,
 and `orch artifact add` (without --ac) work.
 
 ## Working on a ticket
-1. Run `orch claim --next`, then `orch show`. If the person named a ticket: `orch claim ABC-0001`, not --next.
+1. Run `orch claim --next`, then `orch show`.
+   If the person named a ticket: `orch claim ABC-0001`, not --next.
 2. Read the ticket, then run `orch task next`.
 3. Do the task; record it with `orch task done T3 --run` (the real task id).
 4. Give every AC evidence: a task receipt, or `orch artifact add --ac AC1`.

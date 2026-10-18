@@ -521,7 +521,7 @@ drops. The host never sends it.
 | `publish.not_configured` | 3 | no | stays | a Publish op before an owner signed `settings.set {publish}` (`orch publish setup`); no server is set (P5) | — |
 | `publish.not_approved` | 3 | no | stays | `publish.send` for a staged copy no person signed: no `log.added` note with exactly its words (files, server, kind, days, views) is in the ticket log, signed by the caller, within the hour (P5) | — |
 | `publish.changed` | 3 | no | stays | a staged file or its record changed since `publish.prepare` (size, hash, link, owner, mode), or the staged copy is not valid (P5); prepare again | — |
-| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace card could not be made; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `card` or `rejected` (P5) | — |
+| `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace card could not be made; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation` or `rejected` (P5) | — |
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
@@ -13003,14 +13003,16 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   `sha256(token)`. It is held in a 0600 file of the stage until the server commits (so a retry sends the same
   `token_hash`), then wiped with the stage; never in the log, the outcome store, the audit file or an error. The link is
   `<share origin>/s/<share id>#t=<token>` (the token is in the fragment).
-* **Card.** A local-only workspace has no relay card; `publish.register` makes a first card from the genesis delegation
-  with a private key store under `publish/card` (the relay's `membership` is untouched). The server admin pre-binds the
+* **Registration is card-free** (design §2.6b). `publish.register` sends exactly `{delegation, owner_pk}`, copied from the
+  pinned genesis (`workspace.created.delegation`, `owner.pk_pub`), in a request signed with the publish label; no relay
+  card, WXK or CK exists for publishing and the request is useless at the relay. The binding is permanent: an identical
+  delegation is `unchanged`, any other is 409 `delegation_changed` (reason `conflict`). The server admin pre-binds the
   workspace: `orch-publish admin --data DIR owners add OWNER` and `ws allow WS OWNER`; `publish.list` carries `workspace`
   and `owner` so `orch publish setup` can print exactly that when the server answers `unknown_workspace`.
 * **No `SignLedger`** is given to the `PublishSigner`: the server's nonce store refuses a replay, and a file ledger that is
   rewritten on every request and never pruned would only grow.
 * **Codes.** `publish.not_configured`, `publish.not_approved`, `publish.changed`, `publish.server_refused`
-  (`detail.reason`: `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `card`,
+  (`detail.reason`: `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation`,
   `rejected`), `publish.unreachable` (retryable). Rate: 10 per minute per person per kind of request.
 * **CLI.** `orch publish setup|register|prepare|share|send|revoke|list|discard` (`orch.cli.publish`). An agent
   (`ORCH_GRANT`) may `prepare`, `list`, `discard`; the rest is `op.not_allowed` here and again in the host. The link is

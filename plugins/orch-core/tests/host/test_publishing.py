@@ -664,20 +664,30 @@ def test_a_wrong_clock_is_said_in_words(w):
     assert "clock" in res["error"]["message"]
 
 
-def test_register_alone_and_the_card_is_the_workspaces_own(w):
+def test_register_sends_exactly_the_genesis_delegation_and_owner_key_and_no_card(w):
     res = ok(w.req("publish.register", {}))["data"]
     assert res["registered"] is True and res["server"] == SERVER
     (req,) = w.server.requests
     body = json.loads(req["body"])
-    assert set(body) == {"card", "owner_pk"} and req["method"] == "POST"
-    assert body["card"]["o"]["workspace_id"] == w.served.wid and body["card"]["o"]["relay_url"] == SERVER
-    assert set(body["card"]) == {"delegation", "o", "sig", "sealed"}
-    # the relay's own key store is untouched: the card lives under publish/
+    genesis = w._genesis()
+    assert req["method"] == "POST" and set(body) == {"delegation", "owner_pk"}  # two keys, nothing else
+    assert body["delegation"] == genesis["delegation"] and body["owner_pk"] == genesis["owner"]["pk_pub"]
+    assert set(body["delegation"]) == {"o", "sig"} and body["delegation"]["o"]["kind"] == "ws_delegation"
+    text = req["body"].decode()
+    for word in ("card", "wxk", "ck_commit", "relay_url", "sealed"):
+        assert word not in text
+    # no relay-style key store is made for publishing, and the relay's own is untouched
+    assert not (w.base() / "card").exists()
     assert not (Path(w.served.lab.state) / "hosts" / w.served.wid / "membership").exists()
-    assert (w.base() / "card").is_dir() and oct((w.base() / "card").stat().st_mode & 0o777) == "0o700"
-    again = ok(w.req("publish.register", {}))["data"]
-    assert again["registered"] is True
-    assert json.loads(w.server.requests[1]["body"])["card"] == body["card"]  # the stored card, not a new one
+    assert ok(w.req("publish.register", {}))["data"]["registered"] is True
+    assert w.server.requests[1]["body"] == req["body"]  # identical bytes again: the server answers unchanged
+
+
+def test_a_server_holding_another_delegation_is_a_conflict_in_words(w):
+    w.server.fail.append(("POST", r"/register$", 409, "delegation_changed"))
+    res = w.req("publish.register", {})
+    assert err(res) == "publish.server_refused" and res["error"]["detail"] == {"reason": "conflict"}
+    assert "unbind" in res["error"]["message"]
 
 
 def test_every_request_is_signed_for_the_configured_host_with_the_workspace_key(w):

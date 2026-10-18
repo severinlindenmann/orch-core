@@ -22,8 +22,8 @@ get a token or a key (``prepare`` and ``list`` carry none; an agent cannot send)
 bytes, hashed again as they are read; the stage is 0700 and host-owned.
 
 **Server.** ``settings.publish`` is signed by the owner (``settings.set``): the API and share origins, never an agent's
-choice. The workspace registers with the card it presents (design §2.6). A local-only workspace has no relay card, so
-the host keeps a private key store for it under ``<state>/hosts/<ws>/publish/card`` (the relay's own is untouched).
+choice. The workspace registers card-free (design §2.6b): the genesis delegation and the owner key, in a request signed
+with the publish label.
 """
 
 from __future__ import annotations
@@ -604,7 +604,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     plan: dict[str, Any] = {"op": op, "cfg": cfg, "person": person}
     if op == "publish.register":
         _rate(call, "register")
-        plan["card"] = _card(call, cfg)
+        plan["reg"] = _delegation(call)
         return plan
     if op == "publish.revoke":
         rec = next((r for r in _records(service) if r.get("id") == args["share_id"]), None)
@@ -629,7 +629,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     _rate(call, "send")
     plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest())
     if _registered(service, cfg) is None:
-        plan["card"] = _card(call, cfg)
+        plan["reg"] = _delegation(call)
     return plan
 
 
@@ -710,7 +710,7 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     return ok_result(out)
 
 
-# -- the card and the registration -------------------------------------------------------------------------------------
+# -- the registration -------------------------------------------------------------------------------------
 
 
 def _registered(service: WorkspaceService, cfg: dict[str, str]) -> dict[str, Any] | None:
@@ -719,47 +719,27 @@ def _registered(service: WorkspaceService, cfg: dict[str, str]) -> dict[str, Any
     return doc if ok else None
 
 
-def _card(call: Call, cfg: dict[str, str]) -> dict[str, Any]:
-    """The workspace card and the owner's key for ``register``: a first card made from the workspace's own genesis
-    delegation, with its own key store under ``publish/card`` (never the relay's ``membership``). Repeated calls give
-    the stored card. Runs on the worker: it reads the store."""
-    from orch.custody import FileBackend
-    from orch.relay.r6.firstcard import R6LinkSource, default_part
-    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, MembershipUnsafe
-    from orch.relay.sign import LinkContext, RelaySigner, SignerRefused
-    from orch.store import BackendSigner
+def _delegation(call: Call) -> dict[str, Any]:
+    """The body of ``register`` (design §2.6b): exactly the genesis ``delegation`` and the owner's ``pk_pub``, copied
+    from the workspace's pinned genesis, checked here with ``members.check_genesis`` first. No card, no WXK or CK, no
+    relay URL: the request itself is signed with the publish label, so it is useless at the relay. Runs on the
+    worker: it reads the store."""
+    from orch.identity import members
+    from orch.identity.errors import Refused
 
-    service = call.service
-    ws = service.workspace_id
-    genesis = service.store.genesis_event()
-    keys_dir = Path(os.path.realpath(service.state_dir)) / "hosts" / ws / "keys"
-    backend = FileBackend(keys_dir) if keys_dir.is_dir() else None
-    if genesis is None or backend is None or not backend.exists("wsk"):
-        raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
-    root = _private(service, "card")
-    mk = None
+    genesis = call.service.store.genesis_event()
     try:
-        mk = MembershipKeys(root, ws, now_ms=lambda: int(service.clock() * 1000))
-        mk.check_start()
-        signer = RelaySigner(BackendSigner(backend, "wsk"), LinkContext(ws, cfg["server"]), ledger=mk.ledger)
-        source = R6LinkSource.from_genesis(
-            mk,
-            signer,
-            genesis_event=genesis,
-            part=default_part(str(genesis.get("prefix", ""))),
-            now_ms=lambda: int(service.clock() * 1000),
-            blocked=lambda: None,
-        )
-        return {"card": dict(source.card()), "owner_pk": base64.urlsafe_b64encode(source.owner_pk_pub()).decode()}
-    except (CustodyRefused, MembershipUnsafe, SignerRefused, OSError) as exc:
+        facts = members.check_genesis(genesis) if genesis is not None else None
+    except Refused:
+        facts = None
+    if facts is None:
         raise HostError(
-            "publish.server_refused",
-            f"the workspace card could not be made ({type(exc).__name__})",
-            detail={"reason": "card"},
-        ) from None
-    finally:
-        if mk is not None:
-            mk.close()
+            "publish.server_refused", "the workspace genesis could not be read", detail={"reason": "delegation"}
+        )
+    return {
+        "delegation": genesis["delegation"],
+        "owner_pk": genesis["owner"]["pk_pub"],  # byte for byte; check_genesis has verified it is the delegating key
+    }
 
 
 def _client(service: WorkspaceService, origin: str, transport: Any = None) -> Any:
@@ -799,6 +779,8 @@ def _refused(exc: Any) -> HostError:
         return HostError(
             "publish.unreachable", "the publish server could not be reached; nothing was shared", retry_after_ms=2000
         )
+    elif code == "delegation_changed":
+        reason, text = "conflict", "the server holds another delegation for this workspace: its admin must unbind it"
     elif code == "unknown_workspace":
         reason, text = "unknown_workspace", "the server does not know this workspace yet: its admin must allow it"
     elif code == "workspace_blocked":
@@ -857,8 +839,8 @@ def _register(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     cfg = plan["cfg"]
     client = _client(service, cfg["server"], TRANSPORT)
-    card = plan["card"]
-    got = flow.register(client, service.workspace_id, card["card"], base64.urlsafe_b64decode(card["owner_pk"]))
+    reg = plan["reg"]
+    got = flow.register(client, service.workspace_id, reg["delegation"], reg["owner_pk"])
     with _MU:
         _private(service)
         _put_json(
@@ -930,14 +912,14 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         with _MU:  # a share can go live from here on (a lost commit answer): revoke must find it, with no token in it
             rows = [r for r in _records(service) if r.get("id") != rec["id"]]
             _save_records(service, [*rows, {**rec, "state": "sending"}])
-        if "card" in plan:
+        if "reg" in plan:
             _register(call, {**plan, "op": "publish.register"})
         for attempt in (0, 1):
             try:
                 flow.put_meta(client, service.workspace_id, meta["share_id"], body)
                 break
             except PublishError as exc:
-                if exc.code == "unknown_workspace" and attempt == 0 and "card" in plan:
+                if exc.code == "unknown_workspace" and attempt == 0 and "reg" in plan:
                     _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
                     continue
                 raise

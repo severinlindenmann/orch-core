@@ -168,7 +168,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
             "limit",
             "conflict",
             "clock",
-            "card",
+            "delegation",
             "rejected",
         )  # fmt: skip
     },

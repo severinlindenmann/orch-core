@@ -16,8 +16,6 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from orch import crypto
-
 from .client import PublishClient, PublishError, share_target
 
 __all__ = ["commit", "list_shares", "meta_bytes", "put_file", "put_meta", "register", "revoke", "token_hash"]
@@ -43,11 +41,14 @@ def meta_bytes(
     return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
 
 
-def register(client: PublishClient, workspace_id: str, card: Mapping[str, Any], owner_pk_pub: bytes) -> dict[str, Any]:
-    """``POST register {card, owner_pk}``: binds the workspace (or confirms it). A 401 ``unknown_workspace`` means the
-    server's admin has not allowed this workspace yet (the caller says so in plain words)."""
+def register(
+    client: PublishClient, workspace_id: str, delegation: Mapping[str, Any], owner_pk_b64u: str
+) -> dict[str, Any]:
+    """``POST register {delegation, owner_pk}`` (design §2.6b): binds the workspace, or confirms it (``unchanged``).
+    Exactly these two keys, copied from the genesis. A 401 ``unknown_workspace`` means the server's admin has not
+    allowed this workspace yet; 409 ``delegation_changed`` that another delegation is bound."""
     body = json.dumps(
-        {"card": dict(card), "owner_pk": crypto.b64u(owner_pk_pub)}, sort_keys=True, separators=(",", ":")
+        {"delegation": dict(delegation), "owner_pk": owner_pk_b64u}, sort_keys=True, separators=(",", ":")
     ).encode()
     got = client.request("POST", share_target(workspace_id, "register"), body, idempotent=True).json()
     return got if isinstance(got, dict) else {}

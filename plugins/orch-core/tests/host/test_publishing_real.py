@@ -32,7 +32,13 @@ from tests.host.test_publishing import REPORT, World
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 SRC = os.environ.get("ORCH_PUBLISH_SRC")
-pytestmark = pytest.mark.skipif(not SRC, reason="set ORCH_PUBLISH_SRC to an orch-publish checkout with a .venv")
+pytestmark = [
+    pytest.mark.skipif(not SRC, reason="set ORCH_PUBLISH_SRC to an orch-publish checkout with a .venv"),
+    pytest.mark.skipif(
+        bool(SRC) and "delegation_changed" not in (Path(SRC).expanduser() / "pubsrv" / "registry.py").read_text(),
+        reason="needs an orch-publish with the card-free register (design 2.6b)",
+    ),
+]
 
 
 def free_port() -> int:

@@ -148,7 +148,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
             "limit",
             "conflict",
             "clock",
-            "card",
+            "delegation",
             "rejected",
         ),
     },

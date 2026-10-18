@@ -6,7 +6,7 @@ export interface HelpRoute {
   page: string
 }
 
-export const DEFAULT_HELP_PAGE = 'getting-around'
+export const DEFAULT_HELP_PAGE = 'start-here'
 
 /** The slug of the first route that matches `path`, else the default page. */
 export function helpPageFor(routes: HelpRoute[], path: string): string {

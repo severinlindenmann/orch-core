@@ -23,6 +23,7 @@ const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
+const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
@@ -121,6 +122,17 @@ const dropRoute = createRoute({
   },
   loader: pageLoader(() => [], [DropPage.preload]),
   component: DropPage,
+})
+/** The guide of a real host (fixed pages in the bundle). The mock keeps its guide addon page. */
+const guideRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'guide',
+  validateSearch: (s: Record<string, unknown>): { page?: string } => (typeof s.page === 'string' ? { page: s.page } : {}),
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [GuidePage.preload, addonNodes]),
+  component: GuidePage,
 })
 /** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
 const worktreesRoute = createRoute({
@@ -224,7 +236,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, worktreesRoute, activityRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, worktreesRoute, activityRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

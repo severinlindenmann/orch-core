@@ -19,6 +19,7 @@ import {
   ShieldOff,
   SquareKanban,
   Zap,
+  BookOpen,
   PackageOpen,
   FolderGit2,
 } from 'lucide-react'
@@ -433,4 +434,6 @@ const CORE_NAV = [
   { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */
   { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
+  /** The guide of a real host: fixed pages in the bundle, so any host serves it. */
+  { to: '/guide', label: 'Guide', icon: BookOpen, feature: 'today', real: true },
 ] as const

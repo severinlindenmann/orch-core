@@ -622,9 +622,8 @@ def main(
         server.stop()
         err.write(f"orch setup: {e.message}\n")
         return 1
-    err.write(
-        f"orch setup: {flow.dir} ({'this folder already has a workspace: checking what is still missing' if flow.mode == 'finish' else 'new workspace'})\n"
-    )
+    kind = "this folder already has a workspace: checking what is still missing" if flow.mode == "finish" else "new workspace"
+    err.write(f"orch setup: {flow.dir} ({kind})\n")
     opener = open_browser or _open_browser
     opened = opener(env, err, launch, no_browser=True) if no_browser else opener(env, err, launch)
     if opened is True:

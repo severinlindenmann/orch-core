@@ -59,24 +59,42 @@ def test_an_unknown_workspace_is_not_found_and_a_refusal_keeps_serving(lab) -> N
         h.__exit__(None, None, None)
 
 
-def test_a_records_enabled_workspace_is_refused_untouched(lab) -> None:  # noqa: F811
+def test_records_enabled_with_an_unidentifiable_repository_is_refused_untouched(lab) -> None:  # noqa: F811
     from orch.host import records
 
     backend = Backend()
     backend.release.set()
     h, c, wid = serve_lab(lab, backend)
     try:
+        (Path(lab.root) / ".git").mkdir()  # not a repository the reader accepts
         records._write_record(
             Path(lab.state),
             wid,
             os.getuid(),
             {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}},
         )
-        assert records._configured(records.read_record(Path(lab.state), wid, os.getuid())), "fixture must be configured"
         res = c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem())
         assert res["ok"] is False and res["error"]["code"] == "migrate.refused"
         assert (Path(lab.root) / "config.json").is_file() and not (Path(lab.root) / ".orch").exists()
         assert h.host.services[wid].state != "unavailable"
+    finally:
+        h.__exit__(None, None, None)
+
+
+def test_pending_sign_requests_are_counted_from_the_file_store_when_no_service_is_loaded(lab, monkeypatch) -> None:  # noqa: F811
+    from orch.host.requests import RequestStore
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    try:
+        monkeypatch.setattr(h.host, "services", {})  # no service object for the workspace
+        monkeypatch.setattr(RequestStore, "open_count", lambda self: 2)
+        from orch.host.errors import HostError
+
+        with pytest.raises(HostError) as exc:
+            h.host.control.store_migrate({"workspace_id": wid}, new_idem())
+        assert exc.value.code == "migrate.refused" and "2 sign request" in exc.value.message
     finally:
         h.__exit__(None, None, None)
 
@@ -223,3 +241,50 @@ def test_a_registered_workspace_with_a_committed_journal_and_no_host_is_host_req
         assert h2.host.services[wid].state != "unavailable"
     finally:
         h2.__exit__(None, None, None)
+
+
+def test_the_host_moves_a_records_repository_it_recorded_and_leaves_a_forged_one(lab) -> None:  # noqa: F811
+    from orch.host import records
+    from tests.store.test_migrate_cli import _commit, _init_repo
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    root = Path(lab.root)
+    try:
+        _init_repo(root)
+        _commit(root, None, 1)
+        forged = _commit(root, wid, 2)
+        records._write_record(
+            Path(lab.state), wid, os.getuid(), {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}}
+        )
+        ok(c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem()))
+        assert (root / ".git").is_dir() and not (root / ".orch" / ".git").exists() and forged  # not recorded: stays
+    finally:
+        h.__exit__(None, None, None)
+
+
+def test_the_host_moves_the_records_git_when_it_recorded_the_head_itself(lab) -> None:  # noqa: F811
+    from orch.host import records
+    from tests.store.test_migrate_cli import _commit, _init_repo
+
+    backend = Backend()
+    backend.release.set()
+    h, c, wid = serve_lab(lab, backend)
+    root = Path(lab.root)
+    try:
+        _init_repo(root)
+        head = _commit(root, wid, 1)
+        doc = {
+            "v": 1,
+            "private_remote": None,
+            "exports": [],
+            "repo": {"state": "ok"},
+            "lasts": {"p_" + "0" * 32: {"commit": head}},
+        }
+        records._write_record(Path(lab.state), wid, os.getuid(), doc)
+        ok(c.call("host.store_migrate", {"workspace_id": wid}, idem=new_idem()))
+        assert (root / ".orch" / ".git" / "HEAD").is_file() and not (root / ".git").exists()
+        assert h.host.services[wid].state != "unavailable"
+    finally:
+        h.__exit__(None, None, None)

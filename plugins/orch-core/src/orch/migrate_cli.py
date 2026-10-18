@@ -13,8 +13,9 @@ A person-side tool like ``orch worktree`` (not a registry operation, so no opera
 
 An unfinished migration (a crash) is completed or rolled back by the same command: the journal is found by the project's
 identity even when the store is half way and discovery sees nothing. A call under ``ORCH_GRANT`` is refused:
-agents never move a store. Records-enabled workspaces are refused until the records repo move lands
-(``migrate.refused``).
+agents never move a store. The records repository moves with the store (``.git`` into ``.orch/``) when it is
+this workspace's
+(the ``Orch-Records`` trailer of its HEAD commit); the project's own ``.git`` is never touched.
 """
 
 from __future__ import annotations
@@ -72,16 +73,6 @@ def _find_interrupted(state_dir: Path, start: Path) -> tuple[str, Path] | None:
     return None
 
 
-def _records_enabled(state_dir: Path, wid: str) -> bool:
-    from orch.host import records
-    from orch.host.errors import HostError
-
-    try:
-        return bool(records._configured(records.read_record(state_dir, wid, os.getuid())))  # noqa: SLF001
-    except HostError:
-        return True  # an unreadable records state is "enabled": fail closed
-
-
 def _via_host(env: Mapping[str, str], sd: Path, wid: str) -> dict[str, Any]:
     from orch.host.control_client import new_idem
     from orch.ops import workspace_init as wi
@@ -122,13 +113,12 @@ def _via_host(env: Mapping[str, str], sd: Path, wid: str) -> dict[str, Any]:
 
 
 def _direct(sd: Path, project: Path, wid: str) -> dict[str, Any]:
+    from orch.host import records
     from orch.host.errors import HostError
     from orch.host.ownership import OwnershipLock
     from orch.store import migrate as mg
     from orch.store.pins import HostPins
 
-    if _records_enabled(sd, wid):
-        raise MigrateCliError("migrate.refused", "records are enabled for this workspace; nothing was moved")
     pins = HostPins(sd, wid)
     try:
         pin = pins.genesis()
@@ -138,7 +128,15 @@ def _direct(sd: Path, project: Path, wid: str) -> dict[str, Any]:
         pins.close()
     try:
         with OwnershipLock(sd, wid).exclusive(LOCK_WAIT):
-            out = mg.migrate(project, state_dir=sd, workspace_id=wid, expected_genesis=pin)
+            try:
+                from orch.gitread.client import ReaderPool
+
+                move, ident = records.migrate_git_plan(ReaderPool(), sd, wid, os.getuid(), project)
+            except HostError as exc:
+                raise MigrateCliError(exc.code, exc.message) from None
+            out = mg.migrate(
+                project, state_dir=sd, workspace_id=wid, expected_genesis=pin, move_git=ident if move else None
+            )
     except HostError as exc:
         raise MigrateCliError(exc.code, exc.message, 9) from None
     except mg.MigrateError as exc:

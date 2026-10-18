@@ -45,15 +45,154 @@ def test_an_agent_is_refused(tmp_path: Path) -> None:
     assert code == 3 and "op.not_allowed" in text and (env.root / "config.json").is_file()
 
 
-def test_records_enabled_is_refused_in_direct_mode_too(tmp_path: Path) -> None:
+def _git(root: Path, *argv: str, message: str | None = None) -> None:
+    import subprocess
+
+    base = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(root.parent),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+    }
+    cmd = ["git", "-c", "core.hooksPath=/dev/null", *argv]
+    subprocess.run(
+        cmd, cwd=root, env=base, check=True, capture_output=True, input=message.encode() if message else None
+    )
+
+
+def _commit(root: Path, wid: str | None, seq: int, add: str = "config.json") -> str:
+    """One commit in ``root``: a records commit of ``wid`` (the exact message shape), or a plain code commit."""
+    import subprocess
+
+    _git(root, "add", add)
+    shape = f"orch: records ws_seq {seq}\n\nOrch-Manifest: m_{'0' * 64}\nOrch-Records: {wid}\n"
+    _git(root, "commit", "-q", "--allow-empty", "-F", "-", message=shape if wid else f"code {seq}\n")
+    out = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, check=True, env={"PATH": os.environ["PATH"]}
+    )
+    return out.stdout.decode().strip()
+
+
+def _init_repo(root: Path) -> None:
+    _git(root, "init", "-q", "-b", "main", "--template=")
+
+
+def _record(env, head: str | None, *, configured: bool = True) -> None:
     from orch.host import records
 
+    doc: dict = {"v": 1, "private_remote": None, "exports": []}
+    if configured:
+        doc["repo"] = {"state": "ok"}
+    if head:
+        doc["lasts"] = {"p_" + "0" * 32: {"commit": head}}
+    records._write_record(env.host_state, WS, os.getuid(), doc)
+
+
+def test_the_records_repository_moves_only_when_the_host_recorded_its_head(tmp_path: Path) -> None:
     env = _world(tmp_path)
-    records._write_record(
-        env.host_state, WS, os.getuid(), {"v": 1, "private_remote": None, "exports": [], "repo": {"state": "ok"}}
-    )
+    _init_repo(env.root)
+    head = _commit(env.root, WS, 1)
+    _record(env, head)
+    git_head = (env.root / ".git" / "HEAD").read_text()
+    code, text = _cli(env, "--json")
+    assert code == 0, text
+    assert (env.root / ".orch" / ".git" / "HEAD").read_text() == git_head and not (env.root / ".git").exists()
+
+
+def test_a_forged_trailer_on_a_code_repository_is_not_moved(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    _init_repo(env.root)
+    _commit(env.root, None, 1)  # the person's real code history
+    _commit(env.root, WS, 2)  # an agent's commit with a perfect records message on top
+    _record(env, None)  # records configured, but the host never recorded this commit
+    code, text = _cli(env, "--json")
+    assert code == 0, text
+    assert (env.root / ".git" / "HEAD").is_file() and not (env.root / ".orch" / ".git").exists()
+    # even a host-recorded HEAD does not help when an older commit is not a records commit
+    env2 = _world(tmp_path / "b")
+    _init_repo(env2.root)
+    _commit(env2.root, None, 1)
+    tip = _commit(env2.root, WS, 2)
+    _record(env2, tip)
+    code, text = _cli(env2, "--json")
+    assert code == 0, text
+    assert (env2.root / ".git").is_dir() and not (env2.root / ".orch" / ".git").exists()
+
+
+def test_a_repository_is_never_moved_when_records_are_not_configured(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    _init_repo(env.root)
+    head = _commit(env.root, WS, 1)
+    _record(env, head, configured=False)  # a perfect records history, recorded, but records are not enabled
+    code, text = _cli(env, "--json")
+    assert code == 0, text
+    assert (env.root / ".git").is_dir() and not (env.root / ".orch" / ".git").exists()
+
+
+def test_records_enabled_with_an_unidentifiable_repository_is_refused(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    (env.root / ".git").mkdir()  # not a repository git's layout accepts
+    _record(env, None)
     code, text = _cli(env)
     assert code == 3 and "migrate.refused" in text and (env.root / "config.json").is_file()
+    env2 = _world(tmp_path / "b")  # not enabled: the same odd .git is the project's and is left alone
+    (env2.root / ".git").mkdir()
+    assert _cli(env2)[0] == 0 and (env2.root / ".git").is_dir()
+
+
+def test_a_git_directory_swapped_after_identification_is_refused_untouched(tmp_path: Path) -> None:
+    env = _world(tmp_path)
+    _init_repo(env.root)
+    _commit(env.root, WS, 1)
+    st = os.stat(env.root / ".git")
+    (env.root / ".git").rename(env.root / "git-away")
+    (env.root / ".git").mkdir()  # another directory under the name, another inode
+    before = sorted(p.name for p in env.root.iterdir())
+    with pytest.raises(mg.MigrateError) as exc:
+        mg.migrate(env.root, state_dir=env.host_state, workspace_id=WS, move_git=(st.st_dev, st.st_ino))
+    assert exc.value.code == "migrate.unsafe" and sorted(p.name for p in env.root.iterdir()) == before
+
+
+def test_the_records_tool_resolves_the_store_dir_after_the_move(tmp_path: Path, monkeypatch) -> None:
+    from orch.records.host_link import resolve
+
+    env = _world(tmp_path)
+    _cli(env)
+    monkeypatch.chdir(env.root)
+    e = {"ORCH_STATE_DIR": str(env.host_state), "HOME": str(env.tmp)}
+    r = resolve(e, None, state=env.host_state)
+    try:
+        assert r.root == env.root.resolve() and r.record_root == env.root.resolve() / ".orch"
+    finally:
+        r.close()
+    legacy = _world(tmp_path / "old")
+    monkeypatch.chdir(legacy.root)
+    r = resolve({"ORCH_STATE_DIR": str(legacy.host_state), "HOME": str(legacy.tmp)}, None, state=legacy.host_state)
+    try:
+        assert r.record_root == r.root
+    finally:
+        r.close()
+
+
+def test_records_init_is_refused_while_a_store_move_is_under_way(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from orch.records.cli import RecordsError, _no_store_move
+
+    env = _world(tmp_path)
+    r = SimpleNamespace(root=env.root, state=env.host_state, workspace_id=WS, record_root=env.root)
+    _no_store_move(r)  # quiet legacy
+    (env.root / mg.TMP_DIR).mkdir()
+    with pytest.raises(RecordsError):
+        _no_store_move(r)
+    (env.root / mg.TMP_DIR).rmdir()
+    r2 = SimpleNamespace(root=env.root, state=env.host_state, workspace_id=WS, record_root=env.root / ".orch")
+    with pytest.raises(RecordsError):  # the record root is not the store as it is on disk
+        _no_store_move(r2)
 
 
 def test_no_workspace_here(tmp_path: Path, monkeypatch) -> None:
@@ -145,3 +284,19 @@ def test_a_journal_naming_an_entry_the_migration_never_moves_is_stuck(tmp_path: 
     with pytest.raises(mg.MigrateError) as exc:
         mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS)
     assert exc.value.code == "migrate.stuck"
+
+
+@pytest.mark.parametrize(
+    "ref", ["refs/tags/v1", "refs/remotes/origin/main", "refs/stash", "refs/notes/x", "refs/heads/dev"]
+)
+def test_code_history_under_any_other_ref_keeps_the_git_in_place(tmp_path: Path, ref: str) -> None:
+    env = _world(tmp_path)
+    _init_repo(env.root)
+    code_commit = _commit(env.root, None, 1)  # the person's code commit
+    _git(env.root, "update-ref", ref, code_commit)  # code history hangs under another ref
+    _git(env.root, "checkout", "-q", "--orphan", "rec")
+    tip = _commit(env.root, WS, 2)  # a records commit with no code ancestry ...
+    _git(env.root, "branch", "-q", "-M", "main")  # ... which main now points at
+    _record(env, tip)  # the host recorded exactly that tip
+    code, text = _cli(env, "--json")
+    assert (env.root / ".git").is_dir() and not (env.root / ".orch" / ".git").exists(), (code, text)

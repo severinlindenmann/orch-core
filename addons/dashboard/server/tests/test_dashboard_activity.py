@@ -81,6 +81,11 @@ def test_hidden_text_is_withheld_never_repaired():
     assert row["actor"] == {"kind": "person", "id": "p_1", "name": "Ann"} and row["did"] == "wrote a note"
 
 
+def test_the_publish_approval_note_is_said_in_words_and_its_cut_text_is_not_shown():
+    row = adapt.item(raw("log.added", summary="Publish approval: share files outside t\u2026"), {"p_1": "Ann"})
+    assert row["did"] == "approved sharing files outside this computer" and "detail" not in row
+
+
 def test_sentences_use_names_and_fall_back_to_a_general_one():
     names = {"p_2": "Bo"}
     added = adapt.item(raw("member.added", {"person": "p_2", "role": "maintainer"}, key=None), names)

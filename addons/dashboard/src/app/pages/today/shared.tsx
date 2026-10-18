@@ -1,5 +1,6 @@
 import { useContext, useEffect, useState } from 'react'
 import { CollapsedDockWidthContext, usePageWidth } from '../../pageWidth'
+import { findHarness, harnessForAgent } from '@/api/harnesses'
 import type { AgentInfo, Workspace } from '@/api/types'
 
 /** How long an item has waited ("14 min", "2 h", "3 days"): the one formatter, src/lib/time.ts. */
@@ -14,10 +15,18 @@ export interface Directory {
 export function displayName(dir: Directory, id: string): string {
   if (id.startsWith('agent:')) {
     const a = dir.agents.find((x) => x.id === id.slice(6))
-    return a ? `${a.name} for ${displayName(dir, a.for)}` : id.slice(6)
+    return a ? `${a.name} for ${displayName(dir, a.for)}` : agentLabel(id.slice(6))
   }
   if (!dir.workspace) return '…' // members have not loaded yet: not the raw id
-  return dir.workspace.members.find((m) => m.person === id)?.name ?? id
+  const member = dir.workspace.members.find((m) => m.person === id)?.name
+  if (member) return member
+  // A harness id such as "orch-cli" (no person id starts without p_) means nothing to a person.
+  return id.startsWith('p_') ? id : agentLabel(id)
+}
+
+/** The harness name when the agent id is a known one, else "An agent": raw ids like "orch-cli" are not names. */
+function agentLabel(id: string): string {
+  return findHarness(harnessForAgent(id))?.label ?? 'An agent'
 }
 
 /** Today's two layouts: a side column from 1280 px, one column below. */

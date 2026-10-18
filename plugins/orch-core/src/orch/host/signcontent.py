@@ -787,7 +787,8 @@ def text(
     faked); only a section's text is a block, every line of it under a ``| `` mark.
 
     ``members`` (the workspace's members as ``{person, name, hidden?}``; ``None`` = not known, ids stay as signed) turns
-    a person id in a row into name and short id by the dashboard's rules (:mod:`orch.host.personlabel`); the full id is
+    a person id in a row into name and short id by the dashboard's rules (:mod:`orch.host.personlabel`): the short id is
+    always there, a name only when it passes those rules and then marked as the host's word (not signed); the full id is
     in the details of the review."""
 
     def v(value: Any) -> str:
@@ -796,7 +797,7 @@ def text(
     def who(value: Any) -> str:
         from . import personlabel
 
-        said = None if members is None else personlabel.label(value, members)
+        said = None if members is None else personlabel.label(value, members, unsigned_name=True)
         return v(value) if said is None else clean(said)
 
     def block(value: Any) -> list[str]:

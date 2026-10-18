@@ -67,3 +67,11 @@ def test_names_the_allowlist_refuses(name):
 def test_not_a_person_id():
     assert personlabel.label("owner", MEMBERS) is None and personlabel.label(None, MEMBERS) is None
     assert personlabel.label("p_xyz", MEMBERS) is None
+
+
+def test_the_terminal_marks_a_shown_name_as_the_hosts_word_and_keeps_the_id():
+    got = personlabel.label(SEV, MEMBERS, unsigned_name=True)
+    assert got == "Severin (p_181d953f12ab…; name per host, not signed)"
+    for value, want in TABLE[1:]:  # every other row is id-only and reads as the dashboard's
+        if "(" in want and "name per host" not in want and want.startswith("p_"):
+            assert personlabel.label(value, MEMBERS, unsigned_name=True) == want

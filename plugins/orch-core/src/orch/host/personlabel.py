@@ -99,10 +99,13 @@ def short_id(person: str) -> str:
     return person if len(person) <= 14 else person[:14] + "…"
 
 
-def label(value: Any, members: Iterable[Mapping[str, Any]]) -> str | None:
+def label(value: Any, members: Iterable[Mapping[str, Any]], *, unsigned_name: bool = False) -> str | None:
     """What the plain view shows for a person id (``Severin (p_181d953f12ab…)``, ``p_181d953f12ab… (unknown person)``,
     ``… (name not shown)``, ``… (name shared by N members)``), or ``None`` when ``value`` is not a person id.
-    ``members`` are the members of THE request's workspace: dicts with ``person``, ``name``, optionally ``hidden``."""
+    ``members`` are the members of THE request's workspace: dicts with ``person``, ``name``, optionally ``hidden``.
+    ``unsigned_name`` (the terminal) marks a shown name as the host's word:
+    ``Severin (p_…; name per host, not signed)``.
+    The short id is ALWAYS in the label: a name never replaces or hides it."""
     if not isinstance(value, str) or not PERSON.match(value):
         return None
     cut = value.endswith(("…", "..."))
@@ -120,4 +123,6 @@ def label(value: Any, members: Iterable[Mapping[str, Any]]) -> str | None:
     if len(sharing) > 1:
         return f"{short} (name shared by {len(sharing)} members)"
     name = showable_name(hit["name"])
-    return f"{short} (name not shown)" if name is None else f"{name} ({short})"
+    if name is None:
+        return f"{short} (name not shown)"
+    return f"{name} ({short}; name per host, not signed)" if unsigned_name else f"{name} ({short})"

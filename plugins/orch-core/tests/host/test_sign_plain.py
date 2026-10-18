@@ -858,7 +858,7 @@ MEMBERS = [{"person": _ME, "name": "Severin"}]
 def test_f7_the_terminal_shows_a_person_as_name_and_short_id_by_the_dashboard_rules():
     c = {"headline": "Create ticket", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}
     out = "\n".join(signcontent.text(c, signer._clean, members=MEMBERS))
-    assert "owner: Severin (p_42e1c38e0488…)" in out and _ME not in out
+    assert "owner: Severin (p_42e1c38e0488…; name per host, not signed)" in out and _ME not in out
     out = "\n".join(signcontent.text(c, signer._clean, members=[]))
     assert "owner: p_42e1c38e0488… (unknown person)" in out and _ME not in out
     out = "\n".join(signcontent.text(c, signer._clean, members=[{"person": _ME, "name": "Sev​（x"}]))
@@ -879,3 +879,38 @@ def test_f7_members_of_reads_member_list_and_never_raises():
 
     assert signer.members_of(boom) == []
     assert signer.members_of(lambda op, args: {"data": None}) == []
+
+
+def _owner_row(members):
+    c = {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}
+    return [x for x in signcontent.text(c, signer._clean, members=members) if "owner:" in x][0]
+
+
+def test_f7_a_host_name_never_replaces_or_hides_the_id():
+    other = "p_" + "9" * 32
+    # a name that imitates ANOTHER member's name (here a Cyrillic look-alike of "Mara"): both are shared, no name at all
+    twins = [{"person": _ME, "name": "M\u0430ra"}, {"person": other, "name": "Mara"}]
+    row = _owner_row(twins)
+    assert "p_42e1c38e0488…" in row and "Mara" not in row and "M\u0430ra" not in row and "shared by 2" in row
+    # a name that carries an id lookalike (also fullwidth brackets): not shown, the real id is
+    for fake in ("Mara (p_" + "9" * 12 + ")", "\uff08p_" + "9" * 12 + "\uff09", "p_" + "9" * 32):
+        row = _owner_row([{"person": _ME, "name": fake}])
+        assert "p_42e1c38e0488…" in row and "p_999999999999" not in row and "name not shown" in row
+    # a name shown at all is marked as the host's word and sits next to the id
+    row = _owner_row([{"person": _ME, "name": "Severin"}])
+    assert row.strip() == "owner: Severin (p_42e1c38e0488…; name per host, not signed)"
+    # empty, missing or malformed member lists: the short id only
+    for members in (
+        [],
+        [{"person": other, "name": "Mara"}],
+        [{"person": _ME}],
+        [{"person": _ME, "name": None}],
+        [{"person": _ME, "name": 7}],
+    ):
+        row = _owner_row(members)
+        assert "p_42e1c38e0488…" in row and "per host, not signed" not in row, members
+    assert _ME in "\n".join(
+        signcontent.text(
+            {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}, signer._clean
+        )
+    )

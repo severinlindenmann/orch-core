@@ -26,7 +26,7 @@ GOLDEN = Path(__file__).parent / "golden_human"
 
 @pytest.fixture(autouse=True)
 def _utc():
-    """Times in the human text are this computer's: the golden files are in UTC whatever machine writes or checks them."""
+    """Times in the human text are this computer's: the golden files are in UTC on any machine."""
     import os
     import time
 

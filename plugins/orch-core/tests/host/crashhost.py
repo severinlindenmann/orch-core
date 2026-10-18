@@ -13,6 +13,10 @@ import sys
 import threading
 from pathlib import Path
 
+from orch import layout as _layout
+
+_layout.WRITE_NEW = False  # the crash tests build legacy root stores, like the rest of the suite (tests/conftest.py)
+
 
 def die(*_: object, **__: object) -> None:
     os.kill(os.getpid(), signal.SIGKILL)

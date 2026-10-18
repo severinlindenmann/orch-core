@@ -32,6 +32,7 @@ __all__ = [
     "StorePin",
     "check_single_store",
     "fresh",
+    "move_in_progress",
     "open_state_fd",
     "state_marker_present",
     "open_store_dir",
@@ -45,7 +46,7 @@ _CONFIG_LIMIT = 1 << 20
 
 #: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
 #: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
-WRITE_NEW = False
+WRITE_NEW = True
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -261,3 +262,13 @@ def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
     finally:
         for item in fds:
             os.close(item)
+
+
+def move_in_progress(path: str | os.PathLike[str]) -> bool:
+    """A store move is under way next to ``path`` (the project, or its ``.orch``): ``.orch-migrating`` exists there.
+    Writers that reach store files by PATH (instruction files, add-on manifests) refuse while it does, so they never
+    re-create a name in the project root that is moving into ``.orch``. A narrow guard, not a lock: the store lock and
+    ``owner.lock`` are what the migration holds; this only closes the window for writers that take neither."""
+    p = Path(path)
+    bases = [p, p.parent] if p.name == STORE_DIR else [p]
+    return any(os.path.lexists(b / ".orch-migrating") for b in bases)

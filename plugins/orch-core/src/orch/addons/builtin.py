@@ -14,6 +14,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TextIO
 
+from orch.layout import LayoutError
+
 NAMES = ("start-agent", "terminals", "worktrees", "dashboard")
 
 
@@ -25,6 +27,10 @@ def manifest_bytes(name: str) -> bytes:
 
 def write_manifest(workspace: str, name: str, data: bytes, force: bool = False) -> Path:
     """Write ``<workspace>/addons/<name>/orch-addon.json`` walking every component with ``O_NOFOLLOW``."""
+    from orch.layout import move_in_progress
+
+    if move_in_progress(workspace):
+        raise OSError("a store move is under way in this folder (.orch-migrating); run `orch migrate`, then retry")
     path = Path(os.path.abspath(workspace))
     with ExitStack() as stack:
 
@@ -90,10 +96,13 @@ def main(argv: list[str], *, out: TextIO, err: TextIO) -> int:
             raise argparse.ArgumentError(None, "--force requires --write")
         data = manifest_bytes(args.name)
         if args.write:
-            out.write(f"{write_manifest(args.write, args.name, data, args.force)}\n")
+            from orch.layout import store_of
+
+            # --write names the project folder: the manifest goes into its store (.orch/addons/ in the new layout)
+            out.write(f"{write_manifest(str(store_of(args.write)), args.name, data, args.force)}\n")
         else:
             out.write(data.decode("utf-8"))
-    except (argparse.ArgumentError, OSError, ValueError) as exc:
+    except (argparse.ArgumentError, OSError, ValueError, LayoutError) as exc:
         err.write(f"orch addon manifest: {exc}\n")
         return 2
     return 0

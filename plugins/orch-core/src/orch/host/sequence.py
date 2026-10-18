@@ -283,14 +283,18 @@ _REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 MAX_REPOS = 16
 
 
-def _link_repos(value: Any, what: str) -> list[str]:
+def _link_repos(value: Any, what: str, *, ordered: bool = True) -> list[str]:
+    """Repository names, no repeats; the new list is sorted (the reviewed ``was`` keeps whatever order it has)."""
     if (
         not isinstance(value, list)
         or len(value) > MAX_REPOS
         or any(not isinstance(x, str) or not _REPO_NAME.fullmatch(x) for x in value)
-        or value != sorted(set(value))
+        or len(set(value)) != len(value)
+        or (ordered and value != sorted(value))
     ):
-        raise SequenceInvalid(f"{what}: up to {MAX_REPOS} repository names, sorted, no repeats")
+        raise SequenceInvalid(
+            f"{what}: up to {MAX_REPOS} repository names, no repeats" + (", sorted" if ordered else "")
+        )
     return list(value)
 
 
@@ -322,15 +326,17 @@ def _edit_links(value: Any) -> dict[str, Any]:
     was = value["was"]
     if not isinstance(was, Mapping) or set(was) != set(_LINK_KEYS):
         raise SequenceInvalid("links.was is the links value that was reviewed")
-    was_repos = _link_repos(was["repos"], "links.was")
-    was_branches = _link_branches(was["branches"], was_repos, "links.was")
+    was_repos = _link_repos(was["repos"], "links.was", ordered=False)
+    if not isinstance(was["branches"], Mapping) or not set(was["branches"]) <= set(was_repos):
+        raise SequenceInvalid("links.was: a branch only for a linked repository")
+    was_branches = dict(was["branches"])  # as the log holds it; the schema checked it when it was written
     if not isinstance(was["prs"], list) or not isinstance(was["external"], list):
         raise SequenceInvalid("links.was: prs and external are lists")
     repos = _link_repos(value["repos"], "links")
     branches = _link_branches(value["branches"], repos, "links")
     if any(not isinstance(p, Mapping) or p.get("repo") not in repos for p in was["prs"]):
         raise SequenceInvalid("a repository with a pull request cannot be unlinked here")
-    if repos == was_repos and branches == was_branches:
+    if set(repos) == set(was_repos) and branches == was_branches:
         raise SequenceInvalid("links: nothing changes")
     return {
         "was": {

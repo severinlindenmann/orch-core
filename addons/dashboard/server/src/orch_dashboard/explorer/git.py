@@ -46,7 +46,8 @@ def confirmed(folder: str) -> bool:
     except gitsafe.Unsafe as exc:
         raise fail("observe.unavailable", exc.reason, exit=4) from None
     lines = res.out.decode("utf-8", "surrogateescape").splitlines()
-    if res.code != 0 or lines != [os.path.join(real, ".git"), os.path.join(real, ".git"), real]:
+    git_dir = os.path.join(real, ".git")
+    if res.code != 0 or lines != [git_dir, git_dir, real, os.path.join(git_dir, "objects")]:
         return False
     _confirmed[folder] = now
     return True

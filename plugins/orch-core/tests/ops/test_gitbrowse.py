@@ -318,3 +318,58 @@ def test_a_commit_resolves_in_every_form_the_dashboard_uses(world):
     assert world.run("blob", "HEAD", "a.txt").out == b"one\ntwo\n"
     assert world.run("blob", world.c1, "a.txt").out == b"one\n"
     assert world.run("blob", "refs/heads/main", "a.txt").out == b"one\ntwo\n"
+
+
+def test_git_is_pinned_to_the_confirmed_folders_and_no_variable_of_the_caller_reaches_it(world, monkeypatch):
+    other = world.tmp / "other"
+    other.mkdir()
+    world.git(other, "init", "-q", "-b", "main")
+    (other / "x.txt").write_text("other\n")
+    world.git(other, "add", "-A")
+    world.git(other, "commit", "-q", "-m", "other repo", n=9)
+    for name, value in {
+        "GIT_DIR": str(other / ".git"), "GIT_COMMON_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other),
+        "GIT_OBJECT_DIRECTORY": str(other / ".git" / "objects"),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(other / ".git" / "objects"), "GIT_INDEX_FILE": str(other / "idx"),
+        "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.pager", "GIT_CONFIG_VALUE_0": "x",
+        "GIT_NAMESPACE": "x", "GIT_CEILING_DIRECTORIES": "/",
+    }.items():  # fmt: skip
+        monkeypatch.setenv(name, value)
+    real = os.path.realpath(world.repo)
+    for op, operand in (("file_log", ("5", "0", "HEAD", "a.txt")), ("grep", ("needle",)), ("blob", ("HEAD", "a.txt"))):
+        argv, env = gitbrowse.command(str(world.repo), op, os.environ, operand=operand)
+        want = {
+            "GIT_DIR": f"{real}/.git", "GIT_COMMON_DIR": f"{real}/.git", "GIT_WORK_TREE": real,
+            "GIT_OBJECT_DIRECTORY": f"{real}/.git/objects",
+        }  # fmt: skip
+        assert all(env[k] == v for k, v in want.items())
+        assert "GIT_ALTERNATE_OBJECT_DIRECTORIES" not in env and "GIT_INDEX_FILE" not in env
+        assert "GIT_NAMESPACE" not in env and "GIT_CEILING_DIRECTORIES" not in env
+        assert "core.pager" not in " ".join(v for k, v in env.items() if k.startswith("GIT_CONFIG_VALUE_"))
+    assert [r[0] for r in gitbrowse.parse_log(world.run("file_log", "5", "0", "HEAD", "a.txt").out)] == [
+        world.c2,
+        world.c1,
+    ]
+    assert world.run("grep", "other").out == b""  # the other repository's content is not reachable
+
+
+def test_layout_says_where_git_finds_its_directories(world):
+    real = os.path.realpath(world.repo)
+    lines = world.run("layout").out.decode().splitlines()
+    assert lines == [f"{real}/.git", f"{real}/.git", real, f"{real}/.git/objects"]
+
+
+def test_a_redirecting_git_file_is_refused_by_the_gate_or_shows_in_the_layout(world):
+    """`layout` runs unpinned: a `.git` that sends git elsewhere is refused or reported (the caller compares)."""
+    elsewhere = world.tmp / "elsewhere"
+    elsewhere.mkdir()
+    world.git(elsewhere, "init", "-q", "-b", "main")
+    plain = world.tmp / "gitfile"
+    plain.mkdir()
+    (plain / ".git").write_text(f"gitdir: {elsewhere / '.git'}\n")
+    real = os.path.realpath(plain)
+    try:
+        res = gitbrowse.run(str(plain), "layout", os.environ)
+    except gitsafe.Unsafe:
+        return
+    assert res.code != 0 or res.out.decode().splitlines()[0] != f"{real}/.git"

@@ -712,7 +712,9 @@ def test_a_repository_git_reads_from_somewhere_else_is_not_used(get, world, monk
     def lying(repo, op, *a, **k):
         res = real(repo, op, *a, **k)
         if op == "layout":
-            return gitbrowse.Result(0, b"/elsewhere/.git\n/elsewhere/.git\n/elsewhere\n", False)
+            return gitbrowse.Result(
+                0, b"/elsewhere/.git\n/elsewhere/.git\n/elsewhere\n/elsewhere/.git/objects\n", False
+            )
         return res
 
     git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
@@ -750,3 +752,75 @@ def test_a_tree_or_blob_id_is_not_a_commit_anywhere(get, world):
     for bad in ("HEAD:.orch/config.json", f"{world.c1}..{world.c2}", f"{world.c2}:src/app.py", f"{world.c2}^{{tree}}"):
         assert get("/file", root="ws", path="src/app.py", rev=bad).status_code == 400
         assert get("/compare", root="ws", path="src/app.py", a=bad, b=world.c2).status_code == 400
+
+
+# ---------------------------------------------------------------- where git reads its objects from
+
+
+def _plain_repo(world, name, link):
+    folder = world.tmp / name
+    folder.mkdir()
+    (folder / "f.txt").write_text("x\n")
+    git(folder, "init", "-q", "-b", "main")
+    git(folder, "add", "-A")
+    git(folder, "commit", "-q", "-m", "mine")
+    world.link.repos = {name: str(folder)}
+    scope._repos_seen.clear()
+    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
+    git_mod._confirmed.clear()
+    return folder
+
+
+def _refused(get, world, folder, name, monkeypatch):
+    ran = _spy(monkeypatch)
+    assert get("/history", root=f"repo:{name}", path="f.txt").json() == {"repo": False, "commits": [], "more": False}
+    assert get("/file", root=f"repo:{name}", path="f.txt").json()["history"] is False
+    assert get("/search", q="x", root=f"repo:{name}").json()["hits"] == [] and ran == []  # git never started there
+
+
+def test_a_symlinked_objects_folder_is_not_a_repository(get, world, monkeypatch):
+    folder = _plain_repo(world, "linked", None)
+    real = folder / ".git" / "objects"
+    moved = world.tmp / "moved-objects"
+    real.rename(moved)
+    real.symlink_to(moved)
+    _refused(get, world, folder, "linked", monkeypatch)
+
+
+@pytest.mark.parametrize("name", ["alternates", "http-alternates"])
+def test_an_alternates_file_makes_it_not_a_repository(get, world, monkeypatch, name):
+    folder = _plain_repo(world, "alt", None)
+    other = world.proj / ".git" / "objects"  # objects of ANOTHER repository, outside this root
+    (folder / ".git" / "objects" / "info").mkdir(exist_ok=True)
+    (folder / ".git" / "objects" / "info" / name).write_text(f"{other}\n")
+    _refused(get, world, folder, "alt", monkeypatch)
+
+
+def test_a_grafts_file_makes_it_not_a_repository(get, world, monkeypatch):
+    folder = _plain_repo(world, "graft", None)
+    (folder / ".git" / "info").mkdir(exist_ok=True)
+    (folder / ".git" / "info" / "grafts").write_text(f"{world.c2} {world.c1}\n")
+    _refused(get, world, folder, "graft", monkeypatch)
+
+
+def test_variables_git_reads_from_the_environment_cannot_move_it(get, world, monkeypatch):
+    """GIT_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES of the SERVER's own environment are not passed."""
+    other = world.tmp / "mine"
+    other.mkdir()
+    (other / "z.txt").write_text("other repo\n")
+    git(other, "init", "-q", "-b", "main")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "not this one")
+    for name, value in {
+        "GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_COMMON_DIR": str(other / ".git"),
+        "GIT_OBJECT_DIRECTORY": str(other / ".git" / "objects"),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(other / ".git" / "objects"), "GIT_INDEX_FILE": str(other / "i"),
+    }.items():  # fmt: skip
+        monkeypatch.setenv(name, value)
+    git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
+    git_mod._confirmed.clear()
+    got = get("/history", root="ws", path="src/app.py").json()
+    assert [c["sha"] for c in got["commits"]] == [world.c2, world.c1]
+    assert "not this one" not in str(got)
+    assert get("/commit", root="ws", path="src/app.py", sha=world.c2).status_code == 200
+    assert "other repo" not in get("/search", q="other repo").text

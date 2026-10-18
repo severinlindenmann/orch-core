@@ -17,6 +17,8 @@ callers that need a log, a patch of one commit, a file's content at a revision, 
   ``/``, no ``.``/``..``/empty component, no control characters; always behind ``:(literal)`` after ``--``, or in the
   object name ``<commit>:./<file>``), ``<num>`` (digits) and ``<pattern>`` (a literal search text, always the value of
   ``-e``). No caller can add a global option, a subcommand or an option of its own;
+* is pinned to the folders the caller confirmed (:func:`pins`: ``GIT_DIR``, ``GIT_COMMON_DIR``, ``GIT_WORK_TREE``,
+  ``GIT_OBJECT_DIRECTORY``; the ``layout`` operation, which asks git where it would look, runs unpinned);
 * runs with the person's system and global git configuration OFF (:func:`orch.gitsafe.isolated_env`), a scratch
   environment (no ``GIT_*`` of the caller), ``cwd="/"``, stdin closed, in its own process group that is killed after
   ``timeout`` seconds or when the output reaches ``max_bytes`` (:func:`run`);
@@ -96,8 +98,9 @@ OPS: dict[str, Op] = {
     # the files one commit changed: `<status> NUL <path> NUL ...`
     "commit_names": Op(("show", *_SHOW, "--format=", "--name-status", "-z", *gitsafe._DIFF_FIXED, "--end-of-options",
                         "<commit>", "--", ":(top)")),
-    # where git itself finds its directories for `repo`: git dir, common dir, top (checked by the caller)
-    "layout": Op(("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel")),
+    # where git itself finds its directories for `repo`: git dir, common dir, top, objects (checked by the caller)
+    "layout": Op(("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel",
+                  "--git-path", "objects")),
     # the files that differ between two commits (old, new): `<status> NUL <path> NUL ...`
     "range_names": Op(("diff", "--no-color", "--no-renames", "--name-status", "-z", *gitsafe._DIFF_FIXED,
                        "--end-of-options", "<commit>", "<commit>", "--", ":(top)")),
@@ -174,7 +177,23 @@ def command(
     entries = gitsafe._driver_pins(local) if spec.args[0] in ("log", "show", "diff") else []
     argv = gitsafe._argv(repo, args)
     argv[1:1] = _EXTRA
-    return argv, gitsafe.isolated_env(own, entries)
+    env = gitsafe.isolated_env(own, entries)  # from scratch: no GIT_* variable of the caller reaches git
+    if op != "layout":  # every other operation is pinned to the layout `layout` confirmed (see :func:`pins`)
+        env.update(pins(repo))
+    return argv, env
+
+
+def pins(repo: str) -> dict[str, str]:
+    """The directories git is told to use, instead of finding them: the real path of ``repo`` and its ``.git`` folder,
+    exactly what the caller confirmed with the ``layout`` operation. With these set, a ``gitdir:`` redirect, a
+    ``core.worktree``, a ``commondir`` or an alternate object directory of the repository's own files cannot move git
+    elsewhere; ``GIT_ALTERNATE_OBJECT_DIRECTORIES`` and every other ``GIT_*`` variable of the caller are not passed."""
+    real = os.path.realpath(repo)
+    git_dir = os.path.join(real, ".git")
+    return {
+        "GIT_DIR": git_dir, "GIT_COMMON_DIR": git_dir, "GIT_WORK_TREE": real,
+        "GIT_OBJECT_DIRECTORY": os.path.join(git_dir, "objects"),
+    }  # fmt: skip
 
 
 @dataclass(frozen=True)

@@ -35,7 +35,7 @@ SRC = os.environ.get("ORCH_PUBLISH_SRC")
 pytestmark = [
     pytest.mark.skipif(not SRC, reason="set ORCH_PUBLISH_SRC to an orch-publish checkout with a .venv"),
     pytest.mark.skipif(
-        bool(SRC) and "delegation_changed" not in (Path(SRC).expanduser() / "pubsrv" / "registry.py").read_text(),
+        bool(SRC) and "delegation_json" not in (Path(SRC).expanduser() / "pubsrv" / "registry.py").read_text(),
         reason="needs an orch-publish with the card-free register (design 2.6b)",
     ),
 ]

@@ -142,14 +142,24 @@ class Gateway:
             raise fail("addon.disabled", exit=3)
         return link
 
-    @staticmethod
-    def addon_on(link, name) -> bool:
-        """Is the shipped add-on `name` granted and enabled here (`addon.list` state `active`)? Unreadable: off."""
+    #: the last state `addon.list` gave per (link, add-on): a transient error keeps it instead of reading as off
+    _addon_seen: dict = {}
+
+    @classmethod
+    def addon_on(cls, link, name) -> bool:
+        """Is the shipped add-on `name` granted and enabled here (`addon.list` state `active`)? An answer that cannot be
+        read keeps the last known state (a dropped host must not hide the page, or a half-finished share, for a
+        moment); with none known it counts as off."""
+        welcome = getattr(link, "welcome", None)
+        ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
+        key = (ws or id(link), name)
         try:
             rows = link.call("addon.list")["addons"]
         except (HostError, KeyError, TypeError):
-            return False
-        return any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
+            return cls._addon_seen.get(key, False)
+        on = any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
+        cls._addon_seen[key] = on
+        return on
 
     def features(self, ws):
         link = self.enabled(ws)

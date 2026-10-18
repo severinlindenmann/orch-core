@@ -3,6 +3,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
+import { setFeatures } from '@/api/features'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { queryClient } from '@/production/Shell'
 
@@ -256,4 +257,87 @@ it('Settings: the addresses in words, and the registration message when the serv
   await user.click(within(dlg).getByRole('button', { name: 'Continue to sign' }))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
   expect(calls('/handoff')[0].body).toEqual({ action: 'publish_setup', server: 'https://pub.example.org', share: 'https://apps.example.org' })
+})
+
+/** Share through to the signature on the ticket page; returns when the host has been told it is signed. */
+async function signedShare(user: ReturnType<typeof userEvent.setup>) {
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  await user.click(within(await screen.findByTestId('ticket-shares', {}, T)).getByRole('button', { name: 'Share files' }))
+  const form = await screen.findByRole('dialog', { name: 'Share files' }, T)
+  await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
+  await user.click(within(form).getByRole('button', { name: 'Prepare' }))
+  await user.click(within(await screen.findByRole('dialog', { name: 'Ready to sign' }, T)).getByRole('button', { name: 'Review and sign' }))
+  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
+  await screen.findByText('Waiting for your signature', {}, T)
+}
+
+it('the link stays on screen until Done when the list cannot be read after the send', async () => {
+  route()
+  const user = userEvent.setup()
+  await signedShare(user)
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => {
+    if (path.endsWith('/shares/send')) {
+      // from now on the list fails (as a host that drops right after the send would)
+      const ok = inner(path, method, body)
+      const again = state.host.override
+      state.host.override = (p, m, b) => (p.endsWith('/shares') && m === 'GET' ? Response.json({ ok: false, error: { code: 'host.unavailable', message: 'x', retryable: true } }, { status: 503 }) : inner(p, m, b))
+      void again
+      return ok
+    }
+    return inner(path, method, body)
+  }
+  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['shares'] })
+  })
+  await waitFor(() => expect(queryClient.getQueryCache().findAll({ queryKey: ['shares'] }).some((q) => q.state.status === 'error')).toBe(true), T)
+  expect((within(screen.getByRole('dialog', { name: 'Your link' })).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+  await user.click(within(dialog).getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
+})
+
+it('the link stays on screen until Done when the Publish feature flips off after the send', async () => {
+  route()
+  const user = userEvent.setup()
+  await signedShare(user)
+  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  const inner = state.host.override!
+  state.host.override = (p, m, b) => (p.endsWith('/shares') && m === 'GET' ? Response.json({ available: false }) : inner(p, m, b))
+  act(() => setFeatures({ features: [...READS], workspaces: { [A]: [...READS] } }))
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['shares'] })
+  })
+  await waitFor(() => expect(screen.queryByTestId('ticket-shares')).toBeNull(), T)
+  expect((within(screen.getByRole('dialog', { name: 'Your link' })).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+  await user.click(within(dialog).getByRole('button', { name: 'Done' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
+})
+
+it('on the Shares page the link also stays until Done when the list then fails to load', async () => {
+  route()
+  staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: 'secret', days: 7, views: 0, origin: 'agent', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
+  const user = userEvent.setup()
+  show('/w/DEMO/shares')
+  await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T))
+  await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T)) // the dialog's own
+  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
+  await within(await screen.findByRole('dialog', {}, T)).findByText('Waiting for your signature', {}, T)
+  const inner = state.host.override!
+  state.host.override = (p, m, b) => {
+    const res = inner(p, m, b)
+    if (p.endsWith('/shares/send')) state.host.override = (p2, m2, b2) => (p2.endsWith('/shares') && m2 === 'GET' ? Response.json({ ok: false, error: { code: 'host.unavailable', message: 'x', retryable: true } }, { status: 503 }) : inner(p2, m2, b2))
+    return res
+  }
+  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['shares'] })
+  })
+  await waitFor(() => expect(screen.queryByRole('table', { name: 'Shares' })).toBeNull(), T) // the body gave way to its load failure
+  expect((within(screen.getByRole('dialog', { name: 'Your link' })).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+  await user.click(within(dialog).getByRole('button', { name: 'Done' }))
 })

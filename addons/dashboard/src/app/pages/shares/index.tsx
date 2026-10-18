@@ -59,13 +59,11 @@ function StagedRow({ s, ws, mayChange, onSign }: { s: Staged; ws: string; mayCha
   )
 }
 
-export function SharesPage() {
+function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign: (s: Staged) => void }) {
   usePageHeader('Shares')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const role = useRole()
-  const [revoking, setRevoking] = useState<Share | null>(null)
-  const [signing, setSigning] = useState<Staged | null>(null)
   const served = !!ws && hasFeature('publish', ws)
   const list = useQuery({ ...shareQueries.list(ws ?? ''), enabled: served })
   if (!workspace || !ws) return null
@@ -111,7 +109,7 @@ export function SharesPage() {
               <h2 className="text-[11px] font-medium uppercase tracking-wide text-text-faint">Waiting for your signature</h2>
               <ul className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
                 {staged.map((s) => (
-                  <StagedRow key={s.staged_id} s={s} ws={ws} mayChange={mayChange} onSign={setSigning} />
+                  <StagedRow key={s.staged_id} s={s} ws={ws} mayChange={mayChange} onSign={onSign} />
                 ))}
               </ul>
             </section>
@@ -166,7 +164,7 @@ export function SharesPage() {
                         </td>
                         <td className="px-3 py-2 text-right">
                           {mayChange && (state === 'live' || state === 'sending') && (
-                            <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Revoke the share of ${s.ticket ?? 'this ticket'}`} onClick={() => setRevoking(s)}>
+                            <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Revoke the share of ${s.ticket ?? 'this ticket'}`} onClick={() => onRevoke(s)}>
                               Revoke
                             </Button>
                           )}
@@ -180,8 +178,25 @@ export function SharesPage() {
           )}
         </>
       )}
-      {revoking && <RevokeShare ws={ws} share={revoking} onClose={() => setRevoking(null)} />}
-      {signing && <ShareFlow ws={ws} ticket={{ key: signing.ticket ?? '', artifacts: [] }} resume={signing} onClose={() => setSigning(null)} />}
     </div>
+  )
+}
+
+/**
+ * The page. The dialogs sit in this wrapper, at one fixed place in the tree, before and apart from the body: a failed
+ * refetch, an unavailable answer or a flipped feature changes the body only, and can never unmount a dialog that holds
+ * the link (shown once) until the person presses Done.
+ */
+export function SharesPage() {
+  const { workspace } = useWorkspace()
+  const ws = workspace?.id
+  const [revoking, setRevoking] = useState<Share | null>(null)
+  const [signing, setSigning] = useState<Staged | null>(null)
+  return (
+    <>
+      {ws && revoking && <RevokeShare ws={ws} share={revoking} onClose={() => setRevoking(null)} />}
+      {ws && signing && <ShareFlow ws={ws} ticket={{ key: signing.ticket ?? '', artifacts: [] }} resume={signing} onClose={() => setSigning(null)} />}
+      <SharesBody onRevoke={setRevoking} onSign={setSigning} />
+    </>
   )
 }

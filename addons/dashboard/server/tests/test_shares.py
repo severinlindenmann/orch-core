@@ -491,3 +491,18 @@ def test_both_publish_actions_still_prepare_through_the_terminal_hand_off(gatewa
     link.welcome = {"peer": {"person": "p_me"}, "ops": {"settings.set": 1}}  # a host that does not serve Publish
     with pytest.raises(HostError):
         handoff.plan(gateway, stub.ws, handoff.PublishShare(action="publish_share", key="DEMO-1", staged_id=STAGED))
+
+
+def test_a_transient_error_keeps_the_last_known_addon_state():
+    from orch_dashboard.gateway import Gateway
+
+    class Known(AddonLink):
+        welcome = {"workspace": {"id": "f" * 32}}
+
+    on = Known([{"name": "publish", "state": "active"}])
+    assert Gateway.addon_on(on, "publish") is True
+    down = Known(HostError({"code": "host.unavailable"}, 3))
+    assert Gateway.addon_on(down, "publish") is True  # kept, the host is only away for a moment
+    off = Known([{"name": "publish", "state": "disabled"}])
+    assert Gateway.addon_on(off, "publish") is False
+    assert Gateway.addon_on(down, "publish") is False

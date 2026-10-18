@@ -24,11 +24,21 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
   const [revoking, setRevoking] = useState<Share | null>(null)
   const served = isRealHost() && !!ws && hasFeature('publish', ws)
   const list = useQuery({ ...shareQueries.ofTicket(ws ?? '', ticket.key), enabled: served })
-  if (!served || !ws || !list.data?.available) return null
+  // The flows are rendered whatever the list says: a refetch that fails, or a feature flag that flips, must never
+  // unmount a dialog that holds the link (shown once) until the person presses Done.
+  const flows = ws && (
+    <>
+      {sharing && <ShareFlow ws={ws} ticket={ticket} onClose={() => setSharing(false)} />}
+      {resume && <ShareFlow ws={ws} ticket={ticket} resume={resume} onClose={() => setResume(null)} />}
+      {revoking && <RevokeShare ws={ws} share={revoking} onClose={() => setRevoking(null)} />}
+    </>
+  )
+  if (!served || !ws || !list.data?.available) return <>{null}{flows}</>
   const data = list.data
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done'
   const live = data.shares.filter((s) => ['live', 'sending'].includes(effectiveState(s)))
   return (
+    <>
     <section aria-label="Shares" className="space-y-2 rounded-lg border border-border bg-surface p-3" data-testid="ticket-shares">
       <h3 className="text-[11px] font-medium uppercase tracking-wide text-text-faint">Shares</h3>
       {data.staged.map((s) => (
@@ -74,9 +84,8 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
       <Link to="/shares" className="block text-[12px] text-brand hover:underline">
         All shares
       </Link>
-      {sharing && <ShareFlow ws={ws} ticket={ticket} onClose={() => setSharing(false)} />}
-      {resume && <ShareFlow ws={ws} ticket={ticket} resume={resume} onClose={() => setResume(null)} />}
-      {revoking && <RevokeShare ws={ws} share={revoking} onClose={() => setRevoking(null)} />}
     </section>
+    {flows}
+    </>
   )
 }

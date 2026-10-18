@@ -10,7 +10,7 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
-import { Folder_ } from './Tree'
+import { FolderList } from './Tree'
 import { Viewer, type ViewerState } from './Viewer'
 
 export interface ExplorerSearch {
@@ -145,7 +145,7 @@ export function ExplorerPage() {
                 <h2 className="px-2 text-[11px] font-medium uppercase tracking-wide text-text-faint">
                   <bdi>{r.label}</bdi>
                 </h2>
-                <Folder_ ws={ws} root={r.id} path="" depth={0} open={open} toggle={toggle} selected={state} onPick={pick} />
+                <FolderList ws={ws} root={r.id} path="" depth={0} open={open} toggle={toggle} selected={state} onPick={pick} />
               </section>
             ))}
           </div>

@@ -33,7 +33,7 @@ export interface TreeProps {
   onPick: (root: string, path: string) => void
 }
 
-export function Folder_({ ws, root, path, depth, ...p }: TreeProps & { root: string; path: string; depth: number }) {
+export function FolderList({ ws, root, path, depth, ...p }: TreeProps & { root: string; path: string; depth: number }) {
   const q = useQuery(explorerQueries.tree(ws, root, path))
   if (q.isError) return <LoadFailed what="this folder" onRetry={() => void q.refetch()} />
   if (!q.data) return <p className="px-3 py-1 text-[12px] text-text-faint" style={{ paddingLeft: `${8 + depth * 14}px` }}>Loading…</p>
@@ -73,7 +73,7 @@ function Item({ ws, root, dir, entry, depth, ...p }: TreeProps & { root: string;
           {label}
           {entry.repo && <span className="shrink-0 text-[11px] text-text-faint">repository</span>}
         </Row>
-        {isOpen && <Folder_ ws={ws} root={root} path={path} depth={depth + 1} {...p} />}
+        {isOpen && <FolderList ws={ws} root={root} path={path} depth={depth + 1} {...p} />}
       </>
     )
   }

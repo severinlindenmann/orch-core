@@ -45,6 +45,7 @@ from dataclasses import dataclass
 
 from orch import gitsafe
 from orch.gitsafe import Unsafe
+from orch.layout import KEYS_FILE, STORE_DIR
 
 __all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
 
@@ -54,7 +55,7 @@ _SLOT = re.compile(r"<(commit|file|num|pattern)>")
 #: (`orch_dashboard.explorer.guard`) imports these, and every git operation below excludes the same names with
 #: ``:(exclude)`` pathspecs ON TOP of the guard's own check (never instead of it), so a path the guard missed still
 #: cannot come out of git. Git internals, orch's store, key material and ``.env`` files.
-DENIED_NAMES = frozenset({".git", ".orch", ".ssh", ".gnupg", ".netrc", "keys.jsonl", ".env"})
+DENIED_NAMES = frozenset({".git", STORE_DIR, ".ssh", ".gnupg", ".netrc", KEYS_FILE, ".env"})
 DENIED_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks")
 _G = ":(exclude,glob,icase)"

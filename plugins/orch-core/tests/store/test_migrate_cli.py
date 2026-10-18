@@ -284,3 +284,19 @@ def test_a_journal_naming_an_entry_the_migration_never_moves_is_stuck(tmp_path: 
     with pytest.raises(mg.MigrateError) as exc:
         mg.finish_interrupted(env.root, state_dir=env.host_state, workspace_id=WS)
     assert exc.value.code == "migrate.stuck"
+
+
+@pytest.mark.parametrize(
+    "ref", ["refs/tags/v1", "refs/remotes/origin/main", "refs/stash", "refs/notes/x", "refs/heads/dev"]
+)
+def test_code_history_under_any_other_ref_keeps_the_git_in_place(tmp_path: Path, ref: str) -> None:
+    env = _world(tmp_path)
+    _init_repo(env.root)
+    code_commit = _commit(env.root, None, 1)  # the person's code commit
+    _git(env.root, "update-ref", ref, code_commit)  # code history hangs under another ref
+    _git(env.root, "checkout", "-q", "--orphan", "rec")
+    tip = _commit(env.root, WS, 2)  # a records commit with no code ancestry ...
+    _git(env.root, "branch", "-q", "-M", "main")  # ... which main now points at
+    _record(env, tip)  # the host recorded exactly that tip
+    code, text = _cli(env, "--json")
+    assert (env.root / ".git").is_dir() and not (env.root / ".orch" / ".git").exists(), (code, text)

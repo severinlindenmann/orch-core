@@ -415,7 +415,7 @@ def records_identify(args: dict[str, Any], roots: list[str]) -> dict[str, Any]:
         if tip is None or tip not in set(recorded):
             return {"ours": False, "gitdir": ident}
         refs = {**repo.refs.packed, **repo.refs.loose}
-        stack = [oid for name, oid in refs.items() if name.startswith("refs/heads/")]
+        stack = list(refs.values())  # EVERY ref: code history cannot hide under tags, remotes, notes or the stash
         seen: set[str] = set()
         while stack:
             oid = stack.pop()

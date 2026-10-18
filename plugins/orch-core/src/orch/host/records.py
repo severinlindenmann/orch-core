@@ -566,10 +566,10 @@ def migrate_git_plan(
     requires it again). The ``.git`` moves ONLY if all of these hold, otherwise it stays where it is (it is the
     person's own code repository, never touched): (a) records are configured for this workspace; (b) the HEAD commit
     is one the host itself recorded in ``records.json`` (``lasts[*].commit`` or ``pushed_commit``; an agent cannot
-    write that file); (c) every commit reachable from every ``refs/heads/*`` passes the records rules for this
-    workspace, within a bound. (b) and (c) are decided in the git reader child (:mod:`orch.gitread`: sandbox, limits),
-    never in this process. A records state that cannot be read, or a configured workspace whose repository cannot be
-    identified, is ``migrate.refused`` (nothing moves)."""
+    write that file); (c) every commit reachable from EVERY ref (tags, remotes, notes and the stash included) passes
+    the records rules for this workspace, within a bound. (b) and (c) are decided in the git reader child
+    (:mod:`orch.gitread`: sandbox, limits), never in this process. A records state that cannot be read, or a
+    configured workspace whose repository cannot be identified, is ``migrate.refused`` (nothing moves)."""
     import stat as _stat
 
     from orch.gitread.errors import Unavailable

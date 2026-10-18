@@ -62,9 +62,9 @@ describe('the checklist page', () => {
     renderApp('/checklist')
     const group = await screen.findByRole('radiogroup', { name: 'Result of C1' }, T)
     await userEvent.click(within(group).getByRole('radio', { name: 'Failed, blocking' }))
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'C1', 'fail_blocking', ''))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'C1', { status: 'fail_blocking' }))
     await userEvent.type(screen.getByLabelText('Notes for C1'), 'blank page')
-    await waitFor(() => expect(m.saveStep).toHaveBeenLastCalledWith('run2', 'C1', 'fail_blocking', 'blank page'), T)
+    await waitFor(() => expect(m.saveStep).toHaveBeenLastCalledWith('run2', 'C1', { note: 'blank page' }), T)
     expect((await screen.findAllByText('Saved'))[0]).toBeInTheDocument()
   })
 
@@ -73,7 +73,7 @@ describe('the checklist page', () => {
     const box = await screen.findByLabelText('Notes for D1', {}, T)
     await userEvent.type(box, 'ok')
     fireEvent.blur(box)
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'D1', 'todo', 'ok'))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'D1', { note: 'ok' }))
   })
 
   it('shows what was saved before and filters to steps with notes or failures', async () => {
@@ -149,6 +149,24 @@ describe('the checklist page', () => {
     expect(text).toContain(`- ${PATH}/images/C3-aaaaaaaaaaaa.png`)
     expect(text).toContain(`Notes saved in: ${PATH}`)
     expect(text).not.toContain('## C1')
+  })
+})
+
+describe('first save', () => {
+  it('keeps edits made before the first load finished, and sends only the changed field', async () => {
+    let release!: (v: Awaited<ReturnType<typeof testrun.loadRun>>) => void
+    m.loadRun.mockReturnValue(new Promise((r) => (release = r)))
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await userEvent.type(screen.getByLabelText('Notes for B1.1'), 'n')
+    release({ path: PATH, images_path: `${PATH}/images`, notes: { A2: { status: 'todo', note: 'server note', images: ['A2-aaaaaaaaaaaa.png'] } } })
+    await waitFor(() => expect(screen.getByLabelText('Notes for A2')).toHaveValue('server note'))
+    expect(within(screen.getByRole('radiogroup', { name: 'Result of A2' })).getByRole('radio', { name: 'Pass' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText('Notes for B1.1')).toHaveValue('n')
+    expect(await screen.findByAltText('Screenshot A2-aaaaaaaaaaaa.png')).toBeInTheDocument()
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'A2', { status: 'pass' }))
+    expect(m.saveStep).not.toHaveBeenCalledWith('run2', 'A2', expect.objectContaining({ note: expect.anything() }))
   })
 })
 

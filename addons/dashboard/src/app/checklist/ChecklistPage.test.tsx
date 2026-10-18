@@ -189,6 +189,7 @@ describe('a save that fails once', () => {
     await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
     expect(await screen.findByText('Not saved', {}, T)).toBeInTheDocument()
     await waitFor(() => expect(m.saveStep.mock.calls.length).toBeGreaterThanOrEqual(2), T)
+    m.saveStep.mockResolvedValue(undefined)
   })
 })
 
@@ -205,13 +206,19 @@ describe('buildReport', () => {
 
 describe('F8 retry rules', () => {
   it('does not resend a save the server refused (400/403/404/422) and says so in plain words', async () => {
+    m.saveStep.mockReset()
     m.saveStep.mockRejectedValue(new testrun.TestrunError(400, 'invalid.input'))
-    renderApp('/checklist')
-    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
-    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
-    expect(await screen.findByText(/did not accept this change/, {}, T)).toBeInTheDocument()
-    await new Promise((r) => setTimeout(r, 1500))
-    expect(m.saveStep).toHaveBeenCalledTimes(1)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderApp('/checklist')
+      const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+      await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+      expect(await screen.findByText(/did not accept this change/, {}, T)).toBeInTheDocument()
+      await vi.advanceTimersByTimeAsync(60_000) // far past every retry delay
+      expect(m.saveStep).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('resends after a 503', async () => {
     m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))

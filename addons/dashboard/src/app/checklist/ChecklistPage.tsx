@@ -198,6 +198,8 @@ export function ChecklistPage() {
   const touched = useRef(new Map<string, Set<'status' | 'note'>>())
   const chain = useRef<Promise<void>>(Promise.resolve())
   const attempts = useRef(new Map<string, number>())
+  // Set once the page is gone: a save that fails then is not scheduled again (no timer outlives the page).
+  const gone = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -257,7 +259,7 @@ export function ChecklistPage() {
         mark(id, 'error')
         const tries = attempts.current.get(id) ?? 0
         const ended = e instanceof TestrunError && e.status === 401
-        if (!ended && retryable(e) && tries < RETRIES && !timers.current.has(id)) {
+        if (!ended && !gone.current && retryable(e) && tries < RETRIES && !timers.current.has(id)) {
           attempts.current.set(id, tries + 1)
           timers.current.set(id, setTimeout(() => flush(id), Math.min(RETRY_BASE * 2 ** tries, 8000)))
         }
@@ -267,11 +269,13 @@ export function ChecklistPage() {
 
   useEffect(() => {
     const out = timers.current
+    gone.current = false
     const leave = () => { for (const id of [...dirty.current.keys()]) flush(id) }
     window.addEventListener('pagehide', leave)
     return () => {
       window.removeEventListener('pagehide', leave)
       for (const id of [...out.keys()]) flush(id)
+      gone.current = true
     }
   }, [flush])
 

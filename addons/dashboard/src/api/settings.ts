@@ -35,10 +35,55 @@ export interface Stamp {
   by: string
 }
 
+/** What the host saw at a repo's folder just now (read-only). Only an owner or maintainer gets it. */
+export interface HostRepoCheck {
+  state: 'present' | 'missing' | 'not_git' | 'unreadable'
+  branch: string | null
+}
+
 export interface HostRepo {
   name: string
   default_branch: string | null
   remote: string | null
+  /** The declared folder: only when the host sent it (owners and maintainers). */
+  path?: string | null
+  check?: HostRepoCheck | null
+}
+
+/** The host's own spelling of a repo name, a canonical remote (https, no login) and what a path must look like first. */
+export const REPO_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/
+const REPO_REMOTE = /^https:\/\/[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?\/[^\s@?#]{0,1000}$/
+const HIDDEN = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/
+
+export interface RepoDraft {
+  name: string
+  path: string
+  remote: string
+  branch: string
+}
+
+/** Why a repo form cannot be sent yet (the host checks the folder itself; this only stops what is plainly wrong). */
+export function repoProblems(d: RepoDraft): Partial<Record<keyof RepoDraft, string>> {
+  const out: Partial<Record<keyof RepoDraft, string>> = {}
+  if (!REPO_ID.test(d.name)) out.name = 'Use lowercase letters, digits, dots and dashes (up to 64), starting with a letter or digit.'
+  if (!d.path.startsWith('/') || d.path.length > 1024 || HIDDEN.test(d.path) || d.path.split('/').includes('..') || d.path.includes('//')) out.path = 'Write the full path of the folder, starting with / (no ".." in it).'
+  if (d.remote !== '' && (!REPO_REMOTE.test(d.remote) || HIDDEN.test(d.remote))) out.remote = 'A remote is an https:// address without a login, or leave it empty.'
+  if (d.branch !== '' && (d.branch.length > 255 || HIDDEN.test(d.branch) || /\s/.test(d.branch))) out.branch = 'A branch name is one word, or leave it empty.'
+  return out
+}
+
+/** The host's look at a folder in the words a person uses. */
+export function repoCheckWords(c: HostRepoCheck): string {
+  switch (c.state) {
+    case 'present':
+      return c.branch ? `In place, on branch ${c.branch}` : 'In place, not on a branch'
+    case 'missing':
+      return 'Folder not found'
+    case 'not_git':
+      return 'The folder is not a git repository'
+    default:
+      return 'The folder cannot be read'
+  }
 }
 
 /** `available: false` is a host without `settings/1`: everything else is then unknown. */

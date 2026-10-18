@@ -2,7 +2,6 @@
 // it, the scale to pick from; an epic shows the sum of its children and how many have no estimate yet. A change is the
 // ordinary signed size change of the ticket (one review), nothing else.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Gauge } from 'lucide-react'
 import { useState } from 'react'
 import { ESTIMATE_SCALE, estimateOn, notEstimatedText, pointsOf, pointsText, rollup, type SizeName } from '@/api/estimate'
 import type { HandoffAction } from '@/api/handoff'
@@ -12,6 +11,7 @@ import type { TicketDocument } from '@/api/types'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { Section } from '../ticket/shared'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 
@@ -44,13 +44,10 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
   const points = pointsOf(ticket.size)
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done' && ticket.status !== 'closed'
   const action: HandoffAction | null = pick ? { action: 'details', key: ticket.key, size: pick, via: 'estimate' } : null
-  const wording = pick === 'none' ? 'Not estimated' : pointsText(ESTIMATE_SCALE.find((s) => s.size === pick)?.points ?? 0)
+  const wording = pick === 'none' ? 'No estimate' : pointsText(ESTIMATE_SCALE.find((s) => s.size === pick)?.points ?? 0)
   return (
-    <section aria-label="Estimate" className="space-y-2 rounded-lg border border-border bg-surface p-3" data-testid="ticket-estimate">
-      <h3 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-text-faint">
-        <Gauge className="size-3.5" aria-hidden />
-        Estimate
-      </h3>
+    <Section title="Estimate" label="Estimate" testId="ticket-estimate">
+      <div className="space-y-2">
       {epic ? (
         <EpicRollup ws={ws} epic={ticket.key} />
       ) : (
@@ -59,22 +56,40 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
             {points === null ? <span className="text-text-muted">Not estimated yet</span> : <span className="font-medium">{pointsText(points)}</span>}
           </p>
           {mayChange && (
-            <div role="group" aria-label="Set the estimate" className="flex flex-wrap gap-1.5">
-              {ESTIMATE_SCALE.map((s) => (
-                <Button key={s.size} type="button" size="sm" variant={ticket.size === s.size ? 'secondary' : 'outline'} aria-pressed={ticket.size === s.size} aria-label={s.label} disabled={ticket.size === s.size} className={cn('h-7 min-w-8 px-2 font-mono text-[12px]')} onClick={() => setPick(s.size)}>
-                  {s.points}
-                </Button>
-              ))}
-              {ticket.size && (
-                <Button type="button" size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setPick('none')}>
-                  Not estimated
-                </Button>
-              )}
-            </div>
+            <>
+              <p className="text-[12px] text-text-muted">Points compare size, not hours. Choose a value to review and approve the change.</p>
+              <div role="group" aria-label="Set the estimate" className="flex flex-wrap gap-1.5">
+                {ESTIMATE_SCALE.map((s) => {
+                  const on = ticket.size === s.size
+                  return (
+                    <Button
+                      key={s.size}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      aria-pressed={on}
+                      aria-label={s.label}
+                      className={cn('h-8 min-w-9 px-2 font-mono text-[12px]', on && 'border-brand bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand')}
+                      onClick={() => {
+                        if (!on) setPick(s.size)
+                      }}
+                    >
+                      {s.points}
+                    </Button>
+                  )
+                })}
+                {ticket.size && (
+                  <Button type="button" size="sm" variant="ghost" className="h-8 text-[12px]" onClick={() => setPick('none')}>
+                    Clear estimate
+                  </Button>
+                )}
+              </div>
+            </>
           )}
           {!mayChange && atLeast(role, 'member') && <p className="text-[12px] text-text-muted">A finished ticket keeps its estimate.</p>}
         </>
       )}
+      </div>
       {action && (
         <HandoffDialog
           key={`${ticket.key}-${pick}`}
@@ -96,6 +111,6 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
           }}
         />
       )}
-    </section>
+    </Section>
   )
 }

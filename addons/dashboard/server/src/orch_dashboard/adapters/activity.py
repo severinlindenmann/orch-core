@@ -95,7 +95,7 @@ def display(value):
 
 
 def repo_sentence(repos) -> str | None:
-    """"updated repo x" / "removed repo y" from the host's `repos` ({name: "set" | "removed"}); None when it names none.
+    """Sentences for a repo change from the host's `repos` ({name: "set" | "removed"}); None when it names none.
     The event alone cannot tell a new repo from a changed one, so a set is "updated"."""
     if not isinstance(repos, dict):
         return None
@@ -103,7 +103,7 @@ def repo_sentence(repos) -> str | None:
     for name, how in sorted(repos.items()):
         shown = display(name)
         if shown and how in ("set", "removed"):
-            parts.append(f"{'removed' if how == 'removed' else 'updated'} repo {shown}")
+            parts.append(f"{'removed' if how == 'removed' else 'updated'} the repository “{shown}”")
     return "; ".join(parts) or None
 
 
@@ -126,7 +126,8 @@ def sentence(item: dict, name_of) -> str:
         return "limited the ticket to some people" if data.get("restricted") else "opened the ticket to the workspace"
     if kind == "branch.pushed":
         repo = display(data.get("repo_name"))
-        return f"pushed code to {repo}" if repo else "pushed code"
+        # the host saw the branch (a worktree was made, or work was committed): nobody "pushed" anything to a server
+        return f"saw the ticket's branch in the repository “{repo}”" if repo else "saw the ticket's branch"
     if kind == "member.added":
         return f"added {name_of(data.get('person'))} as {label(data.get('role')) or 'a member'}"
     if kind == "member.removed":

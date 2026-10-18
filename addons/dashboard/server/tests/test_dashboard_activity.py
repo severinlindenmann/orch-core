@@ -96,7 +96,12 @@ def test_repo_changes_name_the_repo_and_other_setting_changes_stay_general():
     def did(data):
         return adapt.sentence({"type": "settings.changed", "data": data}, lambda p: "x")
 
-    assert did({"keys": ["repos"], "repos": {"web": "set"}}) == "updated repo web"
-    assert did({"keys": ["repos"], "repos": {"api": "removed", "web": "set"}}) == "removed repo api; updated repo web"
+    assert did({"keys": ["repos"], "repos": {"web": "set"}}) == "updated the repository “web”"
+    assert (
+        did({"keys": ["repos"], "repos": {"api": "removed", "web": "set"}})
+        == "removed the repository “api”; updated the repository “web”"
+    )
     assert did({"keys": ["claim_ttl_min"]}) == "changed the workspace settings"
+    pushed = adapt.sentence({"type": "branch.pushed", "data": {"repo_name": "repo"}}, lambda p: "x")
+    assert pushed == "saw the ticket's branch in the repository “repo”" and "pushed" not in pushed
     assert did({"keys": ["repos"], "repos": {"a‮b": "set"}}) == "changed the workspace settings"

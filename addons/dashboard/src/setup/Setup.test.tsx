@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { Setup, summarize } from './Setup'
+import { plainReason, Setup, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -442,6 +442,12 @@ function failing(status: number, code?: string) {
   ) as unknown as typeof fetch
   return new SetupAPI('tok', fetcher)
 }
+
+test('the cause is in plain words and the code sits under Technical details', () => {
+  expect(plainReason('session.required')).toMatch(/no longer has its link to your terminal/)
+  expect(plainReason('whatever')).toBe('Setup could not go on.')
+  for (const code of ['session.required', 'setup.ended', 'setup.token', 'http.502', 'client: Error: x']) expect(plainReason(code)).not.toMatch(/session\.|setup\.|http\./)
+})
 
 test.each([
   [410, 'setup.ended'],

@@ -5,6 +5,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { agentsApi, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
@@ -42,11 +43,20 @@ const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer
   },
 })
 
+const CHOICES: RoutingChoices = {
+  harnesses: [
+    { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
+    { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'o3', label: 'o3' }] },
+  ],
+  modes: [{ id: 'work', label: 'Do the work' }],
+}
+
 let s: Record<string, ReturnType<typeof vi.spyOn>>
 beforeEach(() => {
   vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+  vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
     start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
@@ -111,6 +121,80 @@ describe('the preview', () => {
   })
 })
 
+describe('start settings wording and layout (MR3/MR4)', () => {
+  it('uses plain labels, a Ready to start line, and stacks the form on phones', async () => {
+    mount()
+    expect(await screen.findByTestId('agent-ready', {}, T)).toHaveTextContent('Ready to start')
+    expect(await screen.findByLabelText('Model for helper agents', {}, T)).toBeInTheDocument()
+    expect(screen.getByText('Project folder')).toBeInTheDocument()
+    expect(screen.getByLabelText(/Use this ticket's separate project folder/)).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Check start settings' })).toBeInTheDocument()
+    expect(screen.getByText('Will use')).toBeInTheDocument()
+    expect(screen.getByText('Allow agents to work for you')).toBeInTheDocument()
+    const form = screen.getByLabelText('Agent').closest('form')!
+    expect(form.className).toContain('grid-cols-1')
+    expect(form.className).toContain('sm:grid-cols-[110px_minmax(0,1fr)]')
+  })
+})
+
+describe('model routing', () => {
+  it('shows the model the workspace chose, says who chose it, and keeps the command behind Details', async () => {
+    s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'workspace' }))
+    mount()
+    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Sonnet (set for this kind of work in Settings)')
+    expect(screen.getByTestId('agent-details')).not.toHaveAttribute('open')
+  })
+
+  it('says "the agent\'s own default" when nothing is set', async () => {
+    s.preview.mockResolvedValue(preview({ model: null, model_source: 'default' }))
+    mount()
+    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Chosen by the agent app')
+  })
+
+  it('the model is a choice from the list, never typed text; picking one previews again with that name', async () => {
+    mount()
+    const pick = (await screen.findByLabelText('Model', {}, T)) as HTMLSelectElement
+    expect([...pick.options].map((o) => o.value)).toEqual(['', 'fable', 'opus', 'sonnet', 'haiku'])
+    s.preview.mockResolvedValue(preview({ model: 'haiku', model_source: 'chosen' }))
+    fireEvent.change(pick, { target: { value: 'haiku' } })
+    expect(screen.getByTestId('agent-stale')).toBeInTheDocument() // changed since the preview: preview again
+    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
+    await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ model: 'haiku' })))
+    expect(await screen.findByTestId('agent-model-line')).toHaveTextContent('Haiku (your choice)')
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.start).toHaveBeenCalledWith(WS, expect.objectContaining({ model: 'haiku' }), 'f'.repeat(64), expect.any(String)))
+  })
+
+  it('changing the agent drops a model that agent does not have', async () => {
+    mount()
+    const pick = (await screen.findByLabelText('Model', {}, T)) as HTMLSelectElement
+    fireEvent.change(pick, { target: { value: 'opus' } })
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'codex' } })
+    await waitFor(() => expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe(''))
+    expect([...(screen.getByLabelText('Model') as HTMLSelectElement).options].map((o) => o.value)).toEqual(['', 'gpt-5.4', 'o3'])
+  })
+
+  it('a failing check only suggests a stronger model; nothing changes until the person presses it', async () => {
+    vi.spyOn(api, 'getTicket').mockResolvedValue({ tasks_state: [{ id: 't1', state: 'doing', receipt: { exit: 1, ms: 5 } }] } as unknown as Awaited<ReturnType<typeof api.getTicket>>)
+    mount()
+    const note = await screen.findByTestId('agent-strong-suggestion', {}, T)
+    expect(note).toHaveTextContent('A check on this ticket is failing')
+    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('') // not changed by itself
+    expect(s.start).not.toHaveBeenCalled()
+    fireEvent.click(within(note).getByRole('button', { name: 'Use Fable' }))
+    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('fable')
+    expect(screen.queryByTestId('agent-strong-suggestion')).toBeNull()
+  })
+
+  it('no suggestion when no check is failing', async () => {
+    vi.spyOn(api, 'getTicket').mockResolvedValue({ tasks_state: [{ id: 't1', state: 'doing', receipt: { exit: 0, ms: 5 } }, { id: 't2', state: 'done', receipt: { exit: 1, ms: 5 } }] } as unknown as Awaited<ReturnType<typeof api.getTicket>>)
+    mount()
+    await screen.findByLabelText('Model', {}, T)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByTestId('agent-strong-suggestion')).toBeNull()
+  })
+})
+
 describe('start', () => {
   it('posts the previewed values, its spec and one idem; a retry keeps the idem', async () => {
     const { onStarted } = mount()
@@ -133,7 +217,7 @@ describe('start', () => {
     fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'fix' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument()
     expect(screen.getByTestId('agent-start')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
     await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ mode: 'fix' })), T)
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
   })

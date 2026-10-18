@@ -87,6 +87,9 @@ describe('lease and reconnect', () => {
     vi.useFakeTimers()
     vi.mocked(runsApi.ticket).mockRejectedValue(new (await import('@/api/types')).ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }))
     render(<RealTerminal ws={WS} run={run({ state: 'exited', replay_until: '2099-01-01T00:00:00Z' })} initial="read" connect={connect} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(runsApi.ticket).not.toHaveBeenCalled() // nothing is asked for an ended run until the person wants its output
+    fireEvent.click(screen.getByRole('button', { name: 'Show output' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
     expect(runsApi.ticket).toHaveBeenCalledTimes(1)
     expect(screen.getByText(/This terminal has ended/)).toBeInTheDocument()

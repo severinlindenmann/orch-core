@@ -10,13 +10,14 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { Switch } from '@/components/ui/switch'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
+import { ModelRouting } from './ModelRouting'
 import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
 const STATE_WORD = { on: 'On', off: 'Off', attention: 'Needs approval again' } as const
-type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer'
-const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer']
+type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing'
+const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'model-routing']
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const data = useQuery(queries.addOns(workspace.id))
@@ -93,6 +94,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
         )}
       </Section>
       {data.data?.add_ons.some((r) => r.id === 'publish' && r.state === 'on') && <PublishServer workspace={workspace} owner={owner} />}
+      {data.data?.add_ons.some((r) => r.id === 'model-routing' && r.state === 'on') && <ModelRouting workspace={workspace} owner={owner} />}
       {dialog}
     </div>
   )

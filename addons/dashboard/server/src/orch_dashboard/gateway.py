@@ -263,6 +263,8 @@ class Gateway:
         if all(link.supports(op, "publish/1") for op in PUBLISH_FEATURE_OPS) and self.addon_on(link, "publish"):
             # Publish (P6): the page and the ticket's Shares box exist only while the add-on is ON for this workspace.
             features.append("publish")
+        if "agent_start" in features and self.addon_on(link, "model-routing"):
+            features.append("model_routing")  # Model routing (add-on on): the Settings section and the model choice
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")

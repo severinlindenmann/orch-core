@@ -49,8 +49,14 @@ it('shows time and runs per ticket in words, and says tokens and cost are not re
   expect(first).toHaveTextContent('2 runs')
   expect(second).toHaveTextContent('Time not recorded') // unknown is never "0"
   expect(second).not.toHaveTextContent(/\b0 (s|min)\b/)
-  expect(screen.getByTestId('usage-week-tokens')).toHaveTextContent('Not reported')
-  expect(screen.getByTestId('usage-month-cost')).toHaveTextContent('Not reported')
+  // US4: one page note instead of "Not reported" twice per tile, and "duration unavailable" instead of the long form
+  expect(screen.getAllByText(/Token counts and cost aren't available\./)).toHaveLength(1)
+  expect(screen.queryByTestId('usage-week-tokens')).toBeNull()
+  expect(second).toHaveTextContent(/duration unavailable for \d/)
+  // US2 / US3
+  expect(screen.getByRole('heading', { name: 'Agent running time' })).toBeInTheDocument()
+  expect(screen.getByText(/ran at the same time are each counted/)).toBeInTheDocument()
+  expect(screen.getByTestId('usage-tickets-heading')).toHaveTextContent('Time by ticket — Last 7 days')
   expect(screen.getByTestId('usage-month')).toHaveTextContent('Counted since')
   expect(screen.getByTestId('usage-week')).not.toHaveTextContent('Counted since')
   expect(document.body.textContent).not.toMatch(/\$|CHF|EUR|\d tokens/)
@@ -62,13 +68,15 @@ it('the month tab lists other tickets without naming them', async () => {
   show('/w/DEMO/usage')
   await screen.findByRole('list', { name: 'Time per ticket' }, T)
   await user.click(screen.getByRole('button', { name: 'Last 30 days' }))
+  expect(screen.getByTestId('usage-tickets-heading')).toHaveTextContent('Time by ticket — Last 30 days')
   expect(within(screen.getByRole('list', { name: 'Time per ticket' })).getAllByRole('listitem')[1]).toHaveTextContent('Other tickets')
 })
 
 it('an empty period says so', async () => {
   route({ available: true, scope: 'your', windows: { week: win(totals(0, 0), []), month: win(totals(0, 0), []) }, recent: [], tokens: null, cost: null })
   show('/w/DEMO/usage')
-  expect(await screen.findByTestId('usage-empty', {}, T)).toHaveTextContent('No agent ran')
+  expect(await screen.findByTestId('usage-empty', {}, T)).toHaveTextContent('No agent ran in the last 7 days yet. Start an agent from a ticket on the Board')
+  expect(within(screen.getByTestId('usage-empty')).getByRole('link', { name: 'Board' })).toBeInTheDocument()
   expect(screen.getByTestId('usage-week')).toHaveTextContent('None yet')
 })
 

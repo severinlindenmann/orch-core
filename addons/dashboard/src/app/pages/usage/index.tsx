@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { runsText, spanText, usageQueries, WINDOW_LABEL, type UsageTicketRow } from '@/api/usage'
+import { NO_TOKENS_NOTE, runsText, spanText, usageQueries, WINDOW_LABEL, type UsageTicketRow } from '@/api/usage'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
 import { cn } from '@/lib/utils'
@@ -15,17 +15,17 @@ import { Tiles } from './Windows'
 
 function Row({ r }: { r: UsageTicketRow }) {
   return (
-    <li className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2.5 text-[13px]" data-testid="usage-row">
+    <li className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2.5 text-[13px] max-sm:flex-col max-sm:items-start" data-testid="usage-row">
       {r.ticket ? (
         <Link to="/ticket/$key" params={{ key: r.ticket }} className="font-mono text-[12px] text-brand hover:underline">
           {r.ticket}
         </Link>
       ) : null}
-      <span className="min-w-0 flex-1 basis-48">
+      <span className="min-w-0 max-w-full flex-1 basis-48 break-words max-sm:flex-none max-sm:basis-auto">
         {r.ticket ? r.title ? <Inline>{r.title}</Inline> : <span className="text-text-faint">title not shown</span> : r.other ? 'Other tickets' : 'Not on a ticket'}
       </span>
       <span className="tabular-nums">{spanText(r)}</span>
-      <span className="ml-auto text-right text-text-muted">{runsText(r)}</span>
+      <span className="ml-auto text-right text-text-muted max-sm:ml-0 max-sm:text-left">{runsText(r)}</span>
     </li>
   )
 }
@@ -51,10 +51,10 @@ export function UsagePage() {
   if (data.isError) return <LoadFailed what="usage" onRetry={() => void data.refetch()} />
   const d = data.data
   return (
-    <div className="w-full max-w-4xl space-y-4">
+    <div className="w-full min-w-0 max-w-4xl space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
       <p className="text-[13px] text-text-muted">
-        How long the agents you started worked, per ticket. The times come from orch’s own record of when each run started and ended. Tokens and cost are not shown because the agent tools do not report them in a way orch can check.
+        How long the agents you started worked, per ticket. The times come from orch’s own record of when each run started and ended. {NO_TOKENS_NOTE}
       </p>
       {!d || !d.available ? (
         <p role="status" className="text-[13px] text-text-muted">
@@ -76,9 +76,16 @@ export function UsagePage() {
               </button>
             ))}
           </div>
+          <h2 className="text-[15px] font-semibold" data-testid="usage-tickets-heading">
+            Time by ticket — {WINDOW_LABEL[win]}
+          </h2>
           {d.windows[win].tickets.length === 0 ? (
             <p data-testid="usage-empty" className="text-[13px] text-text-muted">
-              No agent ran for this period yet.
+              No agent ran in the {WINDOW_LABEL[win].toLowerCase()} yet. Start an agent from a ticket on the{' '}
+              <Link to="/board" className="text-brand hover:underline">
+                Board
+              </Link>{' '}
+              and its running time shows up here.
             </p>
           ) : (
             <ul aria-label="Time per ticket" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">

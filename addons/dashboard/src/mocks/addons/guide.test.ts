@@ -20,7 +20,7 @@ interface State {
 }
 const state = async (s: ReturnType<typeof setup>) => (await s.api.getAddonState(s.ws, 'guide')) as unknown as State
 
-const TITLES = ['Start here', 'Today, Board and Tickets', 'A ticket and quick tasks', 'Approving things', 'Agents and their access', 'Worktrees, Activity and add-ons', 'Settings', 'Coming later', 'Keyboard shortcuts']
+const TITLES = ['Start here', 'Today, Board and Tickets', 'A ticket and quick tasks', 'Approving things', 'Agents and their access', 'Worktrees, Activity and add-ons', 'Settings', 'Repositories', 'Worktrees', 'Shares and Publish', 'Coming later', 'Keyboard shortcuts']
 
 describe('guide package', () => {
   it('starts installed and granted in every demo workspace; open is a viewer action', () => {
@@ -30,7 +30,7 @@ describe('guide package', () => {
     expect(pkg.actions?.open).toMatchObject({ minRole: 'viewer' })
     for (const w of store.workspaces) expect(w.addons.guide).toMatchObject({ enabled: true, status: 'active', installed: true })
   })
-  it('has the nine pages, in order', async () => {
+  it('has the twelve pages, in order', async () => {
     const st = await state(setup())
     expect(st.pages.map((p) => p.title)).toEqual(TITLES)
     expect(st.items.map((i) => i.title)).toEqual(TITLES)

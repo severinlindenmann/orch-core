@@ -13,7 +13,7 @@ import { ApiError } from './types'
 export { newIdem }
 
 export type ShareKind = 'secret' | 'once'
-export type ShareState = 'live' | 'sending' | 'revoked' | 'expired' | 'unknown'
+export type ShareState = 'live' | 'sending' | 'revoked' | 'expired' | 'used' | 'unknown'
 
 export interface StagedFile {
   name: string
@@ -104,12 +104,17 @@ export const STATE_TEXT: Record<ShareState, string> = {
   sending: 'Sending',
   revoked: 'Stopped',
   expired: 'Expired',
+  used: 'Used up',
   unknown: 'Unknown',
 }
 
-/** Is a share past its time although the records still say live? (The server expires it on its own.) */
-export const effectiveState = (s: Pick<Share, 'state' | 'expires_at'>, now = Date.now()): ShareState =>
-  s.state === 'live' && s.expires_at && Date.parse(s.expires_at) <= now ? 'expired' : s.state
+/** Is a share past its time, or a show-once link already opened as often as allowed, although the records still say live? */
+export const effectiveState = (s: Pick<Share, 'state' | 'expires_at'> & Partial<Pick<Share, 'kind' | 'views' | 'view_limit'>>, now = Date.now()): ShareState => {
+  if (s.state !== 'live') return s.state
+  if (s.expires_at && Date.parse(s.expires_at) <= now) return 'expired'
+  if (s.kind === 'once' && s.view_limit && s.views != null && s.views >= s.view_limit) return 'used'
+  return s.state
+}
 
 export const viewsText = (s: Pick<Share, 'kind' | 'views' | 'view_limit'>): string =>
   s.views === null ? 'not known' : s.kind === 'once' && s.view_limit ? `${s.views} of ${s.view_limit}` : String(s.views)

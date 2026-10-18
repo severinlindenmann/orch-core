@@ -242,6 +242,8 @@ const empty = {
  */
 const handoff = {
   prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
+  /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+  checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>(`${w(ws)}/repos/check`, 'POST', action),
   getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }

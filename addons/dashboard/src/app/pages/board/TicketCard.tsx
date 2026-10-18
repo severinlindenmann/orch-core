@@ -22,7 +22,7 @@ export interface BoardPeople {
 /** A ticket's points on its card (Estimate on a real host): the size, as a number. */
 function EstimateChip({ points }: { points: number }) {
   return (
-    <span title={pointsText(points)} aria-label={pointsText(points)} className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" data-testid="estimate-chip">
+    <span title={pointsText(points)} aria-label={`${pointsText(points).replace(' ', ' estimate ')}`} className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" data-testid="estimate-chip">
       {points}
     </span>
   )
@@ -33,7 +33,8 @@ export function CardFields({ ticket, own, skipPoints }: { ticket: TicketSummary;
   const items = useSlot('board.card_field', { ticket })
   const readOnly = !can(useRole(), 'addon.action')
   const { workspace } = useWorkspace()
-  const points = estimateOn(workspace) && !skipPoints ? pointsOf(ticket.size) : null
+  // An epic has no points of its own on a real host: its lane and its page add up its children.
+  const points = estimateOn(workspace) && !skipPoints && ticket.type !== 'epic' ? pointsOf(ticket.size) : null
   const shown = items.filter((c) => {
     if (c.waiting) return false // a field that reads addon state appears once it has loaded
     if (c.guarded) return true // its `when` held (e.g. a landing chip read from the addon's state)

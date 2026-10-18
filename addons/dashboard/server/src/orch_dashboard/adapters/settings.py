@@ -30,6 +30,7 @@ WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 # F1 5.7: a canonical identity is `https://host[:port]/path` or `local:<name>`, and carries no userinfo.
 REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
+TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,18}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 #: a grant's label (common.json `label`): `runner` marks the runner grant (H11c-2); anything else is shown as text
@@ -62,6 +63,26 @@ class Repo(BaseModel):
     #: the declared folder: only when the host sent it (owners and maintainers); otherwise absent, never guessed
     path: str | None = None
     check: RepoCheck | None = None
+    #: keys of the tickets that link this repo (an owner or maintainer at the keyboard only, as the host sent them)
+    tickets: list[str] | None = None
+
+
+def models_table(value) -> dict[str, dict[str, str]] | None:
+    """Model routing's signed table (`workspace.settings.models`), or an error: names only from core's closed lists."""
+    from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise bad()
+    out: dict[str, dict[str, str]] = {}
+    for harness, per in value.items():
+        if harness not in MODEL_CHOICES or not isinstance(per, dict):
+            raise bad()
+        if any(m not in ROUTE_MODES or n not in MODEL_CHOICES[harness] for m, n in per.items()):
+            raise bad()
+        out[harness] = dict(per)
+    return out
 
 
 class Settings(BaseModel):
@@ -75,6 +96,8 @@ class Settings(BaseModel):
     sign_methods: list[str] | None = None
     #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
     sign_methods_known: bool = Field(default=False, exclude=True)
+    #: Model routing: harness -> mode -> model (the signed table); null when none is set or the host says nothing
+    models: dict[str, dict[str, str]] | None = None
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
@@ -87,6 +110,8 @@ class Settings(BaseModel):
         out = handler(self)
         if out.get("sign_methods") is None and not self.sign_methods_known:
             out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
+        if out.get("models") is None:
+            out.pop("models", None)  # none set, or an older core: absent
         return out
 
 
@@ -173,7 +198,17 @@ def repo(name, entry) -> Repo:
         ):
             raise bad()
         check = RepoCheck(state=check["state"], branch=got)
-    return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")), path=path, check=check)
+    linking = entry.get("linked_by")
+    if linking is not None:
+        if not (
+            isinstance(linking, list)
+            and len(linking) <= 12
+            and all(isinstance(k, str) and TICKET_KEY.fullmatch(k) for k in linking)
+        ):
+            raise bad()
+    return Repo(
+        name=name, default_branch=branch, remote=remote(entry.get("remote")), path=path, check=check, tickets=linking
+    )
 
 
 def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
@@ -206,6 +241,7 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
             **out,
             sign_methods=methods,
             sign_methods_known="sign_methods" in first,
+            models=models_table(first.get("models")),
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

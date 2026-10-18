@@ -401,7 +401,13 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
         )
         for key, label in _REPO_FIELDS:
             after = "(removed)" if entry is None else _repo_value(entry, key)
-            _row(out, f"{who}: {label}", after, _repo_value(old, key) if old is not None else "(none)", ctx.note(False))
+            was = _repo_value(old, key) if old is not None else "(none)"
+            if entry is not None and old is not None and was == after:
+                # E-4: a field that stays as it is says so (the host's unsigned word) and shows its value once, no
+                # arrow; the value is still on the screen, so every signed byte is still shown
+                _row(out, f"{who}: {label} (unchanged, per host)", after)
+                continue
+            _row(out, f"{who}: {label}", after, was, ctx.note(False))
     return True
 
 
@@ -420,6 +426,50 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
         _row(out, label, value[key], old.get(key) or "(none)", ctx.note(False))
     out.setdefault("notes", []).append(
         "Files you share go to this server, signed by this workspace. Only a person can change it."
+    )
+    return True
+
+
+_MODE_WORDS = {
+    "work": "Do the work", "refine": "Write requirements and plan", "fix": "Fix what was sent back",
+    "continue": "Continue", "context": "Read and answer",
+}  # fmt: skip
+_HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
+
+
+def _model_word(name: str | None) -> str:
+    from orch.modelchoices import MODEL_LABELS
+
+    return "Harness default" if name is None else MODEL_LABELS[name]
+
+
+def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.models`` (Model routing): one row per harness and mode, the model in words, ``Harness
+    default`` where none is set. The new value replaces the whole table, so every mode of every harness is listed.
+    ``False`` (the generic row, every byte) when the value is not a plain table of the closed lists."""
+    from orch.modelchoices import MODEL_CHOICES
+
+    def plain(v: Any) -> bool:
+        return isinstance(v, Mapping) and all(
+            h in MODEL_CHOICES
+            and isinstance(per, Mapping)
+            and all(m in _MODE_WORDS and per[m] in MODEL_CHOICES[h] for m in per)
+            for h, per in v.items()
+        )
+
+    if value is not None and not plain(value):
+        return False
+    if before is not None and not plain(before):
+        return False  # the host's current value is not a plain table: the generic row shows every byte
+    new = value or {}
+    old = before if plain(before) else {}
+    for harness, hword in _HARNESS_WORDS.items():
+        for mode, mword in _MODE_WORDS.items():
+            after = new.get(harness, {}).get(mode)
+            was = old.get(harness, {}).get(mode)
+            _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
+    out.setdefault("notes", []).append(
+        "Start agent uses these models for new agents. You still see the model before each start."
     )
     return True
 
@@ -845,6 +895,8 @@ def _event(
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
+                continue
+            if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours

@@ -2031,6 +2031,7 @@ A client must not call an op or send an argument whose cap it did not see (§0.4
  gates:{Gate: Policy},
  defaults:["grant_hours"|"claim_ttl_min"|"lease_ttl_min"]{0..3},
  sign_methods:["terminal"|"click"|"phone"] | null,    // B6, additive: the signed setting; null: never set (every way allowed)
+ models:{Harness:{Mode:Model}} | null,                // Model routing, additive: the signed setting; null: none set (harness default)
  settings_at?:{seq:int, at:Time, by:Person} | null,
  policy_at?:{seq:int, at:Time, by:Person} | null,
  sub_cursor:Cursor}

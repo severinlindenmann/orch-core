@@ -1,5 +1,7 @@
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { api } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { canChangeSettings, repoCheckWords, repoProblems, type HostRepo, type HostSettings, type RepoDraft } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
@@ -33,23 +35,41 @@ function Field({ id, label, help, value, error, disabled, placeholder, onChange 
 }
 
 /** Add or change one repository. Nothing is sent from here: "Review and sign" opens the signing hand-off with the typed action. */
-function RepoForm({ initial, editing, taken, onSubmit, onClose }: { initial: RepoDraft; editing: boolean; taken: string[]; onSubmit: (d: RepoDraft) => void; onClose: () => void }) {
+function RepoForm({ ws, initial, editing, taken, onSubmit, onClose }: { ws: string; initial: RepoDraft; editing: boolean; taken: string[]; onSubmit: (d: RepoDraft) => void; onClose: () => void }) {
   const [d, setD] = useState(initial)
   const [tried, setTried] = useState(false)
+  const [checking, setChecking] = useState(false)
+  // The host's own look at the folder (home folder, not a git folder, orch's data, missing), shown next to the field.
+  const [hostSaid, setHostSaid] = useState<{ path: string; text: string } | null>(null)
   const set = (k: keyof RepoDraft) => (v: string) => setD({ ...d, [k]: v })
   const problems = repoProblems(d)
   if (!editing && !problems.name && taken.includes(d.name)) problems.name = 'A repository with this name is already in the list.'
-  const shown = (k: keyof RepoDraft) => (tried ? problems[k] : undefined)
+  const shown = (k: keyof RepoDraft) => (tried ? problems[k] : undefined) ?? (k === 'path' && hostSaid?.path === d.path ? hostSaid.text : undefined)
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg gap-4 border-border bg-surface">
         <form
           noValidate
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             setTried(true)
-            if (Object.keys(problems).length === 0) onSubmit(d)
+            if (Object.keys(problems).length > 0 || checking) return
+            setChecking(true)
+            try {
+              await api.checkRepo(ws, { action: 'repo_set', name: d.name, path: d.path, ...(d.remote ? { remote: d.remote } : {}), ...(d.branch ? { default_branch: d.branch } : {}) })
+            } catch (err) {
+              // Only the host's own plain refusal of the folder stops the form here; anything else (a host that cannot
+              // be asked, a lost answer) goes on to the signing step, which checks again and says so.
+              if (err instanceof ApiError && err.code === 'invalid.input') {
+                setHostSaid({ path: d.path, text: err.message })
+                setTried(false)
+                setChecking(false)
+                return
+              }
+            }
+            setChecking(false)
+            onSubmit(d)
           }}
         >
           <DialogHeader>
@@ -64,7 +84,7 @@ function RepoForm({ initial, editing, taken, onSubmit, onClose }: { initial: Rep
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">Review and sign</Button>
+            <Button type="submit" disabled={checking}>{checking ? 'Checking the folder…' : 'Review and sign'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -79,6 +99,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
   const role = useViewerRole(workspace)
   const { ask, dialog } = useSettingsHandoff(workspace.id, onSettled)
   const [form, setForm] = useState<{ draft: RepoDraft; editing: boolean } | null>(null)
+  const [removing, setRemoving] = useState<HostRepo | null>(null)
   const repos: HostRepo[] = data?.repos ?? []
   const served = hasFeature('do:settings.set', workspace.id)
   const mayEdit = canChangeSettings(role) && served
@@ -94,6 +115,8 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
       autoStart: true,
     })
   }
+
+  const removeRepo = (name: string) => ask({ title: `Remove repository ${name}`, action: { action: 'repo_remove', name }, autoStart: true })
 
   return (
     <Section title="Repositories">
@@ -129,7 +152,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
                       <Button variant="ghost" size="sm" aria-label={`Change ${r.name}`} disabled={!r.path} title={r.path ? undefined : 'The host did not send the folder, so it cannot be changed here.'} onClick={() => open(r)}>
                         <Pencil />
                       </Button>
-                      <Button variant="ghost" size="sm" aria-label={`Remove ${r.name}`} onClick={() => ask({ title: `Remove repository ${r.name}`, action: { action: 'repo_remove', name: r.name }, autoStart: true })}>
+                      <Button variant="ghost" size="sm" aria-label={`Remove ${r.name}`} onClick={() => (r.tickets?.length ? setRemoving(r) : removeRepo(r.name))}>
                         <Trash2 />
                       </Button>
                     </div>
@@ -153,7 +176,28 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
           </p>
         </>
       )}
-      {form && <RepoForm initial={form.draft} editing={form.editing} taken={repos.map((r) => r.name)} onSubmit={submit} onClose={() => setForm(null)} />}
+      {form && <RepoForm ws={workspace.id} initial={form.draft} editing={form.editing} taken={repos.map((r) => r.name)} onSubmit={submit} onClose={() => setForm(null)} />}
+      {removing && (
+        <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>
+          <DialogContent className="max-w-md gap-4 border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>Remove {removing.name}?</DialogTitle>
+              <DialogDescription>
+                {removing.tickets!.length === 1 ? 'This ticket links' : 'These tickets link'} this repository: <Raw>{removing.tickets!.join(', ')}</Raw>
+                {removing.tickets!.length >= 12 ? ' and maybe more' : ''}. They keep the link, but no one can add a worktree for them until you add the repository again or link another one. The folder and its files stay on disk.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="ghost" onClick={() => setRemoving(null)}>
+                Keep it
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => { const n = removing.name; setRemoving(null); removeRepo(n) }}>
+                Continue to review and sign
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {dialog}
     </Section>
   )

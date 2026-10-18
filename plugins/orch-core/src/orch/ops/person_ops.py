@@ -30,6 +30,7 @@ from orch import repopaths
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
+from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -73,6 +74,24 @@ _ORIGIN = {
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
 }
+_MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                harness: {
+                    "type": "object",
+                    "properties": {mode: {"enum": list(names)} for mode in ROUTE_MODES},
+                    "additionalProperties": False,
+                }
+                for harness, names in MODEL_CHOICES.items()
+            },
+            "minProperties": 1,
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
+}
 _SET = {
     "type": "object",
     "properties": {
@@ -98,6 +117,7 @@ _SET = {
                 {"type": "null"},
             ]
         },
+        "models": _MODELS,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -182,10 +202,19 @@ def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"gates": names}, "orch show")
 
 
+def _routing_on(h: Human) -> bool:
+    from orch.addons.install import as_addons
+
+    found = as_addons(h.store.state.workspace.addons).get("model-routing")
+    return found is not None and found.enabled and not found.purged
+
+
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
+    if changes.get("models") is not None and not _routing_on(h):
+        raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
     for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
         if spec is not None:
             try:

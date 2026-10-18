@@ -222,7 +222,9 @@ _SET_FIELDS = frozenset(
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish"})
+_SETTINGS_KEYS = frozenset(
+    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models"}
+)
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:

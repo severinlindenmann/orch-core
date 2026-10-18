@@ -59,32 +59,41 @@ export function HistoryPanel({ ws, root, path, sha, onSha, onOpenVersion }: { ws
     retry: false,
   })
   if (list.isError) return <LoadFailed what="the history" onRetry={() => void list.refetch()} />
-  if (!list.data) return <p className="text-[13px] text-text-muted">Loading the history…</p>
+  if (!list.data) return <p role="status" className="text-[13px] text-text-muted">Loading the history…</p>
   const first = list.data.pages[0]
   if (!first.repo) return <p className="text-[13px] text-text-muted" data-testid="no-history">This file is not in a git repository, so there is no history.</p>
   const commits = list.data.pages.flatMap((p) => p.commits)
   if (commits.length === 0) return <p className="text-[13px] text-text-muted">No commit has changed this file yet.</p>
-  const toggle = (s: string) => setPicked((p) => (p.includes(s) ? p.filter((x) => x !== s) : p.length >= 2 ? [p[1], s] : [...p, s]))
+  // A third pick is not accepted silently: the other boxes are off until one of the two is cleared.
+  const toggle = (s: string) => setPicked((p) => (p.includes(s) ? p.filter((x) => x !== s) : p.length >= 2 ? p : [...p, s]))
   // the older of the two picked versions first
   const order = picked.length === 2 ? [...picked].sort((x, y) => commits.findIndex((c) => c.sha === y) - commits.findIndex((c) => c.sha === x)) : []
   return (
     <div className="space-y-3">
-      <p className="text-[12px] text-text-muted">Pick a change to see it. Tick two to compare those versions.</p>
+      <p className="text-[12px] text-text-muted">Select a change title to view it. Select two checkboxes to compare versions.</p>
+      <div className="flex min-h-6 flex-wrap items-center gap-2 text-[12px]" data-testid="pick-count">
+        <span role="status" className={picked.length === 2 ? 'font-medium text-text' : 'text-text-muted'}>
+          {picked.length} of 2 versions selected{picked.length === 2 ? '. To choose different ones, clear one first.' : ''}
+        </span>
+        {picked.length > 0 && <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setPicked([])}>Clear selection</Button>}
+      </div>
       <ul aria-label="Changes to this file" className="divide-y divide-border rounded-md border border-border">
         {commits.map((c) => (
           <li key={c.sha} className="space-y-1 px-3 py-2 text-[13px]" data-sha={c.sha}>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <input type="checkbox" aria-label={`Compare: ${c.subject}`} checked={picked.includes(c.sha)} onChange={() => toggle(c.sha)} />
-              <button type="button" className={`min-w-0 flex-1 basis-48 text-left hover:underline ${sha === c.sha ? 'font-medium' : ''}`} onClick={() => onSha(sha === c.sha ? undefined : c.sha)}>
+              <span className="-m-1.5 flex size-10 shrink-0 items-center justify-center">
+                <input type="checkbox" className="size-5 outline-none focus-visible:ring-2 focus-visible:ring-brand" aria-label={`Compare: ${c.subject}`} checked={picked.includes(c.sha)} disabled={picked.length >= 2 && !picked.includes(c.sha)} onChange={() => toggle(c.sha)} />
+              </span>
+              <button type="button" aria-expanded={sha === c.sha} className={`min-h-9 min-w-0 flex-1 basis-48 rounded py-1 text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-brand ${sha === c.sha ? 'font-medium' : ''}`} onClick={() => onSha(sha === c.sha ? undefined : c.sha)}>
                 <Inline>{c.subject || '(no message)'}</Inline>
               </button>
               <Chips commit={c} />
             </div>
-            <p className="pl-6 text-[12px] text-text-muted">
+            <p className="pl-8 text-[12px] text-text-muted">
               <Inline>{c.author}</Inline> · {fmtDateTime(c.at)}
             </p>
             {sha === c.sha && (
-              <div className="space-y-2 pl-6">
+              <div className="space-y-2 pl-8">
                 <CommitDiff ws={ws} root={root} path={path} sha={c.sha} />
                 <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => onOpenVersion(c.sha)}>
                   Open the file as it was then

@@ -75,13 +75,60 @@ it('the ticket shows its points and picking another one asks for one signed size
   show('/w/DEMO/ticket/DEMO-0001')
   const box = await screen.findByTestId('ticket-estimate', {}, T)
   expect(within(box).getByTestId('estimate-current')).toHaveTextContent('3 points')
-  expect(within(box).getByRole('button', { name: '3 points' })).toBeDisabled() // already this one
+  // ES1: the chosen value is marked (pressed), stays focusable, and choosing it again asks for nothing
+  const chosen = within(box).getByRole('button', { name: '3 points' })
+  expect(chosen).toHaveAttribute('aria-pressed', 'true')
+  expect(chosen).not.toBeDisabled()
+  expect(chosen.className).toContain('text-brand')
+  expect(within(box).getByRole('button', { name: '5 points' })).toHaveAttribute('aria-pressed', 'false')
+  await user.click(chosen)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(state.host.posts()).toEqual([])
+  // ES2: what points mean and what happens next
+  expect(box).toHaveTextContent('Points compare size, not hours.')
+  expect(box).toHaveTextContent('Choose a value to review and approve the change.')
   await user.click(within(box).getByRole('button', { name: '5 points' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Estimate DEMO-0001')
   expect(dialog).toHaveTextContent('5 points')
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'details', key: 'DEMO-0001', size: 'l', via: 'estimate' }])
+})
+
+it('clearing says "Clear estimate", reviews "No estimate", and the Estimate box is a section like Details and Code', async () => {
+  serve({ size: 'm' })
+  window.innerWidth = 1400
+  const user = userEvent.setup()
+  show('/w/DEMO/ticket/DEMO-0001')
+  const box = await screen.findByTestId('ticket-estimate', {}, T)
+  expect(within(box).getByRole('heading', { name: 'Estimate' }).className).toContain('text-[13px]') // ES5: the Section heading
+  expect(within(box).queryByRole('button', { name: 'Not estimated' })).toBeNull()
+  await user.click(within(box).getByRole('button', { name: 'Clear estimate' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  expect(dialog).toHaveTextContent('No estimate')
+})
+
+it('an epic has no points of its own on a real host: no chip on its card or in its lane header', async () => {
+  const withOwn = [row('DEMO-0010', { type: 'epic', title: 'The epic', size: 'xl' }), ...rows.slice(1)]
+  state.host.override = (path, method) => {
+    if (method !== 'GET') return undefined
+    if (path.endsWith('/board')) return Response.json({ ...board, rows: withOwn, next_page: null })
+    return undefined
+  }
+  show('/w/DEMO/board')
+  await screen.findByTestId('card-DEMO-0011', {}, T)
+  const lane = (await screen.findByRole('button', { name: /Collapse DEMO-0010/ })).closest('div')!.parentElement!
+  expect(within(lane).queryByTitle(/own estimate/)).toBeNull()
+  expect(screen.queryByText('own')).toBeNull()
+})
+
+it('a column total says in words how many cards have no estimate; the chip names its points as estimate points', async () => {
+  serve()
+  show('/w/DEMO/board')
+  const card = await screen.findByTestId('card-DEMO-0011', {}, T)
+  expect(within(card).getByTestId('estimate-chip')).toHaveAccessibleName('3 estimate points')
+  const missing = await screen.findAllByTestId('estimate-missing', {}, T)
+  expect(missing.some((m) => m.textContent?.includes('not estimated'))).toBe(true)
 })
 
 it('an unestimated ticket offers the scale and no "not estimated" button; clearing is offered once it has points', async () => {

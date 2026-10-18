@@ -21,7 +21,8 @@ def _install_builtin(h: Human, root: Any, name: str) -> None:
     ``addon.granted``). A failed write removes the empty directory it made and says why."""
     from orch.addons import builtin
 
-    if name not in builtin.NAMES or h.ctx.dry_run:
+    dry = h.ctx.dry_run or (h.ctx.prepare is not None and h.ctx.prepare.dry_run)
+    if name not in builtin.NAMES or dry:
         return
     member = h.store.state.workspace.members.get(h.person)
     if member is None or member.role != "owner":

@@ -102,12 +102,23 @@ def main(argv: list[str], *, out: TextIO, err: TextIO) -> int:
 def install_missing(workspace: str, name: str) -> None:
     """Write a built-in add-on's own manifest into ``<workspace>/addons/<name>``. On failure the empty directory this
     attempt made is removed (a package already there is never touched) and the error is raised."""
-    directory = Path(os.path.abspath(workspace)) / "addons" / name
     try:
         write_manifest(workspace, name, manifest_bytes(name))
     except (OSError, ValueError):
-        try:
-            os.rmdir(directory)
-        except OSError:
-            pass
+        _drop_empty(workspace, name)
         raise
+
+
+def _drop_empty(workspace: str, name: str) -> None:
+    """``rmdir addons/<name>`` relative to the ``addons`` directory's descriptor (no path walk a link could redirect)."""
+    path = Path(os.path.abspath(workspace)) / "addons"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    try:
+        os.rmdir(name, dir_fd=fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

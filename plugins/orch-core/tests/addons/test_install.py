@@ -356,3 +356,17 @@ def test_a_dry_run_and_a_non_owner_install_nothing(hws, me):
     r = me("addon", "grant", "terminals", "--json")
     assert r.code != 0 and r.err_code == "role.denied"
     assert not (hws.root / "addons" / "terminals").exists()
+
+
+def test_a_failed_builtin_install_removes_the_empty_directory_and_says_why(hws, me, monkeypatch):
+    from orch.addons import builtin
+
+    def broken(workspace, name, data, force=False):
+        os.mkdir(os.path.join(workspace, "addons")) if not os.path.isdir(os.path.join(workspace, "addons")) else None
+        os.mkdir(os.path.join(workspace, "addons", name))
+        raise OSError("disk full")
+
+    monkeypatch.setattr(builtin, "write_manifest", broken)
+    r = me("addon", "grant", "terminals", "--json")
+    assert r.code != 0 and r.err_code == "invalid.input"
+    assert not (hws.root / "addons" / "terminals").exists()

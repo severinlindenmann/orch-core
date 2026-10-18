@@ -296,7 +296,13 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
         )
         for key, label in _REPO_FIELDS:
             after = "(removed)" if entry is None else _repo_value(entry, key)
-            _row(out, f"{who}: {label}", after, _repo_value(old, key) if old is not None else "(none)", ctx.note(False))
+            was = _repo_value(old, key) if old is not None else "(none)"
+            if entry is not None and old is not None and was == after:
+                # E-4: a field that stays as it is says so (the host's unsigned word) and shows its value once, no
+                # arrow; the value is still on the screen, so every signed byte is still shown
+                _row(out, f"{who}: {label} (unchanged, per host)", after)
+                continue
+            _row(out, f"{who}: {label}", after, was, ctx.note(False))
     return True
 
 

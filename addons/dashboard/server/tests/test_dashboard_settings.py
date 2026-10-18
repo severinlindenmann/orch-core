@@ -98,7 +98,7 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}]
+    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None, "tickets": None}]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 
@@ -811,3 +811,16 @@ def test_f8_the_repo_path_check_runs_before_any_request_and_says_why_in_plain_wo
     Gateway.check_repo_path(
         SimpleNamespace(_pins=lambda: {}), ws, str(home)
     )  # a workspace not known here: the host decides
+
+
+def test_an_owner_gets_the_keys_of_the_tickets_that_link_a_repo_and_only_plain_keys():
+    from orch_dashboard.adapters import settings as adapter
+
+    entry = {"default_branch": "main", "path": "/x", "tickets": ["DEMO-0001", "TQ-2"]}
+    assert adapter.repo("code", entry).tickets == ["DEMO-0001", "TQ-2"]
+    for bad in (["no key"], ["DEMO-1\n"], [f"DEMO-{i}" for i in range(13)], "DEMO-1"):
+        try:
+            adapter.repo("code", {**entry, "tickets": bad})
+        except Exception:
+            continue
+        raise AssertionError(bad)

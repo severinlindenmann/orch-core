@@ -48,6 +48,8 @@ export interface HostRepo {
   /** The declared folder: only when the host sent it (owners and maintainers). */
   path?: string | null
   check?: HostRepoCheck | null
+  /** Keys of the tickets that link this repository (owners and maintainers; the host sends at most 12). */
+  tickets?: string[] | null
 }
 
 /** The host's own spelling of a repo name, a canonical remote (https, no login) and what a path must look like first. */

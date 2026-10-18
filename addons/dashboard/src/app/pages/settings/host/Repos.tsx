@@ -79,6 +79,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
   const role = useViewerRole(workspace)
   const { ask, dialog } = useSettingsHandoff(workspace.id, onSettled)
   const [form, setForm] = useState<{ draft: RepoDraft; editing: boolean } | null>(null)
+  const [removing, setRemoving] = useState<HostRepo | null>(null)
   const repos: HostRepo[] = data?.repos ?? []
   const served = hasFeature('do:settings.set', workspace.id)
   const mayEdit = canChangeSettings(role) && served
@@ -94,6 +95,8 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
       autoStart: true,
     })
   }
+
+  const removeRepo = (name: string) => ask({ title: `Remove repository ${name}`, action: { action: 'repo_remove', name }, autoStart: true })
 
   return (
     <Section title="Repositories">
@@ -129,7 +132,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
                       <Button variant="ghost" size="sm" aria-label={`Change ${r.name}`} disabled={!r.path} title={r.path ? undefined : 'The host did not send the folder, so it cannot be changed here.'} onClick={() => open(r)}>
                         <Pencil />
                       </Button>
-                      <Button variant="ghost" size="sm" aria-label={`Remove ${r.name}`} onClick={() => ask({ title: `Remove repository ${r.name}`, action: { action: 'repo_remove', name: r.name }, autoStart: true })}>
+                      <Button variant="ghost" size="sm" aria-label={`Remove ${r.name}`} onClick={() => (r.tickets?.length ? setRemoving(r) : removeRepo(r.name))}>
                         <Trash2 />
                       </Button>
                     </div>
@@ -154,6 +157,27 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
         </>
       )}
       {form && <RepoForm initial={form.draft} editing={form.editing} taken={repos.map((r) => r.name)} onSubmit={submit} onClose={() => setForm(null)} />}
+      {removing && (
+        <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>
+          <DialogContent className="max-w-md gap-4 border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>Remove {removing.name}?</DialogTitle>
+              <DialogDescription>
+                {removing.tickets!.length === 1 ? 'This ticket links' : 'These tickets link'} this repository: <Raw>{removing.tickets!.join(', ')}</Raw>
+                {removing.tickets!.length >= 12 ? ' and maybe more' : ''}. They keep the link, but no one can add a worktree for them until you add the repository again or link another one. The folder and its files stay on disk.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="ghost" onClick={() => setRemoving(null)}>
+                Keep it
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => { const n = removing.name; setRemoving(null); removeRepo(n) }}>
+                Continue to review and sign
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {dialog}
     </Section>
   )

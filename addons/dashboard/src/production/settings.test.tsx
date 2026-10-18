@@ -76,6 +76,21 @@ it('Repositories: removing one hands off repo_remove, and a name already listed 
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
 })
 
+it('Repositories: removing a repo that tickets link warns with their keys before anything is signed', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[0].settings = settingsOf({ repos: [{ name: 'code', default_branch: 'main', remote: null, tickets: ['DEMO-0001', 'DEMO-0004'] }] })
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Remove code' }, T))
+  const warn = await screen.findByRole('dialog', {}, T)
+  expect(warn).toHaveTextContent('DEMO-0001, DEMO-0004')
+  expect(state.host.posts()).toEqual([])
+  await user.click(within(warn).getByRole('button', { name: 'Keep it' }))
+  expect(state.host.posts()).toEqual([])
+  await user.click(screen.getByRole('button', { name: 'Remove code' }))
+  await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: /Continue to review and sign/ }))
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }]), T)
+})
+
 it('Repositories: a member sees the list and no way to change it', async () => {
   state.host.workspaces[0].role = 'member'
   state.host.workspaces[0].me = TOM

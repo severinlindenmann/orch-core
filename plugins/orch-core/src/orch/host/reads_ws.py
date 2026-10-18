@@ -403,6 +403,19 @@ def _linked_repos(ctx: ReadCtx) -> set[str]:
     return out
 
 
+LINKED_KEYS = 12
+
+
+def _linking_tickets(ctx: ReadCtx) -> dict[str, list[str]]:
+    """Repo name to the keys of the tickets (the viewer may see) that link it, at most ``LINKED_KEYS`` each, sorted.
+    A display aid for the person about to remove a repo; it decides nothing."""
+    out: dict[str, list[str]] = {}
+    for view in ctx.visible_tickets():
+        for name in ((view.fields.get("links") or {}).get("repos")) or []:
+            out.setdefault(name, []).append(view.key)
+    return {name: sorted(keys)[:LINKED_KEYS] for name, keys in out.items()}
+
+
 def _remote(value: Any) -> tuple[bool, str | None]:
     """``(serve, remote)``: a declared remote that is not an F1 canonical identity is not served (never repaired)."""
     if value is None:
@@ -469,6 +482,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     linked = _linked_repos(ctx) if viewer.column == "N" else None  # each page re-applies the current visibility
     page: dict[str, Any] = {}
     nxt: int | None = None
+    keys_of = _linking_tickets(ctx) if linked is None and viewer.manager and viewer.column == "P" else {}
     for i in range(start, len(names)):
         name = names[i]
         if linked is not None and name not in linked:
@@ -483,6 +497,8 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         if linked is None and viewer.manager and viewer.column == "P" and isinstance(raw.get("path"), str):
             # the person at the keyboard (an owner or maintainer): is the folder there, and which branch (read-only)
             page[name]["check"] = repopaths.observe(ctx.store.layout, raw["path"])
+        if keys_of.get(name):
+            page[name]["tickets"] = keys_of[name]
     if nxt is not None and snap is None:  # a snapshot only when a later page can follow
         snap = ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, viewer.person, data)
     out: dict[str, Any] = {

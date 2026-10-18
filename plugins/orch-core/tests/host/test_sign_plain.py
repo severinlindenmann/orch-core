@@ -1126,3 +1126,66 @@ def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
     first = signcontent.text(c, signer._clean)[0]
     assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first
+
+
+def test_g2_an_estimate_says_points_and_that_it_cancels_approvals(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["size=m"]}))
+    row = c["fields_changed"][0]
+    assert (row["field"], row["after"]) == ("estimate", "3 points (size M)")
+    assert c["headline"].startswith("Change the estimate of DEMO-0001")
+    note = " ".join(c["notes"])
+    assert "cancels any existing approval of: requirements, plan, verify, code." in note
+    assert "approved again" in note
+    assert "cancels" in "\n".join(signcontent.text(c, signer._clean))
+
+
+def test_g2_a_change_that_no_gate_binds_makes_no_cancel_claim(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["priority=high"]}))
+    assert not any("cancels" in n for n in c.get("notes") or [])
+
+
+def _cancel_notes(ev):
+    out: dict = {}
+    signcontent._cancel_note(ev, out)
+    return " ".join(out.get("notes") or [])
+
+
+def test_g2_the_cancel_note_follows_the_cascade_of_later_gates():
+    assert "requirements, plan, verify, code." in _cancel_notes({"sections": {"summary": {}}})
+    assert "verify, code." in _cancel_notes({"sections": {"verification": {}}})
+    assert "of: plan, verify, code." in _cancel_notes({"sections": {"plan": {}}})
+    assert "of: verify, code." in _cancel_notes({"set": {"ticket.links": []}})
+
+
+def test_g2_an_addon_section_or_field_gets_the_generic_note():
+    assert "may also cancel that approval and every later one" in _cancel_notes({"sections": {"estimate.notes": {}}})
+    assert "may also cancel that approval and every later one" in _cancel_notes(
+        {"set": {"ticket.addons.estimate.points": 3}}
+    )
+
+
+def test_g2_the_size_scale_matches_the_schema_and_the_dashboard():
+    import json
+    import re
+    from pathlib import Path
+
+    schema = json.loads((Path(signcontent.__file__).parents[1] / "schema/schemas/ticket.json").read_text())
+    enum = next(_find_enum(schema))["enum"]
+    assert set(enum) == set(signcontent._SIZE_POINTS)
+    ts = Path(__file__).parents[4] / "addons/dashboard/src/api/estimate.ts"
+    if ts.exists():
+        pairs = re.findall(r"size: '(\w+)', points: (\d+)", ts.read_text())
+        assert {k: int(v) for k, v in pairs} == signcontent._SIZE_POINTS
+
+
+def _find_enum(node):
+    if isinstance(node, dict):
+        if node.get("enum") and "xl" in node["enum"]:
+            yield node
+        for v in node.values():
+            yield from _find_enum(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _find_enum(v)

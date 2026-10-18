@@ -64,7 +64,8 @@ _GATE_TYPES = {"gate.approved": None, "gate.changes_requested": None, "verdict.g
 _MEMBER_OPS = frozenset({"member.add", "member.remove", "member.role"})
 _ADDON_OPS = frozenset({"addon.grant", "addon.disable", "addon.purge"})
 #: the addon ops whose typed word is ``<name>~<WS8>``: the ONE definition, shared by the terminal (``orch sign``), the
-#: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page (tests/fixtures/confirm_words.json)
+#: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page
+#: (addons/dashboard/src/test/confirm-words.json pins all three)
 _ADDON_WS_OPS = frozenset({"addon.grant", "addon.purge"})
 
 
@@ -522,7 +523,8 @@ def _clean(value: Any) -> str:
 
 def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None] | None = None) -> str:
     """The word the person types: the ticket key for decisions and ticket ops (``move`` and a ticket ``policy.set``
-    included), ``GRANT`` for grants, the person id for member ops, the addon name (``<name>~<WS8>`` for grant/purge) for addon ops,
+    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops (``<name>~<WS8>`` for
+    grant/purge),
     ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")

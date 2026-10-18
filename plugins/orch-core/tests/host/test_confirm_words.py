@@ -21,7 +21,13 @@ def _registry(wid: str):
 
 
 def _prepared(case: dict) -> dict:
-    return {"op": case["op"], "workspace_id": WS["id"], "log": "workspace", "material": {"ticket": None}, "events": [case["event"]]}
+    return {
+        "op": case["op"],
+        "workspace_id": WS["id"],
+        "log": "workspace",
+        "material": {"ticket": None},
+        "events": [case["event"]],
+    }
 
 
 @pytest.mark.parametrize("case", DATA["cases"], ids=lambda c: c["op"])

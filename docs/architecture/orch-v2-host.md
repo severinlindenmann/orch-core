@@ -388,7 +388,11 @@ addition:
 - **Per-ticket reads** (`ticket.text`, `artifact.query`, `commit.list`, `diff {head, base}`) use exactly `ticket.get`'s
   visibility: a ticket the viewer may not see contributes nothing, and naming it is `not_found`.
 - **`workspace.settings`**: P and G get the durations, policies, `*_at` and every repo's name and `default_branch`; repo
-  `path` and `remote` only a person-class owner or maintainer (§0.8.5). N receives the three effective durations and four workspace default
+  `path` and `remote` only a person-class owner or maintainer (§0.8.5); the person at the keyboard in that role (column P)
+  also gets `check` per repo, `{state: present|missing|not_git|unreadable, branch}`, read from the folder and `.git/HEAD`
+  as plain files (no git process, no link followed). `settings.set` refuses a repo `path` that is not absolute and plain,
+  not an existing folder, not a git working copy, the home folder or inside the orch store (`invalid.input`, before
+  anything is signed). N receives the three effective durations and four workspace default
   gate policies as an explicit exception permitting these workspace-derived configuration values. Its `repos` contains
   only repositories named in `links.repos` of at least one ticket currently visible to the viewer, each with only
   `default_branch`; `path`, `remote`, `settings_at` and `policy_at` are absent. Filtering occurs before serialization and

@@ -463,6 +463,28 @@ class SettingsSet(Action):
         return self
 
 
+class ModelsSet(Action):
+    """`settings.set {set:{models}}` (Model routing): for each harness and Start agent mode, the model a start uses; a
+    mode that is not named uses the harness default; an empty table clears every choice (sent as `null`). Every name is
+    checked against core's closed per-harness list here, and again by the host. Signed with the typed word."""
+
+    action: Literal["models_set"]
+    models: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=2)
+
+    @model_validator(mode="after")
+    def closed(self):
+        from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
+
+        for harness, per in self.models.items():
+            if harness not in MODEL_CHOICES:
+                raise ValueError("models: an unknown agent")
+            for mode, name in per.items():
+                if mode not in ROUTE_MODES or name not in MODEL_CHOICES[harness]:
+                    raise ValueError("models: a mode or model that orch does not offer")
+        self.models = {h: dict(sorted(per.items())) for h, per in sorted(self.models.items()) if per}
+        return self
+
+
 class RepoSet(Action):
     """`settings.set {set:{repos:{name: {path, remote?, default_branch?}}}}`: add a repo or change one (Repos add-on).
     The host checks the path again (absolute, an existing git folder, not the home folder, not the orch store)."""
@@ -586,7 +608,7 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish"]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "model-routing"]
 
 
 class AddonGrant(Action):
@@ -688,6 +710,7 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
+    | ModelsSet
     | RepoSet
     | RepoRemove
     | PolicySet
@@ -833,6 +856,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case ModelsSet():
+            return "settings.set", {"set": {"models": action.models or None}}
         case PublishSetup():
             return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
         case PublishShare():
@@ -897,7 +922,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | RepoSet() | RepoRemove() | PublishSetup():
+        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():

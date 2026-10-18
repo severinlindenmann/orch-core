@@ -13,6 +13,7 @@ GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$")
 KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}-\d{1,9}$")
+MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}$")
 EXIT_FIELDS = "code signal at reason cleanup"
 
 
@@ -123,10 +124,13 @@ def agent_preview(data):
         if value is not None:
             shown[key] = value
     ticket, spec = data.get("ticket"), data.get("spec")
+    model, source = data.get("model"), data.get("model_source")
     return {
         "spec": spec if isinstance(spec, str) and re.fullmatch(r"[0-9a-f]{64}", spec) else None,
         "ticket": ticket if isinstance(ticket, str) and KEY.fullmatch(ticket) else None,
         "display": text(data.get("display")),
+        "model": model if isinstance(model, str) and MODEL_NAME.fullmatch(model) else None,
+        "model_source": source if source in ("chosen", "workspace", "default") else None,
         "display_hidden": isinstance(data.get("display"), str) and text(data.get("display")) is None,
         "cwd": shown,
         "cwd_path": text(data.get("cwd_path")),

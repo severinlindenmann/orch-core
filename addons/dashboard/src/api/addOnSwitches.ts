@@ -1,7 +1,7 @@
 // Settings > Add-ons (R2-2): what `GET /api/w/:ws/add-ons` answers. Words come from the server (the setup wizard's catalog).
 
 export interface AddOnRow {
-  /** The add-on's name: `start-agent`, `terminals`, `worktrees`, `publish`, or one that is always on (`dashboard`, `quick`). */
+  /** The add-on's name: `start-agent`, `terminals`, `worktrees`, `publish`, `model-routing`, or one that is always on (`dashboard`, `quick`). */
   id: string
   title: string
   /** The plain one-line description, the same words as the setup wizard. */

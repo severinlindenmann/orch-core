@@ -57,7 +57,7 @@ class AddonInfo:
 
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish"})
+OPTIONAL = frozenset({"publish", "model-routing"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -82,6 +82,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "publish": (
             "Publish",
             "Share files from a ticket with a link, on a server you choose. Nothing leaves this Mac until you sign.",
+            False,
+            False,
+        ),
+        "model-routing": (
+            "Model routing",
+            "Choose which AI model each kind of agent work starts on. You still see the model before every start.",
             False,
             False,
         ),

@@ -319,6 +319,48 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
     return True
 
 
+_MODE_WORDS = {
+    "work": "Do the work", "refine": "Write requirements and plan", "fix": "Fix what was sent back",
+    "continue": "Continue", "context": "Read and answer",
+}  # fmt: skip
+_HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
+
+
+def _model_word(name: str | None) -> str:
+    from orch.modelchoices import MODEL_LABELS
+
+    return "Harness default" if name is None else MODEL_LABELS[name]
+
+
+def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.models`` (Model routing): one row per harness and mode, the model in words, ``Harness
+    default`` where none is set. The new value replaces the whole table, so every mode of every harness is listed.
+    ``False`` (the generic row, every byte) when the value is not a plain table of the closed lists."""
+    from orch.modelchoices import MODEL_CHOICES
+
+    def plain(v: Any) -> bool:
+        return isinstance(v, Mapping) and all(
+            h in MODEL_CHOICES
+            and isinstance(per, Mapping)
+            and all(m in _MODE_WORDS and per[m] in MODEL_CHOICES[h] for m in per)
+            for h, per in v.items()
+        )
+
+    if value is not None and not plain(value):
+        return False
+    new = value or {}
+    old = before if plain(before) else {}
+    for harness, hword in _HARNESS_WORDS.items():
+        for mode, mword in _MODE_WORDS.items():
+            after = new.get(harness, {}).get(mode)
+            was = old.get(harness, {}).get(mode)
+            _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
+    out.setdefault("notes", []).append(
+        "Start agent uses these models for new agents. You still see the model before each start."
+    )
+    return True
+
+
 _LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
 _LINK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
@@ -726,6 +768,8 @@ def _event(
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
+                continue
+            if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours

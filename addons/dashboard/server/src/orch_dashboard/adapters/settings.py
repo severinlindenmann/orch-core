@@ -64,6 +64,24 @@ class Repo(BaseModel):
     check: RepoCheck | None = None
 
 
+def models_table(value) -> dict[str, dict[str, str]] | None:
+    """Model routing's signed table (`workspace.settings.models`), or an error: names only from core's closed lists."""
+    from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise bad()
+    out: dict[str, dict[str, str]] = {}
+    for harness, per in value.items():
+        if harness not in MODEL_CHOICES or not isinstance(per, dict):
+            raise bad()
+        if any(m not in ROUTE_MODES or n not in MODEL_CHOICES[harness] for m, n in per.items()):
+            raise bad()
+        out[harness] = dict(per)
+    return out
+
+
 class Settings(BaseModel):
     """`available: false` is a host without `settings/1`: every other field is then unknown (None)."""
 
@@ -75,6 +93,8 @@ class Settings(BaseModel):
     sign_methods: list[str] | None = None
     #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
     sign_methods_known: bool = Field(default=False, exclude=True)
+    #: Model routing: harness -> mode -> model (the signed table); null when none is set or the host says nothing
+    models: dict[str, dict[str, str]] | None = None
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
@@ -206,6 +226,7 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
             **out,
             sign_methods=methods,
             sign_methods_known="sign_methods" in first,
+            models=models_table(first.get("models")),
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

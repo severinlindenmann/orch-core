@@ -26,6 +26,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { queries } from '@/api/queries'
+import { hasFeature } from '@/api/features'
+import { modelLabel, routingQueries, STRONG_MODELS } from '@/api/modelRouting'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
 import { fmtDateTime, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
@@ -48,7 +50,6 @@ export const MODE_LABEL: Record<AgentMode, string> = {
   context: 'Read and answer questions',
 }
 
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:[\]/-]{0,63}$/
 const DEPOSIT_POLLS = 5
 const DEPOSIT_POLL_MS = 2000
 
@@ -97,6 +98,13 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   const [busy, setBusy] = useState(false)
   const asked = useRef(0)
   const runner = useQuery({ ...runnerQuery(ws) })
+  // Model routing: the closed list of models for this agent (from core); the choice is a name of that list, never free text.
+  const routing = hasFeature('model_routing', ws)
+  const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
+  const models = choices.data?.harnesses.find((h) => h.id === harness)?.models ?? []
+  const failing = useQuery({ ...queries.ticket(ws, ticket ?? ''), enabled: routing && !!ticket })
+  const strong = (STRONG_MODELS[harness] ?? []).find((id) => models.some((m) => m.id === id))
+  const checkFailing = !!failing.data?.tasks_state?.some((t) => t.state !== 'done' && t.state !== 'skipped' && t.receipt !== null && t.receipt.exit !== 0)
 
   const preview = useCallback(async (args: AgentArgs) => {
     const n = ++asked.current
@@ -114,7 +122,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void preview(form) }, [])
 
-  const badModel = (model && !MODEL.test(model)) || (subagent && harness === 'claude-code' && !MODEL.test(subagent))
+  const badModel = (model && !models.some((m) => m.id === model)) || (subagent && harness === 'claude-code' && !models.some((m) => m.id === subagent))
   const badLabel = label.length > 40
   const stale = !shown || !same(shown.args, form)
   const data = shown?.data
@@ -154,7 +162,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       </DialogHeader>
       <form className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 text-xs" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
         <Label htmlFor="agent-harness" className="text-xs text-text-muted">Agent</Label>
-        <select id="agent-harness" className="h-7 rounded border border-border bg-bg px-2" value={harness} onChange={(e) => setHarness(e.target.value as Harness)}>
+        <select id="agent-harness" className="h-7 rounded border border-border bg-bg px-2" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
           {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
         <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
@@ -163,17 +171,32 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         </select>
         <span />
         <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
-        <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
-        <Input id="agent-model" className="h-7 text-xs" placeholder="the agent's default" value={model} autoComplete="off" spellCheck={false} onChange={(e) => setModel(e.target.value)} />
-        {harness === 'claude-code' && (<>
+        {models.length > 0 && (<>
+          <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
+          <select id="agent-model" className="h-7 rounded border border-border bg-bg px-2" value={model} onChange={(e) => setModel(e.target.value)}>
+            <option value="">As set for this kind of work</option>
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          {strong && checkFailing && model !== strong && (<>
+            <span />
+            <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
+              A check on this ticket is failing. A stronger model may do better.{' '}
+              <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
+            </p>
+          </>)}
+        </>)}
+        {harness === 'claude-code' && models.length > 0 && (<>
           <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Subagent model</Label>
-          <Input id="agent-subagent" className="h-7 text-xs" placeholder="the agent's default" value={subagent} autoComplete="off" spellCheck={false} onChange={(e) => setSubagent(e.target.value)} />
+          <select id="agent-subagent" className="h-7 rounded border border-border bg-bg px-2" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
+            <option value="">the agent's default</option>
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
         </>)}
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
         <Input id="agent-label" className="h-7 text-xs" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
         <span className="text-text-muted">Worktree</span>
         <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Work in the ticket's own worktree when it has a branch</label>
-        {badModel && <p role="alert" className="col-span-2 text-danger">A model is a name of letters, digits and . _ : / - (no spaces, not starting with -).</p>}
+        {badModel && <p role="alert" className="col-span-2 text-danger">Choose a model from the list.</p>}
         {stale && shown && <p className="col-span-2 text-text-muted" data-testid="agent-stale">The choices changed: preview again before you start.</p>}
         <div className="col-span-2 flex justify-end">
           <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Previewing…' : 'Preview'}</Button>
@@ -181,7 +204,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       </form>
 
       {loading && !data && <Skeleton className="h-24" />}
-      {data && <PreviewLines data={data} ticket={ticket} />}
+      {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={harness} />}
       {note && <p role="status" className="text-xs text-warning" data-testid="agent-changed">{note}</p>}
       {data?.blocked && !noGrant && (
         <div role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger" data-testid="agent-blocked">
@@ -204,11 +227,16 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
 }
 
 /** The host's preview, shown exactly: what runs, where (and whether a worktree is created first), env names, grant. */
-function PreviewLines({ data, ticket }: { data: AgentPreview; ticket?: string }) {
+function PreviewLines({ ws, data, ticket, harness }: { ws: string; data: AgentPreview; ticket?: string; harness: Harness }) {
   const where = data.cwd_path !== null ? data.cwd_path : null
+  const choices = useQuery({ ...routingQueries.choices(ws), enabled: hasFeature('model_routing', ws) })
   const creates = data.will_create_worktree && data.cwd.kind === 'worktree' && where !== null
   return (
     <div className="space-y-2 text-xs" data-testid="agent-preview">
+      <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        <dt className="text-text-muted">Model</dt>
+        <dd data-testid="agent-model-line">{modelLabel(choices.data, harness, data.model)}{data.model_source === 'workspace' ? ' (set for this kind of work in Settings)' : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
+      </dl>
       {data.grant && (
         <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
           <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>

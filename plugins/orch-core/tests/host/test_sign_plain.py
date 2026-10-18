@@ -1015,3 +1015,114 @@ def test_f8_two_different_accesses_with_one_short_form_are_refused_in_the_plain_
     assert old["grant"][-10:] == new["grant"][-10:] and old["grant"] != new["grant"]
     with pytest.raises(signcontent.PlainUnavailable):
         build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+
+
+# --- V4: the plain lead of a share approval and of an Extend (WYSIWYS: a summary never replaces the signed text) ----------
+
+
+def _share_text(kind="secret", views=0, days=7, names=("report.md", "data.csv")):
+    from orch.publishclient import approval
+
+    files = [{"name": n, "size": 1200 + i, "sha256": f"{i + 1:x}" * 64} for i, n in enumerate(names)]
+    return approval.approval_text(
+        staged_id="ps_" + "a" * 32,
+        ticket_key="DEMO-0001",
+        origin="person",
+        kind=kind,
+        days=days,
+        views=views,
+        files=files,
+        server="https://pub.example.com",
+        share="https://share.example.com",
+        manifest="sha256:" + "ab" * 32,
+    )
+
+
+def _share_build(text, op="publish.share"):
+    ev = {**sample("log.added"), "text": text}
+    return build({"op": op, "events": [ev], "material": material_for("log.added", ev)})
+
+
+def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_text():
+    text = _share_text()
+    c = _share_build(text)
+    lines = c["summary"]["lines"]
+    assert c["summary"]["title"] == "Share these files"
+    joined = "\n".join(lines)
+    for needle in ("report.md", "data.csv", "https://pub.example.com", "https://share.example.com", "7 days"):
+        assert needle in joined
+    assert "Anyone who has the link can open the files." in joined
+    assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text  # the exact signed text is still there
+
+
+def test_v4_a_limited_view_link_says_how_many_views():
+    c = _share_build(_share_text(kind="once", views=3, days=1))
+    joined = "\n".join(c["summary"]["lines"])
+    assert "at most 3 times" in joined and "1 day " in joined
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda t: t.replace("Works for: 7 days", "Works for: 7 weeks"),
+        lambda t: t + "\nExtra: line",
+        lambda t: t.replace("Prepared by: you", "Prepared by: someone"),
+        lambda t: t.replace("- report.md  (", "- report.md\nx  ("),
+        lambda t: t.replace("Files (2,", "Files (3,"),
+        lambda t: t.replace("The files are sent to: https://pub.example.com", "The files are sent to: a b"),
+    ],
+)
+def test_v4_an_odd_share_text_gets_no_summary_but_still_the_whole_text(mutate):
+    text = mutate(_share_text())
+    c = _share_build(text)
+    assert "summary" not in c
+    assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text
+
+
+def _extend(**over):
+    new = {
+        **sample("grant.issued"),
+        "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA",
+        "label": "runner",
+        "scope": "workable",
+        "verbs": "agent",
+        "hours": 72,
+        **over,
+    }
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    return build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+
+
+def test_v4_an_extend_is_titled_and_says_running_agents_stop():
+    c = _extend(expires_at="2026-10-21T12:00:00Z")
+    assert c["headline"].startswith("Extend agent access: ") and c["summary"]["title"] == "Extend agent access"
+    joined = "\n".join(c["summary"]["lines"])
+    assert (
+        "Running agents will stop." in joined
+        and "per host, not signed" in joined
+        and "3 days" in joined
+        and "ends " in joined
+        and "gr_…" in joined
+    )
+    assert any(r["field"] == "access taken back" for r in c["fields_changed"])  # the exact rows stay
+
+
+def test_v4_an_extend_with_other_scope_verbs_or_label_keeps_the_generic_review():
+    for over in ({"scope": "all"}, {"verbs": "all"}, {"label": "other"}, {"hours": "x"}):
+        c = _extend(**over)
+        assert "summary" not in c and not c["headline"].startswith("Extend agent access"), over
+
+
+def test_v4_only_one_share_event_of_the_share_op_is_summarised():
+    one_text = _share_text()
+    other = _share_text(names=("other.txt",))
+    ev1, ev2 = ({**sample("log.added"), "text": t} for t in (one_text, other))
+    two = build({"op": "publish.share", "events": [ev1, ev2], "material": material_for("log.added", ev1)})
+    assert "summary" not in two  # the first share's files are never hidden behind the second's summary
+    assert "summary" not in _share_build(one_text, op="log.add")  # not the share op: the text alone
+
+
+def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
+    c = _extend(expires_at="2026-10-21T12:00:00Z")
+    first = signcontent.text(c, signer._clean)[0]
+    assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first

@@ -190,3 +190,42 @@ it.each(['\u3164', '\u115F', '\uFFA0'])('a name with the invisible Hangul filler
   withMembers([{ person: SEV, name: `Sev${filler}erin` }], [{ field: 'owner', before: null, after: SEV }])
   expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')
 })
+
+const SHARE_TEXT = [
+  'Publish approval: share files outside this computer', 'Ticket: DEMO-0001', 'Prepared by: you',
+  'Link: a secret link: anyone who has the link can open the files', 'Works for: 7 days from the moment the link is made',
+  'The files are sent to: https://pub.example.com', 'The link opens at: https://share.example.com', 'Files (1, 1.2 KB):',
+  '- report.md  (1.2 KB, sha256 0123456789abcdef)', 'Staged copy: ps_' + 'a'.repeat(32), 'Manifest: sha256:' + 'ab'.repeat(32),
+].join('\n')
+
+it('leads with the plain summary and still shows every signed line in full, labelled', () => {
+  render(<SignContent content={{
+    headline: 'Share files of DEMO-0001',
+    summary: { title: 'Share these files', lines: ['Files: 1 (1.2 KB): report.md', 'The link works for 7 days from the moment it is made.'] },
+    sections: [{ id: 'share', title: 'What will be shared', text: SHARE_TEXT }],
+  }} />)
+  const summary = screen.getByTestId('sign-summary')
+  expect(within(summary).getByRole('heading', { name: 'Share these files' })).toBeVisible()
+  expect(within(summary).getByText('The link works for 7 days from the moment it is made.')).toBeVisible()
+  const exact = screen.getByTestId('sign-exact')
+  expect(exact).toHaveAttribute('open')
+  expect(within(exact).getByText('Exact signed details')).toBeVisible()
+  // every signed line, untruncated, inside the exact area
+  expect(exact).toBeVisible()
+  for (const line of SHARE_TEXT.split('\n')) expect(exact.textContent).toContain(line)
+  expect(summary.compareDocumentPosition(exact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('without a summary (an odd or unknown value) shows the signed text alone, as before', () => {
+  const odd = SHARE_TEXT.replace('7 days', '7 weeks')
+  render(<SignContent content={{ headline: 'Share files', sections: [{ id: 'share', title: 'What will be shared', text: odd }] }} />)
+  expect(screen.queryByTestId('sign-summary')).toBeNull()
+  expect(screen.queryByTestId('sign-exact')).toBeNull()
+  expect(screen.getByText('Works for: 7 weeks from the moment the link is made')).toBeVisible()
+})
+
+it('shows hidden characters in a summary line and keeps prose notes out of monospace', () => {
+  render(<SignContent content={{ headline: 'x', summary: { title: 'Extend agent access', lines: ['name‮cod.exe'] }, notes: ['Running agents will stop.'] }} />)
+  expect(screen.getByTestId('sign-summary')).toHaveTextContent('name\\u{202e}cod.exe')
+  expect(screen.getByText('Running agents will stop.')).not.toHaveClass('font-mono')
+})

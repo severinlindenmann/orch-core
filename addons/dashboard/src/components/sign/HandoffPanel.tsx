@@ -205,6 +205,10 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
   const remaining = useRemaining(request.expires_at)
   const { material } = request
   const word = material.ticket ? (sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)) : workspaceConfirmWord(request, workspace)
+  // Core's own prompt `[r] hand to the orch runner` follows the signature of a runner grant (the access is the signed
+  // `label`); an Extend also takes back the access it replaces. Both are read from the SIGNED events, never from a host word.
+  const runnerGrant = request.events.some(e => e.type === 'grant.issued' && e.label === 'runner')
+  const extending = runnerGrant && request.events.some(e => e.type === 'grant.revoked' && e.reason === 'extended')
   const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">
@@ -212,8 +216,21 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
       <p className="text-[13px] text-text">
         Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
       </p>
-      {request.code ? <CommandLine code={request.code} /> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
-      <p className="text-[11px] text-text-muted">The terminal shows the same code: <code data-testid="handoff-fingerprint">{request.fingerprint}</code></p>
+      {runnerGrant && (
+        <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
+          {extending && <p className="font-medium">Running agents will stop.</p>}
+          <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in Terminal to give the new access to this Mac’s agent runner.</p>
+          <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this Mac that starts agents for you.</p>
+        </div>
+      )}
+      {request.code ? <>
+        <p className="text-[13px] font-medium text-text">Copy this command into Terminal</p>
+        <CommandLine code={request.code} />
+      </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
+      <p className="text-[12px] text-text-muted">
+        Verification fingerprint: <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code>.
+        {' '}Check that this matches the fingerprint in your terminal.
+      </p>
       {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
       {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
       {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
@@ -221,12 +238,12 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
       <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
       <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[13px]">
-        <dt className="text-text-muted">Fingerprint</dt>
+        <dt className="text-text-muted">Verification fingerprint</dt>
         <dd>
           <code className="font-mono text-[14px] text-text">
             {request.fingerprint}
           </code>
-          <span className="block text-[12px] text-text-muted">Check the same fingerprint in your terminal.</span>
+          <span className="block text-[12px] text-text-muted">The first 12 hex digits of a fingerprint of the request (a hash over the operation, its review and its events). Your terminal shows the same value on its “fingerprint:” line.</span>
         </dd>
         {request.gate_hash && (
           <>

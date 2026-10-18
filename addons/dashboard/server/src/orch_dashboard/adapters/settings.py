@@ -176,7 +176,7 @@ def repo(name, entry) -> Repo:
         ):
             raise bad()
         check = RepoCheck(state=check["state"], branch=got)
-    linking = entry.get("tickets")
+    linking = entry.get("linked_by")
     if linking is not None:
         if not (isinstance(linking, list) and len(linking) <= 12 and all(isinstance(k, str) and TICKET_KEY.fullmatch(k) for k in linking)):
             raise bad()

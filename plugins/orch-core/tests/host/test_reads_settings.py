@@ -155,7 +155,7 @@ def test_an_owner_is_told_which_visible_tickets_link_a_repo(w):
     c = w.client()
     link(w, c, key, "proj")
     got = ok(c.req("workspace.settings"))["settings"]["repos"]
-    assert got["proj"]["tickets"] == [key] and "tickets" not in got["bare"]
+    assert got["proj"]["linked_by"] == [key] and "linked_by" not in got["bare"]
 
 
 def test_a_member_gets_only_the_name_and_default_branch(wq):

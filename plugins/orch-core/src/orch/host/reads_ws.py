@@ -498,7 +498,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
             # the person at the keyboard (an owner or maintainer): is the folder there, and which branch (read-only)
             page[name]["check"] = repopaths.observe(ctx.store.layout, raw["path"])
         if keys_of.get(name):
-            page[name]["tickets"] = keys_of[name]
+            page[name]["linked_by"] = keys_of[name]
     if nxt is not None and snap is None:  # a snapshot only when a later page can follow
         snap = ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, viewer.person, data)
     out: dict[str, Any] = {

@@ -334,3 +334,15 @@ def test_the_typed_word_of_a_workspace_event_is_the_name_it_signs(monkeypatch):
     with pytest.raises(OrchError) as e:
         h.run({"type": "member.removed", "person": "p_x"}, "workspace", "x", review=["r"])
     assert e.value.code == "invalid.input" and asked == ["echo"]
+
+
+def test_a_builtin_addon_never_installed_is_put_in_place_by_its_grant(hws, me):
+    """Turning on terminals from the dashboard after setup left them off: no package on disk yet, the grant installs
+    the shipped manifest and signs its digest."""
+    assert not (hws.root / "addons" / "terminals").exists()
+    r = me("addon", "grant", "terminals")
+    assert r.code == 0, r.err
+    e = ws_events(hws, "addon.granted")[-1]
+    assert e["name"] == "terminals"
+    assert e["package_sha256"] == read_package(hws.root / "addons" / "terminals").digest
+    assert me("addon", "grant", "nonexistent").code != 0

@@ -12,6 +12,21 @@ from orch.ops.errors import OrchError
 from orch.ops.human import Human
 
 
+def _install_builtin(root: Any, name: str) -> None:
+    """An add-on that ships inside orch-core and was never installed here (left off at setup, now turned on from the
+    dashboard): put its own manifest in place, the same bytes setup writes. Only a missing package is filled in, never
+    one that exists; the signed grant covers the digest of what was written, so the person signs exactly this package.
+    Any problem leaves the package missing (the usual not_found follows)."""
+    from orch.addons import builtin
+
+    if name not in builtin.NAMES:
+        return
+    try:
+        builtin.write_manifest(str(root), name, builtin.manifest_bytes(name))
+    except (OSError, ValueError):
+        pass
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The grant is built from the package bytes read once (ticket-format 8.1): exactly the manifest's capabilities and
     its declared fields, sections and artifact kinds. The owner reads a summary on the terminal and types the addon's
@@ -26,6 +41,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         directory = install.package_dir(root, name)
     except PackageError as e:
         raise OrchError("invalid.input", str(e)) from None
+    if not Path(directory).exists():
+        _install_builtin(root, name)
     if not Path(directory).is_dir():
         raise OrchError("not_found", f"no package at addons/{name}", hint=f"put the addon in addons/{name}/")
     try:

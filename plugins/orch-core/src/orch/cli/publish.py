@@ -5,7 +5,7 @@
     orch publish prepare REF FILE... [--once [N]] [--days D]   copy artifacts of a ticket aside; nothing leaves
     orch publish share   STAGED                                a person: sign, then send; the link shows once
     orch publish send    STAGED                                a person: send a copy that is already signed
-    orch publish revoke  SHARE                                 a person: the link stops working at once
+    orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
     orch publish list    [REF] [--live]                        staged copies and shares (never a link)
     orch publish discard STAGED                                drop a staged copy
 
@@ -57,6 +57,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--once", nargs="?", const=1, type=int, default=None)
     p.add_argument("--days", type=int, default=7)
     p.add_argument("--live", action="store_true")
+    p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
     return p
@@ -95,6 +96,32 @@ def _tty_ok() -> bool:
         return False
     try:
         return os.isatty(fd)
+    finally:
+        os.close(fd)
+
+
+def _confirm(prompt: str, word: str) -> bool:
+    """Ask on the person's own terminal (``/dev/tty``) and go on only if they type ``word``; no terminal is a plain
+    refusal that names ``--yes``. Tests replace this."""
+    from orch.ops.caps import open_tty
+
+    try:
+        fd = open_tty(os.O_RDWR)
+    except OSError:
+        raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5) from None
+    try:
+        if not os.isatty(fd):
+            raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5)
+        os.write(fd, prompt.encode())
+        line = bytearray()
+        while True:
+            c = os.read(fd, 1)
+            if not c or c == b"\n":
+                break
+            line += c
+        return bytes(line).strip().decode("utf-8", "replace") == word
+    except (KeyboardInterrupt, OSError):
+        return False
     finally:
         os.close(fd)
 
@@ -307,6 +334,10 @@ def main(
                     raise
             return _send(target, staged, env, out, as_json)
         if a.cmd == "revoke":
+            if not a.yes and not _confirm(
+                f"Revoke share {a.rest[0]}? Its link stops working at once. Type revoke: ", "revoke"
+            ):
+                raise PubError("invalid.input", "not confirmed: nothing was revoked", 5)
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")
             return 0

@@ -929,3 +929,34 @@ def test_f7_a_question_with_the_same_option_key_twice_falls_back():
     q["material"]["question"]["options"].append({"key": "hello", "label": "Other"})
     with pytest.raises(signcontent.PlainUnavailable):
         build(q)
+
+
+def _stop(grant: str, reason: str | None = None) -> dict:
+    ev = {"type": "grant.revoked", "actor": sample("grant.issued")["actor"], "grant": grant}
+    return {**ev, "reason": reason} if reason else ev
+
+
+def test_f8_a_stop_names_the_access_by_its_first_and_last_characters():
+    gid = "gr_01M57ABCDEFGHJKMNPQRZMPS4"
+    ev = _stop(gid)
+    c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
+    assert c["headline"] == "Take back the agent access gr_01M5…ZMPS4"
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["access taken back"] == "gr_01M5…ZMPS4"
+    assert gid not in "\n".join(signcontent.text(c, signer._clean)) + c["headline"]  # the full id is in the details
+
+
+def test_f8_an_extend_shows_both_accesses_and_refuses_the_plain_view_for_the_same_id():
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA"}
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    c = build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["new access"] == "gr_0NEW…AAAAA" and rows["access taken back"] == "gr_0OLD…BBBBB"
+    same = _stop(new["grant"], "extended")
+    with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
+        build({"op": "grant", "events": [new, same], "material": material_for("grant.issued", new)})
+
+
+def test_f8_a_stop_without_a_usable_id_shows_the_value_as_it_is():
+    ev = _stop("x")
+    c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
+    assert c["headline"] == "Take back the agent access x"

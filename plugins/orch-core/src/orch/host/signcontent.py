@@ -189,6 +189,13 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
+def _grant_short(value: Any) -> str:
+    """A grant id by its first and last characters (``gr_01M5…ZMPS4``): enough to tell two grants apart on the screen;
+    the full id is in the technical details."""
+    text = _s(value)
+    return f"{text[:7]}…{text[-5:]}" if len(text) > 14 else text
+
+
 def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
     row: dict[str, Any] = {"field": one(field), "before": _show(before), "after": _show(after)}
     if note and before is not None:
@@ -618,6 +625,13 @@ def _payload(
             raise PlainUnavailable(f"the plain view does not know the event type {typ}")
         _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
         heads.append(_event(typ, ev, ref, out, before, texts, ctx))
+    issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
+    revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
+    if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
+        if set(issued) & set(revoked):
+            raise PlainUnavailable("the access to be taken back is the one being given")
+        for new in issued:
+            _row(out, "new access", _grant_short(new))
     uniq = list(dict.fromkeys(heads))
     if len(uniq) == 1:
         out["headline"] = uniq[0]
@@ -667,12 +681,13 @@ def _event(
     if typ == "grant.issued":
         return _grant_issued(ev, out)
     if typ == "grant.revoked":
-        out.setdefault("notes", []).append("The access id is in the technical details.")
+        _row(out, "access taken back", _grant_short(ev.get("grant")))
+        out.setdefault("notes", []).append("The full access id is in the technical details.")
         if ev.get("reason") == "extended":  # B8: the old half of an Extend
             out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
-        return "Take back the access you gave to agents working for you"
+        return f"Take back the agent access {_grant_short(ev.get('grant'))}"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):

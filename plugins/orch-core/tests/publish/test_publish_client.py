@@ -478,5 +478,73 @@ def test_signer_refusal_text_has_no_input():
 
 
 def test_share_target_encodes_each_part():
-    t = share_target(WS, "shares", "id", "files", "a b/c?d#e")
-    assert t == f"/v1/ws/{WS}/shares/id/files/a%20b%2Fc%3Fd%23e"
+    t = share_target(WS, "shares", "id", "files", "a b?d#e")
+    assert t == f"/v1/ws/{WS}/shares/id/files/a%20b%3Fd%23e"
+
+
+# --- path normalisation: one form only (scan finding, 18 Oct) ---------------------------------------------------------
+
+BAD_SEGMENTS = [
+    "", ".", "..", "%2e", "%2E", "%2e%2e", "%2E%2E", ".%2e", "%2e.", "%252e", "%252e%252e", "%25252e", "%2f", "%2F",
+    "a%2fb", "a%2Fb", "%252f", "%255c", "%5c", "a%5Cb", "%00", "a%", "%zz", "%2",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("seg", BAD_SEGMENTS)
+def test_signer_refuses_dot_empty_and_encoded_separator_segments(seg):
+    s, _ = mk()
+    for t in (
+        f"/v1/ws/{WS}/shares/{seg}/x",
+        f"/v1/ws/{WS}/shares/{seg}",
+        f"/v1/ws/{WS}/{seg}",
+        f"/v1/ws/{WS}/shares/ok/files/{seg}?x=1",
+    ):
+        with pytest.raises(SignerRefused):
+            s.request("GET", t)
+
+
+@pytest.mark.parametrize("t", ["//", "/x//y", "/./x", "/x/./y", "/x/../y", "/x/", "/x/.", "/x/.."])
+def test_signer_refuses_unnormalised_paths(t):
+    s, _ = mk()
+    with pytest.raises(SignerRefused):
+        s.request("GET", f"/v1/ws/{WS}" + t)
+
+
+def test_signer_refuses_dot_segments_before_the_workspace_too():
+    s, _ = mk()
+    for t in (f"/v1/ws/../ws/{WS}/x", f"/v1//ws/{WS}/x", f"/v1/ws/{WS}//x"):
+        with pytest.raises(SignerRefused):
+            s.request("GET", t)
+
+
+def test_signer_accepts_plain_and_encoded_names_and_query_dots():
+    s, _ = mk()
+    for t in (
+        f"/v1/ws/{WS}/shares",
+        f"/v1/ws/{WS}/shares/abc/files/a%20b.txt",
+        f"/v1/ws/{WS}/shares/abc/files/.hidden",
+        f"/v1/ws/{WS}/shares/abc/files/a..b",
+        f"/v1/ws/{WS}/shares/abc/files/%C3%A9.txt",
+        f"/v1/ws/{WS}/shares?path=../x&q=%2e%2e%2f",  # the query is a value, not a path
+        f"/v1/ws/{WS}/shares?",
+    ):
+        s.request("GET", t)
+
+
+@pytest.mark.parametrize("part", ["", ".", "..", "a/b", "a\\b", "a\x00b", "/", None, 5])
+def test_share_target_refuses_bad_parts_before_quoting(part):
+    with pytest.raises(PublishError) as e:
+        share_target(WS, "shares", part)
+    assert e.value.code == "bad_path" and not e.value.sent
+
+
+def test_share_target_output_always_passes_the_signer():
+    s, _ = mk()
+    for p in ("a b", "é", "a..b", ".hidden", "50%", "x?y", "x#y", "%2e"):
+        s.request("GET", share_target(WS, "shares", "id", "files", p))
+
+
+def test_a_name_that_decodes_to_a_separator_is_refused_even_when_quoted():
+    # the literal name "a%2fb" is quoted to a%252fb, which one more decode turns into a/b: refused on purpose
+    with pytest.raises(SignerRefused):
+        mk()[0].request("GET", share_target(WS, "shares", "a%2fb"))

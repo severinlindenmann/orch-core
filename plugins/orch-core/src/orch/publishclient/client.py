@@ -104,7 +104,12 @@ class Transport:
 
 def share_target(workspace_id: str, *parts: str) -> str:
     """``/v1/ws/<ws>/<part>/<part>...`` with every part percent-encoded (a file path inside a share is one or more
-    parts: pass them split on ``/``). Nothing here decodes or normalises."""
+    parts: pass them split on ``/``). A part is a plain name: empty, ``.``, ``..`` and any part holding ``/``, ``\\`` or
+    NUL are refused **before** quoting (``quote`` leaves dots alone), so the target is always already normalised.
+    Nothing here decodes or normalises."""
+    for p in parts:
+        if type(p) is not str or p in ("", ".", "..") or any(c in p for c in "/\\\x00"):
+            raise PublishError("bad_path", method="", sent=False)
     return "/v1/ws/" + workspace_id + "/" + "/".join(quote(p, safe="") for p in parts)
 
 

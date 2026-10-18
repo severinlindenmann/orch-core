@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import collections
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -87,13 +88,38 @@ def publish_signed_bytes(
     )
 
 
+_PCT = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def _segment_ok(seg: str) -> bool:
+    """A path segment is a name: not empty, not ``.``/``..``, no separator or NUL, in any of up to three layers of
+    percent-decoding (``%2e%2e``, ``%252e``, ``%2f``): a server, proxy or filesystem that decodes once more must see
+    the same name we signed. The raw segment must be valid percent-encoding; a later layer that is not (``50%25`` is
+    the name ``50%``) simply ends the walk."""
+    cur = seg
+    for layer in range(4):
+        if cur in ("", ".", "..") or any(c in cur for c in "/\\\x00"):
+            return False
+        if "%" not in cur:
+            return True
+        if cur.count("%") != len(_PCT.findall(cur)):
+            return layer > 0  # a stray ``%`` is invalid encoding in the raw segment, an ordinary name afterwards
+        cur = _PCT.sub(lambda m: chr(int(m.group()[1:], 16)), cur)
+    return False  # more layers than anything legitimate uses
+
+
 def _target_ok(target: object, workspace_hex: str) -> str:
     if type(target) is not str or not target.isascii() or not 1 <= len(target) <= TARGET_MAX:
         raise SignerRefused("target")
     if any(not 0x21 <= ord(c) <= 0x7E for c in target) or "#" in target or "\\" in target:
         raise SignerRefused("target characters")
-    if not target.startswith(f"/v1/ws/{workspace_hex}/"):
+    prefix = f"/v1/ws/{workspace_hex}/"
+    if not target.startswith(prefix):
         raise SignerRefused("target is outside this workspace's routes")
+    path = target.split("?", 1)[0]
+    # every segment after the workspace is a plain name: the path is already in the form no one needs to normalise
+    if not all(_segment_ok(seg) for seg in path[len(prefix) :].split("/")):
+        raise SignerRefused("target has an empty, dot or encoded-separator segment")
     return target
 
 

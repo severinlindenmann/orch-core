@@ -74,7 +74,7 @@ describe('the ticket page edit', () => {
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    await user.click(await screen.findByRole('button', { name: 'Edit text, checks and people' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
     expect(within(dialog).getByRole('button', { name: 'Review and sign' })).toBeInTheDocument()
     await user.type(within(dialog).getByLabelText('New acceptance criterion'), 'A header row is exported')
@@ -88,7 +88,7 @@ describe('the ticket page edit', () => {
   })
   it('says so when nothing changed', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
-    await user.click(await screen.findByRole('button', { name: 'Edit text, checks and people' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
     await user.click(within(dialog).getByRole('button', { name: 'Review and sign' }))
     expect(await within(dialog).findByText('Nothing has changed yet.')).toBeInTheDocument()
@@ -96,11 +96,11 @@ describe('the ticket page edit', () => {
   })
   it('K10: Cancel asks before discarding changes, and closes at once when nothing changed', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
-    await user.click(await screen.findByRole('button', { name: 'Edit text, checks and people' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
     let dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit DEMO-0043' })).toBeNull(), T)
-    await user.click(await screen.findByRole('button', { name: 'Edit text, checks and people' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
     dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
     await user.type(within(dialog).getByLabelText('New acceptance criterion'), 'Something')
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
@@ -111,5 +111,70 @@ describe('the ticket page edit', () => {
     await user.click(within(screen.getByRole('dialog', { name: 'Edit DEMO-0043' })).getByRole('button', { name: 'Cancel' }))
     await user.click(within(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' }, T)).getByRole('button', { name: 'Discard changes' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit DEMO-0043' })).toBeNull(), T)
+  })
+})
+
+describe('buildEdit: repositories (F6)', () => {
+  const linked = { ...ticket, links: { repos: ['api'], branches: { api: 'feat/old' } } }
+  const wantLinks = (repos: string[], branches: Record<string, string>) => ({ ...none, links: { repos, branches } })
+  it('is nothing when the links are as they were (an empty branch means none)', () => {
+    expect(buildEdit(linked, wantLinks(['api'], { api: 'feat/old' }), true)).toEqual({ nothing: true })
+    expect(buildEdit(ticket, wantLinks([], {}), true)).toEqual({ nothing: true })
+    expect(buildEdit(ticket, none, true)).toEqual({ nothing: true }) // links never touched
+  })
+  it('links a repository with a branch as one change, and unlinking drops its branch', () => {
+    expect(buildEdit(ticket, wantLinks(['web', 'api'], { web: ' feat/demo-0001 ', api: '' }), true)).toEqual({
+      steps: 1,
+      action: { action: 'edit_sequence', key: 'DEMO-0001', head_seq: 7, links: { repos: ['api', 'web'], branches: { web: 'feat/demo-0001' } } },
+    })
+    expect(buildEdit(linked, wantLinks([], {}), true)).toMatchObject({ action: { links: { repos: [], branches: {} } } })
+    expect(buildEdit(linked, wantLinks(['api'], { api: 'feat/new' }), true)).toMatchObject({ action: { links: { repos: ['api'], branches: { api: 'feat/new' } } } })
+  })
+  it('counts the links as one of the changes of the review', () => {
+    expect(buildEdit(ticket, { ...wantLinks(['api'], {}), added: ['One more'] }, true)).toMatchObject({ steps: 2 })
+  })
+  it('tells a bad branch name in words, naming the repository', () => {
+    for (const bad of ['has space', '-x', 'a..b', 'x/', '/x', 'HEAD', 'refs/heads/x', 'a.lock', 'a~b', 'x@{y}']) {
+      expect(buildEdit(ticket, wantLinks(['api'], { api: bad }), true), bad).toMatchObject({ problem: expect.stringContaining('Branch for api:') })
+    }
+    expect(buildEdit(ticket, wantLinks(['api'], { api: 'feature/ok-1.2' }), true)).toHaveProperty('action')
+  })
+})
+
+describe('the repositories control in the edit dialog', () => {
+  it('links a repository from the workspace list with the suggested branch, in the ONE review', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+    const region = within(dialog).getByTestId('edit-repositories')
+    const picker = await within(region).findByLabelText('Repository to link', undefined, T)
+    const name = (picker as HTMLSelectElement).value
+    expect(name).not.toBe('')
+    await user.click(within(region).getByRole('button', { name: 'Link repository' }))
+    const branch = within(region).getByLabelText(`Branch in ${name}`) as HTMLInputElement
+    expect(branch.value).toBe('feat/demo-0043')
+    await user.clear(branch)
+    await user.type(branch, 'feat/shiny')
+    await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
+    expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043', links: { repos: expect.arrayContaining([name]), branches: { [name]: 'feat/shiny' } } })
+  })
+  it('refuses a bad branch name before anything is sent, and unlinking removes the row', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+    const region = within(dialog).getByTestId('edit-repositories')
+    await within(region).findByLabelText('Repository to link', undefined, T)
+    await user.click(within(region).getByRole('button', { name: 'Link repository' }))
+    const branch = within(region).getAllByLabelText(/^Branch in /)[0]
+    await user.clear(branch)
+    await user.type(branch, 'has space')
+    expect(await within(region).findByRole('alert')).toHaveTextContent('cannot contain spaces')
+    await user.click(within(dialog).getByRole('button', { name: /^Review and sign/ }))
+    expect(await within(dialog).findByText(/Branch for .*cannot contain spaces/)).toBeInTheDocument()
+    expect(screen.queryByTestId('sent-action')).toBeNull()
+    const before = within(region).getAllByLabelText(/^Branch in /).length
+    await user.click(within(region).getAllByRole('button', { name: /^Unlink / })[0])
+    expect(within(region).queryAllByLabelText(/^Branch in /)).toHaveLength(before - 1)
   })
 })

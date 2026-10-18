@@ -61,7 +61,8 @@ function Root() {
 }
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Root,
-  loader: ({ context }) => loadShell(context),
+  // The checklist opens before any workspace exists: it asks the host for nothing (no 503s in the console).
+  loader: ({ context, location }) => (location.pathname === CHECKLIST_PATH ? undefined : loadShell(context)),
   pendingComponent: () => null,
   pendingMinMs: 0,
 })

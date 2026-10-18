@@ -303,6 +303,10 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         env_fixed["ORCH_TICKET"] = key
     if agent:
         env_fixed["ORCH_HARNESS"] = harness
+        # The agent's cwd may be a worktree or a linked repo, outside the project: discovery cannot walk up to the
+        # workspace from there. The host names it (its own registered root, never a client value); the grant is
+        # bound to this workspace, so an agent that points ORCH_WORKSPACE elsewhere is refused by that other host.
+        env_fixed["ORCH_WORKSPACE"] = str(service.entry.root)
         if where["cwd"]["kind"] == "worktree":
             env_fixed["ORCH_WORKTREE"] = where["path"]
         pairs = []
@@ -315,6 +319,18 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             env_fixed["ORCH_WORKTREES"] = ":".join(pairs)
         if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = sub
+    if agent and mode is not None and where["cwd"]["kind"] != "workspace":
+        # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
+        try:
+            from orch.instructions.harness import agents_rel
+
+            lay = service.store.layout
+            at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
+            if at.isascii() and at.isprintable():
+                argv, login, program = launch_argv(harness, mode, model if not check_model("model", model) else None,
+                                                   key, config, instructions=at)  # fmt: skip
+        except HostError:
+            pass  # the first launch_argv already blocked with the same reason
     grant = None
     if agent:
         cur = hub.grants.current(service.workspace_id, person) if hub is not None else None

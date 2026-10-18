@@ -19,6 +19,7 @@ The visibility of the ticket an event belongs to is the caller's job (filter fir
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -275,7 +276,17 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         return {"gates": sorted(gates)}
     if t == "settings.changed":
         sets = e.get("set") if isinstance(e.get("set"), Mapping) else {}
-        return {"keys": sorted(sets)}
+        out: dict[str, Any] = {"keys": sorted(sets)}
+        repos = sets.get("repos")
+        if isinstance(repos, Mapping):  # which repository names were set or removed; never their paths or remotes
+            named = {
+                n: ("removed" if v is None else "set")
+                for n, v in repos.items()
+                if isinstance(n, str) and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", n)
+            }
+            if named:
+                out["repos"] = dict(sorted(named.items())[:16])
+        return out
     if t == "grant.issued":
         a = e.get("actor") if isinstance(e.get("actor"), Mapping) else {}
         return {

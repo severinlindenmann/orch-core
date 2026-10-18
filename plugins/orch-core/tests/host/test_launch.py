@@ -129,3 +129,8 @@ def test_runner_json_that_is_not_an_object_refuses_never_defaults(tmp_path, text
     path.chmod(0o600)
     with pytest.raises(ConfigError):
         read_config(tmp_path, os.getuid())
+
+
+def test_the_prompt_can_name_the_instructions_by_path():
+    argv, _, _ = launch_argv("codex", "work", None, "ORC-7", LOGIN, instructions="/p/.orch/AGENTS.orch.md")
+    assert argv[-1] == "Run orch status, then work on ticket ORC-7. Follow /p/.orch/AGENTS.orch.md."

@@ -67,7 +67,17 @@ def read_pins(path):
 
 
 # The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
-WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WRITE_OPS = (
+    "move",
+    "settings.set",
+    "policy.set",
+    "member.add",
+    "member.role",
+    "member.remove",
+    "grant.revoke",
+    "addon.grant",
+    "addon.disable",
+)
 
 
 class Gateway:

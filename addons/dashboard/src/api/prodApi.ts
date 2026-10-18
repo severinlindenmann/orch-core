@@ -190,6 +190,7 @@ const reads = {
   // Reduced workspace settings (M4): what the host gives this person, nothing more.
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
   // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.

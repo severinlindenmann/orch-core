@@ -25,6 +25,8 @@ const EVENT_WORDS: Record<string, string> = {
   'role.changed': 'Change of a member\'s role',
   'member.removed': 'Remove a member',
   'grant.revoked': 'Revoke an agent grant',
+  'addon.granted': 'Turn on an add-on',
+  'addon.disabled': 'Turn off an add-on',
 }
 
 /** The tail of the ticket's log id, shown by the dashboard and by the signer so the two reviews read alike. */

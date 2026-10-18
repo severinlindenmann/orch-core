@@ -117,7 +117,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke',
+  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 

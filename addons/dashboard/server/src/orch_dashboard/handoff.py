@@ -560,6 +560,25 @@ class MemberRemove(Action):
     person: Person
 
 
+# the dashboard add-on is always on; no other package is offered here
+AddonName = Literal["start-agent", "terminals", "worktrees"]
+
+
+class AddonGrant(Action):
+    """`addon.grant {name}`: turn a shipped add-on on. Signed (the typed word names the add-on); the host reads the
+    package itself and the review shows what it may do."""
+
+    action: Literal["addon_grant"]
+    name: AddonName
+
+
+class AddonDisable(Action):
+    """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
+
+    action: Literal["addon_disable"]
+    name: AddonName
+
+
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
     grant: GrantId
@@ -612,6 +631,8 @@ PrepareBody = Annotated[
     | MemberAdd
     | MemberRole
     | MemberRemove
+    | AddonGrant
+    | AddonDisable
     | GrantRevoke
     | RunnerGrant,
     Field(discriminator="action"),
@@ -760,6 +781,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
             return "member.remove", {"person": action.person}
+        case AddonGrant():
+            return "addon.grant", {"name": action.name}
+        case AddonDisable():
+            return "addon.disable", {"name": action.name}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -770,7 +795,17 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
 
 
 DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
-WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke", "move")
+WORKSPACE_OPS = (
+    "settings.set",
+    "policy.set",
+    "member.add",
+    "member.role",
+    "member.remove",
+    "grant.revoke",
+    "move",
+    "addon.grant",
+    "addon.disable",
+)
 
 
 def host_files(action: Action) -> dict | None:
@@ -812,6 +847,10 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
         case MemberRemove():
             return lambda ev: one(ev, "member.removed", person=action.person)
+        case AddonGrant():
+            return lambda ev: one(ev, "addon.granted", name=action.name)
+        case AddonDisable():
+            return lambda ev: one(ev, "addon.disabled", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
@@ -899,6 +938,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
+    if isinstance(body, AddonDisable):
+        from .addon_switches import check_off
+
+        check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)

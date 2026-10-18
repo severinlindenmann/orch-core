@@ -97,3 +97,30 @@ def main(argv: list[str], *, out: TextIO, err: TextIO) -> int:
         err.write(f"orch addon manifest: {exc}\n")
         return 2
     return 0
+
+
+def install_missing(workspace: str, name: str) -> None:
+    """Write a built-in add-on's own manifest into ``<workspace>/addons/<name>``. On failure the empty directory this
+    attempt made is removed (a package already there is never touched) and the error is raised."""
+    try:
+        write_manifest(workspace, name, manifest_bytes(name))
+    except (OSError, ValueError):
+        _drop_empty(workspace, name)
+        raise
+
+
+def _drop_empty(workspace: str, name: str) -> None:
+    """``rmdir addons/<name>`` relative to the ``addons`` directory's descriptor (no path walk to redirect)."""
+    from orch.addons.install import ADDONS_DIR
+
+    path = Path(os.path.abspath(workspace)) / ADDONS_DIR
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    try:
+        os.rmdir(name, dir_fd=fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

@@ -147,6 +147,7 @@ export function createApi(transport: Transport) {
     putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
+    getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>('GET', `/api/w/${ws}/add-ons`),
     /** H12d-2: every device's reader level and the workspace's `required_reader` (real host only). */
     getReaders: (ws: string) => call<HostReaders>('GET', `/api/w/${ws}/readers`),
     /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */

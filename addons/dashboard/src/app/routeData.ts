@@ -177,6 +177,8 @@ export const settingsData =
           return [qc.ensureQueryData(queries.roster(id))]
         case 'gates':
           return [qc.ensureQueryData(queries.hostSettings(id))]
+        case 'addons':
+          return [qc.ensureQueryData(queries.addOns(id))]
         case 'grants':
           return [qc.ensureQueryData(queries.hostGrants(id, true)), qc.ensureQueryData(queries.roster(id))]
         default:

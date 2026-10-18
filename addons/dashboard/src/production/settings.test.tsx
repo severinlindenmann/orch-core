@@ -16,7 +16,7 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('heading', { name: 'General' }, T)).toBeInTheDocument()
   const nav = within(screen.getByRole('navigation', { name: 'Settings' }))
-  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Devices'])
+  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Add-ons', 'Devices'])
   expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })

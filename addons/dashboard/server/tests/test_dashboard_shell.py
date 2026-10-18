@@ -37,6 +37,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
         "/api/w/{ws}/settings",
+        "/api/w/{ws}/add-ons",
         "/api/w/{ws}/me/sign_default",
         "/api/w/{ws}/phone/available",
         "/api/w/{ws}/phone/request",
@@ -132,6 +133,7 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings",
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
+        "/w/DEMO/settings/addons",  # R2-2: the Add-ons tab
         "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
         "/w/DEMO/activity",
@@ -147,7 +149,7 @@ def test_app_addresses_open_the_app(client, path):
 @pytest.mark.parametrize(
     "path",
     [
-        "/w/DEMO/settings/addons",
+        "/w/DEMO/settings/nope",
         "/w/DEMO/ticket/x",
         "/w/DEMO/ticket/DEMO-1/extra",
         "/ticket/DEMO-1/x",

@@ -53,6 +53,8 @@ export interface FakeWs {
   quick?: unknown | ((q: URLSearchParams) => unknown)
   /** What `GET /records` answers (M6); absent: the route is not served. */
   records?: unknown
+  /** What `GET /add-ons` answers (R2-2). */
+  addOns?: import('@/api/addOnSwitches').AddOnsData
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -185,6 +187,10 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'addon_grant':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
+    case 'addon_disable':
+      return workspaceRequest('addon.disable', { type: 'addon.disabled', name: body.name })
     case 'grant_revoke':
       return workspaceRequest('grant.revoke', { type: 'grant.revoked', grant: body.grant, ...(body.reason ? { reason: body.reason } : {}) })
     default:
@@ -253,6 +259,7 @@ export class FakeHost {
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
+    if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
     if (rest === 'handoff' && method === 'POST') {
       const request = prepare(body!)

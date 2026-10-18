@@ -557,23 +557,71 @@ def _configured(doc: dict[str, Any]) -> bool:
     return any(isinstance(v, dict) and (v.get("repo") or {}).get("state") in _CONFIGURED for v in lasts.values())
 
 
-def migrate_git_plan(state_dir: Path, workspace_id: str, host_uid: int, project: str | os.PathLike[str]) -> bool:
+def migrate_git_plan(
+    pool: Any, state_dir: Path, workspace_id: str, host_uid: int, project: str | os.PathLike[str]
+) -> tuple[bool, tuple[int, int] | None]:
     """For the store migration: must the project's ``.git`` move into ``.orch`` with the store?
 
-    ``True`` only when that ``.git`` directory is THIS workspace's records repository (its HEAD commit carries the
-    ``Orch-Records`` trailer for this id, :func:`orch.records.tool.repo_is_ours`); the project's own repository is
-    never touched. A records state that cannot be read, or a repository that cannot be identified while records are
-    enabled, is ``migrate.refused`` (nothing moves)."""
-    from orch.records.tool import repo_is_ours
+    Returns ``(move, ident)``, ``ident`` being the ``(st_dev, st_ino)`` of the identified ``.git`` directory (the move
+    requires it again). The ``.git`` moves ONLY if all of these hold, otherwise it stays where it is (it is the
+    person's own code repository, never touched): (a) records are configured for this workspace; (b) the HEAD commit
+    is one the host itself recorded in ``records.json`` (``lasts[*].commit`` or ``pushed_commit``; an agent cannot
+    write that file); (c) every commit reachable from every ``refs/heads/*`` passes the records rules for this
+    workspace, within a bound. (b) and (c) are decided in the git reader child (:mod:`orch.gitread`: sandbox, limits),
+    never in this process. A records state that cannot be read, or a configured workspace whose repository cannot be
+    identified, is ``migrate.refused`` (nothing moves)."""
+    import stat as _stat
+
+    from orch.gitread.errors import Unavailable
 
     try:
-        configured = _configured(read_record(state_dir, workspace_id, host_uid))
-    except HostError:
+        doc = read_record(state_dir, workspace_id, host_uid)
+        configured = _configured(doc)
+        recorded = sorted(
+            {
+                c
+                for v in (doc.get("lasts") or {}).values()
+                if isinstance(v, dict)
+                for c in (v.get("commit"), v.get("pushed_commit"))
+                if isinstance(c, str)
+            }
+        )
+    except (HostError, AttributeError, TypeError):
         raise HostError("migrate.refused", "the records state cannot be read; nothing was moved") from None
-    ours = repo_is_ours(project, workspace_id)
-    if ours is None and configured:
+    if not configured:
+        return False, None  # records are not enabled: a .git here is never ours to move
+    try:
+        st = os.lstat(Path(project) / ".git")
+    except FileNotFoundError:
+        return False, None
+    except OSError:
+        raise HostError("migrate.refused", "the records repository cannot be examined; nothing was moved") from None
+    if not _stat.S_ISDIR(st.st_mode):
+        return False, None  # a .git file or link is never the records repo
+    real = os.path.realpath(project)
+    try:
+        got = pool.call(
+            f"migrate:{workspace_id}",
+            {"profile": "pin", "roots": [real]},
+            {
+                "op": "records_identify",
+                "args": {
+                    "path": real,
+                    "workspace_id": workspace_id,
+                    "recorded": [c for c in recorded if len(c) in (40, 64)],
+                },
+            },
+        )
+        ident = got["gitdir"]
+        if got["ours"] is not True and got["ours"] is not False:
+            raise Unavailable("bad answer")
+    except Exception:  # noqa: BLE001 - Unavailable, Busy, a malformed answer, anything: configured and unknown is refused
+        raise HostError("migrate.refused", "the records repository cannot be identified; nothing was moved") from None
+    if got["ours"] is not True:
+        return False, None
+    if not (isinstance(ident, list) and len(ident) == 2 and all(type(x) is int for x in ident)):
         raise HostError("migrate.refused", "the records repository cannot be identified; nothing was moved")
-    return ours is True
+    return True, (ident[0], ident[1])
 
 
 _SCHEME_URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(?:[^/@]*@)?([^/]*)(.*)$", re.S)

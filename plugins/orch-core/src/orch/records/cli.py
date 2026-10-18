@@ -494,10 +494,35 @@ def main(
         return fail(RecordsError(str(code), message, hint=getattr(exc, "hint", None), exit_=1))
 
 
+def _no_store_move(r: Any) -> None:
+    """``init`` creates a repository: never while a store move is under way or when the record root is not the store of
+    the project as it is on disk now (re-resolved here, so a move that landed after the workspace was found cannot send
+    the new repository into the wrong directory)."""
+    from orch import layout as layout_mod
+    from orch.store import migrate as mg
+
+    root = Path(r.root)
+    if os.path.lexists(root / mg.TMP_DIR):
+        raise RecordsError(
+            "records.unsupported", "a store move is under way (.orch-migrating); run orch migrate", exit_=3
+        )
+    try:
+        step = mg.journal_step(Path(r.state), r.workspace_id, root)
+        now = layout_mod.store_of(root)
+    except (mg.MigrateError, layout_mod.LayoutError) as exc:
+        raise RecordsError("records.unsupported", f"the store move state cannot be read ({exc})", exit_=3) from None
+    if step not in (None, "done", "rolled_back"):
+        raise RecordsError("records.unsupported", "a store move is unfinished; run orch migrate", exit_=3)
+    if now != Path(r.record_root):
+        raise RecordsError("records.unsupported", "the store changed place; run the command again", exit_=3)
+
+
 def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
     a = run.args
     if a.cmd == "init":
         from .git import pinned_root
+
+        _no_store_move(r)
 
         res = init_repo(pinned_root(r.record_root), env=run.env)
         run.repo(r.record_root)  # the result must be a usable dedicated repo

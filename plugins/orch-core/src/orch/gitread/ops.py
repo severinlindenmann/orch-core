@@ -18,9 +18,11 @@ the reader refuses makes **every** request unavailable, not just the ones that w
 from __future__ import annotations
 
 import base64
+import re
 from typing import Any
 
 from orch import canon  # imported here, before the sandbox hook: the request must not import anything later
+from orch.records.tool import _headers_ok, _message_ok  # the one rule for a records commit (not copied)
 
 from . import limits, treecheck
 from .errors import NotFound, Unavailable
@@ -38,7 +40,10 @@ _OPS = {
     "observe": ("gitdir", "worktree"),
     "diff": ("gitdir", "worktree"),
     "tree_check": ("worktree",),
+    "records_identify": ("pin",),
 }
+_HISTORY_MAX = 20_000  # commits looked at to identify a records repository; more is "cannot tell"
+_HEX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 
 def _str(args: dict[str, Any], key: str, *, optional: bool = False) -> str | None:
@@ -385,6 +390,49 @@ def pin_many(args: dict[str, Any], roots: list[str]) -> dict[str, Any]:
     return {"results": out}
 
 
+def records_identify(args: dict[str, Any], roots: list[str]) -> dict[str, Any]:
+    """Is the ``.git`` at ``path`` THIS workspace's records repository?
+
+    ``ours`` only when ALL hold: HEAD's commit is one the host itself recorded (``recorded``, from the host's
+    ``records.json``, which an agent cannot write) and EVERY commit reachable from every ``refs/heads/*`` passes the
+    records rules (:func:`orch.records.tool._headers_ok`, :func:`~orch.records.tool._message_ok` for ``workspace_id``).
+    More than :data:`_HISTORY_MAX` commits, or anything unreadable, raises :class:`Unavailable` ("cannot tell").
+    ``gitdir`` is the ``(dev, ino)`` of the identified ``.git`` directory, for the move to require."""
+    path = _str(args, "path")
+    wid = _str(args, "workspace_id")
+    recorded = args.get("recorded")
+    if (
+        not isinstance(recorded, list)
+        or len(recorded) > 256
+        or not all(isinstance(r, str) and _HEX.fullmatch(r) for r in recorded)
+    ):
+        raise Unavailable("bad request: recorded")
+    assert path is not None and wid is not None
+    pins = pin_repo(path, roots)
+    with Repo(pins) as repo:
+        ident = [pins.gitdir.dev, pins.gitdir.ino]
+        tip = repo.resolve_commit(repo.head_ref())
+        if tip is None or tip not in set(recorded):
+            return {"ours": False, "gitdir": ident}
+        refs = {**repo.refs.packed, **repo.refs.loose}
+        stack = [oid for name, oid in refs.items() if name.startswith("refs/heads/")]
+        seen: set[str] = set()
+        while stack:
+            oid = stack.pop()
+            if oid in seen:
+                continue
+            seen.add(oid)
+            if len(seen) > _HISTORY_MAX:
+                raise Unavailable("too many commits to identify the records repository")
+            _kind, data = repo.objects.read(oid, "commit")
+            head, _, message = data.partition(b"\n\n")
+            names = [line.split(b" ", 1)[0].decode(errors="replace") for line in head.split(b"\n")]
+            if not _headers_ok(names) or not _message_ok(message, wid):
+                return {"ours": False, "gitdir": ident}
+            stack.extend(repo.commit(oid).parents)
+        return {"ours": True, "gitdir": ident}
+
+
 def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
     op = req.get("op")
     args = req.get("args") or {}
@@ -396,6 +444,8 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
         return {"pins": pin_repo(path, list(hello["roots"])).to_json()}
     if op == "pin_many":
         return pin_many(args, list(hello["roots"]))
+    if op == "records_identify":
+        return records_identify(args, list(hello["roots"]))
     pins = RepoPins.from_json(hello.get("pins"))
     with Repo(pins) as repo:
         if op == "tree_check":

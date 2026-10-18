@@ -536,11 +536,27 @@ class ControlOps:
             problems.append(f"{work['runs']} agent or runner session(s) running")
         if work["terminals"]:
             problems.append(f"{work['terminals']} terminal(s) open")
-        pending = requests.open_count() if requests is not None else 0
+        try:
+            pending = requests.open_count() if requests is not None else 0
+        except Exception:  # noqa: BLE001 - a malformed request record: fail closed
+            raise HostError("migrate.refused", "a sign request record is unreadable; nothing was moved") from None
         if pending:
             problems.append(f"{pending} sign request(s) pending")
         if problems:
             raise HostError("migrate.refused", "work is in progress: " + ", ".join(problems) + "; nothing was moved")
+
+    def _identify_records_git(self, records: Any, wid: str, root: str) -> tuple[int, int] | None:
+        """``(dev, ino)`` of the project's ``.git`` when it is this workspace's records repository, else ``None``
+        (:func:`orch.host.records.migrate_git_plan`; any unexpected failure is ``migrate.refused``)."""
+        try:
+            move, ident = records.migrate_git_plan(self.host.git_pool, self.state_dir, wid, self.host_uid, root)
+        except HostError:
+            raise
+        except Exception:  # noqa: BLE001
+            raise HostError(
+                "migrate.refused", "the records repository cannot be identified; nothing was moved"
+            ) from None
+        return ident if move else None
 
     def _migrate_entry(self, entry: Entry, *, live: bool) -> bool:
         """Run the engine for ``entry`` with the workspace unserved, then serve it again whatever happened. It is
@@ -559,7 +575,6 @@ class ControlOps:
             raise HostError(exc.code, exc.detail) from None
         finally:
             pins.close()
-        move_git = records.migrate_git_plan(self.state_dir, wid, self.host_uid, entry.root)
         service = self.host.services.get(wid)
         requests = getattr(service, "requests", None)  # a handle before the unserve; counted again after it
         if requests is None:  # no service is loaded: the file-backed request store, opened by path, is the truth
@@ -574,6 +589,8 @@ class ControlOps:
                     served = True
                     self.host.unserve_from_thread(wid)  # drains first: a write in flight finishes and is answered
                 self._refuse_running_work(entry, requests)  # unserved and locked: nothing new can start now
+                # the records repository is identified here, locked and after check_tree, by the git reader child
+                move_git = self._identify_records_git(records, wid, entry.root)
                 result = mg.migrate(
                     entry.root,
                     state_dir=self.state_dir,

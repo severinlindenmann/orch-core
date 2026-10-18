@@ -119,10 +119,6 @@ def _direct(sd: Path, project: Path, wid: str) -> dict[str, Any]:
     from orch.store import migrate as mg
     from orch.store.pins import HostPins
 
-    try:
-        move_git = records.migrate_git_plan(sd, wid, os.getuid(), project)
-    except HostError as exc:
-        raise MigrateCliError(exc.code, exc.message) from None
     pins = HostPins(sd, wid)
     try:
         pin = pins.genesis()
@@ -132,7 +128,15 @@ def _direct(sd: Path, project: Path, wid: str) -> dict[str, Any]:
         pins.close()
     try:
         with OwnershipLock(sd, wid).exclusive(LOCK_WAIT):
-            out = mg.migrate(project, state_dir=sd, workspace_id=wid, expected_genesis=pin, move_git=move_git)
+            try:
+                from orch.gitread.client import ReaderPool
+
+                move, ident = records.migrate_git_plan(ReaderPool(), sd, wid, os.getuid(), project)
+            except HostError as exc:
+                raise MigrateCliError(exc.code, exc.message) from None
+            out = mg.migrate(
+                project, state_dir=sd, workspace_id=wid, expected_genesis=pin, move_git=ident if move else None
+            )
     except HostError as exc:
         raise MigrateCliError(exc.code, exc.message, 9) from None
     except mg.MigrateError as exc:

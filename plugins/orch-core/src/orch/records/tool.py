@@ -476,38 +476,6 @@ def _message_ok(message: bytes, workspace_id: str) -> bool:
     return re.fullmatch(pattern, message) is not None
 
 
-def repo_is_ours(project: str | os.PathLike[str], workspace_id: str) -> bool | None:
-    """Is the ``.git`` directory directly in ``project`` THIS workspace's records repository?
-
-    ``True``: its HEAD commit is exactly the message :func:`_message` writes for ``workspace_id`` (the ``Orch-Records``
-    trailer). ``False``: there is no ``.git`` directory, it has no commit, or HEAD is anything else (the project's own
-    repository). ``None``: it cannot be told (unreadable, odd layout). Read in process by the pinned reader
-    (:mod:`orch.gitread`): no git runs, no hook, no config of the repository is executed."""
-    import stat as _stat
-
-    try:
-        st = os.lstat(Path(project) / ".git")
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return None
-    if not _stat.S_ISDIR(st.st_mode):
-        return False  # a .git file (a linked worktree) or a link is never the records repo
-    from orch.gitread.errors import Unavailable
-    from orch.gitread.pinning import pin_repo
-    from orch.gitread.repo import Repo
-
-    try:
-        with Repo(pin_repo(os.path.realpath(project), None)) as repo:
-            oid = repo.resolve_commit(repo.head_ref())
-            if oid is None:
-                return False
-            _kind, data = repo.objects.read(oid, "commit")
-    except (Unavailable, OSError, ValueError):
-        return None
-    return _message_ok(data.partition(b"\n\n")[2], workspace_id)
-
-
 def _headers_ok(names: list[str]) -> bool:
     """Only tree, parent, author and committer headers, in git's order (no gpgsig, mergetag, encoding, extras)."""
     if any(n not in _ALLOWED_HEADERS for n in names):

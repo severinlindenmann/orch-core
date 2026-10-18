@@ -141,4 +141,17 @@ def resolve(
     from orch.layout import STORE_DIR
 
     store = base / STORE_DIR if entry.get("store") == STORE_DIR else base
+    from orch import layout as layout_mod
+
+    try:
+        on_disk = layout_mod.store_of(base)
+    except layout_mod.LayoutError as exc:
+        raise RecordsError("records.unsupported", str(exc), exit_=3) from None
+    if on_disk != store:  # never fall back to the other layout: a half-done or stale registry is refused
+        raise RecordsError(
+            "records.unsupported",
+            "the store on disk is not where the host registry says it is",
+            exit_=3,
+            hint="orch migrate finishes or undoes an unfinished store move",
+        )
     return Resolved(wid, base, link, tips, state, "host", store=store)

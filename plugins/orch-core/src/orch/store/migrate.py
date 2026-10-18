@@ -418,7 +418,7 @@ def migrate(
     lock_timeout: float = 10.0,
     after_commit: Callable[[], None] | None = None,
     fault: Fault | None = None,
-    move_git: bool = False,
+    move_git: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """Move the legacy store of ``project`` into ``.orch``. The caller holds ``owner.lock`` exclusively around this
     call. Returns ``{"migrated": bool, "names": [...]}`` (``migrated`` false: it was already done). Raises
@@ -455,13 +455,13 @@ def _move(
     expected_genesis: str | None,
     after_commit: Callable[[], None] | None,
     fault: Fault,
-    move_git: bool = False,
+    move_git: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     # --- plan: every entry below the fd, nothing a link or odd; digests of the logs
     if _lstat(pfd, layout_mod.STORE_DIR) is not None or _lstat(pfd, TMP_DIR) is not None:
         raise MigrateError("migrate.layout", f"{layout_mod.STORE_DIR} or {TMP_DIR} already exists; nothing is moved")
     names: dict[str, list[int]] = {}
-    for name in (*MOVE_NAMES, *((GIT_NAME,) if move_git else ())):
+    for name in (*MOVE_NAMES, *((GIT_NAME,) if move_git is not None else ())):
         st = _lstat(pfd, name)
         if st is None:
             continue
@@ -475,6 +475,8 @@ def _move(
                 "migrate.unsafe", f"{name} is a link or not what the store keeps there; nothing is moved"
             )
         names[name] = _ident(st)
+        if name == GIT_NAME and _ident(st) != list(move_git or ()):
+            raise MigrateError("migrate.unsafe", ".git is not the directory that was identified; nothing is moved")
     if not {"config.json", "events", "tickets", ".state"} <= set(names):
         raise MigrateError(
             "migrate.layout", "the directory holds no complete orch store (config.json, events/, tickets/, .state/)"

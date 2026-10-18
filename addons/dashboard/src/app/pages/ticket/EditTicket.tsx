@@ -1,4 +1,4 @@
-// B12D (finding N3): edit an existing ticket's text, acceptance criteria and people, then ONE review.
+// B12D (finding N3): edit an existing ticket's text, acceptance criteria, repositories and people, then ONE review.
 //
 // The page sends what changed plus the log head it showed (`head_seq`); the server reads the ticket, refuses the edit
 // when the ticket has changed since, and the signer signs one ordinary event per change, each checked against the
@@ -11,7 +11,8 @@ import { handoffMode } from '@/api/features'
 import { can } from '@/api/permissions'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction } from '@/api/handoff'
 import { SECTIONS_BY_TYPE, SECTION_ORDER, sectionLabel, type SectionName } from '@/api/sections'
-import type { TicketDocument } from '@/api/types'
+import { branchProblem, MAX_LINK_REPOS, suggestedBranch } from '@/api/links'
+import type { TicketDocument, TicketLinks } from '@/api/types'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -27,8 +28,8 @@ type Edit = NonNullable<Extract<HandoffAction, { action: 'edit_sequence' }>>
 
 /** What the person changed, as the typed action; or what is wrong with it. Pure: tested without the dialog. */
 export function buildEdit(
-  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'>,
-  want: { sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue },
+  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { links?: Pick<TicketLinks, 'repos' | 'branches'> },
+  want: { sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
   mayEditPeople: boolean,
 ): { action: Edit; steps: number } | { problem: string } | { nothing: true } {
   const sections: Record<string, string> = {}
@@ -52,6 +53,21 @@ export function buildEdit(
   }
   const add = want.added.map((t) => t.trim()).filter(Boolean)
   if (Object.keys(edit).length + add.length > MAX_CRITERIA) return { problem: `At most ${MAX_CRITERIA} acceptance criteria can be changed or added in one signature.` }
+  let links: Edit['links']
+  if (want.links) {
+    const was = { repos: ticket.links?.repos ?? [], branches: ticket.links?.branches ?? {} }
+    const repos = [...new Set(want.links.repos)].sort()
+    const branches: Record<string, string> = {}
+    for (const r of repos) {
+      const b = (want.links.branches[r] ?? '').trim()
+      const bad = branchProblem(b)
+      if (bad) return { problem: `Branch for ${r}: ${bad}` }
+      if (b) branches[r] = b
+    }
+    if (repos.length > MAX_LINK_REPOS) return { problem: `A ticket can be linked to at most ${MAX_LINK_REPOS} repositories.` }
+    const same = repos.length === was.repos.length && repos.every((r) => was.repos.includes(r)) && repos.every((r) => (branches[r] ?? '') === (was.branches[r] ?? '')) && Object.keys(was.branches).length === Object.keys(branches).length
+    if (!same) links = { repos, branches }
+  }
   const people: NonNullable<Edit['people']> = {}
   if (mayEditPeople) {
     if (want.people.owner && want.people.owner !== ticket.people.owner) people.owner = { add: [want.people.owner], remove: [] }
@@ -63,7 +79,7 @@ export function buildEdit(
       if (added.length || removed.length) people[role] = { add: added, remove: removed }
     }
   }
-  const steps = Object.keys(sections).length + Object.keys(edit).length + add.length + Object.keys(people).length
+  const steps = Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
   if (steps === 0) return { nothing: true }
   if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Sign some now and the rest after.` }
   return {
@@ -74,6 +90,7 @@ export function buildEdit(
       head_seq: ticket.head.seq,
       ...(Object.keys(sections).length ? { sections } : {}),
       ...(Object.keys(edit).length || add.length ? { acceptance: { edit, add } } : {}),
+      ...(links ? { links } : {}),
       ...(Object.keys(people).length ? { people } : {}),
     } as Edit,
   }
@@ -90,7 +107,7 @@ export function EditTicket({ ticket, viewer }: { ticket: TicketDocument; viewer:
     <>
       <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
         <Pencil />
-        Edit text, checks and people
+        Edit text, checks, repositories and people
       </Button>
       {open && <EditDialog key={ticket.head.seq} ticket={ticket} viewer={viewer} onClose={() => setOpen(false)} />}
     </>
@@ -107,10 +124,11 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
   const [added, setAdded] = useState<string[]>([])
   const [next, setNext] = useState('')
   const [people, setPeople] = useState<PeopleValue>(() => ({ owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] }))
+  const [links, setLinks] = useState<{ repos: string[]; branches: Record<string, string> }>(() => ({ repos: [...ticket.links.repos], branches: { ...ticket.links.branches } }))
   const [signing, setSigning] = useState<Edit | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const acId = useId()
-  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people }, mayEditPeople), [ticket, sections, criteria, added, people, mayEditPeople])
+  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people, links }, mayEditPeople), [ticket, sections, criteria, added, people, links, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')
   // K10: anything changed (even something not signable yet) is asked about before it is thrown away.
   const [asking, setAsking] = useState(false)
@@ -134,7 +152,7 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
         <DialogHeader>
           <DialogTitle>Edit {ticket.key}</DialogTitle>
           <DialogDescription>
-            Change the text, the acceptance checks and the people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
+            Change the text, the acceptance checks, the repositories and the people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
@@ -188,6 +206,7 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
               </Button>
             </div>
           </section>
+          <RepoLinks ticketKey={ticket.key} wsId={ws?.id} value={links} onChange={setLinks} />
           {mayEditPeople ? (
             <PeoplePicker members={viewer.members} creator={viewer.person} people={people} onPeople={setPeople} visibility="workspace" onVisibility={() => undefined} showVisibility={false} />
           ) : (
@@ -212,7 +231,7 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
             <DialogContent aria-label="Discard unsaved changes?">
               <DialogHeader>
                 <DialogTitle>Discard unsaved changes?</DialogTitle>
-                <DialogDescription>You changed this ticket's text, checks or people. Closing now throws those changes away.</DialogDescription>
+                <DialogDescription>You changed this ticket's text, checks, repositories or people. Closing now throws those changes away.</DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAsking(false)}>Keep editing</Button>
@@ -239,5 +258,104 @@ function EditDialog({ ticket, viewer, onClose }: { ticket: TicketDocument; viewe
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** The repository names the workspace lists (Settings → Repos): the host's list on a real host, the workspace's own otherwise. */
+function useRepoNames(wsId: string | undefined, fallback: Record<string, unknown> | undefined): { names: string[]; ready: boolean } {
+  const settings = useQuery({ ...queries.hostSettings(wsId ?? ''), enabled: !!wsId })
+  const fromHost = settings.data?.repos?.map((r) => r.name)
+  const names = [...new Set([...(fromHost ?? []), ...Object.keys(fallback ?? {})])].sort()
+  return { names, ready: !settings.isPending || names.length > 0 }
+}
+
+/** F6: which repositories this ticket belongs to and the branch of each. Picked from the workspace's list; the host checks the names again and the change is part of the ONE review. */
+export function RepoLinks({
+  ticketKey,
+  wsId,
+  value,
+  onChange,
+}: {
+  ticketKey: string
+  wsId: string | undefined
+  value: { repos: string[]; branches: Record<string, string> }
+  onChange: (v: { repos: string[]; branches: Record<string, string> }) => void
+}) {
+  const id = useId()
+  const workspaces = useQuery(queries.workspaces())
+  const fallback = workspaces.data?.find((w) => w.id === wsId)?.repos
+  const { names, ready } = useRepoNames(wsId, fallback)
+  const [pick, setPick] = useState('')
+  const free = names.filter((n) => !value.repos.includes(n))
+  const chosen = free.includes(pick) ? pick : (free[0] ?? '')
+  const link = () => {
+    if (!chosen || value.repos.length >= MAX_LINK_REPOS) return
+    onChange({ repos: [...value.repos, chosen], branches: { ...value.branches, [chosen]: suggestedBranch(ticketKey) } })
+    setPick('')
+  }
+  const unlink = (repo: string) => {
+    const { [repo]: _gone, ...rest } = value.branches
+    onChange({ repos: value.repos.filter((r) => r !== repo), branches: rest })
+  }
+  return (
+    <section className="space-y-1.5" aria-labelledby={id} data-testid="edit-repositories">
+      <h2 id={id} className="text-[13px] font-medium">
+        Repositories
+      </h2>
+      <p className="text-[12px] text-text-muted">The code of this ticket lives in these repositories. Name the branch it is worked on; agents and worktrees use it. You can leave a branch empty for now.</p>
+      {value.repos.length > 0 && (
+        <ul className="space-y-1">
+          {value.repos.map((repo) => {
+            const bad = branchProblem(value.branches[repo] ?? '')
+            const listed = names.includes(repo)
+            return (
+              <li key={repo} className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-28 shrink-0 truncate text-[13px] font-medium" title={repo}>
+                    {repo}
+                  </span>
+                  <Input
+                    aria-label={`Branch in ${repo}`}
+                    aria-invalid={bad ? true : undefined}
+                    placeholder={suggestedBranch(ticketKey)}
+                    value={value.branches[repo] ?? ''}
+                    onChange={(e) => onChange({ ...value, branches: { ...value.branches, [repo]: e.target.value } })}
+                    className="h-8 text-[13px]"
+                  />
+                  <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Unlink ${repo}`} onClick={() => unlink(repo)}>
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                {bad && (
+                  <p role="alert" className="ml-[7.5rem] text-[12px] text-danger">
+                    {bad}
+                  </p>
+                )}
+                {ready && !listed && <p className="text-[12px] text-warning">{repo} is not in the workspace's repository list any more.</p>}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {names.length === 0 && ready ? (
+        <p className="text-[12px] text-text-muted">The workspace has no repositories yet. An owner adds them under Settings, Repositories.</p>
+      ) : free.length > 0 ? (
+        <div className="flex items-center gap-2">
+          <select aria-label="Repository to link" className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 text-[13px]" value={chosen} onChange={(e) => setPick(e.target.value)}>
+            {free.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <Button type="button" variant="outline" size="sm" onClick={link} disabled={value.repos.length >= MAX_LINK_REPOS}>
+            <Plus />
+            Link repository
+          </Button>
+        </div>
+      ) : (
+        names.length > 0 && <p className="text-[12px] text-text-muted">Every repository of the workspace is linked.</p>
+      )}
+    </section>
   )
 }

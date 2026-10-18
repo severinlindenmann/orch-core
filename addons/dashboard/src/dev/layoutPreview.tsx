@@ -374,7 +374,7 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
     headline,
     content: {
       headline,
-      subline: 'its text, acceptance checks and people, as shown below',
+      subline: 'its text, acceptance checks, repositories and people, as shown below',
       ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),

@@ -71,7 +71,7 @@
       "additionalProperties": false
     },
     "output": {
-      "text": "ok grant.issued[ {grant}][ until={until}]\nnext: {next}",
+      "text": "ok grant.issued[ {grant}][ until {until_local}]\nnext: {next}",
       "json": {
         "type": "object",
         "properties": {
@@ -79,6 +79,9 @@
             "type": "string"
           },
           "until": {
+            "type": "string"
+          },
+          "until_local": {
             "type": "string"
           },
           "scope": {

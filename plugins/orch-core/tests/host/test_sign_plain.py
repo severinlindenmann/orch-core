@@ -382,7 +382,7 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert "scope" not in rows and rows["who can use it"] == "agents working for you"  # K4: scope/verbs are in words
-    assert c["headline"].startswith("Agents may work on all open tickets for 7 hours (until ")
+    assert c["headline"].startswith("Agents may work on any ticket you can see, as you, for 7 hours (until ")
     m = sample("member.added")
     c = build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
@@ -428,7 +428,10 @@ def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, mon
     request = {"op": "grant", "events": [g], "material": material_for("grant.issued", g)}
     _tz(monkeypatch, "Europe/Zurich")
     c = build(request)
-    assert c["headline"] == "Agents may work on all open tickets for 1 day (until Wed 23:45 CEST, your time)"
+    assert (
+        c["headline"]
+        == "Agents may work on any ticket you can see, as you, for 1 day (until Wed 23:45 CEST, your time)"
+    )
     assert [(r["field"], r["after"]) for r in c["fields_changed"]] == [
         ("who can use it", "agents working for you"),
         ("label", "marker-label"),
@@ -452,12 +455,40 @@ def test_k4_the_grant_review_is_one_plain_sentence_in_local_time(restore_tz, mon
 
 def test_k4_other_scopes_and_unknown_times_keep_the_technical_review(restore_tz, monkeypatch):
     _tz(monkeypatch, "UTC")
-    for change in ({"scope": "all"}, {"verbs": ["a.b"]}, {"expires_at": "set at signing"}):
+    for change in ({"scope": "all"}, {"verbs": ["a.b"]}):
         g = {**sample("grant.issued"), **change}
         c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
         rows = {r["field"]: r["after"] for r in c["fields_changed"]}
         assert {"scope", "verbs", "from", "until", "grant id"} <= set(rows)
         assert c["headline"].startswith("Give agents access for 7 hours (scope ")
+
+
+def test_f7_the_ordinary_grant_with_times_set_at_signing_says_what_agents_may_do_without_scope_and_verbs(
+    restore_tz, monkeypatch
+):
+    """The setup review shows the runner grant before its times exist: plain words, no "(scope workable, verbs agent)"."""
+    _tz(monkeypatch, "UTC")
+    g = {**sample("grant.issued"), "hours": 72, "issued_at": "set at signing", "expires_at": "set at signing"}
+    c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    assert c["headline"] == "Agents may work on any ticket you can see, as you, for 3 days"
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert "scope" not in rows and "verbs" not in rows and "grant id" not in rows
+    assert rows["until"] == "set at signing"  # the signed value is still on a row
+    assert "scope workable" not in "\n".join(signcontent.text(c, signer._clean))
+    # any other scope or verbs is never put in words: the technical rows stay
+    other = {**g, "scope": "all"}
+    c = build({"op": "grant", "events": [other], "material": material_for("grant.issued", other)})
+    assert {"scope", "verbs", "grant id"} <= {r["field"] for r in c["fields_changed"]}
+
+
+def test_f7_a_grant_that_is_not_ordinary_shows_its_times_in_local_time_and_as_signed(restore_tz, monkeypatch):
+    _tz(monkeypatch, "Europe/Zurich")
+    g = {**sample("grant.issued"), "scope": "all", "hours": 24}
+    g.update(issued_at="2026-10-20T21:45:37Z", expires_at="2026-10-21T21:45:37Z")
+    c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["until"] == "Wed 23:45 CEST (2026-10-21T21:45:37Z)"
+    assert rows["from"] == "Tue 23:45 CEST (2026-10-20T21:45:37Z)"
 
 
 def test_k4_the_details_still_carry_every_signed_field_of_the_grant(human, served):
@@ -467,13 +498,13 @@ def test_k4_the_details_still_carry_every_signed_field_of_the_grant(human, serve
     for value in (ev["grant"], ev["scope"], ev["issued_at"], ev["expires_at"], "agent"):
         assert value in review.details
         assert value not in review.body if hasattr(review, "body") else True
-    assert "Agents may work on all open tickets for 1 day (until " in str(review)
+    assert "Agents may work on any ticket you can see, as you, for 1 day (until " in str(review)
 
 
 def test_b8_lengths_read_as_days_and_hours_in_the_headline_and_the_settings_note(human, served):
     g = {**sample("grant.issued"), "hours": 72}
     c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
-    assert c["headline"].startswith("Agents may work on all open tickets for 3 days (")
+    assert c["headline"].startswith("Agents may work on any ticket you can see, as you, for 3 days (")
     assert signcontent.span(8) == "8 hours" and signcontent.span(24) == "1 day" and signcontent.span(168) == "7 days"
     event = {**sample("settings.changed"), "set": {"grant_hours": 168}}
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
@@ -720,3 +751,182 @@ def test_the_repo_verdict_row_is_always_labelled_per_host(human, served):
     c, _ = _repo_event_rows({"path": "/x"})  # an add: no old value, the verdict still comes from the host's before
     verdict = next(r for r in c["fields_changed"] if r["field"] == "repository api")
     assert verdict["before_note"] == "per host, not signed"
+
+
+# --- F7: plain reviews of add-ons, answers and people ---------------------------------------------------------------
+
+
+def _addon(**change):
+    ev = {
+        "type": "addon.granted", "name": "terminals", "version": "0.1.0", "package_sha256": "sha256:" + "aa" * 32,
+        "capabilities": ["pty"], "artifact_kinds": [], "fields": {}, "sections": [],
+    }  # fmt: skip
+    ev.update(change)
+    return {"op": "addon.grant", "events": [ev], "material": {"kind": "payload", "ticket": None}}
+
+
+def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():
+    c = build(_addon())
+    assert c["headline"] == "Turn on Terminals: it says it will open terminals on this computer, as you"
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows == {
+        "add-on": "terminals",
+        "version": "0.1.0",
+        "it says it will": "open terminals on this computer, as you",
+    }
+    assert signcontent.ADDON_TRUST in c["notes"]
+    shown = flat(c) + "\n".join(signcontent.text(c, signer._clean))
+    for raw in ("aa" * 6, "{}", "(none)", "pty"):
+        assert raw not in shown
+    assert "package digest" not in {r["field"] for r in c["fields_changed"]}
+    assert "technical details" in " ".join(c["notes"])
+    two = build(_addon(name="start-agent", capabilities=["pty", "spawn_agent"]))
+    assert two["headline"].startswith("Turn on Start agent: it says it will open terminals")
+    assert "start agents on this computer" in two["headline"]
+    none = build(_addon(name="worktrees", capabilities=[]))
+    assert none["headline"] == "Turn on Worktrees: it declares no capabilities"
+    assert signcontent.ADDON_TRUST in none["notes"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"capabilities": ["pty", "teleport"]},  # a capability the plain words do not know
+        {"capabilities": "pty"},
+        {"capabilities": ["pty", "pty"]},
+        {"fields": {"x": {"type": "string"}}},  # it declares something: every value stays a row
+        {"sections": [{"id": "s"}]},
+        {"artifact_kinds": ["report"]},
+        {"name": "Terminals"},  # not a plain add-on name
+        {"name": "ter\nminals"},
+        {"version": "1.0\nfake row"},
+        {"version": None},
+    ],
+)
+def test_f7_an_addon_with_anything_odd_keeps_every_signed_value_as_a_row(change):
+    c = build(_addon(**change))
+    fields = {r["field"] for r in c["fields_changed"]}
+    assert {"version", "package digest", "capabilities"} <= fields
+    assert c["headline"].startswith("Grant the add-on ")
+    assert "it says it will" not in fields
+
+
+def test_f7_turning_an_addon_off_is_plain():
+    ev = {"type": "addon.disabled", "name": "worktrees"}
+    c = build({"op": "addon.disable", "events": [ev], "material": {"kind": "payload", "ticket": None}})
+    assert c["headline"] == "Turn off Worktrees"
+    odd = {**ev, "name": "Work Trees"}
+    assert (
+        build({"op": "addon.disable", "events": [odd], "material": {"kind": "payload", "ticket": None}})["headline"]
+        == "Disable the add-on Work Trees"
+    )
+
+
+def _answer(question_extra=None, option="hello", text=None):
+    ev = {"type": "question.answered", "question": "Q1", "option": option, "hash": "sha256:" + "ab" * 32}
+    if text:
+        ev["text"] = text
+    q = {
+        "id": "Q1", "text": "Which greeting should I write?", "to": "owner", "blocking": True, "recommended": "hello",
+        "why": "I need to know before I write the file.",
+        "options": [{"key": "hello", "label": "Hello"}, {"key": "hi", "label": "Hi"}],
+    }  # fmt: skip
+    q.update(question_extra or {})
+    return {
+        "op": "answer", "events": [ev],
+        "material": {"kind": "question", "ticket": {"key": "RA-0001", "uid": UID}, "question": q},
+    }  # fmt: skip
+
+
+def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
+    c = build(_answer())
+    assert c["headline"].startswith("Answer “Which greeting should I write?” on RA-0001") and c["headline"].endswith(
+        "with Hello"
+    )
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["your choice"] == "Hello"
+    assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
+    assert rows["recommended option"] == "hello (per host, not signed)"
+    assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
+    assert c["ticket"]["key"] == "RA-0001"
+    view = "\n".join(signcontent.text(c, signer._clean))
+    assert "{" not in view and "options" not in view.replace("option ", "")
+
+
+def test_f7_an_answer_outside_the_options_says_so_and_a_new_question_key_still_falls_back():
+    c = build(_answer(option="nope"))
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "nope (not one of the options)"
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(_answer({"surprise": 1}))
+
+
+_ME = "p_42e1c38e0488b742" + "0" * 14
+MEMBERS = [{"person": _ME, "name": "Severin"}]
+
+
+def test_f7_the_terminal_shows_a_person_as_name_and_short_id_by_the_dashboard_rules():
+    c = {"headline": "Create ticket", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}
+    out = "\n".join(signcontent.text(c, signer._clean, members=MEMBERS))
+    assert "owner: Severin (p_42e1c38e0488…; name per host, not signed)" in out and _ME not in out
+    out = "\n".join(signcontent.text(c, signer._clean, members=[]))
+    assert "owner: p_42e1c38e0488… (unknown person)" in out and _ME not in out
+    out = "\n".join(signcontent.text(c, signer._clean, members=[{"person": _ME, "name": "Sev​（x"}]))
+    assert "(name not shown)" in out and "Sev" not in out.split("owner:")[1]
+    # members not known (None): the id stays as signed, nothing is hidden
+    assert _ME in "\n".join(signcontent.text(c, signer._clean))
+    # a value that is not a person id is untouched
+    c["fields_changed"][0]["after"] = "p_nothex"
+    assert "owner: p_nothex" in "\n".join(signcontent.text(c, signer._clean, members=MEMBERS))
+
+
+def test_f7_members_of_reads_member_list_and_never_raises():
+    rows = {"data": {"members": [{"person": _ME, "name": "Severin", "role": "owner", "devices": []}, {"x": 1}]}}
+    assert signer.members_of(lambda op, args: rows) == [{"person": _ME, "name": "Severin"}]
+
+    def boom(op, args):
+        raise ConnectionError("down")
+
+    assert signer.members_of(boom) == []
+    assert signer.members_of(lambda op, args: {"data": None}) == []
+
+
+def _owner_row(members):
+    c = {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}
+    return [x for x in signcontent.text(c, signer._clean, members=members) if "owner:" in x][0]
+
+
+def test_f7_a_host_name_never_replaces_or_hides_the_id():
+    other = "p_" + "9" * 32
+    # a name that imitates ANOTHER member's name (here a Cyrillic look-alike of "Mara"): both are shared, no name at all
+    twins = [{"person": _ME, "name": "M\u0430ra"}, {"person": other, "name": "Mara"}]
+    row = _owner_row(twins)
+    assert "p_42e1c38e0488…" in row and "Mara" not in row and "M\u0430ra" not in row and "shared by 2" in row
+    # a name that carries an id lookalike (also fullwidth brackets): not shown, the real id is
+    for fake in ("Mara (p_" + "9" * 12 + ")", "\uff08p_" + "9" * 12 + "\uff09", "p_" + "9" * 32):
+        row = _owner_row([{"person": _ME, "name": fake}])
+        assert "p_42e1c38e0488…" in row and "p_999999999999" not in row and "name not shown" in row
+    # a name shown at all is marked as the host's word and sits next to the id
+    row = _owner_row([{"person": _ME, "name": "Severin"}])
+    assert row.strip() == "owner: Severin (p_42e1c38e0488…; name per host, not signed)"
+    # empty, missing or malformed member lists: the short id only
+    for members in (
+        [],
+        [{"person": other, "name": "Mara"}],
+        [{"person": _ME}],
+        [{"person": _ME, "name": None}],
+        [{"person": _ME, "name": 7}],
+    ):
+        row = _owner_row(members)
+        assert "p_42e1c38e0488…" in row and "per host, not signed" not in row, members
+    assert _ME in "\n".join(
+        signcontent.text(
+            {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}, signer._clean
+        )
+    )
+
+
+def test_f7_a_question_with_the_same_option_key_twice_falls_back():
+    q = _answer()
+    q["material"]["question"]["options"].append({"key": "hello", "label": "Other"})
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(q)

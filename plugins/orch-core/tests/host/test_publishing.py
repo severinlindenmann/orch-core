@@ -309,9 +309,8 @@ def test_the_builtin_manifest_is_installed_and_granted_like_the_other_addons(bar
     assert err(bare.req("publish.list", {})) == "runner.disabled"
     prepared = human.prepare("addon.grant", {"name": "publish"})
     content = signcontent.build(prepared, verified=True)
-    assert content["headline"] == "Grant the add-on publish"
-    assert any(r["field"] == "capabilities" and "network" in r["after"] for r in content["fields_changed"])
-    assert any("send data to a server over the internet" in n and "your own signature" in n for n in content["notes"])
+    assert content["headline"] == "Turn on Publish: it says it will use the internet"
+    assert any(r["field"] == "it says it will" and "internet" in r["after"] for r in content["fields_changed"])
     signed = human.sign(prepared)
     ok(human.submit_res(prepared["request"]["id"], signed.events))
     assert (Path(bare.ws.root) / "addons" / "publish" / "orch-addon.json").read_bytes() == builtin.manifest_bytes(

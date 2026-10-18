@@ -14,6 +14,20 @@ from orch.ops.human import Human, iso
 _VERB = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?")
 
 
+def _issued(grant_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """The result data of an issued grant: ``until`` as signed (UTC, for machines) and ``until_local``, the same moment
+    in this computer's time with its zone, which the text line shows."""
+    from orch.host.signcontent import local_time
+
+    until = event["expires_at"]  # the key order is the schema's: host mode answers in that order
+    return {
+        "grant": grant_id,
+        "until": until,
+        "until_local": local_time(until, event.get("hours")) or until,
+        "scope": event["scope"],
+    }
+
+
 def _verbs(raw: str) -> str | list[str]:
     if raw == "agent":
         return "agent"
@@ -85,7 +99,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if ctx.prepare is not None and args.get("runner"):  # H11c: the signing client hands it to the runner
         return h.workspace_result(
             None,
-            {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]},
+            _issued(grant_id, event),
             "start agents from the dashboard: the orch runner holds the grant",
             [],
         )
@@ -94,7 +108,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         # the same line and hint as direct mode)
         return h.workspace_result(
             None,
-            {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]},
+            _issued(grant_id, event),
             "set ORCH_GRANT=<the value shown> for the harness",
             ["the secret was shown on your terminal; clear its scrollback when the harness has it"],
         )
@@ -111,7 +125,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
                 f"{grant_id}",
             ) from None
         lines.append("the secret was shown on your terminal; clear its scrollback when the harness has it")
-        data = {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]}
+        data = _issued(grant_id, event)
         return h.workspace_result(done, data, "set ORCH_GRANT=<the value shown> for the harness", lines)
     # a dry run made no grant: no id, no end time, no hint (the id above was never used)
     return h.workspace_result(None, {"scope": event["scope"]}, None, ["no grant was made"])
@@ -137,8 +151,10 @@ OP = operation(
     },
     pre=("workspace_exists", "role_allows", "user_presence", "text_clean"),
     emits=("grant.issued", "grant.revoked"),
-    text="ok grant.issued[ {grant}][ until={until}]\nnext: {next}",
-    data=obj({"grant": STR, "until": STR, "scope": STR}, optional=("grant", "until")),
+    text="ok grant.issued[ {grant}][ until {until_local}]\nnext: {next}",
+    data=obj(
+        {"grant": STR, "until": STR, "until_local": STR, "scope": STR}, optional=("grant", "until", "until_local")
+    ),
     errors=(err("role.denied"), err("parse.text")),
     handler=handle,
 )

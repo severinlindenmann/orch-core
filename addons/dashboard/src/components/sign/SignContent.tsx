@@ -40,7 +40,10 @@ const LOOKALIKES: Record<string, string> = Object.fromEntries(Object.entries({
   // capitals
   A: 'АΑ', B: 'ВΒ', C: 'С', E: 'ЕΕ', H: 'НΗ', I: 'ІΙ', J: 'Ј', K: 'КΚ', M: 'МΜ', N: 'Ν', O: 'ОΟ', P: 'РΡ', S: 'Ѕ', T: 'ТΤ', X: 'ХΧ', Y: 'ΥҮ', Z: 'Ζ',
 }).flatMap(([latin, many]) => [...many].map(c => [c, latin])))
-const nameKey = (name: string) => [...canonName(name)].map(c => LOOKALIKES[c] ?? c).join('').toLowerCase().toUpperCase().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+const mapLookalikes = (text: string) => [...text].map(c => LOOKALIKES[c] ?? c).join('')
+// Order matters (a mark whose case mapping is a letter, U+0345 -> ι, is a letter only after folding): map look-alikes on the
+// original case, fold case, NFD and drop marks, map again. host/personlabel.py `_key` does the same steps.
+const nameKey = (name: string) => mapLookalikes(mapLookalikes(canonName(name)).toLowerCase().toUpperCase().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')).toLowerCase()
 /**
  * An ALLOWLIST, not a blocklist: a name is shown only when, after NFKC, it is letters and marks (plus space . ' -) of at
  * most 40 characters, in ONE script among those that have look-alike letters (no Latin + Cyrillic/Greek mixing), with no

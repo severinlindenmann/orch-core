@@ -2,7 +2,8 @@
 // (adding `enabled` and their own options), and the route loaders (app/routeData.ts) warm the very same entries with
 // ensureQueryData, so a page and its loader can never drift apart. Keys are unchanged from before.
 
-import { queryOptions } from '@tanstack/react-query'
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
+import type { ActivityParams } from './activity'
 import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
@@ -63,6 +64,16 @@ export const queries = {
       queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
       queryFn: () =>
         api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+    }),
+  /** The Activity page of a real host: pages of the timeline, newest first; follows `next_page`. */
+  activity: (ws: string, filters: Omit<ActivityParams, 'page' | 'limit'>) =>
+    infiniteQueryOptions({
+      queryKey: ['activity', ws, filters.group ?? 'all', filters.who ?? '', filters.ticket ?? ''],
+      queryFn: ({ pageParam }) => api.getActivity(ws, { ...filters, ...(pageParam ? { page: pageParam } : {}) }),
+      initialPageParam: '',
+      getNextPageParam: (last) => last.next_page || undefined,
+      refetchInterval: 30_000,
+      retry: false,
     }),
   /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
   records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),

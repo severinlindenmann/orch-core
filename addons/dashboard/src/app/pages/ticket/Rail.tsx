@@ -7,6 +7,7 @@ import { AddonBadge, CollapsibleStack, useAddons, useSlot } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { TicketWorktree } from '../worktrees/TicketWorktree'
 import { NeedsValue } from './Needs'
 import { ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
 
@@ -204,6 +205,7 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
     <>
       <Details ticket={ticket} viewer={viewer} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
+      <TicketWorktree ticket={ticket} />
       <AddonPanels ticket={ticket} viewer={viewer} />
       <InactiveAddonData ticket={ticket} />
     </>

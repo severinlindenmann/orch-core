@@ -110,7 +110,7 @@ def install_missing(workspace: str, name: str) -> None:
 
 
 def _drop_empty(workspace: str, name: str) -> None:
-    """``rmdir addons/<name>`` relative to the ``addons`` directory's descriptor (no path walk a link could redirect)."""
+    """``rmdir addons/<name>`` relative to the ``addons`` directory's descriptor (no path walk to redirect)."""
     path = Path(os.path.abspath(workspace)) / "addons"
     try:
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)

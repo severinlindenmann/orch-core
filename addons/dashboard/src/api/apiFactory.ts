@@ -1,3 +1,4 @@
+import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import type { Transport } from './transport'
 import {
   ApiError,
@@ -153,6 +154,8 @@ export function createApi(transport: Transport) {
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
     /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
+    /** The Activity page of a real host: `available: false` without `activity/1`. */
+    getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>('GET', `/api/w/${ws}/activity?${activityQuery(p)}`),
     /** Records of a real host (M6): the host's status for owners and maintainers; `available: false` without `records/1`. */
     getRecordsCurrent: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records/current`),
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),

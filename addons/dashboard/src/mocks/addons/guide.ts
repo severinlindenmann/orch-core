@@ -1,22 +1,12 @@
-import type { HelpRoute } from '@/api/guide'
+import { GUIDE_ROUTES } from '@/api/guideContent'
 import { GUIDE_PAGES } from './guide-pages'
 import { notFound, registerAddon } from './registry'
 
-// guide: how to use the dashboard, as eight markdown pages. The pages are fixed text, the same for everyone, so the
+// guide: how to use the dashboard, as markdown pages. The pages are fixed text, the same for everyone, so the
 // only state is per viewer: which page they have open (`state.nav[viewer] = { current }`). `open` is minRole 'viewer'
 // in the manifest. The view also sends the route-to-page map and the page texts, which core's `?` help sheet reads:
 // core picks the page for the current route (src/api/guide.ts).
 
-const ROUTES: HelpRoute[] = [
-  { match: '/', page: 'getting-around' },
-  { match: '/board', page: 'tickets-and-sections' },
-  { match: '/tickets*', page: 'tickets-and-sections' },
-  { match: '/ticket/*', page: 'gates-and-approvals' },
-  { match: '/agents', page: 'agents-and-grants' },
-  { match: '/settings/addons', page: 'addons' },
-  { match: '/settings/addon/*', page: 'addons' },
-  { match: '/addon/*', page: 'addons' },
-]
 
 type Nav = Record<string, { current?: string }>
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Nav
@@ -34,7 +24,7 @@ registerAddon({
         actions: [{ action: 'open', label: 'Open', args: { slug: p.slug } }],
       })),
       current: cur,
-      help: { routes: ROUTES, pages: GUIDE_PAGES },
+      help: { routes: GUIDE_ROUTES, pages: GUIDE_PAGES },
     }
   },
   actions: {

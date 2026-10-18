@@ -48,7 +48,7 @@ LABEL = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 QUESTION = re.compile(r"^Q[1-9][0-9]*$")
 GATES = ("requirements", "plan", "code")
 RESOLUTIONS = ("wont_do", "duplicate", "obsolete", "other")
-SETTABLE = {"labels", "priority", "size", "title", "parent"}
+SETTABLE = {"labels", "links", "priority", "size", "title", "parent"}
 MAX_SECTION = 65536
 MAX_TEXT = 4096
 WORKSPACE_BUILDERS = {
@@ -693,6 +693,22 @@ class Builder:
         ]
         return events, view.uid, self.payload_material(view, events)
 
+    def links_value(self, view, raw):
+        """``links={...}`` as the core's ``set`` makes it: the object's keys replace the ticket's, and every repository
+        must be in ``settings.repos`` (the model refuses an unknown one at the append)."""
+        try:
+            doc = canon.loads_strict(raw.encode())
+        except (canon.JcsError, ValueError):
+            raise invalid("links is a JSON object") from None
+        if not isinstance(doc, dict) or set(doc) - {"repos", "branches", "prs", "external"}:
+            raise invalid("links is an object with repos, branches, prs and external")
+        value = {**thaw(view.fields["links"]), **doc}
+        known = self.store.state.workspace.repos
+        unknown = [r for r in value["repos"] if r not in known]
+        if unknown:
+            raise invalid(f"repos not in settings.repos: {unknown}")
+        return value
+
     def op_set(self, args):
         self.exact(args, {"ref", "pairs"})
         pairs = args["pairs"]
@@ -724,6 +740,8 @@ class Builder:
                     if parent.key == view.key:
                         raise invalid("a ticket is not its own parent")
                     sets[path] = parent.key
+            elif name == "links":
+                sets[path] = self.links_value(view, value)
             elif name == "priority":
                 if value not in ("low", "medium", "high", "urgent"):
                     raise invalid("priority is low, medium, high or urgent")

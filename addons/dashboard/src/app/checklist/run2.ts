@@ -199,7 +199,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'C3',
         title: 'Edit a ticket',
-        text: 'Open the ticket page, "Edit text, checks and people". Sign it in the Terminal as in C2.',
+        text: 'Open the ticket page, "Edit text, checks, repositories and people". Sign it in the Terminal as in C2.',
         see: 'ONE review for all changes (old to new is clear, e.g. "remove: Severin").',
         warn: 'This crashed before (KeyError: title): if it fails again, BLOCKING.',
       },

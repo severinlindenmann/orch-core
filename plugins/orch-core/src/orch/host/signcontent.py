@@ -285,6 +285,50 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
     return True
 
 
+_LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
+_LINK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def _link_plain(value: Any) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and set(value) == _LINK_KEYS
+        and isinstance(value["repos"], list)
+        and all(isinstance(r, str) and _LINK_NAME.fullmatch(r) for r in value["repos"])
+        and isinstance(value["branches"], Mapping)
+        and all(
+            k in value["repos"] and isinstance(b, str) and b and "\n" not in b for k, b in value["branches"].items()
+        )
+    )
+
+
+def _link_word(links: Mapping[str, Any], name: str) -> str:
+    if name not in links["repos"]:
+        return "not linked"
+    branch = links["branches"].get(name)
+    return f"linked, branch {one(branch)}" if branch else "linked, no branch"
+
+
+def _links_rows(out: dict[str, Any], value: Any, before: Any, note: str | None) -> bool:
+    """A ticket's ``links`` edit as one row per repository that changes (``repository X: not linked -> linked, branch
+    Y``). ``False`` (the generic row, every byte) when either value is not plain, when the pull requests or external
+    links change too, or when nothing about the repositories changes."""
+    if not _link_plain(value) or not _link_plain(before):
+        return False
+    if value["prs"] != before["prs"] or value["external"] != before["external"]:
+        return False
+    rows = []
+    for name in sorted(set(value["repos"]) | set(before["repos"])):
+        old, new = _link_word(before, name), _link_word(value, name)
+        if old != new:
+            rows.append((name, new, old))
+    if not rows:
+        return False
+    for name, new, old in rows:
+        _row(out, f"repository {one(name)}", new, old, note)
+    return True
+
+
 def _grant_issued(ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     """The grant review. The plain view of the ordinary grant (scope ``workable``, verbs ``agent``) is one sentence;
     scope, verbs, the grant id and the UTC times are in the technical details (``d``), which carry every signed field.
@@ -700,6 +744,8 @@ def _updated(
         elif field == "tasks":
             out["tasks"] = _tasks(value)
             names.append("plan")
+        elif field == "links" and _links_rows(out, value, before.get(path), ctx.note(path in checked)):
+            names.append("repositories")
         else:
             # `before` is shown as checked only when the event's base_rev binds it; otherwise it is the host's word
             _row(out, field, value, before.get(path), ctx.note(path in checked))

@@ -1006,6 +1006,52 @@ def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_ca
     assert post(client, token, stub, body).json()["id"] == got["id"]
 
 
+def test_an_edit_links_repositories_and_the_server_builds_old_to_new_from_the_host_read(ready, host_calls, p1):
+    client, token, stub, rich, signing = ready
+    repos = {"proj": {"path": "/tmp/f6-proj"}, "other": {"path": "/tmp/f6-other"}}
+    p1.store.append(p1.person_event(p1.owner, "workspace", "settings.changed", set={"repos": repos}), log="workspace")
+    view = p1.store.ticket("DEMO-0001")
+    was = {k: (list(v) if isinstance(v, list | tuple) else dict(v)) for k, v in view.fields["links"].items()}
+    body = _edit_body(p1, sections={}, links={"repos": ["proj", "other"], "branches": {"proj": "feat/demo-0001"}})
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    intent = sent["sequence"]["intent"]
+    assert sent["op"] == "set" and sent["args"]["ref"] == "DEMO-0001"
+    assert sent["args"]["pairs"] == ['links={"branches":{"proj":"feat/demo-0001"},"repos":["other","proj"]}']
+    # `was` is the host's read, never the browser's
+    assert intent["links"] == {
+        "was": was,
+        "repos": ["other", "proj"],
+        "branches": {"proj": "feat/demo-0001"},
+    }
+    assert sent["sequence"]["of"] == 1
+
+
+def test_an_edit_whose_links_do_not_change_sends_no_links_step(ready, host_calls, p1):
+    client, token, stub, rich, signing = ready
+    view = p1.store.ticket("DEMO-0001")
+    now = view.fields["links"]
+    body = _edit_body(p1, links={"repos": list(now["repos"]), "branches": dict(now["branches"])})
+    post(client, token, stub, body)
+    assert "links" not in [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]["sequence"]["intent"]
+
+
+@pytest.mark.parametrize(
+    "links",
+    [
+        {"repos": ["proj"], "branches": {"proj": "has space"}},
+        {"repos": ["proj"], "branches": {"proj": "-x"}},
+        {"repos": ["../x"], "branches": {}},
+        {"repos": [], "branches": {}, "extra": 1},
+    ],
+)
+def test_an_edit_refuses_a_bad_branch_or_repo_name(ready, p1, links):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, _edit_body(p1, sections={}, links=links))
+    assert res.status_code in (400, 422), res.text
+
+
 def test_an_edit_of_a_ticket_that_changed_since_the_page_is_refused(ready, p1):
     client, token, stub, rich, signing = ready
     body = _edit_body(p1)

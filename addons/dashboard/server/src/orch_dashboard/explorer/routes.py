@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from .. import reads
 from ..errors import HostError, fail
 from ..gateway import Gateway
-from . import git, guard, links, preview, search
+from . import describe, git, guard, links, search
 from . import scope as scopes
 
 RootId = Annotated[str, StringConstraints(pattern=r"^(?:ws|repo:[a-z0-9][a-z0-9._-]{0,63})$")]
@@ -137,13 +137,13 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 return {**base, "kind": "other", "size": st.st_size}
             data = None
             cut = False
-            if st.st_size <= max(preview.TEXT_MAX, preview.IMAGE_MAX):
-                data, st, cut = root.read(parts, max(preview.TEXT_MAX, preview.IMAGE_MAX))
+            if st.st_size <= max(describe.TEXT_MAX, describe.IMAGE_MAX):
+                data, st, cut = root.read(parts, max(describe.TEXT_MAX, describe.IMAGE_MAX))
         except guard.GuardError as exc:
             raise _refuse(exc) from None
-        out = preview.describe(name, data, st.st_size, cut)
-        if out["kind"] in ("text", "markdown") and len(data or b"") > preview.TEXT_MAX:
-            out = preview.describe(name, None, st.st_size)
+        out = describe.describe(name, data, st.st_size, cut)
+        if out["kind"] in ("text", "markdown") and len(data or b"") > describe.TEXT_MAX:
+            out = describe.describe(name, None, st.st_size)
         repo = None
         try:
             repo = git.locate(root, parts)

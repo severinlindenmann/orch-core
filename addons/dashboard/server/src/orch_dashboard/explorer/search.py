@@ -16,8 +16,8 @@ import shutil
 from orch import gitbrowse, gitsafe
 
 from ..errors import HostError
+from . import describe, guard
 from . import git as history
-from . import guard, preview
 
 MAX_HITS = 200
 MAX_BYTES = 1_000_000
@@ -53,7 +53,7 @@ def _clean_hit(root: guard.Root, rel: str, line: int, text: str) -> dict | None:
         "path": "/".join(parts),
         "label": guard.label("/".join(parts)),
         "line": line,
-        "text": preview.clean_line(text),
+        "text": describe.clean_line(text),
     }
 
 

@@ -268,14 +268,20 @@ class Root:
                 raise Missing("There is no such file.") from None
 
     #: files that move where git reads its objects or its history from: a repository that has one is not used
-    _REDIRECTS = (".git/commondir", ".git/objects/info/alternates", ".git/objects/info/http-alternates", ".git/info/grafts")
+    _REDIRECTS = (
+        ".git/commondir",
+        ".git/objects/info/alternates",
+        ".git/objects/info/http-alternates",
+        ".git/info/grafts",
+    )
 
     def has_git(self, parts: tuple[str, ...]) -> bool:
-        """Does the folder ``parts`` hold its own, plain git working copy? A real ``.git`` FOLDER (not a link) with a real
-        ``objects`` folder (not a link) and none of the files that redirect git: ``commondir``, ``objects/info/alternates``,
-        ``objects/info/http-alternates``, ``info/grafts``. A ``.git`` FILE (``gitdir: <elsewhere>``) is refused: it can
-        send git to a git directory outside the root or inside a forbidden folder. The caller (`git.locate`)
-        additionally asks git where it finds its directories and requires exactly these, and pins git to them."""
+        """Does the folder ``parts`` hold its own, plain git working copy? A real ``.git`` FOLDER (not a link) with a
+        real ``objects`` folder (not a link) and none of the files that redirect git: ``commondir``,
+        ``objects/info/alternates``, ``objects/info/http-alternates``, ``info/grafts``. A ``.git`` FILE
+        (``gitdir: <elsewhere>``) is refused: it can send git to a git directory outside the root or inside a forbidden
+        folder. The caller (`git.locate`) additionally asks git where it finds its directories and requires exactly
+        these, and pins git to them."""
         try:
             with self.dir(parts) as fd:
                 for name in (".git", ".git/objects"):

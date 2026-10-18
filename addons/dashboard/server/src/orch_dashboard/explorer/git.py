@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from orch import gitbrowse, gitsafe
 
 from ..errors import fail
-from . import guard, preview
+from . import describe, guard
 
 PATCH_MAX = 400_000
 PAGE_MAX = 200
@@ -78,7 +78,7 @@ def _run(repo: Repo, op: str, *operand: str, max_bytes: int = PATCH_MAX, timeout
 
 
 def _text(value: str, limit: int = 300) -> str:
-    return preview.clean_line(value, limit)
+    return describe.clean_line(value, limit)
 
 
 def log(repo: Repo, skip: int, limit: int) -> dict:
@@ -136,10 +136,10 @@ def version(repo: Repo, name: str, sha: str) -> dict:
         raise fail("not_found", "The file does not exist in that version.", exit=2)
     n = int(size.out.strip())
     data = None
-    if n <= max(preview.TEXT_MAX, preview.IMAGE_MAX):
-        got = _run(repo, "blob", sha, repo.file, max_bytes=max(preview.TEXT_MAX, preview.IMAGE_MAX) + 1)
+    if n <= max(describe.TEXT_MAX, describe.IMAGE_MAX):
+        got = _run(repo, "blob", sha, repo.file, max_bytes=max(describe.TEXT_MAX, describe.IMAGE_MAX) + 1)
         data = got.out if got.code == 0 and not got.cut else None
-    return preview.describe(name, data, n, cut=data is None and n > 0)
+    return describe.describe(name, data, n, cut=data is None and n > 0)
 
 
 def commit_files(repo: Repo, sha: str, before: str | None) -> list[tuple[str, str]]:

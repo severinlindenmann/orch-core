@@ -26,8 +26,8 @@ def ts(epoch: int) -> str:
 
 
 class Env:
-    def __init__(self, tmp_path: Path, *, clock_start: int = T0, ws_id: str = WS) -> None:
-        self.ws_id = ws_id  # a second workspace in one test (the publish isolation e2e) needs another id
+    def __init__(self, tmp_path: Path, *, clock_start: int = T0, ws_id: str | None = None) -> None:
+        self.ws_id = ws_id or WS  # a second workspace in one test (the publish isolation e2e) needs another id
         self.tmp = tmp_path
         self.root = tmp_path / "workspace"
         self.root.mkdir(parents=True, exist_ok=True)  # Store.open makes no project directory for a reader

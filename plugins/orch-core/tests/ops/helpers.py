@@ -15,7 +15,7 @@ from orch import crypto
 from orch.cli.main import main
 from orch.custody import FileBackend
 from orch.store import BackendSigner
-from tests.store.helpers import GRANT_SECRET, WS, Env
+from tests.store.helpers import GRANT_SECRET, Env
 
 SESSION = "s_01J9ZP0000000000000000000S"
 OTHER = "s_01J9ZP0000000000000000000T"
@@ -24,12 +24,12 @@ OTHER = "s_01J9ZP0000000000000000000T"
 class Ws(Env):
     live = False  # True: the clock is the wall clock (the binary under test reads the real one)
 
-    def __init__(self, tmp_path: Path, *, live: bool = False, ws_id: str = WS) -> None:
+    def __init__(self, tmp_path: Path, *, live: bool = False, ws_id: str | None = None) -> None:
         import time
 
         super().__init__(tmp_path, clock_start=int(time.time()) if live else 1_790_000_000, ws_id=ws_id)
         self.live = live
-        keys = self.host_state / "hosts" / ws_id / "keys"
+        keys = self.host_state / "hosts" / self.ws_id / "keys"
         self.host_backend = FileBackend(keys)
         self.wsk_pub = self.host_backend.create("wsk")
         self.signer = BackendSigner(self.host_backend, "wsk")

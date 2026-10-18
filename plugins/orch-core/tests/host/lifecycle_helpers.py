@@ -24,7 +24,7 @@ from orch.host.service import Host
 from orch.identity import certs, new_ulid
 from tests.identity.helpers import Person
 from tests.ops.helpers import Ws
-from tests.store.helpers import T0, WS
+from tests.store.helpers import T0
 
 UID = os.getuid()
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -130,8 +130,8 @@ class HostThread:
 class Lab:
     """One test's world: a bootstrapped workspace (``Ws``), its host state dir and a short run directory."""
 
-    def __init__(self, tmp_path: Path, *, ws_id: str = WS) -> None:
-        self.ws = Ws(tmp_path, ws_id=ws_id)
+    def __init__(self, tmp_path: Path, *, ws_id: str | None = None) -> None:
+        self.ws = Ws(tmp_path, **({"ws_id": ws_id} if ws_id else {}))
         self.ws.bootstrap()
         self.ws.store.close()
         self.ws.store = None

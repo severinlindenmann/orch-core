@@ -389,3 +389,14 @@ def test_last_change_lists_only_files_with_their_exact_path(world):
     world.git(r, "commit", "-q", "-am", "gone", n=8)
     assert gitbrowse.parse_names(world.run("last_change", "HEAD", "a.txt").out) == [("D", "a.txt")]
     assert world.run("last_change", "HEAD", "never.txt").out == b""
+
+
+def test_blob_type_and_the_file_name_checks(world):
+    assert world.run("blob_type", world.c1, "a.txt").out.strip() == b"blob"
+    assert world.run("blob_type", world.c1, "dir").out.strip() == b"tree"
+    assert world.run("blob_type", world.c1, "never").code != 0
+    assert gitbrowse.parse_names(world.run("commit_file_names", world.c2, "a.txt").out) == [("M", "a.txt")]
+    assert [p for _s, p in gitbrowse.parse_names(world.run("commit_file_names", world.c3, "dir").out)] == [
+        "dir/ünï code.txt"
+    ]
+    assert gitbrowse.parse_names(world.run("range_file_names", world.c1, world.c3, "a.txt").out) == [("M", "a.txt")]

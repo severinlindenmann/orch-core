@@ -88,6 +88,7 @@ SHOWN: dict[str, frozenset[str]] = {
 #: signed key). Only for the ordinary grant (scope ``workable``, verbs ``agent``); any other value shows them as rows.
 DETAILS_ONLY: dict[str, frozenset[str]] = {
     "grant.issued": frozenset({"grant", "scope", "verbs", "issued_at", "expires_at"}),
+    "grant.revoked": frozenset({"grant"}),
 }
 
 #: the keys of a gate input the plain view shows, and the ones that are hashes; of its ``fields``, a task, an
@@ -584,10 +585,21 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
     # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
-    # binds none of them
+    # binds none of them. Said in plain words, in one labelled note instead of a suffix on every line.
+    out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
+    unsigned = []
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
-            _row(out, label, f"{_s(q[k])} (per host, not signed)")
+            value = q[k]
+            words = (
+                "the ticket owner"
+                if value == "ticket_owner"
+                else ("yes" if value is True else "no" if value is False else opts.get(_s(value), _s(value)))
+            )
+            _row(out, label, words)
+            unsigned.append(label)
+    if unsigned:
+        out.setdefault("notes", []).append(f"Per host, not signed: {', '.join(unsigned)}.")
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
@@ -655,12 +667,12 @@ def _event(
     if typ == "grant.issued":
         return _grant_issued(ev, out)
     if typ == "grant.revoked":
-        _row(out, "grant id", ev.get("grant"))
+        out.setdefault("notes", []).append("The access id is in the technical details.")
         if ev.get("reason") == "extended":  # B8: the old half of an Extend
             out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
-        return f"Take back the agent access {_s(ev.get('grant'))}"
+        return "Take back the access you gave to agents working for you"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):

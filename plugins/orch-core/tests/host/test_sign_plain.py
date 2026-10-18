@@ -568,10 +568,9 @@ def test_a_question_shows_its_options_and_labels_what_the_question_hash_does_not
     c = build({"op": "answer", "events": [ev], "material": material})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["option a"] == "Left (cost 1d)" and rows["option b"] == "Right"
-    assert (
-        rows["addressed to"].endswith("(per host, not signed)")
-        and rows["blocks the ticket"] == "true (per host, not signed)"
-    )
+    assert rows["addressed to"] == "p_" + "7" * 32 and rows["blocks the ticket"] == "yes"
+    assert c["fields_title"] == "About this question"  # no "- ->" before values
+    assert "Per host, not signed: addressed to, blocks the ticket." in c["notes"]
     assert c["headline"].startswith("Answer “Which way?” on DEMO-0001") and c["headline"].endswith("with Left")
     material["question"]["future"] = 1
     with pytest.raises(signcontent.PlainUnavailable):
@@ -846,7 +845,7 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["your choice"] == "Hello"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option"] == "hello (per host, not signed)"
+    assert rows["recommended option"] == "Hello" and "recommended option" in " ".join(c["notes"])
     assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
     assert c["ticket"]["key"] == "RA-0001"
     view = "\n".join(signcontent.text(c, signer._clean))

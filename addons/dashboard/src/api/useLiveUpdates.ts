@@ -57,7 +57,7 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
       })
       void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid, needles)
       // The feed on Today and the closed list name the ticket by key and title: purge them whole, then read as the new viewer.
-      const feeds = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      const feeds = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || q.queryKey[0] === 'activity' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
       void client.cancelQueries(feeds); client.removeQueries(feeds)
       for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.type === 'needs.changed') {
@@ -72,7 +72,7 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
     } else if (item.type === 'visibility.changed' || item.type === 'people.changed' || item.type === 'ticket.closed' || item.type === 'ticket.reopened') {
       // Who may see a ticket (or whether it is listed) changed. Today's activity and a closed list carry titles and rows
       // that were visible a moment ago: drop them, not only mark them stale, then read again as the new viewer.
-      const lists = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      const lists = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || q.queryKey[0] === 'activity' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
       void client.cancelQueries(lists); client.removeQueries(lists)
       if (item.key) void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] })
       for (const name of ['tickets', 'board', 'today']) invalidate(name)

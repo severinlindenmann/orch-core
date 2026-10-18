@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   Files,
+  History,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
@@ -430,4 +431,6 @@ const CORE_NAV = [
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
   { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  /** Activity (#595): who did what; listed where the host serves `activity/1`. */
+  { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
 ] as const

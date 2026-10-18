@@ -49,6 +49,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/worktrees",
         "/api/w/{ws}/worktrees/create",
         "/api/w/{ws}/worktrees/remove",
+        "/api/w/{ws}/activity",
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
@@ -133,6 +134,7 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings/grants",
         "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
+        "/w/DEMO/activity",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],

@@ -172,7 +172,7 @@ def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
     code, out, _ = cli(ws, "check")
     assert (
         code == 5
-        and "AGENTS.orch.md: r1, this orch writes r2" in out
+        and f"AGENTS.orch.md: r1, this orch writes r{INSTRUCTIONS_REV}" in out
         and out.splitlines()[-1] == ("next: orch instructions sync")
     )
     code, out, err = cli(ws, "instructions", "sync")

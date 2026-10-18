@@ -9,7 +9,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals, worktrees
+from . import (
+    activity_routes,
+    adapters,
+    addon_routes,
+    agents,
+    click,
+    handoff,
+    phone,
+    reads,
+    settings,
+    signprefs,
+    terminals,
+    worktrees,
+)
 from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth
@@ -26,7 +39,7 @@ class LaunchCode(BaseModel):
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
+    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick|activity)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
     r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
 )
@@ -155,6 +168,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     signprefs.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
+    activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
     worktrees.register(app, gateway)

@@ -31,9 +31,9 @@ export function RevokeShare({ ws, share, onClose }: { ws: string; share: Share; 
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="max-w-md gap-3 border-border bg-surface">
         <DialogHeader>
-          <DialogTitle>Revoke this link?</DialogTitle>
+          <DialogTitle>Stop sharing these files?</DialogTitle>
           <DialogDescription>
-            The link for {share.ticket ? <Inline>{share.ticket}</Inline> : 'this share'} stops working at once. Anyone who has it can no longer open the files. This cannot be undone; to share again you make a new link.
+            The link for {share.ticket ? <Inline>{share.ticket}</Inline> : 'this share'} stops working at once. Anyone who has it can no longer open the files. This cannot be undone; to share again, make a new link.
           </DialogDescription>
         </DialogHeader>
         {error && (
@@ -46,7 +46,7 @@ export function RevokeShare({ ws, share, onClose }: { ws: string; share: Share; 
             Cancel
           </Button>
           <Button variant="destructive" onClick={() => void go()} disabled={busy}>
-            {busy ? 'Revoking…' : 'Revoke link'}
+            {busy ? 'Stopping…' : 'Stop sharing'}
           </Button>
         </DialogFooter>
       </DialogContent>

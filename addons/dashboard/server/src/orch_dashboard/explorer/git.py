@@ -193,9 +193,27 @@ def commit_files(repo: Repo, sha: str, before: str | None) -> list[tuple[str, st
     return gitbrowse.parse_names(res.out) if res.code == 0 else []
 
 
+def on_head(repo: Repo, sha: str) -> bool:
+    """Is the commit already on the line the repository's own folder stands on (HEAD)? Asked with the allowed
+    operations only: the commit is in HEAD's log of one of the files it changed. Unknown (a commit that changed no
+    file, an unreadable answer, a file with a very long log) is False, so the commit is shown rather than hidden."""
+    for _status, rel in commit_files(repo, sha, None)[:20]:
+        try:
+            parts = guard.split(rel)
+        except guard.GuardError:
+            continue
+        if guard.deny(parts, store_names=frozenset(repo.exclude_top)):
+            continue
+        res = _run(repo, "file_log", "500", "0", "HEAD", "/".join(parts), max_bytes=2_000_000)
+        if res.code != 0:
+            return False
+        return any(row[0] == sha for row in gitbrowse.parse_log(res.out))
+    return False
+
+
 def search(repo: Repo, query: str) -> list[tuple[str, int, str]]:
     res = _run(repo, "grep", query, max_bytes=1_000_000, timeout=10.0)
     return gitbrowse.parse_grep(res.out) if res.code == 0 else []
 
 
-__all__ = ["Repo", "locate", "log", "commit", "compare", "version", "commit_files", "search"]
+__all__ = ["Repo", "locate", "log", "commit", "compare", "version", "commit_files", "on_head", "search"]

@@ -232,6 +232,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
       <DialogContent
+        showCloseButton={!(end || phase === 'waiting')}
         data-handoff-dialog
         className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {

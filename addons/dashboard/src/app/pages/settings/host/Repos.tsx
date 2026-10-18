@@ -184,7 +184,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
               <DialogTitle>Remove {removing.name}?</DialogTitle>
               <DialogDescription>
                 {removing.tickets!.length === 1 ? 'This ticket links' : 'These tickets link'} this repository: <Raw>{removing.tickets!.join(', ')}</Raw>
-                {removing.tickets!.length >= 12 ? ' and maybe more' : ''}. They keep the link, but no one can add a worktree for them until you add the repository again or link another one. The folder and its files stay on disk.
+                {removing.tickets!.length >= 12 ? ' and maybe more' : ''}. {removing.tickets!.length === 1 ? 'It keeps' : 'They keep'} the link, but no one can add a worktree for {removing.tickets!.length === 1 ? 'it' : 'them'} until you add the repository again or link another one. The folder and its files stay on disk.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2">

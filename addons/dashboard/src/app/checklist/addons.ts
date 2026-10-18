@@ -24,7 +24,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'H3',
         title: 'Switch it off again',
-        see: 'One review and one confirmation (no typed word). Afterwards the switch shows Off and nothing is deleted.',
+        see: 'One review, then you type the add-on\'s name (for example worktrees) to confirm. Afterwards the switch shows Off and nothing is deleted.',
       },
       {
         id: 'H4',
@@ -188,7 +188,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'L1',
         title: 'Open the Guide',
         text: 'Open the dashboard on a real workspace. Look for "Guide" at the bottom of the main sidebar list and click it.',
-        see: 'The nine pages in the left list, "Start here" first.',
+        see: 'The twelve pages in the left list, "Start here" first.',
       },
       {
         id: 'L2',
@@ -232,8 +232,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'M2',
         title: 'Add a repo and link it',
         text: 'In Settings, General, Repositories, add the repo (as in I2). Then link it to the new ticket with a branch.',
-        commands: [`orch set <TICKET> links='{"repos":["repo"],"branches":{"repo":"feat/together"}}'`],
-        see: 'The repo shows "In place". The ticket shows the repo and the branch (replace <TICKET> by the ticket key; use a grant as in D2).',
+        commands: ['orch show <TICKET> --full', `orch set <TICKET> links='{"repos":["repo"],"branches":{"repo":"feat/together"}}'`],
+        see: 'The repo shows "In place". The ticket shows the repo and the branch. Replace <TICKET> by the new ticket\'s key (for example RA-0003) in both commands; both need a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2). The first command only reads the ticket, ignore its output.',
       },
       {
         id: 'M3',
@@ -264,18 +264,18 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N2',
         title: 'Start the local server and tell orch about it',
-        text: 'In Terminal start the server with the command you are given (the workspace id and your person id go after --workspace, as WS=PERSON, and your person id again after --owner), then set it up.',
+        text: 'In one Terminal window start the server and leave it running. In a second window run the setup command and sign it. When it is done, the second window prints a line that starts with "orch-publish dev" and ends with --workspace and --owner and long ids. Copy that exact line (it holds your ids; do not type them), press Ctrl-C in the first window and run the copied line there instead. Then continue.',
         commands: [
-          'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104 --workspace WS=PERSON --owner PERSON',
+          'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104',
           'orch publish setup --server http://127.0.0.1:8103 --share http://127.0.0.1:8104',
         ],
-        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup. In Settings, Add-ons the same two addresses show under "Publish: where files go".',
+        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup and prints the restart line with your ids. In Settings, Add-ons the same two addresses show under "Publish: where files go".',
       },
       {
         id: 'N3',
         title: 'Give a ticket a file',
-        text: 'Add a file to a ticket (with a grant, as in H2).',
-        commands: ['orch artifact add report.md --kind report --ref TST-0001'],
+        text: 'Add a file to the ticket RA-0001. This needs a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2).',
+        commands: ['cd ~/orch-run2-a', 'echo "A short test report" > report.md', 'orch artifact add report.md --kind report --ref RA-0001'],
         see: 'The ticket\'s right column has a "Shares" box with "Share files".',
       },
       {
@@ -305,8 +305,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N8',
         title: 'An agent prepares, you sign',
-        text: 'With a grant, let an agent prepare a share.',
-        commands: ['orch publish prepare TST-0001 report.md'],
+        text: 'With a grant (as in D2), let an agent prepare a share. An agent can only prepare shares for the ticket it has claimed, so claim it first (if it says your session already holds it, carry on).',
+        commands: ['orch claim RA-0001', 'orch publish prepare RA-0001 report.md'],
         see: 'It prints a staged id and no link. The ticket\'s Shares box says "Waiting for your signature, prepared by an agent". Review and sign gives the link once.',
       },
       {
@@ -340,7 +340,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'O2',
         title: 'Estimate a ticket',
         text: 'Open a ticket that is not done. In the right column find the Estimate box and press 3.',
-        see: 'A review that says "Estimate: 3 points". After signing, the box says "3 points" and the Details row says Points: 3 points (not Size). The number 3 is greyed because it is already chosen.',
+        see: 'A review that changes the ticket\'s size to the matching letter (3 points is size m; 1 is xs, 2 s, 5 l, 8 xl). After signing, the box says "3 points" and the Details row says Points: 3 points (not Size). The number 3 is greyed because it is already chosen. If the requirements were already approved, approve them again afterwards.',
       },
       {
         id: 'O3',
@@ -364,7 +364,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'O6',
         title: 'List view and switching off',
         text: 'Open Tickets as a list: the Points column. Then switch Estimate off in Settings, Add-ons.',
-        see: 'The list shows 1 to 8 (or –) under Points. After switching off, the Points column, chips, totals and the Estimate box are gone and the plain Size comes back; the sizes stay on the tickets.',
+        see: 'The list has a Points column that shows 1 to 8 (or – for a ticket without an estimate). After switching off, the Points column, chips, totals and the Estimate box are gone and the plain Size comes back; the sizes stay on the tickets.',
       },
     ],
   },
@@ -415,7 +415,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Q1',
         title: 'Switch Model routing on',
         text: 'Open Settings, then Add-ons, and switch Model routing on.',
-        see: 'The usual review and typed word. Afterwards a "Model routing" box appears under the list: for Claude and Codex, one row per kind of work (Do the work, Write requirements and plan, Fix what was sent back, Continue, Read and answer), each set to "Agent default".',
+        see: 'The usual review and typed word. Afterwards a "Default models" box appears under the list: for Claude and Codex, one row per kind of work (Do the work, Write requirements and plan, Fix what was sent back, Continue, Read and answer), each set to "Agent default".',
       },
       {
         id: 'Q2',

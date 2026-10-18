@@ -71,9 +71,10 @@ export function FolderList({ ws, root, path, depth, ...p }: TreeProps & { root: 
   if (!q.data) return <p role="status" className="px-3 py-1 text-[12px] text-text-faint" style={{ paddingLeft: `${8 + depth * 14}px` }}>Loading…</p>
   return (
     <ul aria-label={depth === 0 ? 'Files' : undefined} onKeyDown={depth === 0 ? onTreeKey : undefined} data-tree-root={depth === 0 ? '' : undefined}>
-      {q.data.entries.map((e) => (
+      {q.data.entries.map((e, i, all) => (
         <li key={e.name}>
-          <Item ws={ws} root={root} dir={path} entry={e} depth={depth} {...p} />
+          {/* The reason is said once per run of entries locked for the same reason, not under every one */}
+          <Item ws={ws} root={root} dir={path} entry={e} depth={depth} sameReasonAsAbove={!!e.locked && all[i - 1]?.locked === e.locked} {...p} />
         </li>
       ))}
       {q.data.entries.length === 0 && <li className="px-3 py-1 text-[12px] text-text-faint">Empty folder</li>}
@@ -82,7 +83,7 @@ export function FolderList({ ws, root, path, depth, ...p }: TreeProps & { root: 
   )
 }
 
-function Item({ ws, root, dir, entry, depth, ...p }: TreeProps & { root: string; dir: string; entry: Entry; depth: number }) {
+function Item({ ws, root, dir, entry, depth, sameReasonAsAbove, ...p }: TreeProps & { root: string; dir: string; entry: Entry; depth: number; sameReasonAsAbove?: boolean }) {
   const path = join(dir, entry.name)
   const label = <bdi className="min-w-0 flex-1 truncate [unicode-bidi:isolate]">{entry.label}</bdi>
   if (entry.locked) {
@@ -93,7 +94,7 @@ function Item({ ws, root, dir, entry, depth, ...p }: TreeProps & { root: string;
           {label}
           <span className="shrink-0 text-[11px] text-text-faint">Locked</span>
         </Row>
-        <p className="pb-1 pr-2 text-[11px] text-text-faint" style={{ paddingLeft: `${8 + depth * 14 + 22}px` }} data-testid="why-locked">Why locked? {lockedText(entry.locked)}</p>
+        {!sameReasonAsAbove && <p className="pb-1 pr-2 text-[11px] text-text-faint" style={{ paddingLeft: `${8 + depth * 14 + 22}px` }} data-testid="why-locked">Why locked? {lockedText(entry.locked)}</p>}
       </>
     )
   }

@@ -139,7 +139,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     } catch (e) {
       if (e instanceof ApiError && e.code === 'launch.changed') {
         // What would run changed since the preview (also a new runner grant): show it again, ask for a new Start.
-        setNote('What would run changed since the last check. Check it again, then start.')
+        setNote('What would run changed since the last check. It has been checked again: read it, then start.')
         await preview(shown.args)
       } else {
         // The same idem stays: Start again returns the recorded run, never a second one. A lost answer: read the list.
@@ -198,7 +198,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
         {badModel && <p role="alert" className="text-danger sm:col-span-2">Choose a model from the list.</p>}
         {stale && shown && <p className="text-text-muted sm:col-span-2" data-testid="agent-stale">The choices changed: check the start settings again before you start.</p>}
-        {!stale && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
+        {!stale && !note && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
         <div className="flex justify-end sm:col-span-2">
           <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Checking…' : 'Check start settings'}</Button>
         </div>
@@ -282,7 +282,7 @@ export type GrantStep =
  * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
-export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome }: { extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
+export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome, onConfirmed }: { onConfirmed?: () => void; extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
   const workspaces = useQuery(queries.workspaces())
   const workspace = workspaces.data?.find(w => w.id === ws)
   // 8 h / 1 / 3 / 7 days, never above the workspace maximum; an Extend never offers less than the access it replaces.
@@ -310,8 +310,12 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   changed.current = onChanged
   const outcome = useRef(onOutcome)
   outcome.current = onOutcome
+  const confirmed = useRef(onConfirmed)
+  confirmed.current = onConfirmed
   useEffect(() => {
     if (['polling', 'confirmed', 'rejected', 'unknown'].includes(step.kind)) outcome.current?.()
+    // A signed and delivered grant ends the dialog that hosts this card (Extend), so a second click cannot extend again.
+    if (step.kind === 'confirmed') confirmed.current?.()
   }, [step.kind])
   const grant = runner?.grant ?? null
   const enabled = runner?.enabled === true && !!workspace

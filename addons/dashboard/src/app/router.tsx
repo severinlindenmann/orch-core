@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, redirect } from '@tanstack/react-router'
+import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
 import { RouteProblem } from './shell/RouteProblem'
 import { lazyPage } from './pages/lazyPage'
@@ -23,6 +23,8 @@ const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
+// The tester's checklist: its own page without the shell, so it works before any workspace exists (orch setup).
+const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'ChecklistPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -34,6 +36,9 @@ const addonNodes = () => import('@/addon-ui/preloadNodes').then((m) => m.preload
 /** Under this a page simply replaces the old one; past it the page's skeleton shows, for at least PENDING_MIN_MS. */
 export const PENDING_MS = 200
 export const PENDING_MIN_MS = 300
+
+/** The tester's checklist (not in the nav; opened with `orch dashboard open /checklist`). */
+export const CHECKLIST_PATH = '/checklist'
 
 /** A page this build or host does not serve (the read-only production app) goes to the board; the mock serves all. */
 const serves = (feature: string) => () => {
@@ -47,8 +52,12 @@ export interface RouterContext extends LoaderContext {
   urls: UrlState
 }
 // The shell's data loads before its first paint (nothing to keep on screen yet: the document's own background).
+function Root() {
+  const path = useRouterState({ select: (s) => s.location.pathname })
+  return path === CHECKLIST_PATH ? <Outlet /> : <Shell />
+}
 const rootRoute = createRootRouteWithContext<RouterContext>()({
-  component: Shell,
+  component: Root,
   loader: ({ context }) => loadShell(context),
   pendingComponent: () => null,
   pendingMinMs: 0,
@@ -120,6 +129,7 @@ const dropRoute = createRoute({
   loader: pageLoader(() => [], [DropPage.preload]),
   component: DropPage,
 })
+const checklistRoute = createRoute({ getParentRoute: () => rootRoute, path: 'checklist', loader: pageLoader(() => [], [ChecklistPage.preload]), component: ChecklistPage })
 const layoutPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '__layout/$name',
@@ -201,7 +211,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

@@ -1,0 +1,90 @@
+// The tester's checklist store (server: testrun.py). Not part of the workspace `api`: it needs no workspace, so it works
+// before `orch setup`. Same-origin, bearer header only, like the other calls.
+import { getToken } from './bootstrap'
+
+export const STATUSES = ['todo', 'pass', 'fail_blocking', 'fail_non_blocking', 'skipped'] as const
+export type StepStatus = (typeof STATUSES)[number]
+
+export interface StepNotes {
+  status: StepStatus
+  note: string
+  images: string[]
+  updated?: string
+}
+
+export interface TestrunState {
+  /** Where the notes are kept on this computer. */
+  path: string
+  images_path: string
+  notes: Record<string, StepNotes>
+}
+
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
+export const IMAGE_MAX = 5 * 1024 * 1024
+
+export class TestrunError extends Error {
+  constructor(public status: number, public code: string) {
+    super(code)
+  }
+}
+
+async function call(method: string, path: string, body?: unknown): Promise<Response> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (body !== undefined) headers['content-type'] = 'application/json'
+  const res = await fetch(path, { method, headers, credentials: 'omit', redirect: 'error', cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body) })
+  if (!res.ok) {
+    let code = 'error'
+    try {
+      code = ((await res.json()) as { error?: { code?: string } }).error?.code ?? code
+    } catch {
+      /* not JSON */
+    }
+    throw new TestrunError(res.status, code)
+  }
+  return res
+}
+
+const base = (run: string) => `/api/testrun/${encodeURIComponent(run)}`
+
+export async function loadRun(run: string): Promise<TestrunState> {
+  return (await (await call('GET', base(run))).json()) as TestrunState
+}
+
+export async function saveStep(run: string, step: string, status: StepStatus, note: string): Promise<void> {
+  await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, { status, note })
+}
+
+function toBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+/** Why a file cannot be added, or null when it can (the server checks again). */
+export function imageProblem(file: { type: string; size: number }): string | null {
+  if (!(IMAGE_TYPES as readonly string[]).includes(file.type)) return 'Only PNG, JPEG or WebP pictures can be added.'
+  if (file.size > IMAGE_MAX) return 'That picture is larger than 5 MB.'
+  if (file.size === 0) return 'That picture is empty.'
+  return null
+}
+
+export async function addImage(run: string, step: string, file: Blob): Promise<{ name: string; path: string }> {
+  const data = await toBase64(file)
+  return (await (await call('POST', `${base(run)}/steps/${encodeURIComponent(step)}/images`, { type: file.type, data })).json()) as { name: string; path: string }
+}
+
+export async function removeImage(run: string, name: string): Promise<void> {
+  await call('DELETE', `${base(run)}/images/${encodeURIComponent(name)}`)
+}
+
+/** The picture as a data: URL (the page's CSP allows `data:` images, and the request needs the bearer header). */
+export async function imageUrl(run: string, name: string): Promise<string> {
+  const blob = await (await call('GET', `${base(run)}/images/${encodeURIComponent(name)}`)).blob()
+  const data = await toBase64(blob)
+  return `data:${blob.type};base64,${data}`
+}

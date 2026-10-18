@@ -12979,3 +12979,39 @@ sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page
 * **Pinned seams updated:** `PassphraseBackend.generated` (called only from `custody.select.setup_backend`),
   `.unlocked(` also in `setup/steps.py`, `stage_convenience(passphrase=...)` also in `setup/steps.py`: the passphrase is the
   one the setup process generated itself, never text from a browser, argument or file.
+
+### 12.15 The Publish add-on (P5, 18 Oct 2026)
+
+Share files of a ticket with a link, on a server the owner chooses (design: orch-publish `pubsrv`, protocol-v2 §12.1).
+The add-on `publish` ships inside orch-core (capability `network`); `addon.grant publish` turns it on, `runner.disabled`
+(`detail.missing: "addon"`) while it is off. Nothing leaves the machine without a person's signature.
+
+| Op | Column | What |
+|---|---|---|
+| `publish.prepare {ref, artifacts[], kind?, days?, views?}` | P; G only on the ticket it claims | copies the named artifacts (by the ticket manifest and digest) into a host-private stage (`<state>/hosts/<ws>/publish/stage/<id>/`, 0700); returns `staged_id` and the exact words a person signs; tags `origin: agent\|person` |
+| `publish.share {staged_id}` (through `human.prepare`/`submit`) | person, signed | one `log.added` note on the ticket whose text the host builds from the stage (ticket, who prepared it, link kind, days, views, **server**, **every file with size and hash**, the manifest hash) |
+| `publish.send {staged_id}` | P only | builds the same words again from the stage and the signed server setting; requires a person-signed note with exactly these words (the caller's, at most an hour old); registers the workspace if needed, uploads the staged bytes (read, hashed, sent), commits, returns the link **once** and wipes the stage |
+| `publish.revoke {share_id}` | P only | `DELETE` on the server, then the record says `revoked` |
+| `publish.list {ref?, live?}` | P, G (own claimed ticket) | staged copies and shares (never a link or token); `live` (P) adds the server's state and view counts |
+| `publish.discard {staged_id}` | P; G only copies an agent prepared on its claimed ticket | drops a stage |
+| `publish.register` | P only | registers the workspace with the card it presents |
+
+* **Server setting** is signed state: `settings.set {set: {publish: {server, share}}}` (owner only; `null` removes it). Both
+  are origins (`https://host[:port]`, or `http://127.0.0.1`/`localhost` for this computer), different from each other.
+  A change after a signature voids that signature (the words contain both).
+* **Token.** `secrets.token_bytes(32)` base64url, 43 characters, made in `publish.send`; the server gets only
+  `sha256(token)`. It is held in a 0600 file of the stage until the server commits (so a retry sends the same
+  `token_hash`), then wiped with the stage; never in the log, the outcome store, the audit file or an error. The link is
+  `<share origin>/s/<share id>#t=<token>` (the token is in the fragment).
+* **Card.** A local-only workspace has no relay card; `publish.register` makes a first card from the genesis delegation
+  with a private key store under `publish/card` (the relay's `membership` is untouched). The server admin pre-binds the
+  workspace: `orch-publish admin --data DIR owners add OWNER` and `ws allow WS OWNER`; `publish.list` carries `workspace`
+  and `owner` so `orch publish setup` can print exactly that when the server answers `unknown_workspace`.
+* **No `SignLedger`** is given to the `PublishSigner`: the server's nonce store refuses a replay, and a file ledger that is
+  rewritten on every request and never pruned would only grow.
+* **Codes.** `publish.not_configured`, `publish.not_approved`, `publish.changed`, `publish.server_refused`
+  (`detail.reason`: `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `card`,
+  `rejected`), `publish.unreachable` (retryable). Rate: 10 per minute per person per kind of request.
+* **CLI.** `orch publish setup|register|prepare|share|send|revoke|list|discard` (`orch.cli.publish`). An agent
+  (`ORCH_GRANT`) may `prepare`, `list`, `discard`; the rest is `op.not_allowed` here and again in the host. The link is
+  written to `/dev/tty` only.

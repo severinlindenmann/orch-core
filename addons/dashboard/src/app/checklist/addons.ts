@@ -325,6 +325,88 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
     ],
   },
   {
+    id: 'O',
+    title: 'Estimate',
+    where: 'Browser, test workspace only',
+    intro: 'Give tickets a size in points (1, 2, 3, 5 or 8) and see the total on the board and on epics. Points are the ticket\'s size, so nothing else is stored.',
+    steps: [
+      {
+        id: 'O1',
+        title: 'Switch Estimate on',
+        text: 'Open Settings, then Add-ons, and switch Estimate on.',
+        see: 'A review for Estimate that lists no special permissions (none). After you sign, the switch shows On. Before that, no ticket shows points or an Estimate box.',
+      },
+      {
+        id: 'O2',
+        title: 'Estimate a ticket',
+        text: 'Open a ticket that is not done. In the right column find the Estimate box and press 3.',
+        see: 'A review that says "Estimate: 3 points". After signing, the box says "3 points" and the Details row says Points: 3 points (not Size). The number 3 is greyed because it is already chosen.',
+      },
+      {
+        id: 'O3',
+        title: 'Change it and take it away',
+        text: 'Press 8, sign. Then press "Not estimated", sign.',
+        see: 'The box follows each change ("8 points", then "Not estimated yet"). Nothing is deleted from the ticket\'s history.',
+      },
+      {
+        id: 'O4',
+        title: 'Board cards and column totals',
+        text: 'Estimate three tickets in the same column (for example 2, 3 and 5), then open the Board.',
+        see: 'Each estimated card has a small round number. The column head shows the total (10 pts); a card without an estimate shows no number and adds nothing.',
+      },
+      {
+        id: 'O5',
+        title: 'An epic adds up its children',
+        text: 'Make an epic with three tickets, estimate two of them (3 and 5), and open the epic and the Board.',
+        see: 'The epic\'s Estimate box says "8 points in this epic · 1 not estimated". On the Board the epic\'s row shows "8 pts · 1 not estimated". A ticket closed as "won\'t do" is not counted.',
+      },
+      {
+        id: 'O6',
+        title: 'List view and switching off',
+        text: 'Open Tickets as a list: the Points column. Then switch Estimate off in Settings, Add-ons.',
+        see: 'The list shows 1 to 8 (or –) under Points. After switching off, the Points column, chips, totals and the Estimate box are gone and the plain Size comes back; the sizes stay on the tickets.',
+      },
+    ],
+  },
+  {
+    id: 'P',
+    title: 'Usage',
+    where: 'Browser and Terminal, on this Mac, test workspace only',
+    intro: 'See how long agents worked on each ticket. It only counts time; tokens and cost are shown as "Not reported" because the agent tools do not report them in a way orch can check.',
+    steps: [
+      {
+        id: 'P1',
+        title: 'Switch Usage on',
+        text: 'Open Settings, then Add-ons, and switch Usage on.',
+        see: 'The review says Usage is added; after you sign it shows On and a Usage entry appears in the sidebar. Switched off again, the entry and the box on tickets are gone.',
+      },
+      {
+        id: 'P2',
+        title: 'Let an agent work for a few minutes',
+        text: 'Start an agent on a ticket from the dashboard (as in M3), let it run a few minutes, then stop it.',
+        see: 'On the Usage page the ticket appears with the time the agent ran and "1 run" under Last 7 days. While it runs it says "so far".',
+      },
+      {
+        id: 'P3',
+        title: 'The ticket page',
+        text: 'Open that ticket and look at the right column.',
+        see: 'A Usage box with Last 7 days and Last 30 days (time and runs). Tokens and Cost say "Not reported". "Recent runs" opens a short list with the agent name, the start time in your time zone and how long it ran.',
+      },
+      {
+        id: 'P4',
+        title: 'Nothing is made up',
+        text: 'Compare the Usage page with what you know about your agents.',
+        see: 'No dollar or franc amounts and no token counts anywhere. A run whose end was not recorded counts as a run with "time not recorded", never as zero.',
+      },
+      {
+        id: 'P5',
+        title: 'Longer than a week',
+        text: 'Look at the Last 30 days box a day or more after you first opened Usage.',
+        see: 'If the page cannot vouch for the whole 30 days it says "Counted since <date>". Runs older than that are not counted.',
+      },
+    ],
+  },
+  {
     id: 'R',
     title: 'File Explorer',
     where: 'Browser; as an owner, in a test workspace that has a git project folder',

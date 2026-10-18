@@ -24,6 +24,7 @@ from . import (
     signprefs,
     terminals,
     testrun,
+    usage,
     worktrees,
 )
 from .adapters.setup import SetupProxy
@@ -69,6 +70,7 @@ SPA_ROUTES = (
     "explorer",
     "shares",
     "activity",
+    "usage",
     "guide",  # ?page=<x> is a query: not part of the path
     "settings",
     "settings/$tab",
@@ -233,6 +235,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     agents.register(app, gateway)
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
+    usage.register(app, gateway)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)

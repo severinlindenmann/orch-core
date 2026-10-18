@@ -23,6 +23,7 @@ import {
   PackageOpen,
   FolderGit2,
   FolderTree,
+  Gauge,
   Share2,
 } from 'lucide-react'
 import { api } from '@/api/client'
@@ -446,6 +447,8 @@ const CORE_NAV = [
   { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
+  /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
+  { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */
   { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
   /** The guide of a real host: fixed pages in the bundle, so any host serves it. */

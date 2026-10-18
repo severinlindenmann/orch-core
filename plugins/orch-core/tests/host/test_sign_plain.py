@@ -1126,3 +1126,21 @@ def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
     first = signcontent.text(c, signer._clean)[0]
     assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first
+
+
+def test_g2_an_estimate_says_points_and_that_it_cancels_approvals(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["size=m"]}))
+    row = c["fields_changed"][0]
+    assert (row["field"], row["after"]) == ("estimate", "3 points (size M)")
+    assert c["headline"].startswith("Change the estimate of DEMO-0001")
+    note = " ".join(c["notes"])
+    assert "cancels any existing approval of: requirements, plan, verify, code." in note
+    assert "approved again" in note
+    assert "cancels" in "\n".join(signcontent.text(c, signer._clean))
+
+
+def test_g2_a_change_that_no_gate_binds_makes_no_cancel_claim(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["priority=high"]}))
+    assert not any("cancels" in n for n in c.get("notes") or [])

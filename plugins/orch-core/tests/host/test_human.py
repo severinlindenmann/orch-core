@@ -627,3 +627,14 @@ def test_every_person_version_of_an_agent_op_round_trips(human, served):
     assert view["title"] == "Renamed" and view["acceptance"][0]["text"] == "it really works"
     # an agent op whose events a person may not append (task.*) is not a person op
     assert err(human.prepare_res("task.start", {"task": f"{key}/T1"})) == "op.not_allowed"
+
+
+def test_a_dry_run_prepare_of_addon_grant_installs_nothing(human, served):
+    """A built-in add-on that was never installed is put in place by a real grant only: a dry-run prepare through the
+    host (ctx.dry_run is False there, the flag rides on the capture) leaves no package."""
+    from pathlib import Path
+
+    package = Path(served.service.store.layout.store) / "addons" / "terminals"
+    assert not package.exists()
+    assert err(human.prepare_res("addon.grant", {"name": "terminals"}, dry_run=True)) == "not_found"
+    assert not package.exists()

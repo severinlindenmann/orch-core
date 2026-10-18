@@ -39,8 +39,12 @@ export type HandoffAction =
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
-  /** Reduced workspace settings (M4). `repos` is not here: the Repos addon owns repo editing. */
+  /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
+  | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
+  /** Take one repository off the list. The folder and its files stay on disk. */
+  | { action: 'repo_remove'; name: string }
   /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
   | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
   /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */
@@ -48,6 +52,9 @@ export type HandoffAction =
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
+  /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
+  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' }
+  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' }
   /** The runner grant, signed in the terminal where one click is not used (`orch sign` hands the secret to the runner). */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
   /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
@@ -241,6 +248,11 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
   }
   // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
   if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
+  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (the signer builds the same word).
+  if (request.op === 'addon.grant') {
+    const name = request.events[0]?.name
+    return workspace && typeof name === 'string' ? `${name}~${workspace.id.slice(-8)}` : null
+  }
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }
 

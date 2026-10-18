@@ -438,6 +438,37 @@ class SettingsSet(Action):
         return self
 
 
+class RepoSet(Action):
+    """`settings.set {set:{repos:{name: {path, remote?, default_branch?}}}}`: add a repo or change one (Repos add-on).
+    The host checks the path again (absolute, an existing git folder, not the home folder, not the orch store)."""
+
+    action: Literal["repo_set"]
+    name: Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+    path: Annotated[str, StringConstraints(min_length=1, max_length=1024), OneLine]
+    remote: Annotated[str, StringConstraints(min_length=1, max_length=512), OneLine] | None = None
+    default_branch: Annotated[str, StringConstraints(min_length=1, max_length=255), OneLine] | None = None
+
+    @model_validator(mode="after")
+    def plain(self):
+        if not self.path.startswith("/"):
+            raise ValueError("write the full path, starting with /")
+        if self.remote is not None and not adapters.settings.REMOTE.fullmatch(self.remote):
+            raise ValueError("a remote is an https:// address without a login")
+        return self
+
+    def entry(self) -> dict:
+        return {"path": self.path} | {
+            k: v for k, v in (("remote", self.remote), ("default_branch", self.default_branch)) if v is not None
+        }
+
+
+class RepoRemove(Action):
+    """Take a repo off the workspace's list. Nothing on disk is touched."""
+
+    action: Literal["repo_remove"]
+    name: Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+
+
 class PolicyBody(BaseModel):
     """F1 5.7 `Policy`, exactly: five keys, tokens from the closed list."""
 
@@ -529,6 +560,25 @@ class MemberRemove(Action):
     person: Person
 
 
+# the dashboard add-on is always on; no other package is offered here
+AddonName = Literal["start-agent", "terminals", "worktrees"]
+
+
+class AddonGrant(Action):
+    """`addon.grant {name}`: turn a shipped add-on on. Signed (the typed word names the add-on); the host reads the
+    package itself and the review shows what it may do."""
+
+    action: Literal["addon_grant"]
+    name: AddonName
+
+
+class AddonDisable(Action):
+    """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
+
+    action: Literal["addon_disable"]
+    name: AddonName
+
+
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
     grant: GrantId
@@ -575,10 +625,14 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
+    | RepoSet
+    | RepoRemove
     | PolicySet
     | MemberAdd
     | MemberRole
     | MemberRemove
+    | AddonGrant
+    | AddonDisable
     | GrantRevoke
     | RunnerGrant,
     Field(discriminator="action"),
@@ -714,6 +768,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case RepoSet():
+            return "settings.set", {"set": {"repos": {action.name: action.entry()}}}
+        case RepoRemove():
+            return "settings.set", {"set": {"repos": {action.name: None}}}
         case PolicySet():
             return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
         case MemberAdd():
@@ -723,6 +781,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
             return "member.remove", {"person": action.person}
+        case AddonGrant():
+            return "addon.grant", {"name": action.name}
+        case AddonDisable():
+            return "addon.disable", {"name": action.name}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -733,7 +795,17 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
 
 
 DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
-WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke", "move")
+WORKSPACE_OPS = (
+    "settings.set",
+    "policy.set",
+    "member.add",
+    "member.role",
+    "member.remove",
+    "grant.revoke",
+    "move",
+    "addon.grant",
+    "addon.disable",
+)
 
 
 def host_files(action: Action) -> dict | None:
@@ -754,7 +826,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet():
+        case SettingsSet() | RepoSet() | RepoRemove():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PolicySet():
@@ -775,6 +847,10 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
         case MemberRemove():
             return lambda ev: one(ev, "member.removed", person=action.person)
+        case AddonGrant():
+            return lambda ev: one(ev, "addon.granted", name=action.name)
+        case AddonDisable():
+            return lambda ev: one(ev, "addon.disabled", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
@@ -862,6 +938,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
+    if isinstance(body, AddonDisable):
+        from .addon_switches import check_off
+
+        check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)

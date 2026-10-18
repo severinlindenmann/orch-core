@@ -16,7 +16,7 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('heading', { name: 'General' }, T)).toBeInTheDocument()
   const nav = within(screen.getByRole('navigation', { name: 'Settings' }))
-  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Devices'])
+  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Gates', 'Grants', 'Add-ons', 'Devices'])
   expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
@@ -29,16 +29,63 @@ it('Devices on a real host: pairing a phone is not available yet, and no pairing
   expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
 })
 
-it('General shows what the host says, marks defaults and lists repositories read only', async () => {
+it('General shows what the host says, marks defaults and lists repositories with what the host sees on disk', async () => {
   show('/w/DEMO/settings/general')
   expect(await screen.findByRole('button', { name: '8 h' }, T)).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByLabelText(/Ticket reserved for/)).toHaveValue(120)
   expect(screen.getAllByText(/The default\./).length).toBe(2) // claim and lease; the grant length is not a default here
   const repos = screen.getByRole('list', { name: 'Repositories' })
-  expect(within(repos).getByText('main')).toBeInTheDocument()
   expect(within(repos).getByText('https://git.example.test/a/code')).toBeInTheDocument()
-  expect(screen.getByText(/has no button or command to add one yet/)).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: /repo/i })).not.toBeInTheDocument()
+  expect(within(repos).getByText('/srv/code')).toBeInTheDocument()
+  expect(screen.getByTestId('repo-check-code')).toHaveTextContent('In place, on branch main')
+  expect(screen.getByRole('button', { name: 'Add repository' })).toBeInTheDocument() // an owner on a host that serves settings.set
+})
+
+it('Repositories: adding one validates in the form, then hands the typed action to the signer', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Add repository' }, T))
+  const form = await screen.findByRole('dialog', {}, T)
+  await user.type(within(form).getByLabelText('Name'), 'api')
+  await user.type(within(form).getByLabelText('Folder on this computer'), 'relative/dir')
+  await user.type(within(form).getByLabelText(/Remote/), 'https://user:tok@git.example.test/a')
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  expect(within(form).getAllByRole('alert').length).toBe(2) // the folder and the remote; nothing was sent
+  expect(state.host.posts()).toEqual([])
+  await user.clear(within(form).getByLabelText('Folder on this computer'))
+  await user.type(within(form).getByLabelText('Folder on this computer'), '/work/api')
+  await user.clear(within(form).getByLabelText(/Remote/))
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_set', name: 'api', path: '/work/api' }])
+})
+
+it('Repositories: removing one hands off repo_remove, and a name already listed is refused in the form', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Add repository' }, T))
+  const form = await screen.findByRole('dialog', {}, T)
+  await user.type(within(form).getByLabelText('Name'), 'code')
+  await user.type(within(form).getByLabelText('Folder on this computer'), '/x')
+  await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
+  expect(within(form).getByRole('alert')).toHaveTextContent('already in the list')
+  await user.click(within(form).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Remove code' }))
+  await within(await screen.findByRole('dialog', {}, T)).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
+})
+
+it('Repositories: a member sees the list and no way to change it', async () => {
+  state.host.workspaces[0].role = 'member'
+  state.host.workspaces[0].me = TOM
+  state.host.workspaces[0].settings = settingsOf({ repos: [{ name: 'code', default_branch: 'main', remote: null }] })
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByRole('list', { name: 'Repositories' }, T)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Add repository' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Remove code' })).toBeNull()
+  expect(screen.queryByTestId('repo-check-code')).toBeNull()
+  expect(screen.getByText('Only owners can add, change or remove repositories.')).toBeInTheDocument()
 })
 
 it('a host without the settings cap says so and shows no value', async () => {

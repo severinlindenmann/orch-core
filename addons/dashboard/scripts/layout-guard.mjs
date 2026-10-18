@@ -517,6 +517,7 @@ async function run(send, close) {
               ['real-host-records', 'records-ok', [['the export warning', '[data-testid="records-export-warning"]'], ['the private-remote line', '[data-testid="records-private-line"]']]],
               ['real-host-records-hidden-url', 'records-hidden-url', [['the export warning', '[data-testid="records-export-warning"]'], ['the blocked line', '[data-testid="records-export-blocked"]']]],
               ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
+              ['real-host-addons', 'addons-mixed', [['the terminals row', '[data-testid="addon-terminals"]'], ['the switch', '[role="switch"]']]],
               ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
               // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).

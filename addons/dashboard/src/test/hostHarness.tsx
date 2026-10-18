@@ -70,7 +70,7 @@ export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
       verify: policy({ approvers: ['reviewers'], not: ['assignees'] }),
       code: policy({ approvers: ['maintainer', 'owner'], not: ['assignees'], applies: 'off', independent: true }),
     },
-    repos: [{ name: 'code', default_branch: 'main', remote: 'https://git.example.test/a/code' }],
+    repos: [{ name: 'code', default_branch: 'main', remote: 'https://git.example.test/a/code', path: '/srv/code', check: { state: 'present', branch: 'main' } }],
     repos_more: false,
     settings_at: null,
     policy_at: null,
@@ -157,6 +157,13 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       const set = Object.fromEntries(['grant_hours', 'claim_ttl_min', 'lease_ttl_min'].filter((k) => k in body).map((k) => [k, body[k]]))
       return workspaceRequest('settings.set', { type: 'settings.changed', set }, { before: Object.fromEntries(Object.keys(set).map((k) => [k, 'HOST-BEFORE-VALUE'])) })
     }
+    case 'repo_set': {
+      const { path, remote, default_branch } = body as Record<string, string | undefined>
+      const entry = { path, ...(remote ? { remote } : {}), ...(default_branch ? { default_branch } : {}) }
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { repos: { [body.name as string]: entry } } })
+    }
+    case 'repo_remove':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { repos: { [body.name as string]: null } } })
     case 'policy_set':
       return workspaceRequest('policy.set', { type: 'policy.changed', gates: { [body.gate as string]: body.policy } })
     case 'member_add':

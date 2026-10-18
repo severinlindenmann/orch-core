@@ -269,11 +269,18 @@ def test_a_ticket_owner_fixes_a_no_eligible_gate_with_policy_set(maint):
 # --- settings.set ----------------------------------------------------------------------------------------------------
 
 
-def test_settings_set_changes_the_durations_and_repos(human, served):
+def git_dir(tmp_path, name="proj"):
+    """A folder the host accepts as a repo (it checks the folder and its .git; it runs no git)."""
+    d = tmp_path / name
+    (d / ".git").mkdir(parents=True)
+    return str(d)
+
+
+def test_settings_set_changes_the_durations_and_repos(human, served, tmp_path):
     changes = {
         "grant_hours": 4,
         "claim_ttl_min": 30,
-        "repos": {"proj": {"path": "/srv/proj", "default_branch": "main"}, "old": None},
+        "repos": {"proj": {"path": git_dir(tmp_path), "default_branch": "main"}, "old": None},
     }
     prepared, done, signed = human.run("settings.set", {"set": changes})
     (event,) = signed.events
@@ -285,15 +292,18 @@ def test_settings_set_changes_the_durations_and_repos(human, served):
     assert got["settings"]["repos"]["proj"]["default_branch"] == "main"
 
 
-def test_settings_set_shows_the_current_values_as_unsigned_before(human):
-    prepared = human.prepare("settings.set", {"set": {"grant_hours": 2, "repos": {"proj": {"path": "/p"}}}})
+def test_settings_set_shows_the_current_values_as_unsigned_before(human, tmp_path):
+    prepared = human.prepare(
+        "settings.set", {"set": {"grant_hours": 2, "repos": {"proj": {"path": git_dir(tmp_path)}}}}
+    )
     assert prepared["material"]["before"] == {"grant_hours": 8, "repos": {"proj": None}}  # the host's current values
     review_item = prepared["material"]["review"][0]
     assert review_item["type"] == "settings.changed" and review_item["payload"]["set"]["grant_hours"] == 2
     human.sign(prepared)  # the signer accepts it: each before key is a key of `set`
 
 
-def test_settings_set_checks_its_input(human):
+def test_settings_set_checks_its_input(human, tmp_path):
+    d = git_dir(tmp_path, "x")
     bad = [
         {"set": {}},
         {},
@@ -311,10 +321,19 @@ def test_settings_set_checks_its_input(human):
         assert err(human.prepare_res("settings.set", args)) == "invalid.input", args
     # the model's own rules: a remote is a canonical identity, a local one names its own repo
     assert (
-        human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "ssh://h/x"}}}})["ok"]
-        is False
+        human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": d, "remote": "ssh://h/x"}}}})["ok"] is False
     )
-    human.prepare("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "https://example.org/x"}}}})
+    human.prepare("settings.set", {"set": {"repos": {"x": {"path": d, "remote": "https://example.org/x"}}}})
+
+
+def test_settings_set_checks_repo_paths_on_the_host(human, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    for path in ("/no/such/folder", "relative/dir", str(plain), str(tmp_path / "a" / ".." / "plain")):
+        res = human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": path}}}})
+        assert err(res) == "invalid.input", path
+    # removing a name needs no path; a good folder passes
+    human.prepare("settings.set", {"set": {"repos": {"x": None}}})
 
 
 # --- the whole path --------------------------------------------------------------------------------------------------

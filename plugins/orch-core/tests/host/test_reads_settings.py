@@ -136,8 +136,17 @@ def test_an_owner_gets_path_and_remote_and_null_for_what_is_not_set(w):
     seed_repos(w)
     got = ok(w.client().req("workspace.settings"))["settings"]["repos"]
     assert list(got) == ["bare", "proj"]  # ordered by name
-    assert got["proj"] == {"default_branch": "main", "path": "/srv/proj", "remote": OK_REMOTE}
-    assert got["bare"] == {"default_branch": None, "path": "/srv/bare", "remote": None}
+    assert {k: v for k, v in got["proj"].items() if k != "check"} == {
+        "default_branch": "main",
+        "path": "/srv/proj",
+        "remote": OK_REMOTE,
+    }
+    assert {k: v for k, v in got["bare"].items() if k != "check"} == {
+        "default_branch": None,
+        "path": "/srv/bare",
+        "remote": None,
+    }
+    assert got["proj"]["check"] == {"state": "missing", "branch": None}  # /srv/proj is not on this machine
 
 
 def test_a_member_gets_only_the_name_and_default_branch(wq):
@@ -178,7 +187,7 @@ def test_an_unparseable_remote_is_omitted_never_repaired(w, monkeypatch):
 
     monkeypatch.setattr(reads_ws, "check_repo_identity", refuse_proj)
     got = ok(w.client().req("workspace.settings"))["settings"]["repos"]
-    assert got["proj"] == {"default_branch": "main", "path": "/srv/proj"}  # the key is absent, not null
+    assert {k: v for k, v in got["proj"].items() if k != "check"} == {"default_branch": "main", "path": "/srv/proj"}
     assert got["bare"]["remote"] is None
 
 

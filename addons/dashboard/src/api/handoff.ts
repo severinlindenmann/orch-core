@@ -39,8 +39,12 @@ export type HandoffAction =
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
-  /** Reduced workspace settings (M4). `repos` is not here: the Repos addon owns repo editing. */
+  /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
+  | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
+  /** Take one repository off the list. The folder and its files stay on disk. */
+  | { action: 'repo_remove'; name: string }
   /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
   | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
   /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */

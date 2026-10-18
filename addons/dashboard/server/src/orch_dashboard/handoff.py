@@ -438,6 +438,37 @@ class SettingsSet(Action):
         return self
 
 
+class RepoSet(Action):
+    """`settings.set {set:{repos:{name: {path, remote?, default_branch?}}}}`: add a repo or change one (Repos add-on).
+    The host checks the path again (absolute, an existing git folder, not the home folder, not the orch store)."""
+
+    action: Literal["repo_set"]
+    name: Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+    path: Annotated[str, StringConstraints(min_length=1, max_length=1024), OneLine]
+    remote: Annotated[str, StringConstraints(min_length=1, max_length=512), OneLine] | None = None
+    default_branch: Annotated[str, StringConstraints(min_length=1, max_length=255), OneLine] | None = None
+
+    @model_validator(mode="after")
+    def plain(self):
+        if not self.path.startswith("/"):
+            raise ValueError("write the full path, starting with /")
+        if self.remote is not None and not adapters.settings.REMOTE.fullmatch(self.remote):
+            raise ValueError("a remote is an https:// address without a login")
+        return self
+
+    def entry(self) -> dict:
+        return {"path": self.path} | {
+            k: v for k, v in (("remote", self.remote), ("default_branch", self.default_branch)) if v is not None
+        }
+
+
+class RepoRemove(Action):
+    """Take a repo off the workspace's list. Nothing on disk is touched."""
+
+    action: Literal["repo_remove"]
+    name: Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+
+
 class PolicyBody(BaseModel):
     """F1 5.7 `Policy`, exactly: five keys, tokens from the closed list."""
 
@@ -594,6 +625,8 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
+    | RepoSet
+    | RepoRemove
     | PolicySet
     | MemberAdd
     | MemberRole
@@ -735,6 +768,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case RepoSet():
+            return "settings.set", {"set": {"repos": {action.name: action.entry()}}}
+        case RepoRemove():
+            return "settings.set", {"set": {"repos": {action.name: None}}}
         case PolicySet():
             return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
         case MemberAdd():
@@ -789,7 +826,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet():
+        case SettingsSet() | RepoSet() | RepoRemove():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PolicySet():

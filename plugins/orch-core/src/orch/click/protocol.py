@@ -133,27 +133,41 @@ WORD_OPS = frozenset(
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
-        "publish.share",  # P5: lets files leave this computer; never a click alone
     }
 )
 #: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
 
 
-def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
-    """``click``, ``word`` or ``terminal``. ``settings.set`` that touches ``repos`` needs the word (it changes the repo
-    path and remote D58 reads); without the events (before prepare) it counts as a click op."""
+#: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
+#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
+SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
+_RANK = {"click": 0, "word": 1, "terminal": 2}
+
+
+def _settings_class(changes: list[Any]) -> str:
+    out = "click"
+    for changed in changes:
+        if not isinstance(changed, dict):
+            return "word"  # not a plain settings map: fail closed to the stronger confirmation
+        for k in changed:
+            head = str(k).split(".")[0]
+            kind = "terminal" if head in SETTINGS_TERMINAL_KEYS else "word" if head in SETTINGS_WORD_KEYS else "click"
+            out = max(out, kind, key=_RANK.__getitem__)
+    return out
+
+
+def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str, Any] | None = None) -> str:
+    """``click``, ``word`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
+    from the signed events when there are any (**the class at sign time, which wins**), else from the request's
+    ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
+    gives can only be raised by the sign-time check, never lowered."""
     if op in WORD_OPS:
         return "word"
-    if op == "settings.set" and events is not None:
-        for ev in events:
-            changed = ev.get("set")
-            # B6: sign_methods decides which signatures the workspace accepts: a typed word, like repos
-            # P5: publish decides where shared files go
-            if not isinstance(changed, dict) or any(
-                str(k).split(".")[0] in ("repos", "sign_methods", "grant_hours", "publish") for k in changed
-            ):
-                return "word"
-        return "click"
+    if op == "settings.set" and (events is not None or args is not None):
+        if events is not None:
+            return _settings_class([ev.get("set") for ev in events])
+        return _settings_class([(args or {}).get("set")])
     if op in CLICK_OPS:
         return "click"
     return "terminal"

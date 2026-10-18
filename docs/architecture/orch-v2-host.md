@@ -13017,3 +13017,7 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
 * **CLI.** `orch publish setup|register|prepare|share|send|revoke|list|discard` (`orch.cli.publish`). An agent
   (`ORCH_GRANT`) may `prepare`, `list`, `discard`; the rest is `op.not_allowed` here and again in the host. The link is
   written to `/dev/tty` only.
+* **Signing class.** `publish.share` and a `settings.set` that touches `publish` are **terminal-only**: never click or one-click,
+  and the dashboard signs them through `orch sign CODE`. `click/protocol.op_class` classes `settings.set` by key
+  (`publish` terminal; `repos`, `sign_methods`, `grant_hours` word) from the request's `set` before prepare (early check) and from
+  the prepared events at sign time; the sign-time class wins (`click/view.py`).

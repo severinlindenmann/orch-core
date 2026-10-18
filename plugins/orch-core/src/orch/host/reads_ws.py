@@ -482,7 +482,8 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     linked = _linked_repos(ctx) if viewer.column == "N" else None  # each page re-applies the current visibility
     page: dict[str, Any] = {}
     nxt: int | None = None
-    keys_of = _linking_tickets(ctx) if linked is None and viewer.manager and viewer.column == "P" else {}
+    keyboard = linked is None and viewer.manager and viewer.column == "P"  # the person at the keyboard (R is not served)
+    keys_of = _linking_tickets(ctx) if keyboard else {}
     for i in range(start, len(names)):
         name = names[i]
         if linked is not None and name not in linked:
@@ -494,7 +495,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         page[name] = (
             {"default_branch": raw.get("default_branch")} if linked is not None else _repo_entry(raw, viewer.manager)
         )
-        if linked is None and viewer.manager and viewer.column == "P" and isinstance(raw.get("path"), str):
+        if keyboard and isinstance(raw.get("path"), str):
             # the person at the keyboard (an owner or maintainer): is the folder there, and which branch (read-only)
             page[name]["check"] = repopaths.observe(ctx.store.layout, raw["path"])
         if keys_of.get(name):

@@ -93,3 +93,25 @@ def test_webp_stills_pass_and_metadata_is_refused():
         imagecheck.check(webp((b"VP8X", bytes([0x08]) + b"\x00" * 9), (b"VP8 ", b"\x00" * 10)))
     with pytest.raises(ImageRefused, match="size"):
         imagecheck.check(still + b"tail")
+
+
+def test_png_allowlist_refuses_animation_private_and_unknown_chunks_but_keeps_real_ones():
+    for kind in (b"acTL", b"fcTL", b"fdAT", b"prVt", b"cICP", b"tIME"):
+        with pytest.raises(ImageRefused):
+            imagecheck.check(png(chunk(kind, b"x" * 8)))
+    for kind in (b"sRGB", b"gAMA", b"pHYs", b"iDOT"):  # what Chrome and Safari write
+        assert imagecheck.check(png(chunk(kind, b"\x00" * 4))) == "image/png"
+
+
+def test_a_bomb_header_is_refused_without_decoding():
+    big = struct.pack(">IIBBBBB", 100000, 100000, 8, 2, 0, 0, 0)
+    bomb = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", big) + chunk(b"IDAT", b"x") + chunk(b"IEND")
+    with pytest.raises(ImageRefused, match="16384"):
+        imagecheck.check(bomb)
+    short = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", b"\x00" * 12) + chunk(b"IEND")
+    with pytest.raises(ImageRefused, match="13 bytes"):
+        imagecheck.check(short)
+    # VP8 and VP8L store 14-bit sides (never above 16384); only VP8X can announce more
+    vp8x = bytes([0]) + b"\x00\x00\x00" + (20000 - 1).to_bytes(3, "little") + (0).to_bytes(3, "little")
+    with pytest.raises(ImageRefused, match="16384"):
+        imagecheck.check(webp((b"VP8X", vp8x), (b"VP8 ", b"\x00" * 10)))

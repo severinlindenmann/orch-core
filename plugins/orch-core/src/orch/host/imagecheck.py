@@ -24,11 +24,17 @@ __all__ = ["IMAGE_MAX", "ImageRefused", "check", "media_type"]
 
 IMAGE_MAX = 5 * 1024 * 1024
 _PNG = b"\x89PNG\r\n\x1a\n"
-#: chunks that can hold text, a place, a time or a profile: not allowed in a pasted picture
-_PNG_FORBIDDEN = frozenset({b"eXIf", b"tEXt", b"zTXt", b"iTXt", b"iCCP", b"tIME", b"dSIG"})
+#: the only chunks a pasted PNG may have (an allowlist: text, location, time, profile, animation and private chunks are
+#: all refused by not being here). ``iDOT`` is Apple's private "multi-threaded decode" index that Safari's canvas writes
+#: (pixel offsets only, no metadata), so a real Safari paste passes.
+_PNG_ALLOWED = frozenset(
+    {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"pHYs", b"bKGD", b"iDOT"}
+)
+#: a picture side is at most this many pixels (a decompression-bomb header is refused without decoding anything)
+SIDE_MAX = 16384
 _PNG_CHUNKS_MAX = 4096
 _WEBP_ALLOWED = frozenset({b"VP8 ", b"VP8L", b"VP8X", b"ALPH"})
-_WEBP_METADATA_FLAGS = 0x20 | 0x08 | 0x04  # ICC profile, EXIF, XMP bits of the VP8X flags byte
+_WEBP_METADATA_FLAGS = 0x20 | 0x08 | 0x04 | 0x02  # ICC profile, EXIF, XMP, animation (0x10 alpha is fine)
 
 
 class ImageRefused(ValueError):
@@ -84,8 +90,16 @@ def _png(data: bytes) -> None:
         if first and ctype != b"IHDR":
             raise ImageRefused("the PNG does not start with its header chunk")
         first = False
-        if ctype in _PNG_FORBIDDEN:
-            raise ImageRefused("the PNG carries metadata (text, a profile or a location); take a plain screenshot")
+        if ctype not in _PNG_ALLOWED:
+            raise ImageRefused(
+                "the PNG carries metadata or is animated (text, a profile or a location); take a plain screenshot"
+            )
+        if ctype == b"IHDR":
+            if length != 13 or pos + 8 + 8 > n:
+                raise ImageRefused("the PNG header chunk is not 13 bytes")
+            w, h = struct.unpack(">II", data[pos + 8 : pos + 16])
+            if not (1 <= w <= SIDE_MAX and 1 <= h <= SIDE_MAX):
+                raise ImageRefused("the picture is larger than 16384 pixels on a side")
         end = pos + 8 + length + 4  # header, data, CRC
         if end > n:
             raise ImageRefused("a PNG chunk runs past the end of the file")
@@ -96,6 +110,11 @@ def _png(data: bytes) -> None:
             if pos != n:
                 raise ImageRefused("the PNG has bytes after its end")
             return
+
+
+def _side(w: int, h: int) -> None:
+    if not (1 <= w <= SIDE_MAX and 1 <= h <= SIDE_MAX):
+        raise ImageRefused("the picture is larger than 16384 pixels on a side")
 
 
 def _webp(data: bytes) -> None:
@@ -116,8 +135,19 @@ def _webp(data: bytes) -> None:
             raise ImageRefused("the WebP carries metadata or is animated; take a plain screenshot")
         body = pos + 8
         if ctype == b"VP8X":
-            if length < 1 or body >= n or data[body] & _WEBP_METADATA_FLAGS:
-                raise ImageRefused("the WebP says it carries metadata")
+            if length != 10 or body + 10 > n or data[body] & _WEBP_METADATA_FLAGS:
+                raise ImageRefused("the WebP says it carries metadata or is animated")
+            w = 1 + int.from_bytes(data[body + 4 : body + 7], "little")
+            h = 1 + int.from_bytes(data[body + 7 : body + 10], "little")
+            _side(w, h)
+        elif ctype == b"VP8 " and length >= 10 and data[body + 3 : body + 6] == b"\x9d\x01\x2a":
+            _side(
+                int.from_bytes(data[body + 6 : body + 8], "little") & 0x3FFF,
+                int.from_bytes(data[body + 8 : body + 10], "little") & 0x3FFF,
+            )
+        elif ctype == b"VP8L" and length >= 5 and data[body] == 0x2F:
+            bits = int.from_bytes(data[body + 1 : body + 5], "little")
+            _side((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
         if ctype in (b"VP8 ", b"VP8L"):
             seen_image = True
         pos = body + length + (length & 1)

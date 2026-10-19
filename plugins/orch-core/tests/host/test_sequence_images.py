@@ -309,3 +309,62 @@ def test_an_edit_may_start_with_the_image(click, served, human):
     assert click.signatures == before + 2
     got = ok(served.client().req("ticket.get", {"ref": key}))["data"]
     assert meta["name"] in got["doc"]["sections"]["summary"]
+
+
+def test_a_review_open_longer_than_the_stash_lifetime_still_signs_and_bytes_count_once(click, served, human):
+    data, intent = with_image()
+    stash(click, data)
+    _, op, args, meta = seq_args(click, intent)
+    p = click.prepare(op, args, sequence=meta)
+    v = click.view(p["request_id"])
+    held = next(iter(click.signer.stash_.values()))
+    approval = next(iter(click.signer.approvals.values()))
+    assert next(iter(approval.images.values())) is held["data"]  # shared, not copied
+    click.signer.STASH_LIFETIME = 300.0
+    click.mono.t += 250  # two waits of 250 are past the (shortened) lifetime: only the pin keeps it
+    click.signer.stash(
+        {
+            "workspace_id": served.wid,
+            "sha256": "sha256:" + "1" * 64,
+            "size": 1,
+            "offset": 0,
+            "b64": "AA==",
+            "last": False,
+        }
+    )
+    click.mono.t += 250
+    click.signer.stash(
+        {
+            "workspace_id": served.wid,
+            "sha256": "sha256:" + "2" * 64,
+            "size": 1,
+            "offset": 0,
+            "b64": "AA==",
+            "last": False,
+        }
+    )
+    assert (served.wid, canon.artifact_digest(data)) in click.signer.stash_  # pinned by the open review
+    click.mono.t += 2
+    click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == 5
+
+
+def test_a_first_step_that_names_no_held_screenshot_is_a_clear_refusal(click, served, human):
+    data, intent = with_image()
+    stash(click, data)
+    _, op, args, meta = seq_args(click, intent)
+    made = click.prepare(*seq_args(click)[1:3], sequence=seq_args(click)[3])
+    v = click.view(made["request_id"])
+    click.mono.t += 2
+    key = click.sign(made["request_id"], v["view_digest"])["result"]["key"]
+    d0 = ok(served.client().req("ticket.get", {"ref": key}))["data"]
+    img, meta2 = image()
+    stash(click, img)
+    text = f"![x](artifact:{meta2['name']})"
+    edit = {"v": 1, "kind": "edit_ticket", "ticket": {"key": key, "uid": d0["doc"]["uid"]}, "ticket_type": "feature",
+            "head": d0["doc"]["head"]["head"],
+            "sections": {"summary": {"was": canon.section_hash("One line."), "text": text}},
+            "images": [meta2]}  # fmt: skip
+    _, op, args, m = seq_args(click, edit)
+    with pytest.raises(ClickError, match="does not carry"):
+        click.prepare(op, {**args, "name": "paste-20261019-101500-00000000.png"}, sequence=m)

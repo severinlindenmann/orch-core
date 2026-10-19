@@ -117,6 +117,7 @@ class Approval:
     deposit_result: dict[str, Any] | None = None
     #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
     images: dict[str, bytes] | None = None
+    image_digests: tuple[str, ...] = ()
 
 
 def _new_idem() -> str:
@@ -374,8 +375,11 @@ class ClickSigner:
             self._sequence_ok(entry, op, inner, seq, deposit, files)
             images = self._images_for(entry, seq)
             if images and op == "artifact.add":  # an edit whose first step adds a screenshot
-                files = {"path": {"b64": base64.b64encode(images[str(inner.get("name"))]).decode()}}
-                send_files = self._host_files(entry, images[str(inner.get("name"))])
+                first = images.get(str(inner.get("name")))
+                if first is None:
+                    raise ClickError("invalid.input", "the first step names a screenshot the review does not carry")
+                files = {"path": {"b64": base64.b64encode(first).decode()}}
+                send_files = self._host_files(entry, first)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -427,6 +431,7 @@ class ClickSigner:
                 files=files or None,
                 deposit=deposit,
                 images=images or None,
+                image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
         approval = self.approvals[key]
         if approval.deposit != deposit:
@@ -461,8 +466,11 @@ class ClickSigner:
         if len(chunk) > CHUNK_MAX:
             raise ClickError("invalid.input", "a chunk is at most 768 KiB")
         now = self.mono()
+        pinned = self._pinned()
         for k, v in list(self.stash_.items()):
-            if now - v["at"] > self.STASH_LIFETIME:
+            if k in pinned:
+                v["at"] = now  # a prepared review still names this file: it waits as long as the review does
+            elif now - v["at"] > self.STASH_LIFETIME:
                 del self.stash_[k]
         key = (entry["workspace_id"], digest)
         held = self.stash_.get(key)
@@ -498,8 +506,19 @@ class ClickSigner:
                 del self.stash_[key]
                 raise ClickError("invalid.input", f"screenshot refused: {exc}") from None
             held["done"] = True
+            held["data"] = data
+            held["buf"] = bytearray()  # the bytes live once, as ``data``
             return {"state": "complete"}
         return {"state": "partial", "held": len(held["buf"])}
+
+    def _pinned(self) -> set[tuple[str, str]]:
+        """The stash entries a live prepared approval still needs (their bytes count once, in the stash)."""
+        return {
+            (a.workspace_id, d)
+            for a in self.approvals.values()
+            if a.images and not self._expired(a)
+            for d in a.image_digests
+        }
 
     def _images_for(self, entry: dict[str, Any], seq: Mapping[str, Any]) -> dict[str, bytes] | None:
         """The bytes of the intent's screenshots by name, from the stash: each complete, checked and equal to the
@@ -516,9 +535,10 @@ class ClickSigner:
             held = self.stash_.get((entry["workspace_id"], img["sha256"]))
             if held is None or not held["done"]:
                 raise ClickError("invalid.input", f"the screenshot {img['name']} was not uploaded to the signer")
-            data = bytes(held["buf"])
+            data = held["data"]  # the one bytes object (no copy: the approval shares it with the stash)
             if canon.artifact_digest(data) != img["sha256"] or len(data) != img["bytes"]:
                 raise ClickError("invalid.input", f"the screenshot {img['name']} is not the file in the review")
+            held["at"] = self.mono()
             out[img["name"]] = data
         return out or None
 

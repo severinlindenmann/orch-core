@@ -57,8 +57,9 @@ host UID, mode 0700 (0750 on Tier B). The project root keeps only what other too
 orch block, which names `.orch/AGENTS.orch.md`), `CLAUDE.md` (`@AGENTS.md` only), `.agents/skills/orch-*` and
 `.claude/skills/orch-*`, and a `.gitignore` line `.orch/`. Records travel through `orch records` (the records
 repository is `.orch/.git`). The marker of a workspace is `.orch/config.json` with `"schema": "orch.workspace/2"`; a
-config in the project root AND in `.orch/` is refused ("two orch stores"). A workspace made before the move (the store
-in the project root, "legacy") is read as before and moved by `orch migrate`. Decisions and the migration are in
+config in the project root AND in `.orch/` is refused ("two orch stores"). A store from before the move (in the
+project root, "legacy") is refused with one plain message: delete the listed files and run `orch setup` again (owner
+decision 19 Oct: no migration, start fresh). Decisions and the migration are in
 `design-orch-subfolder` (state) and §10.7 "Decisions of the `.orch/` store move".
 
 `config.json` (excerpt; ids are shortened in all examples, the real forms are in §11.1):

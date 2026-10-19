@@ -141,7 +141,7 @@ def open_store_fs(
             if layout.legacy and not _layout.LEGACY_ALLOWED:
                 raise StoreError(
                     "validation.path",
-                    "this workspace's store is still in the project folder (the old layout); run `orch migrate`",
+                    _layout.legacy_refusal(pfs.fd),
                 )
             if pin is not None and (pin.ident is None) != layout.legacy:
                 raise StoreError("validation.path", "the store layout changed since the workspace was found")

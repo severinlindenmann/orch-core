@@ -1,5 +1,5 @@
 """The final state of the move: a workspace whose store is still in the project root is refused wherever a store is
-opened, with the one fix `orch migrate`; `orch migrate` itself, discovery and the registry read still work."""
+opened, with one plain message (delete the old files, run orch setup again); `orch migrate` itself, discovery and the registry read still work."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _world(tmp_path: Path):
 
 def test_a_legacy_store_does_not_open_and_says_how_to_move_it(tmp_path: Path) -> None:
     env = _world(tmp_path)
-    with pytest.raises(StoreError, match="orch migrate"):
+    with pytest.raises(StoreError, match="Delete .*run orch setup again"):
         Store.open(env.root, expected_workspace_id=WS, load="lazy")
 
 
@@ -39,7 +39,7 @@ def test_every_command_answers_with_the_one_fix(tmp_path: Path) -> None:
     out = io.StringIO()
     code = main(["status", "--json"], env=e, stdout=out, stderr=io.StringIO())
     doc = json.loads(out.getvalue())
-    assert code != 0 and doc["ok"] is False and "orch migrate" in json.dumps(doc)
+    assert code != 0 and doc["ok"] is False and "run orch setup again" in json.dumps(doc)
 
 
 def test_orch_migrate_still_works_and_the_moved_workspace_opens(tmp_path: Path) -> None:

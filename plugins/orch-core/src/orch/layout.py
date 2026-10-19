@@ -104,6 +104,26 @@ class StorePin:
     owned: bool = False
 
 
+_LEGACY_FILES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", ".state", "addons")
+
+
+def legacy_refusal(project_fd: int) -> str:
+    """The one plain message for a store from an older version that sits in the project root: orch now keeps its files in
+    ``.orch/``, and there is no migration (start fresh). Lists the exact names found below the project fd."""
+    found = []
+    for name in _LEGACY_FILES:
+        try:
+            st = os.stat(name, dir_fd=project_fd, follow_symlinks=False)
+        except OSError:
+            continue
+        found.append(name + "/" if stat.S_ISDIR(st.st_mode) else name)
+    names = ", ".join(found) if found else "config.json"
+    return (
+        "this folder has an orch store from an older version in the project root; orch now keeps its files in .orch/. "
+        f"Delete {names} and run orch setup again"
+    )
+
+
 def is_private(st: os.stat_result) -> bool:
     """Owned by the current user and writable by no one else."""
     return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
@@ -114,8 +134,8 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
     if legacy and new:
         raise LayoutError(
             "two orch stores in one project (config.json in the root and in .orch/); "
-            "finish `orch migrate` or remove one",
-            hint="run `orch migrate`, or remove one of the two stores",
+            "delete the older files in the project root (config.json, keys.jsonl, events/, tickets/, .state/, addons/)",
+            hint="delete the older store files in the project root, then run orch setup again",
         )
 
 

@@ -20,7 +20,7 @@ AGENTS_MAX_LINES = 40
 FORMAT_VERSION = "2.0"
 #: Bumped whenever the text of ``AGENTS.orch.md`` or of a built-in skill changes. The stamp on the first line carries
 #: it; an installed file with a lower number is stale (``orch check``, the session-start text).
-INSTRUCTIONS_REV = 3
+INSTRUCTIONS_REV = 4
 
 _MARKER = re.compile(r"\{orch:([a-z_.]+)\}")
 _STAMP = re.compile(r"^orch v\d+\.\d+ \(instructions r(\d+)\)")
@@ -50,6 +50,8 @@ _TEMPLATE = (
     "",
     "## When you are unsure",
     'Ask: `{orch:ask} "…" --options a,b --rec a`, then run `{orch:wait}` before going on.',
+    "Ask only a real open decision. Never ask to approve or review a gate or the work: the person sees it in",
+    "Approvals; finish the gate, then `{orch:wait}` or go on with other work.",
     "",
     "## Never",
     "Never edit tickets/**, .orch/** or ignore retry:false.",

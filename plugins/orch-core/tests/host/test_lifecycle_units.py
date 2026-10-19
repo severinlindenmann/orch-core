@@ -163,7 +163,9 @@ def test_abandon_lets_the_same_key_run_again(intents):
 def test_launchd_plist():
     doc = plistlib.loads(units.launchd_plist(Path("/py/bin/python3"), Path("/rel/2.0"), Path("/s"), log_dir=Path("/l")))
     assert doc["Label"] == "io.orch.host" and doc["RunAtLoad"] is True and doc["KeepAlive"] is True
-    assert doc["ProgramArguments"] == ["/py/bin/python3", "-I", "/rel/2.0/bin/orch-host", "run", "--state", "/s"]
+    # the launcher is the program (macOS lists the item as "orch-host", not "python3.14"); its shebang has the -I
+    assert doc["ProgramArguments"] == ["/rel/2.0/bin/orch-host", "run", "--state", "/s"]
+    assert "AssociatedBundleIdentifiers" not in doc  # needs an installed signed app; orch ships none
     assert doc["Umask"] == 0o077 and doc["StandardErrorPath"] == "/l/host.log"
 
 

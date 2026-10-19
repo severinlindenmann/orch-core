@@ -140,6 +140,14 @@ describe('the real dock', () => {
     expect(screen.getByRole('tab', { name: /Live one/ })).toBeInTheDocument()
   })
 
+  it('U6: a start that never spawned leaves no tab behind (the dialog already showed the error)', async () => {
+    const failed = { state: 'exited' as const, replay_until: null, exit: { code: null, signal: null, at: '2026-01-01T00:00:00Z', reason: 'spawn_failed' as const, cleanup: null } }
+    list = { ...list, runs: [run('F1', { ...failed, ticket: 'RA-0009', kind: 'agent' }), run('R1', { label: 'Live one' })] }
+    mount()
+    await screen.findByRole('tab', { name: /Live one/ })
+    expect(screen.queryByRole('tab', { name: /RA-0009/ })).toBeNull()
+  })
+
   it('Start agent is not available when the host does not serve agent_start', async () => {
     setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
     mount()

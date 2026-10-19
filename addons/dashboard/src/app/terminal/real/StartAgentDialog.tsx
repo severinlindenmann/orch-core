@@ -7,7 +7,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AGENT_MODES, agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, HARNESSES, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
   TERMINAL_ONLY, UPDATE_ORCH, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
@@ -90,6 +90,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   const [subagent, setSubagent] = useState('')
   const [label, setLabel] = useState('')
   const [worktree, setWorktree] = useState(true)
+  const [moreOpen, setMoreOpen] = useState(false)
   const form = argsOf({ ticket, harness, mode, model, subagent, label, worktree })
   const [shown, setShown] = useState<{ args: AgentArgs; data: AgentPreview } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -119,8 +120,16 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       if (n === asked.current) setLoading(false)
     }
   }, [ws])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void preview(form) }, [])
+  // The host is asked again by itself a moment after a choice changes (no "check" button); Start stays off meanwhile.
+  const wanted = JSON.stringify(form)
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) { first.current = false; void preview(form); return }
+    if (badModel || badLabel) return
+    const t = setTimeout(() => void preview(form), 350)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted])
 
   const badModel = (model && !models.some((m) => m.id === model)) || (subagent && harness === 'claude-code' && !models.some((m) => m.id === subagent))
   const badLabel = label.length > 40
@@ -133,6 +142,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     setNote('')
     try {
       const { run } = await agentsApi.start(ws, shown.args, data.spec, idem)
+      if (ackRef.current.noticeFull) void ackRef.current.acknowledge() // starting with the full notice on screen counts as reading it
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
       onStarted?.(run)
       onClose()
@@ -153,12 +163,27 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   const noGrant = data?.blocked?.code === 'launch.no_grant'
   // Review L2: nothing starts that the person could not read (a command or a folder withheld for invisible characters).
   const unreadable = !!data && (data.display_hidden || data.cwd_path_hidden || data.display === null || data.cwd_path === null)
+  const warnings = data?.warnings ?? []
+  const loginNotice = warnings.filter(isLoginNotice)
+  const otherWarnings = warnings.filter((x) => !isLoginNotice(x))
+  // The risk notice is shown in full until it is acknowledged once (kept by the dashboard server, per person and
+  // workspace); afterwards it is one line whose Details hold the same words. A failed read counts as not acknowledged.
+  const ack = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false })
+  const acknowledged = ack.data?.acknowledged.start_agent === true
+  const noticeFull = !ack.isPending && !acknowledged
+  const acknowledge = useCallback(async () => {
+    try {
+      qc.setQueryData(['risk-notices', ws], await agentsApi.acknowledge(ws, 'start_agent'))
+    } catch { /* not saved: the full notice shows again next time */ }
+  }, [qc, ws])
+  const ackRef = useRef({ noticeFull, acknowledge })
+  ackRef.current = { noticeFull, acknowledge }
 
   return (
     <>
       <DialogHeader>
         <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
-        <DialogDescription data-testid="execution-line">{EXECUTION_LINE}</DialogDescription>
+        <DialogDescription className="sr-only">Choose an agent and what it should do.</DialogDescription>
       </DialogHeader>
       <form className="grid grid-cols-1 items-center gap-x-3 gap-y-1.5 text-xs sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
         <Label htmlFor="agent-harness" className="text-xs text-text-muted">Agent</Label>
@@ -171,51 +196,62 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         </select>
         <span className="hidden sm:block" />
         <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 mb-1 text-text-muted sm:mb-0">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
-        {models.length > 0 && (<>
-          <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
-          <select id="agent-model" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">As set for this kind of work</option>
-            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
-          {strong && checkFailing && model !== strong && (<>
-            <span className="hidden sm:block" />
-            <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
-              A check on this ticket is failing. A stronger model may do better.{' '}
-              <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
-            </p>
-          </>)}
-        </>)}
-        {harness === 'claude-code' && models.length > 0 && (<>
-          <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
-          <select id="agent-subagent" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
-            <option value="">Chosen by the agent app</option>
-            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
-        </>)}
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
         <Input id="agent-label" className="h-9 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
         <span className="mt-1 text-text-muted sm:mt-0">Project folder</span>
         <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
-        {badModel && <p role="alert" className="text-danger sm:col-span-2">Choose a model from the list.</p>}
-        {stale && shown && <p className="text-text-muted sm:col-span-2" data-testid="agent-stale">The choices changed: check the start settings again before you start.</p>}
-        {!stale && !note && shown && !shown.data.blocked && !!shown.data.spec && <p className="text-success sm:col-span-2" data-testid="agent-ready" role="status">Ready to start.</p>}
-        <div className="flex justify-end sm:col-span-2">
-          <Button type="submit" size="xs" variant="outline" disabled={loading || !!badModel || badLabel}>{loading ? 'Checking…' : 'Check start settings'}</Button>
-        </div>
+        {(models.length > 0) && (
+          <details className="sm:col-span-2" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+            <summary className="cursor-pointer text-text-muted">More choices</summary>
+            <div className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-1.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2">
+              <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
+              <select id="agent-model" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">As set for this kind of work</option>
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+              {strong && checkFailing && model !== strong && (<>
+                <span className="hidden sm:block" />
+                <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
+                  A check on this ticket is failing. A stronger model may do better.{' '}
+                  <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
+                </p>
+              </>)}
+              {harness === 'claude-code' && (<>
+                <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
+                <select id="agent-subagent" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
+                  <option value="">Chosen by the agent app</option>
+                  {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </>)}
+            </div>
+          </details>
+        )}
       </form>
 
-      {loading && !data && <Skeleton className="h-24" />}
-      {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
-      {note && <p role="status" className="text-xs text-warning" data-testid="agent-changed">{note}</p>}
-      {data?.blocked && !noGrant && (
-        <div role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger" data-testid="agent-blocked">
-          <p>Cannot start: {blockedText(data.blocked) ?? 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}</p>
-          {data.blocked.message && <p className="mt-1 text-text-muted">The host says: <Prose inline>{data.blocked.message}</Prose></p>}
-        </div>
-      )}
-      <RunnerGrantCard initial={grantStep} ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={noGrant ? data?.blocked ?? null : null}
+      {/* One status line: what is happening or what blocks. Everything else is under Details. */}
+      <div className="space-y-1 text-xs" data-testid="agent-status">
+        {badModel && <p role="alert" className="text-danger">Choose a model from the list.</p>}
+        {!badModel && (loading || stale) && !error && <p role="status" className="text-text-muted" data-testid="agent-stale">Checking…</p>}
+        {!badModel && !stale && !loading && note && <p role="status" className="text-warning" data-testid="agent-changed">{note}</p>}
+        {!badModel && !stale && !loading && !note && data && !data.blocked && !!data.spec && !unreadable && <p className="text-success" data-testid="agent-ready" role="status">Ready to start.</p>}
+        {!stale && !loading && data?.blocked && !noGrant && (
+          <div role="alert" className="text-danger" data-testid="agent-blocked">
+            <p>Cannot start: {blockedText(data.blocked) ?? 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}</p>
+            {data.blocked.message && <p className="mt-1 text-text-muted">The host says: <Prose inline>{data.blocked.message}</Prose></p>}
+          </div>
+        )}
+        {!stale && !loading && noGrant && <p role="status" className="text-text-muted" data-testid="agent-needs-grant">Agents need your permission to work for you first.</p>}
+        {unreadable && !data?.blocked && <p role="alert" className="text-danger" data-testid="agent-unreadable">The command or the folder cannot be shown here, so it cannot be started from the dashboard. Fix it in the terminal (runner.json or the path), then preview again.</p>}
+        {!stale && otherWarnings.map((x, i) => <p key={i} role="note" className="text-warning"><Prose inline>{x}</Prose></p>)}
+      </div>
+      {loading && !data && <Skeleton className="h-6" />}
+
+      <RiskNotice full={noticeFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge()}>
+        {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
+      </RiskNotice>
+
+      <GrantSection initial={grantStep} ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={noGrant ? data?.blocked ?? null : null}
         onChanged={() => { void runner.refetch(); void preview(shown?.args ?? form) }} />
-      {unreadable && !data?.blocked && <p role="alert" className="text-xs text-danger" data-testid="agent-unreadable">The command or the folder cannot be shown here, so it cannot be started from the dashboard. Fix it in the terminal (runner.json or the path), then preview again.</p>}
       {error && <p role="alert" className="text-xs text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
       <DialogFooter>
         <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
@@ -227,44 +263,88 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   )
 }
 
+const isLoginNotice = (w: string) => /login shell/i.test(w)
+
+/**
+ * The "runs as you" disclosure (D-P2-31). First time: the full notice, with the login-shell notice, until the person
+ * says they read it. After that: one small line, and the same words under Details. Never removed, only folded.
+ */
+function RiskNotice({ full, loginNotice, onAcknowledge, children }: { full: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
+  const words = (
+    <>
+      <p data-testid="execution-line">{EXECUTION_LINE}</p>
+      {loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}
+    </>
+  )
+  return (
+    <section aria-label="Runs as you" className="space-y-2 text-xs" data-testid="agent-risk">
+      {full && (
+        <div role="note" className="space-y-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-warning" data-testid="agent-risk-full">
+          {words}
+          <Button size="xs" variant="outline" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>
+        </div>
+      )}
+      <details data-testid="agent-details">
+        <summary className="cursor-pointer text-text-muted">{full ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
+        <div className="mt-2 space-y-2">
+          {!full && <div className="space-y-1 text-text-muted">{words}</div>}
+          {children}
+        </div>
+      </details>
+    </section>
+  )
+}
+
+/** One calm line when the runner already holds a valid grant; the full "Allow agents to work for you" box when it does not. */
+function GrantSection(props: { ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void; initial?: GrantStep }) {
+  const grant = props.runner?.grant ?? null
+  const valid = !!grant && Date.parse(grant.until) > nowMs()
+  const [open, setOpen] = useState(false)
+  // Once the full box was needed (no grant), it stays for this dialog: a grant just signed shows its own confirmation.
+  const [needed, setNeeded] = useState(false)
+  useEffect(() => { if (!props.loading && !valid) setNeeded(true) }, [props.loading, valid])
+  if (props.loading && !props.initial) return <Skeleton className="h-6" />
+  if (valid && grant && !open && !needed) {
+    return (
+      <p className="text-xs text-text-muted" data-testid="agent-grant-line">
+        Agents can work for you until <time dateTime={grant.until}>{clock(grant.until)}</time> <span aria-hidden>·</span>{' '}
+        <button type="button" className="underline" onClick={() => setOpen(true)}>Change</button>
+      </p>
+    )
+  }
+  return <RunnerGrantCard initial={props.initial} ws={props.ws} runner={props.runner} loading={props.loading} blocked={props.blocked} onChanged={props.onChanged} />
+}
+
 /** The host's preview, shown exactly: what runs, where (and whether a worktree is created first), env names, grant. */
 function PreviewLines({ ws, data, ticket, harness }: { ws: string; data: AgentPreview; ticket?: string; harness: Harness }) {
   const where = data.cwd_path !== null ? data.cwd_path : null
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: hasFeature('model_routing', ws) })
   const creates = data.will_create_worktree && data.cwd.kind === 'worktree' && where !== null
   return (
-    <div className="space-y-2 text-xs" data-testid="agent-preview">
+    <div className="space-y-2" data-testid="agent-preview">
       <dl className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
         <dt className="text-text-muted">Will use</dt>
         <dd data-testid="agent-model-line">{data.model ? modelLabel(choices.data, harness, data.model) : 'Chosen by the agent app'}{data.model_source === 'workspace' ? ' (set for this kind of work in Settings)' : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
+        {data.grant && (<>
+          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
+        </>)}
+        <dt className="text-text-muted">Runs</dt>
+        <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
+        <dt className="text-text-muted">In</dt>
+        <dd data-testid="agent-cwd">
+          {creates ? (
+            <Raw>{worktreeLine(data.cwd.ticket ?? data.ticket ?? ticket ?? '', data.cwd.repo ?? '', where)}</Raw>
+          ) : (
+            <>
+              <span className="block">{data.cwd.kind === 'repo' ? SHARED_COPY : cwdText(data)}</span>
+              {where !== null ? <Raw>{where}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : ''}</span>}
+            </>
+          )}
+        </dd>
+        <dt className="text-text-muted">As</dt>
+        <dd>an agent with your runner grant, not as you</dd>
+        {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px]">{data.env.map((n) => <span key={n}><Inline>{n}</Inline></span>)}</dd></>)}
       </dl>
-      {data.grant && (
-        <dl className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
-          <dt className="mt-1 text-text-muted sm:mt-0">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
-        </dl>
-      )}
-      <details data-testid="agent-details">
-        <summary className="cursor-pointer text-text-muted">Details</summary>
-        <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
-          <dt className="text-text-muted">Runs</dt>
-          <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-          <dt className="text-text-muted">In</dt>
-          <dd data-testid="agent-cwd">
-            {creates ? (
-              <Raw>{worktreeLine(data.cwd.ticket ?? data.ticket ?? ticket ?? '', data.cwd.repo ?? '', where)}</Raw>
-            ) : (
-              <>
-                <span className="block">{data.cwd.kind === 'repo' ? SHARED_COPY : cwdText(data)}</span>
-                {where !== null ? <Raw>{where}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : ''}</span>}
-              </>
-            )}
-          </dd>
-          <dt className="text-text-muted">As</dt>
-          <dd>an agent with your runner grant, not as you</dd>
-          {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px]">{data.env.map((n) => <span key={n}><Inline>{n}</Inline></span>)}</dd></>)}
-        </dl>
-      </details>
-      {data.warnings.map((w, i) => <p key={i} role="note" className="text-warning"><Prose inline>{w}</Prose></p>)}
     </div>
   )
 }

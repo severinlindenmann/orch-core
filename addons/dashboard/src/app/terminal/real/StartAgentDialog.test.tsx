@@ -21,6 +21,7 @@ const T = { timeout: 5000 }
 const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const REQ = 'hr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const UNTIL = '2026-10-15T20:00:00Z'
+const SOON = new Date(Date.now() + 2 * 86_400_000).toISOString() // a grant that is still valid
 const WORD = `DEMO~${WS.slice(-8)}/GRANT`
 
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
@@ -63,6 +64,8 @@ beforeEach(() => {
     runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner() }),
     status: vi.spyOn(agentsApi, 'depositStatus').mockResolvedValue({ deposit: 'unknown' }),
     forget: vi.spyOn(agentsApi, 'forget').mockResolvedValue({ forgotten: true }),
+    notices: vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: {} }),
+    acknowledge: vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } }),
     prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'word' }),
     view: vi.spyOn(api, 'viewClick').mockResolvedValue(grantView()),
     sign: vi.spyOn(api, 'signClick').mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: GRANT }),
@@ -92,7 +95,7 @@ describe('the preview', () => {
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
     expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.')
+    await waitFor(() => expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'), T)
     expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
   })
 
@@ -128,7 +131,7 @@ describe('start settings wording and layout (MR3/MR4)', () => {
     expect(await screen.findByLabelText('Model for helper agents', {}, T)).toBeInTheDocument()
     expect(screen.getByText('Project folder')).toBeInTheDocument()
     expect(screen.getByLabelText(/Use this ticket's separate project folder/)).toBeChecked()
-    expect(screen.getByRole('button', { name: 'Check start settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Check start settings' })).toBeNull() // the check runs by itself
     expect(screen.getByText('Will use')).toBeInTheDocument()
     expect(screen.getByText('Allow agents to work for you')).toBeInTheDocument()
     const form = screen.getByLabelText('Agent').closest('form')!
@@ -158,8 +161,7 @@ describe('model routing', () => {
     s.preview.mockResolvedValue(preview({ model: 'haiku', model_source: 'chosen' }))
     fireEvent.change(pick, { target: { value: 'haiku' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument() // changed since the preview: preview again
-    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
-    await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ model: 'haiku' })))
+    await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ model: 'haiku' })), T)
     expect(await screen.findByTestId('agent-model-line')).toHaveTextContent('Haiku (your choice)')
     fireEvent.click(screen.getByTestId('agent-start'))
     await waitFor(() => expect(s.start).toHaveBeenCalledWith(WS, expect.objectContaining({ model: 'haiku' }), 'f'.repeat(64), expect.any(String)))
@@ -217,7 +219,6 @@ describe('start', () => {
     fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'fix' } })
     expect(screen.getByTestId('agent-stale')).toBeInTheDocument()
     expect(screen.getByTestId('agent-start')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Check start settings' }))
     await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ mode: 'fix' })), T)
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
   })
@@ -360,12 +361,105 @@ describe('the runner grant', () => {
   })
 
   it('Forget runner grant asks first, then forgets with an idem', async () => {
-    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'workable' } }) })
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }, T))
     fireEvent.click(await screen.findByRole('button', { name: 'Forget runner grant' }, T))
     expect(s.forget).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Forget' }))
     await waitFor(() => expect(s.forget).toHaveBeenCalledWith(WS, GRANT, expect.stringMatching(/^a_/)), T)
+  })
+})
+
+describe('a short, calm dialog (U6)', () => {
+  const grantSoon = () => s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
+
+  it('first time: the full notice and the full grant box, nothing hidden', async () => {
+    mount()
+    expect(await screen.findByTestId('agent-risk-full', {}, T)).toHaveTextContent(EXECUTION_LINE)
+    expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    expect(await screen.findByTestId('runner-grant-card', {}, T)).toBeInTheDocument()
+    expect(screen.getByTestId('agent-ready')).toBeInTheDocument()
+  })
+
+  it('the login-shell notice is shown in the first-time notice', async () => {
+    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs'] }))
+    mount()
+    expect(await screen.findByTestId('agent-login-notice', {}, T)).toHaveTextContent('login shell')
+    expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-notice')).toBeInTheDocument()
+  })
+
+  it('acknowledged: one small line, the same words under Details, the login-shell notice there too', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: ['the program is found and started through your login shell; x'] }))
+    mount()
+    await screen.findByTestId('agent-ready', {}, T)
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+    const details = screen.getByTestId('agent-details')
+    expect(details).not.toHaveAttribute('open')
+    expect(within(details).getByText(/Runs as you on this Mac/)).toBeInTheDocument()
+    expect(within(details).getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
+  })
+
+  it('"I understand" saves the acknowledgement and folds the notice', async () => {
+    mount()
+    fireEvent.click(await screen.findByTestId('agent-risk-ack', {}, T))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'start_agent'))
+    await waitFor(() => expect(screen.queryByTestId('agent-risk-full')).toBeNull())
+    expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE) // still there, under Details
+  })
+
+  it('starting with the full notice on screen counts as having read it', async () => {
+    mount()
+    await screen.findByTestId('agent-risk-full', {}, T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'start_agent'), T)
+  })
+
+  it('an acknowledgement that cannot be read shows the full notice (fails open to more disclosure)', async () => {
+    s.notices.mockRejectedValue(new ApiError(404, { code: 'not_found', message: 'x', retryable: false }))
+    mount()
+    expect(await screen.findByTestId('agent-risk-full', {}, T)).toBeInTheDocument()
+  })
+
+  it('a valid grant is one line with Change; Change opens the full box', async () => {
+    grantSoon()
+    mount()
+    const line = await screen.findByTestId('agent-grant-line', {}, T)
+    expect(line).toHaveTextContent(/^Agents can work for you until .+ · Change$/)
+    expect(screen.queryByTestId('runner-grant-card')).toBeNull()
+    fireEvent.click(within(line).getByRole('button', { name: 'Change' }))
+    expect(await screen.findByTestId('runner-grant-card')).toBeInTheDocument()
+  })
+
+  it('no grant: the full box with the risk sentence and a short status instead of a warning', async () => {
+    s.preview.mockResolvedValue(preview({ spec: null, grant: null, blocked: { code: 'launch.no_grant', message: null, detail: { reason: 'none' } } }))
+    mount()
+    expect(await screen.findByTestId('runner-grant-card', {}, T)).toBeInTheDocument()
+    expect(screen.getByTestId('runner-grant-risk')).toBeInTheDocument()
+    expect(await screen.findByTestId('agent-needs-grant')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+  })
+
+  it('blocked: one status line with the reason, Start off, no grant line', async () => {
+    grantSoon()
+    s.preview.mockResolvedValue(preview({ spec: null, blocked: { code: 'launch.claimed', message: null, detail: {} } }))
+    mount()
+    expect(await screen.findByTestId('agent-blocked', {}, T)).toHaveTextContent('An agent session already claims this ticket.')
+    expect(screen.queryByTestId('agent-ready')).toBeNull()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+  })
+
+  it('the main view has no check button, no Details-free paragraph about dashboard execution', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    grantSoon()
+    mount()
+    await screen.findByTestId('agent-ready', {}, T)
+    expect(screen.queryByRole('button', { name: /Check start settings/ })).toBeNull()
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+    expect(screen.queryByTestId('runner-grant-card')).toBeNull()
   })
 })
 

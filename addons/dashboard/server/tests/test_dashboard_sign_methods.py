@@ -89,3 +89,17 @@ def test_a_default_that_stopped_being_allowed_is_not_used(worlds, owner):
         log="workspace",
     )
     assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": ["terminal"]}
+
+
+def test_a_risk_notice_acknowledgement_is_per_person_and_workspace(worlds, owner):
+    from orch_dashboard import riskack
+
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.get(url).json() == {"acknowledged": {}}
+    assert world.post(url, {"notice": "anything"}).status_code in (400, 422)
+    assert world.post(url, {"notice": "start_agent"}).json() == {"acknowledged": {"start_agent": True}}
+    assert world.get(url).json() == {"acknowledged": {"start_agent": True}}
+    other = add_member(owner, "Tom", "member")
+    assert riskack.load(other.ref, world.stub.ws) == {}
+    assert riskack.load(owner.owner.ref, "w" * 32) == {}

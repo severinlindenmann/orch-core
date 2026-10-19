@@ -270,6 +270,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             p.block("runner.disabled", f"dashboard execution is not available here: {gone} missing", missing=gone)
         elif not hub.connected:
             p.block("runner.unavailable", "no runner is connected")
+        else:
+            try:
+                hub.require_current()
+            except HostError as exc:
+                p.block(exc.code, exc.message)
     if agent and view is not None and view.claim is not None and view.claim.live:
         p.block("launch.claimed", f"{view.key} is claimed by a live session; the agent could not claim it")
     try:
@@ -491,6 +496,7 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         return runners.view(rec)
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
+    hub.require_current()
     launch = data["launch"]
     cur = hub.grants.current(wid, person)
     if cur is None or cur["grant"] != launch["grant"]:

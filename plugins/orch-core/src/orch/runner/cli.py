@@ -229,8 +229,17 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     except (OSError, HostError) as exc:
         return _fail("runner.unavailable", f"the {unit.kind} runner service did not start: {exc}", 9)
     enablement.set_enabled(state, wid, True, uid, terminals=terminals, text=text)
+    from orch.host.release import code_digest
+
+    try:  # a changed unit was just re-bootstrapped: a fresh process on the new release, nothing to restart
+        stale = None if changed else service.restart_if_stale(unit, manager, state, code_digest())
+    except OSError:
+        stale = None
     data = {"workspace_id": wid, "enabled": True, "terminals": terminals, "service": unit.kind,
             "unit": str(unit.unit_path), "changed": changed, "ran": ran, "card": enablement.CARD_TEXT}  # fmt: skip
+    if stale is not None:
+        data["runner_message"] = stale["message"]
+        data["runner_restarted"] = stale["restarted"]
     return {"ok": True, "result": {"data": data}}
 
 
@@ -300,8 +309,12 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
         except OSError as exc:
             log.warning("dev runner: not announced: %s", exc)
     # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
+    from .service import current_release, write_loaded_release
+
+    release = current_release()  # eager: the release this runner loaded, for the host's hello and for enable
+    write_loaded_release(state, release)
     link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
-                    config=lambda: read_config(state, uid), grants=grants)  # fmt: skip
+                    config=lambda: read_config(state, uid), grants=grants, release=release)  # fmt: skip
     link.start()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

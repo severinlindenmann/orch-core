@@ -177,6 +177,9 @@ def serve(lock_held=False):
 
 
 def _serve(directory, lock_fd=None):
+    # The digest of the code this process LOADED, taken now and never again: an in-place reinstall changes the files
+    # on disk, and a server that hashed them at request time would report the new release while running the old code.
+    release = code_digest()
     # For a child, its launcher holds the startup lock until ctl.sock answers.
     gateway = Gateway()
     ctl_path = directory / "ctl.sock"
@@ -237,7 +240,7 @@ def _serve(directory, lock_fd=None):
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
                     elif req == {"command": "hello"}:
-                        conn.sendall(encode({"release": code_digest()}))
+                        conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True

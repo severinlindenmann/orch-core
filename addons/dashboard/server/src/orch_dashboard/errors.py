@@ -81,6 +81,7 @@ def status(code: str) -> int:
         "records.budget",
         "records.snapshot_changed",
         "runner.unavailable",
+        "runner.stale",
     }:
         return 503
     if code in {

@@ -609,7 +609,7 @@ def stale_env(tmp_path, monkeypatch, fake):
     seams, so nothing reaches launchctl, systemctl or a real process."""
     short = short_dir()
     restarts: list[str] = []
-    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: restarts.append(mine) or True)
+    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: restarts.append(mine) or "drained")
     env = {
         "HOME": str(tmp_path / "home"),
         "ORCH_STATE_DIR": str(tmp_path / "state"),
@@ -651,3 +651,189 @@ def test_enable_only_tells_about_a_foreground_host_and_never_restarts_it(stale_e
     data = json.loads(out)["result"]["data"]
     assert code == 0 and restarts == [] and data["restart_needed"] is True
     assert "not under the service manager" in data["message"]
+
+
+# --- the restart falls back to the service manager when the drain never finishes ------------------------------------
+
+
+class _FakeManager:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[str] = []
+        self.fail = fail
+
+    def active(self) -> bool:
+        return True
+
+    def start(self, *, changed: bool) -> list:
+        self.calls.append("start")
+        return []
+
+    def restart_now(self) -> list:
+        self.calls.append("restart_now")
+        if self.fail:
+            raise OSError("kickstart failed")
+        return []
+
+
+class _DrainClient:
+    reply: dict = {"ok": True}
+
+    def __init__(self, *a, **k) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def call(self, op):
+        assert op == "host.restart"
+        return self.reply
+
+
+def _restart_world(monkeypatch, *, running_after_kick: bool):
+    """The host reports the old release until the service manager kicks it (when ``running_after_kick``)."""
+    import orch.host.control_client as cc
+
+    manager = _FakeManager()
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr("orch.host.enable.START_WAIT", 0.3)
+    monkeypatch.setattr(
+        host_cli,
+        "_host_release",
+        lambda control: "new" if running_after_kick and "restart_now" in manager.calls else "old",
+    )
+    return manager
+
+
+def test_a_drain_that_never_finishes_is_followed_by_a_forced_service_restart(monkeypatch):
+    manager = _restart_world(monkeypatch, running_after_kick=True)
+    assert host_cli._restart(manager, Path("/nope"), "new") == "forced"
+    assert manager.calls == ["restart_now"]
+
+
+def test_a_graceful_drain_needs_no_forced_restart(monkeypatch):
+    manager = _FakeManager()
+    import orch.host.control_client as cc
+
+    seen = iter(["old", "new", "new"])
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: next(seen))
+    assert host_cli._restart(manager, Path("/nope"), "new") == "drained"
+    assert manager.calls == []
+
+
+def test_someone_elses_drain_is_waited_for_not_killed(monkeypatch):
+    import orch.host.control_client as cc
+
+    manager = _FakeManager()
+    seen = iter(["old", "old", "new"])
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr(_DrainClient, "reply", {"ok": False, "error": {"code": "host.restarting"}})
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: next(seen))
+    assert host_cli._restart(manager, Path("/nope"), "new") == "drained"
+    assert manager.calls == []
+
+
+def test_a_refused_drain_request_goes_straight_to_the_forced_restart(monkeypatch):
+    import orch.host.control_client as cc
+
+    manager = _FakeManager()
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr(_DrainClient, "reply", {"ok": False, "error": {"code": "internal"}})
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "new" if "restart_now" in manager.calls else "old")
+    assert host_cli._restart(manager, Path("/nope"), "new") == "forced"
+
+
+def test_enable_reports_a_forced_restart(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: "forced")
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and data["forced"] is True and "may have been interrupted" in data["message"]
+
+
+def test_a_restart_that_cannot_happen_is_reported_not_hidden(monkeypatch):
+    manager = _restart_world(monkeypatch, running_after_kick=False)
+    assert host_cli._restart(manager, Path("/nope"), "new") is None
+    assert manager.calls[0] == "restart_now"
+
+
+def test_enable_says_so_when_the_host_could_not_be_restarted(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: None)
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and data["restart_needed"] is True and "did not restart" in data["message"]
+    assert "orch host restart" not in data["message"] and "interrupts requests in flight" in data["message"]
+    assert ("launchctl kickstart -k gui/" in data["message"]) or ("systemctl --user restart" in data["message"])
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_the_manager_restart_now_commands(tmp_path, platform):
+    unit = svc.plan(
+        {"HOME": str(tmp_path / "h")}, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform=platform, uid=501
+    )
+    ran: list[list[str]] = []
+    m = svc.Manager(unit, run=lambda argv: ran.append(list(argv)) or done())
+    m.restart_now()
+    expect = (
+        ["launchctl", "kickstart", "-k", "gui/501/io.orch.host"]
+        if platform == "darwin"
+        else ["systemctl", "--user", "restart", unit.systemd_name]
+    )
+    assert ran == [expect]
+    failing = svc.Manager(unit, run=lambda argv: done(1))
+    with pytest.raises(OSError):
+        failing.restart_now()
+
+
+def test_enable_also_restarts_a_stale_runner_service(stale_env, monkeypatch):
+    """The runner service is checked by the same rule (fake runner manager, fake release file)."""
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    seen = []
+
+    def fake_runner(unit, manager, state, mine, force=False):
+        seen.append(mine)
+        return {
+            "restarted": True,
+            "message": "restarted the agent runner; agents and terminals it had started were stopped",
+        }
+
+    monkeypatch.setattr("orch.runner.service.restart_if_stale", fake_runner)
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and len(seen) == 1 and data["runner_restarted"] is True
+    assert "agents and terminals" in data["runner_message"]
+
+
+def test_register_never_touches_the_runner_and_the_flag_forces_it(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    seen = []
+    monkeypatch.setattr(
+        "orch.runner.service.restart_if_stale",
+        lambda unit, manager, state, mine, force=False: seen.append(force) or None,
+    )
+    code, out = host(["enable", "--dev"], env)
+    assert code == 0 and seen == [False]
+    code, out = host(["enable", "--dev", "--restart-runner"], env)
+    assert code == 0 and seen == [False, True]
+    doc = host_cli.enable(Path(env["ORCH_STATE_DIR"]), env, dev=True, runner="skip")
+    assert doc["ok"] is True and seen == [False, True]  # the register path: the runner is not asked
+
+
+def test_a_runner_with_live_runs_makes_enable_say_restart_needed(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    monkeypatch.setattr(
+        "orch.runner.service.restart_if_stale",
+        lambda *a, **k: {"restarted": False, "restart_needed": True, "message": "has 1 running agents/terminals"},
+    )
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert data["restart_needed"] is True and data["runner_restarted"] is False

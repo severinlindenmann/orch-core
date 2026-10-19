@@ -275,7 +275,7 @@ function TerminalNotice({ children }: { children?: React.ReactNode }) {
   )
 }
 /** The final check: three large tiles to compare with the setup window. The browser never imitates that window. */
-function ConfirmWords({ words }: { words: string[] | null }) {
+export function ConfirmWords({ words }: { words: string[] | null }) {
   return (
     <section className="confirm-words" role="status" aria-label="Final check">
       <p>

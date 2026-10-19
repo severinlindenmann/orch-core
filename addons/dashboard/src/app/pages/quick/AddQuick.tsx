@@ -87,7 +87,7 @@ export function AddQuick({ ws }: { ws: string }) {
     agents ? `agent access for ${accessLength(chosen)}` : 'no agent access',
   ].join(' · ')
   return (
-    <section aria-label="Add a quick task" className="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section aria-label="Add a quick task" className="min-w-0 space-y-4 rounded-lg border border-border bg-surface p-4">
       {started && (
         <p role="status" data-testid="quick-started" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text">
           Task created and signed. {started} It is in the list below.
@@ -108,22 +108,22 @@ export function AddQuick({ ws }: { ws: string }) {
           <Label htmlFor="quick-details">Details (optional)</Label>
           <textarea id="quick-details" value={details} onChange={(e) => setDetails(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px]" placeholder="What should be true when it is done?" />
         </div>
-        <fieldset className="space-y-2">
+        <fieldset className="min-w-0 space-y-3">
           <legend className="text-[13px] font-medium text-text">Steps (optional, up to {MAX_STEPS})</legend>
-          <ol className="space-y-2">
+          <ol className="space-y-3">
             {steps.map((s, i) => (
-              <li key={i} className="space-y-1.5 rounded-md border border-border bg-bg p-2">
+              <li key={i} className="min-w-0 space-y-2 rounded-lg border border-border bg-bg p-3">
                 <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full border border-border text-[11px] text-text-muted">{i + 1}</span>
-                  <Input aria-label={`Step ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to do" autoComplete="off" className="min-h-11 min-w-0 flex-1" />
-                  <Button type="button" variant="ghost" size="sm" className="min-h-11 min-w-11 shrink-0" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps((all) => (all.length > 1 ? all.filter((_, n) => n !== i) : [{ text: '', cmd: '' }]))}>
+                  <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-medium text-text-muted">{i + 1}</span>
+                  <Input aria-label={`Step ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to do" autoComplete="off" className="min-h-11 w-auto min-w-0 flex-1" />
+                  <Button type="button" variant="ghost" size="sm" className="min-h-11 min-w-11 shrink-0 px-2 text-xs text-text-muted hover:text-text" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps((all) => (all.length > 1 ? all.filter((_, n) => n !== i) : [{ text: '', cmd: '' }]))}>
                     Remove
                   </Button>
                 </div>
                 {checking.includes(i) || s.cmd ? (
-                  <Input aria-label={`Step ${i + 1} check`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it (optional)" autoComplete="off" className="min-h-11 font-mono" />
+                  <Input aria-label={`Step ${i + 1} check`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it" autoComplete="off" className="min-h-11 font-mono" />
                 ) : (
-                  <Button type="button" variant="ghost" size="sm" className="min-h-11 text-text-muted" onClick={() => setChecking((c) => [...c, i])}>
+                  <Button type="button" variant="ghost" size="sm" className="min-h-11 max-w-full whitespace-normal px-0 text-xs text-text-muted underline-offset-4 hover:bg-transparent hover:text-text hover:underline dark:hover:bg-transparent" onClick={() => setChecking((c) => [...c, i])}>
                     Add a way to check
                   </Button>
                 )}
@@ -138,12 +138,12 @@ export function AddQuick({ ws }: { ws: string }) {
             <p className="text-[12px] text-text-muted">A quick task has up to {MAX_STEPS} steps. Make a ticket for anything bigger.</p>
           )}
         </fieldset>
-        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+        <div className="space-y-3 rounded-lg border border-warning/25 bg-warning/5 p-3">
           <label className="flex items-start gap-2 text-[13px] text-text">
-            <input type="checkbox" className="mt-1 size-4" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
+            <input type="checkbox" className="mt-1 size-4 shrink-0" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
             <span>Let agents work on any ticket they are allowed to work on, not only this one, for</span>
           </label>
-          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="min-h-11 w-full rounded-md border border-border bg-bg px-2 text-[13px]">
+          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="block min-h-11 w-full min-w-0 rounded-md border border-border bg-bg px-3 text-[13px] text-text disabled:text-text-muted">
             {lengths.map(([h, label]) => (
               <option key={h} value={h}>
                 {label}
@@ -157,8 +157,8 @@ export function AddQuick({ ws }: { ws: string }) {
         <Button type="submit" className="min-h-11 w-full" disabled={!title || !built || !!action}>
           Start task
         </Button>
-        <p data-testid="quick-what-you-sign" className="border-t border-border pt-3 text-[12px] text-text-muted">
-          <span className="font-medium text-text">What you sign. </span>
+        <p data-testid="quick-what-you-sign" className="break-words border-t border-border pt-3 text-[12px] leading-relaxed text-text-muted">
+          <span className="font-medium">What you sign. </span>
           {summary}
         </p>
       </form>

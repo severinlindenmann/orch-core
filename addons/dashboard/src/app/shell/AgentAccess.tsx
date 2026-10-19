@@ -73,24 +73,24 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   // Nothing active and not just stopped: offer a way in whenever the runner answered (a reload after Stop, or no grant ever).
   const idle = !live && !stopped && runner.isSuccess && !runner.isFetching
   if (!live && !stopped && !idle && !extend && !askStop && !partial && queue.length === 0) return null
-  const pill = 'flex min-h-11 min-w-0 shrink-0 items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 sm:min-h-9'
+  const pill = 'flex min-h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9'
   return <div className="agent-access flex min-w-0 items-center gap-2 text-xs">
     {live && !partial ? <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild><button type="button" className={`${pill} ${ending ? 'border-warning text-warning' : ''}`}>
+      <PopoverTrigger asChild><button type="button" className={`${pill} ${ending ? 'border-warning/40 bg-warning/5 text-warning' : ''}`}>
         <span aria-hidden className={`size-2 shrink-0 rounded-full ${ending ? 'bg-warning' : 'bg-success'}`} />
         <span className="whitespace-nowrap">{ending ? <>Agent access ends in {fmtSpan(left)}</> : <>Agent access<span className="agent-access-detail"> · {timeLeft(left)}</span></>}</span>
         <time className="sr-only" dateTime={soonest} title={fmtExact(soonest!)}>{fmtSlot(soonest!)}</time>
         <ChevronDown className="size-3.5 shrink-0" aria-hidden />
       </button></PopoverTrigger>
-      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] space-y-3 text-xs">
+      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] space-y-4 border-border bg-surface p-4 text-xs leading-relaxed text-text">
         <p className="font-medium text-text">Agents may work for you until <time dateTime={soonest} title={fmtExact(soonest!)}>{fmtExact(soonest!)}</time>.</p>
-        <ul aria-label="Your agent access" className="space-y-1 text-text-muted">
+        <ul aria-label="Your agent access" className="space-y-2 text-text-muted">
           {rows.map(r => <li key={r.id}>{r.what} · until <time dateTime={r.until}>{fmtSlot(r.until)}</time></li>)}
         </ul>
         {more > 0 && <p className="text-text-muted">Extend replaces the access on this computer. The other access keeps its own end time until you stop it.</p>}
         <div className="grid gap-2">
-          <Button size="sm" aria-label="Extend agent access" className="min-h-11" onClick={() => { setOpen(false); setExtend(true) }}>Extend</Button>
-          <Button size="sm" variant="outline" className="min-h-11" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => { setOpen(false); setAskStop(true) }}>Stop</Button>
+          <Button size="sm" aria-label="Extend agent access" className="min-h-11 w-full" onClick={() => { setOpen(false); setExtend(true) }}>Extend</Button>
+          <Button size="sm" variant="outline" className="min-h-11 w-full border-border bg-bg text-text" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => { setOpen(false); setAskStop(true) }}>Stop</Button>
         </div>
       </PopoverContent>
     </Popover> : <div className={pill} role="group" aria-label="Agent access">

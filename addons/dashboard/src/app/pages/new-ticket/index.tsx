@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { handoffMode } from '@/api/features'
+import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
@@ -84,8 +85,13 @@ export function handoffNewTicket(d: Draft, creator?: string, agentHours?: number
   // A spike keeps its findings where other types have verification (the form's label says "Findings").
   const sections = Object.fromEntries(written.map(([name, text]) => [d.type === 'spike' && name === 'verification' ? 'findings' : name, (text as string).trim()]))
   const people = sequencePeople(d.people, creator)
+  // R3 part B: screenshots pasted into the sections are signed first (one signature each), from the bytes this tab holds
+  const texts = Object.values(sections) as string[]
+  if (missingPasted(texts).length) return { problem: 'A pasted picture is no longer here (the page was reloaded). Paste it again, or take its line out of the text.' }
+  const images = pastedIn(texts)
+  if (images.length > MAX_IMAGES) return { problem: `At most ${MAX_IMAGES} pictures fit in one signing run.` }
   const hasFields = d.priority !== 'medium' || !!d.size || d.labels.length > 0 || !!(d.parent && d.type !== 'epic')
-  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0) + (agentHours ? 1 : 0)
+  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0) + images.length + (agentHours ? 1 : 0)
   if (steps > MAX_SEQUENCE_STEPS) return { tooMany: true, problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Leave some sections or criteria for later.` }
   return {
     action: {
@@ -99,6 +105,7 @@ export function handoffNewTicket(d: Draft, creator?: string, agentHours?: number
       sections,
       ...(criteria.length ? { acceptance: criteria } : {}),
       ...(people ? { people } : {}),
+      ...(images.length ? { images } : {}),
       ...(agentHours ? { agent: { hours: agentHours } } : {}),
     } as HandoffAction,
   }

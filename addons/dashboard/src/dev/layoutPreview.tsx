@@ -32,7 +32,10 @@ import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { nowMs } from '@/lib/time'
-import { clickProblem, type ClickCard } from '@/api/click'
+import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { pastedIn } from '@/api/pasteImage'
+import { Section } from '@/app/pages/new-ticket/SectionsEditor'
+import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
@@ -118,6 +121,8 @@ export const LAYOUT_SCENARIOS = [
   'new-sequence-start-nogrant',
   // B12D (N3): the ticket page's edit of text, criteria and people, and its ONE review.
   'edit-ticket',
+  // R3 part B: paste a screenshot into a section, and the sign dialog's picture check (match, and a swapped file).
+  'paste-sign',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -842,6 +847,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
+  if (scenario === 'paste-sign') return <PasteSignPreview />
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
@@ -953,4 +959,51 @@ function NewSequencePreview({ start = false }: { start?: boolean }) {
     setOn(true)
   }, [])
   return on ? <NewTicketPage /> : null
+}
+
+/** R3 part B: the real section editor (paste a picture into it) and the real sign panel with a View that names the pasted
+ * pictures: once as the signer would build it, once as a host that swapped the file would. Nothing here signs. */
+function PasteSignPreview() {
+  const [text, setText] = useState('The export button does nothing when I click it.')
+  const pics = pastedIn([text])
+  const view = (images: { name: string; sha256: string; bytes: number; alt: string }[]): ClickViewAnswer => ({
+    view_digest: 'sha256:' + 'a'.repeat(64),
+    view: {
+      risk: CLICK_RISK,
+      op: 'new',
+      workspace: { id: 'f'.repeat(32), name: 'Acme energy data', prefix: 'DEMO' },
+      fingerprint: 'abcdef012345',
+      lines: ['Create DEMO-0044'],
+      checks: [],
+      confirm: { kind: 'click' },
+      expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+      auth: 'convenience',
+      device: PLACEHOLDER_DEVICE,
+      artifacts: 'checked',
+      headline: 'Create DEMO-0044',
+      content: {
+        headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Export does nothing',
+        title: 'New ticket Export does nothing',
+        subline: 'Includes its text (1 section)',
+        ticket: { key: 'DEMO-0044', title: 'Export does nothing', uid_tail: '0000000A', new: true, key_note: 'key per host, not proven' },
+        sections: [{ id: 'context', title: 'Context', text }],
+        images,
+        notes: [`Adds ${images.length} screenshot${images.length === 1 ? '' : 's'}. The dashboard shows each one from the file you pasted and checks its digest against the one signed.`],
+      },
+    },
+  })
+  const swapped = pics.map((p) => ({ ...p, sha256: `sha256:${'0'.repeat(64)}` }))
+  return (
+    <div className="mx-auto max-w-2xl space-y-8 p-4">
+      <Section type="bug" name="context" value={text} onChange={setText} />
+      <section aria-label="What you sign" className="space-y-2">
+        <h2 className="text-[13px] font-medium">The sign dialog</h2>
+        <ClickSignPanel answer={view(pics)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+      <section aria-label="If the host swapped the file" className="space-y-2">
+        <h2 className="text-[13px] font-medium">If the host had swapped the file</h2>
+        <ClickSignPanel answer={view(swapped)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+    </div>
+  )
 }

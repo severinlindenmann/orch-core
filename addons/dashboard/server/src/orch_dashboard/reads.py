@@ -25,7 +25,7 @@ MAX_PAGES = 30  # a page may hold fewer rows than asked (rows drop out between p
 RECENT = 6  # Today's "Recently" shows this many activity rows
 RECENT_PAGES = 5
 CHUNK = 786432
-MAX_ARTIFACT = 3 * CHUNK
+MAX_ARTIFACT = 7 * CHUNK  # 5.25 MiB: a pasted screenshot (at most 5 MiB) is read whole
 
 
 class TicketsQuery(BaseModel):
@@ -104,6 +104,20 @@ def recent_activity(gateway: Gateway, ws: str, want: int = RECENT):
         if not page or len(items) >= want:
             break
     return items[:want]
+
+
+def picture(data: bytes) -> dict | None:
+    from orch.host import imagecheck
+
+    try:
+        kind = imagecheck.check(data)
+    except imagecheck.ImageRefused:
+        return None
+    return {
+        "type": "png" if kind == "image/png" else "webp",
+        "b64": base64.b64encode(data).decode(),
+        "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+    }
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -195,4 +209,7 @@ def register(app: FastAPI, gateway: Gateway):
             "truncated": not complete,
             "binary": binary,
             "text": text,
+            # R3 part B: a screenshot pasted into the ticket. Only a complete, verified PNG/WebP that passes core's
+            # header check is offered; the page hashes the bytes itself before showing them, and only ever as an <img>.
+            "image": picture(data) if verified else None,
         }

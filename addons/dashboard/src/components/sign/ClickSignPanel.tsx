@@ -1,3 +1,4 @@
+import { usePicturesOk } from './Pictures'
 import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. The risk notice is one tap away under the custody line (a details toggle). `lines` are core's terminal
@@ -116,7 +117,8 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   }, [waitUntil])
   const waiting = waitUntil > now
   const needsWord = view.confirm.kind === 'word'
-  const can = armed && !signing && !waiting
+  const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
+  const can = armed && !signing && !waiting && picturesOk
   const hold = useHold(can, () => {
     if (view.confirm.kind === 'word') onSign(view.confirm.word)
   })

@@ -21,7 +21,7 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
@@ -148,6 +148,17 @@ def deposit_answer(got: dict, request_id: str) -> dict:
     return out
 
 
+class ImageChunk(BaseModel):
+    """At most 512 KiB of a picture per call (base64 under the 1 MiB body limit); the signer holds it in order."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sha256: ViewDigest
+    size: Annotated[int, Field(ge=1, le=5 * 1024 * 1024)]
+    offset: Annotated[int, Field(ge=0, le=5 * 1024 * 1024)]
+    b64: Annotated[str, StringConstraints(max_length=720_000, pattern=r"^[A-Za-z0-9+/]*={0,2}$")]
+    last: bool
+
+
 class Step(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     request_id: RequestId
@@ -259,6 +270,15 @@ def register(app: FastAPI, gateway: Gateway):
             row = signer.call("custody_off", {"workspace_id": ws})
         return {**(adapters.click_card(row) or {}), "switchable": True}
 
+    @app.post("/api/w/{ws}/click/images")
+    def images(body: ImageChunk, ws: str = Depends(workspace)):
+        """R3 part B: one chunk of a pasted screenshot, relayed to the signer, which holds the bytes and checks them
+        against the digest of the intent the person reviews. This server keeps nothing of them."""
+        gateway.enabled(ws)
+        if not signer.images():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot take pictures yet.", exit=9)
+        return signer.call("stash", {"workspace_id": ws, **body.model_dump()})
+
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
@@ -303,6 +323,8 @@ def register(app: FastAPI, gateway: Gateway):
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
+        if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
         # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
         key = getattr(body, "key", None)

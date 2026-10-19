@@ -6,10 +6,11 @@ import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
 import { ALL_STEPS, RUN2_SECTIONS, RUN_ID } from './run2'
 import { buildReport } from './report'
+import { carryFor, stepHash } from './carry'
 
 vi.mock('@/api/testrun', async (orig) => {
   const real = await orig<typeof import('@/api/testrun')>()
-  return { ...real, loadRun: vi.fn(), saveStep: vi.fn(), addImage: vi.fn(), removeImage: vi.fn(), imageUrl: vi.fn() }
+  return { ...real, loadRun: vi.fn(), loadPrevious: vi.fn(), saveStep: vi.fn(), addImage: vi.fn(), removeImage: vi.fn(), imageUrl: vi.fn() }
 })
 const m = vi.mocked(testrun)
 const T = { timeout: 8000 }
@@ -18,6 +19,7 @@ const PATH = '/Users/x/.config/orch/testrun/run3'
 beforeEach(() => {
   vi.clearAllMocks()
   m.loadRun.mockResolvedValue({ path: PATH, images_path: `${PATH}/images`, notes: {} })
+  m.loadPrevious.mockResolvedValue([])
   m.saveStep.mockResolvedValue(undefined)
   m.imageUrl.mockResolvedValue('data:image/png;base64,AAAA')
 })
@@ -172,7 +174,7 @@ describe('first save', () => {
     expect(within(screen.getByRole('radiogroup', { name: 'Result of A2' })).getByRole('radio', { name: 'Pass' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByLabelText('Notes for B1.1')).toHaveValue('n')
     expect(await screen.findByAltText('Screenshot A2-aaaaaaaaaaaa.png')).toBeInTheDocument()
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'A2', { status: 'pass' }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'A2', { status: 'pass', hash: stepHash(ALL_STEPS.find((x) => x.id === 'A2')!) }))
     expect(m.saveStep).not.toHaveBeenCalledWith('run3', 'A2', expect.objectContaining({ note: expect.anything() }))
   })
 })
@@ -261,5 +263,61 @@ describe('keepalive only for small bodies', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('carry-over from an earlier run', () => {
+  const A1 = ALL_STEPS.find((x) => x.id === 'A1')!
+  const A2 = ALL_STEPS.find((x) => x.id === 'A2')!
+  const old = (id: string, status: testrun.StepStatus, extra: Partial<testrun.PreviousRun['steps'][string]> = {}) => ({
+    [id]: { status, note: '', images: 0, updated: '2026-10-19T10:00:00+00:00', passed_at: '2026-10-19T10:00:00+00:00', hash: null, ...extra },
+  })
+  const prev = (steps: testrun.PreviousRun['steps']): testrun.PreviousRun[] => [{ run: 'run2', steps }]
+
+  it('pure rules: same text is done, changed text is not, failures give context, a reopened or touched step is left alone', () => {
+    const same = prev(old('A1', 'pass', { hash: stepHash(A1) }))
+    expect(carryFor(A1, undefined, same)).toMatchObject({ kind: 'done', run: 'run2' })
+    expect(carryFor(A1, undefined, prev(old('A1', 'pass', { hash: '0000000000000000' })))).toEqual({ kind: 'changed', run: 'run2' })
+    expect(carryFor(A1, undefined, prev(old('A1', 'pass')))).toMatchObject({ kind: 'changed' })
+    expect(carryFor({ ...A1, text: 'different' }, undefined, same)).toMatchObject({ kind: 'changed' })
+    expect(carryFor(A1, { status: 'todo', note: '', images: [], retest: true }, same)).toBeNull()
+    expect(carryFor(A1, { status: 'fail_blocking', note: '', images: [] }, same)).toBeNull()
+    expect(carryFor(A1, undefined, prev(old('A1', 'fail_blocking', { note: 'broke' })))).toEqual({ kind: 'context', run: 'run2', status: 'fail_blocking', note: 'broke' })
+    expect(carryFor(A1, undefined, prev(old('A1', 'todo')))).toBeNull()
+    // the newest run that has anything wins
+    const two: testrun.PreviousRun[] = [{ run: 'run1', steps: old('A1', 'pass', { hash: stepHash(A1) }) }, { run: 'run2', steps: old('A1', 'fail_non_blocking', { note: 'x' }) }]
+    expect(carryFor(A1, undefined, two)).toMatchObject({ kind: 'context', run: 'run2' })
+  })
+
+  it('shows a passed step collapsed as done with its date, counts it, and Test again reopens it', async () => {
+    m.loadPrevious.mockResolvedValue(prev(old('A1', 'pass', { hash: stepHash(A1) })))
+    renderApp('/checklist')
+    expect(await screen.findByText(/Done in run 2 \(19 Oct 2026\)/, {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Result of A1' })).toBeNull()
+    expect(screen.getByText(/1 pass \(1 done earlier\)/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Test again: A1/ }))
+    expect(m.saveStep).toHaveBeenCalledWith('run3', 'A1', { retest: true })
+    expect(await screen.findByRole('radiogroup', { name: 'Result of A1' })).toBeInTheDocument()
+    expect(screen.queryByText(/Done in run 2/)).toBeNull()
+  })
+
+  it('a changed step says so, a failed one shows its old note, and the report lists carried steps', async () => {
+    m.loadPrevious.mockResolvedValue(prev({ ...old('A1', 'pass', { hash: 'ffffffffffffffff' }), ...old('A2', 'fail_blocking', { note: 'blank page' }) }))
+    renderApp('/checklist')
+    expect(await screen.findByText(/Changed since run 2, please test again/, {}, T)).toBeInTheDocument()
+    expect(screen.getByText('blank page')).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'Result of A2' })).toBeInTheDocument()
+    const report = buildReport({}, '/i', '/p', { A1: { kind: 'done', run: 'run2', date: '2026-10-19T10:00:00+00:00' } })
+    expect(report).toContain(`## A1 ${A1.title}: Pass (done in run 2, 19 Oct 2026, not tested again)`)
+    expect(report).toContain('Pass: 1')
+    expect(A2.id).toBe('A2')
+  })
+
+  it('a pass saved without a fingerprint gets one on load, and a failing earlier-run load is ignored', async () => {
+    m.loadRun.mockResolvedValue({ path: PATH, images_path: `${PATH}/images`, notes: { A1: { status: 'pass', note: '', images: [] } } })
+    m.loadPrevious.mockRejectedValue(new Error('x'))
+    renderApp('/checklist')
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'A1', { hash: stepHash(A1) }))
+    expect(screen.getAllByRole('radiogroup')).toHaveLength(ALL_STEPS.length)
   })
 })

@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 import orch_dashboard.__main__ as launcher
-from orch_dashboard.auth import CODE_TTL, Auth
+from orch_dashboard.auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from orch_dashboard.hostlink import encode
 
 PORT = 43210
@@ -108,7 +108,11 @@ def _launch(tmp_path, monkeypatch, opens=True):
         return opens
 
     monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
-    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    monkeypatch.setattr(
+        launcher,
+        "control",
+        lambda _path, command, *_: {"release": launcher.code_digest()} if command == "hello" else issued,
+    )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.subprocess, "Popen", popen)
     monkeypatch.setattr(launcher.os, "execv", _nothing, raising=False)
@@ -154,7 +158,7 @@ def test_no_browser_leaves_no_file(tmp_path, monkeypatch):
     assert not list((tmp_path / "dashboard").glob("launch-*.html"))
 
 
-def test_the_startup_sweep_uses_the_code_lifetime(tmp_path):
+def test_the_startup_sweep_uses_the_longest_code_lifetime(tmp_path):
     import os
 
     directory = tmp_path / "d"
@@ -163,8 +167,8 @@ def test_the_startup_sweep_uses_the_code_lifetime(tmp_path):
     for p in (old, young):
         p.write_text("x")
     now = 1_000_000.0
-    os.utime(old, (now - CODE_TTL, now - CODE_TTL))
-    os.utime(young, (now - CODE_TTL + 1, now - CODE_TTL + 1))
+    os.utime(old, (now - SETUP_CODE_TTL, now - SETUP_CODE_TTL))
+    os.utime(young, (now - SETUP_CODE_TTL + 1, now - SETUP_CODE_TTL + 1))
     launcher.sweep_redirects(directory, now=now)
     assert not old.exists() and young.exists()
 
@@ -293,7 +297,11 @@ def test_a_launcher_paused_past_expiry_writes_no_file(tmp_path, monkeypatch):
     auth = _auth(tmp_path, monkeypatch, lambda: clock[0])
     issued = auth.launch(PORT)
     monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
-    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    monkeypatch.setattr(
+        launcher,
+        "control",
+        lambda _path, command, *_: {"release": launcher.code_digest()} if command == "hello" else issued,
+    )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.webbrowser, "open", _nothing)
     # The launcher was paused for the code's whole life: the server's timer already ran (nothing to unlink yet).
@@ -310,7 +318,11 @@ def test_a_launcher_paused_during_the_write_removes_the_file(tmp_path, monkeypat
     auth = _auth(tmp_path, monkeypatch, lambda: 1000.0)
     issued = auth.launch(PORT)
     monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
-    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    monkeypatch.setattr(
+        launcher,
+        "control",
+        lambda _path, command, *_: {"release": launcher.code_digest()} if command == "hello" else issued,
+    )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.webbrowser, "open", _nothing)
     times = iter([1000.0, 1000.0 + CODE_TTL])  # before the write, then after a pause

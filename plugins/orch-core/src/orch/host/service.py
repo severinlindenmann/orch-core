@@ -10,7 +10,9 @@ Start-up, in order:
 Drain (``host.restart``, D-P2-4): new requests answer ``host.restarting`` with ``retry_after_ms``; writes in flight
 finish (no deadline inside a commit); parked ``wait``s answer ``host.restarting``; subscriptions end with
 ``end: "host.restarting"`` (:attr:`Host.subscriptions_end`, the bus of H6a); then the listeners close and
-:meth:`Host.run` returns, so the service manager starts the new release.
+:meth:`Host.run` returns, so the service manager starts the new release. ``orch host enable`` waits twice
+START_WAIT for the drain, then forces the restart through the service manager (``kickstart -k`` / ``systemctl
+restart``): crash-equivalent, a request in flight may be interrupted and is recovered at start.
 
 **Live updates (H6a).** Each workspace's worker keeps its subscription journal (:mod:`orch.host.journal`) and hands
 new entries to the host's :class:`~orch.host.bus.Bus` on the event loop. Every :data:`JOURNAL_CHECK_SECONDS` the host
@@ -38,6 +40,8 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch import layout as layout_mod
+from orch.layout import LayoutError
 
 from . import frames
 from .blobs import BLOB_MAX, Quota
@@ -54,6 +58,17 @@ from .pins import AgentPins
 from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, WorkspaceGate, WorkspaceService
+
+
+def _release_id() -> str:
+    """The digest of this host's code (B5b): the CLI warns when it differs from its own."""
+    from .release import code_digest
+
+    try:
+        return code_digest()
+    except OSError:
+        return "unknown"
+
 
 LOG = logging.getLogger(__name__)
 #: how often retention runs in a host that stays up (§0.7)
@@ -77,16 +92,28 @@ def _digest(ops: dict[str, int]) -> str:
 SERVED_MARKER = "host-served"
 
 
+def _state_fd(project: str | os.PathLike[str]) -> int | None:
+    return layout_mod.open_state_fd(project)
+
+
+def is_served(project: str | os.PathLike[str]) -> bool:
+    """A host serves the workspace of ``project``: its marker is under the store's ``.state``. Fails closed: absent only
+    when shown absent in both candidate places (``orch.layout.state_marker_present``); a layout that cannot be placed
+    counts as served, so a direct-mode tool never opens a store it cannot place."""
+    return layout_mod.state_marker_present(project, SERVED_MARKER)
+
+
 def served_marker(root: str, on: bool, state_dir: Path) -> None:
     """Write or remove the marker beneath the workspace's ``.state`` (no symlink followed; failures are ignored: the
     marker is a second fence next to the registry, never a reason to stop serving)."""
     import json as _json
 
     del state_dir  # kept in the signature for the callers; never written into the workspace
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        dfd = os.open(Path(root) / ".state", flags)
-    except OSError:
+        dfd = _state_fd(root)
+    except LayoutError:
+        return
+    if dfd is None:
         return
     try:
         if on:
@@ -247,7 +274,7 @@ class Host:
         if service is None:
             return False
         auth = service.auth
-        if auth is not None and auth.fresh(service.entry.root):
+        if auth is not None and auth.fresh(service.entry.store_dir):
             return auth.person_ok(person, self.clock())
         try:
             asyncio.get_running_loop()
@@ -331,6 +358,7 @@ class Host:
         welcome = {
             "host": HOST_NAME,
             "workspace": None,
+            "release": _release_id(),
             "tier": self._tier(),
             "caps": ["control/1", "outcome/1"],
             "ops": dict(CONTROL_OPS),
@@ -396,8 +424,9 @@ class Host:
         service.runners = self.runners  # H11a: run.list / run.sub
         service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
         backend = self.backend_factory()
-        from .relayhook import make_starter
+        from .relayhook import install_seams, make_starter
 
+        install_seams()  # B1: the four relay seams (idempotent; the R6 gate is the separate switch)
         service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
         if self.dev is not None:
@@ -417,6 +446,7 @@ class Host:
         welcome = {
             "host": HOST_NAME,
             "workspace": {"id": entry.workspace_id, "prefix": entry.prefix[:10] or "?"},
+            "release": _release_id(),
             "tier": entry.tier,
             "caps": list(backend.caps),
             "ops": dict(backend.ops),

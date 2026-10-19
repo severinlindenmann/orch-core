@@ -24,7 +24,7 @@ MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer 
 MATERIAL_KEYS = {
     "gate": ({"kind", "gate", "input", "policy", "texts", "ticket", "review"},) * 2,
     "question": ({"kind", "ticket", "question", "review"},) * 2,
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
 }
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
 
@@ -136,6 +136,15 @@ def request(
         ):
             raise inconsistent()
         first = events[0]
+        from orch.host import signcontent, signer
+
+        try:  # B6: the plain view, derived from this very material and these events, only after the signer's own
+            # material checks (gate, policy, question and section hashes, every `before` against base_rev) hold on them
+            checked = {"op": prepared["op"], "log": prepared["log"], "workspace_id": ws, **prepared}
+            signer.verify_material(checked, workspace_id=ws)
+            content = signcontent.clean_tree(signcontent.build(checked, verified=True))
+        except (signer.SignerRefused, KeyError, TypeError, ValueError, AttributeError):
+            content = None  # the UI falls back to the host's material preview, as before
         return {
             "id": info["id"],
             "code": info["code"],
@@ -146,6 +155,7 @@ def request(
             "fingerprint": prepared["fingerprint"],
             "review_digest": digest,
             "gate_hash": first.get("hash") if first.get("type") in GATE_EVENTS else None,
+            **({"headline": content["headline"], "content": content} if content is not None else {}),
             "material": material,
             "events": events,
             "origin": prepared.get("origin"),

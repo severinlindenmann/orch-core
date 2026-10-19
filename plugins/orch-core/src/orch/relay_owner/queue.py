@@ -98,6 +98,8 @@ class Pending:
     state: str
     within_policy: bool
     cert_code: str | None = None
+    offer_id: str | None = None  # the offer the request names (B1b L2: the caller binds it to the attached offer)
+    attempt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,7 @@ class PrimaryQueue:
             device_id=inner.device_id, label=inner.display_label, scopes_max=inner.scopes_max,
             client_hosted=req.client_hosted, state=e_state, within_policy=self._policy(inner),
             cert_code=None if challenge is None else pairing.cert_code(challenge["o"]),
+            offer_id=inner.offer_id, attempt=inner.attempt,
         )  # fmt: skip
 
     def _take(

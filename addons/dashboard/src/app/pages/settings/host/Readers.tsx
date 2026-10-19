@@ -93,7 +93,8 @@ function ReaderTable({ readers, required, roster }: { readers: HostReader[]; req
                       <DeviceName device={named} />
                     </TableCell>
                     <TableCell data-testid="reader-level">
-                      {reader.level}
+                      Level {reader.level}
+                      <span className="block text-[11px] text-text-muted">{reader.level >= 1 ? 'reads click-signed entries' : required !== null && required >= 1 ? 'this app needs an update to read entries signed with one click' : 'does not read click-signed entries; nothing here uses one-click signing yet'}</span>
                       {reader.reader !== reader.level && <span className="text-text-muted"> (declared {reader.reader})</span>}
                     </TableCell>
                     <TableCell className="whitespace-normal">

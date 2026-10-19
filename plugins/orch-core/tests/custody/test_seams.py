@@ -65,4 +65,26 @@ def test_the_answering_backend_and_dashboard_passphrases_have_one_caller_each():
             if name in transitions and _passes_a_passphrase(call):
                 dashboard.append((rel, name))
     assert answering == ["custody/select.py"]
-    assert dashboard == [("click/signer.py", "stage_convenience")]
+    generated = [
+        path.relative_to(SRC).as_posix()
+        for path in SRC.rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Attribute)
+        and node.attr == "generated"
+        and path.name != "passphrase.py"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "PassphraseBackend"
+    ]
+    assert generated == ["custody/select.py"]  # B9: the setup process's own generated passphrase, one caller
+    # B9: ``orch setup`` converts with the passphrase ITS OWN process generated, or (Finish setup) one the person typed
+    # on the setup terminal with echo off (``Terminal.ask_secret``); never text from a browser or an argument
+    setup_callers = sorted(
+        path.relative_to(SRC).as_posix()
+        for path in SRC.rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Attribute)
+        and node.attr == "setup_backend"
+        and path.relative_to(SRC).as_posix() != "custody/select.py"
+    )
+    assert setup_callers == ["setup/steps.py", "setup/steps.py"]  # the generated-passphrase backend: setup's two sites
+    assert sorted(dashboard) == [("click/signer.py", "stage_convenience"), ("setup/steps.py", "stage_convenience")]

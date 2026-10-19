@@ -33,7 +33,7 @@ import os
 import secrets
 import stat
 import weakref
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 
 from . import fsio
@@ -81,6 +81,54 @@ def rm_at(dir_fd: int, name: str, depth: int = 0) -> None:
     os.rmdir(name, dir_fd=dir_fd)
 
 
+def remove_made_dir(project: str | os.PathLike[str], name: str, recorded: Sequence[int] | None) -> bool:
+    """Remove the directory ``project/name`` only if it is the one recorded (``[st_dev, st_ino]``: the directory a
+    call itself made), by fds: ``name`` is opened ``O_NOFOLLOW`` below the project fd and compared, renamed to a unique
+    tombstone, the tombstone checked to be that same directory again, its entries removed through the verified fd and
+    the (then empty) tombstone dropped with ``rmdir`` below the project fd. Anything else (another inode, a link, no
+    record) is a person's own and is left alone. ``True`` when the directory was removed."""
+    if recorded is None or "/" in name or name in ("", ".", ".."):
+        return False
+    flags = _DIR | _NOFOLLOW
+    try:
+        pfd = os.open(project, flags)
+    except OSError:
+        return False
+    try:
+        try:
+            dfd = os.open(name, flags, dir_fd=pfd)
+        except OSError:
+            return False
+        try:
+            st = os.fstat(dfd)
+            if [st.st_dev, st.st_ino] != list(recorded):
+                return False
+            tomb = f".{name.lstrip('.')}-rollback-{secrets.token_hex(8)}"
+            try:
+                os.rename(name, tomb, src_dir_fd=pfd, dst_dir_fd=pfd)
+            except OSError:
+                return False
+            try:
+                moved = os.stat(tomb, dir_fd=pfd, follow_symlinks=False)
+            except OSError:
+                return False
+            if (moved.st_dev, moved.st_ino) != (st.st_dev, st.st_ino):
+                with contextlib.suppress(OSError):  # not what we opened: put it back, touch nothing
+                    os.rename(tomb, name, src_dir_fd=pfd, dst_dir_fd=pfd)
+                return False
+            try:
+                for child in os.listdir(dfd):
+                    rm_at(dfd, child)
+                os.rmdir(tomb, dir_fd=pfd)  # only an empty directory can go
+            except OSError:
+                return False
+            return True
+        finally:
+            os.close(dfd)
+    finally:
+        os.close(pfd)
+
+
 def _close(fd: list[int], cache: dict[str, int]) -> None:
     while cache:
         with contextlib.suppress(OSError):
@@ -104,6 +152,8 @@ class RootFS:
         self._finalizer = weakref.finalize(self, _close, self._fd, self._cache)
         st = os.fstat(fd)
         self.ident: tuple[int, int] = (st.st_dev, st.st_ino)
+        #: set by ``open_store_fs``: the layout resolve that opened this root found an orch ``config.json``
+        self.config_seen = False
 
     @classmethod
     def at(cls, path: Rel, *, ident: tuple[int, int] | None = None, create: bool = False) -> RootFS:

@@ -1,3 +1,5 @@
+import { AccessLength } from '../AccessLength'
+import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
@@ -7,16 +9,19 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fmtDateTime, plural } from '@/lib/time'
+import { fmtDateTime } from '@/lib/time'
+import { accessLength } from '@/api/grants'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
 import { Raw } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
+import { HostAlarms } from '@/components/dev/DevHost'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
+import { ReposSection } from './Repos'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -27,11 +32,12 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   )
 }
 
-/** Workspace identity, the three durations (changed by a hand-off) and the repositories (read only: the Repos addon edits them). */
+/** Workspace identity, the three durations (changed by a hand-off) and (in Repos.tsx) the repositories. */
 export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const settings = useQuery(queries.hostSettings(workspace.id))
   const identity = useQuery(queries.identity(workspace.id))
   const role = useViewerRole(workspace)
+  const hostInfo = useQuery(queries.hostInfo())
   const { ask, dialog } = useSettingsHandoff(workspace.id)
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
@@ -57,6 +63,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
       <h2 className="text-base font-semibold">General</h2>
+      <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
       <Section title="Workspace">
         <dl className="divide-y divide-border">
           <Row label="Name">
@@ -66,6 +73,10 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
             <Mono>{workspace.prefix}</Mono>
             <CopyButton value={workspace.prefix} label="prefix" />
           </Row>
+        </dl>
+        <details className="mt-1 border-t border-border pt-2 text-[13px]">
+          <summary className="cursor-pointer text-text-muted">Technical details</summary>
+          <dl className="divide-y divide-border">
           <Row label="UUID">
             <Mono>{id?.uuid ?? workspace.id}</Mono>
             <CopyButton value={id?.uuid ?? workspace.id} label="UUID" />
@@ -81,8 +92,11 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
               <span>epoch {id.epoch}</span>
             </Row>
           )}
-        </dl>
+          </dl>
+        </details>
       </Section>
+
+      <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
 
       {/* A real host only (the mock never offers click-to-sign): the switch, with the risk line first. */}
       {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
@@ -117,11 +131,14 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         ) : (
           <>
             <div className="grid gap-4 @[40rem]/page:grid-cols-3">
-              {DURATIONS.map((d) => (
+              {DURATIONS.map((d) => d.key === 'grant_hours' ? (
+                <AccessLength key={d.key} value={Number(value(d.key))} disabled={!!why} onChange={(hours) => setDraft({ ...draft, grant_hours: String(hours) })} />
+              ) : (
                 <div key={d.key} className="space-y-1.5">
                   <Label htmlFor={`set-${d.key}`}>
                     {d.label} ({d.unit})
                   </Label>
+                  <p className="text-[12px] text-text-muted">{d.hint}</p>
                   <Input
                     id={`set-${d.key}`}
                     type="number"
@@ -142,7 +159,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
             </div>
             {invalid && (
               <p role="alert" className="mt-2 text-[13px] text-danger">
-                {invalid.label} is a whole number from {invalid.min} to {invalid.max} {invalid.unit}.
+                {invalid.label}: use a whole number from {invalid.min} to {invalid.max} {invalid.unit}.
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -152,34 +169,14 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
               {why && <OwnerNote id="settings-why">{why}</OwnerNote>}
             </div>
             <p className="mt-2 text-[12px] text-text-muted">
-              A new grant lasts {data.grant_hours === null ? '' : plural(data.grant_hours ?? 0, 'hour')} unless its signer picks another length (a member's grant is never longer than this); grants already signed keep their end time.
+              A new agent access lasts {data.grant_hours === null ? '' : accessLength(data.grant_hours ?? 0)} unless its signer picks another length (a member's grant is never longer than this); grants already signed keep their end time.
               {data.settings_at && ` Last changed ${fmtDateTime(data.settings_at.at)}.`}
             </p>
           </>
         )}
       </Section>
 
-      <Section title="Repositories">
-        {!data ? (
-          <p className="text-[13px] text-text-muted">Reading the repositories…</p>
-        ) : !data.available || !data.repos ? (
-          <p className="text-[13px] text-text-muted">This host does not say which repositories there are.</p>
-        ) : data.repos.length === 0 ? (
-          <p className="text-[13px] text-text-muted">No repositories are declared.</p>
-        ) : (
-          <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
-            {data.repos.map((r) => (
-              <li key={r.name} className="flex flex-wrap items-center gap-x-4 gap-y-0.5 py-1.5">
-                <Mono><Raw>{r.name}</Raw></Mono>
-                <span className="text-text-muted">{r.default_branch === null ? 'no default branch' : <Raw>{r.default_branch}</Raw>}</span>
-                {r.remote && <span className="min-w-0 break-all text-text-faint"><Raw>{r.remote}</Raw></span>}
-              </li>
-            ))}
-          </ul>
-        )}
-        {data?.repos_more && <p className="mt-2 text-[12px] text-text-muted">More repositories exist than are listed here.</p>}
-        <p className="mt-2 text-[12px] text-text-muted">Repositories are added, changed and removed in the Repos addon, not here.</p>
-      </Section>
+      <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
       {dialog}
     </div>
   )

@@ -11,7 +11,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { ClickCard, ClickSwitch } from '@/api/click'
 import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
-import { signerProblem } from '@/api/refusals'
+import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
 import { ClickRisk } from '@/components/sign/ClickSignPanel'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
+import { fmtDateTime } from '@/lib/time'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
 const MESSAGES: Record<string, string> = {
@@ -55,6 +56,8 @@ function failure(e: unknown, on: boolean, prefix: string): Failure {
     const s = Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))
     return { text: `Too many wrong passphrases. Try again in ${s >= 120 ? `${Math.ceil(s / 60)} min` : `${s} s`}, or use the terminal.` }
   }
+  // Core D1 (#582): a dev sandbox host never switches signing on from the dashboard.
+  if (e.code === DEV_REFUSED) return { text: `${devRefusedSentence(e)} Nothing changed.` }
   if (e.code === 'custody.terminal_needed') {
     return {
       text: `Nothing changed. Switch it ${on ? 'on' : 'off'} in the terminal:`,
@@ -124,13 +127,19 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
     <Section title="Sign in the dashboard">
       <div data-testid="workspace-card-signing" className="space-y-3 text-[13px]">
         <ClickRisk />
+        {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
         <p data-testid="signing-state">
           {on && card?.available
-            ? 'On: actions are signed here with one click. "Sign in the terminal instead" stays in every dialog.'
+            ? 'On: actions can be signed here with one click. Hosts with approval settings offer other allowed methods under Other ways.'
             : on
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Sign in the terminal.`
               : 'Off: every signature is made in the terminal with your passphrase.'}
         </p>
+        {card?.problem === 'dev_host' && (
+          <p data-testid="signing-dev-host" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-danger">
+            {DEV_HOST_SENTENCE}
+          </p>
+        )}
         {card?.problem === 'readers_old' && (
           <p data-testid="signing-readers-old">
             <Link to="/settings/$tab" params={{ tab: 'devices' }} className="text-brand underline underline-offset-2 hover:no-underline">
@@ -138,7 +147,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             </Link>
           </p>
         )}
-        {!owner ? (
+        {card?.problem === 'dev_host' ? null : !owner ? (
           <p className="text-text-muted">Only an owner switches this.</p>
         ) : card && card.switchable === false ? (
           <p data-testid="signing-update" className="text-text-muted">

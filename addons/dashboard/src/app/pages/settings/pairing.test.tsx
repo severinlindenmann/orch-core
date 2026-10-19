@@ -62,13 +62,13 @@ describe('the gate', () => {
 
   it('pair-unavailable says so and calls nothing', async () => {
     open('pair-unavailable')
-    expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone is not available on this host yet.')
+    expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
     expect(pairPreviewForTests.fixture()!.calls).toEqual([])
   })
 })
 
 describe('before offering', () => {
-  const OFF = 'Turn click-to-sign off first: orch host convenience off --workspace DEMO'
+  const OFF = 'Update the orch app on the phone and scan again, or turn click-to-sign off first: orch host convenience off --workspace DEMO'
 
   it('convenience flag on: blocked with the exact turn-off line, no Create button', async () => {
     open('pair-blocked-convenience')
@@ -79,11 +79,10 @@ describe('before offering', () => {
     expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
   })
 
-  it('convenience custody: the turn-off line plus the custody hint', async () => {
-    open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'key in convenience custody', cause: 'custody' } } })
+  it('a key in convenience custody alone is not a block any more (the preview shows no custody hint)', async () => {
+    open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'a phone app is too old', cause: 'custody' } } })
     await screen.findByTestId('pair-blocked', {}, T)
-    expect(screen.getByTestId('pair-convenience-off').textContent).toBe(OFF)
-    expect(screen.getByTestId('pair-convenience-custody')).toHaveTextContent('convenience custody')
+    expect(screen.queryByTestId('pair-convenience-custody')).toBeNull()
   })
 
   it('convenience history alone is not a block: a warning before Create pairing link', async () => {

@@ -436,7 +436,7 @@ class Bus:
             self.end(sub, "reset")  # nothing can be revalidated or delivered (no refresh spin): snapshot later
             return
         if wid not in fresh:
-            fresh[wid] = auth.fresh(service.entry.root)
+            fresh[wid] = auth.fresh(service.entry.store_dir)
         if not fresh[wid]:
             self._refresh(service)  # never deliver on a snapshot older than the log: the worker refreshes it
             return

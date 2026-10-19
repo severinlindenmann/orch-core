@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import devsandbox
+from orch import layout as layout_mod
 from orch.devsandbox import RESERVED_PREFIX, SandboxRefused
 
 from .errors import HostError
@@ -433,8 +434,8 @@ def refuse_push(service: Any) -> None:
 
 def _raw_prefix(root: str) -> str | None:
     """The ``prefix`` of the first line of the workspace log, unverified: used only to narrow (skip)."""
-    with contextlib.suppress(OSError, ValueError, TypeError, AttributeError):
-        with open(Path(root) / "events" / "workspace.jsonl", "rb") as handle:
+    with contextlib.suppress(OSError, ValueError, TypeError, AttributeError, layout_mod.LayoutError):
+        with open(layout_mod.store_of(root) / "events" / "workspace.jsonl", "rb") as handle:
             first = json.loads(handle.readline(1 << 20))
         prefix = first.get("prefix") if isinstance(first, dict) else None
         return prefix if isinstance(prefix, str) else None

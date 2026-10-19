@@ -21,14 +21,19 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
+    EditTicket,
+    NewTicketSequence,
     PrepareBody,
+    PublishSetup,
+    PublishShare,
+    QuickStart,
     RequestId,
     RunnerGrant,
     done_error,
@@ -36,6 +41,7 @@ from .handoff import (
     plan,
     read_done,
     send_prepare,
+    sequence_progress,
 )
 from .reads import workspace
 
@@ -54,8 +60,8 @@ TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
-    "hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
 DEPOSITS = ("confirmed", "rejected", "unknown")
@@ -97,7 +103,8 @@ class CustodyBody(BaseModel):
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
-ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
+# The runner grant is a click request, or a terminal hand-off with `runner` set by this server, never by the browser.
+ClickBody = PrepareBody
 
 
 def deposit_view_ok(view: dict, ws: str) -> bool:
@@ -256,6 +263,18 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
+        if isinstance(body, PublishSetup | PublishShare):
+            # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,
+            # before a slot is taken or the signer is asked (core's op_class also reads `publish.share` as terminal).
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "message": "Sharing files and choosing where they go are signed in your terminal, not by click.",
+                    "retryable": False,
+                    "reason": "terminal_only",
+                },
+                3,
+            )
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:
@@ -277,6 +296,11 @@ def register(app: FastAPI, gateway: Gateway):
                     "why": "update_orch",
                 },
                 3,
+            )
+        if isinstance(body, NewTicketSequence | EditTicket | QuickStart) and not signer.sequences():
+            # an older signer would ignore `sequence` and sign the first step only
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
@@ -305,6 +329,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
+            if planned.sequence:
+                sent["sequence"] = planned.sequence
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
@@ -368,6 +394,10 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
+        if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
+            handoffs.intents[rid] = planned.sequence["intent"]
+            while len(handoffs.intents) > 64:
+                handoffs.intents.pop(next(iter(handoffs.intents)))
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
@@ -465,7 +495,19 @@ def register(app: FastAPI, gateway: Gateway):
             clicks.forget(rid)
         if got == "submitted" and row.get("seq") is None:
             raise done_error({}, row)
-        return {"id": rid, "state": got}
+        out: dict = {"id": rid, "state": got}
+        intent = handoffs.intents.get(rid)
+        key = row.get("key")
+        if intent is not None and isinstance(key, str) and got != "prepared":
+            # A stopped sequence: which ticket exists and how many steps are in it, read from the host (never typed).
+            progress = sequence_progress(
+                gateway, ws, key, intent, person=app.state.person_of(ws), since=row.get("created_at")
+            )
+            if progress is not None:
+                if intent.get("agent") is not None:
+                    progress["last"] = "grant"
+                out |= {"key": key, "progress": progress}
+        return out
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, ws: str = Depends(workspace)):

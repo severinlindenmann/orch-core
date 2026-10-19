@@ -18,9 +18,10 @@ It owns, per workspace:
   ``service.relay_lock`` (the starter rule of 11A.4 "As built in H12a").
 
 **The R6 gate.** 11A.1: "``RelayWorker`` does not start the poll thread for a workspace until R6 is merged and its
-integration tests against the real relay pass." :data:`R6_READY` is that gate, a code constant (``False``): the host
-checks it in ``relaylink.start_blocker`` (so ``may_start`` is false and ``host.status.relay`` names
-:data:`R6_GATE_REASON`), and :meth:`RelayWorker.start` checks it again (defence in depth) before any thread exists.
+integration tests against the real relay pass." :data:`R6_READY` is that gate, a code constant (``True`` since the
+flip, 16 Oct 2026): the host checks it in ``relaylink.start_blocker`` (so ``may_start`` is false and
+``host.status.relay`` names :data:`R6_GATE_REASON`), and :meth:`RelayWorker.start` checks it again (defence in depth)
+before any thread exists.
 What flipping it requires is listed in 11A.4 "As built in R5".
 
 **Fork and exec.** The state directory's lock fd is close-on-exec and its fork hook closes a child's copy (R1); the
@@ -64,10 +65,10 @@ __all__ = [
 
 log = logging.getLogger("orch.relay.worker")
 
-#: The R6 gate (11A.1): False until R6 (pairing, membership, WK custody, the real ``EpochKeySource`` and ``R6View``)
-#: is merged AND its integration tests against the real relay pass. Flipping it is a reviewed one-line change with
-#: the checklist of 11A.4 "As built in R5"; ``tests/relay/test_worker.py`` pins the literal.
-R6_READY = False
+#: The R6 gate (11A.1): was False until R6 (pairing, membership, WK custody, the real ``EpochKeySource`` and ``R6View``)
+#: was merged AND its integration tests against the real relay passed. Flipped to True on 16 Oct 2026, after B1 (#608),
+#: per the 11A.4 "As built in R5" checklist (D:5780-5793); ``tests/relay/test_worker.py`` pins the literal.
+R6_READY = True
 R6_GATE_REASON = "r6_not_ready: the relay worker stays dormant until R6 is merged and integration-tested (11A.1)"
 
 
@@ -251,8 +252,15 @@ class RelayWorker:
         unpublished: Unpublished | None = None,
         on_ended: Callable[[], None] = lambda: None,
         mono: Callable[[], float] = time.monotonic,
+        conn: Callable[[], Any] | None = None,
     ) -> None:
         self.workspace_id, self.id8 = workspace_id, workspace_id[:8]
+        #: the connection factory of this link (one transport per thread, 11A.7): the seam factories of the host
+        #: (R3's publisher, R6b's membership thread) build their own connection through it (B1)
+        self.conn = conn
+        #: threads that live and die with the worker beside the publisher (R6b's membership thread): objects with
+        #: ``start()``, ``stop()`` and ``join(timeout) -> bool``; added before :meth:`start`
+        self.companions: list[Any] = []
         self.state, self.session, self.alarm = state, session, alarms
         self._submit, self._stop_event = submit, stop_event
         self._link_state, self._precheck, self._first_link = link_state, precheck, first_link
@@ -346,6 +354,10 @@ class RelayWorker:
             self.publisher.start()
             if self._stopping:  # a stop between the lock and here: tell it (again; stop is idempotent)
                 self.publisher.stop()
+            for companion in self.companions:
+                companion.start()
+                if self._stopping:
+                    companion.stop()
         except WorkerStopped:
             return
         except Exception as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
@@ -376,6 +388,8 @@ class RelayWorker:
             self.loop.stop()
         if running:
             self.publisher.stop()
+        for companion in self.companions:
+            companion.stop()
 
     def join(self, timeout: float) -> bool:
         """True when every relay thread ended within ``timeout`` (shared): the start thread, the loop (joined twice:
@@ -407,6 +421,8 @@ class RelayWorker:
             ended = self.loop.join(left()) and ended
             ended = self.loop.join(left()) and ended
         ended = self.publisher.join(left()) and ended
+        for companion in self.companions:
+            ended = companion.join(left()) and ended
         return ended
 
     def _reap(self) -> None:

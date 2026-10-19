@@ -49,7 +49,7 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeDisabled()
     fireEvent.change(field, { target: { value: 'my passphrase' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions are signed here/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
     expect(sw).toHaveBeenCalledWith(WS, { on: true, passphrase: 'my passphrase' })
     expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
   })
@@ -63,6 +63,17 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('That passphrase was refused. Nothing changed.')
     expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
     expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
+  })
+
+  it('a dev sandbox host refusing the switch says why, and an unknown reason stays generic', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'dev_host' } }))
+    mount(OFF)
+    await typeAndSubmit()
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/off on a dev sandbox host/)
+    sw.mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'brand_new_reason' } }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(screen.getByTestId('signing-error')).not.toHaveTextContent(/brand_new/))
   })
 
   it('too many wrong passphrases name the wait', async () => {
@@ -191,7 +202,7 @@ describe('Sign in the dashboard', () => {
     await act(async () => {
       await qcOf.invalidateQueries({ queryKey: ['click-status', WS] })
     })
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions are signed here/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: actions can be signed here/))
     expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
     expect(screen.queryByTestId('signing-error')).toBeNull()
     expect(screen.queryByText(/Reloading the card/)).toBeNull()
@@ -262,4 +273,18 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
     expect(document.body.innerHTML).not.toContain('typed then left')
   })
+})
+
+it('describes the Other ways menu and keeps the full risk notice for older acknowledgements', async () => {
+  mount({ ...ON, risk_ack: null })
+  await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('Other ways'))
+  expect(screen.getByTestId('click-risk')).toHaveTextContent('Convenience signing:')
+})
+
+it('shows the ISO risk acknowledgement as a date in Settings', async () => {
+  const at = '2026-10-16T18:30:00Z'
+  mount({ ...ON, risk_ack: at })
+  const notice = await screen.findByText(/Risk notice acknowledged on/)
+  expect(notice.querySelector('time')).toHaveAttribute('datetime', at)
+  expect(notice).toHaveTextContent('16 Oct 18:30') // local zone (UTC in tests), the shared formatter
 })

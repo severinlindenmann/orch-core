@@ -1899,3 +1899,30 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Hunk headers in the Changes tab show only the line ranges (`@@ -12,4 +12,5 @@`), no longer the function context git prints after them. A diff that git cannot produce (it failed, was refused or ran past its 30 s limit) is an error the tab shows as "Diff unavailable", never counts with an empty patch.
 - **Why:** The function context comes from the repository's own `diff.<driver>.xfuncname`/`funcname`, which orch now pins (a backtracking regex stalled the diff until the timeout) and strips: a person reviewing the diff must not read repo-chosen text as orch's. The empty patch hid that failure.
 - **Revert:** Drop `plain_hunk_headers` in `plugins/orch-core/src/orch/store/observe.py` and the `xfuncname`/`funcname` pins in `gitsafe._driver_pins`; in `devhost/reads.py` map `None` to `""` again (not recommended).
+
+### 2026-10-17 — B10 Part B phase 1 phone requests
+
+Decision: Requirements and plan decisions can send an unsigned host hint to a paired phone, using the person's preferred method. Code and verdict phone methods remain coming soon. The phone chooses the decision and collects change text; the dashboard sends only ref, gate and the displayed generation. Human-only server routes forward phone.request/cancel/status; the dashboard never signs this path. Phone decisions have no authentication or signature-strength label in gate details; approver information is labelled per host, not signed.
+
+Why: This follows the B10 phase 1 wire contract. Status remains authoritative after cancellation/expiry because an in-flight decision may still land. Polling and ticket query updates refresh the result without claiming an authentication strength.
+
+Revert: Remove the phone routes, host capability and dialog integration; keep the disabled B6 method stub.
+
+### 2026-10-17 — B10 phone requests: dashboard session trust boundary
+
+- **Decision:** B10 phone requests: the trust boundary is the dashboard session token, same as every dashboard write; the server's own env/peer check does not describe the HTTP caller. Show phone information as reported by your Mac. Stop polling immediately on done or status 404/403; allow at most 60 seconds after cancelled, expired or stale for an in-flight decision to land. Scope retry keys to the workspace, ticket, gate and generation.
+- **Why:** Server process checks cannot identify an HTTP caller. Plain copy avoids implying a verified signature, and bounded polling catches late decisions without watching ended requests forever.
+- **Revert:** Restore the previous phone copy and polling behavior; remove request identity tracking in `usePhone`.
+## 2026-10-16 B9 Task U: isolated setup browser wizard
+
+- **Decision:** `/setup` has a dedicated in-memory session and a closed proxy to the setup process's private Unix socket. Core's `/claim` consumes the 30-second launch code; core owns run-aware idle expiry. Dashboard tokens and setup tokens cannot cross scopes. The proxy streams replies and wipes its transient request buffer; neither bodies nor secrets enter logs, caches, storage or the dashboard gateway.
+- **Why:** rev 2 of batch-9 is authoritative over the earlier mockup: permissions and approval precede secret generation; recovery-only Copy/Print; digest-bound review, typed word and terminal fingerprint gates; local workspace by default. Secret responses are removed after confirmation and on page exit. No service worker participates.
+- **Revert:** remove the setup entry branches, setup adapter/routes, setup-only security/auth additions, and `src/setup` / `src/api/setup.ts`. Preserve ordinary dashboard authentication.
+
+## 2026-10-16 — B9 alignment with merged core
+
+**Decision:** Consume the private setup.code file on the dashboard server, delete it before the socket claim, and name the listening port. Open plain /setup; keep the returned setup credential only in browser memory. Show core waiting/error facts and use GRANT / AGENTS fixtures.
+
+**Why:** The dated B9-C launch note supersedes the URL fragment contract. Core owns single use and run-aware idle expiry; real-core transport tests now cover the boundary.
+
+**Revert:** Revert these dashboard changes only together with a replacement core launch/auth contract.

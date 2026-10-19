@@ -39,6 +39,16 @@ def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
     return env
 
 
+@pytest.fixture(autouse=True)
+def _no_plain_review_leak():
+    """The one-shot "a plain review was just shown" flag of the passphrase prompt never survives a test (a review
+    confirmed in one test and no passphrase asked would shorten the next test's prompt)."""
+    yield
+    from orch.custody import passphrase
+
+    passphrase._PLAIN_REVIEW.update(shown=False, hint=True)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _never_the_real_keychain():
     """No test may reach the owner's real keychains (H5c): the store, ``_open`` and every keychain test helper refuse
@@ -101,9 +111,16 @@ REAL_SERVICE_FILES = (
 )
 
 
+#: the release pointer is flipped by any other session's release install on this shared machine; this run cannot
+#: change it (``install_release`` refuses a real-home target via ``refuse_real_home``), so it is not compared
+SHARED_POINTERS = {(".local", "share", "orch", "releases", "current")}
+
+
 def _service_snapshot() -> dict[str, object]:
     out: dict[str, object] = {}
     for parts in REAL_SERVICE_FILES:
+        if parts in SHARED_POINTERS:
+            continue
         path = os.path.join(real_home(), *parts)
         try:
             st = os.lstat(path)

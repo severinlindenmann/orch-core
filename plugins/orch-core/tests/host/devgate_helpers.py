@@ -30,6 +30,7 @@ class SbxWs(Ws):
         Env.__init__(self, sroot, clock_start=1_790_000_000)
         self.live = False
         self.root = sroot / "ws"
+        self.root.mkdir(parents=True, exist_ok=True)
         self.host_state = sroot / "state"
         keys = self.host_state / "hosts" / WS / "keys"
         self.host_backend = FileBackend(keys)

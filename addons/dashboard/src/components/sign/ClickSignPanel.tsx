@@ -1,5 +1,6 @@
+import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
-// own preview, the host's fingerprint or a cached ticket. The risk line comes first. `lines` are core's terminal
+// own preview, the host's fingerprint or a cached ticket. The risk notice is one tap away under the custody line (a details toggle). `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
 // not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
@@ -12,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
+import { fmtClock } from '@/lib/time'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -27,7 +29,7 @@ export const ClickRisk = () => <RiskLine text={CLICK_RISK} />
 
 function When({ stamp }: { stamp: string }) {
   const t = Date.parse(stamp)
-  return <time dateTime={stamp}>{Number.isNaN(t) ? stamp : new Date(t).toLocaleTimeString()}</time>
+  return <time dateTime={stamp}>{Number.isNaN(t) ? stamp : fmtClock(stamp)}</time>
 }
 
 interface Props {
@@ -47,6 +49,60 @@ export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, wai
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
   return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} />
+}
+
+/** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
+function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
+  return (
+    <>
+      <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
+        <dt className="text-text-muted">Action</dt>
+        <dd>
+          <Raw>{view.op}</Raw>
+        </dd>
+        <dt className="text-text-muted">Workspace</dt>
+        <dd data-testid="click-workspace" className="flex flex-wrap items-center gap-x-2">
+          <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
+            id {uuid8(view.workspace.id)}
+          </span>
+          <Raw>{view.workspace.prefix}</Raw>
+          <Raw>{view.workspace.name}</Raw>
+        </dd>
+        <dt className="text-text-muted">Fingerprint</dt>
+        <dd className="font-mono" data-testid="click-fingerprint">
+          {view.fingerprint}
+        </dd>
+        <dt className="text-text-muted">Device</dt>
+        <dd><Raw>{view.device}</Raw></dd>
+        <dt className="text-text-muted">Expires</dt>
+        <dd>
+          <When stamp={view.expires_at} />
+        </dd>
+      </dl>
+      {view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
+        {view.lines.map((line, i) => (
+          <div key={i} className="whitespace-pre-wrap break-all">
+            {line === '' ? ' ' : line}
+          </div>
+        ))}
+      </div>}
+
+      {view.checks.length > 0 && (
+        <ul data-testid="click-checks" className="space-y-0.5 text-[12px] text-text-muted">
+          {view.checks.map((c, i) => (
+            <li key={i}>
+              Repository <Raw>{c.repo}</Raw>: {c.clean ? 'clean' : 'not clean'}, checked by <Raw>{c.attested_by}</Raw> at <When stamp={c.at} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {view.artifacts === 'checked' && (
+        <p data-testid="click-artifacts" className="text-[12px] text-text-muted">
+          The signer checked the artifact bytes it signs.
+        </p>
+      )}
+    </>
+  )
 }
 
 function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
@@ -69,56 +125,20 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     onSign(undefined)
   }
   const hintId = useId()
+  const technical = <TechnicalFacts view={view} />
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <RiskLine text={view.risk} />
-      <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
-        <dt className="text-text-muted">Action</dt>
-        <dd>
-          <Raw>{view.op}</Raw>
-        </dd>
-        <dt className="text-text-muted">Workspace</dt>
-        <dd data-testid="click-workspace" className="flex flex-wrap items-center gap-x-2">
-          <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
-            id {uuid8(view.workspace.id)}
-          </span>
-          <Raw>{view.workspace.prefix}</Raw>
-          <Raw>{view.workspace.name}</Raw>
-        </dd>
-        <dt className="text-text-muted">Fingerprint</dt>
-        <dd className="font-mono" data-testid="click-fingerprint">
-          {view.fingerprint}
-        </dd>
-        <dt className="text-text-muted">Signed with</dt>
-        <dd data-testid="click-custody">
-          {view.auth === 'convenience' ? 'convenience (no presence)' : <Raw>{view.auth}</Raw>}, device <Raw>{view.device}</Raw>
-        </dd>
-        <dt className="text-text-muted">Expires</dt>
-        <dd>
-          <When stamp={view.expires_at} />
-        </dd>
-      </dl>
-      <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
-        {view.lines.map((line, i) => (
-          <div key={i} className="whitespace-pre-wrap break-all">
-            {line === '' ? ' ' : line}
-          </div>
-        ))}
-      </div>
-      {view.checks.length > 0 && (
-        <ul data-testid="click-checks" className="space-y-0.5 text-[12px] text-text-muted">
-          {view.checks.map((c, i) => (
-            <li key={i}>
-              Repository <Raw>{c.repo}</Raw>: {c.clean ? 'clean' : 'not clean'}, checked by <Raw>{c.attested_by}</Raw> at <When stamp={c.at} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {view.artifacts && (
-        <p data-testid="click-artifacts" className="text-[12px] text-text-muted">
-          {view.artifacts === 'checked' ? 'The signer checked the artifact bytes it signs.' : 'The signer did not see the artifact bytes: only their hash is signed.'}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} />}
+      <div className="space-y-1">
+        <p data-testid="click-custody" role="note" className="text-[13px] text-warning">
+          {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
         </p>
-      )}
+        {view.auth === 'convenience' && <details data-testid="click-risk-more" className="text-[12px] text-text-muted"><summary className="w-fit cursor-pointer">What this means</summary><p className="mt-1 text-text">{CLICK_RISK}</p></details>}
+      </div>
+      {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
+      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
+      {!view.content && <SignDetails>{technical}</SignDetails>}
+      {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {view.confirm.kind === 'word' && (
         <p id={hintId} data-testid="click-hold-hint" className="text-[13px] text-text">
           Hold Sign to confirm <Raw>{view.confirm.word}</Raw>

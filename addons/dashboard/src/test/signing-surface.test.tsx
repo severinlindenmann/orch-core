@@ -1,3 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import userEvent from '@testing-library/user-event'
 // The signing and core-confirm paths of the mock, in one table (the list is exactly the CASES below):
 //  (a) the dialog's title and its Covers hold core's words only: nothing the addon wrote, except its name as
 //      "Title (package id)"; what the addon wrote is shown, in full, in a labelled "From the addon" region instead;
@@ -15,6 +18,7 @@ import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 import { openTicketPanel } from '@/test/ticketPanels'
+import { nowMs } from '@/lib/time'
 
 const T = { timeout: 8000 }
 type User = ReturnType<typeof renderApp>['user']
@@ -620,9 +624,7 @@ const CASES: Case[] = [
     name: 'agent grant length (settings)',
     path: '/settings/general',
     open: async (user) => {
-      const f = await screen.findByLabelText('Agent grant length (hours)', {}, T)
-      await user.clear(f)
-      await user.type(f, '24')
+      await user.click(await screen.findByRole('button', { name: '1 day' }, T))
       await user.click(screen.getAllByRole('button', { name: 'Save' })[1])
       return screen.findByRole('dialog', {}, T)
     },
@@ -742,12 +744,15 @@ it('records current-destination confirmation warning preserves the exact URL thr
 // M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
 // its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the word, confirmed by holding Sign.
 describe('start agent', () => {
-  it('posts exactly what the preview showed, and the grant View carries the deposit line before Sign', async () => {
+  it.each([false, true])('runner grant (extend=%s) carries the deposit line and word before Sign', async (extend) => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { agentsApi } = await import('@/api/agents')
     const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
-    const { StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
+    const { RunnerGrantCard, StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
     const WS = 'b'.repeat(32)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 8, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
     const display = "codex 'work on DEMO-7'‮"
     vi.spyOn(agentsApi, 'preview').mockResolvedValue({
       spec: 'e'.repeat(64), ticket: 'DEMO-7', display, display_hidden: false, cwd: { kind: 'workspace' }, cwd_path: '/w/demo', cwd_path_hidden: false,
@@ -761,16 +766,128 @@ describe('start agent', () => {
       lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'word', word: 'DEMO~bbbbbbbb/GRANT' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
       auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
-    render(<QueryClientProvider client={new QueryClient()}><StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} /></QueryClientProvider>)
-    const shown = await screen.findByTestId('agent-preview', {}, T)
-    expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+    render(<QueryClientProvider client={new QueryClient()}>{extend
+      ? <RunnerGrantCard ws={WS} runner={{ enabled: true, connected: true, terminals: false, grant: null }} loading={false} blocked={null} extend={{ id: 'gr_old', scope: 'workable', until: new Date(nowMs() + 5 * 36e5).toISOString() }} onChanged={() => {}} />
+      : <StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} />}</QueryClientProvider>)
+    if (!extend) {
+      const shown = await screen.findByTestId('agent-preview', {}, T)
+      expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+    }
+    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled(), T)
     screen.getByTestId('runner-grant-issue').click()
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).getByTestId('click-hold-hint').textContent).toBe('Hold Sign to confirm DEMO~bbbbbbbb/GRANT')
     expect(within(panel).getByRole('button', { name: 'Hold to sign' })).toBeInTheDocument()
-    expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })
+})
+
+describe('approval methods policy', () => {
+  it('requires terminal review for sign_methods even when the personal default is one click', async () => {
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { HandoffDialog } = await import('@/components/sign/HandoffDialog')
+    const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
+    const { fakeRequest, state } = await import('@/test/handoffHarness')
+    const ws = 'a'.repeat(32)
+    const methods = ['terminal', 'phone'] as const
+    const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, sign_methods: [...methods] }
+    const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload: { sign_methods: [...methods] }, derived: {} }] }
+    const request = { ...fakeRequest(), op: 'settings.set', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Change allowed ways to approve', fields_changed: [{ field: 'sign_methods', before: 'terminal, click', after: methods.join(', '), before_note: 'per host, not signed' }] } }
+    request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', is_default: false, allowed: ['terminal', 'click', 'phone'] })
+    const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
+    vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
+    vi.spyOn(api, 'cancelHandoff').mockResolvedValue({ id: request.id, state: 'cancelled' })
+    const click = vi.spyOn(api, 'prepareClick')
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: [...methods] }} onClose={() => {}} /></QueryClientProvider>)
+    const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+    await waitFor(() => expect(button).toBeEnabled())
+    button.click()
+    await screen.findByTestId('handoff-command')
+    expect(screen.getByText('terminal, phone')).toBeVisible()
+    expect(screen.getByText('per host, not signed')).toBeVisible()
+    expect(prepare).toHaveBeenCalledWith(ws, { action: 'settings_set', sign_methods: [...methods] }, 0)
+    expect(click).not.toHaveBeenCalled()
+  })
+})
+
+it('shows the host refusal and recovery hint when removing one click would strand a custody key', async () => {
+  const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+  const { HandoffDialog } = await import('@/components/sign/HandoffDialog')
+  const { ApiError } = await import('@/api/types')
+  const message = 'sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in convenience custody'
+  const hint = 'move the key back first: orch host convenience off --workspace W and orch keys custody passphrase --workspace W --in-place'
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(400, { code: 'invalid.input', message, hint, retryable: false }))
+  const click = vi.spyOn(api, 'prepareClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws="w" title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'phone'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
+  const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+  await waitFor(() => expect(button).toBeEnabled())
+  button.click()
+  expect(await screen.findByText(message)).toBeVisible()
+  expect(screen.getByText(hint)).toBeVisible()
+  expect(prepare).toHaveBeenCalledWith('w', { action: 'settings_set', sign_methods: ['terminal', 'phone'] }, 0)
+  expect(click).not.toHaveBeenCalled()
+})
+
+
+it('phone handoff sends only the displayed gate and generation, leaving the decision to the phone', async () => {
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', is_default: false, allowed: ['terminal', 'phone'] })
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  const request = { ref: 'DEMO-0044', gate: 'plan' as const, gate_gen: 7 }
+  const sent = vi.spyOn(api, 'phoneRequest').mockResolvedValue({ ...request, id: 'ph_' + '0'.repeat(26), uid: 'uid', state: 'open', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString(), phones: 1 })
+  vi.spyOn(api, 'phoneCancel').mockResolvedValue({ id: 'ph_' + '0'.repeat(26), state: 'cancelled' })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><HandoffDialog ws="ws" title="Request changes on plan" action={{ action: 'request_changes', key: request.ref, gate: 'plan', message: 'local text' }} phoneRequest={request} hint="Say what should change" onClose={() => {}} /></QueryClientProvider>)
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Approve on your phone' }))
+  await screen.findByText('Waiting for your phone…')
+  expect(screen.getByText(/Version 7 of this step \(as reported by your Mac\)/)).toBeVisible()
+  expect(sent).toHaveBeenCalledWith('ws', { ...request, idem: expect.any(String) })
+  expect(screen.getByText(/choose Approve or Request changes there/)).toBeVisible()
+  vi.restoreAllMocks()
+})
+
+it('setup Create posts the review digest shown with core rows and terminal fingerprint', async () => {
+  const { Setup } = await import('@/setup/Setup')
+  const { SetupAPI } = await import('@/api/setup')
+  const { fireEvent } = await import('@testing-library/react')
+  const posted: unknown[] = []
+  const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    let value: unknown = {ok:true}
+    if (String(url).endsWith('/state')) value = {
+      phase:'profile',mode:'finish',dir:'/demo',dir_name:'demo',suggested:{name:'Demo',prefix:'TST'},
+      addons:[{id:'worktrees',title:'Worktrees',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
+      methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
+      relay:{available:false,enabled:false},missing:['addon:worktrees'],labels:{},
+      current:{name:'Demo',prefix:'TST',addons_on:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
+    }
+    if (String(url).endsWith('/review')) value = {
+      review_id:'demo-review',digest:'demo-bound-digest',fingerprint:['demo','not','real'],
+      items:[{id:'settings',title:'Settings',lines:['Agents: 8 hours'],details:['Exact settings'],volatile:['set at signing'],type:'settings.changed',fields:{set:{grant_hours:8}},placeholders:[],placeholder_details:[]}],
+      runner_grant:null,flags:[],risk:null,typed_word:null,tty_confirm:true,
+    }
+    if (String(url).endsWith('/create')) { posted.push(JSON.parse(String(init?.body))); value = {run_id:'demo-run'} }
+    if (String(url).includes('/progress')) value = {steps:[],done:false,error:null,retry:[],workspace:null}
+    return new Response(JSON.stringify(value))
+  })
+  render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
+  await screen.findByRole('heading',{name:'Finish setup in demo'})
+  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
+  await screen.findByRole('heading',{name:'Review your setup'})
+  expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
+  fireEvent.click(screen.getByText('Show technical details'))
+  expect(screen.getByText('Agents: 8 hours')).toBeVisible()
+  expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
+  fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
+  await waitFor(() => expect(posted).toEqual([{review_id:'demo-review',digest:'demo-bound-digest'}]))
 })

@@ -35,6 +35,18 @@ const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0))
 const ready = (writer: boolean) => ({ start: 0, offset: 0, cols: 80, rows: 24, writer, state: 'running' as const })
 
 describe('lease and reconnect', () => {
+  it('K7: the tab that just opened the terminal takes keyboard focus; a read-only one does not', async () => {
+    const { unmount } = render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)
+    await flush()
+    act(() => sockets[0].h.ready(ready(true)))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Terminal input')
+    unmount()
+    sockets = []
+    render(<RealTerminal ws={WS} run={run()} initial="read" connect={connect} />)
+    await flush()
+    act(() => sockets[0].h.ready(ready(false)))
+    expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Terminal input')
+  })
   it('attaches read-only by default and offers Take control (take:true only after the click)', async () => {
     render(<RealTerminal ws={WS} run={run()} initial="read" connect={connect} />)
     await flush()
@@ -57,7 +69,7 @@ describe('lease and reconnect', () => {
   it('losing the lease shows Take back; a 4409 offers Take control; neither takes by itself', async () => {
     render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)
     await flush()
-    expect(tickets).toEqual([{ mode: 'write', take: false }])
+    expect(tickets).toEqual([{ mode: 'write', take: true }]) // N5: the tab that started the shell gets control
     act(() => sockets[0].h.ready(ready(true)))
     expect(screen.queryByText('Read only.')).toBeNull()
     act(() => sockets[0].h.writer(false))
@@ -71,6 +83,17 @@ describe('lease and reconnect', () => {
     expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument()
   })
 
+  it('an ended run is attached once and never retried when the host answers 503', async () => {
+    vi.useFakeTimers()
+    vi.mocked(runsApi.ticket).mockRejectedValue(new (await import('@/api/types')).ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }))
+    render(<RealTerminal ws={WS} run={run({ state: 'exited', replay_until: '2099-01-01T00:00:00Z' })} initial="read" connect={connect} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(runsApi.ticket).not.toHaveBeenCalled() // nothing is asked for an ended run until the person wants its output
+    fireEvent.click(screen.getByRole('button', { name: 'Show output' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(runsApi.ticket).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/This terminal has ended/)).toBeInTheDocument()
+  })
   it('a reconnect (4503, 4401, 4429) asks for read again, never for the lease', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} />)

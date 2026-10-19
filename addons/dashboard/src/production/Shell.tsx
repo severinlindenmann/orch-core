@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 import { OrbitMark } from '../brand/OrbitMark'
-import { createAppRouter } from '../app/router'
+import { CHECKLIST_PATH, createAppRouter } from '../app/router'
 import { getToken, isForeignNavigation, onSessionChange } from '../api/bootstrap'
 import { setFeatures } from '../api/features'
 import { session } from '../api/prodApi'
@@ -16,13 +16,18 @@ export const queryClient = new QueryClient({ defaultOptions: { queries: { staleT
 
 /** Lists the features the server serves, then draws the app. The router is built after them: its guards read them. */
 function App() {
-  const features = useQuery({ queryKey: ['session'], queryFn: session })
+  // The tester's checklist needs no host and asks it for nothing; its link back to the dashboard is a full page load.
+  const onChecklist = location.pathname === CHECKLIST_PATH
+  const features = useQuery({ queryKey: ['session'], queryFn: session, enabled: !onChecklist })
+  // The tester's checklist needs no host: before `orch host enable` or `orch setup` the feature list can be refused
+  // (no host registry yet), and the checklist still opens, with no feature on.
+  const checklistOnly = onChecklist || (!!features.error && location.pathname === CHECKLIST_PATH)
   const router = useMemo(() => {
-    if (!features.data) return null
-    setFeatures(features.data)
+    if (!features.data && !checklistOnly) return null
+    setFeatures(features.data ?? { features: [] })
     return createAppRouter(undefined, queryClient)
-  }, [features.data])
-  if (features.error) return <main className="prod-login" role="alert"><OrbitMark /><h1>The dashboard server did not answer</h1><p>{features.error.message}</p></main>
+  }, [features.data, checklistOnly])
+  if (features.error && !checklistOnly) return <main className="prod-login" role="alert"><OrbitMark /><h1>The dashboard server did not answer</h1><p>{features.error.message}</p></main>
   if (!router) return <div aria-label="Loading session" role="status" className="prod-skeleton" />
   return <RouterProvider router={router} />
 }

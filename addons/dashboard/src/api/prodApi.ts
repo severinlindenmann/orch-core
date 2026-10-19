@@ -6,10 +6,12 @@ import { clearSession, getToken } from './bootstrap'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
+import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import {
   ApiError,
   type ApiErrorBody,
@@ -59,7 +61,7 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
-async function call<T>(path: string, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
+async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body)
   if (result.status === 401) {
@@ -173,6 +175,7 @@ const reads = {
     return { person: first.person, name: first.name, role }
   },
   getWorkspaces: listWorkspaces,
+  getHostInfo: () => call<unknown>('/api/host'),
   listPeople: async (ws: string): Promise<KnownPerson[]> =>
     ((await listWorkspaces()).find((x) => x.id === ws)?.members ?? []).map((m) => ({ person: m.person, name: m.name, email: '' })),
   getToday: (ws: string) => call<TodayDocument>(`${w(ws)}/today`),
@@ -188,6 +191,7 @@ const reads = {
   // Reduced workspace settings (M4): what the host gives this person, nothing more.
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
   // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
@@ -200,6 +204,7 @@ const reads = {
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),
 }
@@ -237,6 +242,8 @@ const empty = {
  */
 const handoff = {
   prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
+  /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+  checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>(`${w(ws)}/repos/check`, 'POST', action),
   getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
@@ -250,8 +257,14 @@ const click = {
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
   signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
-  stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
+  stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
+  // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
+  // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
+  // 404 and the page then hides the controls.
+  getSignDefault: (ws: string) => call<SignDefault>(`${w(ws)}/me/sign_default`),
+  putSignDefault: (ws: string, body: { method: SignMethod; fallback?: SignMethod }) => call<SignDefault>(`${w(ws)}/me/sign_default`, 'PUT', body),
+  phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
 }

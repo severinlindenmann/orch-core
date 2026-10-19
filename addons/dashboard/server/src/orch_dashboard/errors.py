@@ -81,6 +81,7 @@ def status(code: str) -> int:
         "records.budget",
         "records.snapshot_changed",
         "runner.unavailable",
+        "runner.stale",
     }:
         return 503
     if code in {
@@ -138,6 +139,19 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,
+    },
+    # core P5 (orch-v2-host 12.15): why the publish server said no
+    "publish.server_refused": {
+        "reason": (
+            "unknown_workspace",
+            "blocked",
+            "owner_not_allowed",
+            "limit",
+            "conflict",
+            "clock",
+            "delegation",
+            "rejected",
+        ),
     },
     # core D1 (orch-v2-host 11A.17): the Simulator dev gate's closed reason
     "host.dev_refused": {
@@ -228,6 +242,8 @@ CLICK_REFUSALS = (
     "uncertain",
     "already_signed",
     "record_unavailable",
+    "stopped",
+    "resumable",
     "disabled",
 )
 #: the top-level `reason`, closed per code: the click signer carries the convenience reasons there (the same sets as

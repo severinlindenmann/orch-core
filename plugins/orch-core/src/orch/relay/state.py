@@ -63,6 +63,7 @@ _LEDGER_KEY = {
     "member_list": _DECIMAL,
     "wk_commit": _DECIMAL,
     "wk_grant": re.compile(r"[0-9a-f]{32}:(0|[1-9][0-9]*)"),
+    "cert_request": re.compile(r"[0-9a-f]{32}"),  # R6c: one signed request per request_id (11A.15.7)
 }
 
 

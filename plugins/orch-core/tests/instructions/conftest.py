@@ -15,6 +15,9 @@ from orch.ops.caps import Files
 OWN = "Zq7!mPx2-vL9#rTb4w"  # a passphrase of the person's own that passes the strength check
 
 
+_BLOCKS = re.compile(r"^((?: *\d+ [a-z]+(?: +\d+ [a-z]+)*\n){4})", re.M)
+
+
 class FakeTerminal:
     """What the person sees and types on ``/dev/tty``. ``typed`` is the queue of answers to the passphrase prompts
     (empty: type the generated passphrase back); the recovery-code words are read from what was shown."""
@@ -43,7 +46,7 @@ class FakeTerminal:
 
     @property
     def code(self) -> str:
-        return re.findall(r"^([a-z]+(?: [a-z]+){23})$", self.text, flags=re.M)[-1]
+        return " ".join(re.findall(r"\d+ ([a-z]+)", _BLOCKS.findall(self.text)[-1]))
 
     def show(self, text: str) -> None:
         if not self.ok:

@@ -337,6 +337,8 @@ def test_the_grant_secret_is_drawn_by_the_signer_and_never_reaches_the_host(huma
         __import__("orch.identity", fromlist=["parse_grant"]).parse_grant(signed.secret).secret
     )
     res = ok(human.submit_res(p["request"]["id"], signed.events))
+    local = res["data"].pop("until_local")  # the same moment in this computer's time (the text line shows it)
+    assert local and not local.endswith("Z")
     assert res["data"] == {"grant": ev["grant"], "until": ev["expires_at"], "scope": "workable"}
     secret = signed.secret.partition(".")[2]
     for path in served.lab.state.rglob("*"):  # the host's state: requests, outcomes, keys, logs of the host
@@ -513,8 +515,10 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
         ((text, word),) = shown
         assert (
             word == f"{key}/{s.lab.ws.uid(key)[-8:]}"
-            and "workspace: Acme (DEMO)" in text
-            and "self-declared, unverified" in text
+            and "in workspace Acme (DEMO)" in text  # the plain view first ...
+            and "self-declared" not in text
+            and "workspace: Acme (DEMO)" in text.details  # ... the full review behind `d`
+            and "self-declared, unverified" in text.details
         )
         event = s.lab.ws.events(key)[-1]
         assert event["text"] == "via the composite"
@@ -625,3 +629,14 @@ def test_every_person_version_of_an_agent_op_round_trips(human, served):
     assert view["title"] == "Renamed" and view["acceptance"][0]["text"] == "it really works"
     # an agent op whose events a person may not append (task.*) is not a person op
     assert err(human.prepare_res("task.start", {"task": f"{key}/T1"})) == "op.not_allowed"
+
+
+def test_a_dry_run_prepare_of_addon_grant_installs_nothing(human, served):
+    """A built-in add-on that was never installed is put in place by a real grant only: a dry-run prepare through the
+    host (ctx.dry_run is False there, the flag rides on the capture) leaves no package."""
+    from pathlib import Path
+
+    package = Path(served.service.store.layout.store) / "addons" / "terminals"
+    assert not package.exists()
+    assert err(human.prepare_res("addon.grant", {"name": "terminals"}, dry_run=True)) == "not_found"
+    assert not package.exists()

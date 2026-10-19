@@ -7,7 +7,7 @@
     "cli": "orch grant",
     "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
     "who": "human",
-    "usage": "orch grant [--hours N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]",
+    "usage": "orch grant [--hours N] [--days N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--extend GRANT] [--runner] [--dry-run]",
     "pre": [
       "workspace_exists",
       "role_allows",
@@ -15,7 +15,8 @@
       "text_clean"
     ],
     "emits": [
-      "grant.issued"
+      "grant.issued",
+      "grant.revoked"
     ],
     "input": {
       "type": "object",
@@ -23,10 +24,16 @@
       "properties": {
         "hours": {
           "type": "integer",
-          "description": "length in whole hours (1 to 24)",
+          "description": "length in whole hours (1 to 168)",
           "minimum": 1,
-          "maximum": 24,
-          "default": 8,
+          "maximum": 168,
+          "x-metavar": "N"
+        },
+        "days": {
+          "type": "integer",
+          "description": "length in whole days (1 to 7); instead of --hours",
+          "minimum": 1,
+          "maximum": 7,
           "x-metavar": "N"
         },
         "scope": {
@@ -49,16 +56,22 @@
           "description": "short label",
           "x-metavar": "TEXT"
         },
+        "extend": {
+          "type": "string",
+          "description": "revoke this runner grant of yours together with the new one (with --runner)",
+          "pattern": "^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "x-metavar": "GRANT"
+        },
         "runner": {
           "type": "boolean",
-          "description": "hand the secret to the orch runner on this machine instead of showing it (label runner, 12 h max)"
+          "description": "hand the secret to the runner here instead of showing it (at most the grant_hours setting)"
         }
       },
       "required": [],
       "additionalProperties": false
     },
     "output": {
-      "text": "ok grant.issued[ {grant}][ until={until}]\nnext: {next}",
+      "text": "ok grant.issued[ {grant}][ until {until_local}]\nnext: {next}",
       "json": {
         "type": "object",
         "properties": {
@@ -66,6 +79,9 @@
             "type": "string"
           },
           "until": {
+            "type": "string"
+          },
+          "until_local": {
             "type": "string"
           },
           "scope": {

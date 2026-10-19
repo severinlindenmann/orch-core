@@ -17,9 +17,8 @@ const ON = { custody: 'convenience', enabled: true, available: true } as const
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, ...DO, 'actions', 'click'], click: ON })])
 
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
-  await user.clear(input)
-  await user.type(input, '12')
+  const input = await screen.findByRole('button', { name: '1 day' }, T)
+  await user.click(input)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
   return screen.findByRole('dialog', {}, T)
 }
@@ -53,10 +52,10 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(state.host.calls.filter((c) => c.path.endsWith('/handoff') && c.method === 'POST')).toEqual([]) // nothing yet
   await user.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
   const panel = await within(dialog).findByTestId('click-panel', {}, T)
-  expect(panel.firstElementChild).toHaveTextContent(CLICK_RISK)
+  expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
   expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(panel).not.toHaveTextContent(/HOST-BEFORE-VALUE|Preview|orch sign/)
-  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 12 })
+  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 24 })
   const sign = within(dialog).getByRole('button', { name: 'Sign' })
   expect(sign).toBeDisabled()
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
@@ -82,10 +81,9 @@ it('each workspace has its own person and role: the second workspace draws its a
   state.host.workspaces.push(second)
   const user = userEvent.setup()
   show(`/w/DEMO/settings/general?ws=${uuid8(B)}`)
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByRole('button', { name: '1 day' }, T)
   expect(input).toBeEnabled()
-  await user.clear(input)
-  await user.type(input, '10')
+  await user.click(input)
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled() // an owner there, though not under the first workspace's person id
   expect(OWNER).not.toBe(MARA)
 })

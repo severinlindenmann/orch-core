@@ -17,6 +17,7 @@ import { settingsTabs } from './tabs'
 import { isRealHost } from '@/api/features'
 import { HostGates } from './host/Gates'
 import { HostGeneral } from './host/General'
+import { HostAddOns } from './host/AddOns'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { HostRecords } from './host/Records'
@@ -49,6 +50,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'members' && <HostMembers workspace={workspace} />}
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
+        {tab === 'addons' && <HostAddOns key={workspace.id} workspace={workspace} />}
         {tab === 'records' && <HostRecords key={workspace.id} workspace={workspace} />}
         {tab === 'devices' && <HostDevices key={workspace.id} workspace={workspace} />}
       </SettingsFrame>

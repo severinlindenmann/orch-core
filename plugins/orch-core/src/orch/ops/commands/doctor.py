@@ -24,8 +24,8 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             raise OrchError("internal", "doctor --repair is not served by the host")
         c = Call.of(ctx, "doctor")
         found, _ = health.inspect(
-            root, c.store.workspace_id, None, fast=False, instructions=stale_findings(root), caps=ctx.caps,
-            store=c.store, sees=c.sees,
+            root, c.store.workspace_id, None, fast=False, caps=ctx.caps, store=c.store, sees=c.sees,
+            instructions=stale_findings(root, c.store.layout.store),
         )  # fmt: skip
         return _result(found, lines)
     cfg = ws.config  # as discovery read it; then the root must still be the directory found
@@ -40,10 +40,11 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             wid,
             ws.state_dir,
             fast=False,
-            instructions=stale_findings(root),
+            instructions=stale_findings(root, ws.store_dir),
             caps=ctx.caps,
             ident=ws.ident,
             config=ws.config_bytes,
+            store_pin=ws.store_pin,
         )
         if store is not None:
             store.close()

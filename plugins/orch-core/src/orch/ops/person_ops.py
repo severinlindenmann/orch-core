@@ -14,6 +14,8 @@ exactly as it judges a signed one (``lifecycle.moved``, ``lifecycle.policy_chang
   a ticket override: whoever ``claims.may_manage`` (the ticket owner who is not a viewer, owners, maintainers; F1
   5.4.2); the workspace default: workspace owners only.
 * ``settings.set {set}`` -> ``settings.changed {set}``: workspace owners only.
+* ``people.set {ref, role, add, remove}`` -> ``people.changed {role, add, remove}`` (B12D): who owns, works on or
+  reviews a ticket; whoever ``claims.may_manage``; an owner is exactly one person.
 * ``relay.pair_device {offer_id}`` -> ``device.added {device, cert}`` (H12c-e, 11A.15.10 item 12): the phone R6 paired,
   from R6's verified facts (never from the request); its own material kind (:mod:`orch.identity.pairdevice`).
 
@@ -24,8 +26,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from orch import repopaths
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
+from orch.model.types import GRANT_MAX_HOURS
+from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -63,12 +68,56 @@ _REPO = {
     "required": ["path"],
     "additionalProperties": False,
 }
+_ORIGIN = {
+    "type": "string",
+    "maxLength": 300,
+    "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
+    r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
+}
+_MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                harness: {
+                    "type": "object",
+                    "properties": {mode: {"enum": list(names)} for mode in ROUTE_MODES},
+                    "additionalProperties": False,
+                }
+                for harness, names in MODEL_CHOICES.items()
+            },
+            "minProperties": 1,
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
+}
 _SET = {
     "type": "object",
     "properties": {
-        "grant_hours": {"type": "integer", "minimum": 1, "maximum": 24},
+        "grant_hours": {"type": "integer", "minimum": 1, "maximum": GRANT_MAX_HOURS},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+        "sign_methods": {  # B6: terminal always; touchid is reserved
+            "type": "array",
+            "items": {"enum": ["terminal", "click", "phone"]},
+            "uniqueItems": True,
+            "minItems": 1,
+            "maxItems": 3,
+            "contains": {"const": "terminal"},
+        },
+        "publish": {  # the Publish add-on's server: an address pair, or null to remove it
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {"server": _ORIGIN, "share": _ORIGIN},
+                    "required": ["server", "share"],
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ]
+        },
+        "models": _MODELS,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -153,10 +202,25 @@ def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"gates": names}, "orch show")
 
 
+def _routing_on(h: Human) -> bool:
+    from orch.addons.install import as_addons
+
+    found = as_addons(h.store.state.workspace.addons).get("model-routing")
+    return found is not None and found.enabled and not found.purged
+
+
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
+    if changes.get("models") is not None and not _routing_on(h):
+        raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
+    for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
+        if spec is not None:
+            try:
+                repopaths.check_declared(h.store.layout, spec["path"])
+            except repopaths.RepoPathError as exc:
+                raise OrchError("invalid.input", f"{name}: {exc}") from None
     done = h.run({"type": "settings.changed", "set": changes}, "workspace", "change the workspace settings", review=[])
     return h.workspace_result(done, {"set": sorted(changes)}, "orch show")
 
@@ -216,6 +280,28 @@ SETTINGS_SET = operation(
 )
 
 
+def handle_people(ctx: Context, args: dict[str, Any]) -> Result:
+    """``people.set {ref, role, add, remove}`` -> ``people.changed``: whoever ``claims.may_manage`` (the ticket owner
+    who is not a viewer, owners, maintainers). The lists are canonical (sorted, de-duplicated); an owner has exactly
+    one id and no removal; a person who is not a member is refused here, before anything is signed (the model refuses
+    it again)."""
+    h = _Human(ctx, "people.set")
+    view = h.ticket(args["ref"])
+    core = h.store.state._core
+    if not claims.may_manage(core.ws, core.tickets[view.uid], h.person):
+        raise OrchError("role.denied", "people are for the ticket owner, owners and maintainers")
+    role = args["role"]
+    add, remove = sorted(set(args.get("add") or [])), sorted(set(args.get("remove") or []))
+    if set(add) & set(remove) or not (add or remove) or (role == "owner" and (len(add) != 1 or remove)):
+        raise OrchError("invalid.input", "people.set: nothing to change, or an owner that is not exactly one person")
+    unknown = [p for p in add if p not in core.ws.members]
+    if unknown:
+        raise OrchError("invalid.input", f"people.set: not members: {', '.join(unknown)}"[:200])
+    event = {"type": "people.changed", "role": role, "add": add, "remove": remove}
+    done = h.run(event, view.uid, f"change the {role} of {view.key}", review=h.header(view))
+    return h.ticket_result(view, done, {"role": role, "add": add, "remove": remove}, "orch show")
+
+
 def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
     """``relay.pair_device {offer_id}`` (H12c-e, 11A.15.6 step 9): ``device.added {device, cert}`` of the phone R6
     paired. The facts are R6's, handed to this handler by the host (``Capture.pair``, :mod:`orch.host.pairdevice`):
@@ -245,6 +331,42 @@ def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the relay pairing continues: orch host relay pair list")
 
 
+def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
+    """``publish.share {staged_id}`` (P5): the person's signature over the exact words of one staged share, as a
+    ``log.added`` note on its ticket. The words come from the host's facts about the staged copy (ticket, kind, days,
+    views, server, every file with size and hash), never from the request, which names only the staged id; the host
+    sends the files only after it finds a note with exactly these words signed by this person."""
+    from orch.publishclient.approval import ApprovalFacts
+
+    h = _Human(ctx, "publish.share")
+    facts = getattr(ctx.prepare, "publish", None)
+    if not isinstance(facts, ApprovalFacts) or facts.staged_id != args["staged_id"]:
+        raise OrchError("human_only", "publish.share is prepared only by the host's publish module, from a staged copy")
+    view = h.ticket(facts.ticket_key)
+    done = h.run({"type": "log.added", "text": facts.text}, view.uid, f"share files of {view.key}",
+                 review=h.header(view))  # fmt: skip
+    return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
+
+
+_PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
+PEOPLE_SET = operation(
+    "people.set",
+    "Human only",
+    "Add or remove the people of one role of a ticket (the owner is replaced by exactly one person).",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "role": E("the role", "owner", "assignees", "reviewers"),
+        "add": {"type": "array", "items": _PERSON, "maxItems": 16, "description": "people to add"},
+        "remove": {"type": "array", "items": _PERSON, "maxItems": 16, "description": "people to remove"},
+    },
+    required=("ref", "role"),
+    emits=("people.changed",),
+    text="ok {key} people.changed {role} seq={seq}\nnext: {next}",
+    data=obj({"role": STR, "add": {"type": "array", "items": STR}, "remove": {"type": "array", "items": STR}}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_people,
+)
 PAIR_DEVICE = operation(
     "relay.pair_device",
     "Human only",
@@ -255,10 +377,30 @@ PAIR_DEVICE = operation(
     emits=("device.added",),
     text="ok device.added {device} seq={seq}\nnext: {next}",
     data=obj({"device": STR, "offer_id": STR, "attempt": STR}),
-    errors=(err("role.denied"), err("reader.decl_invalid"), err("sign.convenience_readers")),
+    errors=(
+        err("role.denied"),
+        err("reader.decl_invalid"),
+        err("sign.convenience_readers"),
+        err("relay.pair_closed"),  # R6c: the offer is not at step 9, the phone's deadline is near, no publisher
+    ),
     handler=handle_pair_device,
 )
-OPS: dict[str, Operation] = {op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PAIR_DEVICE)}
+PUBLISH_SHARE = operation(
+    "publish.share",
+    "Human only",
+    "Sign the exact words of one staged share (files, server, link kind, days); prepared by the host only.",
+    who="human",
+    props={"staged_id": S("the staged copy (ps_ and 32 hex)", pattern="^ps_[0-9a-f]{32}$")},
+    required=("staged_id",),
+    emits=("log.added",),
+    text="ok {key} log.added seq={seq}\nnext: {next}",
+    data=obj({"staged_id": STR}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_publish_share,
+)
+OPS: dict[str, Operation] = {
+    op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE, PUBLISH_SHARE)
+}
 
 
 def get(name: str) -> Operation:

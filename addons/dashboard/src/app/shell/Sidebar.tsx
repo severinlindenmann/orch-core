@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   Files,
+  History,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
@@ -18,7 +19,13 @@ import {
   ShieldOff,
   SquareKanban,
   Zap,
+  BookOpen,
   PackageOpen,
+  FolderGit2,
+  FolderTree,
+  Gauge,
+  Share2,
+  SquareTerminal,
 } from 'lucide-react'
 import { api } from '@/api/client'
 import { hasFeature, isRealHost } from '@/api/features'
@@ -49,7 +56,7 @@ import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
-import { fmtClock, fmtDateTime } from '@/lib/time'
+import { fmtClock, fmtDateTime, sameLocalDay } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
 
@@ -171,7 +178,7 @@ export function Sidebar() {
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
-  const grantTime = grant ? (today.data && grant.until.slice(0, 10) !== today.data.now.slice(0, 10) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
+  const grantTime = grant ? (today.data && !sameLocalDay(grant.until, today.data.now) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
   const { railCollapsed: collapsed, railAnimating, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
   const { pinned, toggle: togglePin } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
@@ -339,6 +346,14 @@ export function Sidebar() {
             </RailTip>
           )}
 
+          <RailTip label="Test checklist">
+            {/* A full page load: the checklist is its own page outside the shell, so an in-app move would render the old page without its shell for a moment. */}
+            <a href="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
+              <ListChecks className="size-4" />
+              <span className={label}>Test checklist</span>
+            </a>
+          </RailTip>
+
           {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
             <div
               className={cn(
@@ -427,4 +442,18 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
+  /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
+  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  /** Terminals (add-on): every terminal and agent session; listed only while the add-on is ON (the server adds `terminals_page` then). */
+  { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
+  /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
+  { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
+  /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
+  { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
+  /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
+  { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
+  /** Activity (#595): who did what; listed where the host serves `activity/1`. */
+  { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
+  /** The guide of a real host: fixed pages in the bundle, so any host serves it. */
+  { to: '/guide', label: 'Guide', icon: BookOpen, feature: 'today', real: true },
 ] as const

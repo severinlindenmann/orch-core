@@ -7,6 +7,12 @@ import { AddonBadge, CollapsibleStack, useAddons, useSlot } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { TicketFiles } from '../explorer/TicketFiles'
+import { TicketUsage } from '../usage/TicketUsage'
+import { TicketWorktree } from '../worktrees/TicketWorktree'
+import { TicketShares } from '../shares/TicketShares'
+import { TicketEstimate } from '../estimate/TicketEstimate'
+import { estimateOn, pointsOf, pointsText } from '@/api/estimate'
 import { NeedsValue } from './Needs'
 import { ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
 
@@ -59,8 +65,14 @@ const ESTIMATE = 'estimate'
  * Size or Points, never both (B m14): with the Estimate addon on, its points are the ticket's size measure and the
  * core t-shirt size steps back (still in Raw); without it, the size.
  */
-export function useSizeMeasure(ticket: TicketDocument): { label: 'Size' | 'Points'; value: string | null; note?: string } {
+export function useSizeMeasure(ticket: TicketDocument): { label: 'Size' | 'Points'; value: string | null; note?: string; hidden?: boolean } {
   const { workspace } = useWorkspace()
+  if (estimateOn(workspace)) {
+    // A real host: the points are the size itself, in points ("M" stays in Technical details / Raw).
+    const points = pointsOf(ticket.size)
+    // An epic has no points of its own here: the Estimate box adds up its children.
+    return { label: 'Points', value: points === null ? null : pointsText(points), hidden: ticket.type === 'epic' }
+  }
   if (addonActive(workspace, ESTIMATE)) {
     const points = (ticket.addons?.[ESTIMATE] as { points?: unknown } | undefined)?.points
     return {
@@ -90,7 +102,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
   return (
     <Section title="Details">
       <dl className="divide-y divide-border">
-        {row(
+        {!measure.hidden && row(
           measure.label,
           <span className="flex flex-col">
             {measure.value ? <span>{measure.value}</span> : <span className="text-text-faint">{measure.label === 'Points' ? 'not estimated' : 'not set'}</span>}
@@ -134,7 +146,8 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
 function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
   const branches = Object.entries(ticket.links.branches)
   const pulls = prs ? ticket.links.prs : []
-  if (branches.length === 0 && pulls.length === 0 && ticket.links.external.length === 0) return null
+  const bare = ticket.links.repos.filter((r) => !ticket.links.branches[r]) // F6: linked, no branch named yet
+  if (branches.length === 0 && bare.length === 0 && pulls.length === 0 && ticket.links.external.length === 0) return null
   return (
     <Section title="Code">
       <ul className="space-y-2 text-[13px]">
@@ -143,6 +156,15 @@ function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
             <GitBranch className="mt-0.5 size-3.5 shrink-0 text-text-muted" />
             <span className="min-w-0">
               <span className="block break-all font-mono text-[12px]">{branch}</span>
+              <span className="text-[11px] text-text-faint">{repo}</span>
+            </span>
+          </li>
+        ))}
+        {bare.map((repo) => (
+          <li key={`bare-${repo}`} className="flex items-start gap-2">
+            <GitBranch className="mt-0.5 size-3.5 shrink-0 text-text-muted" />
+            <span className="min-w-0">
+              <span className="block text-[12px] text-text-muted">No branch named yet</span>
               <span className="text-[11px] text-text-faint">{repo}</span>
             </span>
           </li>
@@ -204,6 +226,11 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
     <>
       <Details ticket={ticket} viewer={viewer} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
+      <TicketEstimate ticket={ticket} />
+      <TicketWorktree ticket={ticket} />
+      <TicketFiles ticket={ticket} />
+      <TicketUsage ticket={ticket} />
+      <TicketShares ticket={ticket} />
       <AddonPanels ticket={ticket} viewer={viewer} />
       <InactiveAddonData ticket={ticket} />
     </>
@@ -247,10 +274,12 @@ export function PropertiesStrip({ ticket, viewer }: { ticket: TicketDocument; vi
   )
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px]">
-      <p data-testid="ticket-properties" className="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden whitespace-nowrap">
-        <span title={measure.note} className="inline-flex min-w-0">
-          {item(measure.label, measure.value ?? (measure.label === 'Points' ? 'not estimated' : 'not set'))}
-        </span>
+      <p data-testid="ticket-properties" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-0.5">
+        {!measure.hidden && (
+          <span title={measure.note} className="inline-flex min-w-0">
+            {item(measure.label, measure.value ?? (measure.label === 'Points' ? 'not estimated' : 'not set'))}
+          </span>
+        )}
         {item('Due', ticket.due ?? 'none')}
         {ticket.blocked_by.length > 0 && item('Blocked by', <span className="font-mono">{ticket.blocked_by.join(', ')}</span>)}
         {branch && item('Branch', <span className="font-mono">{branch}</span>)}

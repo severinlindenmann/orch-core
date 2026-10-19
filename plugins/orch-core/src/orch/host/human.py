@@ -101,6 +101,7 @@ _SCHEMAS = {
             "args": {"type": "object"},
             "signer": _SIGNER,
             "handoff": {"type": "boolean"},
+            "sequence": {"type": "object"},
         },
         "required": ["op", "args"],
         "additionalProperties": False,
@@ -171,6 +172,13 @@ def _validate(op: str, args: Any) -> None:
     if errors:
         where = ".".join(map(str, errors[0].absolute_path))
         raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
+
+
+def _tail_id(store: Any, log: str) -> str | None:
+    """The id of the last event of ``log`` (``None`` for an empty or unknown log): what a sequence's chain compares."""
+    nxt = int(store.peek_stamp(log)["seq"])
+    last = store.events(log, after=max(nxt - 2, 0), limit=2)
+    return str(last[-1]["id"]) if last and nxt > 1 else None
 
 
 def _store_error(exc: Any) -> HostError:
@@ -346,6 +354,7 @@ class HumanOps:
             "signer": args.get("signer"),
             "handoff": bool(args.get("handoff", False)),
             "person": call.viewer,
+            "sequence": args.get("sequence"),
         }
         session = (call.frame.get("auth") or {}).get("session")
         outcomes = service.outcomes
@@ -390,8 +399,6 @@ class HumanOps:
         store.refresh()
         if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
-        if name == pairdevice.OP and signer is not None and signer["auth"] == "convenience":
-            raise convenience.refuse_pair_device()  # H12c-e (11A.15.6): whatever the flag or any opt-in
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
@@ -415,8 +422,14 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        meta = self._sequence(call, name, inner, args, person, store, dry_run)
+        capture.sequence = meta
         if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
             capture.pair = pairdevice.facts_for(service, inner)
+        if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
+            from . import publishing
+
+            capture.publish = publishing.facts_for(service, inner, call)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -437,6 +450,7 @@ class HumanOps:
         prepared, extras = self._build(call, name, log, capture, store, now)
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         convenience.refuse_reader_op(service, name, events=prepared["events"], readers=capture.readers)
+        convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
@@ -474,6 +488,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "sequence": meta,
             "result": template,
             "submit": None,
             "outcome": None,
@@ -492,6 +507,67 @@ class HumanOps:
         if intent is not None:
             service.outcomes.commit(intent, view)
         return view
+
+    @staticmethod
+    def _sequence(
+        call: Call, name: str, inner: dict[str, Any], args: dict[str, Any], person: str, store: Any, dry_run: bool
+    ) -> dict[str, Any] | None:
+        """``human.prepare {sequence}`` (batch 11, finding 9): one step of a signer's sequence. The meta is checked
+        whole (:func:`orch.host.sequence.check_meta`); a later step is prepared only on the head the signer's own
+        previous step left (a foreign event in between is ``human.request_mismatch``, the signer's abort)."""
+        meta = args.get("sequence")
+        if meta is None:
+            return None
+        from . import sequence
+
+        if args.get("handoff") and meta.get("step") != 0:
+            raise HostError("invalid.input", "only the first step of a sequence is a hand-off")
+        who = args.get("signer")
+        if who is not None and who.get("auth") not in ("passphrase", "convenience"):
+            # the phone (and a secure enclave) keep separate signatures: no sequence is offered to them
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
+        try:
+            checked = sequence.check_meta(
+                meta, op=name, args=inner, workspace_id=call.service.workspace_id, person=person
+            )
+        except sequence.SequenceInvalid as exc:
+            raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and checked["intent"].get("people"):
+            from orch.model import claims
+
+            core = store.state._core
+            view = store.ticket(checked["intent"]["ticket"]["key"])
+            if view is None or not claims.may_manage(core.ws, core.tickets[view.uid], person):
+                raise HostError("role.denied", "people are for the ticket owner, owners and maintainers")
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and not dry_run:
+            # an edit starts on the ticket and at the head the person reviewed (also checked by the signer)
+            want = checked["intent"]["ticket"]
+            view = store.ticket(want["key"])
+            seq = store.log_seq(want["uid"]) if view is not None and view.uid == want["uid"] else None
+            if seq is None or store.head_at(want["uid"], seq) != checked["intent"]["head"]:
+                raise HostError("human.request_mismatch", sequence.CHANGED)
+        agent = (checked.get("intent") or {}).get("agent") if checked["step"] == 0 else None
+        if (
+            agent is not None
+        ):  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
+            from orch.model.types import GRANT_MAX_HOURS
+
+            cap = min(store.state.workspace.settings["grant_hours"], GRANT_MAX_HOURS)
+            if agent["hours"] > cap:
+                raise HostError(
+                    "invalid.input",
+                    f"agent access can last at most {cap} hours in this workspace (Settings), not {agent['hours']}; "
+                    "nothing was signed",
+                )
+        if checked["step"] > 0 and not dry_run:
+            view = store.ticket(checked["ticket"])
+            if (
+                inner.get("ref") not in (None, checked["ticket"])
+                or view is None
+                or _tail_id(store, view.uid) != checked["prev"]
+            ):
+                raise HostError("human.request_mismatch", sequence.CHANGED)
+        return checked
 
     def _specs(self, operation: Any, frame: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """The inner op's ``files``: inline ``{b64}``, a ``{blob}``, or (only on a retry of a prepare with
@@ -607,7 +683,8 @@ class HumanOps:
         material: dict[str, Any] = {"kind": "payload", "ticket": ticket}
         texts: dict[str, str] = {}
         for ev, extra in zip(events, extras, strict=True):
-            for sid in ev.get("sections") or {}:
+            sections = ev.get("sections")
+            for sid in sections if isinstance(sections, dict) else ():  # addon.granted's are declarations (a list)
                 body = extra.get("body") or {}
                 texts[sid] = body.get(sid) or ""
         if texts:
@@ -620,10 +697,13 @@ class HumanOps:
                     if key == "repos":
                         now = {name: thaw(current.repos.get(name)) for name in value}
                     else:
-                        now = current.settings.get(key)
+                        now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
                     before.setdefault(key, now)
         if before:
             material["before"] = before
+        seq = getattr(capture, "sequence", None)
+        if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
+            material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
         return material
 
     # -- reading and binding
@@ -662,8 +742,9 @@ class HumanOps:
         )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
-        if record["op"] == pairdevice.OP and signer["auth"] == "convenience":  # H12c-e: never bound to convenience
-            raise convenience.refuse_pair_device()
+        if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
+            # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
+            raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
@@ -871,9 +952,25 @@ class HumanOps:
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
             if record["op"] == pairdevice.OP:
-                if any(e.get("auth") == "convenience" for e in events):
-                    raise convenience.refuse_pair_device()  # H12c-e: also when a bound request was altered
                 pairdevice.check_entries(record["prepared"], record.get("readers") or [])
+            from . import sequence
+
+            meta = record.get("sequence")
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.EDIT:
+                # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
+                if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
+                    raise HostError("human.request_mismatch", sequence.CHANGED)
+            if meta is not None and meta["step"] > 0:
+                # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
+                # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)
+                log = record["prepared"]["log"]
+                view = store.ticket(meta["ticket"])
+                if view is None or _tail_id(store, view.uid) != meta["prev"]:
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+                if log != "workspace" and store.log_head(log) != events[0].get("based_on"):
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+                if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
+                    raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
@@ -1063,7 +1160,7 @@ def bound_copy(git: Any, store: Any, log: str, name: str, copies: list[dict[str,
     if not git.enabled or git.reader is None:  # fail closed: no reader means nothing can vouch for any copy
         raise HostError("observe.unavailable", f"{name}: git cannot be read in this workspace now")
     want = next((c for c in copies or [] if c.get("repo") == name and c.get("ticket") == log), None)
-    copy = git.ticket_copy(store.root, store.state.workspace.repos, log, name)
+    copy = git.ticket_copy(store.layout, store.state.workspace.repos, log, name)
     if want is None or copy.binding(log, name) != want:
         raise HostError(
             "observe.unavailable",
@@ -1318,6 +1415,10 @@ def append_signed(
         try:
             if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
                 error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
+            if (
+                error is None and signed_by is None
+            ):  # B6: by custody, not by the label; under the lock, on the re-read state
+                error = convenience.refuse_excluded_click_custody(service)
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):

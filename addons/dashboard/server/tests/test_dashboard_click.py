@@ -138,6 +138,7 @@ class HostCheck:
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
+        self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
 
     def human(self, ws, op, args, **kw):
         if op == "human.prepare" and self.replay_error:
@@ -159,7 +160,12 @@ class HostCheck:
                 return {"requests": list(self.listing)}
             return {
                 "requests": [
-                    {"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound"), "seq": 7}
+                    {
+                        "id": args["request_id"],
+                        "state": self.pending.get(args["request_id"], "bound"),
+                        "seq": 7,
+                        **({"key": self.key, "created_at": "2026-10-19T08:00:00Z"} if self.key else {}),
+                    }
                 ]
             }
         raise AssertionError(op)
@@ -206,7 +212,7 @@ def test_the_signer_is_one_child_started_on_first_use_with_a_clean_environment(c
     env = script.started[0]
     assert env["ORCH_STATE_DIR"] == str(gateway.state) and "PYTHONPATH" not in env
     assert "click" in got[0]["features"]
-    assert got[0]["click"] == {"custody": "convenience", "enabled": True, "available": True}
+    assert got[0]["click"] == {"custody": "convenience", "enabled": True, "available": True, "risk_ack": None}
 
 
 def test_pythonpath_is_not_passed_to_the_signer(monkeypatch, tmp_path):
@@ -527,7 +533,13 @@ def test_no_route_but_the_click_routes_calls_the_signer():
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
     res = client.get(url(stub, "status"), headers=hdr(token, False))
-    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": False}
+    assert res.json() == {
+        "custody": "convenience",
+        "enabled": True,
+        "available": True,
+        "risk_ack": None,
+        "switchable": False,
+    }
     script.available = False
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["problem"] == "disabled"
 
@@ -1474,8 +1486,8 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
-    "hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
@@ -1557,7 +1569,7 @@ def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client,
 @pytest.mark.parametrize(
     "body",
     [
-        runner_grant(hours=13),
+        runner_grant(hours=169),
         runner_grant(hours=0),
         runner_grant(hours="8"),
         runner_grant(scope="mine"),
@@ -1572,9 +1584,10 @@ def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
     assert [c for cl in deposits.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
-def test_runner_grant_is_never_a_terminal_handoff(client, token, stub, deposits):
+def test_runner_grant_handoff_is_refused_where_the_workspace_signs_by_one_click(client, token, stub, deposits):
+    # B11-P1: the terminal hand-off exists for terminal-approval workspaces; a one-click workspace keeps its refusal.
     res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
-    assert res.status_code == 400
+    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only"
 
 
 def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):
@@ -1686,6 +1699,17 @@ def test_expected_admits_only_the_callers_runner_grant():
     assert not check([{**good, "extra": 1}])  # review I2: no field beyond the grant.issued shape
     twelve = expected(RunnerGrant(action="runner_grant", hours=12, scope="all"), me)
     assert twelve([{**good, "hours": 12, "scope": "all"}]) and not twelve([{**good, "hours": 13, "scope": "all"}])
+    # B8 Extend: the new runner grant, then the revoke of exactly the named grant ("extended"), both by the caller
+    old = "gr_" + "0" * 26
+    ext = expected(RunnerGrant(action="runner_grant", hours=72, scope="all", extend=old), me)
+    actor = good["actor"]
+    revoke = {"type": "grant.revoked", "grant": old, "reason": "extended", "actor": actor}
+    new = {**good, "hours": 72, "scope": "all"}
+    assert ext([new, revoke])
+    assert not ext([new])  # the revoke leg is part of what is shown
+    assert not ext([new, {**revoke, "grant": "gr_" + "1" * 26}])
+    assert not ext([new, {**revoke, "reason": "other"}])
+    assert not ext([revoke, new])
 
 
 # -- the click-to-sign switch (section 0.8.6 item 3a) ----------------------------------------------------------------
@@ -1712,7 +1736,13 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     caplog.set_level(logging.DEBUG)
     res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
     assert res.status_code == 200, res.text
-    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": True}
+    assert res.json() == {
+        "custody": "convenience",
+        "enabled": True,
+        "available": True,
+        "risk_ack": None,
+        "switchable": True,
+    }
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
     assert calls == [("custody_on", {"workspace_id": stub.ws, "passphrase": PASSPHRASE})]
     out, err = capfd.readouterr()
@@ -1810,3 +1840,70 @@ def test_the_switch_takes_a_small_body(client, token, stub, script):
     res = switch(client, token, stub, {"on": True, "passphrase": "x" * 20_000})
     assert res.status_code == 413 and "x" * 100 not in res.text
     assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+SEQUENCE = {
+    "action": "new_sequence",
+    "title": "Plan the launch",
+    "priority": "high",
+    "sections": {"summary": "Why this exists."},
+}
+
+
+def test_a_new_ticket_with_its_text_goes_to_the_signer_as_one_sequence(client, token, stub, script):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    assert args["op"] == "new" and args["args"] == {"title": "Plan the launch", "type": "feature"}
+    meta = args["sequence"]
+    assert meta["step"] == 0 and meta["of"] == 3 and meta["intent"]["sections"] == {"summary": "Why this exists."}
+    assert meta["intent"]["set"] == {"priority": "high"} and meta["digest"].startswith("sha256:")
+
+
+def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, script):
+    script.features = ["custody"]  # it would ignore `sequence` and sign the first step only
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code >= 400 and "orch-core" in res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "publish_setup", "server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"},
+        {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
+    ],
+)
+def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
+    # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
+    res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
+    assert script.prepared == 0
+    assert client.app.state.handoffs.active == {}
+
+
+def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
+    client, token, stub, script, host_check, rich, monkeypatch
+):
+    """U4: the server (never error text) says the ticket landed and only the access is missing."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    seen = {}
+
+    def progress(gateway, ws, key, intent, person=None, since=None):
+        seen.update(key=key, since=since, agent=intent.get("agent"))
+        return {"done": 3, "of": 4}
+
+    monkeypatch.setattr("orch_dashboard.click.sequence_progress", progress)
+    host_check.key = "DEMO-0044"
+    got = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert got["key"] == "DEMO-0044" and got["progress"] == {"done": 3, "of": 4, "last": "grant"}
+    assert seen == {"key": "DEMO-0044", "since": "2026-10-19T08:00:00Z", "agent": {"hours": 24, "scope": "workable"}}
+    # no key on the host's row yet (nothing created): nothing to report
+    host_check.key = None
+    plain = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert "key" not in plain and "progress" not in plain

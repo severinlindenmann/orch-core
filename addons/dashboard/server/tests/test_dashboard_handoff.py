@@ -114,6 +114,8 @@ def test_each_action_prepares_a_request_from_the_hosts_material(ready, action, e
     assert got["material"]["review"][0]["type"] == event
     assert len(got["fingerprint"]) == 12 and got["review_digest"].startswith("sha256:")
     assert got["events"][0]["actor"]["device"] is None and "sig" not in got["events"][0]
+    # B6: the plain view is a sibling of the hashed material, derived from it (the digest above still recomputes)
+    assert got["headline"] and got["content"]["headline"] == got["headline"] and "content" not in got["material"]
     # Nothing was written: preparing signs and appends nothing.
     before = rich[0].store.head_seq(rich[1]["First"])
     assert rich[0].store.head_seq(rich[1]["First"]) == before
@@ -678,3 +680,414 @@ def test_submitted_failed_intent_never_claims_done(ready):
     assert "not signed into the log" in error["message"] and "signed_at" not in error
     fresh = post(client, token, stub, {**body, "retry": 1})
     assert fresh.status_code == 200 and fresh.json()["id"] != made
+
+
+@pytest.mark.parametrize("mutate", ["none", "before", "section_text", "policy"])
+def test_the_plain_view_is_shown_only_when_the_signers_material_checks_hold(ready, monkeypatch, mutate):
+    """B6: `content` is derived from the host's material, so the server first runs the signer's own material
+    checks (gate, policy and section hashes, every `before` against `base_rev`); a failing one leaves the old view."""
+    client, token, stub, rich, signing = ready
+    from orch.host import review
+
+    from orch_dashboard import adapters
+
+    original = signing.stub.requests.prepare
+    action = (
+        {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
+        if mutate == "policy"
+        else {"action": "section", "key": "DEMO-0001", "section": "summary", "text": "New text."}
+    )
+
+    def tamper(store, views, args, opts):
+        out = original(store, views, args, opts)
+        m = out["material"]
+        if mutate == "before":
+            m["before"]["body.summary"] = "a text the event's base_rev does not bind"
+        elif mutate == "section_text":
+            m["texts"]["summary"] = "something else"
+        elif mutate == "policy":  # the host shows another policy than the one the gate hash binds
+            m["policy"] = {**m["policy"], "count": m["policy"]["count"] + 1}
+        m["review"] = [review.of(e, m) for e in out["events"]] if mutate in ("before", "policy") else m["review"]
+        digest = adapters.handoff.review_digest(m)
+        out["review_digest"], out["fingerprint"] = (
+            digest,
+            adapters.handoff.fingerprint(digest, out["events"], out["op"]),
+        )
+        return out
+
+    monkeypatch.setattr(signing.stub.requests, "prepare", tamper)
+    res = post(client, token, stub, action)
+    assert res.status_code == 200, res.text
+    got = res.json()
+    if mutate == "none":
+        assert (
+            got["headline"].startswith("Change the summary of") and got["content"]["sections"][0]["text"] == "New text."
+        )
+    else:
+        assert "content" not in got and "headline" not in got and got["material"]["review"]
+
+
+SEQ = {
+    "action": "new_sequence",
+    "title": "Plan the launch",
+    "type": "feature",
+    "priority": "high",
+    "labels": ["b", "a"],
+    "sections": {"summary": "Why this exists.", "context": "Line one\r\nLine two"},
+}
+
+
+def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"]
+    assert sent and sent[-1]["op"] == "new" and sent[-1]["args"] == {"title": "Plan the launch", "type": "feature"}
+    meta = sent[-1]["sequence"]
+    assert meta["step"] == 0 and meta["of"] == 4  # new, set, two sections
+    assert meta["intent"]["set"] == {"labels": ["a", "b"], "priority": "high"}  # sorted; CRLF made LF
+    assert meta["intent"]["sections"]["context"] == "Line one\nLine two"
+    assert got["material"]["sequence"]["intent"] == meta["intent"] and got["events"][0]["type"] == "ticket.created"
+    # the one view carries the ticket AND its written text
+    content = got["content"]
+    assert sorted(s["id"] for s in content["sections"]) == ["context", "summary"]
+    assert content["headline"].startswith("Create DEMO-") and content["subline"] == "Includes its text (2 sections)"
+    assert any("one confirmation" in n.lower() for n in content["notes"])
+    # a second post of the same intent is the same request (the intent's idem covers the whole intent)
+    again = post(client, token, stub, {**SEQ}).json()
+    assert again["id"] == got["id"]
+    other = post(client, token, stub, {**SEQ, "sections": {"summary": "Another text."}}).json()
+    assert other["id"] != got["id"]
+
+
+def test_a_new_ticket_with_agent_access_adds_the_grant_as_the_last_step_only_when_asked(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    plain = post(client, token, stub, {**SEQ}).json()
+    assert "agent" not in plain["material"]["sequence"]["intent"]  # without `agent` the intent is exactly as before
+    res = post(client, token, stub, {**SEQ, "agent": {"hours": 72}})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"]
+    meta = sent[-1]["sequence"]
+    assert meta["of"] == 5  # new, set, two sections, then the agent access
+    assert meta["intent"]["agent"] == {"hours": 72, "scope": "workable"}
+    assert got["id"] != plain["id"] and got["material"]["sequence"]["digest"] != plain["material"]["sequence"]["digest"]
+    # the access is only ever the workable scope, 1..168 hours, and nothing else
+    for bad in ({"hours": 0}, {"hours": 169}, {"hours": 24, "scope": "all"}, {"hours": 24.5}):
+        assert post(client, token, stub, {**SEQ, "agent": bad}).status_code in (400, 422)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sections": {"nonsense": "x"}},
+        {"sections": {"summary": "  "}},
+        {"labels": ["Has Space"]},
+        {"surprise": 1},
+    ],
+)
+def test_a_new_ticket_with_its_text_refuses_a_bad_intent(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ, **change})
+    assert res.status_code in (400, 422), res.text
+
+
+def test_the_progress_of_a_sequence_is_read_from_the_tickets_log():
+    from orch import canon
+    from orch.host import sequence
+
+    from orch_dashboard.handoff import sequence_progress
+
+    intent = sequence.validate_intent(
+        {
+            "v": 1,
+            "kind": "new_ticket",
+            "title": "T",
+            "ticket_type": "feature",
+            "set": {"priority": "high"},
+            "sections": {"summary": "One", "context": "Two"},
+        }
+    )
+    ticket = {"doc": {"priority": "medium"}, "sections": {}}
+
+    class Gateway:
+        def call(self, ws, op, args):
+            return ticket
+
+    def at():
+        return sequence_progress(Gateway(), "w", "DEMO-0001", intent)
+
+    assert at() == {"done": 1, "of": 4}  # the ticket exists
+    ticket["doc"]["priority"] = "high"
+    assert at() == {"done": 2, "of": 4}
+    ticket["sections"]["summary"] = [{"hash": canon.section_hash("One")}]  # the ticket page's order: summary first
+    assert at() == {"done": 3, "of": 4}
+    ticket["sections"]["context"] = [{"hash": canon.section_hash("Two")}]
+    assert at() == {"done": 4, "of": 4}
+    assert sequence_progress(Gateway(), "w", None, intent) is None
+
+
+def test_the_agent_access_of_a_quick_task_counts_as_the_last_step_and_is_read_from_the_grants():
+    from orch import canon
+    from orch.host import sequence
+
+    from orch_dashboard.handoff import sequence_progress
+
+    intent = sequence.validate_intent(
+        {
+            "v": 1,
+            "kind": "quick_task",
+            "title": "T",
+            "description": "D",
+            "checks": [{"text": "C", "cmd": None}],
+            "agent": {"hours": 24, "scope": "workable"},
+        }
+    )
+    from orch.host import seqquick
+
+    plan = seqquick.plan_text(intent["checks"])
+    ticket = {
+        "doc": {"labels": ["quick"], "acceptance": [{}], "tasks": [{}]},
+        "sections": {
+            "requirements": [{"hash": canon.section_hash("D")}],
+            "plan": [{"hash": canon.section_hash(plan)}],
+        },
+        "gates": {"requirements": {"state": "approved"}, "plan": {"state": "approved"}},
+    }
+    grants = []
+
+    class Gateway:
+        def call(self, ws, op, args):
+            return ticket if op == "ticket.get" else {"grants": grants}
+
+    total = len(sequence.steps(intent))
+
+    def at():
+        return sequence_progress(Gateway(), "w", "DEMO-0001", intent, person="p_me", since="2026-10-17T10:00:00Z")
+
+    assert at() == {"done": total - 1, "of": total}  # every ticket step landed; the grant did not: not done
+    good = {
+        "person": "p_me",
+        "label": "runner",
+        "issued_at": "2026-10-17T10:00:05Z",
+        "expires_at": "2026-10-18T10:00:05Z",
+    }
+    for bad in (
+        {**good, "person": "p_other"},
+        {**good, "label": None},
+        {**good, "issued_at": "2026-10-17T09:00:00Z", "expires_at": "2026-10-18T09:00:00Z"},  # older than this request
+        {**good, "expires_at": "2026-10-17T18:00:05Z"},  # another length
+        {**good, "revoked_at": "2026-10-17T10:01:00Z"},
+    ):
+        grants[:] = [bad]
+        assert at() == {"done": total - 1, "of": total}
+    grants[:] = [good]
+    assert at() == {"done": total, "of": total}
+    no_person = sequence_progress(Gateway(), "w", "DEMO-0001", intent)
+    assert no_person == {"done": total - 1, "of": total}  # closed
+
+
+QUICK = {
+    "action": "quick_start",
+    "title": "Fix the typo in the README",
+    "description": "The README says teh.\r\nFix it.",
+    "checks": [{"text": "The typo is gone", "cmd": "grep -c teh README.md"}],
+    "agent": {"hours": 8},
+}
+
+
+def test_a_quick_task_is_one_request_one_review_with_the_derived_plan(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**QUICK})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [a for op, a, _ in host_calls if op == "human.prepare"][-1]
+    assert sent["op"] == "new" and sent["args"] == {"title": "Fix the typo in the README", "type": "chore"}
+    meta = sent["sequence"]
+    # new, labels, requirements, 1 ac, approve, plan, 1 task, approve, grant
+    assert meta["step"] == 0 and meta["of"] == 9
+    assert meta["intent"]["kind"] == "quick_task" and meta["intent"]["agent"] == {"hours": 8, "scope": "workable"}
+    assert meta["intent"]["description"] == "The README says teh.\nFix it."
+    assert got["material"]["sequence"]["intent"] == meta["intent"]
+    assert got["content"]["headline"].startswith("Start task DEMO-")
+    ids = sorted(s["id"] for s in got["content"]["sections"])
+    assert ids == ["plan", "requirements"]
+    prefix = "Agents may work on any ticket they are allowed to work on"
+    assert any(n.startswith(prefix) for n in got["content"]["notes"])
+
+
+def test_a_quick_task_without_steps_gets_one_check_and_no_grant(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {"action": "quick_start", "title": "Water the plants"})
+    assert res.status_code == 200, res.text
+    meta = [a for op, a, _ in host_calls if op == "human.prepare"][-1]["sequence"]
+    assert meta["of"] == 8 and meta["intent"]["agent"] is None
+    assert meta["intent"]["checks"] == [{"text": "Water the plants", "cmd": None}]
+    assert meta["intent"]["description"] == "Water the plants"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"checks": [{"text": "a", "cmd": None}] * 5},
+        {"agent": {"hours": 500}},
+        {"title": ""},
+        {"surprise": 1},
+        {"checks": [{"text": "a\nb"}]},
+    ],
+)
+def test_a_bad_quick_task_is_refused(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**QUICK, **change})
+    assert res.status_code in (400, 422), res.text
+
+
+QUINN = "p_" + "7" * 32
+
+
+def test_a_new_ticket_carries_criteria_and_people_in_the_same_review(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    body = {**SEQ, "acceptance": ["It opens", "It saves"], "people": {"assignees": [QUINN], "owner": QUINN}}
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    intent = sent["sequence"]["intent"]
+    assert intent["acceptance"] == ["It opens", "It saves"]
+    assert intent["people"] == {"assignees": [QUINN], "owner": QUINN}
+    assert sent["sequence"]["of"] == 4 + 2 + 2  # new, set, two sections, two criteria, assignees, owner
+    # neither key: the intent is the old one, with the old digest
+    plain = post(client, token, stub, {**SEQ}).json()
+    assert "acceptance" not in sent_intent(host_calls) and plain["id"] != res.json()["id"]
+
+
+def sent_intent(host_calls):
+    return [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]["sequence"]["intent"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"acceptance": ["x"] * 9},
+        {"people": {"owner": "not-a-person"}},
+        {"people": {"watchers": [QUINN]}},
+        {"people": {"assignees": [QUINN], "extra": 1}},
+    ],
+)
+def test_a_new_ticket_refuses_bad_criteria_and_people(ready, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {**SEQ, **change})
+    assert res.status_code in (400, 422), res.text
+
+
+def _edit_body(p1, **over):
+    """The edit action of DEMO-0001 the way the page sends it: what changes and the log head it showed."""
+    store = p1.store
+    view = store.ticket("DEMO-0001")
+    return {
+        "action": "edit_sequence",
+        "key": "DEMO-0001",
+        "head_seq": store.log_seq(view.uid),
+        "sections": {"summary": "New text.\r\nTwo"},
+        **over,
+    }
+
+
+def test_an_edit_is_relayed_as_an_intent_over_the_existing_ticket(ready, host_calls, p1):
+    from orch import canon
+
+    client, token, stub, rich, signing = ready
+    body = _edit_body(
+        p1,
+        acceptance={"edit": {}, "add": ["Second"]},
+        people={"reviewers": {"add": [QUINN], "remove": []}},
+    )
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    meta = sent["sequence"]
+    assert sent["op"] == "section.set" and sent["args"]["ref"] == "DEMO-0001"
+    assert meta["step"] == 0 and meta["of"] == 3  # the section, the criterion, the reviewer
+    intent = meta["intent"]
+    assert intent["sections"]["summary"]["text"] == "New text.\nTwo"  # CRLF made LF
+    # the text it replaces, the criteria it extends and the head come from the host's read, not from the browser
+    view = p1.store.ticket("DEMO-0001")
+    assert intent["sections"]["summary"]["was"] == canon.section_hash(
+        p1.store.body_sections(view.uid).get("summary", "")
+    )
+    assert intent["ticket"] == {"key": "DEMO-0001", "uid": view.uid}
+    got = res.json()
+    assert got["content"]["headline"].startswith("Edit DEMO-0001 (key per host; signed id")
+    assert got["events"][0]["based_on"] == intent["head"]
+    # the same edit is the same request
+    assert post(client, token, stub, body).json()["id"] == got["id"]
+
+
+def test_an_edit_links_repositories_and_the_server_builds_old_to_new_from_the_host_read(ready, host_calls, p1):
+    client, token, stub, rich, signing = ready
+    repos = {"proj": {"path": "/tmp/f6-proj"}, "other": {"path": "/tmp/f6-other"}}
+    p1.store.append(p1.person_event(p1.owner, "workspace", "settings.changed", set={"repos": repos}), log="workspace")
+    view = p1.store.ticket("DEMO-0001")
+    was = {k: (list(v) if isinstance(v, list | tuple) else dict(v)) for k, v in view.fields["links"].items()}
+    body = _edit_body(p1, sections={}, links={"repos": ["proj", "other"], "branches": {"proj": "feat/demo-0001"}})
+    res = post(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]
+    intent = sent["sequence"]["intent"]
+    assert sent["op"] == "set" and sent["args"]["ref"] == "DEMO-0001"
+    assert sent["args"]["pairs"] == ['links={"branches":{"proj":"feat/demo-0001"},"repos":["other","proj"]}']
+    # `was` is the host's read, never the browser's
+    assert intent["links"] == {
+        "was": was,
+        "repos": ["other", "proj"],
+        "branches": {"proj": "feat/demo-0001"},
+    }
+    assert sent["sequence"]["of"] == 1
+
+
+def test_an_edit_whose_links_do_not_change_sends_no_links_step(ready, host_calls, p1):
+    client, token, stub, rich, signing = ready
+    view = p1.store.ticket("DEMO-0001")
+    now = view.fields["links"]
+    body = _edit_body(p1, links={"repos": list(now["repos"]), "branches": dict(now["branches"])})
+    post(client, token, stub, body)
+    assert "links" not in [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"][-1]["sequence"]["intent"]
+
+
+@pytest.mark.parametrize(
+    "links",
+    [
+        {"repos": ["proj"], "branches": {"proj": "has space"}},
+        {"repos": ["proj"], "branches": {"proj": "-x"}},
+        {"repos": ["../x"], "branches": {}},
+        {"repos": [], "branches": {}, "extra": 1},
+    ],
+)
+def test_an_edit_refuses_a_bad_branch_or_repo_name(ready, p1, links):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, _edit_body(p1, sections={}, links=links))
+    assert res.status_code in (400, 422), res.text
+
+
+def test_an_edit_of_a_ticket_that_changed_since_the_page_is_refused(ready, p1):
+    client, token, stub, rich, signing = ready
+    body = _edit_body(p1)
+    res = post(client, token, stub, {**body, "head_seq": body["head_seq"] - 1})
+    assert res.status_code >= 400 and "changed after you opened it" in res.text, res.text
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sections": {}},  # nothing changes
+        {"head_seq": 0},
+        {"people": {"owner": {"add": [QUINN, "p_" + "8" * 32], "remove": []}}},
+        {"people": {"watchers": {"add": [QUINN], "remove": []}}},
+        {"acceptance": {"edit": {"AC9": "x"}, "add": []}},
+        {"surprise": 1},
+    ],
+)
+def test_an_edit_refuses_a_bad_intent(ready, p1, change):
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, _edit_body(p1, **change))
+    assert res.status_code in (400, 409, 422), res.text

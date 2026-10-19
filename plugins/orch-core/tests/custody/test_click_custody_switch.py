@@ -51,6 +51,7 @@ def switch(tmp_path, monkeypatch):
     store = FakeStore()
     monkeypatch.setattr(select, "_store", lambda _state: store)
     uid = os.getuid()
+    monkeypatch.setattr(convenience, "refuse_turn_on", lambda *a, **k: None)  # no workspace log here (B10 tests below)
     entry = {"workspace_id": WS, "prefix": "INT", "host_uid": uid}
     mono, log = Mono(), Log(state)
     signer = ClickSigner(
@@ -89,7 +90,7 @@ def test_the_signer_advertises_the_switch():
 def test_status_lists_the_feature(switch):
     signer, *_ = switch
     out = signer.status({})
-    assert out["features"] == ["custody"]
+    assert out["features"] == ["custody", "sequence"]
     (row,) = out["workspaces"]
     assert row["custody"] == "passphrase" and row["enabled"] is False and row["problem"] == "not_convenience"
 
@@ -479,3 +480,19 @@ def test_f4_the_move_back_takes_no_passphrase_argument():
     import inspect
 
     assert "passphrase" not in inspect.signature(select.downgrade_in_place).parameters
+
+
+def test_on_is_refused_up_front_while_a_reader_is_below_level_1_and_nothing_moves(switch, monkeypatch):
+    """B10 (the lockout fix): the host-side readers check runs before any passphrase work or key move."""
+    from orch.host.errors import HostError
+
+    signer, state, provider, store, _, _ = switch
+    err = convenience.unavailable("phone_device", ["d_" + "ab" * 16])
+
+    def boom(*a, **k):
+        raise HostError(err.code, err.message, hint="h", detail=err.detail)
+
+    monkeypatch.setattr(convenience, "refuse_turn_on", boom)
+    info = refused(lambda: on(signer, provider.passphrase), "sign.convenience_unavailable")
+    assert info.reason == "phone_device" and info.detail == {"reason": "phone_device", "devices": ["d_" + "ab" * 16]}
+    assert not flag(state) and signer.status({})["workspaces"][0]["custody"] == "passphrase"

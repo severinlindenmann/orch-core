@@ -334,3 +334,39 @@ def test_the_typed_word_of_a_workspace_event_is_the_name_it_signs(monkeypatch):
     with pytest.raises(OrchError) as e:
         h.run({"type": "member.removed", "person": "p_x"}, "workspace", "x", review=["r"])
     assert e.value.code == "invalid.input" and asked == ["echo"]
+
+
+def test_a_builtin_addon_never_installed_is_put_in_place_by_its_grant(hws, me):
+    """Turning on terminals from the dashboard after setup left them off: no package on disk yet, the grant installs
+    the shipped manifest and signs its digest."""
+    assert not (hws.root / "addons" / "terminals").exists()
+    r = me("addon", "grant", "terminals")
+    assert r.code == 0, r.err
+    e = ws_events(hws, "addon.granted")[-1]
+    assert e["name"] == "terminals"
+    assert e["package_sha256"] == read_package(hws.root / "addons" / "terminals").digest
+    assert me("addon", "grant", "nonexistent").code != 0
+
+
+def test_a_dry_run_and_a_non_owner_install_nothing(hws, me):
+    assert me("addon", "grant", "terminals", "--dry-run").code != 0
+    assert not (hws.root / "addons" / "terminals").exists()
+    m = hws.add_member("maria", "maintainer")
+    hws.act_as(m)
+    r = me("addon", "grant", "terminals", "--json")
+    assert r.code != 0 and r.err_code == "role.denied"
+    assert not (hws.root / "addons" / "terminals").exists()
+
+
+def test_a_failed_builtin_install_removes_the_empty_directory_and_says_why(hws, me, monkeypatch):
+    from orch.addons import builtin
+
+    def broken(workspace, name, data, force=False):
+        os.mkdir(os.path.join(workspace, "addons")) if not os.path.isdir(os.path.join(workspace, "addons")) else None
+        os.mkdir(os.path.join(workspace, "addons", name))
+        raise OSError("disk full")
+
+    monkeypatch.setattr(builtin, "write_manifest", broken)
+    r = me("addon", "grant", "terminals", "--json")
+    assert r.code != 0 and r.err_code == "invalid.input"
+    assert not (hws.root / "addons" / "terminals").exists()

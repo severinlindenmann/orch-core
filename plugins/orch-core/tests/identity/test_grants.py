@@ -100,8 +100,13 @@ def test_timestamps():
 @pytest.mark.parametrize("role", ["owner", "maintainer"])
 def test_owner_and_maintainer_terms(role):
     check_grant_issued(ev(scope="all", hours=24, expires_at="2026-10-11T10:00:00Z"), role=role, at=AT, human_only=set())
+    # B8: owners and maintainers up to 168 h whatever the setting; members stay within it
+    week = ev(hours=168, expires_at="2026-10-17T10:00:00Z")
+    check_grant_issued(week, role=role, at=AT, human_only=set(), grant_hours=8)
+    assert code(role, ev(hours=169, expires_at="2026-10-17T11:00:00Z")) == "grant.hours"
+    assert code(role, ev(), grant_hours=169) == "grant.hours"
     check_grant_issued(ev(hours=1, expires_at="2026-10-10T11:00:00Z"), role=role, at=AT, human_only=set())
-    assert code(role, ev(hours=25, expires_at="2026-10-11T11:00:00Z")) == "grant.hours"
+    assert code(role, ev(hours=169, expires_at="2026-10-17T11:00:00Z")) == "grant.hours"
     assert code(role, ev(hours=0, expires_at=AT)) == "grant.hours"
 
 

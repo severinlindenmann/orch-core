@@ -71,7 +71,8 @@ def test_deposit_needs_dashboard_execution_and_at_most_12_hours_and_no_other_lab
     served, click, _, _ = world
     refused(lambda: click.prepare("grant", {"hours": 8}, deposit=True), "human.click_refused", "terminal_only")
     execution(served)
-    refused(lambda: click.prepare("grant", {"hours": 13}, deposit=True), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("grant", {"hours": 169}, deposit=True), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("grant", {"hours": 9}, deposit=True), "invalid.input")  # B8: above the setting (8)
     for bad in ({"label": "mine"}, {"verbs": "log"}, {"hours": "8"}, {"extra": 1}):
         refused(lambda bad=bad: click.prepare("grant", {"hours": 8, **bad}, deposit=True), "invalid.input")
 
@@ -102,6 +103,40 @@ def test_a_click_grant_goes_to_the_runner_and_never_to_the_dashboard(world):
     assert again["duplicate"] is True and again["deposit"] == "confirmed" and again["grant"] == gid
     me = ok(served.client().req("whoami", {}))["data"]["runner"]
     assert me["grant"]["id"] == gid
+
+
+def test_extend_is_one_signature_new_grant_and_revoke_old_then_the_deposit(world):
+    """B8: Extend = issue + revoke in ONE prepared request, typed word, the runner swaps after the commit."""
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    old = click.sign(p["request_id"], v["view_digest"], word=word(served))["grant"]
+    p2, v2 = flow(click, served, extend=old)
+    assert p2["confirm"] == "word" and v2["view"]["confirm"]["word"] == word(served)
+    assert any(old in line for line in v2["view"]["lines"])  # the revoke leg is in the review, in full
+    res = click.sign(p2["request_id"], v2["view_digest"], word=word(served))
+    assert res["deposit"] == "confirmed" and res["grant"] != old
+    grants = served.service.store.state.workspace.grants
+    assert grants[old].revoked and not grants[res["grant"]].revoked
+    assert [g["grant"] for g in runner.grants.report()] == [res["grant"]]
+
+
+def test_extend_is_all_or_nothing_and_only_for_your_own_live_runner_grant(world):
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    old = click.sign(p["request_id"], v["view_digest"], word=word(served))["grant"]
+    refused(lambda: click.prepare("grant", {"hours": 8, "extend": "gr_" + "0" * 26}, deposit=True), "invalid.input")
+    p2, v2 = flow(click, served, extend=old)
+    pr = click.prepare("grant.revoke", {"grant": old})  # the old leg dies first, signed by its own request
+    vr = click.view(pr["request_id"])
+    click.mono.t += 1.5
+    click.sign(pr["request_id"], vr["view_digest"])
+    before = set(served.service.store.state.workspace.grants)
+    with pytest.raises(Exception) as e:  # the whole request is refused (the revoke leg is judged with the issue)
+        click.sign(p2["request_id"], v2["view_digest"], word=word(served))
+    assert "already revoked" in str(e.value)
+    assert set(served.service.store.state.workspace.grants) == before  # the new grant never landed
 
 
 def test_the_view_has_no_deposit_field_for_any_other_op(world):
@@ -182,11 +217,11 @@ def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():
         views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "x", "hours": 8,
                                                          "verbs": "agent"}]})  # fmt: skip
     assert getattr(e.value, "reason", None) == "terminal_only"
-    for bad in ({"hours": 13}, {"verbs": ["log"]}, {"label": None}):
+    for bad in ({"hours": 169}, {"verbs": ["log"]}, {"label": None}):
         ev = {"type": "grant.issued", "label": "runner", "hours": 8, "verbs": "agent", **bad}
         with pytest.raises(ClickError):
             views.deposit_checks({"op": "grant", "events": [ev]})
-    views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 12,
+    views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 168,
                                                      "verbs": "agent"}]})  # fmt: skip
 
 

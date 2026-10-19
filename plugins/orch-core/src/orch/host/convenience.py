@@ -40,7 +40,6 @@ __all__ = [
     "REASONS",
     "check",
     "enabled",
-    "refuse_pair_device",
     "pair_gate",
     "flag_path",
     "pending_handoffs",
@@ -50,6 +49,7 @@ __all__ = [
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
+    "refuse_turn_on",
     "set_enabled",
     "unavailable",
     "why",
@@ -89,12 +89,125 @@ def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
     return isinstance(entry, dict) and entry.get("enabled") is True
 
 
+def risk_ack(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
+    """When the one-click risk notice was acknowledged by switching click-to-sign on (B6), else ``None``: a workspace
+    enabled before B6, or one that is off."""
+    try:
+        entry = _doc(state_dir, host_uid)["workspaces"].get(workspace_id)
+    except HostError:
+        return None
+    ack = entry.get("risk_ack") if isinstance(entry, dict) and entry.get("enabled") is True else None
+    return ack if isinstance(ack, str) else None
+
+
+def _methods(service: Any) -> Any:
+    return service.store.state.workspace.settings.get("sign_methods")
+
+
+def _click_custody(service: Any) -> bool:
+    """B6 (Opus round 2): one-click signing is possible here when the flag is on OR the person's key still sits in
+    convenience custody (the dashboard's "Turn off" leaves it there). Fails closed: an unreadable selection counts."""
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+        return True
+    from orch.custody import select
+
+    try:
+        sel = select.read_selection(service.state_dir, service.workspace_id)
+    except Exception:  # noqa: BLE001 - fail closed on an unreadable or invalid selection
+        return True
+    # a custody transition in progress (either direction) counts too: the convenience copy may already exist
+    return sel is not None and (sel.get("custody") == "convenience" or sel.get("transition") is not None)
+
+
+def refuse_click_removal(service: Any, op: str, events: list[dict[str, Any]]) -> None:
+    """B6 (Opus round 1, HIGH-2): a ``settings.set`` that takes ``click`` out of ``sign_methods`` is refused while
+    click-to-sign is on here: the owner's key is in convenience custody and the terminal path is closed (one signing
+    path per workspace), so the change would lock the honest signer out. The fix is named."""
+    if op != "settings.set" or not _click_custody(service):
+        return
+    for ev in events:
+        methods = (ev.get("set") or {}).get("sign_methods")
+        if methods is not None and "click" not in methods:
+            raise HostError(
+                "invalid.input",
+                "sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in "
+                "convenience custody",
+                hint="move the key back first: orch host convenience off --workspace W and "
+                "orch keys custody passphrase --workspace W --in-place",
+            )
+
+
+def refuse_excluded_click_custody(service: Any) -> HostError | None:
+    """B6 (Opus round 1, HIGH-2): while click-to-sign is on the device key is in convenience custody, and any process
+    running as the person can sign with it and write any ``auth`` label. So, whatever label an event carries, nothing
+    lands from this machine's person path while the workspace's ``sign_methods`` leaves ``click`` out. The custody
+    decides, not the self-declared label. (With the flag off, only the key's own custody protects it: see §0.8.6.)"""
+    methods = _methods(service)
+    if methods is not None and "click" not in methods and _click_custody(service):
+        return unavailable("disabled", [])
+    return None
+
+
 def flag_or_gate(service: Any) -> bool:
     """``required_reader`` 1 (§0.8.6 item 9.4): the per-workspace flag is on, or the Simulator dev gate passes for
     this workspace (§11A.17.4, the lock-free :func:`orch.host.devmode.gated`)."""
     from .devmode import gated
 
     return enabled(service.state_dir, service.workspace_id, service.host_uid) or gated(service)
+
+
+#: the way out of a refused switch-on (B10, the lockout fix): update the readers, or stay with the passphrase key
+TURN_ON_ESCAPE = (
+    "update the orch app on those devices (it then declares what it reads) or remove them, then switch click-to-sign "
+    "on again; to stay without it: orch host convenience off --workspace W and, if the key was moved, "
+    "orch keys custody passphrase --workspace W --in-place"
+)
+
+
+def _own_device(state_dir: Path, workspace_id: str) -> str:
+    """This machine's device for the workspace (the public part of its key, no passphrase asked); ``""`` when it cannot
+    be found, so that nothing is excluded and the answer can only be stricter."""
+    try:
+        from orch.identity import device_ref
+        from orch.ops.human import KEY_ID, device_backend
+
+        return device_ref(device_backend(state_dir, workspace_id, convenience=True).public_key(KEY_ID))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, person: str | None = None) -> None:
+    """B10 (the lockout fix): switching click-to-sign on is refused **up front** while any reader of the workspace is
+    below level 1 (an old phone app, ``no_declaration``, a relay too old), naming the devices, instead of leaving the
+    flag on with every click signature refused. The same readers rule as every convenience signature
+    (:func:`why`, with the flag treated as on), read from the verified log and the reader records: the machine's own
+    device is the signer and does not count. Fail closed: a log or record that cannot be read refuses. Raises
+    ``sign.convenience_unavailable`` (reason ``relay_paired`` / ``other_member`` / ``phone_device`` and ``devices``)
+    whose hint names the escape (:data:`TURN_ON_ESCAPE`). The same check runs again at every signature."""
+    from orch.store import Store, StoreError
+
+    wid = entry["workspace_id"]
+    me = person
+    if me is None:
+        me = ((entry.get("peers") or {}).get(str(os.getuid())) or {}).get("person")
+    try:
+        store = Store.open(entry["root"], expected_workspace_id=wid, host_state_dir=None, load="lazy")
+    except StoreError as exc:
+        raise HostError(exc.code, exc.detail or exc.code) from None
+    except (OSError, KeyError) as exc:
+        raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
+    try:
+        with store.locked():
+            store.refresh()
+            mine = _own_device(state_dir, wid)
+            found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
+    finally:
+        store.close()
+    if found is None:
+        return
+    reason, devices = found
+    err = unavailable(reason, devices)
+    raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
 
 
 def refuse_dev_host(state_dir: Path, env: Any = None) -> None:
@@ -114,7 +227,9 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
         doc = _doc(state_dir, host_uid)
         if on:
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            doc["workspaces"][workspace_id] = {"enabled": True, "at": stamp}
+            # B6 (owner decision F): switching it on is where the risk notice is required; every path that gets here
+            # shows it (the CLI prints it, the dashboard's switch shows it), and the time is recorded
+            doc["workspaces"][workspace_id] = {"enabled": True, "at": stamp, "risk_ack": stamp}
         else:
             doc["workspaces"].pop(workspace_id, None)
         write_private(flag_path(state_dir), doc)
@@ -152,6 +267,9 @@ def why(
 
     if not gated and not enabled(state_dir, workspace_id, host_uid):  # §11A.17.4: the dev gate stands in
         return "disabled", []
+    methods = store.state.workspace.settings.get("sign_methods")
+    if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
+        return "disabled", []
     if _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
@@ -170,7 +288,8 @@ def reason(store: Any, state_dir: Path, workspace_id: str, host_uid: int, person
 
 
 _TEXT = {
-    "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W)",
+    "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W; "
+    "and the workspace setting sign_methods must allow click)",
     "relay_paired": "the workspace is paired with a relay, whose readers may not know convenience signatures",
     "other_member": "another member's reader (a core or a device) has not declared that it knows convenience "
     "signatures",
@@ -178,11 +297,7 @@ _TEXT = {
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
     "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
     "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
-    "pair_device": "pairing a device (relay.pair_device) is signed in your terminal with your passphrase, never with "
-    "convenience custody",
 }
-#: the fix of ``pair_device`` (11A.15.6 "Convenience custody is refused for pairing"): back to passphrase custody
-PAIR_DEVICE_FIX = "orch keys custody passphrase --workspace W --in-place"
 
 
 def unavailable(reason: str, devices: list[str]) -> HostError:
@@ -196,17 +311,6 @@ def unavailable(reason: str, devices: list[str]) -> HostError:
         f"{reason}: {_TEXT[reason]}{named}",
         hint=hint,
         detail={"reason": reason, "devices": devices},
-    )
-
-
-def refuse_pair_device() -> HostError:
-    """``sign.convenience_unavailable`` with reason ``pair_device`` (H12c-e, 11A.15.6): ``relay.pair_device`` refuses
-    ``auth:"convenience"`` whatever the flag, the readers or any dev opt-in; the fix names passphrase custody."""
-    return HostError(
-        "sign.convenience_unavailable",
-        f"pair_device: {_TEXT['pair_device']}",
-        hint=f"sign it with orch sign CODE; a key converted to convenience custody goes back with {PAIR_DEVICE_FIX}",
-        detail={"reason": "pair_device", "devices": []},
     )
 
 

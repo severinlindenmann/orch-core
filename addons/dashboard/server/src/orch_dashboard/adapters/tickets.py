@@ -275,6 +275,9 @@ def _gate(gate: dict[str, Any] | None, ext: bool, decisions_source: list[dict] |
         out["waiting"] = gate["waiting"]
     if gate.get("blocked"):
         out["blocked"] = True
+    # B11: what an approval still lacks (core's completeness rule); the page never offers Approve while it lacks any
+    if isinstance(gate.get("missing"), list):
+        out["missing"] = [str(m) for m in gate["missing"]]
     if gate.get("eligible") is not None:
         out["eligible"] = list(gate["eligible"])
     if decisions_source:

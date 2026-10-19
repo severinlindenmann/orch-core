@@ -25,7 +25,7 @@ def _render(manifest: dict) -> str:  # the relay's manifest.render
     return json.dumps(manifest, sort_keys=True, indent=2) + "\n"
 
 
-PINNED_RELAY_COMMIT = "d84f70670781684202eaf69d1f52fdcfc6dc9a05"
+PINNED_RELAY_COMMIT = "4a9f95474bdac8dc3ffae8be4099a9b4b2e6cdcc"
 UPDATE = (
     "the vendored relay corpus changed. To update it: run scripts/sync-vectors.sh <relay ref> (it writes "
     "tests/relay/vectors/vectors_v2.json.xz, the http_fixtures/ files MANIFEST.json lists plus MANIFEST.json, and "
@@ -61,7 +61,7 @@ def test_source_names_commit_revision_and_vector_hash():
     src = corpus.source()
     assert set(src) == {"relay_repo", "relay_commit", "http_fixtures_manifest_revision", "vectors_v2_sha256"}
     assert len(src["relay_commit"]) == 40 and int(src["relay_commit"], 16) >= 0
-    assert int(src["http_fixtures_manifest_revision"]) == MANIFEST["revision"] == 13
+    assert int(src["http_fixtures_manifest_revision"]) == MANIFEST["revision"] == 19
     assert hashlib.sha256(corpus.vectors_bytes()).hexdigest() == src["vectors_v2_sha256"]  # decompressed bytes
 
 

@@ -173,6 +173,7 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
         "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
+        "phone.requests", "gate.input",  # B10 Part B: the viewer's own phone requests; the gate-hash input
     }  # fmt: skip
     own = {"whoami", "outcome.get", "relay.submit", "reader.declare"}  # reader.declare: H12d-3, the device's own
     assert columns.RELAY_OPS == frozenset(reads | host | own)
@@ -489,7 +490,9 @@ class FakeStore:
     def state(self) -> Any:
         from types import SimpleNamespace
 
-        return SimpleNamespace(workspace=SimpleNamespace(devices={}, members={}), device_evidence=lambda d: None)
+        return SimpleNamespace(
+            workspace=SimpleNamespace(devices={}, members={}, settings={}), device_evidence=lambda d: None
+        )
 
     def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:
         for e in self.appended:
@@ -810,6 +813,7 @@ def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path, monkeypatch):
 
     state = _state(tmp_path)
     _link(state, WS)
+    monkeypatch.setattr(relay_worker, "R6_READY", False)
     assert relaylink.may_start(state, WS, UID) is False  # R5: the R6 gate (11A.1) keeps every start dormant
     assert relaylink.start_blocker(state, WS, UID) == relay_worker.R6_GATE_REASON
     monkeypatch.setattr(relay_worker, "R6_READY", True)

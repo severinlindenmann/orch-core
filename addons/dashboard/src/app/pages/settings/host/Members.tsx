@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, keyText, type RosterMember } from '@/api/settings'
+import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, SCOPE_HELP, keyText, type RosterMember } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -187,7 +187,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
         </p>
       )}
       <div className="rounded-lg border border-border bg-surface">
-        <Table>
+        <Table className="min-w-[30rem]">
           <TableHeader>
             <TableRow>
               <TableHead>Person</TableHead>
@@ -219,14 +219,17 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
               return (
                 <TableRow key={m.person}>
                   <TableCell>
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <PersonAvatar id={m.person} name={m.name} />
                       {m.name_hidden ? (
                         <span className="text-warning">Name not shown: it has invisible characters</span>
                       ) : (
                         <Raw>{m.name}</Raw>
                       )}
-                      <span className="font-mono text-[11px] text-text-faint"><Raw>{m.person}</Raw></span>
+                      <details className="basis-full pl-8 text-[11px] text-text-faint @[40rem]/page:basis-auto @[40rem]/page:pl-0">
+                        <summary className="cursor-pointer">Technical details</summary>
+                        <span className="break-all font-mono">Person id <Raw>{m.person}</Raw></span>
+                      </details>
                     </span>
                   </TableCell>
                   <TableCell>{select}</TableCell>
@@ -235,14 +238,22 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                       <span className="text-text-faint">none</span>
                     ) : (
                       <ul aria-label={`Devices of ${visible(m.name)}`} className="space-y-0.5 text-[12px]">
-                        {m.devices.map((d) => (
+                        {m.devices.map((d, i) => (
                           <li key={d.id} className="flex flex-wrap gap-x-2">
-                            <span className="font-mono text-text-muted"><Raw>{d.id}</Raw></span>
+                            <span className="text-text-muted">Device {i + 1}</span>
                             <span className={d.valid ? 'text-text-faint' : 'text-warning'}>{d.valid ? <Raw>{d.scopes.join(', ')}</Raw> : 'not valid'}</span>
                             {d.auth && <span className="text-text-faint"><Raw>{d.auth}</Raw></span>}
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {m.devices.length > 0 && (
+                      <details className="mt-1 text-[11px] text-text-faint">
+                        <summary className="cursor-pointer">Technical details</summary>
+                        {m.devices.map((d, i) => (
+                          <span key={d.id} className="block break-all font-mono">Device {i + 1} <Raw>{d.id}</Raw></span>
+                        ))}
+                      </details>
                     )}
                   </TableCell>
                   <TableCell>
@@ -265,6 +276,9 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
           </TableBody>
         </Table>
       </div>
+      <p className="text-[12px] text-text-muted" data-testid="scope-legend">
+        A device can: {Object.entries(SCOPE_HELP).map(([k, v], i) => <span key={k}>{i > 0 && '; '}<b className="font-medium text-text">{k}</b> = {v}</span>)}.
+      </p>
       {adding && (
         <AddMember
           me={role}

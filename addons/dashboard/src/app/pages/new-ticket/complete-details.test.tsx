@@ -66,14 +66,14 @@ describe('Complete details after a signed new ticket', () => {
     expect(onFinish).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Prepare section' }))
     expect(s.prepare).toHaveBeenNthCalledWith(2, 'w_1', { ...SECTION, key: KEY }, 0)
-    await waitFor(() => expect(onFinish).toHaveBeenCalledTimes(1), { timeout: 9000 })
+    await waitFor(() => expect(onFinish).toHaveBeenCalledWith(2), { timeout: 9000 })
     expect(s.postAction).not.toHaveBeenCalled()
   }, 30000)
 
   it('cancel signs nothing, prepares nothing and ends the offer', async () => {
     const { user, onFinish } = mount([DETAILS])
     await user.click(await screen.findByRole('button', { name: 'Cancel' }))
-    expect(onFinish).toHaveBeenCalledTimes(1)
+    expect(onFinish).toHaveBeenCalledWith(0) // cancelled with nothing signed: the caller says what is not saved
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
   })
@@ -90,26 +90,23 @@ describe('Complete details after a signed new ticket', () => {
 })
 
 describe('what a signed new ticket hands on', () => {
-  it('turns priority, size, labels and the parent into one details step and each written section into a section step', () => {
+  it('sends the title, type, fields and each written section as ONE intent (one review, one confirmation)', () => {
     const made = handoffNewTicket({ ...EMPTY, title: 'T', type: 'bug', priority: 'high', size: 's', labels: ['api'], parent: 'DEMO-0003', sections: { requirements: ' Must work ', context: '' } })
     expect(made).toEqual({
-      action: { action: 'new', title: 'T', type: 'bug' },
-      details: [
-        { action: 'details', key: '', priority: 'high', size: 's', labels: ['api'], parent: 'DEMO-0003' },
-        { action: 'section', key: '', section: 'requirements', text: 'Must work' },
-      ],
+      action: { action: 'new_sequence', title: 'T', type: 'bug', priority: 'high', size: 's', labels: ['api'], parent: 'DEMO-0003', sections: { requirements: 'Must work' } },
     })
   })
-  it('offers nothing when there is nothing to hand on, and never a parent for an epic', () => {
-    expect(handoffNewTicket({ ...EMPTY, title: 'Plain' })).toEqual({ action: { action: 'new', title: 'Plain', type: 'feature' }, details: [] })
-    expect(handoffNewTicket({ ...EMPTY, title: 'E', type: 'epic', parent: 'DEMO-0003' })).toMatchObject({ details: [] })
+  it('sends only the title and type when nothing else is written, and never a parent for an epic', () => {
+    expect(handoffNewTicket({ ...EMPTY, title: 'Plain' })).toEqual({ action: { action: 'new_sequence', title: 'Plain', type: 'feature', sections: {} } })
+    const epic = handoffNewTicket({ ...EMPTY, title: 'E', type: 'epic', parent: 'DEMO-0003' }) as { action: Record<string, unknown> }
+    expect(epic.action).not.toHaveProperty('parent')
   })
   it('keeps a spike\'s findings under the host\'s name', () => {
     const made = handoffNewTicket({ ...EMPTY, title: 'S', type: 'spike', sections: { verification: 'What we found' } })
-    expect(made).toMatchObject({ details: [{ action: 'section', section: 'findings', text: 'What we found' }] })
+    expect(made).toMatchObject({ action: { sections: { findings: 'What we found' } } })
   })
   it('refuses what the host has no signed operation for, instead of dropping it', () => {
-    for (const patch of [{ visibility: { restricted: ['p_x'] } }, { due: '2026-11-01' }, { acceptance: ['x'] }, { people: { owner: 'p_x', assignees: [], reviewers: [] } }]) {
+    for (const patch of [{ visibility: { restricted: ['p_x'] } }, { due: '2026-11-01' }]) {
       const made = handoffNewTicket({ ...EMPTY, title: 'T', ...patch })
       expect(made).toHaveProperty('problem')
       expect((made as { problem: string }).problem).toMatch(/cannot carry/)

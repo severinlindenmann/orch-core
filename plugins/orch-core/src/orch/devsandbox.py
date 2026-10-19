@@ -43,6 +43,8 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from orch import layout
+
 __all__ = [
     "DEV_JSON",
     "MANIFEST",
@@ -275,19 +277,19 @@ def click_refusal(state_dir: str | os.PathLike[str], env: Mapping[str, str]) -> 
 
 
 def marker_present(ws_root: str | os.PathLike[str]) -> bool:
-    """``<ws>/.state/dev-sandbox.json`` exists in any form (a narrowing signal: a broken one counts too)."""
-    try:
-        return os.path.lexists(Path(ws_root) / ".state" / WS_MARKER)
-    except (OSError, ValueError):
-        return True
+    """``<store>/.state/dev-sandbox.json`` exists in any form (a narrowing signal: a broken one counts too). Fails
+    closed, in both candidate places: see :func:`orch.layout.state_marker_present`."""
+    return layout.state_marker_present(ws_root, WS_MARKER)
 
 
 def read_marker(ws_root: str | os.PathLike[str]) -> dict[str, Any]:
     """The workspace marker, checked (0600, this UID, no link, ``{v:1, sandbox_id, workspace_id}``)."""
     try:
-        fd = os.open(Path(ws_root) / ".state", _DIR)
-    except OSError:
-        raise SandboxRefused("no workspace .state directory") from None
+        fd = layout.open_state_fd(ws_root)
+    except layout.LayoutError as exc:
+        raise SandboxRefused(str(exc)) from None
+    if fd is None:
+        raise SandboxRefused("no workspace .state directory")
     try:
         doc = _json(read_private(fd, WS_MARKER), "workspace marker")
     finally:
@@ -315,6 +317,18 @@ def _write(path: Path, doc: Any) -> None:
     finally:
         os.close(fd)
     os.replace(tmp, path)
+
+
+def _write_at(dir_fd: int, name: str, doc: Any) -> None:
+    """:func:`_write` below a directory fd."""
+    tmp = f".{name}.{secrets.token_hex(6)}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    try:
+        os.write(fd, json.dumps(doc, sort_keys=True).encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
 
 
 def _ident(path: str | os.PathLike[str]) -> dict[str, int]:
@@ -355,7 +369,16 @@ def write_dev_json(root: str | os.PathLike[str], sandbox_id: str, relay_origin: 
 
 
 def write_marker(ws_root: str | os.PathLike[str], sandbox_id: str, workspace_id: str) -> dict[str, Any]:
-    """Write ``<ws>/.state/dev-sandbox.json`` (``.state`` must exist)."""
+    """Write ``<store>/.state/dev-sandbox.json`` (``.state`` must exist), below the pinned ``.state`` fd."""
     doc = {"v": 1, "sandbox_id": sandbox_id, "workspace_id": workspace_id}
-    _write(Path(ws_root) / ".state" / WS_MARKER, doc)
+    try:
+        fd = layout.open_state_fd(ws_root)
+    except layout.LayoutError as exc:
+        raise SandboxRefused(str(exc)) from None
+    if fd is None:
+        raise SandboxRefused("no workspace .state directory")
+    try:
+        _write_at(fd, WS_MARKER, doc)
+    finally:
+        os.close(fd)
     return doc

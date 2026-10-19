@@ -216,7 +216,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
       className={cn('@container/dock relative flex min-w-0 shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
       style={right ? { width: size } : { height: size }}>
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
-      <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
+      <header className={cn('flex h-9 min-w-0 shrink-0 items-center gap-2 overflow-hidden border-b bg-surface-2 px-2 text-xs', addonRule)}>
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         {/* At the narrowest right-hand dock (320 px) the header still fits: the scope truncates, "New session" is an icon. */}
@@ -228,7 +228,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
         {right ? <span className="flex-1" /> : <SessionTabs windows={windows} current={current} visible={visibleTabs} onSelect={select} onClose={closeTranscript} />}
         <NewSessionButton open={newOpen} onOpenChange={setNewOpen} ticket={ticket} lastHarness={prefs.harness} canStart={canStart} onStart={start} />
         <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="Sessions" title="Sessions" aria-pressed={browser} onClick={() => setBrowser(!browser)}>
-          <List />{!right && 'Sessions'}
+          <List />{!right && <span className="hidden @[34rem]/dock:inline">Sessions</span>}
         </Button>
         <TicketInfo ticket={ticket} compact={right} />
         <DropdownMenu>

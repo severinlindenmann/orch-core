@@ -9,7 +9,7 @@ import { STATUS_LABEL } from './lib'
 export function ColumnHeader({ status, tickets, total, onCollapse }: { status: Status; tickets: TicketSummary[]; total: number; onCollapse: () => void }) {
   const humanOnly = status === 'done'
   return (
-    <header className="@container flex items-center gap-1.5 px-2.5 py-2">
+    <header className="@container flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-2.5 py-2">
       <h2 className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
       <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
         <Num value={total} />

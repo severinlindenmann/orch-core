@@ -6,7 +6,7 @@ import { ApiError } from '@/api/types'
 import { DASHBOARD_EXECUTION_LINE, readQuickLimits, writeQuickLimits } from '@/api/quickRecords'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { queryClient } from '@/production/Shell'
-import { DO, MARA, OWNER, READS, TOM, roster, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { DO, MARA, OWNER, READS, TOM, roster, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 // The production app on a fake server that speaks the M6 routes (quick tasks, records, the runner line).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -15,7 +15,6 @@ vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof
 
 const A = 'a'.repeat(32)
 const T = { timeout: 5000 }
-const KEY = 'DEMO-0007'
 const FEATURES = [...READS, ...DO, 'actions', 'quick', 'records']
 const URL_PUSH = 'https://git.example.test/me/records.git'
 const row = (key: string, title: string, status: string, quick: { commits: number | null; files: number | null; over: boolean | null } | null, labels: string[] = ['quick']) => ({
@@ -56,11 +55,11 @@ it('lists the quick tasks with counts, marks the outgrown one first and keeps un
   const list = await screen.findByRole('list', { name: 'Active quick tasks' }, T)
   const items = within(list).getAllByRole('listitem')
   expect(items[0]).toHaveTextContent('DEMO-0011')
-  expect(items[0]).toHaveTextContent('outgrew')
+  expect(items[0]).toHaveTextContent('too big')
   expect(items[0]).toHaveTextContent('4 commits, 7 files')
   expect(items[1]).toHaveTextContent('1 commit, 1 file')
-  expect(items[3]).toHaveTextContent('counts unknown')
-  expect(items[3]).not.toHaveTextContent(/0 commits|outgrew/)
+  expect(items[3]).toHaveTextContent('size not measured yet')
+  expect(items[3]).not.toHaveTextContent(/0 commits|too big/)
   expect(await screen.findByRole('tab', { name: /^Completed\s*1/ }, T)).toBeInTheDocument()
   const asked = other('/quick')[0]
   expect(asked.path).toContain('status=backlog')
@@ -71,7 +70,7 @@ it('the limits are a local setting: saved per workspace in this browser and sent
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  await user.click(screen.getByText(/^Limits for/))
+  await user.click(screen.getByText(/^When is a quick task too big/))
   await user.type(screen.getByLabelText(/^Commits/), '2')
   await user.type(screen.getByLabelText(/^Files/), '5')
   await user.click(screen.getByRole('button', { name: 'Save limits' }))
@@ -85,7 +84,7 @@ it('a limit out of range is refused in the page and never sent', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  await user.click(screen.getByText(/^Limits for/))
+  await user.click(screen.getByText(/^When is a quick task too big/))
   await user.type(screen.getByLabelText(/^Commits/), '101')
   expect(screen.getByRole('button', { name: 'Save limits' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('1 to 100')
@@ -136,31 +135,48 @@ it('a viewer sees the list but no add form and no Close', async () => {
   expect(screen.queryByRole('button', { name: /^Close/ })).toBeNull()
 })
 
-it('says "two signatures" in the add form', async () => {
+it('says "one signature" in the add form, in plain words', async () => {
   show('/w/DEMO/quick')
-  expect(await screen.findByTestId('quick-two-signatures', {}, T)).toHaveTextContent('two signatures')
+  const note = await screen.findByTestId('quick-one-signature', {}, T)
+  expect(note).toHaveTextContent('One signature starts the task')
+  expect(note).toHaveTextContent('final verdict')
+  expect(screen.queryByTestId('quick-two-signatures')).toBeNull()
 })
 
-it('adding on a terminal workspace: new (chore), signed in the terminal, then the label quick, one hand-off each', async () => {
+it('starting on a terminal workspace is ONE hand-off with the whole task: title, details, steps, no agent access unless ticked', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Fix the typo in CONTRIBUTING')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.type(screen.getByLabelText('Details (optional)'), 'It says teh.')
+  await user.type(screen.getByLabelText('Step 1'), 'The typo is gone')
+  await user.type(screen.getByLabelText('Step 1 check'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
-  expect(within(first).getByText('New quick task (1 of 2)')).toBeInTheDocument()
   await within(first).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'new', title: 'Fix the typo in CONTRIBUTING', type: 'chore' })
+  expect(state.host.posts()).toHaveLength(1)
+  expect(state.host.posts()[0].body).toEqual({
+    action: 'quick_start',
+    title: 'Fix the typo in CONTRIBUTING',
+    description: 'It says teh.',
+    checks: [{ text: 'The typo is gone', cmd: 'test -z "$(grep -w teh CONTRIBUTING.md)"' }],
+  })
   expect(other('/click/')).toEqual([]) // the terminal path only: no click route on a workspace where it is off
-  state.host.submitted.set([...state.host.requests.keys()][0], KEY)
-  const second = await waitFor(() => {
-    const d = screen.getByRole('dialog')
-    expect(within(d).getByText('Label as quick (2 of 2)')).toBeInTheDocument()
-    return d
-  }, { timeout: 15000 })
-  expect(second).toHaveTextContent('Labels: quick')
-  await user.click(within(second).getByRole('button', { name: 'Prepare details' }))
-  await waitFor(() => expect(state.host.posts().length).toBe(2), T)
-  expect(state.host.posts()[1].body).toMatchObject({ action: 'details', key: KEY, labels: ['quick'] })
+}, 30000)
+
+it('ticking the box adds the agent access (workable tickets only) to the same request, never on its own', async () => {
+  state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
+  expect(screen.getByLabelText('How long agents may work')).toBeDisabled()
+  await user.click(screen.getByRole('checkbox', { name: /Let agents work on any ticket/ }))
+  // the workspace maximum caps the lengths (the host refuses a longer runner grant): 3 days here, so no 7 days
+  expect(within(screen.getByLabelText('How long agents may work')).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
+  await user.selectOptions(screen.getByLabelText('How long agents may work'), '24')
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
+  await screen.findByRole('dialog', {}, T)
+  await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
+  expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } })
 }, 30000)
 
 it('adding where click-to-sign is on goes through the click routes, not a hand-off', async () => {
@@ -169,10 +185,9 @@ it('adding where click-to-sign is on goes through the click routes, not a hand-o
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Remove the dead import')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
   await within(first).findByRole('button', { name: 'Sign' }, T)
-  expect(within(first).getByText('New quick task (1 of 2)')).toBeInTheDocument()
   expect(state.host.posts()).toEqual([]) // no terminal hand-off was prepared
   expect(within(first).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
 })
@@ -181,12 +196,12 @@ it('a title that is empty or has a line break is never submitted', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   const field = await screen.findByLabelText(/^Quick task \(one line\)/, {}, T)
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   await user.type(field, '   ')
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   await user.clear(field)
   await user.type(field, 'x'.repeat(121))
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('at most 120')
 })
 

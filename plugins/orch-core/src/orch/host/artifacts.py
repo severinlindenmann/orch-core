@@ -38,7 +38,7 @@ from .visibility import Viewer
 if TYPE_CHECKING:
     from .workspace import Call
 
-__all__ = ["CHUNK", "SCHEMA", "artifact_get"]
+__all__ = ["CHUNK", "SCHEMA", "artifact_file", "artifact_get"]
 
 CHUNK = 786_432
 #: the store's artifact limit (64 MiB, the blob limit too): a larger file is not one the log can name
@@ -85,6 +85,12 @@ def _hash(fd: int, size: int) -> str:
     return "sha256:" + h.hexdigest()
 
 
+def artifact_file(service: Any, uid: str, name: str) -> Path:
+    """The file of artifact ``name`` of ticket ``uid`` (names come from the ticket manifest, never from a client). The
+    one place that joins it; open it with the workspace's ``Files`` (fd walk, ``O_NOFOLLOW``)."""
+    return service.entry.store_dir / "tickets" / uid / "artifacts" / name
+
+
 def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     """The worker-thread part of ``artifact.get`` (args already passed :data:`SCHEMA`)."""
     service = call.service
@@ -95,7 +101,7 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if not art.digest:
         raise _missing()  # an addon artifact has no file
     offset, length = int(args["offset"]), int(args.get("length", CHUNK))
-    path = Path(service.entry.root) / "tickets" / view.uid / "artifacts" / art.name
+    path = artifact_file(service, view.uid, art.name)
     try:
         fd = service.capabilities().files.open_fd(path, os.O_RDONLY)
     except OSError:  # missing, a symlink, not a regular file, hard-linked: not the file the log names

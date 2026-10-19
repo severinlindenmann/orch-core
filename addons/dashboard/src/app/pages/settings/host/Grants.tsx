@@ -35,7 +35,7 @@ function RevokeDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGra
         <Label htmlFor="revoke-reason">Why (optional)</Label>
         <Input id="revoke-reason" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
         <p className="text-[12px] text-text-faint">
-          One line, at most 200 characters. Every agent session using this grant ends. Grant <Mono>{grant.id}</Mono>.
+          One line, at most 200 characters. Every agent session using this grant ends. 
         </p>
       </div>
     </HandoffDialog>
@@ -64,7 +64,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
         </label>
       </div>
       <p className="text-[13px] text-text-muted">
-        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agents are granted in your terminal; here a grant can only be revoked.
+        {role === 'owner' ? 'Every grant of the workspace.' : 'Your own grants.'} Agent access is given from the “Agents can work for you” pill at the top (Extend or Start again) or in your terminal; here you can revoke a grant.
       </p>
       {!grants.data ? (
         <p className="text-[13px] text-text-muted">Reading the grants…</p>
@@ -92,12 +92,18 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                   <TableRow key={g.id}>
                     <TableCell>
                       <span className="block"><Raw>{name(g.person)}</Raw></span>
-                      <Mono className="text-[11px] text-text-faint">{g.id}</Mono>
-                      {g.label === 'runner' ? (
-                        <span data-testid="runner-grant-tag" className="ml-1.5"><Pill tone="neutral">runner grant</Pill></span>
-                      ) : g.label ? (
-                        <span className="ml-1.5 text-[11px] text-text-faint">label <Raw>{g.label}</Raw></span>
-                      ) : null}
+                      <span className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-text-faint">
+                        {g.label === 'runner' ? (
+                          <span data-testid="runner-grant-tag"><Pill tone="neutral">runner grant</Pill></span>
+                        ) : g.label ? (
+                          <span>label <Raw>{g.label}</Raw></span>
+                        ) : null}
+                      </span>
+                      <details className="text-[11px] text-text-faint">
+                        <summary className="cursor-pointer">Technical details</summary>
+                        <span className="block break-all">Grant <Mono className="text-[11px] text-text-faint">{g.id}</Mono></span>
+                        {g.session_ids && g.session_ids.length > 0 && <span className="block break-all">Sessions <Mono className="text-[11px] text-text-faint"><Raw>{g.session_ids.join(', ')}</Raw>{g.sessions_more ? ', …' : ''}</Mono></span>}
+                      </details>
                     </TableCell>
                     <TableCell>
                       <Mono><Raw>{g.scope}</Raw></Mono>
@@ -114,7 +120,6 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {g.sessions}
-                      {g.session_ids && g.session_ids.length > 0 && <span className="block text-[11px] text-text-faint"><Raw>{g.session_ids.join(', ')}</Raw>{g.sessions_more ? ', …' : ''}</span>}
                     </TableCell>
                     <TableCell>
                       <Pill tone={TONE[s]} className="capitalize">

@@ -38,14 +38,17 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
 from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
+from orch import layout as _layout
 from orch.identity import CryptoVerifier, new_ulid
+from orch.identity.certs import REVOKE_REASONS, revoke_strength
+from orch.layout import Layout, LayoutError, StorePin
 from orch.model import (
     WORKSPACE,
     Code,
@@ -69,7 +72,7 @@ from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_l
 from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
-from .rootfs import RootFS
+from .rootfs import RootFS, remove_made_dir
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
@@ -84,7 +87,11 @@ def _lock_opener(fs: RootFS) -> Callable[[], int]:
     def opener() -> int:
         fs.revalidate()
         try:
-            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+            # no parents=True: .state is made when the store is opened; a stale opener (after a migrate moved the
+            # store) must never re-create ``.state`` in a root that is no longer the store
+            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600)
+        except FileNotFoundError:
+            raise StoreError("validation.path", ".state is gone; the store was moved or removed") from None
         except (NotRegularFile, IsADirectoryError):
             raise StoreError("validation.path", ".state/lock is not a regular file") from None
 
@@ -106,6 +113,80 @@ def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
     return verify
 
 
+def open_store_fs(
+    project: Path,
+    ident: tuple[int, int] | None,
+    pin: StorePin | None,
+    *,
+    create: bool = False,
+    make_project: bool = False,
+) -> tuple[RootFS, Layout, tuple[int, int] | None]:
+    """The pinned store root and the layout of the project directory ``project`` (opened ``O_NOFOLLOW``, checked
+    against ``ident``): the layout is resolved from that one fd and, in the new layout, ``.orch`` is opened below it
+    (``O_NOFOLLOW``), never by a path. ``create`` (a new workspace only, never with ``ident``): when the project holds
+    no store and the layout switch says new, ``.orch`` may be made; otherwise no store is ever created (a records or
+    read caller can never make one). ``make_project``: a missing project directory may be made
+    (``Store.open``). Returns the root, the layout and the ``(st_dev, st_ino)`` of the ``.orch`` directory THIS call
+    made (``None``: none): it is made with ``mkdir`` (``EEXIST`` is refused), so an existing directory of that name,
+    a person's own, is never taken for a new store."""
+    if create and ident is not None:
+        raise StoreError("validation.path", "a store found by its identity is never created")
+    pfs = RootFS.at(project, ident=ident, create=make_project and ident is None)
+    keep = False
+    created: tuple[int, int] | None = None
+    try:
+        try:
+            found = _layout.resolve(pfs.fd, project)
+            layout = found if found is not None else _layout.fresh(project)
+            if pin is not None and (pin.ident is None) != layout.legacy:
+                raise StoreError("validation.path", "the store layout changed since the workspace was found")
+            if layout.legacy:
+                keep = True
+                pfs.config_seen = found is not None
+                return pfs, layout, None
+            if found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only, never reused
+                try:
+                    os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
+                except FileExistsError:
+                    raise StoreError(
+                        "validation.path",
+                        f"{_layout.STORE_DIR} already exists and is not an orch store; it is not used or replaced",
+                    ) from None
+                try:
+                    sfd = _layout.open_store_dir(pfs.fd)
+                    if sfd is not None:
+                        st = os.fstat(sfd)
+                        created = (st.st_dev, st.st_ino)
+                    else:
+                        raise LayoutError(f"{_layout.STORE_DIR} cannot be opened")
+                except BaseException:
+                    with contextlib.suppress(OSError):  # this call made it and failed: nothing is left behind
+                        os.rmdir(_layout.STORE_DIR, dir_fd=pfs.fd)
+                    raise
+            else:
+                sfd = _layout.open_store_dir(pfs.fd)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if sfd is None:  # it was there when the layout was resolved and is gone now: never made again here
+            raise StoreError("validation.path", f"{_layout.STORE_DIR} vanished while the store was being opened")
+        try:
+            if pin is not None:
+                st = os.fstat(sfd)
+                if (st.st_dev, st.st_ino) != pin.ident or (pin.owned and not _layout.is_private(st)):
+                    raise StoreError(
+                        "validation.path", f"{_layout.STORE_DIR} is no longer the store directory that was found"
+                    )
+            nfs = RootFS(layout.store, sfd)
+            nfs.config_seen = found is not None
+            return nfs, layout, created
+        except BaseException:
+            os.close(sfd)
+            raise
+    finally:
+        if not keep:
+            pfs.close()
+
+
 def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
     """:func:`~orch.store.logs.stat_sig` of an ``lstat`` result (a symlink has its own signature)."""
     if _S_ISLNK(st.st_mode):
@@ -123,6 +204,9 @@ RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (6
 RELAY_CACHE_BYTES = 16 << 20  # the one cached branch, raw digests (64 bytes a head: about 262 000 heads at most)
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
 _MAX_LABEL_SEALED = 1024  # b64u characters of a forwarded certificate's sealed label
 _ITEM_KEYS = frozenset(
@@ -271,8 +355,18 @@ class Store:
         lock_timeout: float | None,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         fs: RootFS | None = None,
+        layout: Layout,
     ) -> None:
+        if Path(root) != layout.store:
+            raise ValueError("the store root is not the layout's store directory")
         self.root = root
+        #: project (the directory agents work in) and store (``root``); the same directory in the legacy layout. There
+        #: is no default: :meth:`open` resolves it from the directory (``orch.layout.resolve``).
+        self.layout = layout
+        #: a ``config.json`` was seen by the layout check: its later absence refuses (``_resolve_checked``)
+        self._config_seen = False
+        #: ``(st_dev, st_ino)`` of the ``.orch`` directory the open that built this store made (``None``: none)
+        self.created_store: tuple[int, int] | None = None
         #: the pinned root (#516): every file under the workspace is reached through it, never by path
         self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
@@ -317,6 +411,9 @@ class Store:
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
         self._state_v: State | None = None
+        #: H13a (11A.16.2): raised in the ONE place the model state changes (the ``_state`` setter), under the store
+        #: lock; the push dispatch step records it. An AST test pins that it is assigned nowhere else.
+        self.auth_gen = 0
         self._relay_pregated: State | None = None  # _commit's new state whose losses were gated before its write
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
@@ -369,6 +466,9 @@ class Store:
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         config: bytes | None = None,
         ident: tuple[int, int] | None = None,
+        store_pin: StorePin | None = None,
+        create: bool = False,
+        scaffold: bool = True,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -387,14 +487,25 @@ class Store:
         caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
         them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
         it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
-        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516).
+        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516). ``path`` is the **project**
+        directory (and ``ident`` is its identity): the layout (legacy: the store is the project; new: the store is
+        ``.orch``) is resolved here from that one fd (:func:`orch.layout.resolve`), a linked or double store is
+        ``validation.path``, and a directory with no store yet gets :func:`orch.layout.fresh`. ``store_pin``: what
+        discovery saw of the store (:class:`~orch.layout.StorePin`): the opened ``.orch`` must be that directory (an
+        inode swapped in between is ``validation.path``), and after an implicit walk it must still be the current
+        user's and not group/other-writable. ``create`` (default ``False``; only ``orch init`` and ``host.bootstrap``
+        set it): a new workspace may be made: in the new layout its ``.orch`` (which
+        must not exist: ``Store.created_store`` is its identity). Without it no ``.orch`` is ever made.
+        ``scaffold=False`` (the migrate check): the ``events``, ``tickets`` and ``.state``
+        directories are not made, so a store that lacks one cannot pass.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
-        root = Path(path)
-        fs = RootFS.at(root, ident=ident, create=ident is None)
+        project = Path(path)
+        fs, layout, created = open_store_fs(project, ident, store_pin, create=create, make_project=create)
+        root = layout.store
         try:
             store = cls(
                 root,
@@ -408,18 +519,27 @@ class Store:
                 lock_timeout=lock_timeout,
                 guard=guard,
                 fs=fs,
+                layout=layout,
             )
-            store._open(load == "all", config)
+            store.created_store = created
+            store._open(load == "all", config, scaffold)
         except BaseException:
             fs.close()
+            if created is not None:  # this open made .orch and failed: it leaves nothing behind
+                remove_made_dir(project, _layout.STORE_DIR, created)
             raise
         return store
 
-    def _open(self, eager: bool, config: bytes | None = None) -> None:
+    def _open(self, eager: bool, config: bytes | None = None, scaffold: bool = True) -> None:
+        # the window between open_store_fs's resolve and the first check under the lock fails closed too: a store that
+        # had its config then is checked before anything below the root is made
+        self._config_seen = self.fs.config_seen
+        self._check_layout()
         for d in ("events", "tickets", ".state"):
             if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")
-            self.fs.mkdir(d)
+            if scaffold:
+                self.fs.mkdir(d)
         self._known_config = config
         try:
             self._open_checked(eager)
@@ -441,6 +561,7 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._guard(), self._lock:
+            self._check_layout()
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
@@ -466,6 +587,8 @@ class Store:
         """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
         here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
         old, self._state_v = self._state_v, new
+        if old is not new:
+            self.auth_gen += 1  # conservative: any state change (an authorization change is one of them)
         pregated, self._relay_pregated = self._relay_pregated, None
         if self.relay_gate is not None and old is not None and new is not None and old is not new:
             if new is not pregated:  # _commit raised it already, before the event became durable
@@ -542,6 +665,71 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    # -- H13a: the push planner's read-only view (11A.16.4) ---------------------------------------------------------
+
+    def log_marks(self) -> dict[str, tuple[int, int]]:
+        """``{log: (size, mtime_ns)}`` of every log this store knows, after a directory scan (a stat per ticket, no
+        replay): the planner examines a log only when its mark moved. The workspace log is ``(bytes read, 0)``."""
+        with self._locked():
+            self._scan_dirs()
+            out = {uid: (h.sig[0], h.sig[2]) for uid, h in self._hints.items()}
+            info = self._logs.get(WORKSPACE)
+            out[WORKSPACE] = (info.offset if info is not None else 0, 0)
+            return out
+
+    def head_at(self, log: str, seq: int) -> str | None:
+        """The head (event hash) of ``seq`` in ``log`` as replayed and chain-checked, or ``None`` (seq 0, a log this
+        store does not hold, or a log shorter than ``seq``). Loads the ticket."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or not 1 <= seq <= info.seq or seq > len(info.heads):
+                return None
+            return info.heads[seq - 1]
+
+    def log_seq(self, log: str) -> int | None:
+        """The head ``seq`` of ``log`` as loaded, or ``None`` when the log cannot be read right now (not held, or a
+        read error): the planner tells "unreadable, try later" from "shorter than my cursor" with it. Loads the
+        ticket."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or log in self._read_errors:
+                return None
+            return int(info.seq)
+
+    def events_after(self, log: str, after: int, limit: int = 256) -> list[tuple[dict[str, Any], str]]:
+        """``(event, head)`` for the events of ``log`` with ``seq`` above ``after``, at most ``limit``, oldest first;
+        ``head`` is the event's hash as the chain has it. Read-only; loads the ticket (replayed and verified)."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None or log in self._read_errors:
+                return []
+            first, last = max(after, 0) + 1, min(info.seq, max(after, 0) + max(limit, 0))
+            return [(e, info.heads[e["seq"] - 1]) for e in self._read_events(log, first, last)]
+
+    def seq_before(self, log: str, at_epoch: int) -> int:
+        """The greatest ``seq`` of ``log`` whose ``at`` is before ``at_epoch`` (seconds), 0 if none: the start fence
+        of a log the planner has no cursor for. Reads back from the head in chunks."""
+        with self._locked():
+            if log != WORKSPACE:
+                self._ensure({log})
+            info = self._logs.get(log)
+            if info is None:
+                return 0
+            hi = info.seq
+            while hi > 0:
+                lo = max(1, hi - 31)
+                for e in reversed(self._read_events(log, lo, hi)):
+                    if _epoch(e["at"]) < at_epoch:
+                        return int(e["seq"])
+                hi = lo - 1
+            return 0
 
     def revision(self) -> tuple[Any, ...]:
         """A value that stays equal exactly while no log changed (H12d-3, #555 review F1): the read heads ``(log, seq,
@@ -1100,9 +1288,64 @@ class Store:
 
     # ------------------------------------------------------------------ locking, sync, recovery
 
+    def _check_layout(self) -> None:
+        """Under the guard and the lock, on every transaction: the store this object has open is still the store of
+        its project.
+
+        ``orch.layout.resolve`` runs afresh and must find the layout this store was opened with; in the new layout the
+        ``.orch`` it names must be the very directory pinned (same ``st_dev``/``st_ino``). The legacy layout is
+        resolved below the PINNED root fd (the project is the store, and a project path swapped later is no concern of
+        a pinned fd), the new one below the project opened afresh by path (``O_NOFOLLOW``).
+
+        A migrate that moved the store (it holds ``owner.lock`` exclusively, which a direct-mode guard waits for), a
+        swapped ``.orch`` or a store that vanished fails closed with ``validation.path``: a stale opener never writes
+        to a store that is no longer where it was. A workspace whose ``config.json`` is not written yet (genesis in
+        progress) resolves to nothing and keeps the layout it was opened with."""
+        if self.layout.legacy:
+            self._resolve_checked(self.fs.fd)
+            return
+        try:
+            pfd = os.open(self.layout.project, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC)
+        except OSError as exc:
+            raise StoreError("validation.path", f"the project directory cannot be opened ({exc.strerror})") from None
+        try:
+            self._resolve_checked(pfd)
+        finally:
+            os.close(pfd)
+
+    def _resolve_checked(self, pfd: int) -> None:
+        try:
+            found = _layout.resolve(pfd, self.layout.project)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if found is not None:
+            self._config_seen = True
+        elif self._config_seen:
+            # once this store has seen its config.json (or opened with one), a missing one is a migrate window, a
+            # deleted, invalid, oversized or FIFO file, never "no config yet": fail closed, never write into a root that
+            # is no longer a store. Only a store opened before any config existed keeps its layout.
+            raise StoreError("validation.path", "the workspace's config.json is gone or unreadable; nothing is written")
+        if found is not None and found.legacy != self.layout.legacy:
+            raise StoreError("validation.path", "the store layout changed since it was opened; run the command again")
+        if self.layout.legacy:
+            return
+        try:
+            sfd = _layout.open_store_dir(pfd)
+        except LayoutError as exc:
+            raise StoreError("validation.path", str(exc)) from None
+        if sfd is None:
+            raise StoreError("validation.path", f"{_layout.STORE_DIR} is gone")
+        try:
+            now = os.fstat(sfd)
+        finally:
+            os.close(sfd)
+        if (now.st_dev, now.st_ino) != tuple(self.fs.ident):
+            raise StoreError("validation.path", "the store directory is no longer the one that was opened")
+
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._guard(), self._lock:
+            self._check_layout()
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
@@ -3597,34 +3840,40 @@ class Store:
 
     # ------------------------------------------------------------------ forwarded revocation evidence (H12b)
 
-    def note_forwarded_revocation(self, item: object) -> Literal["held", "pending", "dropped"]:
-        """Hold one verified item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
+    def note_forwarded_revocation(self, item: object) -> Literal["held", "settled", "dropped", "unverifiable"]:
+        """Judge one item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
 
         Every fact comes from the signed objects: ``pk_pub`` parses and names the person; the certificate verifies
         under it (``check_cert``) and is judged at its own ``created_ms`` (an expired historical certificate is
         still evidence); the revocation verifies under it against that certificate; device, person and reason are
         the certificate's and revocation's, and the item's outer ``device_id``, ``person_id`` and ``reason`` and
-        ``provenance.digest`` (``sha256:`` over ``cj(revocation)``) must equal them. Then, under the store lock:
-        ``held`` when the workspace associates the device with that person (the caller raises the owners' ``needs``
-        item); ``pending`` when it does not but the person is a current or past member; ``dropped`` for anything
-        else, for anything that does not verify and when ``HostPins.note_revocation`` (forwarded, capped) does not
-        retain it. ``held`` and ``pending`` mean the record is durable. Idempotent per ``(device_id, person_id)``.
-        The host never appends ``device.revoked`` or a restore for it."""
+        ``provenance.digest`` (``sha256:`` over ``cj(revocation)``) must equal them. One answer, under the store lock:
+
+        * ``unverifiable``: anything that does not verify or parse (R4 counts it visibly; it carries no evidence);
+        * ``dropped``: verified, but no person key is known here (neither a current or past member nor the person
+          of a revocation entry: R4 counts it as ``unverifiable``);
+        * ``settled``: the workspace's own state holds a verified revocation of exactly this pair at least as strong
+          as the item's verified reason (:func:`_standing`, ``revoke_strength``);
+        * ``held``: everything else, whatever the reason (no revocation yet, a weaker one, a device known only as
+          another person's tombstone or not at all, a cap that kept the record out of ``HostPins``). Without host
+          state the item cannot be judged: ``store.busy`` is raised (no result at all).
+
+        The record is durable in ``HostPins`` (capped) before ``held``/``settled`` is returned. Idempotent per
+        ``(device_id, person_id)``. The host never appends ``device.revoked`` or a restore for it."""
         facts = _verify_forwarded(item)
         if facts is None:
-            return "dropped"
+            return "unverifiable"
         device, person, reason, rev, cert, pk_pub = facts
         with self._locked():
             if self._pins is None or self._state is None:
-                _log.info("forwarded revocation dropped (%s, %s): no host state", device, person)
-                return "dropped"
+                raise StoreError(
+                    "store.busy", "no host state yet: the item cannot be judged"
+                )  # no result: R4 reads again
             state = self._state
-            if state.device_person(device) == person:
-                result: Literal["held", "pending", "dropped"] = "held"
-            elif state.is_member(person):
-                result = "pending"
-            else:
-                _log.info("forwarded revocation dropped (%s, %s): not a member", device, person)
+            have = state.revoked_reason(device, person)
+            associated = state.device_person(device) == person
+            if not (associated or state.knows_person(person)):
+                _log.info("forwarded revocation dropped (%s, %s): no person key is known", device, person)
                 return "dropped"
             owner = None
             if self._genesis_event is not None:
@@ -3634,11 +3883,61 @@ class Store:
                 device, reason, rev, self._now(), cert, pk_pub, chain=False, is_member=state.is_member, owner=owner
             )
             if not kept:
-                _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
-                return "dropped"
-            if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
-                self._raise_relay_gate(device, "held_evidence")
-            return result
+                _log.info("forwarded revocation (%s, %s) over the caps: held in the owner's view only", device, person)
+            elif associated or have is not None:
+                self._raise_relay_gate(device, "held_evidence")  # R6a: the relay gate invariant, under the store lock
+            return "settled" if _standing(state, device, person, reason) == "settled" else "held"
+
+    def pair_standings(self, pairs: Sequence[tuple[str, str, str]]) -> list[str]:
+        """The standing of each ``(d_device, p_person, reason)`` of the owner's held ledger (R4), read-only, under
+        the store lock: ``settled`` | ``stronger`` | ``revoke`` | ``other`` | ``unknown`` (:func:`_standing`). The
+        ledger removes a row ONLY on ``settled``, a pure function of this state and never of relay behaviour."""
+        with self._locked():
+            if self._state is None:
+                return ["unknown"] * len(pairs)
+            return [_standing(self._state, d, p, r) for d, p, r in pairs]
+
+    def pair_settled(self, device: str, person: str, reason: str) -> bool:
+        """Whether the workspace's own state revokes exactly ``(d_device, p_person)`` at least as strongly as
+        ``reason``."""
+        return self.pair_standings([(device, person, reason)])[0] == "settled"
+
+    def forwarded_evidence(self) -> list[dict[str, str]]:
+        """The forwarded revocation evidence ``HostPins`` holds durably, as ``{device_id, person_id, reason,
+        digest}`` (32-hex ids): R4 re-seeds its held ledger from it, so a lost or older ``unpublished.json`` can
+        never make the ledger smaller than the evidence the host already holds."""
+        with self._locked():
+            if self._pins is None:
+                return []
+            out = []
+            for rec in self._pins.revocations():
+                # a forwarded record, and the stronger forwarded evidence kept beside a chain record (``upgrade``)
+                for r in ([rec] if is_forwarded(rec) else []) + ([rec["upgrade"]] if rec.get("upgrade") else []):
+                    out.append({
+                        "device_id": rec["device"][2:], "person_id": pair(rec)[1][2:], "reason": r["reason"],
+                        "digest": canon.artifact_digest(canon.cj_checked(r["revocation"])),
+                    })  # fmt: skip
+            return out
+
+
+def _standing(state: State, device: str, person: str, reason: str) -> str:
+    """The standing of the relay's evidence ``(d_device, p_person, reason)`` against the workspace's own state, the
+    single judgement of R4's held ledger (11A.9): ``settled`` when ``ws.revocations[device][person]`` (live devices
+    and restore tombstones alike) is at least as strong as ``reason`` (``revoke_strength``; a reason outside the enum
+    needs ``compromised``); ``stronger`` when it holds a weaker one; else what the owner can still do: ``revoke``
+    (the device is the person's, no revocation yet), ``other`` (the device is another person's or a tombstone
+    holds other persons' evidence only: the model refuses a revocation by this person), ``unknown`` (no such
+    device, no tombstone)."""
+    need = revoke_strength(reason) if reason in REVOKE_REASONS else revoke_strength("compromised")
+    have = state.revoked_reason(device, person)
+    if have is not None:
+        return "settled" if revoke_strength(have) >= need else "stronger"
+    owner = state.device_person(device)
+    if owner == person:
+        return "revoke"
+    if owner is not None or state.has_revocations_for(device):
+        return "other"
+    return "unknown"
 
 
 def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:

@@ -29,6 +29,10 @@ R1_FIXTURES = {
     "relay_info": "test_relay_info (H12d-3: link step 1 and every R1 login, orch-v2-host §0.8.6 item 9.8)",
 }
 NOT_R1 = {
+    "push_register": "B4 host push (tests/relay/t2/test_b4_push_real_relay.py; phone side register is the phone's)",
+    "push_send": "B4 host push (orch.relay.push, tests/relay/test_push.py; tests/relay/t2/test_b4_push_real_relay.py)",
+    "push_unregister": "B4 (phone side; tests/relay/t2/test_b4_push_real_relay.py)",
+    "drop_retire": "D40 drop retire (host retire; not an R1 route; no host-side caller in core yet)",
     "accounts": "owner client (P3-D3/D34; orch.relay_owner, tests/relay_owner/test_client.py)",
     "device_put": "owner client: PK-signed certificate upload (P3-D5; tests/relay_owner/test_client.py)",
     "device_get": "R6; the owner client reads it too (tests/relay_owner/test_client.py)",

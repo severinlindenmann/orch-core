@@ -1,6 +1,6 @@
 """``orch runner …``: the machine switch, the runner service and the runner process itself.
 
-* ``orch runner enable --workspace W [--no-terminals] [--dev] [--replace]`` (person, own terminal only): shows the
+* ``orch runner enable [--workspace W] [--no-terminals] [--dev] [--replace]`` (person, own terminal only): shows the
   risk, requires typing the workspace prefix, records the switch (D-P2-31) and installs and starts the runner unit
   (D-P2-24) like ``orch host enable``.
 * ``orch runner disable --workspace W``: switches dashboard execution off (the service stays; it starts nothing for
@@ -61,18 +61,20 @@ def _parser() -> argparse.ArgumentParser:
             "and drop ORCH_GRANT, so it can turn this on too."
         ),
     )
-    en.add_argument("--workspace", required=True, help="workspace id or prefix")
+    en.add_argument("--workspace", help="workspace id or prefix (default: the workspace of the current directory)")
     en.add_argument("--no-terminals", action="store_true", help="hide terminals (does not make agents safe)")
     en.add_argument("--replace", action="store_true", help="replace a runner service installed for another setup")
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
     en.add_argument("--state", type=Path)
     en.add_argument("--run", type=Path)
+    en.add_argument("--json", action="store_true", help="machine-readable output")
     dis = sub.add_parser("disable", help="turn dashboard execution off for a workspace")
-    dis.add_argument("--workspace", required=True)
+    dis.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
     dis.add_argument("--state", type=Path)
+    dis.add_argument("--json", action="store_true", help="machine-readable output")
     term = sub.add_parser("terminals", help="turn terminals on or off for a workspace with dashboard execution on")
     term.add_argument("switch", choices=["on", "off"])
-    term.add_argument("--workspace", required=True)
+    term.add_argument("--workspace", help="workspace id or prefix (default: the current directory's)")
     term.add_argument("--state", type=Path)
     st = sub.add_parser("status")
     st.add_argument("--state", type=Path)
@@ -100,10 +102,24 @@ def _state(given: Path | None, env: Mapping[str, str]) -> Path:
     return given.resolve() if given is not None else state_dir(env)
 
 
-def _workspace(state: Path, uid: int, wanted: str) -> tuple[str, str]:
+def _cwd_workspace_id(env: Mapping[str, str]) -> str:
+    """The id of the workspace the current directory (or ``ORCH_WORKSPACE``) is in, as every other command finds it."""
+    from orch import discovery
+
+    explicit = env.get("ORCH_WORKSPACE")
+    found = discovery.locate(explicit or os.getcwd(), explicit=bool(explicit), v1=False)
+    wid = ((found.config if found is not None else None) or {}).get("workspace", {}).get("id")
+    if not isinstance(wid, str):
+        raise HostError("invalid.input", "name the workspace (--workspace ID or PREFIX): this directory is in none")
+    return wid
+
+
+def _workspace(state: Path, uid: int, wanted: str | None, env: Mapping[str, str] | None = None) -> tuple[str, str]:
     from orch.host.custody import read_json
     from orch.host.registry import registry_path
 
+    if wanted is None:
+        wanted = _cwd_workspace_id(os.environ if env is None else env)
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
     match = [w for w in reg.get("workspaces") or [] if wanted in (w.get("workspace_id"), w.get("prefix"))]
     if len(match) != 1:
@@ -115,11 +131,30 @@ def _write(out: TextIO, doc: dict[str, Any]) -> None:
     out.write(json.dumps(doc, sort_keys=True) + "\n")
 
 
+def _human(cmd: str, doc: dict[str, Any]) -> str:
+    """N18: the result of ``enable`` or ``disable`` as plain lines for a person (``--json`` keeps the document)."""
+    if not doc.get("ok"):
+        from orch.host.cli import human_text
+
+        return human_text(cmd, doc, subject="orch runner")
+    data = doc["result"]["data"]
+    wid = " ".join(str(data.get("workspace_id")).split())
+    if cmd == "disable":
+        return (
+            f"Dashboard execution is off for workspace {wid}. The runner service stays installed but starts nothing.\n"
+        )
+    terms = "on" if data.get("terminals") else "off"
+    return f"Dashboard execution is on for workspace {wid} (terminals {terms}).\n"
+
+
 def _fail(code: str, message: str, exit_: int, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "exit": exit_, "error": {"code": code, "message": message[:400], "retryable": False}, **extra}
 
 
-def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dict[str, Any]:
+def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, confirmed: bool = False) -> dict[str, Any]:
+    """``confirmed``: the caller (``orch setup``) already showed :data:`enablement.CARD_TEXT` (the runner flag of its
+    review; :func:`enablement.risk_text` embeds it) and has the person's consent for exactly that text; the typed-prefix
+    prompt is skipped. Nothing else changes."""
     from orch.host import cli as host_cli
     from orch.host import enable as svc
     from orch.host.custody import ensure_private_dir
@@ -131,7 +166,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
         return _fail("human_only", "dashboard execution is a person's decision; an agent never turns it on", 3)
     uid = os.getuid()
     state = _state(args.state, env)
-    wid, prefix = _workspace(state, uid, args.workspace)
+    wid, prefix = _workspace(state, uid, args.workspace, env)
     run_dir = svc.run_dir_for(state, args.run, env)
     try:
         unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
@@ -169,13 +204,14 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
         )
     terminals = not args.no_terminals
     text = enablement.risk_text(prefix or wid[:8], wid, terminals)
-    try:
-        TERMINAL.show(text)
-        typed = TERMINAL.ask(f"Type the workspace prefix {prefix} to turn on dashboard execution: ")
-    except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
-        return _fail("human_only", f"orch runner enable needs your own terminal ({exc})", 3)
-    if typed.strip() != prefix or not prefix:
-        return _fail("invalid.input", "the prefix did not match; dashboard execution stays off", 5)
+    if not confirmed:
+        try:
+            TERMINAL.show(text)
+            typed = TERMINAL.ask(f"Type the workspace prefix {prefix} to turn on dashboard execution: ")
+        except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
+            return _fail("human_only", f"orch runner enable needs your own terminal ({exc})", 3)
+        if typed.strip() != prefix or not prefix:
+            return _fail("invalid.input", "the prefix did not match; dashboard execution stays off", 5)
     try:
         install_release(target=releases_dir(dict(env)))
     except (ReleaseError, OSError) as exc:
@@ -193,8 +229,17 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
     except (OSError, HostError) as exc:
         return _fail("runner.unavailable", f"the {unit.kind} runner service did not start: {exc}", 9)
     enablement.set_enabled(state, wid, True, uid, terminals=terminals, text=text)
+    from orch.host.release import code_digest
+
+    try:  # a changed unit was just re-bootstrapped: a fresh process on the new release, nothing to restart
+        stale = None if changed else service.restart_if_stale(unit, manager, state, code_digest())
+    except OSError:
+        stale = None
     data = {"workspace_id": wid, "enabled": True, "terminals": terminals, "service": unit.kind,
             "unit": str(unit.unit_path), "changed": changed, "ran": ran, "card": enablement.CARD_TEXT}  # fmt: skip
+    if stale is not None:
+        data["runner_message"] = stale["message"]
+        data["runner_restarted"] = stale["restarted"]
     return {"ok": True, "result": {"data": data}}
 
 
@@ -205,7 +250,7 @@ def terminals(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any
         return _fail("human_only", "terminals are a person's decision; an agent never turns them on", 3)
     uid = os.getuid()
     state = _state(args.state, env)
-    wid, prefix = _workspace(state, uid, args.workspace)
+    wid, prefix = _workspace(state, uid, args.workspace, env)
     on = args.switch == "on"
     text = ""
     if on:
@@ -264,8 +309,12 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
         except OSError as exc:
             log.warning("dev runner: not announced: %s", exc)
     # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
+    from .service import current_release, write_loaded_release
+
+    release = current_release()  # eager: the release this runner loaded, for the host's hello and for enable
+    write_loaded_release(state, release)
     link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
-                    config=lambda: read_config(state, uid), grants=grants)  # fmt: skip
+                    config=lambda: read_config(state, uid), grants=grants, release=release)  # fmt: skip
     link.start()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -294,13 +343,20 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
     try:
         if args.cmd == "enable":
             doc = enable(args, env, out)
-            _write(out, doc)
+            if args.json:
+                _write(out, doc)
+            else:
+                out.write(_human("enable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 1))
         if args.cmd == "disable":
             state = _state(args.state, env)
-            wid, _ = _workspace(state, os.getuid(), args.workspace)
+            wid, _ = _workspace(state, os.getuid(), args.workspace, env)
             enablement.set_enabled(state, wid, False, os.getuid())
-            _write(out, {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}})
+            done = {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}}
+            if args.json:
+                _write(out, done)
+            else:
+                out.write(_human("disable", done))
             return 0
         if args.cmd == "terminals":
             doc = terminals(args, env)

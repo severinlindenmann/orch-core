@@ -517,6 +517,7 @@ async function run(send, close) {
               ['real-host-records', 'records-ok', [['the export warning', '[data-testid="records-export-warning"]'], ['the private-remote line', '[data-testid="records-private-line"]']]],
               ['real-host-records-hidden-url', 'records-hidden-url', [['the export warning', '[data-testid="records-export-warning"]'], ['the blocked line', '[data-testid="records-export-blocked"]']]],
               ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
+              ['real-host-addons', 'addons-mixed', [['the terminals row', '[data-testid="addon-terminals"]'], ['the switch', '[role="switch"]']]],
               ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
               // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).
@@ -527,7 +528,10 @@ async function run(send, close) {
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
               // M7b: core's Start agent dialog (fixture preview, runner and grant answers; nothing reaches a host).
-              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the preview', '[data-testid="agent-preview"]'], ['the current grant', '[data-testid="runner-grant-current"]']]],
+              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the first-time notice', '[data-testid="agent-risk-full"]'], ['the grant line', '[data-testid="agent-grant-line"]']]],
+              ['real-host-agent-dialog-acked', 'agent-dialog-acked', [['the dialog', '[data-start-agent]'], ['the details line', '[data-testid="agent-details"] summary'], ['the grant line', '[data-testid="agent-grant-line"]']]],
+              ['real-host-agent-model', 'agent-model', [['the dialog', '[data-start-agent]'], ['the model line', '[data-testid="agent-model-line"]']]],
+              ['real-host-addons-model-routing', 'addons-model-routing', [['the routing box', '[data-testid="model-routing"]']]],
               ['real-host-agent-blocked', 'agent-blocked', [['the blocked reason', '[data-testid="agent-blocked"]'], ['the execution-off line', '[data-testid="runner-grant-off"]']]],
               ['real-host-agent-grant', 'agent-grant', [['the grant card', '[data-testid="runner-grant-card"]'], ['Issue runner grant', '[data-testid="runner-grant-issue"]'], ['the risk sentence', '[data-testid="runner-grant-risk"]']]],
               ['real-host-agent-outcomes', 'agent-outcomes', [['the unknown outcome', '[data-testid="runner-grant-unknown"]']]],
@@ -542,6 +546,12 @@ async function run(send, close) {
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
+              // Core D1 (#582): the dev sandbox host. The badge sits in the topbar of every page.
+              ['real-host-dev-badge', 'dev-badge', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the sandbox id', '[data-testid="dev-badge-sandbox"]']]],
+              ['real-host-dev-badge-long', 'dev-badge-long', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the long workspace name', '[data-testid="workspace-card-signing"], h2']]],
+              ['real-host-dev-alarms', 'dev-alarms', [['the alarms', '[data-testid="host-alarms"] [data-testid="host-alarm"]']]],
+              ['real-host-dev-refused', 'dev-refused', [['the refusals', '[data-testid="dev-refused-gallery"] [data-testid="click-problem"]']]],
+              ['real-host-signing-dev-host', 'signing-dev-host', [['the signing card', '[data-testid="workspace-card-signing"]'], ['the dev-host explanation', '[data-testid="signing-dev-host"]'], ['the badge', '[data-testid="dev-badge"]']]],
               // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
               ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
               ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],

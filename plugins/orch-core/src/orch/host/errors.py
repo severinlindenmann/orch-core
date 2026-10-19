@@ -29,6 +29,9 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "host.required": (3, False),
     "lock.busy": (9, True),
     "control.rolled_back": (9, True),
+    "migrate.refused": (3, False),
+    "migrate.stuck": (3, False),
+    "migrate.failed": (1, False),
     "outcome.unknown": (9, True),
     "outcome.unknown_idem": (2, False),
     "idem.required": (5, False),
@@ -74,6 +77,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     # H11a, the runner (addons design §9.2)
     "runner.unavailable": (9, True),
     "runner.disabled": (3, False),
+    "runner.stale": (3, False),  # the runner runs another release than the host: orch host enable restarts it
     "launch.cwd_changed": (3, False),
     "harness.not_found": (3, False),
     "run.spawn_failed": (1, False),
@@ -95,6 +99,12 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
     "unsupported.platform": (3, False),
+    # P5, the Publish add-on (design-publish-addon)
+    "publish.not_configured": (3, False),
+    "publish.not_approved": (3, False),
+    "publish.changed": (3, False),
+    "publish.server_refused": (3, False),
+    "publish.unreachable": (9, True),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),
@@ -106,10 +116,22 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "host.limit": (3, False),
     # R5, orch host relay unlink (§11A.6); R6's pairing ops reuse it (11A.15.9)
     "relay.not_linked": (3, False),
+    # R6c, relay pairing (11A.15.9, 11A.15.9A): the internal API and relay.pair_device's source
+    "relay.pair_open": (3, False),
+    "relay.no_primary": (3, False),
+    "relay.quota": (3, False),
+    "relay.pair_closed": (3, False),
     # H12e, phone person events over relay.submit (§11A.14): admission refusals core owns, all definite (class C)
     "event.expired": (3, False),
     "event.abandoned": (3, False),
     "ticket.key_not_next": (3, False),
+    # B1b (11A.15.23), orch keys primary init: the primary's certificate and the relay account
+    "primary.invite_file": (5, False),
+    "primary.invite_unusable": (3, False),
+    "primary.account_exists": (3, False),
+    "primary.account_failed": (3, True),
+    "primary.relay_mismatch": (3, False),
+    "primary.not_registered": (3, False),
     # §11A.17 (D1), the Simulator dev gate: a dev-host start refused, or a dev-host or sandbox-workspace refusal
     "host.dev_refused": (3, False),
 }
@@ -139,9 +161,21 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "run.limit": {"which": ("agent_ws", "agent_person", "shell_person", "runner")},
     "launch.no_grant": {"reason": ("none", "expiring", "scope", "revoked")},
     "runner.disabled": {"missing": ("addon", "machine", "terminals")},
+    "publish.server_refused": {
+        "reason": (
+            "unknown_workspace",
+            "blocked",
+            "owner_not_allowed",
+            "limit",
+            "conflict",
+            "clock",
+            "delegation",
+            "rejected",
+        )  # fmt: skip
+    },
     "ticket.key_not_next": {"next_key": None},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
-    "sign.convenience_unavailable": {  # H12c-e: pair_device (relay.pair_device is never convenience-signed)
+    "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (
             "disabled",
             "relay_paired",

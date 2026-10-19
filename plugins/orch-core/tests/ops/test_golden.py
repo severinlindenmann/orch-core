@@ -22,6 +22,25 @@ import pytest
 from tests.ops.helpers import OTHER, Cli, Ws
 
 GOLDEN = Path(__file__).parent / "golden"
+
+
+@pytest.fixture(autouse=True)
+def _utc():
+    """Times in the human text are this computer's: the golden files are in UTC on any machine."""
+    import os
+    import time
+
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
 SEQ = {}
 
 

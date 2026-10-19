@@ -39,12 +39,14 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon, crypto
+from orch import layout as layout_mod
 from orch.custody import Backend, CustodyError, FileBackend, NoPrompt, get_backend
 from orch.custody.strength import check_strength, generate_passphrase
 from orch.identity import (
     Refused,
     derive_person_key,
     device_ref,
+    format_code_numbered,
     generate_recovery_code,
     new_ulid,
     person_ref,
@@ -65,6 +67,7 @@ __all__ = [
     "connect_host",
     "create_workspace",
     "create_workspace_hosted",
+    "BootstrapState",
     "open_backend",
     "person_dir",
 ]
@@ -127,6 +130,8 @@ class Terminal:
         fd = self._open()
         try:
             old = termios.tcgetattr(fd)
+            # B11 review: input typed before the prompt (type-ahead, a pasted line) is never an answer, in every mode
+            termios.tcflush(fd, termios.TCIFLUSH)
             if not echo:  # echo off first, then the prompt: input typed on seeing it is neither shown nor flushed
                 new = old[:]
                 new[3] &= ~termios.ECHO
@@ -150,9 +155,37 @@ class Terminal:
         """Write ``prompt`` and wait for the person to press Enter."""
         self._read(prompt, echo=True)
 
+    def enter_pressed(self, timeout: float, *, flush: bool = False) -> bool:
+        """K2: wait up to ``timeout`` seconds for the person to press Enter on their own terminal; ``True`` once a line
+        was read. ``flush`` first drops anything typed before (type-ahead is never an answer). Echo stays as the
+        terminal has it; a terminal that cannot be opened or read is simply "not pressed"."""
+        import select
+        import termios
+
+        try:
+            fd = self._open()
+        except NoPrompt:
+            time.sleep(timeout)
+            return False
+        try:
+            if flush:
+                with contextlib.suppress(termios.error):
+                    termios.tcflush(fd, termios.TCIFLUSH)
+            if not select.select([fd], [], [], timeout)[0]:
+                return False
+            return bool(os.read(fd, 4096))
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
     def ask_secret(self, prompt: str) -> str:
         """One line from the person with echo off."""
         return self._read(prompt, echo=False)
+
+    def ask(self, prompt: str) -> str:
+        """One line from the person, echoed (``orch setup`` asks for yes with it)."""
+        return self._read(prompt, echo=True)
 
 
 #: The terminal of this process; tests replace it. Production code never passes another.
@@ -189,16 +222,20 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
             "orch init needs your own terminal (/dev/tty): no passphrase can be asked",
             "run orch init in a terminal",
         )
-    problems = check_targets(root)
+    try:
+        problems = check_targets(root, layout_mod.store_of(root))
+    except layout_mod.LayoutError as e:
+        raise _refuse("invalid.input", f"nothing was created: {e}", "remove or rename the .orch entry") from None
     if problems:
         raise _refuse("invalid.input", "nothing was created: " + "; ".join(problems[:3]), "remove the symbolic link")
 
 
 def _no_workspace(ctx: Context, root: Path) -> None:
-    if find_workspace(ctx.env, root, ctx.caps.files) is not None or any(
-        os.path.lexists(root / n) for n in _WORKSPACE_FILES
-    ):
+    """A workspace found here (or above) by orch's own marker is "already exists"; a project file under a name the
+    store writes is a collision named in words (:mod:`orch.rootclaim`), never "a workspace"."""
+    if find_workspace(ctx.env, root, ctx.caps.files) is not None:
         raise _refuse("invalid.input", "a workspace already exists here", "orch status")
+    _empty_root(root)
 
 
 def _label_key(scalar: bytes) -> bytes:
@@ -292,7 +329,9 @@ def _confirm_recovery_code(code: str) -> None:
             "\n=== orch init: your recovery code ===\n"
             "These 24 words are the only way back to your person key if you lose this machine or its passphrase.\n"
             "orch does not store the person key: without the code you can never add or revoke a device.\n"
-            "Write them down in order and keep them somewhere safe. They are shown now, once.\n\n" + code + "\n\n"
+            "Write them down in order and keep them somewhere safe. They are shown now, once.\n\n"
+            + format_code_numbered(code)
+            + "\n\n"
         )
         TERMINAL.wait("Press Enter when you have written the code down: ")
         positions = sorted(secrets.SystemRandom().sample(range(1, 25), CODE_WORDS_ASKED))
@@ -417,6 +456,7 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     lock = _lock(root)
     host_dir: Path | None = None
     existed_before: set[str] = set()
+    made: list[tuple[int, int]] = []  # the identity of the .orch this call makes
     shown_secrets = False
     try:
         _no_workspace(ctx, root)  # again, now that no other init can be between this check and the files
@@ -428,18 +468,18 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
             wid = secrets.token_hex(16)
             host_dir = sd / "hosts" / wid
             appended, person = _make_keys_and_genesis(
-                ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code
+                ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code, made
             )
     except KeyboardInterrupt:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         raise _refuse("stop", "init cancelled; nothing was created" + _void(shown_secrets)) from None
     except OrchError as e:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         if shown_secrets and "void" not in e.message:
             e.message += _void(shown_secrets)
         raise
     except BaseException:
-        _rollback(root, host_dir, existed_before)
+        _rollback(root, host_dir, existed_before, made)
         raise
     finally:
         with contextlib.suppress(OSError):
@@ -546,16 +586,16 @@ def _drop_person(sd: Path, wid: str | None) -> None:
 
 
 def _empty_root(root: Path) -> None:
+    from orch import rootclaim
+
     try:
-        names = os.listdir(root)
+        view = rootclaim.inspect(root)
     except OSError as e:
         raise _refuse("invalid.input", f"cannot list {root}: {e.strerror}") from None
-    if names:
-        raise _refuse(
-            "invalid.input",
-            "init --host creates the workspace in an empty directory; nothing was created",
-            "run it in a new, empty directory",
-        )
+    why = rootclaim.refusal(view, init_lock_ok=True)
+    if why is not None:
+        hint = "if it is already an orch workspace run `orch host register .`" if view.orch else None
+        raise _refuse("invalid.input", f"{root}: {why}; nothing was created", hint)
 
 
 def _ask_outcome(client: Any, idem: str) -> tuple[str, dict[str, Any] | None]:
@@ -617,6 +657,89 @@ def _bootstrap(
         _sleep(0.25)
 
 
+class BootstrapState:
+    """What a hosted bootstrap leaves for its caller's cleanup: the connection, the workspace id of the key in use, the
+    idem of a bootstrap whose outcome is unknown (its device key is kept) and the definite result."""
+
+    def __init__(self) -> None:
+        self.client: Any = None
+        self.wid: str | None = None
+        self.pending: str | None = None
+        self.result: dict[str, Any] | None = None
+        self.person: str = ""
+
+
+def _hosted_bootstrap(
+    ctx: Context,
+    sd: Path,
+    root: Path,
+    prefix: str,
+    owner_name: str,
+    passphrase: str,
+    code: str,
+    st: BootstrapState,
+    backend_factory: Any = None,
+) -> None:
+    """The ``host.wsk_create`` + ``host.bootstrap`` loop of :func:`create_workspace_hosted`, shared with ``orch setup``
+    (``backend_factory`` opens the device key's backend; ``None`` is :func:`open_backend`, which asks the terminal).
+    State for the caller's cleanup is in ``st``; on a refusal the device key of an undecided outcome is kept."""
+    from orch.host.control_client import new_idem
+
+    try:
+        st.client = connect_host(sd)
+    except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
+        raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
+    for attempt in range(BOOTSTRAP_ATTEMPTS):
+        try:
+            created = _call(st.client, "host.wsk_create", {})
+        except _Lost as lost:
+            raise _unavailable(f"the host connection dropped ({lost})") from None
+        if not created.get("ok"):
+            raise _host_refusal(created.get("error") or {})
+        data = created["result"]["data"]
+        if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
+            raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
+        st.wid = data["workspace_id"]
+        try:
+            wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
+            event, st.person = _signed_genesis(
+                ctx,
+                sd,
+                st.wid,
+                wsk_pub,
+                prefix,
+                owner_name,
+                passphrase,
+                code,
+                generated=True,
+                backend_factory=backend_factory,
+            )
+        except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
+            raise _failure(e) from e
+        request = {
+            "workspace_id": st.wid,
+            "root": str(root),
+            "events": [event],
+            "peers": {str(os.getuid()): {"class": "person", "person": st.person}},
+        }
+        st.pending = new_idem()
+        st.client, st.result, error = _bootstrap(sd, st.client, request, st.pending)
+        st.pending = None  # a definite answer
+        if st.result is not None:
+            return
+        _drop_person(sd, st.wid)
+        st.wid = None
+        if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
+            raise _host_refusal(error or {})
+        TERMINAL.wait(
+            "\nThe host restarted and rolled the new workspace back; its id and key are gone.\n"
+            "Press Enter to sign a new genesis with a new workspace key (your passphrase is asked again): "
+        )
+        if not root.exists():  # the person's directory, re-created as the host requires it (not the umask)
+            os.mkdir(root, 0o700)
+            os.chmod(root, 0o700)
+
+
 def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     """``orch init --host``: the ``host.wsk_create`` + ``host.bootstrap`` composite (§0.8, D-P2-9).
 
@@ -626,7 +749,6 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     sends it. The device key is dropped, and the person told that nothing was created, **only** on a definite answer
     (:func:`_bootstrap`). A bootstrap the host rolled back (``control.rolled_back``) starts again from
     ``host.wsk_create`` after one confirmation on the person's terminal: the new id and key need a new genesis."""
-    from orch.host.control_client import new_idem
 
     root = Path(ctx.workspace._cwd if ctx.workspace is not None and ctx.workspace._cwd else os.getcwd())
     sd = state_dir(ctx.env, ctx.caps.files)
@@ -643,75 +765,29 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
             hints=["run it without --dry-run"],
         )
     shown_secrets = False
-    wid: str | None = None
-    pending: str | None = None  # the idem of a bootstrap whose outcome is unknown: its device key is kept
-    client: Any = None
-    result: dict[str, Any] | None = None
+    st = BootstrapState()
     try:
         with _hangup_as_interrupt():
             shown_secrets = True
             passphrase, code = _dialogue(ctx, owner_name, prefix)
-            try:
-                client = connect_host(sd)
-            except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
-                raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
-            for attempt in range(BOOTSTRAP_ATTEMPTS):
-                try:
-                    created = _call(client, "host.wsk_create", {})
-                except _Lost as lost:
-                    raise _unavailable(f"the host connection dropped ({lost})") from None
-                if not created.get("ok"):
-                    raise _host_refusal(created.get("error") or {})
-                data = created["result"]["data"]
-                if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
-                    raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
-                wid = data["workspace_id"]
-                try:
-                    wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
-                    event, person = _signed_genesis(
-                        ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code, generated=True
-                    )
-                except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
-                    raise _failure(e) from e
-                request = {
-                    "workspace_id": wid,
-                    "root": str(root),
-                    "events": [event],
-                    "peers": {str(os.getuid()): {"class": "person", "person": person}},
-                }
-                pending = new_idem()
-                client, result, error = _bootstrap(sd, client, request, pending)
-                pending = None  # a definite answer
-                if result is not None:
-                    break
-                _drop_person(sd, wid)
-                wid = None
-                if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
-                    raise _host_refusal(error or {})
-                TERMINAL.wait(
-                    "\nThe host restarted and rolled the new workspace back; its id and key are gone.\n"
-                    "Press Enter to sign a new genesis with a new workspace key (your passphrase is asked again): "
-                )
-                if not root.exists():  # the person's directory, re-created as the host requires it (not the umask)
-                    os.mkdir(root, 0o700)
-                    os.chmod(root, 0o700)
+            _hosted_bootstrap(ctx, sd, root, prefix, owner_name, passphrase, code, st)
     except KeyboardInterrupt:
-        _drop_unless_pending(sd, wid, pending)
-        if pending is not None:
-            raise _unavailable("init was interrupted during host.bootstrap", pending) from None
+        _drop_unless_pending(sd, st.wid, st.pending)
+        if st.pending is not None:
+            raise _unavailable("init was interrupted during host.bootstrap", st.pending) from None
         raise _refuse("stop", "init cancelled; nothing was created" + _void(shown_secrets)) from None
     except OrchError as e:
-        _drop_unless_pending(sd, wid, pending)
+        _drop_unless_pending(sd, st.wid, st.pending)
         if shown_secrets and "void" not in e.message and e.code != "host.unavailable":
             e.message += _void(shown_secrets)
         raise
     except BaseException:
-        _drop_unless_pending(sd, wid, pending)
+        _drop_unless_pending(sd, st.wid, st.pending)
         raise
     finally:
-        _close(client)
+        _close(st.client)
     key_line = "the workspace key stays with the orch host, which serves this workspace (orch host list)"
-    return _finish(root, sd, wid, key_line, prefix, owner_name, person, int((result or {}).get("seq", 1)))
+    return _finish(root, sd, st.wid, key_line, prefix, owner_name, st.person, int((st.result or {}).get("seq", 1)))
 
 
 def _drop_unless_pending(sd: Path, wid: str | None, pending: str | None) -> None:
@@ -739,6 +815,7 @@ def _signed_genesis(
     code: str,
     *,
     generated: bool = False,
+    backend_factory: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """The device key (made here, under :func:`person_dir`), its certificate and the delegation of ``wsk_pub``, both
     signed by the person key derived from ``code``, and the genesis ``workspace.created`` signed with the device key.
@@ -757,7 +834,7 @@ def _signed_genesis(
     def pk_sign(payload: bytes) -> bytes:
         return crypto.sign(pk, payload)
 
-    dk_backend = open_backend(person_dir(sd, wid))
+    dk_backend = (backend_factory or open_backend)(person_dir(sd, wid))
     dk_pub = dk_backend.create(DEVICE_KEY, role="device", passphrase=passphrase)
     kx_pub = crypto.public_bytes(crypto.generate_private_key())  # P1 has no key-exchange user (relay is P3)
     person = person_ref(pk_pub)
@@ -801,7 +878,7 @@ def _signed_genesis(
     return event, person
 
 
-def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code):
+def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, passphrase, code, made=None):
     from orch.store import BackendSigner, Store, StoreError
 
     store = None
@@ -819,7 +896,10 @@ def _make_keys_and_genesis(ctx, root, sd, wid, host_dir, prefix, owner_name, pas
             clock=ctx.now,
             workspace_name=root.name or prefix,
             load="lazy",
+            create=True,
         )
+        if made is not None and store.created_store is not None:
+            made.append(store.created_store)
         appended = store.append(event, log="workspace")
     except (CustodyError, Refused, StoreError, OSError, ValueError) as e:
         if store is not None:
@@ -839,10 +919,10 @@ def _finish(root, sd, wid, key_line, prefix, owner_name, person, seq) -> Result:
         key_line,
     ]
     try:
-        written, kept = write_workspace_files(root)
+        written, kept = write_workspace_files(root, store=layout_mod.store_of(root))
         lines.append("wrote " + ", ".join(written) if written else "instructions are current")
         lines += kept
-    except (UnsafePath, OSError, UnicodeDecodeError) as e:
+    except (UnsafePath, OSError, UnicodeDecodeError, layout_mod.LayoutError) as e:
         lines.append(
             f"WORKSPACE CREATED, but the instruction files were not written: {e}. "
             "Fix that, then run orch instructions sync (add the AGENTS.md / CLAUDE.md lines by hand)"
@@ -866,10 +946,16 @@ def _failure(e: Exception) -> OrchError:
     return _refuse("invalid.input", f"{type(e).__name__}: {e}; nothing was created", "orch describe init")
 
 
-def _rollback(root: Path, host_dir: Path | None, existed_before: set[str]) -> None:
+def _rollback(
+    root: Path, host_dir: Path | None, existed_before: set[str], made: list[tuple[int, int]] | None = None
+) -> None:
     """Remove what this call created: the key directory and the workspace files that were not there before."""
     if host_dir is not None:
         shutil.rmtree(host_dir, ignore_errors=True)
+    if made:  # the .orch this call made (its identity), by fds: a person's own .orch is never touched
+        from orch.store.rootfs import remove_made_dir
+
+        remove_made_dir(root, layout_mod.STORE_DIR, made[0])
     for n in _WORKSPACE_FILES:
         if n in existed_before:
             continue

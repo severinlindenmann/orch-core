@@ -169,6 +169,9 @@ class RelayEntry:
 
             with store.locked():  # the one span; the store is re-read first
                 self._call(identity, "relay.submit", args, recheck, idem).authorize()
+                methods = store.state.workspace.settings.get("sign_methods")
+                if methods is not None and "phone" not in methods:  # B6: every column R device is a paired phone
+                    raise HostError("op.not_allowed", "this workspace does not allow signing with a phone")
                 return service.outcomes.execute(identity.principal, idem, "relay.submit", args, apply, planned=None)
         except (HostError, StoreError) as exc:
             raise _refusal(exc) from None
@@ -198,6 +201,10 @@ class RelayEntry:
         seq = relayadmit.known_or_fresh(store, log, ev, service.clock())
         if seq is not None:  # an identical landed event: committed, duplicate (before anything is judged)
             return relay_submit.result(log, [seq], duplicate=True)
+        try:
+            relay_submit.check_phase1(ev)  # B10 Part B phase 1: again under the lock (a recovered write meets it too)
+        except Refusal:
+            raise HostError("op.not_allowed", "the phone decides requirements and plan only") from None
         relayadmit.check_target(store, log, ev)
         try:
             relayadmit.judge_events(store, log, events)

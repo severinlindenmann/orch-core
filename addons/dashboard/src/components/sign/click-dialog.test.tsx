@@ -64,6 +64,7 @@ async function open(action: Parameters<typeof mount>[0] = PLAN) {
   flag(true)
   const m = await mount(action)
   const dialog = await screen.findByRole('dialog', {}, T)
+  await waitFor(() => expect(within(dialog).getAllByRole('button', { name: /^(Sign|Sign in Terminal)$/ }).find(el => !el.closest('details'))).toBeEnabled(), T)
   return { ...m, dialog }
 }
 async function toPanel() {
@@ -88,7 +89,8 @@ describe('the action dialog with click-to-sign', () => {
     const { dialog } = await open()
     expect(await within(dialog).findByRole('button', { name: 'Sign' }, T)).toBeEnabled()
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
-    expect(within(dialog).getByTestId('click-risk')).toHaveTextContent(CLICK_RISK)
+    expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
+    expect(within(dialog).getByText('Sign with one click on this computer.')).toBeInTheDocument()
     expect(c.prepare).not.toHaveBeenCalled()
     expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
   })
@@ -105,15 +107,15 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).not.toHaveBeenCalled()
   })
 
-  it('with the flag on but the signer unable there is no Sign button and NO hand-off: an honest message', async () => {
+  it('falls back to terminal when the signer is unavailable and settings are absent', async () => {
     flag('unavailable')
+    s.prepare.mockResolvedValue(fakeRequest())
+    s.get.mockResolvedValue(state(fakeRequest()))
     await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
-    const note = await within(dialog).findByTestId('click-unavailable', {}, T)
-    expect(note).toHaveTextContent('orch host convenience off')
-    expect(within(dialog).queryByRole('button', { name: /^Sign$|terminal/ })).toBeNull()
-    expect(s.prepare).not.toHaveBeenCalled()
+    await within(dialog).findByTestId('handoff-command', {}, T)
     expect(c.prepare).not.toHaveBeenCalled()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
   })
 
   it('a hand-off refused with sign.click_only (the flag was switched on) says the workspace signs in the dashboard', async () => {
@@ -130,7 +132,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(c.view).toHaveBeenCalledWith(ws, REQ)
     const panel = within(dialog).getByTestId('click-panel')
-    expect(panel.firstElementChild).toHaveTextContent(CLICK_RISK)
+    expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
+    expect(within(panel).getAllByText('Technical details')).toHaveLength(1)
     expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
@@ -270,7 +273,8 @@ describe('the action dialog with click-to-sign', () => {
 
   it('shows the custody and the device of the View', async () => {
     const { dialog } = await toPanel()
-    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('convenience (no presence), device d_x')
+    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+    expect(within(dialog).getByText('d_x').closest('details')).not.toHaveAttribute('open')
   })
 
   it('a rate limit keeps Sign off for the time the signer names (fake timers: no wall-clock race)', async () => {
@@ -314,12 +318,25 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(m.dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(m.dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(within(m.dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', expect.stringMatching(/^202/))
+    // A-1: the host's record is never part of the sentence: it is folded under "Technical details"
+    expect(within(m.dialog).getByText(/A similar comment/).closest('p')).not.toHaveTextContent('HOST-SIGNED')
+    expect(within(m.dialog).getByTestId('technical-details')).not.toHaveAttribute('open')
     expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
     await within(m.dialog).findByTestId('click-panel', {}, T).catch(() => undefined)
     await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('an add-on that is already as asked says so in plain words: no raw JSON, no Do it again', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'addon.already', message: 'Terminals is already on.', retryable: false }, 1))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(m.dialog).toHaveTextContent('Terminals is already on.')
+    expect(m.dialog).not.toHaveTextContent(/event_id|package_sha256|\{"/)
+    expect(within(m.dialog).queryByRole('button', { name: /Do it again|^Sign$|Try again/ })).toBeNull()
   })
 
   it('a submitted failure needs an explicit Start again and advances retry', async () => {
@@ -474,4 +491,45 @@ describe('every error code and reason has an honest message', () => {
   it('a network failure is a retry, not a crash', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })
+})
+
+it.each([null, ['terminal', 'click', 'phone']])('disables phone approval and uses the usable fallback with allowed methods %j', async (sign_methods) => {
+  s.prepare.mockResolvedValue(fakeRequest())
+  s.get.mockResolvedValue(state(fakeRequest()))
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
+  const { dialog } = await open()
+  fireEvent.click(within(dialog).getByText('Other ways'))
+  // No phone is paired and none was asked for: Phone is not offered at all (no "coming soon" button).
+  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
+  await within(dialog).findByTestId('handoff-command')
+  expect(c.prepare).not.toHaveBeenCalled()
+})
+
+it('omits One click from Other ways when the signer is unavailable', async () => {
+  flag('unavailable')
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
+  await mount(PLAN)
+  const dialog = await screen.findByRole('dialog')
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign in Terminal' })).toBeEnabled())
+  // Nothing usable is left: no click (signer unavailable), no phone (none paired), so no "Other ways" at all.
+  expect(within(dialog).queryByText('Other ways')).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
+})
+
+it('cancels the click review before switching to a fresh terminal intent', async () => {
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click'], is_default: false })
+  s.prepare.mockResolvedValue(fakeRequest())
+  s.get.mockResolvedValue(state(fakeRequest()))
+  const { dialog, ws, ticket } = await toPanel()
+  fireEvent.click(within(dialog).getByText('Other ways'))
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
+  await within(dialog).findByTestId('handoff-command')
+  expect(c.cancel).toHaveBeenCalledWith(ws, REQ)
+  expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 1)
+  expect(c.sign).not.toHaveBeenCalled()
 })

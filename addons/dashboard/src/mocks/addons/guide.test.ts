@@ -20,7 +20,7 @@ interface State {
 }
 const state = async (s: ReturnType<typeof setup>) => (await s.api.getAddonState(s.ws, 'guide')) as unknown as State
 
-const TITLES = ['Getting around', 'Tickets and sections', 'Gates and approvals', 'Agents and grants', 'Questions', 'Addons and the orange A', 'Keyboard shortcuts', 'What is simulated in this mockup']
+const TITLES = ['Start here', 'Today, Board and Tickets', 'A ticket and quick tasks', 'Approving things', 'Agents and their access', 'Worktrees, Activity and add-ons', 'Settings', 'Repositories', 'Worktrees', 'Shares and Publish', 'Coming later', 'Keyboard shortcuts']
 
 describe('guide package', () => {
   it('starts installed and granted in every demo workspace; open is a viewer action', () => {
@@ -30,7 +30,7 @@ describe('guide package', () => {
     expect(pkg.actions?.open).toMatchObject({ minRole: 'viewer' })
     for (const w of store.workspaces) expect(w.addons.guide).toMatchObject({ enabled: true, status: 'active', installed: true })
   })
-  it('has the eight pages, in order', async () => {
+  it('has the twelve pages, in order', async () => {
     const st = await state(setup())
     expect(st.pages.map((p) => p.title)).toEqual(TITLES)
     expect(st.items.map((i) => i.title)).toEqual(TITLES)
@@ -41,11 +41,11 @@ describe('guide package', () => {
 describe('guide navigation is per viewer', () => {
   it('opens a page for the viewer who asked, and a viewer may do it', async () => {
     const s = setup('p_tom')
-    expect((await state(s)).current.title).toBe('Getting around')
-    await s.api.runAddonAction(s.ws, 'guide', 'open', { slug: 'questions' })
-    expect((await state(s)).current.title).toBe('Questions')
+    expect((await state(s)).current.title).toBe('Start here')
+    await s.api.runAddonAction(s.ws, 'guide', 'open', { slug: 'approving' })
+    expect((await state(s)).current.title).toBe('Approving things')
     s.store.setViewer('p_sev')
-    expect((await state(s)).current.title).toBe('Getting around')
+    expect((await state(s)).current.title).toBe('Start here')
   })
 })
 
@@ -53,17 +53,14 @@ describe('route to help page', () => {
   it('maps routes as the brief says; anything else is Getting around', async () => {
     const { routes } = (await state(setup())).help
     const t = (path: string) => helpPageFor(routes, path)
-    expect(t('/')).toBe('getting-around')
-    expect(t('/board')).toBe('tickets-and-sections')
-    expect(t('/tickets')).toBe('tickets-and-sections')
-    expect(t('/tickets/new')).toBe('tickets-and-sections')
-    expect(t('/ticket/DEMO-0043')).toBe('gates-and-approvals')
-    expect(t('/agents')).toBe('agents-and-grants')
-    expect(t('/settings/addons')).toBe('addons')
-    expect(t('/settings/addon/wiki')).toBe('addons')
-    expect(t('/addon/wiki/pages')).toBe('addons')
-    expect(t('/settings/members')).toBe('getting-around')
-    expect(t('/nope')).toBe('getting-around')
+    expect(t('/')).toBe('today-board-tickets')
+    expect(t('/board')).toBe('today-board-tickets')
+    expect(t('/tickets/new')).toBe('today-board-tickets')
+    expect(t('/ticket/DEMO-0043')).toBe('a-ticket')
+    expect(t('/agents')).toBe('agents')
+    expect(t('/settings/members')).toBe('settings')
+    expect(t('/addon/wiki/pages')).toBe('more-tools')
+    expect(t('/nope')).toBe('start-here')
     for (const r of routes) expect((await state(setup())).help.pages.some((p) => p.slug === r.page)).toBe(true)
   })
 })
@@ -81,9 +78,14 @@ describe('Keyboard shortcuts page is generated from the shortcut registry', () =
   })
 })
 
-describe('What is simulated', () => {
-  it('names each simulated thing', async () => {
-    const md = (await state(setup())).pages.find((p) => p.title === 'What is simulated in this mockup')!.markdown
-    for (const w of ['Touch ID', 'terminal', 'GitHub', 'relay', 'agent run', '2026-10-09 11:30', 'reset']) expect(md.toLowerCase(), w).toContain(w.toLowerCase())
+describe('what the pages promise', () => {
+  it('says coming later for relay, phone and auto-close, and names the terminal hand-off', async () => {
+    const pages = (await state(setup())).pages
+    const later = pages.find((p) => p.slug === 'later')!.markdown.toLowerCase()
+    for (const w of ['relay', 'phone', 'close themselves']) expect(later, w).toContain(w)
+    expect(pages.find((p) => p.slug === 'approving')!.markdown).toContain('orch sign CODE')
+  })
+  it('has no raw ids', async () => {
+    for (const p of (await state(setup())).pages) expect(p.markdown, p.slug).not.toMatch(/\b[A-Z]{2,6}-\d{3,}\b|p_[a-z]+|ws_/)
   })
 })

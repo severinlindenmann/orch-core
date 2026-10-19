@@ -43,7 +43,9 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
   const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
-  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !(dismissed.has(r.run) && ended(r)))
+  // A start whose process never started (spawn_failed) is no terminal: the dialog already told the person why, so it gets no tab (unless its cleanup is in doubt: then the tab and the warning stay).
+  const neverStarted = (r: Run) => r.state === 'exited' && r.exit?.reason === 'spawn_failed' && !cleanupDoubt(r.exit.cleanup)
+  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !neverStarted(r) && !(dismissed.has(r.run) && ended(r)))
   const endedShown = shown.filter(ended)
   const dismiss = (ids: string[]) => setDismissed((d) => new Set([...d, ...ids]))
   const [selected, setSelected] = useState<string | null>(null)

@@ -70,6 +70,9 @@ export const agentsApi = {
   depositStatus: (ws: string, depositId: string) =>
     call<{ deposit: DepositOutcome | 'none'; reason?: DepositReason }>('GET', `${w(ws)}/runner/deposits/${encodeURIComponent(depositId)}`),
   forget: (ws: string, grant: string, idem: string) => call<{ forgotten: boolean }>('POST', `${w(ws)}/runner/forget`, { grant, idem }),
+  /** Which risk notices this person already read (kept by the dashboard server, per person and workspace). */
+  riskNotices: (ws: string) => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('GET', `${w(ws)}/me/risk_notices`),
+  acknowledge: (ws: string, notice: 'start_agent' | 'login_shell') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
 }
 
 export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws) })
@@ -133,3 +136,6 @@ export function cwdText(p: AgentPreview): string {
   if (kind === 'workspace') return 'the workspace root'
   return 'not shown'
 }
+
+/** The host's login-shell sentence (core launch.py LOGIN_NOTICE, pinned by a server test); the notice is acknowledged on its own. */
+export const LOGIN_NOTICE = 'the program is found and started through your login shell; your shell profile runs first and can change what runs'

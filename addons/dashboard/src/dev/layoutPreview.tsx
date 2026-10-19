@@ -67,6 +67,7 @@ export const LAYOUT_SCENARIOS = [
   'terminal-stop',
   // M7b: core's Start agent dialog with fixture answers (preview, blocked reasons, the runner grant card, outcomes).
   'agent-dialog',
+  'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
@@ -482,7 +483,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
     spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
     cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-0043' }, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing.worktrees/0a1b2c3d-DEMO-0043`, cwd_path_hidden: false,
     will_create_worktree: true, login_shell: true, env: ['TERM', 'COLORTERM', 'ORCH_GRANT', 'ORCH_SESSION', 'ORCH_TICKET', 'ORCH_HARNESS', 'CLAUDE_CODE_SUBAGENT_MODEL'],
-    grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
+    grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
   if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
@@ -735,11 +736,13 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
+  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
+  ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('routing.choices', routingApi.choices)
   ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })

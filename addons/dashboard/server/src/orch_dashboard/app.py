@@ -19,6 +19,7 @@ from . import (
     handoff,
     phone,
     reads,
+    riskack,
     settings,
     shares,
     signprefs,
@@ -229,6 +230,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)
+    riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
     activity_routes.register(app, gateway)

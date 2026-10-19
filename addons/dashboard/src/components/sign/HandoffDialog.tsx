@@ -181,10 +181,14 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    // Not before the list of workspaces is known: whether this one offers Sign decides how the dialog starts.
-    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && method === 'terminal' && !methods.loading && !allowed) {
+    // Not before the list of workspaces and the signing settings are known: whether this one offers Sign decides how the
+    // dialog starts. An action with nothing to fill in prepares at once (the click that opened it is the intent), so the
+    // person never sees a Sign button before the host's content (WYSIWYS). Phone is a choice the person makes, never auto.
+    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !methods.loading && (method === 'click' || method === 'terminal')) {
       started.current = true
-      void run.prepare(p.action)
+      // A click request that ended earlier (cancelled, expired) must not block a fresh open: this open is a new intent.
+      if (method === 'click') void click.start(p.action, 0, true)
+      else void run.prepare(p.action)
     }
     // Once per opening: a changed action object is not a new click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,7 +402,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {phase === 'waiting' && 'Waiting for your signature'}
           </span>
           <div className="flex flex-wrap gap-2">
-            {phase === 'idle' && !clickOpen && (
+            {phase === 'idle' && !clickOpen && !(p.autoStart && p.action && method !== 'phone') && (
               <>
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   {phoneRun.hint && phoneRun.hint.state !== 'open' ? 'Close' : 'Cancel'}

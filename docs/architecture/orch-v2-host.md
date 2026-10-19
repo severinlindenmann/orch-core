@@ -1819,7 +1819,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
    starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
    (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
-   changed) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   changed; a running host of another release is drained with `host.restart`, and if it has not come back on the new release after 2 x START_WAIT (40 s) `enable` forces the restart with `kickstart -k` / `systemctl --user restart`: crash-equivalent, a request in flight may be interrupted and is recovered at start; result `forced: true`) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
    `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
    CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is

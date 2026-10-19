@@ -312,15 +312,17 @@ class Manager:
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
 
+    def restart_command(self) -> list[str]:
+        """The command that restarts the loaded service at once, for this platform only."""
+        if self.plan.kind == "launchd":
+            return ["launchctl", "kickstart", "-k", self._target()]
+        return ["systemctl", "--user", "restart", self.plan.systemd_name]
+
     def restart_now(self) -> list[list[str]]:
         """Restart the loaded service without waiting for the host (``launchctl kickstart -k``, ``systemctl --user
         restart``): the fallback when a graceful drain never finished. The host's state is crash-safe (the service
         manager restarts a crashed host the same way); the caller says so to the person."""
-        argv = (
-            ["launchctl", "kickstart", "-k", self._target()]
-            if self.plan.kind == "launchd"
-            else ["systemctl", "--user", "restart", self.plan.systemd_name]
-        )
+        argv = self.restart_command()
         res = self.run(argv)
         if res.returncode != 0:
             raise OSError(_failed(argv, res))

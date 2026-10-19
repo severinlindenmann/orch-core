@@ -393,6 +393,10 @@ def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str,
     }
 
 
+#: how many START_WAITs a drain gets before ``enable`` forces the restart
+DRAIN_WAIT_FACTOR = 2
+
+
 def enable(
     state: Path, env: Mapping[str, str], *, run: Path | None = None, replace: bool = False, dev: bool = False
 ) -> dict[str, Any]:
@@ -479,13 +483,23 @@ def enable(
     theirs = _host_release(control)
     if theirs != mine:  # a host that predates the welcome's release field is older by definition (``None``)
         if manager.active() is True:  # started by the service manager: restart it (never a process it did not start)
-            if _restart(manager, control, mine):
+            how = _restart(manager, control, mine)
+            if how == "drained":
                 data["restarted"] = mine
                 data["message"] = f"restarted the host on the new release {mine}"
-            else:
+            elif how == "forced":
+                data["restarted"] = mine
+                data["forced"] = True
                 data["message"] = (
-                    f"the host still runs the old release {theirs or 'unknown'} and did not restart: "
-                    f"run `orch host restart`, or `launchctl kickstart -k` / `systemctl --user restart` its service"
+                    "the host did not finish open work in time; it was restarted and a request in flight may have "
+                    "been interrupted (its outcome is recovered at start)"
+                )
+            else:
+                import shlex
+
+                data["message"] = (
+                    f"the host still runs the old release {theirs or 'unknown'} and did not restart. To restart it "
+                    f"now (this interrupts requests in flight): {shlex.join(manager.restart_command())}"
                 )
                 data["restart_needed"] = True
         else:  # a foreground or dev host: not ours to kill
@@ -509,27 +523,33 @@ def _host_release(control: Path) -> str | None:
     return release if isinstance(release, str) else None
 
 
-def _restart(manager: Any, control: Path, mine: str) -> bool:
-    """Drain the host through its control socket (``orch host restart``), let the service manager bring it back
-    (started again if it does not), and wait until a host reports release ``mine``."""
+def _restart(manager: Any, control: Path, mine: str) -> str | None:
+    """Drain the host through its control socket (``orch host restart``) and let the service manager bring it back
+    (started again if it does not). Returns ``"drained"`` when a host reports release ``mine``; else, after
+    ``DRAIN_WAIT_FACTOR`` x START_WAIT (a drain waits for requests in flight, with no deadline), restarts the service
+    at once (crash-equivalent: the host has no SIGTERM handler; recovery at start is idempotent) and returns
+    ``"forced"``; ``None`` when even that did not bring ``mine`` up."""
     from .control_client import ControlClient
     from .enable import START_WAIT
 
+    draining = False
     try:
         with ControlClient(control, timeout=10) as client:
-            client.call("host.restart")
+            frame = client.call("host.restart")
+        # ok: the drain started; host.restarting: someone else's drain is running, wait for it too
+        draining = bool(frame.get("ok")) or (frame.get("error") or {}).get("code") == "host.restarting"
     except (OSError, ConnectionError):
         pass  # the drain did not start: the fallback below restarts it
-    else:
-        if _wait_for_release(manager, control, mine, START_WAIT):
-            return True
-    # The drain did not finish (a request in flight that never ends): do what the service manager does for a crashed
-    # host, restart it now, rather than leave the old release running.
+    if draining and _wait_for_release(manager, control, mine, START_WAIT * DRAIN_WAIT_FACTOR):
+        return "drained"
+    # The drain did not finish (a request in flight that never ends): restart the service now rather than leave the
+    # old release running. A slow-starting new host may be in startup recovery when kickstart -k hits it; recovery is
+    # idempotent, so it simply runs again.
     try:
         manager.restart_now()
     except OSError:
-        return False
-    return _wait_for_release(manager, control, mine, START_WAIT)
+        return None
+    return "forced" if _wait_for_release(manager, control, mine, START_WAIT) else None
 
 
 def _wait_for_release(manager: Any, control: Path, mine: str, wait: float) -> bool:

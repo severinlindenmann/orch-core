@@ -65,10 +65,8 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
         assert ".orch/AGENTS.orch.md" in (root / "AGENTS.md").read_text()
         assert ".orch/" in (root / ".gitignore").read_text().split("\n")
         entry = h.host.registry.get(wid)
-        assert (
-            entry is not None and entry.store == ".orch" and entry.store_dir == Path(os.path.realpath(root)) / ".orch"
-        )
-        assert '"store":".orch"' in registry_path(lab.state).read_text()
+        assert entry is not None and entry.store_dir == Path(os.path.realpath(root)) / ".orch"
+        assert '"store"' not in registry_path(lab.state).read_text()  # the store is always <root>/.orch
         service = h.host.services[wid]
         assert service.state == "ok", service.cause
         assert service.store is not None and service.store.layout.store.name == ".orch"

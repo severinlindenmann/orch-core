@@ -11,6 +11,7 @@ import pytest
 
 from orch.ops import health
 from orch.ops.caps import Capabilities
+from orch.store import StoreError
 from tests.store.helpers import WS, Env
 from tests.store.outside import snapshot, swap, watch
 
@@ -99,7 +100,7 @@ def test_the_workspace_name_is_read_below_the_pinned_root(env, outside, tmp_path
     s.close()
 
 
-def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
+def test_a_records_snapshot_reads_nothing_through_a_swapped_project_path(env, outside, tmp_path):
     from orch.host import records as host_records
 
     s = env.bootstrap()
@@ -111,7 +112,8 @@ def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
     env.root.rename(tmp_path / "ws-moved")
     os.symlink(outside / "ws", env.root)
     with watch(outside) as seen:
-        got = host_records._take(SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS))
-    assert seen == []
-    assert got["files"] == want["files"]  # the store's own directory, not the one the path now names
+        with pytest.raises(StoreError):  # the project path now names another directory: the snapshot fails closed
+            host_records._take(SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS))
+    assert all(x.endswith("/outside/ws") for x in seen)  # only the refused no-follow open of the project path itself
+    assert want["files"]
     s.close()

@@ -130,7 +130,7 @@ def test_lock_busy_after_the_append_keeps_the_intent_and_a_retry_finishes_it(lab
             assert held
             # the genesis landed: never a refusal (H3b3 F1), the client asks again with the same idem
             assert err(c.call("host.bootstrap", args, idem=idem)) == "outcome.unknown"
-        assert (root / "events" / "workspace.jsonl").is_file()  # the genesis landed and stays
+        assert (root / ".orch" / "events" / "workspace.jsonl").is_file()  # the genesis landed and stays
         assert ok(c.call("host.outcome", {"idem": idem}))["data"] == {"state": "pending"}
         result = ok(c.call("host.bootstrap", args, idem=idem))  # the same key finishes it
         assert result["data"] == {"workspace_id": wid, "seq": 1}
@@ -163,7 +163,7 @@ def test_a_landed_genesis_that_cannot_be_finished_at_start_stays_started_and_is_
         with lab.host(lock_wait=0.2) as h, h.client() as c:
             assert h.host.recovered == [("host.bootstrap", "started")]
             assert ok(c.call("host.outcome", {"idem": idem}))["data"] == {"state": "pending"}
-    assert (root / "events" / "workspace.jsonl").is_file()
+    assert (root / ".orch" / "events" / "workspace.jsonl").is_file()
     assert (lab.state / "hosts" / wid / "keys").is_dir()
     with lab.host() as h, h.client() as c:
         assert h.host.recovered == [("host.bootstrap", "committed")]

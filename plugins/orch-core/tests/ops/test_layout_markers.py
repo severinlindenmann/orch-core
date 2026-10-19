@@ -123,7 +123,7 @@ def test_store_open_creates_dot_orch_only_with_create_and_records_what_it_made(t
     s = Store.open(p, expected_workspace_id="w" * 32, create=True)
     try:
         st = os.stat(p / ".orch")
-        assert s.created_store == (st.st_dev, st.st_ino) and not s.layout.legacy
+        assert s.created_store == (st.st_dev, st.st_ino)
         assert stat.S_IMODE(st.st_mode) == 0o700
     finally:
         s.close()

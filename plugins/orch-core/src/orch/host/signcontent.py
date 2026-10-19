@@ -80,6 +80,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "question.answered": frozenset({"question", "option", "text"}),
     "question.asked": frozenset({"qid", "question"}),
     "settings.changed": frozenset({"set"}),
+    "task.done": frozenset({"task", "receipt", "log", "text"}),
     "ticket.closed": frozenset({"resolution", "duplicate_of", "text"}),
     "ticket.created": frozenset({"key", "ticket_type", "title", "owner"}),
     "ticket.moved": frozenset({"from", "to", "reason"}),
@@ -683,6 +684,23 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         _payload(material, events, ticket, out, ctx, op=prepared.get("op"))
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
+    if prepared.get("op") in ("ac.accept", "ac.unaccept"):
+        from . import acceptance
+
+        statement = material.get("statement")
+        parsed = acceptance.parse(statement)
+        if parsed is None or len(events) != 1 or not acceptance.matches(events[0], statement):
+            raise PlainUnavailable("manual acceptance has no checked statement")
+        ac = one(parsed["ac"])
+        out["headline"] = (
+            f"Accept {ac} of {_ref(ticket)} manually"
+            if parsed["kind"] == "accept"
+            else f"Withdraw the acceptance of {ac} of {_ref(ticket)}"
+        )
+        out["sections"] = [{"id": "statement", "title": "Statement", "text": statement}]
+        out["notes"] = (
+            ["No automated check backs this: you vouch for it yourself."] if parsed["kind"] == "accept" else []
+        )
     done = {k: v for k, v in out.items() if v not in (None, [], "")}
     creates = any(ev.get("type") == "ticket.created" for ev in events)
     if creates:
@@ -1120,6 +1138,13 @@ def _event(
     if typ == "role.changed":
         _row(out, "person", ev.get("person"))
         return f"Make {_s(ev.get('person'))} {_s(ev.get('role'))}"
+    if typ == "task.done":
+        for key in ("task", "receipt", "log", "text"):
+            if key in ev:
+                _row(out, key, ev[key])
+        if "receipt" not in ev:
+            out.setdefault("notes", []).append("No receipt: marking this task done proves no criterion.")
+        return f"Mark task {_s(ev.get('task'))} of {ref} done"
     if typ in ("artifact.added", "artifact.replaced"):
         for k in ("kind", "label", "ref", "addon", "ac", "task", "replaces"):
             if ev.get(k) is not None:

@@ -6,11 +6,13 @@ session that held its lease, or took it implicitly by finishing it. Evidence is 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from orch.canon import ARTIFACT_KINDS
 
 from . import addon_rules, claims, gates, generations, source
+from .accept import criterion_hash, parse_label
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -96,7 +98,11 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
     """Per acceptance criterion, its evidence (§6): a file artifact from a person or a granted agent naming it in
     ``ac``, or a done task that ``proves`` it with an exit-0 receipt at the current source ``sha`` of its repo."""
     out: dict[str, list[str]] = {a["id"]: [] for a in t.fields["acceptance"]}
+    texts = {a["id"]: a["text"] for a in t.fields["acceptance"]}
     for name, art in sorted(t.artifacts.items()):
+        if art.kind == "feedback" and (art.label or "").startswith("accepted "):
+            if art.ac not in texts or parse_label(art.label) != (art.ac, criterion_hash(art.ac, texts[art.ac])):
+                continue
         if art.evidence_ok and art.ac in out:
             out[art.ac].append(f"artifact:{name}")
     for task in t.fields["tasks"]:
@@ -110,6 +116,29 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
             if ac in out:
                 out[ac].append(f"task:{task['id']}")
     return out
+
+
+def acceptance_state(t: TCore, ac_id: str) -> str | None:
+    """Current person feedback only; malformed labels never claim acceptance."""
+    ac = next((a for a in t.fields["acceptance"] if a["id"] == ac_id), None)
+    if ac is None:
+        return None
+    state = None
+    for art in t.artifacts.values():
+        parsed = parse_label(art.label)
+        if (
+            art.kind != "feedback"
+            or re.fullmatch(r"p_[0-9a-f]{32}", art.by) is None
+            or not art.evidence_ok
+            or art.ac != ac_id
+        ):
+            continue
+        if parsed is None or parsed[0] != ac_id:
+            continue
+        if parsed[1] == criterion_hash(ac_id, ac["text"]):
+            return "accepted"
+        state = "stale"
+    return state
 
 
 # --- artifacts --------------------------------------------------------------------------------------------------

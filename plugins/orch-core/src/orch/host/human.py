@@ -686,6 +686,8 @@ class HumanOps:
             question = next((thaw(q) for q in view.fields["questions"] if q["id"] == qid), None)
             return {"kind": "question", "ticket": ticket, "question": question}
         material: dict[str, Any] = {"kind": "payload", "ticket": ticket}
+        if capture.statement is not None:
+            material["statement"] = capture.statement
         texts: dict[str, str] = {}
         for ev, extra in zip(events, extras, strict=True):
             sections = ev.get("sections")

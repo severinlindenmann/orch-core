@@ -262,6 +262,35 @@ def _receipt_counts(x: _Ticket, task_id: str) -> bool:
     return repo is None or (commit is not None and commit == model_source.repo_sha(x.t, repo))
 
 
+def _manual_acceptance(x: _Ticket, ac_id: str, text: str) -> dict[str, Any]:
+    from orch.host.acceptance import artifact_statement
+    from orch.model.accept import criterion_hash, parse_label
+
+    stale = False
+    for art in sorted(x.t.artifacts.values(), key=lambda a: a.event, reverse=True):
+        if art.ac != ac_id or art.kind != "feedback" or parse_label(art.label) is None:
+            continue
+        path = x.ctx.store.root / "tickets" / x.view.uid / "artifacts" / art.name
+        try:
+            data = x.ctx.service.capabilities().files.read_bytes(path)
+        except OSError:
+            continue
+        statement = artifact_statement(art, data)
+        if statement is None:
+            continue
+        if statement["hash"] != criterion_hash(ac_id, text):
+            stale = True
+            continue
+        event = x.by_id.get(art.event)
+        if event is None or event.get("actor", {}).get("kind") != "person":
+            continue
+        accepted = {"by": art.by, "at": event["at"], "note": statement["note"], "statement_ok": True}
+        if "auth" in event:
+            accepted["auth"] = event["auth"]
+        return {"proof": "accepted", "accepted": accepted}
+    return {"accepted_stale": True} if stale else {}
+
+
 def _criteria(x: _Ticket) -> list[dict[str, Any]]:
     manifest = model_tasks.ac_evidence(x.ws, x.t)
     out = []
@@ -279,12 +308,27 @@ def _criteria(x: _Ticket) -> list[dict[str, Any]]:
                         "attested_by": _attested_by(x.by_id.get(art.event)),
                     }
                 )
+        proof = (
+            "proven"
+            if any(
+                ref.startswith("task:") or (ref.startswith("artifact:") and x.t.artifacts[ref[9:]].kind == "receipt")
+                for ref in manifest.get(a.id, [])
+            )
+            else "asserted"
+            if manifest.get(a.id)
+            else "pending"
+        )
+        manual = _manual_acceptance(x, a.id, a.text)
+        if proof == "proven":  # a receipt is the stronger proof: the manual acceptance does not replace its state
+            manual.pop("proof", None)
         out.append(
             {
                 "id": a.id,
                 "text": a.text,
                 "evidence": evidence,
                 "covered": bool(manifest.get(a.id)),
+                "proof": proof,
+                **manual,
                 "tasks": [
                     {"id": tk.id, "evidence": f"task:{tk.id}" in manifest.get(a.id, [])}
                     for tk in x.view.tasks

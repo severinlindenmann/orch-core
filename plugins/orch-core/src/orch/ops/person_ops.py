@@ -398,8 +398,162 @@ PUBLISH_SHARE = operation(
     errors=(err("role.denied"), err("not_found")),
     handler=handle_publish_share,
 )
+
+
+def _manageable(h: Human, view: Any) -> Any:
+    core = h.store.state._core
+    t = core.tickets[view.uid]
+    member = core.ws.members.get(h.person)
+    if (
+        member is None
+        or member.role == "viewer"
+        or not (claims.may_manage(core.ws, t, h.person) or h.person in t.people["reviewers"])
+    ):
+        raise OrchError("role.denied", "only the ticket owner, reviewers, workspace owners and maintainers may do this")
+    if view.status not in ("open", "in_progress", "testing"):
+        raise OrchError("transition.refused", "the ticket is not open for work")
+    return t
+
+
+def handle_acceptance(ctx: Context, args: dict[str, Any], *, withdraw: bool = False) -> Result:
+    from orch.host import acceptance
+    from orch.model.accept import criterion_hash, label, parse_label, withdraw_label
+    from orch.ops.plans import artifact_event
+
+    op = "ac.unaccept" if withdraw else "ac.accept"
+    h = _Human(ctx, op)
+    with h.store.locked():
+        view = h.ticket(args["ref"])
+        t = _manageable(h, view)
+        ac_id = args["ac"]
+        ac = next((a for a in t.fields["acceptance"] if a["id"] == ac_id), None)
+        if ac is None:
+            raise OrchError("not_found", "no such acceptance criterion")
+        accepted = [
+            a
+            for a in t.artifacts.values()
+            if a.kind == "feedback"
+            and a.by.startswith("p_")
+            and a.ac == ac_id
+            and a.evidence_ok
+            and (p := parse_label(a.label)) is not None
+            and p[0] == ac_id
+            and acceptance.NAME.fullmatch(a.name)
+        ]
+        current = [a for a in accepted if parse_label(a.label) == (ac_id, criterion_hash(ac_id, ac["text"]))]
+        if not withdraw and current:
+            raise OrchError("invalid.input", "this criterion already has a current manual acceptance")
+        if withdraw and not accepted:
+            raise OrchError("not_found", "this criterion has no manual acceptance to withdraw")
+        try:
+            statement = (
+                acceptance.build_withdraw(ac_id, ac["text"], args["reason"])
+                if withdraw
+                else acceptance.build_accept(ac_id, ac["text"], args.get("note"))
+            )
+            k = 1
+            while acceptance.artifact_name(ac_id, k) in t.artifacts:
+                k += 1
+            old = sorted(current or accepted, key=lambda a: a.event)[-1] if withdraw else None
+            name = old.name if old else acceptance.artifact_name(ac_id, k)
+        except ValueError as exc:
+            raise OrchError("invalid.input", str(exc)) from None
+        event, files = artifact_event(
+            h.call,
+            name,
+            statement.encode("utf-8"),
+            "feedback",
+            label=withdraw_label(ac_id) if withdraw else label(ac_id, ac["text"]),
+        )
+        if old is not None:
+            event.update(type="artifact.replaced", replaces=old.digest)
+        else:
+            event["ac"] = ac_id
+        if ctx.prepare is not None:
+            ctx.prepare.statement = statement
+        done = h.run(event, view.uid, op, review=h.header(view, statement), artifacts=files)
+        return h.ticket_result(view, done, {"ac": ac_id, "name": name}, "orch show")
+
+
+def handle_unaccept(ctx: Context, args: dict[str, Any]) -> Result:
+    return handle_acceptance(ctx, args, withdraw=True)
+
+
+def handle_mark_done(ctx: Context, args: dict[str, Any]) -> Result:
+    h = _Human(ctx, "task.mark_done")
+    with h.store.locked():
+        view = h.ticket(args["ref"])
+        _manageable(h, view)
+        done = h.run(
+            {"type": "task.done", "task": args["task"]},
+            view.uid,
+            f"mark {args['task']} done without a receipt",
+            review=h.header(view),
+        )
+        return h.ticket_result(view, done, {"task": args["task"]}, "orch show")
+
+
+AC_ACCEPT = operation(
+    "ac.accept",
+    "Human only",
+    "Accept a criterion manually, bound to its current wording.",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "ac": S("criterion", pattern=r"^AC[1-9][0-9]*$"),
+        "note": S("note", minLength=1, maxLength=1000),
+    },
+    required=("ref", "ac"),
+    emits=("artifact.added",),
+    text="ok {key} accepted {ac} seq={seq}\nnext: {next}",
+    data=obj({"ac": STR, "name": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_acceptance,
+)
+AC_UNACCEPT = operation(
+    "ac.unaccept",
+    "Human only",
+    "Withdraw a manual acceptance, including an earlier wording.",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "ac": S("criterion", pattern=r"^AC[1-9][0-9]*$"),
+        "reason": S("reason", minLength=1, maxLength=1000),
+    },
+    required=("ref", "ac", "reason"),
+    emits=("artifact.replaced",),
+    text="ok {key} withdrew {ac} seq={seq}\nnext: {next}",
+    data=obj({"ac": STR, "name": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_unaccept,
+)
+TASK_MARK_DONE = operation(
+    "task.mark_done",
+    "Human only",
+    "Mark a task done without a receipt or criterion evidence.",
+    who="human",
+    props={"ref": REF("ticket REF"), "task": S("task", pattern=r"^T[1-9][0-9]*$")},
+    required=("ref", "task"),
+    emits=("task.done",),
+    text="ok {key} task.done {task} seq={seq}\nnext: {next}",
+    data=obj({"task": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_mark_done,
+)
+
 OPS: dict[str, Operation] = {
-    op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE, PUBLISH_SHARE)
+    op.name: op
+    for op in (
+        MOVE,
+        POLICY_SET,
+        SETTINGS_SET,
+        PEOPLE_SET,
+        PAIR_DEVICE,
+        PUBLISH_SHARE,
+        AC_ACCEPT,
+        AC_UNACCEPT,
+        TASK_MARK_DONE,
+    )
 }
 
 

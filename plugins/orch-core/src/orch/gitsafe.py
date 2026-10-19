@@ -115,6 +115,8 @@ import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from orch.gitread.refs import branch_ok as _branch_ok  # #561's validator, moved to gitread by #565
+
 __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "NEUTRAL", "OPS", "PINNED",
     "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env", "local_config",
@@ -391,8 +393,14 @@ class Op:
         return tuple(m for a in self.args for m in _SLOT.findall(a))
 
 
-_SLOT = re.compile(r"<(path)>")
+_SLOT = re.compile(r"<(rev|path|context)>")
 
+#: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
+#: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
+_DIFF_FIXED = (
+    "--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty", "-O/dev/null",
+    "--diff-algorithm=default",  # beats even a driver's own algorithm, which -c diff.algorithm does not (R7-L1)
+)  # fmt: skip
 #: Every diff operation also gets these command-scope values (command scope beats the repo's own config), so a
 #: ``diff.*`` key cannot run a program or change the output orch parses (the gate tolerates only
 #: :data:`DIFF_TOLERATED`; pinning more costs nothing). Each named key of
@@ -449,10 +457,23 @@ OPS: dict[str, Op] = {
 }  # fmt: skip
 
 
+#: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
+#: :func:`_branch_ok` (git's own ref rules, Unicode allowed). No operation of :data:`OPS` takes one since #565;
+#: :mod:`orch.gitbrowse` (the explorer's own closed operation table) still does.
+_REV = re.compile(r"HEAD|[0-9a-f]{40}|[0-9a-f]{64}|refs/heads/(?P<name>.+)", re.DOTALL)
+
+
 def _check(kind: str, value: object) -> str:
     if not isinstance(value, str) or not value or "\0" in value or "\n" in value:
         raise Unsafe("invalid git operand")
-    if kind != "path" or value.startswith("/") or len(value) > 4096 or ".." in value.split("/"):  # below -C <repo>
+    if kind == "rev":
+        m = _REV.fullmatch(value)
+        if m is None or (m.group("name") is not None and not _branch_ok(m.group("name"))):
+            raise Unsafe("invalid revision")
+    elif kind == "context":
+        if not re.fullmatch(r"[0-9]|10", value):
+            raise Unsafe("invalid context")
+    elif value.startswith("/") or len(value) > 4096 or ".." in value.split("/"):  # relative to -C <repo>, below it
         raise Unsafe("invalid path")
     return value
 
@@ -656,6 +677,16 @@ def diff_tolerated(key: str) -> bool:
     if section != "diff" or sub == "":  # driver "" (selected by an empty ``diff=`` attribute): refused (R7-L1)
         return False
     return name in (DIFF_TOLERATED if sub is None else DIFF_DRIVER_TOLERATED)
+
+
+_HUNK = re.compile(r"(?m)^(@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@).*$")
+
+
+def plain_hunk_headers(patch: str) -> str:
+    """``patch`` with the function context after each hunk header's second ``@@`` removed: a repository's
+    ``diff.<driver>.xfuncname``/``funcname`` choose that text, and a person reviewing the diff must not read it as
+    orch's. Only hunk headers start with ``@@`` (content lines start with `` ``, ``+``, ``-`` or ``\\``)."""
+    return _HUNK.sub(r"\1", patch)
 
 
 def gate(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECONDS) -> list[tuple[str, str, str]]:

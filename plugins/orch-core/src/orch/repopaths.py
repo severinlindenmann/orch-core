@@ -135,7 +135,7 @@ def _gitdir(work: str) -> str | None:
 def observe(layout: Layout, declared_path: str) -> dict[str, Any]:
     """``{"state": present|missing|not_git|unreadable, "branch": str | None}`` for one declared path (joined lexically
     to the project folder as every host-mode read does). Read-only."""
-    from orch.gitsafe import _branch_ok
+    from orch.gitread.refs import branch_ok as _branch_ok
 
     work = os.path.normpath(os.path.join(os.fspath(layout.project), declared_path))
     try:

@@ -4488,7 +4488,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     for the rest), `gate.stale` as retry class `C-review`, the push kind `ticket.update` (a generic wake with the hint's id, no ticket text).
     No F1, hash or error-code change; the model judges the phone's decision as any person event (device validity and
     generation at the append).
-63. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
+76. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
     be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the caller
     spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file)
     could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through

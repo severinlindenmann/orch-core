@@ -66,7 +66,7 @@ def _mine(r) -> set[str]:
 
 
 @pytest.mark.parametrize("pattern,files", CASES, ids=[c[0] for c in CASES])
-def test_an_ignore_pattern_ignores_exactly_what_git_ignores(make_repo, sure_ignores, pattern, files):
+def test_an_ignore_pattern_ignores_exactly_what_git_ignores(make_repo, pattern, files):
     r = make_repo()
     r.git("config", "core.ignoreCase", "false")  # git matches case-sensitively; the policy can be sure (round 3)
     r.write("d/keep.txt", "k\n")
@@ -79,9 +79,6 @@ def test_an_ignore_pattern_ignores_exactly_what_git_ignores(make_repo, sure_igno
     mine = _mine(r)
     assert time.monotonic() - started < 2  # no backtracking: the "*a*a*...*ab" line took 21 s before (M1)
     theirs = _status(r)
-    if "\\" in pattern[1:]:  # a backslash the parity corpus does not prove: the policy drops the file (round 3)
-        assert theirs <= mine and mine == theirs | {f for f in files}, (pattern, sorted(mine), sorted(theirs))
-        return
     assert mine == theirs, (pattern, sorted(mine), sorted(theirs))
 
 
@@ -92,7 +89,7 @@ def test_the_matcher_is_linear_on_the_old_redos_line():
     assert time.monotonic() - started < 2
 
 
-def test_a_tree_check_past_its_budget_is_unknown_never_clean(make_repo, monkeypatch, sure_ignores):
+def test_a_tree_check_past_its_budget_is_unknown_never_clean(make_repo, monkeypatch):
     """M1 / L5: direct mode has no child wall clock; the reader's own budget ends a long check as unknown."""
     r = make_repo()
     r.git("config", "core.ignorecase", "false")
@@ -135,7 +132,7 @@ PERSON = [
 
 
 @pytest.mark.parametrize("label,gitconfig,xdg,files,want", PERSON, ids=[p[0] for p in PERSON])
-def test_the_persons_ignore_never_hides_what_git_shows(make_repo, sure_ignores, label, gitconfig, xdg, files, want):
+def test_the_persons_ignore_never_hides_what_git_shows(make_repo, label, gitconfig, xdg, files, want):
     """M2: git follows includes and treats an empty value as "no file"; the reader cannot follow includes, so it
     ignores nothing then. It may be dirtier than git, never cleaner."""
     r = make_repo()

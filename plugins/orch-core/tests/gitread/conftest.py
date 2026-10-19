@@ -92,16 +92,13 @@ def git_version() -> tuple[int, ...]:
     return tuple(int("".join(ch for ch in n if ch.isdigit()) or 0) for n in nums[:3])
 
 
-@pytest.fixture
-def sure_ignores(monkeypatch):
-    """For tests of ignore MATCHING against git (#583 round 3): the policy's file-system probe answers
-    "case-sensitive", as on Linux. Each such test also sets ``core.ignorecase=false`` in its repository, so git matches
-    case-sensitively too and the two are compared on equal terms. The real probe and the "none applies" outcomes are
-    tested in ``test_ignore_policy.py``."""
-    from orch.gitread import ignorepolicy
-
-    monkeypatch.setattr(ignorepolicy, "_case_insensitive", lambda worktree: False)
-
-
 def case_sensitive(r) -> None:
     r.git("config", "core.ignorecase", "false")
+
+
+def untracked_by_git(r) -> set[str]:
+    """Every path plain git lists as untracked or changed (``status --untracked-files=all``)."""
+    out = subprocess.run([GIT, "--no-optional-locks", "-C", str(r.path), "status", "--porcelain=v1", "-z",
+                          "--untracked-files=all"], capture_output=True, env=r.env, check=True,
+                         stdin=subprocess.DEVNULL).stdout  # fmt: skip
+    return {e[3:].decode() for e in out.split(b"\0") if e}

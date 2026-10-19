@@ -58,8 +58,8 @@ def test_a_clean_tree_is_clean_and_every_kind_of_change_is_seen(make_repo, fmt):
     os.unlink(r.path / "link")
     os.symlink("d", r.path / "link")
     got, more = changed(r)
-    # host mode's child cannot read the person's git config, so it applies no ignore rule (#583 round 3,
-    # orch.gitread.ignorepolicy): the ignored files count too, dirtier than git, never cleaner
+    # host mode applies the repository's own ignore rules (#583 round 3, decision B; orch.gitread.ignorepolicy), with
+    # the repository's core.ignorecase: the ignored files do not count, as in git
     assert (
         got
         == {
@@ -68,13 +68,11 @@ def test_a_clean_tree_is_clean_and_every_kind_of_change_is_seen(make_repo, fmt):
             "x.sh": "modified",
             "new.txt": "untracked",
             "keep.log": "untracked",
-            "debug.log": "untracked",
-            "build/out/o.bin": "untracked",
             "link": "modified",
         }
         and not more
     )
-    assert set(got) - git_status(r) == {"debug.log", "build/out/o.bin"}
+    assert set(got) == git_status(r)
 
 
 def test_staged_changes_count_even_when_the_worktree_matches_the_index(make_repo):
@@ -118,8 +116,8 @@ def test_a_fifo_at_a_tracked_path_is_a_type_change_and_never_blocks(make_repo):
     assert got == {"a.txt": "type", "untracked-fifo": "untracked"}
 
 
-def test_ignore_rules_follow_gitignore(make_repo, sure_ignores):
-    """Matching, where the policy is sure (direct mode, a case-sensitive file system, core.ignorecase false)."""
+def test_ignore_rules_follow_gitignore(make_repo):
+    """Matching as git does it, core.ignorecase false (case folding: test_ignore_casefold.py)."""
     r = make_repo()
     case_sensitive(r)
     r.write("t.txt", "t\n")
@@ -539,8 +537,8 @@ def test_a_tracked_file_matching_an_ignore_pattern_is_still_compared(make_repo):
     r.write("build/tracked.txt", "edited\n")
     r.write("traced.log", "edited\n")
     r.write("build/untracked.txt", "ignored\n")
-    # host mode applies no ignore rule (#583 round 3): the ignored untracked file counts too, the tracked ones compare
-    want = {"build/tracked.txt": "modified", "traced.log": "modified", "build/untracked.txt": "untracked"}
+    # the ignored untracked file does not count (as in git), the tracked ones compare whatever the rules say
+    want = {"build/tracked.txt": "modified", "traced.log": "modified"}
     assert changed(r)[0] == want
 
 

@@ -1,6 +1,7 @@
-"""#583 round 3 (orch-07, structural): *removal never depends on ignore rules; ignore rules apply only when gitread is
-sure it matches git, otherwise none.* :mod:`orch.gitread.ignorepolicy` is the one place that decides; these tests pin
-its decisions, its bounds, and that no other code applies a pattern.
+"""#583 round 3 (orch-07, structural; owner decision B of 19 Oct 2026): *removal never depends on ignore rules; a status
+check applies a rule only as git would, and where it cannot tell which way git matches it applies the rule only if git
+would in either case.* :mod:`orch.gitread.ignorepolicy` is the one place that decides; these tests pin its decisions,
+its bounds, and that no other code applies a pattern. The case-folding itself is in ``test_ignore_casefold.py``.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from orch.gitread.local import READER, person_ignore
 from .conftest import case_sensitive
 
 SRC = Path(ignorepolicy.__file__).parents[1]
+USES = re.compile(r"\bcompile_glob\b|\bparse_ignore\b|ignorepolicy\._parse|\bIgnores\(|[\"']info/exclude[\"']")
 
 
 def test_no_other_code_parses_or_applies_an_ignore_pattern():
@@ -32,7 +34,7 @@ def test_no_other_code_parses_or_applies_an_ignore_pattern():
         if p in allowed:
             continue
         text = p.read_text()
-        if re.search(r"\bcompile_glob\b|\bparse_ignore\b|ignorepolicy\._parse|\bIgnores\(|[\"']info/exclude[\"']", text):
+        if USES.search(text):
             offenders.append(str(p.relative_to(SRC)))
     assert offenders == []
 
@@ -41,63 +43,25 @@ def _paths(raw) -> set[str]:
     return {base64.b64decode(c["path_b64"]).decode() for c in raw["changed"]}
 
 
-def test_the_file_system_probe_is_the_real_one(make_repo, tmp_path):
+def test_the_file_system_does_not_decide_core_ignorecase_does(make_repo, tmp_path):
+    """Decision B: whether the volume folds case is not what git goes by; ``core.ignorecase`` is. With it false (set
+    here whatever the volume), ``*.log`` ignores ``x.log`` and a ``!X.LOG`` negation does not apply, exactly as git."""
     r = make_repo()
-    (tmp_path / "probe").write_text("x")
-    folds = (tmp_path / "PROBE").exists()
-    from orch.gitread.fs import open_walk
-
-    d, _ = open_walk(os.path.realpath(r.path))
-    try:
-        assert ignorepolicy._case_insensitive(d) is folds
-    finally:
-        d.close()
-    r.write(".gitignore", "*.log\n")
+    r.write(".gitignore", "*.log\n!X.LOG\n")
     r.commit()
     r.git("config", "core.ignorecase", "false")
     r.write("x.log", "x\n")
-    got = READER.tree_check(r.path, r.env)
-    assert ("x.log" in _paths(got)) is folds  # a case-insensitive file system: no rule applies (dirtier)
-
-
-def test_the_probes_keep_log_case_is_shown(make_repo, sure_ignores):
-    """Opus delta M1: info/exclude ``*.log`` / ``!Keep.log`` with git's default ``ignorecase=true`` hides keep.log in
-    a case-sensitive match while git shows it; the policy applies no rule then."""
-    r = make_repo()
-    r.write("t", "t\n")
-    r.commit()
+    assert "x.log" not in _paths(READER.tree_check(r.path, r.env))
     r.git("config", "core.ignorecase", "true")
-    (r.gitdir / "info").mkdir(exist_ok=True)
-    (r.gitdir / "info" / "exclude").write_text("*.log\n!Keep.log\n")
-    r.write("keep.log", "mine\n")
-    r.write("other.log", "x\n")
-    got = READER.tree_check(r.path, r.env)
-    assert {"keep.log", "other.log"} <= _paths(got) and got["ignore_rules"].startswith("none")
+    assert "x.log" in _paths(READER.tree_check(r.path, r.env))  # git folds: the negation re-includes it
 
 
-@pytest.mark.parametrize("content", [b"\xef\xbb\xbf!keep.log\n", b"!keep.log\na\\ \n", b"!keep.log\n\xc3\xa9*\n",
-                                     b"!keep.log\nx\\y\n", b"!keep.log\n\x01\n"])  # fmt: skip
-def test_an_unsure_gitignore_drops_itself_and_every_lower_source(make_repo, sure_ignores, content):
-    """A BOM, an unproven backslash, non-ASCII or a control byte: the file is not certain. Dropping it alone would
-    drop its negation and let info/exclude hide keep.log (cleaner than git); everything lower goes with it."""
-    r = make_repo()
-    case_sensitive(r)
-    r.write("t", "t\n")
-    r.commit()
-    (r.gitdir / "info").mkdir(exist_ok=True)
-    (r.gitdir / "info" / "exclude").write_text("*.log\n")
-    (r.path / ".gitignore").write_bytes(content)
-    r.write("keep.log", "mine\n")
-    r.write("other.log", "x\n")
-    assert {"keep.log", "other.log", ".gitignore"} <= _paths(READER.tree_check(r.path, r.env))
-
-
-def test_a_sure_gitignore_below_an_unsure_one_still_applies(make_repo, sure_ignores):
+def test_a_sure_gitignore_below_an_unsure_one_still_applies(make_repo):
     r = make_repo()
     case_sensitive(r)
     r.write("d/t", "t\n")
     r.commit()
-    (r.path / ".gitignore").write_bytes(b"\xef\xbb\xbf*.tmp\n")  # unsure: dropped (only dirtier)
+    (r.path / ".gitignore").write_bytes(b"*.tmp\n!\xc3\xa9\n")  # a non-ASCII negation: unsure, dropped (only dirtier)
     r.write("d/.gitignore", "*.o\n")
     r.write("d/a.o", "x\n")
     r.write("d/b.tmp", "x\n")
@@ -105,7 +69,7 @@ def test_a_sure_gitignore_below_an_unsure_one_still_applies(make_repo, sure_igno
     assert "d/b.tmp" in got and "d/a.o" not in got
 
 
-def test_a_repository_core_excludesfile_drops_the_persons_file(make_repo, sure_ignores):
+def test_a_repository_core_excludesfile_drops_the_persons_file(make_repo):
     """Opus delta L1: git's excludesFile is then the repository's; the person's (lowest) is dropped, never guessed."""
     r = make_repo()
     case_sensitive(r)
@@ -134,13 +98,19 @@ def test_the_persons_environment_is_known_only_in_the_plain_cases(tmp_path, extr
     assert person_ignore(env).known is known
 
 
-def test_ignorecase_in_the_persons_config_means_no_rule(tmp_path):
+def test_ignorecase_in_the_persons_config_is_read_with_its_last_value(tmp_path):
+    env = {"HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"}
+    assert person_ignore(env).ignorecase is None  # set nowhere: git's default is the policy's to apply
     (tmp_path / ".gitconfig").write_text("[core]\n\tignorecase = true\n")
-    got = person_ignore({"HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"})
-    assert got.known and got.ignorecase
+    got = person_ignore(env)
+    assert got.known and got.ignorecase is True
+    (tmp_path / ".gitconfig").write_text("[core]\n\tignorecase = true\n\tignorecase = no\n")
+    assert person_ignore(env).ignorecase is False
+    (tmp_path / ".gitconfig").write_text("[core]\n\tignorecase = perhaps\n")
+    assert not person_ignore(env).known  # git would die on it: not certain
 
 
-def test_hard_linked_large_gitignores_end_quickly_as_unknown(make_repo, sure_ignores):
+def test_hard_linked_large_gitignores_end_quickly_as_unknown(make_repo):
     """Opus delta M2: 8 untracked directories, each with the same 1 MiB .gitignore as a hard link. git: 0.04 s; the
     reader took 67 s. The ignore bytes of one check are capped at BYTES_MAX: unknown at once."""
     r = make_repo()
@@ -159,7 +129,7 @@ def test_hard_linked_large_gitignores_end_quickly_as_unknown(make_repo, sure_ign
     assert time.monotonic() - started < 2
 
 
-def test_a_class_heavy_gitignore_under_the_cap_compiles_in_linear_time(make_repo, sure_ignores):
+def test_a_class_heavy_gitignore_under_the_cap_compiles_in_linear_time(make_repo):
     r = make_repo()
     case_sensitive(r)
     r.write("t", "t\n")

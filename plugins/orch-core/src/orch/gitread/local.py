@@ -24,7 +24,7 @@ from typing import Any
 
 from . import ops
 from .errors import Unavailable
-from .ignorepolicy import IgnorePolicy, PersonIgnore
+from .ignorepolicy import IgnorePolicy, PersonIgnore, git_bool
 from .pinning import pin_repo
 from .repo import Repo
 
@@ -117,10 +117,6 @@ class _Unsure(Exception):
     """The person's configuration cannot be read with certainty."""
 
 
-_FALSE = {"false", "no", "off", "0"}
-_TRUE = {"true", "yes", "on", "1"}
-
-
 def _read_person_config(path: str, facts: dict[str, Any]) -> None:
     """One config file git reads for the person: ``core.excludesFile`` (last value; ``""`` when set empty) and
     ``core.ignorecase`` into ``facts``. Raises :class:`_Unsure` when the file exists but cannot be read or parsed,
@@ -143,10 +139,10 @@ def _read_person_config(path: str, facts: dict[str, Any]) -> None:
         if section == "core" and sub is None and key == "excludesfile":
             facts["excludes"] = v if v is not None else ""
         if section == "core" and sub is None and key == "ignorecase":
-            val = "true" if v is None else v.strip().lower()
-            if val not in _TRUE | _FALSE:
-                raise _Unsure(f"{path} sets core.ignorecase to a value that is not a plain boolean")
-            facts["ignorecase"] = val in _TRUE
+            got = git_bool(v)
+            if got is None:
+                raise _Unsure(f"{path} sets core.ignorecase to a value that is not a boolean")
+            facts["ignorecase"] = got
 
 
 def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
@@ -154,13 +150,14 @@ def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
     (#583 round 3, B; the decision itself is :class:`orch.gitread.ignorepolicy.IgnorePolicy`'s).
 
     git reads the system file (unless ``GIT_CONFIG_NOSYSTEM``), then ``$XDG_CONFIG_HOME/git/config`` and
-    ``~/.gitconfig`` (or ``$GIT_CONFIG_GLOBAL``), the last value winning, includes followed. **Not known** (no ignore
-    rule applies at all) when: ``HOME`` or ``XDG_CONFIG_HOME`` is not absolute; the environment passes configuration
-    or points elsewhere (any ``GIT_CONFIG_*`` but ``GIT_CONFIG_GLOBAL``, and ``GIT_CONFIG_NOSYSTEM`` unless exactly
-    ``1``); any of those files exists but cannot be read or parsed, or has an include. ``ignorecase``: any of them
-    sets ``core.ignorecase`` true. ``excludes``: the file git uses as ``core.excludesFile`` (its default
-    ``$XDG_CONFIG_HOME/git/ignore`` only when none is set), ``None`` when none, empty, relative or unreadable (the
-    lowest source: dropping it is only ever dirtier). Residual: a system config at a build prefix not in
+    ``~/.gitconfig`` (or ``$GIT_CONFIG_GLOBAL``), the last value winning, includes followed. **Not known** (the policy
+    then matches in both case modes and does not read the person's ignore file) when: ``HOME`` or ``XDG_CONFIG_HOME``
+    is not absolute; the environment passes configuration or points elsewhere (any ``GIT_CONFIG_*`` but
+    ``GIT_CONFIG_GLOBAL``, and ``GIT_CONFIG_NOSYSTEM`` unless exactly ``1``); any of those files exists but cannot be
+    read or parsed, or has an include. ``ignorecase``: the last ``core.ignorecase`` any of them sets (``None``: none
+    does). ``excludes``: the file git uses as ``core.excludesFile`` (its default ``$XDG_CONFIG_HOME/git/ignore`` only
+    when none is set), ``None`` when none, empty, relative or unreadable (the lowest source: dropping it is only ever
+    dirtier). Residual: a system config at a build prefix not in
     :data:`SYSTEM_CONFIGS`."""
     home = env.get("HOME") or ""
     if not home.startswith("/"):
@@ -178,7 +175,7 @@ def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
     files: list[str] = [] if nosystem == "1" else list(SYSTEM_CONFIGS)
     glob_ = env.get("GIT_CONFIG_GLOBAL")
     files += [glob_] if glob_ else [os.path.join(xdg, "git", "config"), os.path.join(home, ".gitconfig")]
-    facts: dict[str, Any] = {"excludes": None, "ignorecase": False}
+    facts: dict[str, Any] = {"excludes": None, "ignorecase": None}
     try:
         for cfg in files:
             if cfg != os.devnull:
@@ -195,7 +192,7 @@ def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
     else:
         path = None  # empty (no global file), "~user/" or relative to git's working directory
     data = _read_small(path, EXCLUDES_MAX) if path is not None and os.path.lexists(path) else None
-    return PersonIgnore(True, bool(facts["ignorecase"]), data)
+    return PersonIgnore(True, facts["ignorecase"], data)
 
 
 #: the work one direct-mode tree check may take (the host's reader child has ``limits.WALL_SECONDS`` too)
@@ -287,7 +284,7 @@ class LocalGitReader:
                 if removal:
                     policy = IgnorePolicy.removal(budget)
                 else:
-                    policy = IgnorePolicy.status(repo, worktree, person, budget)
+                    policy = IgnorePolicy.status(repo, person, budget)
                 return treecheck.check(repo, worktree, detached_ok=True, policy=policy, budget=budget, removal=removal)
             finally:
                 worktree.close()

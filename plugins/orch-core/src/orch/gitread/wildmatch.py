@@ -11,6 +11,13 @@ The semantics are git's ``wildmatch`` with ``WM_PATHNAME``, as ``.gitignore`` us
   end of the pattern makes the pattern match nothing, as in git (``WM_ABORT_ALL``);
 * ``\\x`` is the literal byte ``x``.
 
+**Case folding (``core.ignorecase``, #583 round 3).** ``compile_glob(..., fold=True)`` is git's ``WM_CASEFOLD``
+exactly as ``dowild`` does it, quirks included: the path byte and an *unescaped* pattern literal are lower-cased
+(ASCII only, as git's ``tolower``); an escaped literal (``\\A``) and a set member (``[A]``) are **not**, so they never
+match a path letter; a range matches a lower-case path letter also by its upper-case form; ``[:upper:]`` and
+``[:lower:]`` match either case; ``[!a]`` excludes ``A``. ``tests/gitread/test_ignore_parity.py`` fuzzes this against
+``git check-ignore`` with ``core.ignorecase=true``.
+
 **How.** The pattern is compiled once into tokens and matched by a set-of-states simulation (Thompson's
 construction): every byte of the path advances all live states at once, so a match costs at most
 ``len(path) * len(tokens)`` steps, whatever the pattern. The regex translation this replaces backtracked: one
@@ -51,7 +58,7 @@ def _cc(name: bytes, c: int) -> bool | None:
     return tests.get(name)
 
 
-def _class(pat: bytes, i: int) -> tuple[bytes, int] | None:
+def _class(pat: bytes, i: int, fold: bool = False) -> tuple[bytes, int] | None:
     """The set starting at ``pat[i] == "["``, as git's ``dowild`` reads it: ``(256-byte table, index after "]")``, or
     ``None`` when git aborts (an unclosed set, a ``\\`` at the end, an unknown class)."""
     n = len(pat)
@@ -74,7 +81,7 @@ def _class(pat: bytes, i: int) -> tuple[bytes, int] | None:
             if p >= n:
                 return None
             ch = pat[p]
-            items.append(("r", ch, ch))
+            items.append(("m", ch, ch))
             prev = ch
         elif ch == 0x2D and prev and p + 1 < n and pat[p + 1] != 0x5D:  # "-": a range from prev
             p += 1
@@ -98,27 +105,40 @@ def _class(pat: bytes, i: int) -> tuple[bytes, int] | None:
                 p = end
                 prev = 0
             else:  # no ":]": "[" is an ordinary member, the scan goes on at ":"
-                items.append(("r", ch, ch))
+                items.append(("m", ch, ch))
                 prev = ch
         else:
-            items.append(("r", ch, ch))
+            items.append(("m", ch, ch))
             prev = ch
         p += 1
     # O(members + 256) (#583 round 3, Opus delta M2: the per-byte scan of every member was quadratic): each range is
-    # one slice, each POSIX class one precomputed table
+    # one slice, each POSIX class one precomputed table. ``hit[t]`` is dowild's answer for the (already folded) path
+    # byte ``t``; with ``fold`` the path byte is lower-cased first, members are not (git's quirks, see the module doc)
     hit = bytearray(256)
     for it in items:
-        if it[0] == "r":
+        if it[0] in ("r", "m"):
             lo, hi = it[1], it[2]  # type: ignore[misc]
             if lo <= hi:
                 hit[lo : hi + 1] = b"\x01" * (hi - lo + 1)
+                # only a real range (not a single member): a lower-case path letter also matches by its upper-case form
+                if fold and it[0] == "r":
+                    for t in range(0x61, 0x7B):
+                        if lo <= t - 0x20 <= hi:
+                            hit[t] = 1
         else:
             cls = _CLASSES[it[1]]  # type: ignore[index]
+            name = it[1]
             for c in range(256):
                 if cls[c]:
                     hit[c] = 1
-    table = bytes(1 if (bool(hit[c]) != negated and c != _SLASH) else 0 for c in range(256))
-    return table, p + 1
+            if fold and name in (b"upper", b"lower"):
+                for t in range(0x61, 0x7B):  # either case (the path byte is lower-case by now)
+                    hit[t] = 1
+    table = bytearray(256)
+    for c in range(256):
+        t = c + 0x20 if fold and 0x41 <= c <= 0x5A else c  # git lower-cases the path byte first
+        table[c] = 1 if (bool(hit[t]) != negated and c != _SLASH) else 0
+    return bytes(table), p + 1
 
 
 _CLASSES = {
@@ -153,10 +173,11 @@ class Budget:
 
 
 class Glob:
-    __slots__ = ("tokens",)
+    __slots__ = ("tokens", "fold")
 
-    def __init__(self, tokens: list[tuple[int, object]]) -> None:
+    def __init__(self, tokens: list[tuple[int, object]], fold: bool = False) -> None:
         self.tokens = tokens
+        self.fold = fold
 
     def _close(self, states: set[int]) -> set[int]:
         """Add every state reachable without consuming a byte (a star or ``**/`` may match nothing)."""
@@ -173,9 +194,12 @@ class Glob:
         toks = self.tokens
         n = len(toks)
         states = self._close({0})
+        fold = self.fold
         for c in path:
             if not states:
                 return False
+            if fold and 0x41 <= c <= 0x5A:
+                c += 0x20  # git lower-cases the path byte (ASCII), pattern literals were lowered at compile time
             if budget is not None:
                 budget.spend(len(states))
             nxt: set[int] = set()
@@ -210,9 +234,9 @@ class Glob:
         return n in states
 
 
-def compile_glob(pat: bytes, budget: Budget | None = None) -> Glob | None:
+def compile_glob(pat: bytes, budget: Budget | None = None, fold: bool = False) -> Glob | None:
     """The pattern (one ``.gitignore`` line, its ``!``, trailing ``/`` and leading ``/`` already removed) compiled,
-    or ``None`` when git's wildmatch would match nothing with it."""
+    or ``None`` when git's wildmatch would match nothing with it. ``fold``: ``WM_CASEFOLD`` (``core.ignorecase``)."""
     toks: list[tuple[int, object]] = []
     i, n = 0, len(pat)
     while i < n:
@@ -237,7 +261,7 @@ def compile_glob(pat: bytes, budget: Budget | None = None) -> Glob | None:
         elif c == 0x5B:  # "["
             if budget is not None:
                 budget.spend(256)  # a class costs its table (#583 round 3, C)
-            got = _class(pat, i)
+            got = _class(pat, i, fold)
             if got is None:
                 return None
             table, i = got
@@ -245,9 +269,9 @@ def compile_glob(pat: bytes, budget: Budget | None = None) -> Glob | None:
         elif c == 0x5C:  # "\"
             if i + 1 >= n:
                 return None
-            toks.append((_LIT, pat[i + 1]))
+            toks.append((_LIT, pat[i + 1]))  # an escaped literal is not folded (dowild lowers p_ch before the "\\")
             i += 2
         else:
-            toks.append((_LIT, c))
+            toks.append((_LIT, c + 0x20 if fold and 0x41 <= c <= 0x5A else c))
             i += 1
-    return Glob(toks)
+    return Glob(toks, fold)

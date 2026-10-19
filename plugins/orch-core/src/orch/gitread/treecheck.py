@@ -578,9 +578,7 @@ class _Check:
     def _walk_all(self) -> None:
         if self.policy is None:  # the host's child: the person's configuration cannot be read here
             self.policy = (
-                IgnorePolicy.removal(self.budget)
-                if self.removal
-                else IgnorePolicy.status(self.repo, self.worktree, None, self.budget)
+                IgnorePolicy.removal(self.budget) if self.removal else IgnorePolicy.status(self.repo, None, self.budget)
             )
         # git's order: core.excludesFile, then info/exclude, then .gitignore files, as far as the policy is certain
         self.walk(self.worktree, b"", self.policy.top(self.repo.commondir), False, 0)

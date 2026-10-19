@@ -38,7 +38,7 @@ function sequenceRequest(): HandoffRequest {
       headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Plan the launch',
       title: 'New ticket DEMO-0044: Plan the launch',
       subline: 'and its text (2 sections)',
-      ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
+      ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', new: true, key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
       sections: [
         { id: 'context', title: 'Context', text: 'Line one\nLine two' },
         { id: 'summary', title: 'Summary', text: 'Why this exists.' },

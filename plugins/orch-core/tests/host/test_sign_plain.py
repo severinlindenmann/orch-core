@@ -1224,14 +1224,24 @@ def test_g5_repeated_notes_appear_once_and_cancel_notes_merge_in_gate_order():
 def test_u3_the_title_drops_the_key_qualifier_and_names_a_new_ticket():
     t = {"key": "DEMO-1", "title": "", "uid_tail": "ABCD1234", "key_note": "n"}
     q = " (key per host; signed id …ABCD1234)"
-    new = signcontent._with_title({"headline": f"Create ticket DEMO-1 · Elefant Chart{q}", "ticket": t})
+    new = signcontent._with_title({"headline": f"Create ticket DEMO-1 · Elefant Chart{q}", "ticket": dict(t)})
     assert new["title"] == "New ticket DEMO-1: Elefant Chart" and new["headline"].endswith(q)  # headline: unchanged
-    seq = signcontent._with_title({"headline": f"Create DEMO-1{q}: Elefant Chart", "ticket": t})
-    assert seq["title"] == "New ticket DEMO-1: Elefant Chart"
-    edit = signcontent._with_title({"headline": f"Change the plan of DEMO-1{q}", "ticket": t})
-    assert edit["title"] == "Change the plan of DEMO-1"
+    assert new["ticket"]["new"] is True and new["ticket"]["uid_tail"] == "ABCD1234"
+    seq = signcontent._with_title({"headline": f"Create DEMO-1{q}: Elefant Chart", "ticket": dict(t)})
+    assert seq["title"] == "New ticket DEMO-1: Elefant Chart" and seq["ticket"]["new"] is True
+    quick = signcontent._with_title({"headline": f"Start task DEMO-1{q}: Elefant Chart", "ticket": dict(t)})
+    assert quick["title"] == "Start task DEMO-1: Elefant Chart" and quick["ticket"]["new"] is True
     plain = signcontent._with_title({"headline": "Change the workspace settings"})
-    assert "title" not in plain
+    assert "title" not in plain and "ticket" not in plain
+
+
+def test_u3_a_request_on_an_existing_ticket_is_not_new_so_the_dashboard_keeps_the_signed_id_visible():
+    t = {"key": "DEMO-1", "title": "", "uid_tail": "ABCD1234", "key_note": "n"}
+    q = " (key per host; signed id …ABCD1234)"
+    for head in (f"Change the plan of DEMO-1{q}", f"Approve the requirements of DEMO-1{q}", f"Edit DEMO-1{q}"):
+        out = signcontent._with_title({"headline": head, "ticket": dict(t)})
+        assert out["ticket"]["new"] is False and out["ticket"]["uid_tail"] == "ABCD1234"
+        assert out["headline"] == head and "signed id" not in out["title"]  # the id is the dashboard's muted line, not words
 
 
 def test_u3_only_a_creation_drops_the_cancel_notes_and_never_another_note():

@@ -100,11 +100,15 @@ export function useWorkspaceMembers(ws: string | undefined): Member[] {
 /**
  * Name and id as separate isolates, so neither can reorder or hide the other. `plain` (the main view): a name that passed
  * every rule above is shown alone; the id it stands for is one line away in the Technical details (`name (id) = full id`).
- * A person without a showable name always keeps the id and the reason.
+ * A person without a showable name always keeps the id and the reason. Next to a name the main view always keeps the LAST
+ * hex digits of the id, muted ("Severin ·a5be"): two people may share a display name, so who is meant stays visible
+ * without opening the details.
  */
 function Person({ parts, plain = false }: { parts: PersonParts; plain?: boolean }) {
   const id = <bdi dir="ltr" className="whitespace-pre-wrap break-all font-mono text-[12px] text-text [unicode-bidi:isolate]">{parts.short}</bdi>
-  if (parts.name !== null) return plain ? <Inline>{parts.name}</Inline> : <><Raw>{parts.name}</Raw> ({id})</>
+  if (parts.name !== null) return plain
+    ? <><Inline>{parts.name}</Inline> <bdi dir="ltr" data-testid="person-tail" title="The end of this person's id" className="font-mono text-[11px] text-text-muted [unicode-bidi:isolate]">·{(parts.full ?? parts.id).slice(-4)}</bdi></>
+    : <><Raw>{parts.name}</Raw> ({id})</>
   return <>{id} ({parts.note})</>
 }
 function Shown({ value, members, empty = '—', plain = false }: { value: string | null; members: Member[]; empty?: string; plain?: boolean }) {
@@ -119,7 +123,11 @@ export function SignContent({ content, ws, technical }: { content: Content; ws?:
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
   const summary = content.summary
+  // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
+  // (it signs the key and the title) has them under Technical details only.
+  const ticketLine = content.ticket && content.ticket.new !== true
   const rest = <>
+    {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span></li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
@@ -128,7 +136,7 @@ export function SignContent({ content, ws, technical }: { content: Content; ws?:
     {(content.ticket || ids.length > 0 || technical) && <details className="space-y-3 text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details</summary>
       {content.ticket && <div>
-        <p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>
+        {!ticketLine && <p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
         {content.ticket.title && <Value>{content.ticket.title}</Value>}
         {content.ticket.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
       </div>}

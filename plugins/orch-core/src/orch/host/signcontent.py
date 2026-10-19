@@ -21,7 +21,7 @@ The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Con
      fields_title?: str, notes?: [str], title?: str}
     title = the headline without the host-key / signed-id qualifier, for a dialog title (U3); the qualifier stays in
     ``ticket`` (key_note, uid_tail), which the dashboard shows under "Technical details"; ``headline`` is unchanged
-    ticket = {key, title, uid_tail, key_note}   // key_note: the key is the host's word; uid_tail is the signed id's end
+    ticket = {key, title, uid_tail, key_note, new}   // new: this review creates the ticket; key_note: the key is the host's word; uid_tail is the signed id's end
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
 shown only when a signed event states it (a ``ticket.created``): a gate does not bind the title, so ``ticket.title`` is
@@ -681,18 +681,26 @@ _NEW_TICKET = (re.compile(r"Create ticket (\S+) · (.*)", re.S), re.compile(r"Cr
 
 
 def _with_title(content: dict[str, Any]) -> dict[str, Any]:
-    """U3: ``title``, the headline a person reads: no "key per host; signed id" qualifier (it is in ``ticket``, shown
-    under the technical details) and "New ticket KEY: title" for a creation. Only ever a rewording of ``headline``."""
+    """U3: ``title``, the headline a person reads: no "key per host; signed id" qualifier in the words and "New ticket
+    KEY: title" for a creation. Only ever a rewording of ``headline``.
+
+    ``ticket.new`` says whether this review creates the ticket (a creation signs the key and the title, so the signed
+    id is only a technical detail there). For a request on an existing ticket the qualifier is not in the title but the
+    dashboard keeps "key per host · signed id …tail" visible in the main view (``ticket.new`` false)."""
     head, ticket = content.get("headline"), content.get("ticket")
     if not isinstance(head, str):
         return content
     if isinstance(ticket, Mapping):
         head = head.replace(f" (key per host; signed id …{ticket.get('uid_tail')})", "")
+    new = head.startswith("Start task ")  # a quick task creates its ticket in the same review
     for pattern in _NEW_TICKET:
         m = pattern.fullmatch(head)
         if m:
             head = f"New ticket {m.group(1)}: {m.group(2)}"
+            new = True
             break
+    if isinstance(ticket, dict):
+        content["ticket"] = {**ticket, "new": new}
     if head != content["headline"]:
         content["title"] = head
     return content

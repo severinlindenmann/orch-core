@@ -8,7 +8,7 @@ export interface SignContent {
   summary?: { title: string; lines: string[] }
   /** B11: the second line under the headline ("and its text (3 sections)"), core's words. */
   subline?: string
-  ticket?: { key: string; title: string; uid_tail: string; key_note: string }
+  ticket?: { key: string; title: string; uid_tail: string; key_note: string; /** This review creates the ticket (U3): its signed id is then only a technical detail. */ new?: boolean }
   sections?: { id: string; title: string; text: string }[]
   acceptance?: { id: string; text: string; checked?: boolean }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]

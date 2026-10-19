@@ -129,7 +129,7 @@ def test_the_first_request_is_one_review_of_every_step(human, tmp_path):
     assert "signed id" not in content["title"] and content["ticket"]["uid_tail"] and content["ticket"]["key_note"]
     # nothing can be cancelled on a ticket this very review creates: no cancel note, but the one-confirmation note stays
     assert not any(n.startswith(("This cancels", "An add-on field")) for n in content["notes"])
-    assert content["fields_title"] == "Details"
+    assert content["fields_title"] == "Details" and content["ticket"]["new"] is True
     assert not any("signatures" in n for n in content["notes"])
     assert any("4 steps" in n for n in content["notes"])
     text = signer.render(first, lambda w: ("ws", "ORCH"))

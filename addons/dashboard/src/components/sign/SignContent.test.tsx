@@ -51,7 +51,7 @@ it('marks and indents every block and continuation without creating items or row
 it('renders every display string in fully populated content', () => {
   const content = {
     headline: 'Review all changes',
-    ticket: { key: 'FULL-0001', title: 'Complete ticket title', uid_tail: '1234abcd', key_note: 'Host-local ticket key' },
+    ticket: { key: 'FULL-0001', title: 'Complete ticket title', uid_tail: '1234abcd', key_note: 'Host-local ticket key', new: true },
     sections: [{ id: 'plan', title: 'Complete plan', text: 'First section line\nSecond section line' }],
     acceptance: [{ id: 'AC-yes', text: 'Checked criterion', checked: true }, { id: 'AC-no', text: 'Unchecked criterion', checked: false }],
     tasks: [{ n: 3, id: 'TASK-three', title: 'Complete task', verify: ['First verification', 'Second verification'] }],
@@ -101,9 +101,9 @@ const details = () => screen.getByText(/Technical details/).closest('details')!
 
 it('shows a known member as name WITH short id; the full id and the key line only under Technical details', () => {
   withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: B }])
-  expect(row('owner')).toHaveTextContent('Owner: — → Severin')
+  expect(row('owner')).toHaveTextContent('Owner: — → Severin ·abcd')
   expect(row('owner')).not.toHaveTextContent(SEV)
-  expect(row('reviewer')).toHaveTextContent('Reviewer: Mara → p_bbbb11112222… (unknown person)')
+  expect(row('reviewer')).toHaveTextContent('Reviewer: Mara ·77aa → p_bbbb11112222… (unknown person)')
   expect(details()).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
   expect(details()).toHaveTextContent('key per host, not proven')
 })
@@ -125,7 +125,7 @@ const members: M[] = [
   { person: 'p_8888111122223333444455556666777b', name: 'א\u202Eבג' }, // right-to-left name
 ]
 const table: [string, string, string][] = [
-  ['known and unique', SEV, 'Severin'],
+  ['known and unique', SEV, 'Severin ·abcd'],
   ['confusable duplicate (zero-width, fullwidth, spaces)', A, 'p_aaaa11112222… (name shared by 2 members)'],
   ['the other one of the pair', B, 'p_bbbb11112222… (name shared by 2 members)'],
   ['a name with "(p_…)" in it', 'p_cccc1111222233334444555566667777', 'p_cccc11112222… (name not shown)'],
@@ -241,4 +241,23 @@ it('shows hidden characters in a summary line and keeps prose notes out of monos
   render(<SignContent content={{ headline: 'x', summary: { title: 'Extend agent access', lines: ['name‮cod.exe'] }, notes: ['Running agents will stop.'] }} />)
   expect(screen.getByTestId('sign-summary')).toHaveTextContent('name\\u{202e}cod.exe')
   expect(screen.getByText('Running agents will stop.')).not.toHaveClass('font-mono')
+})
+
+it('U3: a named person keeps the last hex digits of the id in the main view; two people with different names are told apart', () => {
+  const X = 'p_aaaa1111222233334444555566667777', Y = 'p_bbbb1111222233334444555566667788'
+  withMembers([{ person: X, name: 'Sam' }, { person: Y, name: 'Sam Two' }], [{ field: 'owner', before: X, after: Y }])
+  expect(row('owner')).toHaveTextContent('Owner: Sam ·7777 → Sam Two ·7788')
+  expect(within(row('owner') as HTMLElement).getAllByTestId('person-tail')).toHaveLength(2)
+  expect(row('owner')).not.toHaveTextContent(X) // never the whole id in the row
+})
+
+it('U3: a request on an existing ticket keeps "key per host" and the signed id in the main view; a creation folds them away', () => {
+  const t = { key: 'DEMO-0001', title: '', uid_tail: 'WJCC73ZJ', key_note: 'key per host, not proven' }
+  const { unmount } = render(<SignContent content={{ headline: 'Approve', ticket: { ...t, new: false }, notes: ['x'] }} />)
+  expect(screen.getByTestId('sign-ticket')).toHaveTextContent('DEMO-0001 (key per host) · signed id …WJCC73ZJ')
+  expect(screen.getByTestId('sign-ticket').closest('details')).toBeNull() // not folded away
+  unmount()
+  render(<SignContent content={{ headline: 'Create', ticket: { ...t, new: true }, notes: ['x'] }} />)
+  expect(screen.queryByTestId('sign-ticket')).toBeNull()
+  expect(screen.getByText('WJCC73ZJ').closest('details')).toBeInstanceOf(HTMLDetailsElement) // under Technical details
 })

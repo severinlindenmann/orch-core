@@ -1323,7 +1323,7 @@ gen?:int}`; never a secret, a token, a link or relay bytes.
 
 **Human ops** (`human.*`, §0.8.1), **job ops** (§0.8.2), **control ops** (§0.8.3): below.
 
-**Person versions of agent ops (signed).** `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `log`, `ask`,
+**Person versions of agent ops (signed).** `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `log`, `ask`,
 `artifact.add` and `artifact.replace` run as a person through `human.prepare {op, args}`. The rule is exact: allowed
 when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
 signed person). Other agent ops answer `op.not_allowed`.
@@ -1628,7 +1628,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    the keys of `set` for `settings.changed`.
 6. Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
    `EMITS_V1` types otherwise. **The op is bound:** it is in the fingerprint input, shown in the header, and the signer
-   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `section.set`: one
+   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `task.add`/`task.edit`: `ticket.tasks` only; `section.set`: one
    section and no `set`; `set`: the fields of `set` only).
 7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the **last
    eight characters** of the ticket uid in the request's `log` (the log the signature names; the signer takes it from
@@ -2771,7 +2771,7 @@ to your orch runner on this machine and is never shown") only then, with the per
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
 | **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
 | **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
@@ -4470,6 +4470,33 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V2` (= V1 + `grant.revoked` on the human-only `grant` op; V1 frozen), no verb
     covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
     names a number of hours. The signing views read lengths as days and hours.
+
+73a. **R3 part A1: `task.edit` and the "approvals this edit cancels" preview (19 Oct 2026; design-r3-manual-accept-and-images).**
+    - **`task.edit {task, text?, verify?, proves?, ref?}`** (agent op and person version, group Edit, class click): one
+      `ticket.updated` of `ticket.tasks`, built from the current list with exactly one task changed (`verify: ""`
+      removes the command; `proves: []` through the API proves none). Refused: an unknown task or criterion
+      (`not_found`), an edit that changes nothing (`invalid.input`), and **a change of the `verify` command or the
+      `proves` list of a task that is done** (`transition.refused`, "reopen it first"): a receipt must never stand for
+      another command or criterion. The text of a done task may change. The signer binds it like `task.add`
+      (`set == {ticket.tasks}`, no sections). No new error code; the CLI goldens (`describe`, `help`, `task-edit`,
+      `task-edit-done`) are declared per op. `EMITS_V3` = V2 + the new key `task.edit` (V1/V2 and every replay verdict
+      unchanged; the model keeps judging grant verbs by V1, where the name `task.edit` grants nothing: a grant that lets
+      an agent edit tasks names `task.add` or `agent`, which cover every `ticket.updated`).
+    - **WYSIWYS of the plan:** the plain review of a `ticket.tasks` change adds one `before -> after` row per added,
+      changed or removed task (`Task T2`: text, verify, proves). `before` is the plan the host read, checked against
+      the event's `base_rev` by the signer (`material.before`), so it is not labelled "per host".
+    - **`prepared.cancels`** (unsigned, beside `checks`; absent when the request writes no ticket field or section):
+      `[{gate, people: [person ids], complete}]`, the gates in order that lose at least one **counting** approval if the
+      write lands now. `host/cancels.py` runs the model's own `generations.mark_paths` and `settle` on a **scratch copy** of
+      the ticket (no second binding table) and compares `counting()` before and after, so the `applies` filter and the
+      cascade ("a raise of one gate raises every later gate") are exactly the model's. A section/criterion/task/link/field
+      request uses its events' paths; an `edit_ticket` sequence uses the paths of all its steps from the intent, at its
+      first step only (later steps carry none). `signcontent.build` checks the exact shape (gate known and in order, no
+      repeat, person ids well-formed, no extra keys; anything else is `PlainUnavailable`, so the full review is shown)
+      and adds `content.cancels`, one note ("Per the host (not signed): approvals that stand right now and are cancelled
+      by this: plan (2 people), ..." or "... no approval stands right now, so this cancels none.") and, in the terminal
+      text, a block with the names. The signed, deterministic note "This cancels any existing approval of: ..." stays
+      and is never replaced by the host's word.
 
 74. **B10 Part A: one click together with a phone (owner decision F of 16 Oct 2026; JUDGEMENT CALL reversing orch-52's N4):**
     `relay.pair_device` may be signed with the convenience device key; it is WORD class (`WORD_OPS`: the typed word is the

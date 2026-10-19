@@ -453,6 +453,11 @@ class HumanOps:
         convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
+        from . import cancels as cancel_preview
+
+        cancels = cancel_preview.for_request(store, log, person, prepared, capture.sequence)
+        if cancels is not None:  # R3: the approvals this edit cancels right now: the host's word, not signed
+            prepared["cancels"] = cancels
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
             # a decision that binds commits is never prepared without its checks
             require_checks(call, prepared, capture.copies)

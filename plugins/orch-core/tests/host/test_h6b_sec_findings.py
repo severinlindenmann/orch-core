@@ -60,7 +60,10 @@ def test_page_token_non_ascii_mac_is_page_expired_on_the_wire(w, op):
 
 
 def _ctx(root: Path):
-    return types.SimpleNamespace(store=types.SimpleNamespace(root=root))
+    """A read context whose store has the real pinned root (#516/#564: the name is read below ``store.fs``)."""
+    from orch.store.rootfs import RootFS
+
+    return types.SimpleNamespace(store=types.SimpleNamespace(root=root, fs=RootFS.at(root)))
 
 
 def test_workspace_name_does_not_follow_a_symlinked_config_json(tmp_path):
@@ -69,7 +72,16 @@ def test_workspace_name_does_not_follow_a_symlinked_config_json(tmp_path):
     secret = tmp_path / "elsewhere.json"
     secret.write_text(json.dumps({"workspace": {"name": "READ-THROUGH-A-SYMLINK"}}))
     (root / "config.json").symlink_to(secret)
-    assert reads_ws._name(_ctx(root), "DEMO") == "DEMO"  # the store never follows a link (fsio.read_or_none)
+    ctx = _ctx(root)
+    assert reads_ws._name(ctx, "DEMO") == "DEMO"  # the pinned root never follows a link (RootFS.read_or_none)
+    # the control: a real workspace's config.json in its place is read through the same pinned root
+    from tests.store.helpers import Env
+
+    env = Env(tmp_path / "control")
+    env.bootstrap().close()
+    (root / "config.json").unlink()
+    (root / "config.json").write_bytes((env.root / "config.json").read_bytes())
+    assert reads_ws._name(ctx, "DEMO") == "Acme"
 
 
 def test_workspace_name_survives_a_deeply_nested_config_json(tmp_path):
@@ -79,9 +91,6 @@ def test_workspace_name_survives_a_deeply_nested_config_json(tmp_path):
     assert reads_ws._name(_ctx(root), "DEMO") == "DEMO"  # RecursionError is not caught today
 
 
-@pytest.mark.xfail(
-    reason="pre-existing: fsio.open_nofollow (the store's own config.json read) blocks on a FIFO too", strict=False
-)
 def test_workspace_name_does_not_block_on_a_fifo_config_json(tmp_path):
     root = tmp_path / "ws"
     root.mkdir()

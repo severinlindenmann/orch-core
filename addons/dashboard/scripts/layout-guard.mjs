@@ -517,6 +517,7 @@ async function run(send, close) {
               ['real-host-records', 'records-ok', [['the export warning', '[data-testid="records-export-warning"]'], ['the private-remote line', '[data-testid="records-private-line"]']]],
               ['real-host-records-hidden-url', 'records-hidden-url', [['the export warning', '[data-testid="records-export-warning"]'], ['the blocked line', '[data-testid="records-export-blocked"]']]],
               ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
+              ['real-host-addons', 'addons-mixed', [['the terminals row', '[data-testid="addon-terminals"]'], ['the switch', '[role="switch"]']]],
               ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
               // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).
@@ -527,7 +528,10 @@ async function run(send, close) {
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
               // M7b: core's Start agent dialog (fixture preview, runner and grant answers; nothing reaches a host).
-              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the preview', '[data-testid="agent-preview"]'], ['the current grant', '[data-testid="runner-grant-current"]']]],
+              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the first-time notice', '[data-testid="agent-risk-full"]'], ['the grant line', '[data-testid="agent-grant-line"]']]],
+              ['real-host-agent-dialog-acked', 'agent-dialog-acked', [['the dialog', '[data-start-agent]'], ['the details line', '[data-testid="agent-details"] summary'], ['the grant line', '[data-testid="agent-grant-line"]']]],
+              ['real-host-agent-model', 'agent-model', [['the dialog', '[data-start-agent]'], ['the model line', '[data-testid="agent-model-line"]']]],
+              ['real-host-addons-model-routing', 'addons-model-routing', [['the routing box', '[data-testid="model-routing"]']]],
               ['real-host-agent-blocked', 'agent-blocked', [['the blocked reason', '[data-testid="agent-blocked"]'], ['the execution-off line', '[data-testid="runner-grant-off"]']]],
               ['real-host-agent-grant', 'agent-grant', [['the grant card', '[data-testid="runner-grant-card"]'], ['Issue runner grant', '[data-testid="runner-grant-issue"]'], ['the risk sentence', '[data-testid="runner-grant-risk"]']]],
               ['real-host-agent-outcomes', 'agent-outcomes', [['the unknown outcome', '[data-testid="runner-grant-unknown"]']]],
@@ -542,6 +546,12 @@ async function run(send, close) {
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
+              // Core D1 (#582): the dev sandbox host. The badge sits in the topbar of every page.
+              ['real-host-dev-badge', 'dev-badge', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the sandbox id', '[data-testid="dev-badge-sandbox"]']]],
+              ['real-host-dev-badge-long', 'dev-badge-long', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the long workspace name', '[data-testid="workspace-card-signing"], h2']]],
+              ['real-host-dev-alarms', 'dev-alarms', [['the alarms', '[data-testid="host-alarms"] [data-testid="host-alarm"]']]],
+              ['real-host-dev-refused', 'dev-refused', [['the refusals', '[data-testid="dev-refused-gallery"] [data-testid="click-problem"]']]],
+              ['real-host-signing-dev-host', 'signing-dev-host', [['the signing card', '[data-testid="workspace-card-signing"]'], ['the dev-host explanation', '[data-testid="signing-dev-host"]'], ['the badge', '[data-testid="dev-badge"]']]],
               // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
               ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
               ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],
@@ -549,10 +559,50 @@ async function run(send, close) {
               ['real-host-drop-upload-progress', 'drop-upload-progress', [['the progress', '[data-testid="drop-progress"]'], ['Cancel', '[data-testid="drop-cancel"]']]],
               ['real-host-drop-errors', 'drop-errors', [['the error texts', '[data-testid="drop-error-gallery"] [data-testid="drop-error"]']]],
               ['real-host-drop-versions', 'drop-versions', [['the version list', '[data-testid="drop-version"]'], ['the cap line', '[data-testid="drop-version-cap"]']]],
+              ['real-host-drop-phone', 'drop-phone', [['the shared-from line', '[data-testid="drop-shared"]'], ['the gestureless note', '[data-testid="drop-gestureless"]'], ['the pending-others line', '[data-testid="drop-pending-others"]'], ['a hand-off line', '[data-testid="drop-handoff"]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
+            }
+            // The signing card (#578, #580): fixture card with a long name, prefix and device; the forms are opened by their buttons.
+            const typeInto = (sel, value) =>
+              evaluate(async (s, v) => {
+                const input = document.querySelector(s)
+                if (!input) return false
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, v)
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+                await new Promise((r) => setTimeout(r, 200))
+                return true
+              }, sel, value)
+            const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
+            if (!ONLY || ONLY.test('real-host-signing-on')) {
+              await go('/__layout/signing-on')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              await settle()
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the Turn on… button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-off')) {
+              await go('/__layout/signing-off')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn off$/))
+              await settle()
+              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the move-back command', '[data-testid="signing-move-back"] code'], ['the copy button', '[data-testid="signing-move-back"] button']]) : ['the Turn off button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
+              await go('/__layout/signing-terminal-on')
+              await check(config, 'real-host-signing-terminal-on', await need([...CARD, ['the terminal-on view', '[data-testid="signing-terminal-on"] code'], ['the copy button', '[data-testid="signing-terminal-on"] button']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unsafe')) {
+              await go('/__layout/signing-unsafe')
+              await check(config, 'real-host-signing-unsafe', await need([...CARD, ['the refused-prefix description', '[data-testid="signing-command-unsafe"]']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unknown')) {
+              await go('/__layout/signing-unknown')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
+              const sent = typed && (await clickText('button', /^Turn on$/))
+              await settle()
+              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the Turn on… form did not open or send'])
             }
             // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {

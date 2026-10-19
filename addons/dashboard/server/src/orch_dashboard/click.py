@@ -21,14 +21,19 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
+    EditTicket,
+    NewTicketSequence,
     PrepareBody,
+    PublishSetup,
+    PublishShare,
+    QuickStart,
     RequestId,
     RunnerGrant,
     done_error,
@@ -36,6 +41,7 @@ from .handoff import (
     plan,
     read_done,
     send_prepare,
+    sequence_progress,
 )
 from .reads import workspace
 
@@ -54,8 +60,8 @@ TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
-    "hours."
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
+    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
 GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
 DEPOSITS = ("confirmed", "rejected", "unknown")
@@ -73,8 +79,32 @@ ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 
+Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+
+
+class CustodyBody(BaseModel):
+    """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's CURRENT passphrase: the proof the key
+    is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` carries nothing:
+    it only turns the flag off, and the dashboard never chooses a passphrase (Opus H2), so a `passphrase` with `off`
+    is invalid input, refused before the signer is called. Never logged or echoed (the validation handler answers a
+    bare `invalid.input`)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    passphrase: Passphrase | None = None
+
+    @model_validator(mode="after")
+    def _proof_only_to_switch_on(self):
+        if self.on and self.passphrase is None:
+            raise ValueError("on needs the passphrase")
+        if not self.on and "passphrase" in self.model_fields_set:
+            raise ValueError("off takes no passphrase")
+        return self
+
+
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
-ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
+# The runner grant is a click request, or a terminal hand-off with `runner` set by this server, never by the browser.
+ClickBody = PrepareBody
 
 
 def deposit_view_ok(view: dict, ws: str) -> bool:
@@ -202,17 +232,49 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/click/status")
     def status(ws: str = Depends(workspace)):
         gateway.enabled(ws)
-        return adapters.click_card(signer.status().get(ws)) or {
+        card = adapters.click_card(signer.status().get(ws)) or {
             "custody": "none",
             "enabled": False,
             "available": False,
             "problem": "no_signer",
         }
+        return {**card, "switchable": signer.switchable()}
+
+    def owner(ws: str) -> bool:
+        me = app.state.person_of(ws)
+        return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
+
+    @app.post("/api/w/{ws}/click/custody")
+    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+        """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
+        (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
+        if not signer.switchable():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
+        if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
+            row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
+        else:  # off: the flag only, never a re-key (moving the key back is `orch keys custody passphrase --in-place`)
+            row = signer.call("custody_off", {"workspace_id": ws})
+        return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
+        if isinstance(body, PublishSetup | PublishShare):
+            # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,
+            # before a slot is taken or the signer is asked (core's op_class also reads `publish.share` as terminal).
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "message": "Sharing files and choosing where they go are signed in your terminal, not by click.",
+                    "retryable": False,
+                    "reason": "terminal_only",
+                },
+                3,
+            )
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:
@@ -234,6 +296,11 @@ def register(app: FastAPI, gateway: Gateway):
                     "why": "update_orch",
                 },
                 3,
+            )
+        if isinstance(body, NewTicketSequence | EditTicket | QuickStart) and not signer.sequences():
+            # an older signer would ignore `sequence` and sign the first step only
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
@@ -262,6 +329,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
+            if planned.sequence:
+                sent["sequence"] = planned.sequence
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
@@ -325,6 +394,10 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
+        if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
+            handoffs.intents[rid] = planned.sequence["intent"]
+            while len(handoffs.intents) > 64:
+                handoffs.intents.pop(next(iter(handoffs.intents)))
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
@@ -422,7 +495,19 @@ def register(app: FastAPI, gateway: Gateway):
             clicks.forget(rid)
         if got == "submitted" and row.get("seq") is None:
             raise done_error({}, row)
-        return {"id": rid, "state": got}
+        out: dict = {"id": rid, "state": got}
+        intent = handoffs.intents.get(rid)
+        key = row.get("key")
+        if intent is not None and isinstance(key, str) and got != "prepared":
+            # A stopped sequence: which ticket exists and how many steps are in it, read from the host (never typed).
+            progress = sequence_progress(
+                gateway, ws, key, intent, person=app.state.person_of(ws), since=row.get("created_at")
+            )
+            if progress is not None:
+                if intent.get("agent") is not None:
+                    progress["last"] = "grant"
+                out |= {"key": key, "progress": progress}
+        return out
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, ws: str = Depends(workspace)):

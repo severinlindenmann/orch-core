@@ -4,7 +4,7 @@
 // (features `quick`, `records`, `runner`), so the layout guard, which runs against the mock app, never sees them. This
 // draws the REAL components with fixture answers: the mock `api` methods they call are replaced here, per scenario, by
 // functions that return plain data. Nothing of this is in a production build and nothing in it reaches a host.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest, type HandoffState } from '@/api/handoff'
@@ -13,27 +13,38 @@ import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { HostRecords } from '@/app/pages/settings/host/Records'
+import { HostAddOns } from '@/app/pages/settings/host/AddOns'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
 import { DropError, dropError } from '@/api/drop'
 import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
-import { AGENT, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
+import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
+import { TerminalsPage } from '@/app/pages/terminals'
 import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
+import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
-import { clickProblem } from '@/api/click'
+import { AgentAccess } from '@/app/shell/AgentAccess'
+import { nowMs } from '@/lib/time'
+import { clickProblem, type ClickCard } from '@/api/click'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
+import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
 import { readersOf, readersRoster, refusalSamples } from './readersFixture'
+import { setFeatures } from '@/api/features'
+import { NewTicketPage } from '@/app/pages/new-ticket'
+import { TicketPage } from '@/app/pages/ticket'
 
 export const LAYOUT_SCENARIOS = [
+  // R2-2: Settings > Add-ons with one of each state.
+  'addons-mixed',
   'quick-normal',
   'quick-many',
   'quick-add',
@@ -46,6 +57,9 @@ export const LAYOUT_SCENARIOS = [
   'runner-off',
   // M7a: the real-host terminal dock (RealDock with fixture runs and a fixture socket).
   'terminal-dock',
+  'terminal-colours',
+  'terminals-page',
+  'terminals-page-empty',
   'terminal-preview',
   'terminal-readonly',
   'terminal-take',
@@ -53,9 +67,17 @@ export const LAYOUT_SCENARIOS = [
   'terminal-stop',
   // M7b: core's Start agent dialog with fixture answers (preview, blocked reasons, the runner grant card, outcomes).
   'agent-dialog',
+  'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
+  // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
+  'agent-model',
+  'addons-model-routing',
+  // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
+  'agent-pill',
+  'agent-pill-stopped',
+  'agent-pill-off',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -67,6 +89,20 @@ export const LAYOUT_SCENARIOS = [
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
   'convenience-refusals',
+  // The Settings → General signing card ("Sign in the dashboard"): the five states of #578, with a long name, prefix and device.
+  'signing-on',
+  'signing-off',
+  'signing-terminal-on',
+  'signing-unsafe',
+  'signing-unknown',
+  // Core D1 (#582): the dev sandbox host. The DEV SANDBOX badge (normal and with a long workspace name), the alarms list,
+  // every host.dev_refused reason, and the signing card on a dev host.
+  'signing-dev-host',
+  'dev-badge',
+  'dev-badge-long',
+  'dev-alarms',
+  'dev-status-failed', // the host status read fails: a neutral "Host status unavailable" cue, never a normal-looking host
+  'dev-refused',
   // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
   'drop-unavailable',
   'drop-list',
@@ -74,11 +110,62 @@ export const LAYOUT_SCENARIOS = [
   'drop-upload-progress',
   'drop-errors',
   'drop-versions',
+  'drop-phone',
+  // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
+  'new-sequence',
+  // U4: the same form on a host that can start agents: with a usable agent access, and without one.
+  'new-sequence-start',
+  'new-sequence-start-nogrant',
+  // B12D (N3): the ticket page's edit of text, criteria and people, and its ONE review.
+  'edit-ticket',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
 const LONG_URL = 'https://git.example.test/' + 'a-very-long-organisation-name/'.repeat(6) + 'records-of-the-workspace-with-an-unbreakable-name.git'
 const LONG_WORD = 'U'.repeat(90)
+
+// The signing card fixtures: a placeholder device id (d_ + 32 hex of an obvious pattern), never a real key, and no passphrase prefilled.
+const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
+const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
+const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
+const signingCard = (scenario: LayoutScenario): ClickCard =>
+  scenario === 'signing-dev-host'
+    ? { custody: 'passphrase', enabled: false, available: false, problem: 'dev_host', switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-on' || scenario === 'signing-unknown'
+    ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-off'
+      ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
+      : { custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true, device: PLACEHOLDER_DEVICE }
+const signingWorkspace = (scenario: LayoutScenario, workspace: Workspace): Workspace => ({
+  ...workspace,
+  name: SIGNING_LONG_NAME,
+  prefix: scenario === 'signing-unsafe' ? 'X;rm -rf ~' : SIGNING_LONG_PREFIX,
+  click: signingCard(scenario),
+})
+
+// Core D1 fixtures: obvious placeholder ids, never real ones.
+const DEV_WS = 'f'.repeat(32)
+const hostInfoFor = (scenario: LayoutScenario): unknown =>
+  scenario === 'dev-alarms'
+    ? {
+        dev: { sim_convenience: true, sandbox: '0123abcd' },
+        alarms: [
+          { code: 'sandbox_workspace_registered', workspace_id: DEV_WS },
+          { code: 'sandbox_workspace_registered', workspace_id: 'not-a-workspace-id-' + LONG_WORD },
+          { code: 'dev_convenience_refused', count: 3 },
+          { code: 'some_future_alarm' },
+          { code: 'Not a code <b>x</b>' },
+        ],
+      }
+    : scenario === 'dev-badge' || scenario === 'dev-badge-long' || scenario === 'signing-dev-host'
+      ? { dev: { sim_convenience: true, sandbox: '0123abcd' } }
+      : {}
+const DEV_REFUSED_REASONS = ['sandbox_workspace', 'not_sandbox', 'dev_origin', 'dev_host', 'not_foreground', 'service_managed', 'home_not_in_root']
+const devRefusedSamples = () => [
+  ...DEV_REFUSED_REASONS.map((r) => ({ title: `host.dev_refused · ${r}`, error: new ApiError(409, { code: 'host.dev_refused', message: `refused: as the host says it, with a long tail ${LONG_WORD}`, retryable: false, detail: { reason: r } }) })),
+  { title: 'host.dev_refused · a reason this page does not know', error: new ApiError(409, { code: 'host.dev_refused', message: 'refused', retryable: false, detail: { reason: 'brand_new_reason' } }) },
+  { title: 'host.dev_refused · no reason', error: new ApiError(409, { code: 'host.dev_refused', message: 'refused', retryable: false }) },
+]
 
 const quickRow = (i: number, over: Partial<QuickRow> = {}): QuickRow =>
   ({
@@ -133,8 +220,200 @@ const records = (scenario: LayoutScenario): RecordsStatus => {
   return base
 }
 
+/** The first request of a New ticket sequence as the dashboard server sends it: `ticket.created`, the whole intent in the material, one SignContent with the ticket and its text. */
+function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
+  serial += 1
+  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
+  const order = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'findings', 'current_state']
+  const sections = Object.entries((action.sections ?? {}) as Record<string, string>).sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
+  const sets: Record<string, unknown> = {
+    ...(action.priority ? { priority: action.priority } : {}),
+    ...(action.size ? { size: action.size } : {}),
+    ...(Array.isArray(action.labels) && action.labels.length ? { labels: [...(action.labels as string[])].sort() } : {}),
+    ...(action.parent ? { parent: action.parent } : {}),
+  }
+  const criteria = ((action.acceptance as string[] | undefined) ?? []).filter(Boolean)
+  const people = (action.people as Record<string, string | string[]> | undefined) ?? {}
+  const asList = (v: string | string[]) => (Array.isArray(v) ? v : [v])
+  const peopleRows = (['assignees', 'reviewers', 'owner'] as const).flatMap((role) => asList(people[role] ?? []).map((p) => ({ field: `${role}: add`, before: null, after: String(p) })))
+  const intent = { v: 1, kind: 'new_ticket', title: action.title, ticket_type: action.type, set: sets, sections: Object.fromEntries(sections), ...(criteria.length ? { acceptance: criteria } : {}), ...(Object.keys(people).length ? { people } : {}) }
+  const of = 1 + (Object.keys(sets).length ? 1 : 0) + sections.length + criteria.length + peopleRows.length
+  const key = 'DEMO-0199'
+  const uid = '01J9ZP0000000000000000X0AB'
+  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }
+  const material = {
+    kind: 'payload' as const,
+    ticket: { key, uid },
+    sequence: { digest: 'sha256:' + 'c'.repeat(64), of, intent },
+    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
+  }
+  const digest = reviewDigestOf(material)
+  const events = [event] as unknown as HandoffEvent[]
+  const written = [sections.length ? `${sections.length} written section${sections.length === 1 ? '' : 's'}` : '', Object.keys(sets).length ? 'its details' : ''].filter(Boolean)
+  const headline = `Create ${key}: ${String(action.title)}`
+  const parts = [sections.length ? `its text (${sections.length} section${sections.length === 1 ? '' : 's'})` : '', criteria.length ? `${criteria.length} acceptance check${criteria.length === 1 ? '' : 's'}` : '', peopleRows.length ? 'its people' : ''].filter(Boolean)
+  const subline = parts.length ? `and ${parts.join(', ')}` : undefined
+  void written
+  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+  return {
+    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
+    code: '7F3K-Q2MA',
+    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+    state: 'prepared',
+    op: 'new',
+    key,
+    fingerprint: fingerprintOf(digest, events, 'new'),
+    review_digest: digest,
+    gate_hash: null,
+    headline,
+    content: {
+      headline: `Create ${key} (key per host; signed id …${uid.slice(-8)}): ${String(action.title)}`,
+      title: headline.replace('Create ', 'New ticket '),
+      subline: subline?.replace(/^and /, 'Includes '),
+      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
+      ...(criteria.length ? { acceptance: criteria.map((text, i) => ({ id: `AC${i + 1}`, text, checked: false })) } : {}),
+      fields_title: 'Details',
+      fields_changed: [
+        { field: 'type', before: null, after: String(action.type) },
+        { field: 'owner', before: null, after: 'you' },
+        ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
+        ...peopleRows,
+      ],
+      notes: [`One confirmation signs all ${of} steps. If the ticket changes meanwhile, signing stops and what is already signed stays.`],
+    },
+    material,
+    events,
+    origin: null,
+  } as unknown as HandoffRequest
+}
+
+/** The first request of a quick start as the dashboard server sends it (the plan is derived, shown verbatim). */
+function quickRequest(action: Record<string, unknown>): HandoffRequest {
+  serial += 1
+  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
+  const title = String(action.title)
+  const description = String(action.description ?? title)
+  const checks = ((action.checks as { text: string; cmd?: string }[] | undefined) ?? [{ text: title }]).map((c) => ({ text: c.text, cmd: c.cmd ?? null }))
+  const agent = (action.agent as { hours: number } | undefined) ?? null
+  const plan = ['Quick task: do these steps in order.', ...checks.flatMap((c, i) => [`${i + 1}. ${c.text}`, ...(c.cmd ? [`   Checked by: ${c.cmd}`] : [])])].join('\n')
+  const of = 6 + 2 * checks.length + (agent ? 1 : 0)
+  const key = 'DEMO-0200'
+  const uid = '01J9ZP0000000000000000X0AC'
+  const intent = { v: 1, kind: 'quick_task', title, description, checks, agent: agent ? { hours: agent.hours, scope: 'workable' } : null }
+  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }
+  const material = {
+    kind: 'payload' as const,
+    ticket: { key, uid },
+    sequence: { digest: 'sha256:' + 'd'.repeat(64), of, intent },
+    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
+  }
+  const digest = reviewDigestOf(material)
+  const events = [event] as unknown as HandoffEvent[]
+  const headline = `Start task ${key}: ${title}`
+  const until = new Date(Date.now() + (agent?.hours ?? 0) * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+  return {
+    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
+    code: '7F3K-Q2MA',
+    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+    state: 'prepared',
+    op: 'new',
+    key,
+    fingerprint: fingerprintOf(digest, events, 'new'),
+    review_digest: digest,
+    gate_hash: null,
+    headline,
+    content: {
+      headline,
+      subline: 'creates the task and approves its requirements and plan',
+      ticket: { key, title, uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      sections: [
+        { id: 'requirements', title: 'Requirements', text: description },
+        { id: 'plan', title: 'Plan', text: plan },
+      ],
+      acceptance: checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text, checked: false })),
+      tasks: checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
+      fields_changed: [
+        { field: 'type', before: null, after: 'chore' },
+        { field: 'labels', before: null, after: 'quick' },
+      ],
+      notes: [
+        'Approves the requirements as written above, and the plan as written above (the signer checks that each approval covers exactly this text).',
+        'The task still ends with your own verdict: nothing closes it for you.',
+        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. Typed word: GRANT. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
+        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
+      ],
+    },
+    material,
+    events,
+    origin: null,
+  } as unknown as HandoffRequest
+}
+
+/** The first request of an edit sequence as the dashboard server sends it: the first change as the host prepared it, the whole intent in the material, one SignContent with every change. */
+function editRequest(action: Record<string, unknown>): HandoffRequest {
+  serial += 1
+  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
+  const key = String(action.key)
+  const uid = '01J9ZP0000000000000000X0AD'
+  const sections = Object.entries((action.sections ?? {}) as Record<string, string>)
+  const acceptance = (action.acceptance ?? { edit: {}, add: [] }) as { edit: Record<string, string>; add: string[] }
+  const people = (action.people ?? {}) as Record<string, { add: string[]; remove: string[] }>
+  const peopleRows = Object.entries(people).flatMap(([role, c]) => [...c.add.map((p) => ({ field: `${role}: add`, before: null, after: p })), ...c.remove.map((p) => ({ field: `${role}: remove`, before: null, after: p }))])
+  const links = action.links as { repos: string[]; branches: Record<string, string> } | undefined
+  const linkRows = (links?.repos ?? []).map((repo) => ({ field: `repository ${repo}`, before: 'not linked', after: links?.branches[repo] ? `linked, branch ${links.branches[repo]}` : 'linked, no branch' }))
+  const of = sections.length + Object.keys(acceptance.edit).length + acceptance.add.length + (links ? 1 : 0) + Object.keys(people).length
+  const intent = { v: 1, kind: 'edit_ticket', ticket: { key, uid }, ticket_type: 'feature', head: 'sha256:' + 'e'.repeat(64), sections: Object.fromEntries(sections.map(([sid, text]) => [sid, { was: 'sha256:' + '0'.repeat(64), text }])) }
+  const first = sections[0] ?? null
+  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'e'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.updated', base_rev: { [`body.${first?.[0] ?? 'summary'}`]: 'sha256:' + '0'.repeat(64) }, sections: { [first?.[0] ?? 'summary']: { hash: 'sha256:' + '1'.repeat(64), refs: [] } } }
+  const material = {
+    kind: 'payload' as const,
+    ticket: { key, uid },
+    texts: first ? { [first[0]]: first[1] } : {},
+    sequence: { digest: 'sha256:' + 'f'.repeat(64), of, intent },
+    review: [{ event_id: id, type: 'ticket.updated', payload: { base_rev: event.base_rev, sections: event.sections }, derived: {} }],
+  }
+  const digest = reviewDigestOf(material)
+  const events = [event] as unknown as HandoffEvent[]
+  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+  const headline = `Edit ${key}`
+  const changed = [...Object.entries(acceptance.edit).map(([id2, text]) => ({ id: id2, text })), ...acceptance.add.map((text, i) => ({ id: `AC${i + 4}`, text }))]
+  return {
+    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
+    code: '7F3K-Q2MA',
+    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+    state: 'prepared',
+    op: 'section.set',
+    key,
+    fingerprint: fingerprintOf(digest, events, 'section.set'),
+    review_digest: digest,
+    gate_hash: null,
+    headline,
+    content: {
+      headline,
+      subline: 'its text, acceptance checks, repositories and people, as shown below',
+      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
+      ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
+      fields_changed: [...linkRows, ...peopleRows],
+      notes: [
+        'Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing stops and nothing more is signed.',
+        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
+      ],
+    },
+    material,
+    events,
+    origin: null,
+  } as unknown as HandoffRequest
+}
+
+/** The op of each request this preview prepared (the state it answers must name the same op). */
+const opOf = new Map<string, string>()
 let serial = 0
 function request(action: Record<string, unknown>): HandoffRequest {
+  if (action.action === 'new_sequence') return sequenceRequest(action)
+  if (action.action === 'edit_sequence') return editRequest(action)
+  if (action.action === 'quick_start') return quickRequest(action)
   serial += 1
   const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
   const type = action.action === 'new' ? 'ticket.created' : 'ticket.updated'
@@ -144,6 +423,14 @@ function request(action: Record<string, unknown>): HandoffRequest {
   const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: t, payload, derived: {} }] }
   const digest = reviewDigestOf(material)
   const op = String(action.action)
+  if (action.action === 'runner_grant') {
+    const grant = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'grant.issued', grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', scope: action.scope, verbs: 'agent', label: 'runner', hours: action.hours, issued_at: '2026-10-17T09:00:00Z', expires_at: '2026-10-18T09:00:00Z' }
+    const { type: gt, v: _v, id: _id, actor: _a, auth: _au, hash_v: _h, roster_v: _r, based_on: _b, ...gp } = grant
+    const gm = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: gt, payload: gp, derived: {} }] }
+    const gd = reviewDigestOf(gm)
+    const ge = [grant] as unknown as HandoffEvent[]
+    return { id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'), code: '7F3K-Q2MA', expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), state: 'prepared', op: 'grant', key: null, fingerprint: fingerprintOf(gd, ge, 'grant'), review_digest: gd, gate_hash: null, material: gm, events: ge, origin: null }
+  }
   return {
     id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
     code: '7F3K-Q2MA',
@@ -171,6 +458,7 @@ const runList = (scenario: LayoutScenario): RunList => {
   const runner = { connected: true, enabled: true, terminals: true }
   if (scenario === 'terminal-exited')
     return { runner, truncated: false, runs: [fixtureRun('EX', { state: 'exited', replay_until: '2026-01-01T00:00:00Z', exit: ENDED, label: `Build ${LONG_WORD}` })] }
+  if (scenario === 'terminals-page-empty') return { runner, truncated: false, runs: [] }
   if (scenario === 'terminal-stop')
     return { runner, truncated: false, runs: [fixtureRun('ST', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: { ...ENDED, cleanup: 'incomplete' } })] }
   return {
@@ -185,23 +473,57 @@ const runList = (scenario: LayoutScenario): RunList => {
   }
 }
 const AGENT_GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const ROUTING_CHOICES: RoutingChoices = {
+  harnesses: [
+    { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
+    { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'gpt-5-codex', label: 'GPT-5 Codex' }, { id: 'gpt-5', label: 'GPT-5' }, { id: 'o3', label: 'o3' }] },
+  ],
+  modes: [
+    { id: 'work', label: 'Do the work' }, { id: 'refine', label: 'Write requirements and plan' }, { id: 'fix', label: 'Fix what was sent back' },
+    { id: 'continue', label: 'Continue' }, { id: 'context', label: 'Read and answer' },
+  ],
+}
 const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   const base: AgentPreview = {
     spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
     cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-0043' }, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing.worktrees/0a1b2c3d-DEMO-0043`, cwd_path_hidden: false,
     will_create_worktree: true, login_shell: true, env: ['TERM', 'COLORTERM', 'ORCH_GRANT', 'ORCH_SESSION', 'ORCH_TICKET', 'ORCH_HARNESS', 'CLAUDE_CODE_SUBAGENT_MODEL'],
-    grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
+    grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
+  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
   if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
+/** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
+const ESC = '\x1b['
+const COLOUR_SAMPLE = [
+  `${ESC}32msev${ESC}0m@${ESC}36mdemo${ESC}0m ${ESC}1;34m~/code/billing${ESC}0m ${ESC}35m(feat/DEMO-0043)${ESC}0m $ ls --color`,
+  `${ESC}1;34msrc${ESC}0m  ${ESC}1;34mtests${ESC}0m  README.md  ${ESC}1;32mrun.sh${ESC}0m  ${ESC}1;36mlatest -> v2${ESC}0m  ${ESC}31mbroken.tar.gz${ESC}0m`,
+  `$ git status -sb`,
+  `## feat/DEMO-0043...origin/feat/DEMO-0043 [ahead 2]`,
+  ` ${ESC}31mM${ESC}0m src/tariffs.py`,
+  `${ESC}32mA${ESC}0m  tests/test_tariffs.py`,
+  `${ESC}31m??${ESC}0m notes.txt`,
+  `$ git diff src/tariffs.py`,
+  `${ESC}1mdiff --git a/src/tariffs.py b/src/tariffs.py${ESC}0m`,
+  `${ESC}36m@@ -12,3 +12,4 @@ def load(path):${ESC}0m`,
+  `${ESC}31m-    rows = read(path)${ESC}0m`,
+  `${ESC}32m+    rows = read(path, strict=True)${ESC}0m`,
+  `$ pytest -q`,
+  `${ESC}32m..........${ESC}0m${ESC}31mF${ESC}0m${ESC}32m..${ESC}0m`,
+  `${ESC}1;31mFAILED${ESC}0m tests/test_tariffs.py::test_strict - ${ESC}33mAssertionError${ESC}0m: expected 3, got 4`,
+  `${ESC}2m(dim: 1 failed, 12 passed)${ESC}0m  ${ESC}4munderlined${ESC}0m  ${ESC}7minverse${ESC}0m`,
+  Array.from({ length: 8 }, (_, i) => `${ESC}${30 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  Array.from({ length: 8 }, (_, i) => `${ESC}${90 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  '',
+].join('\r\n')
 /** A fixture socket: `ready` at once (never the lease), then a screenful of output. Nothing leaves this page. */
 function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
   const timer = setTimeout(() => {
     h.ready({ start: 0, offset: 0, cols: 100, rows: 30, writer: false, state: current === 'terminal-stop' ? 'exited' : 'running' })
-    const text = Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
+    const text = current === 'terminal-colours' ? COLOUR_SAMPLE : Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
     h.output(0, new TextEncoder().encode(text))
     if (current === 'terminal-stop') h.exit(1, null)
   }, 50)
@@ -298,6 +620,26 @@ const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
           dropItem({ name: `${LONG_URL}`, claimed: false }),
         ],
       }
+    case 'drop-phone': {
+      const share = (over: Parameters<typeof dropItem>[0]) =>
+        dropItem({ shared_from: PHONE_SHARE, claimed_ms: T0 - DAY, shared_until_ms: T0 + 6 * DAY, can_retire: 'self', ...over })
+      return {
+        received: [
+          share({ name: 'boarding-pass.pdf' }),
+          share({ name: 'photo-without-confirmation.jpg', mime: 'image/jpeg', gestureless: true }),
+          share({ name: `${LONG_URL}.png`, mime: 'image/png', shared_from: { ...PHONE_SHARE, label: `iPhone ${LONG_WORD}` }, can_retire: 'handoff' }),
+          share({ name: 'old-scan.pdf', state: 'expired', expires_ms: T0 - DAY, tombstone_until_ms: T0 + 29 * DAY, can_retire: null }),
+          share({ name: 'removed-by-owner.pdf', state: 'retired', tombstone_until_ms: T0 + 30 * DAY, can_retire: null }),
+          dropItem({ name: 'awaiting.jpg', claimed: false, unclaimed_reason: 'awaiting_claim', can_retire: null }),
+          dropItem({ name: 'revoked-phone.jpg', claimed: false, unclaimed_reason: 'author_revoked', can_retire: null }),
+          dropItem({ name: 'needs-terminal.jpg', claimed: false, unclaimed_reason: 'needs_handoff', can_retire: 'handoff' }),
+          dropItem({ name: 'from-the-future.jpg', claimed: false, unclaimed_reason: 'brand_new_reason' }),
+          dropItem({ name: 'plain-file.pdf' }),
+        ],
+        pendingOthers: 3,
+        pageSize: 20,
+      }
+    }
     case 'drop-upload-progress':
       return { received: mixed().slice(0, 3), stallAfterChunks: 2 }
     case 'drop-errors':
@@ -349,6 +691,7 @@ export function resetLayoutPreview() {
   for (const [name, fn] of originals) {
     if (name === 'runs.connect') termTransport.connect = fn as typeof termTransport.connect
     else if (name.startsWith('runs.')) r[name.slice(5)] = fn
+    else if (name === 'routing.choices') (routingApi as unknown as Record<string, unknown>).choices = fn
     else if (name.startsWith('agents.')) (agentsApi as unknown as Record<string, unknown>)[name.slice(7)] = fn
     else a[name] = fn
   }
@@ -371,7 +714,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -398,9 +741,13 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : null } })
+  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
+  ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
+  originals.set('routing.choices', routingApi.choices)
+  ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' || current === 'new-sequence-start' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })
@@ -417,23 +764,50 @@ function install() {
   })
   set('recordsAutoOff', async () => ({ ok: true }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
-  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => request(action))
+  // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
+  // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
+  set('getHostInfo', async () => {
+    if (current === 'dev-status-failed') throw new ApiError(502, { code: 'host.unavailable', message: 'fixture: no answer', retryable: true })
+    return hostInfoFor(current)
+  })
+  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  set('switchClick', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return original.switchClick(...args)
+    throw new TypeError('fixture: the connection was lost')
+  })
+  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {
+    const made = request(action)
+    opOf.set(made.id, made.op)
+    return made
+  })
+  set('getAddOns', async () => ({
+    available: true,
+    add_ons: [
+      { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
+      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'model-routing', title: 'Model routing', desc: 'Choose which AI model each kind of agent work starts on. You still see the model before every start.', state: current === 'addons-model-routing' ? 'on' : 'off', locked: null, blocked: null },
+      { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
+    ],
+  }))
   set('getHostSettings', async () => ({
     available: true,
-    grant_hours: 8,
+    grant_hours: current.startsWith('new-sequence-start') ? 168 : 8,
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
     gates: {},
     repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
+    models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current === 'addons-model-routing' ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
   set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
-  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
+  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 
@@ -455,13 +829,21 @@ export function LayoutPreview({ name }: { name: string }) {
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
+    // The topbar is already mounted and watches this one: it is refetched, not removed.
+    void qc.invalidateQueries({ queryKey: ['host-info'] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
+  if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
+  if (scenario === 'new-sequence') return <NewSequencePreview />
+  if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
+  if (scenario === 'edit-ticket') return <EditTicketPreview />
+  if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
+    return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
       <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
@@ -480,6 +862,18 @@ export function LayoutPreview({ name }: { name: string }) {
           </section>
         )}
       </div>
+    )
+  if (scenario === 'dev-refused')
+    return (
+      <section aria-label="Every dev host refusal (layout preview)" data-testid="dev-refused-gallery" className="max-w-4xl space-y-3">
+        <h2 className="text-base font-semibold">Every dev host refusal (layout preview)</h2>
+        {devRefusedSamples().map((sample) => (
+          <div key={sample.title} data-testid="dev-refused-sample" className="space-y-1">
+            <p className="font-mono text-[12px] text-text-faint">{sample.title}</p>
+            <ClickProblemBox problem={clickProblem(sample.error)} ws={workspace.id} />
+          </div>
+        ))}
+      </section>
     )
   if (scenario === 'convenience-refusals')
     return (
@@ -503,6 +897,12 @@ export function LayoutPreview({ name }: { name: string }) {
         <HostDevices workspace={workspace} />
       </SettingsFrame>
     )
+  if (scenario.startsWith('addons-'))
+    return (
+      <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
+        <HostAddOns workspace={workspace} />
+      </SettingsFrame>
+    )
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
@@ -511,7 +911,7 @@ export function LayoutPreview({ name }: { name: string }) {
     )
   return (
     <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-      <HostGeneral workspace={workspace} />
+      <HostGeneral workspace={scenario.startsWith('signing-') ? signingWorkspace(scenario, workspace) : scenario === 'dev-badge-long' ? { ...workspace, name: SIGNING_LONG_NAME, prefix: SIGNING_LONG_PREFIX } : workspace} />
     </SettingsFrame>
   )
 }
@@ -527,4 +927,30 @@ function TerminalPreview({ scenario }: { scenario: LayoutScenario }) {
         rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} autoPreview={scenario === 'terminal-preview'} />
     </div>
   )
+}
+
+/** The real ticket page in hand-off mode (a real host): Edit opens the form, Review and sign the one review with fixture answers. */
+function EditTicketPreview() {
+  useEffect(() => {
+    setFeatures({ features: ['actions'] })
+    return () => setFeatures(null)
+  }, [])
+  const [on, setOn] = useState(false)
+  useEffect(() => setOn(true), [])
+  return on ? <TicketPage ticketKey="DEMO-0043" /> : null
+}
+
+/** The real New ticket form in hand-off mode (a real host): Create opens the one review with fixture answers. */
+function NewSequencePreview({ start = false }: { start?: boolean }) {
+  useEffect(() => {
+    setFeatures({ features: start ? ['actions', 'agent_start', 'model_routing'] : ['actions'] })
+    return () => setFeatures(null)
+  }, [])
+  const ready = useRef(false)
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    ready.current = true
+    setOn(true)
+  }, [])
+  return on ? <NewTicketPage /> : null
 }

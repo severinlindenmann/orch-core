@@ -25,7 +25,18 @@ DEPOSIT_CONTRACT = 2
 SWITCH = "ORCH_DASHBOARD_CLICK"
 RESTART_AFTER = 1.0  # seconds: a signer that dies at once is not respawned in a tight loop
 CONTRACT_RETRY = 30.0
-TIMEOUT = {"status": 8.0, "prepare": 30.0, "view": 30.0, "sign": 60.0, "cancel": 30.0}
+TIMEOUT = {
+    "status": 8.0,
+    "prepare": 30.0,
+    "view": 30.0,
+    "sign": 60.0,
+    "cancel": 30.0,
+    "custody_on": 60.0,
+    "custody_off": 60.0,
+}
+#: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
+CUSTODY_FEATURE = "custody"
+SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
 def child_env(state: Path) -> dict[str, str]:
@@ -57,6 +68,7 @@ class Signer:
         self.client = None
         self.core: str | None = None
         self.contract: int | None = None  # the running signer's contract (1 or 2), once started
+        self.features: frozenset[str] = frozenset()  # the running signer's `status.features` (strings only)
         self.last_spawn = -1e9
         self.refused: tuple[float, HostError] | None = None  # a signer of another contract: until this time
         self.restarts = 0
@@ -126,6 +138,8 @@ class Signer:
             raise error
         self.refused = None
         self.contract = contract  # 2 means the signer supports runner-grant deposit
+        got = status.get("features")
+        self.features = frozenset(f for f in got if type(f) is str) if isinstance(got, list) else frozenset()
         self.core = str(status.get("core"))[:40]
         self.client = client
         return client
@@ -135,6 +149,25 @@ class Signer:
         with self.lock:
             self._ensure()
             return (self.contract or 0) >= DEPOSIT_CONTRACT
+
+    def switchable(self) -> bool:
+        """Can the running signer (started now if needed) switch click-to-sign on and off? Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return CUSTODY_FEATURE in self.features
+
+    def sequences(self) -> bool:
+        """Can the running signer (started now if needed) sign a sequence on one review (batch 11)? An older signer
+        would ignore `sequence` and sign the first step only, so it is never asked. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return SEQUENCE_FEATURE in self.features
 
     def close(self) -> None:
         with self.lock:

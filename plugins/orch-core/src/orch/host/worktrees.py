@@ -191,6 +191,7 @@ def _gate(call: Call) -> None:
         )
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
+    hub.require_current()
 
 
 def _rate(call: Call) -> None:
@@ -236,7 +237,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         branch = ((view.fields.get("links") or {}).get("branches") or {}).get(repo)
         if not branch:
             raise HostError("worktree.no_branch", f"{view.key} links no branch for {repo}; set links.branches first")
-        declared = git.repo_path(store.root, store.state.workspace.repos, repo)
+        declared = git.repo_path(store.layout, store.state.workspace.repos, repo)
         if declared is None:
             raise HostError("not_found", f"{repo} is not declared in settings.repos")
         dpins = git.reader.pins.get(os.fspath(declared))
@@ -250,7 +251,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         path = worktree_path(os.fspath(declared), service.workspace_id, view.key)
         declared_paths = {
             os.fspath(p) for n in store.state.workspace.repos
-            if (p := git.repo_path(store.root, store.state.workspace.repos, n)) is not None
+            if (p := git.repo_path(store.layout, store.state.workspace.repos, n)) is not None
         }  # fmt: skip
         if path in declared_paths:
             raise HostError("worktree.exists", "the worktree path is a declared repository")
@@ -259,7 +260,7 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
         return plan
     if reg is None:
         raise HostError("worktree.none", f"{view.key} has no worktree for {repo}")
-    declared = git.repo_path(store.root, store.state.workspace.repos, repo)
+    declared = git.repo_path(store.layout, store.state.workspace.repos, repo)
     dpins = git.reader.pins.get(os.fspath(declared)) if declared is not None else None
     if dpins is None:
         raise HostError("observe.unavailable", f"{repo}: the declared repository is not pinned")
@@ -402,6 +403,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
         args = {"op": "worktree.add" if plan["op"] == "worktree.create" else "worktree.remove",
                 "repo_pin": plan["repo_pin"], "path": plan["path"], "branch": plan["branch"],
                 "base": plan.get("base_sha"), "force": plan["force"], "generation": plan["gen"] + 1}  # fmt: skip
+        hub.require_current()  # a runner of another release applies its old rules to this command too
         await hub.command("git", args, timeout=GIT_TIMEOUT)
         after = _register if plan["op"] == "worktree.create" else _unregister
         return await asyncio.wrap_future(service.submit(after, call, plan))

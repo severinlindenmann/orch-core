@@ -15,14 +15,14 @@ import re
 import time
 from typing import Any
 
-from orch import canon
+from orch import canon, repopaths
 from orch.identity import check_member_added, person_ref
 from orch.store.render import thaw
 
 from orch_dashboard.errors import fail
 
 PAGE = 32
-DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
+DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
 GATES = ("requirements", "plan", "verify", "code")
 TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 ROLES = ("owner", "maintainer", "member", "viewer")
@@ -66,6 +66,7 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
         if role in ("owner", "maintainer"):
             entry["path"] = repo["path"]
             entry["remote"] = repo.get("remote")
+            entry["check"] = repopaths.observe(store.layout, repo["path"])  # as core serves a person at the keyboard
         repos[name] = entry
     set_by_event = {k for e in _ws_events(store) if e["type"] == "settings.changed" for k in e["set"]}
     nxt = f"st_{start + limit}" if start + limit < len(names) else None
@@ -74,6 +75,7 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
         "next_page": nxt,
         "gates": thaw(ws.policies),
         "defaults": [k for k in DURATIONS if k not in set_by_event],
+        "sign_methods": list(ws.settings["sign_methods"]) if "sign_methods" in ws.settings else None,  # B6: null: not set
         "settings_at": _last(store, "settings.changed"),
         "policy_at": _last(store, "policy.changed"),
         "sub_cursor": host.cursor,
@@ -173,21 +175,51 @@ def grants(store, ws, person: str, args: dict[str, Any], ext: bool) -> dict[str,
     return {"grants": rows}
 
 
+def _check_repos(layout, repos) -> None:
+    """core's rules for `set.repos` (shape, name, a canonical remote) and the host's path checks (orch.repopaths)."""
+    if not isinstance(repos, dict) or not 1 <= len(repos) <= 32:
+        raise invalid("repos is one to 32 repos")
+    for name, entry in repos.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", name):
+            raise invalid("a repo name is lowercase letters, digits, dots, dashes")
+        if entry is None:
+            continue
+        if not isinstance(entry, dict) or "path" not in entry or set(entry) - {"path", "remote", "default_branch"}:
+            raise invalid("a repo is a path, with an optional remote and default_branch")
+        if "remote" in entry:
+            try:
+                canon.check_repo_identity(entry["remote"])
+            except canon.HashError as exc:
+                raise invalid(str(exc)) from None
+        try:
+            repopaths.check_declared(layout, entry["path"])
+        except repopaths.RepoPathError as exc:
+            raise invalid(f"{name}: {exc}") from None
+
+
 # -- writes (called by humanops.Builder) -----------------------------------------------------------------------------
 def settings_set(builder, args):
     builder.exact(args, {"set"})
     given = args["set"]
-    if not isinstance(given, dict) or not given or set(given) - set(DURATIONS) - {"repos"}:
-        raise invalid("set is grant_hours, claim_ttl_min, lease_ttl_min or repos")
-    if "repos" in given:
-        raise fail("op.unsupported", "the dev stub changes durations only (repos belong to the Repos addon)", exit=1)
+    if not isinstance(given, dict) or not given or set(given) - set(DURATIONS) - {"repos", "sign_methods"}:
+        raise invalid("set is grant_hours, claim_ttl_min, lease_ttl_min, sign_methods or repos")
     for k, v in given.items():
+        if k == "repos":
+            _check_repos(builder.store.layout, v)
+            continue
+        if k == "sign_methods":
+            if not isinstance(v, list) or "terminal" not in v or len(set(v)) != len(v) or set(v) - {"terminal", "click", "phone"}:
+                raise invalid("sign_methods is terminal plus click or phone, once each")
+            continue
         low, high = DURATIONS[k]
         if type(v) is not int or not low <= v <= high:
             raise invalid(f"{k} is {low} to {high}")
     event = {"type": "settings.changed", "set": dict(given)}
     # `before` is labelled "current values according to the host, not signed" and only needs to be keys of `set`.
-    before = {k: builder.store.state.workspace.settings[k] for k in given}
+    before = {k: builder.store.state.workspace.settings.get(k) for k in given if k not in ("sign_methods", "repos")}
+    if "repos" in given:  # core's: the host's current entry of each named repo (null: none)
+        before["repos"] = {n: thaw(builder.store.state.workspace.repos.get(n)) for n in given["repos"]}
+    before.update({"sign_methods": builder.store.state.workspace.settings.get("sign_methods") or ["terminal"]} if "sign_methods" in given else {})
     events = [builder.envelope(event, "workspace")]
     return events, "workspace", builder.payload_material(None, events, before=before, ticket=None)
 

@@ -123,9 +123,9 @@ def resolve(words: list[str] | tuple[str, ...]) -> Operation | None:
 def verb_events() -> dict[str, frozenset[str]]:
     """The frozen table (``orch.model.emits``) that grant verbs are judged by; the live registry must equal it
     (a test checks), so replay never depends on a release's handlers."""
-    from orch.model.emits import CURRENT
+    from orch.model.emits import EMITS_V1
 
-    return dict(CURRENT)
+    return dict(EMITS_V1)  # B8: still V1; V2 differs only in a human-only key
 
 
 def registry_emits() -> dict[str, frozenset[str]]:

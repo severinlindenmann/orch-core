@@ -1,9 +1,11 @@
 import os
+import re
+from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
 
-from orch_dashboard.app import create_app
+from orch_dashboard.app import SETTINGS_TABS, SPA_BARE_ONLY, create_app
 from orch_dashboard.errors import HostError, host_response
 from orch_dashboard.gateway import read_pins
 
@@ -17,6 +19,7 @@ def test_closed_route_allowlist():
         "/api/events",
         "/api/w/{ws}/head",
         "/api/workspaces",
+        "/api/host",
         "/api/me",
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",
@@ -27,6 +30,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/changes",
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
         "/api/w/{ws}/handoff",
+        "/api/w/{ws}/repos/check",
         "/api/w/{ws}/handoff/{request_id}",
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/click/prepare",
@@ -34,11 +38,39 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/state",
         "/api/w/{ws}/click/sign",
         "/api/w/{ws}/click/cancel",
+        "/api/w/{ws}/click/custody",
         "/api/w/{ws}/settings",
+        "/api/w/{ws}/add-ons",
+        "/api/w/{ws}/me/sign_default",
+        "/api/w/{ws}/me/risk_notices",
+        "/api/w/{ws}/phone/available",
+        "/api/w/{ws}/phone/request",
+        "/api/w/{ws}/phone/cancel",
+        "/api/w/{ws}/phone/status/{id}",
         "/api/w/{ws}/members",
         "/api/w/{ws}/readers",
         "/api/w/{ws}/grants",
         "/api/w/{ws}/quick",
+        "/api/w/{ws}/worktrees",
+        "/api/w/{ws}/worktrees/create",
+        "/api/w/{ws}/worktrees/remove",
+        "/api/w/{ws}/explorer",
+        "/api/w/{ws}/explorer/tree",
+        "/api/w/{ws}/explorer/file",
+        "/api/w/{ws}/explorer/names",
+        "/api/w/{ws}/explorer/search",
+        "/api/w/{ws}/explorer/history",
+        "/api/w/{ws}/explorer/commit",
+        "/api/w/{ws}/explorer/compare",
+        "/api/w/{ws}/explorer/ticket/{key}",
+        "/api/w/{ws}/shares",
+        "/api/w/{ws}/shares/prepare",
+        "/api/w/{ws}/shares/send",
+        "/api/w/{ws}/shares/revoke",
+        "/api/w/{ws}/shares/discard",
+        "/api/w/{ws}/shares/register",
+        "/api/w/{ws}/activity",
+        "/api/w/{ws}/usage",
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
@@ -51,9 +83,16 @@ def test_closed_route_allowlist():
         "/term",
         "/api/w/{ws}/agents/preview",
         "/api/w/{ws}/agents/start",
+        "/api/w/{ws}/model-routing",
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",
+        "/api/testrun/{run}",
+        "/api/testrun/{run}/steps/{step}",
+        "/api/testrun/{run}/steps/{step}/images",
+        "/api/testrun/{run}/images/{name}",
+        "/auth/setup",
+        "/api/setup/{route:path}",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected
@@ -119,8 +158,11 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings",
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
+        "/w/DEMO/settings/addons",  # R2-2: the Add-ons tab
         "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
+        "/w/DEMO/activity",
+        "/w/DEMO/usage",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],
@@ -133,7 +175,7 @@ def test_app_addresses_open_the_app(client, path):
 @pytest.mark.parametrize(
     "path",
     [
-        "/w/DEMO/settings/addons",
+        "/w/DEMO/settings/nope",
         "/w/DEMO/ticket/x",
         "/w/DEMO/ticket/DEMO-1/extra",
         "/ticket/DEMO-1/x",
@@ -259,3 +301,64 @@ def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypa
     config = app._telemetry
     assert not any(config[k] for k in ("tracing", "metrics", "logs", "operation_spans", "auto_configure"))
     assert app._native_telemetry.enabled() is False
+
+
+ROUTER = Path(__file__).resolve().parents[2] / "src" / "app" / "router.tsx"
+TABS_TS = Path(__file__).resolve().parents[2] / "src" / "app" / "pages" / "settings" / "tabs.ts"
+NOT_SERVED = {"__layout/$name"}  # the mockup's layout preview: never on a real host
+SAMPLE = {"$key": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
+
+
+def _client_routes():
+    src = ROUTER.read_text()
+    paths = re.findall(r"createRoute\(\{[^}]*?\bpath:\s*'([^']*)'", src, re.S)
+    assert len(paths) >= 15, paths  # the walk found the router's routes
+    return paths
+
+
+def _sample(path):
+    return "/".join(SAMPLE.get(seg, seg) for seg in path.split("/") if seg)
+
+
+def test_every_client_route_is_served_on_reload(client):
+    for route in _client_routes():
+        if route in NOT_SERVED:
+            continue
+        tail = _sample(route)
+        url = f"/{tail}" if route in SPA_BARE_ONLY else f"/w/DEMO/{tail}".rstrip("/")
+        res = client.get(url)
+        assert res.status_code == 200 and "main-hash.js" in res.text, (route, url)
+
+
+def test_every_real_host_settings_tab_is_served(client):
+    block = TABS_TS.read_text().split("export const HOST_TABS")[1].split("] as const")[0]
+    tabs = re.findall(r"id:\s*'([a-z]+)'", block)
+    assert tabs and set(tabs) == set(SETTINGS_TABS), tabs
+    for tab in tabs:
+        assert client.get(f"/w/DEMO/settings/{tab}").status_code == 200, tab
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/w/DEMO/guide",
+        "/w/DEMO/worktrees",
+        "/w/DEMO/shares",
+        "/w/DEMO/artifacts",
+        "/w/DEMO/addon/guide/main",
+        "/w/DEMO/settings/addon/x",
+    ],
+)
+def test_reload_addresses_named_by_the_e2e(client, path):
+    assert client.get(path).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/w/DEMO/guide/x/y", "/w/DEMO/__layout/x", "/guide", "/worktrees"])
+def test_api_and_unknown_stay_404(client, path):
+    assert client.get(path).status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/api/nope", "/api/w/DEMO/guide", "/api/w/DEMO/worktrees/x"])
+def test_unknown_api_paths_stay_json_404(client, token, path):
+    res = client.get(path, headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 404 and "main-hash.js" not in res.text

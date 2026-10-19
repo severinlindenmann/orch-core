@@ -8,6 +8,7 @@ Every test gets its own relay process (fresh data directory, fresh rate windows)
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -261,3 +262,55 @@ def test_the_relay_ends_when_the_process_that_started_it_dies(tmp_path):
     d = relay_dir()
     (tmp_path / "data").mkdir()
     orphan_test(["relay", str(tmp_path / "data"), str(d), "5"], tmp_path)
+
+
+@pytest.mark.t2_long(150)
+def test_an_idle_linked_host_keeps_its_lease_and_its_aux_thread_for_two_lease_periods(bridged):
+    """Bug: the aux thread's renewal (15 s into an idle long-poll) met the relay's closed idle keep-alive
+    (``TransportError: protocol``), the thread died and the 40 s lease lapsed. The relay's lease is fixed at 40 s, so
+    this idles 2 periods + margin in real time."""
+    side, _phone, _epoch = bridged
+    renewed: list[int] = []
+    real = side.sess.renew
+
+    def counting(**kw):
+        got = real(**kw)
+        renewed.append(got.gen)
+        return got
+
+    side.sess.renew = counting  # type: ignore[method-assign]
+    side.start()
+    aux = f"orch-relay-aux-{side.loop.id8}"
+    time.sleep(2 * 40 + 12)
+    assert side.loop.error is None, side.loop.error
+    assert not side.sess.fenced
+    assert any(t.name == aux and t.is_alive() for t in threading.enumerate()), "the aux thread died"
+    assert len(renewed) >= 3, renewed  # one renewal per 15 s of poll silence
+    other = session(side.relay)  # a second client probing for the lease: a live lease is never stolen
+    with pytest.raises(RelayRefused) as e:
+        other.call("POST", f"/v2/workspaces/{other.workspace_id}/host/hold", "POST /v2/workspaces/{ws}/host/hold",
+                   body={"gen": None, "take_over": False}, keys={"gen", "lease_s", "cursor"})  # fmt: skip
+    assert e.value.code == "holder_conflict"
+    assert side.loop.error is None
+
+
+def test_a_read_after_a_quiet_spell_is_answered_on_the_first_attempt_with_no_transport_error(bridged, caplog):
+    """The relay closes an idle keep-alive after 5 s. The poster's connection has been idle through 7 s of silence: the
+    answer's POST must go out at once (the connection is replaced before sending), not fail and wait for a resend."""
+    side, phone, epoch = bridged
+    side.start()
+    rid0, env0 = phone.request({"op": "whoami", "args": {}}, epoch=epoch)  # the poster's connection is in use once
+    assert phone.post(rid0, env0)[0] == 202
+    phone.answer(rid0, epoch)
+    time.sleep(7)
+    caplog.set_level("INFO", logger="orch.relay")
+    t0 = time.monotonic()
+    rid, env = phone.request({"op": "whoami", "args": {}}, epoch=epoch)
+    assert phone.post(rid, env)[0] == 202
+    meta, _ = answer_of(phone.answer(rid, epoch, timeout_s=15.0)[0])
+    assert meta == {"status": "ok"}
+    assert len(side.loop.for_rid(rid)) == 1  # the answer's POST went out once: no retry, no phone resend
+    assert time.monotonic() - t0 < 10
+    assert side.loop.error is None and not side.alarms
+    bad = [r.getMessage() for r in caplog.records if "failed" in r.getMessage() or "TransportError" in r.getMessage()]
+    assert not bad, bad

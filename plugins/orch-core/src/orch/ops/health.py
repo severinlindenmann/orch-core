@@ -18,20 +18,22 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import SubprocessError
+from subprocess import DEVNULL, SubprocessError
 from typing import Any
 
-from orch import canon
+from orch import canon, gitsafe
+from orch.layout import StorePin
 from orch.ops.caps import Capabilities, CapabilityDenied, Files
 from orch.store import Store, StoreError
 from orch.store import render as store_render
 from orch.store.checkpoints import verify_object
-from orch.store.fsio import read_or_none
 from orch.store.paths import ULID
 from orch.store.pins import HostPins, is_forwarded, pair
+from orch.store.rootfs import RootFS
 from orch.store.store import MISSING_CHECKPOINT_RECOVERY
 
 __all__ = ["Finding", "InspectStore", "check_staged", "inspect", "repair"]
@@ -65,7 +67,15 @@ class InspectStore(Store):
         return None
 
 
-def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> InspectStore | None:
+def _open(
+    root: Path,
+    wid: str,
+    state_dir: Path,
+    findings: list[Finding],
+    ident: tuple[int, int] | None = None,
+    config: bytes | None = None,
+    store_pin: StorePin | None = None,
+) -> InspectStore | None:
     pins = HostPins(state_dir, wid)
     try:
         pin = pins.genesis()
@@ -74,12 +84,20 @@ def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> Ins
         pin = None
     try:
         s = InspectStore.open(
-            root, expected_workspace_id=wid, expected_genesis=pin, host=None, host_state_dir=None, load="all"
+            root,
+            expected_workspace_id=wid,
+            expected_genesis=pin,
+            host=None,
+            host_state_dir=None,
+            load="all",
+            ident=ident,  # the root discovery found, by its fd: every read below goes through it (#516)
+            config=config,  # the config.json bytes discovery checked, not a second read by path
+            store_pin=store_pin,
         )
     except StoreError as e:
         findings.append(Finding("error", "workspace", e.code, e.detail))
         return None
-    findings.extend(_pending_linked(root))
+    findings.extend(_pending_linked(s.fs))
     if pin is None and s.genesis is not None:
         findings.append(
             Finding(
@@ -93,13 +111,13 @@ def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> Ins
     return s
 
 
-def _pending_linked(root: Path) -> list[Finding]:
+def _pending_linked(fs: RootFS) -> list[Finding]:
     """A crashed append of a relay-linked workspace (its pending directory carries an outbox entry, H12b): named, so
     an operator knows why a store without host state refuses to open; the next host open finishes it."""
     from orch.store.outbox import pending_linked_appends
 
     out = []
-    for ev, log in pending_linked_appends(root):
+    for ev, log in pending_linked_appends(fs):
         what = f"a crashed append of event {ev} to {log} carries a relay outbox entry"
         out.append(Finding("warn", "workspace", "outbox.pending", what + "; the next host open finishes it", None))
     return out
@@ -122,6 +140,9 @@ def inspect(
     caps: Capabilities,
     store: Store | None = None,
     sees: Callable[[Any], bool] | None = None,
+    ident: tuple[int, int] | None = None,
+    config: bytes | None = None,
+    store_pin: StorePin | None = None,
 ) -> tuple[list[Finding], Store | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
     (checkpoint presence, pins, index, repositories, orphan keys).
@@ -129,7 +150,12 @@ def inspect(
     Host mode (H4a1) passes ``store`` (the host's own; it is used as it is, never closed here, and no second store is
     opened, no ``config.json`` and no state directory read) and ``sees`` (the viewer's visibility test). Every finding
     about a ticket the viewer may not see, or whose visibility cannot be told (a log that does not replay), is left out
-    before anything is counted (F6)."""
+    before anything is counted (F6).
+
+    Direct mode passes ``ident`` (the root's ``st_dev``/``st_ino`` as discovery saw it) and ``config`` (the
+    ``config.json`` bytes discovery read from the checked fd): the store opens the root by
+    its fd and refuses another directory, and every file the checks read is read below that fd
+    (:class:`~orch.store.rootfs.RootFS`, ``O_NOFOLLOW`` on every component), never by path (#516)."""
     out: list[Finding] = []
     hosted = store is not None
     if hosted:
@@ -137,9 +163,11 @@ def inspect(
         store.load_all()
     else:
         assert state_dir is not None
-        s = _open(root, wid, state_dir, out)
+        s = _open(root, wid, state_dir, out, ident, config, store_pin)
     if s is None:
         return out, None
+    # direct mode reads the workspace through the store's pinned root; host mode through the host's Files
+    files: Files | RootFS = caps.files if caps.files.roots is not None else s.fs
 
     def ok(log: str | None) -> bool:
         if sees is None or log is None or log == "workspace":
@@ -167,10 +195,10 @@ def inspect(
                     out.append(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
-        out += _projections(s, caps.files, ok)
+        out += _projections(s, files, ok)
         host_key = s.can_write if hosted else _has_host_key(state_dir, wid)  # type: ignore[arg-type]
         pins = s._pins if hosted else HostPins(state_dir, wid)  # type: ignore[arg-type]
-        out += _checkpoints(s, host_key, caps.files, pins, ok)
+        out += _checkpoints(s, host_key, files, pins, ok)
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
@@ -179,6 +207,8 @@ def inspect(
                 out += _orphans(state_dir, wid, caps)  # type: ignore[arg-type]
         for f in instructions or []:
             out.append(Finding("warn", f["where"], "instructions.stale", f["what"], None))
+    except StoreError as e:  # a directory swapped for a symlink while the checks ran (#516): a finding, not a crash
+        out.append(Finding("error", "workspace", e.code, e.detail))
     except Exception:
         if not hosted:
             s.close()
@@ -186,11 +216,11 @@ def inspect(
     return out, s
 
 
-def _isdir(files: Files, path: Path, *, follow: bool = False) -> bool:
-    """A directory: in host mode opened through the capability's fd walk (never through a link); in direct mode as
-    before (``follow``: a link to a directory counts)."""
-    if files.roots is None:
-        return path.is_dir() and (follow or not path.is_symlink())
+def _isdir(files: Files | RootFS, path: Path) -> bool:
+    """A real directory, opened through the fd walk (never through a link): host mode by the capability, direct mode
+    below the store's pinned root (#516)."""
+    if isinstance(files, RootFS):
+        return files.is_dir(path)
     try:
         files.listdir(path)
     except OSError:
@@ -198,10 +228,14 @@ def _isdir(files: Files, path: Path, *, follow: bool = False) -> bool:
     return True
 
 
-def _size(files: Files, path: Path) -> int | None:
-    """The size of a regular file (``None``: missing, a link, not a regular file); host mode through the capability."""
-    if files.roots is None:
-        return path.stat().st_size if path.is_file() else None
+def _size(files: Files | RootFS, path: Path) -> int | None:
+    """The size of a regular file (``None``: missing, a link, not a regular file), through the fd walk."""
+    if isinstance(files, RootFS):
+        try:
+            st = files.lstat(path)
+        except (OSError, StoreError):
+            return None
+        return st.st_size if stat.S_ISREG(st.st_mode) else None
     try:
         fd = files.open_fd(path, os.O_RDONLY)
     except OSError:
@@ -212,17 +246,21 @@ def _size(files: Files, path: Path) -> int | None:
         os.close(fd)
 
 
-def _read(files: Files, path: Path, limit: int | None = None) -> bytes | None:
-    """A file's bytes or ``None``: in host mode through the capability (roots, no symlink), else as before."""
-    if files.roots is None:
-        return read_or_none(path) if limit is None else read_or_none(path, limit)
+def _read(files: Files | RootFS, path: Path, limit: int | None = None) -> bytes | None:
+    """A file's bytes or ``None`` (missing, a symlink, a symlinked directory on the way): host mode through the
+    capability, direct mode below the store's pinned root (#516)."""
+    if isinstance(files, RootFS):
+        try:
+            return files.read_or_none(path) if limit is None else files.read_or_none(path, limit)
+        except (OSError, StoreError):
+            return None
     try:
         return files.read_bytes(path)
     except OSError:
         return None
 
 
-def _projections(s: Store, files: Files, visible: Callable[[str], bool] = lambda log: True) -> list[Finding]:
+def _projections(s: Store, files: Files | RootFS, visible: Callable[[str], bool] = lambda log: True) -> list[Finding]:
     """What the files hold against what the log says: ``ticket.json``, ``body.md``, artifacts, ``config.json``,
     ``keys.jsonl`` (an external edit, a torn write, a file somebody replaced)."""
     out: list[Finding] = []
@@ -238,7 +276,7 @@ def _projections(s: Store, files: Files, visible: Callable[[str], bool] = lambda
         if _read(files, root / rel) != want:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
     tdir = root / "tickets"
-    for p in [tdir / n for n in sorted(files.listdir(tdir))] if _isdir(files, tdir, follow=True) else []:
+    for p in [tdir / n for n in sorted(files.listdir(tdir))] if _isdir(files, tdir) else []:
         if ULID.fullmatch(p.name) and visible(p.name) and _isdir(files, p):
             if not _size(files, p / "events.jsonl"):
                 out.append(Finding("error", f"tickets/{p.name}", "ticket.nolog", "a ticket folder with no event log"))
@@ -283,7 +321,7 @@ def _projections(s: Store, files: Files, visible: Callable[[str], bool] = lambda
                 continue
             p = tdir / "artifacts" / a.name
             try:
-                data = None if files.roots is None and p.is_symlink() else _read(files, p, 256 * 1024 * 1024)
+                data = _read(files, p, 256 * 1024 * 1024)  # a symlink reads as absent
             except OSError:
                 data = None
             if data is None:
@@ -306,7 +344,7 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
 def _checkpoints(
     s: Store,
     host_here: bool,
-    files: Files,
+    files: Files | RootFS,
     pins: HostPins | None = None,
     visible: Callable[[str], bool] = lambda log: True,
 ) -> list[Finding]:
@@ -353,7 +391,7 @@ def _checkpoints(
         )
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"
-    names = sorted(files.listdir(cdir)) if _isdir(files, cdir, follow=True) else []
+    names = sorted(files.listdir(cdir)) if _isdir(files, cdir) else []
     for p in [cdir / n for n in names if n.endswith(".json")]:
         uid = p.stem.removeprefix("ticket-")  # ticket checkpoints are ticket-<uid>.json (store.checkpoints)
         if ULID.fullmatch(uid) and not visible(uid):
@@ -409,7 +447,7 @@ def _index(s: InspectStore) -> list[Finding]:
 def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
-        p = caps.git.repo_path(root, s.state.workspace.repos, name)  # host mode: lexical, no I/O
+        p = caps.git.repo_path(s.layout, s.state.workspace.repos, name)  # host mode: lexical, no I/O
         if caps.files.roots is not None:
             # Host mode: never stat a path outside the root; the reader child opens the repo under its pins.
             try:
@@ -499,12 +537,34 @@ def repair(
 # ---------------------------------------------------------------------------------------------------- commit check
 
 
-def _git(root: Path, *args: str, caps: Capabilities) -> bytes | None:
+def _gate(root: Path, caps: Capabilities) -> str | None:
+    """The invariant of :mod:`orch.gitsafe` on the workspace's repository (#546): why orch does not run git there, or
+    ``None``. Where the handler has no process capability (host mode), nothing is checked: :func:`_git` then runs
+    nothing either."""
+    if not caps.exec.enabled:
+        return None
     try:
+        gitsafe.gate(os.path.abspath(root), caps.env)
+    except gitsafe.Unsafe as exc:
+        return exc.reason
+    return None
+
+
+def _git(root: Path, op: str, *, caps: Capabilities, path: str | None = None) -> bytes | None:
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` (``staged_raw``, ``staged_blob`` of ``path``), isolated
+    (:func:`orch.gitsafe.command`, #546: the gate again, no free argv, system and global configuration off, none of
+    the person's configuration, hooks, fsmonitor, network, pager, external diff and textconv off, an environment built
+    from scratch), spawned through ``caps.exec``. ``None`` when it is refused or fails; with no process capability
+    (host mode) nothing runs."""
+    if not caps.exec.enabled:
+        return None
+    try:
+        argv, env = gitsafe.command(os.path.abspath(root), op, caps.env, operand=path)
         done = caps.exec.run(
-            ["git", "-C", str(root), *args], capture_output=True, timeout=30, check=False, start_new_session=True
-        )
-    except (OSError, SubprocessError):
+            argv, capture_output=True, timeout=30, check=False, start_new_session=True, env=env, cwd="/",
+            stdin=DEVNULL,
+        )  # fmt: skip
+    except (gitsafe.Unsafe, OSError, SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
 
@@ -516,7 +576,10 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
     out: list[Finding] = []
-    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative", caps=caps)
+    refused = _gate(root, caps)
+    if refused is not None:
+        return [Finding("error", "git", "git.unavailable", f"orch does not run git here: {refused}")]
+    raw = _git(root, "staged_raw", caps=caps)
     if raw is None:
         return [Finding("error", "git", "git.unavailable", "git cannot list the staged files here")]
     st = s.state
@@ -553,7 +616,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
             continue
-        blob = _git(root, "show", f":{rel}", caps=caps)
+        blob = _git(root, "staged_blob", caps=caps, path=rel)
         if blob is None:
             out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
             continue
@@ -576,7 +639,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
             if blob != s._keys_bytes():
                 out.append(Finding("error", rel, "commit.edited", "keys.jsonl is not what the log says (hand edit)"))
         elif rel == "events/workspace.jsonl":
-            out += _prefix(rel, blob, root / rel, "workspace")
+            out += _prefix(rel, blob, s.fs, "workspace")
         elif rel.startswith(("tickets/", "events/")) and not m:
             out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
         elif m:
@@ -597,7 +660,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
                 if texts is None or have != want:
                     out.append(Finding("error", rel, "commit.edited", f"{view.key}: body.md is not what the log says"))
             elif what == "events.jsonl":
-                out += _prefix(rel, blob, root / rel, view.key)
+                out += _prefix(rel, blob, s.fs, view.key)
             elif what.startswith("artifacts/"):
                 name = what[len("artifacts/") :]
                 a = next((x for x in view.artifacts if x.name == name), None)
@@ -608,10 +671,13 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
     return out
 
 
-def _prefix(rel: str, blob: bytes, disk: Path, label: str) -> list[Finding]:
+def _prefix(rel: str, blob: bytes, fs: RootFS, label: str) -> list[Finding]:
     """A staged log must be the verified log or an earlier part of it, byte for byte (a forged or rewritten line is
-    neither)."""
-    cur = read_or_none(disk, 512 * 1024 * 1024)
+    neither). The log on disk is read below the store's pinned root (#516)."""
+    try:
+        cur = fs.read_or_none(rel, 512 * 1024 * 1024)
+    except (OSError, StoreError):
+        cur = None
     if cur is None or not cur.startswith(blob):
         return [Finding("error", rel, "commit.forged", f"{label}: the staged log is not a prefix of the verified log")]
     return []

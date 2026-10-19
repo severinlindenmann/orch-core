@@ -187,3 +187,14 @@ def test_null_priority_stays_null(client, token, stub, gateway, rich, monkeypatc
     assert doc["priority"] is None
     rows = client.get(f"/api/w/{stub.ws}/tickets", headers=headers(token)).json()["rows"]
     assert rows and all(r["priority"] is None for r in rows)
+
+
+def test_a_diff_git_cannot_produce_reaches_the_page_as_diff_unavailable(client, token, stub, rich, monkeypatch):
+    """#561 R7-M1, the server route: an error the Changes tab shows as "Diff unavailable", not an empty diff."""
+    from devhost import reads
+
+    real = reads.observe.git
+    monkeypatch.setattr(reads.observe, "git", lambda p, o, **kw: None if o == "diff_patch" else real(p, o, **kw))
+    res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))
+    assert res.status_code == 409 and res.json()["error"]["code"] == "observe.unavailable"
+    assert "diff unavailable" in res.json()["error"]["message"]

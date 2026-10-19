@@ -7,11 +7,15 @@ component of the result must be a real directory or file inside the root: a syml
 
 from __future__ import annotations
 
-import os
 import re
+import stat
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .errors import StoreError
+
+if TYPE_CHECKING:
+    from .rootfs import RootFS
 
 __all__ = ["ARTIFACT", "ULID", "check_artifact", "check_state_dirs", "check_uid", "safe_join", "target_ok"]
 
@@ -43,17 +47,11 @@ def target_ok(rel: object) -> str:
 
 
 def safe_join(root: Path, rel: str) -> Path:
-    """``root/rel`` with no symlinked directory on the way (the last part may be absent or a link), no escape."""
+    """``root/rel``, checked **lexically** only (no ``..``, absolute path, NUL or backslash): no file system access.
+    Every file under the root is reached through the store's pinned root (:class:`~orch.store.rootfs.RootFS`), which
+    walks each component ``O_NOFOLLOW`` and refuses a symlinked directory (``validation.path``) at the access itself;
+    a check here by pathname would only be a second, racy look at a different object (#564)."""
     if "\x00" in rel or rel.startswith(("/", "\\")) or ".." in Path(rel).parts or "\\" in rel:
-        raise StoreError("validation.path", f"{rel!r} escapes the workspace")
-    cur = root
-    parts = Path(rel).parts
-    for part in parts[:-1]:  # the last component may be a link: replacing it replaces the link, never its target
-        cur = cur / part
-        if os.path.islink(cur):
-            raise StoreError("validation.path", f"{rel!r} passes through a symlink")
-    base = os.path.realpath(root)
-    if os.path.commonpath([base, os.path.realpath(cur)]) != base:
         raise StoreError("validation.path", f"{rel!r} escapes the workspace")
     return root / rel
 
@@ -62,12 +60,16 @@ _DIRS = ("events", "tickets", ".state", ".state/pending", ".state/body", ".state
          ".state/sessions", ".state/abandoned", ".state/rejected")  # fmt: skip
 
 
-def check_state_dirs(root: Path) -> None:
+def check_state_dirs(fs: RootFS) -> None:
     """The directories the store writes under must be real directories of the workspace: a symlink (``.state`` pointing
-    elsewhere, say) would send writes outside it (``validation.path``)."""
+    elsewhere, say) would send writes outside it (``validation.path``). Checked below the pinned root (#516); every
+    later access walks ``O_NOFOLLOW`` again, so this is the early, named refusal, not the boundary."""
     for rel in _DIRS:
-        p = root / rel
-        if os.path.islink(p):
+        try:
+            st = fs.lstat(rel)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if stat.S_ISLNK(st.st_mode):
             raise StoreError("validation.path", f"{rel} is a symlink")
-        if os.path.lexists(p) and not p.is_dir():
+        if not stat.S_ISDIR(st.st_mode):
             raise StoreError("validation.path", f"{rel} is not a directory")

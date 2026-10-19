@@ -81,6 +81,7 @@ def status(code: str) -> int:
         "records.budget",
         "records.snapshot_changed",
         "runner.unavailable",
+        "runner.stale",
     }:
         return 503
     if code in {
@@ -124,12 +125,52 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     "runner.disabled": {"missing": ("addon", "machine", "terminals")},
     "ticket.key_not_next": {"next_key": KEY},
     "sign.convenience_unavailable": {
-        "reason": ("disabled", "relay_paired", "other_member", "phone_device", "reader_version"),
+        "reason": (
+            "disabled",
+            "relay_paired",
+            "other_member",
+            "phone_device",
+            "reader_version",
+            "pair_device",
+            "dev_host",
+        ),
         "devices": DEVICES,
     },
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,
+    },
+    # core P5 (orch-v2-host 12.15): why the publish server said no
+    "publish.server_refused": {
+        "reason": (
+            "unknown_workspace",
+            "blocked",
+            "owner_not_allowed",
+            "limit",
+            "conflict",
+            "clock",
+            "delegation",
+            "rejected",
+        ),
+    },
+    # core D1 (orch-v2-host 11A.17): the Simulator dev gate's closed reason
+    "host.dev_refused": {
+        "reason": (
+            "not_foreground",
+            "service_managed",
+            "service_dir",
+            "no_manifest",
+            "state_not_in_root",
+            "home_not_in_root",
+            "no_dev_json",
+            "dev_json_mismatch",
+            "no_person",
+            "custody_convenience",
+            "not_sandbox",
+            "sandbox_workspace",
+            "dev_origin",
+            "dev_host",
+        ),
     },
 }
 TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}")
@@ -201,6 +242,8 @@ CLICK_REFUSALS = (
     "uncertain",
     "already_signed",
     "record_unavailable",
+    "stopped",
+    "resumable",
     "disabled",
 )
 #: the top-level `reason`, closed per code: the click signer carries the convenience reasons there (the same sets as

@@ -124,14 +124,19 @@ RELAY_OPS = frozenset(
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings",
         # H12d-2: the reader records of the current devices (§0.8.6 item 9.11)
         "reader.list",
+        # B10 Part B: the viewer's own phone requests, and the gate-hash input a phone recomputes
+        "phone.requests", "gate.input",
         # the principal's own
         "whoami", "outcome.get",
         # device-signed person events
         "relay.submit",
+        # H12d-3 (§0.8.6 item 9.5, 9.11): the requesting device's own reader declaration, exempt from the rd check
+        "reader.declare",
     }
 )  # fmt: skip
-#: the ops of kind ``device_signed``: never served on a socket
-DEVICE_SIGNED_OPS = frozenset({"relay.submit"})
+#: the ops of kind ``device_signed`` in column R: device-signed person events (``relay.submit``) and the device's own
+#: signed reader declaration (``reader.declare``, H12d-3; on a socket it is the person's ``person_write``)
+DEVICE_SIGNED_OPS = frozenset({"relay.submit", "reader.declare"})
 _SOCKET_PEERS = frozenset({"person", "agent", "worker", "control"})
 
 # The permission matrix (§0.5) for each column.

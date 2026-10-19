@@ -40,6 +40,16 @@ DEPOSIT_REASONS = (
 )
 
 
+HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
+MODE_WORDS = {
+    "work": "Do the work",
+    "refine": "Write requirements and plan",
+    "fix": "Fix what was sent back",
+    "continue": "Continue",
+    "context": "Read and answer",
+}
+
+
 class AgentPreviewBody(BaseModel):
     """`agent.preview`'s arguments (section 12.3). A model of its own: `term.preview`'s `mode` is `context` only."""
 
@@ -76,6 +86,21 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.post("/api/w/{ws}/agents/preview")
     def preview(body: AgentPreviewBody, ws: str = Depends(reads.workspace)):
         return project.agent_preview(gateway.call(ws, "agent.preview", body.host_args()))
+
+    @app.get("/api/w/{ws}/model-routing")
+    def model_routing(ws: str = Depends(reads.workspace)):
+        """The closed lists Model routing offers (core's `orch.modelchoices`, nothing from the host): the agents, their
+        models and the Start agent modes, in the words the page shows. The signed table itself is in the settings."""
+        from orch.modelchoices import MODEL_CHOICES, MODEL_LABELS, ROUTE_MODES
+
+        gateway.enabled(ws)
+        return {
+            "harnesses": [
+                {"id": h, "label": HARNESS_WORDS[h], "models": [{"id": m, "label": MODEL_LABELS[m]} for m in names]}
+                for h, names in MODEL_CHOICES.items()
+            ],
+            "modes": [{"id": m, "label": MODE_WORDS[m]} for m in ROUTE_MODES],
+        }
 
     @app.post("/api/w/{ws}/agents/start")
     def start(body: AgentStartBody, ws: str = Depends(reads.workspace)):

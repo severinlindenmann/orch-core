@@ -4,16 +4,15 @@
 // (feature `agent_start`); the agent's run then appears here like a shell and attaches the same way.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { MoreHorizontal, PanelBottomClose, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
+import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
 import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
-import { Inline, Prose, Raw } from '@/components/sign/visible'
+import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -25,18 +24,15 @@ import { ResizeHandle } from '../dock/ResizeHandle'
 import { RealTerminal } from './RealTerminal'
 
 import { EXECUTION_LINE } from './executionLine'
+import { PreviewDialog } from './PreviewDialog'
+import { runName } from './runName'
 import { StartAgentDialog } from './StartAgentDialog'
 
 export { EXECUTION_LINE }
 
-/** A run's name in the dock: its label (untrusted, shown through visible.tsx), else the harness and the ticket. */
-export function runName(run: Run): string {
-  if (run.label) return run.label
-  const what = run.harness === 'shell' ? 'Shell' : run.harness === 'claude-code' ? 'Claude' : run.harness === 'codex' ? 'Codex' : 'Terminal'
-  return run.ticket ? `${run.ticket} ${what}` : what
-}
+export { runName }
 
-export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
+export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview, request, requestDone }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const ticket = useDockTicket()
@@ -44,9 +40,16 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const right = side === 'right'
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: !!ws })
   const runs = list.data?.runs ?? []
-  const shown = runs.filter((r) => r.kind === 'shell' || r.kind === 'agent')
+  // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
+  const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
+  // A start whose process never started (spawn_failed) is no terminal: the dialog already told the person why, so it gets no tab (unless its cleanup is in doubt: then the tab and the warning stay).
+  const neverStarted = (r: Run) => r.state === 'exited' && r.exit?.reason === 'spawn_failed' && !cleanupDoubt(r.exit.cleanup)
+  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !neverStarted(r) && !(dismissed.has(r.run) && ended(r)))
+  const endedShown = shown.filter(ended)
+  const dismiss = (ids: string[]) => setDismissed((d) => new Set([...d, ...ids]))
   const [selected, setSelected] = useState<string | null>(null)
-  // The run this mount opened itself: its first attach asks for the lease (write, never take).
+  // The run this mount opened itself: its first attach takes the lease (nobody else can hold a run that was just created).
   const [opened, setOpened] = useState<string | null>(null)
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<{ args: { ticket?: string }; data: TermPreview | null; error: string; idem: string } | null>(null)
@@ -58,6 +61,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const region = useRef<HTMLElement>(null)
 
   useEffect(() => { setSelected(null) }, [ws])
+  // The Terminals page asked for this run (Open): select it, then say the request is done.
+  useEffect(() => { if (request) { setSelected(request); requestDone?.() } }, [request, requestDone])
   // The write attach after Open is one-shot (review M1): once that run's terminal has mounted with it, every later mount
   // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
   useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
@@ -114,7 +119,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
-        {!right && <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} />}
+        {!right && <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />}
         {right && <span className="flex-1" />}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -141,6 +146,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             ) : (
               <DropdownMenuItem disabled={!rightFits} onSelect={() => setPrefs((p) => ({ ...p, side: 'right' }))}>{rightFits ? 'Move to the right' : 'Not enough room — dock at the bottom'}</DropdownMenuItem>
             )}
+            <DropdownMenuItem disabled={endedShown.length === 0} onSelect={() => dismiss(endedShown.map((r) => r.run))}>Clear ended terminals</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
           </DropdownMenuContent>
@@ -151,7 +157,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">
-          <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} />
+          <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
@@ -178,58 +184,22 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   )
 }
 
-function RunTabs({ runs, current, onSelect, doubt }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean> }) {
+function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean>; onDismiss: (id: string) => void }) {
   if (runs.length === 0) return <span className="min-w-0 flex-1 truncate text-xs text-text-faint">No terminal open</span>
   return (
     <div role="tablist" aria-label="Terminals" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
       {runs.map((r, i) => (
-        <button key={r.run} type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
+        <span key={r.run} className="flex shrink-0 items-center">
+        <button type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>
           <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' ? 'bg-success' : 'bg-text-faint')} />
           <span className="tabular-nums text-text-faint">{i + 1}</span>
           <span className="min-w-0 truncate">{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
           <span className="sr-only">{r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
         </button>
+        {r.state !== 'running' && r.state !== 'starting' && <button type="button" aria-label={`Clear ${runName(r)}`} title="Clear this ended terminal" onClick={() => onDismiss(r.run)} className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-text-faint hover:bg-surface-3 hover:text-text"><X className="size-3" aria-hidden /></button>}
+        </span>
       ))}
     </div>
-  )
-}
-
-/** The host's preview, shown before anything starts: what runs, where, as whom. Every value is untrusted text. */
-function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data: TermPreview | null; error: string } | null; busy: boolean; onClose: () => void; onConfirm: () => void }) {
-  const data = preview?.data
-  return (
-    <Dialog open={!!preview} onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-w-lg gap-3 border-border bg-surface" data-term-preview>
-        <DialogHeader>
-          <DialogTitle>Open a terminal</DialogTitle>
-          <DialogDescription>{EXECUTION_LINE}</DialogDescription>
-        </DialogHeader>
-        {!data && !preview?.error && <Skeleton className="h-20" />}
-        {data && (
-          <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-            <dt className="text-text-muted">Runs</dt>
-            <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-            <dt className="text-text-muted">In</dt>
-            <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
-            <dt className="text-text-muted">As</dt>
-            <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
-            {data.login_shell && (<><dt className="text-text-muted">Shell</dt><dd>The program is found and started through your login shell; your shell profile runs first and can change what runs.</dd></>)}
-            {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
-          </dl>
-        )}
-        {data?.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-warning"><Prose inline>{w}</Prose></p>)}
-        {data?.blocked && (
-          <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">
-            Cannot open: {data.blocked.message ? <Prose inline>{data.blocked.message}</Prose> : 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}
-          </p>
-        )}
-        {preview?.error && <p role="alert" className="text-xs text-danger"><Inline>{preview.error}</Inline></p>}
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" disabled={!data || !!data.blocked || busy} onClick={onConfirm}>Open terminal</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

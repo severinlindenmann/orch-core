@@ -21,7 +21,7 @@ from orch.ops import workspace_init as wi
 from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.store import BackendSigner, Store
-from tests.instructions.conftest import OWN, init_ctx
+from tests.instructions.conftest import _BLOCKS, OWN, init_ctx
 
 ARGS = {"prefix": "DEMO", "name": "Severin"}
 SESSION = "s_01J9ZP0000000000000000000S"
@@ -67,20 +67,22 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
         "AGENTS.md",
         "CLAUDE.md",
         ".gitignore",
-        ".claude/skills/orch-tickets/SKILL.md",
-        ".claude/skills/orch-tickets/orch.skill.json",
-        ".claude/skills/orch-work-on-ticket/SKILL.md",
-        ".claude/skills/orch-refine-ticket/SKILL.md",
+        ".agents/skills/orch-tickets/SKILL.md",
+        ".agents/skills/orch-tickets/orch.skill.json",
+        ".agents/skills/orch-work-on-ticket/SKILL.md",
+        ".agents/skills/orch-refine-ticket/SKILL.md",
+        ".claude/skills/orch-tickets/SKILL.md",  # the generated copy, always written
     ):
         assert (root / rel).is_file(), rel
-    assert "@AGENTS.orch.md" in (root / "CLAUDE.md").read_text().split("\n")
+    assert "@AGENTS.md" in (root / "CLAUDE.md").read_text().split("\n")
+    assert "<!-- orch:begin -->" in (root / "AGENTS.md").read_text().split("\n")
     assert ".state/" in (root / ".gitignore").read_text().split("\n")
     assert res.hints and res.hints[0].startswith("orch grant")
 
 
 def test_recovery_code_is_shown_once_on_the_terminal_and_nowhere_else(where, term, passphrases):
     res = run_init(where)
-    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 1
+    assert len(_BLOCKS.findall(term.text)) == 1
     code = term.code
     check_recovery_code(code)  # 24 valid BIP-39 words with a good checksum
     # the code is the person key: its person id is the owner of the genesis
@@ -126,7 +128,7 @@ def test_a_passphrase_that_differs_the_second_time_is_not_taken(where, term, pas
         run_init(where)
     assert e.value.code == "invalid.input" and "nothing was created" in e.value.message
     assert tree(where["root"]) == set() and not (where["state"] / "hosts").exists()
-    assert not re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)  # no code was shown yet
+    assert not _BLOCKS.findall(term.text)  # no code was shown yet
 
 
 def test_a_wrong_recovery_word_shows_the_code_again_and_three_failures_abort(where, term, passphrases):
@@ -135,7 +137,7 @@ def test_a_wrong_recovery_word_shows_the_code_again_and_three_failures_abort(whe
         run_init(where)
     assert "not confirmed" in e.value.message and "void" in e.value.message
     assert tree(where["root"]) == set() and term.cleared == 1
-    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 3
+    assert len(_BLOCKS.findall(term.text)) == 3
 
 
 def test_the_log_replays_clean_and_check_says_so(where, term, passphrases):
@@ -333,7 +335,7 @@ def test_existing_agents_and_claude_files_are_extended_not_replaced(where, term,
     run_init(where)
     a = (where["root"] / "AGENTS.md").read_text()
     assert a.startswith("# Repo rules\nBe kind.\n") and "AGENTS.orch.md" in a
-    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.orch.md\n"
+    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n@AGENTS.orch.md\n"
     assert (where["root"] / ".gitignore").read_text() == "node_modules/\n.state/\n"
 
 
@@ -398,6 +400,24 @@ def test_a_second_init_in_the_same_directory_is_refused_and_deletes_nothing(wher
         assert not term.shown
     finally:
         os.close(fd)
+
+
+def test_init_names_a_project_file_under_a_store_name_and_writes_nothing(where, term, passphrases):
+    # finding B11-2: a project's own config.json is not "a workspace"; it is named, and nothing is written
+    (where["root"] / "config.json").write_text('{"name": "my-app"}')
+    (where["root"] / "events").mkdir()
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and "workspace already exists" not in e.value.message
+    assert "already has its own config.json, events/" in e.value.message and not term.shown
+    assert sorted(p.name for p in where["root"].iterdir()) == ["config.json", "events"]
+    assert (where["root"] / "config.json").read_text() == '{"name": "my-app"}'
+
+
+def test_a_stale_init_lock_does_not_block_init(where, term, passphrases):
+    (where["root"] / wi.LOCK_DIR).write_text("")  # a crashed init's lock file: the flock decides, not the name
+    run_init(where)
+    assert (where["root"] / "config.json").is_file()
 
 
 def test_the_lock_is_released_after_success_and_after_failure(where, term, passphrases):
@@ -480,14 +500,14 @@ def test_a_failure_writing_the_instruction_files_keeps_the_workspace_and_says_so
 
 
 def test_a_kept_workspace_skill_is_announced(where, term, passphrases):
-    skill = where["root"] / ".claude" / "skills" / "orch-tickets"
+    skill = where["root"] / ".agents" / "skills" / "orch-tickets"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("mine\n")
     (skill / "orch.skill.json").write_text(
         json.dumps({"schema_version": 1, "skill_version": "1.0.0", "scope": "workspace", "connections": [], "env": []})
     )
     res = run_init(where)
-    assert any(x.startswith("kept .claude/skills/orch-tickets (scope workspace") for x in res.lines)
+    assert any(x.startswith("kept .agents/skills/orch-tickets (scope workspace") for x in res.lines)
     assert (skill / "SKILL.md").read_text() == "mine\n"
 
 
@@ -512,7 +532,9 @@ def test_init_refuses_a_symlinked_file_and_copies_nothing(where, term, passphras
     assert not where["state"].exists() and sorted(p.name for p in where["root"].iterdir()) == [name]
 
 
-@pytest.mark.parametrize("rel", [".claude", ".claude/skills", ".claude/skills/orch-tickets"])
+@pytest.mark.parametrize(
+    "rel", [".claude", ".claude/skills", ".claude/skills/orch-tickets", ".agents", ".agents/skills"]
+)
 def test_init_refuses_a_symlinked_directory_and_writes_nothing_outside(where, term, passphrases, tmp_path, rel):
     out = outside(tmp_path)
     link = where["root"] / rel

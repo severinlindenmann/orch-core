@@ -3,7 +3,7 @@
   "error": {
     "code": "transition.refused",
     "message": "gate.status: verify decisions are accepted only in testing",
-    "hint": "orch show --section current_state",
+    "hint": "orch show REF",
     "fix": {
       "argv": [
         "orch",

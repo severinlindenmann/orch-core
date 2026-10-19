@@ -10,7 +10,9 @@ Start-up, in order:
 Drain (``host.restart``, D-P2-4): new requests answer ``host.restarting`` with ``retry_after_ms``; writes in flight
 finish (no deadline inside a commit); parked ``wait``s answer ``host.restarting``; subscriptions end with
 ``end: "host.restarting"`` (:attr:`Host.subscriptions_end`, the bus of H6a); then the listeners close and
-:meth:`Host.run` returns, so the service manager starts the new release.
+:meth:`Host.run` returns, so the service manager starts the new release. ``orch host enable`` waits twice
+START_WAIT for the drain, then forces the restart through the service manager (``kickstart -k`` / ``systemctl
+restart``): crash-equivalent, a request in flight may be interrupted and is recovered at start.
 
 **Live updates (H6a).** Each workspace's worker keeps its subscription journal (:mod:`orch.host.journal`) and hands
 new entries to the host's :class:`~orch.host.bus.Bus` on the event loop. Every :data:`JOURNAL_CHECK_SECONDS` the host
@@ -38,6 +40,8 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch import layout as layout_mod
+from orch.layout import LayoutError
 
 from . import frames
 from .blobs import BLOB_MAX, Quota
@@ -54,6 +58,17 @@ from .pins import AgentPins
 from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, WorkspaceGate, WorkspaceService
+
+
+def _release_id() -> str:
+    """The digest of this host's code (B5b): the CLI warns when it differs from its own."""
+    from .release import code_digest
+
+    try:
+        return code_digest()
+    except OSError:
+        return "unknown"
+
 
 LOG = logging.getLogger(__name__)
 #: how often retention runs in a host that stays up (§0.7)
@@ -77,16 +92,28 @@ def _digest(ops: dict[str, int]) -> str:
 SERVED_MARKER = "host-served"
 
 
+def _state_fd(project: str | os.PathLike[str]) -> int | None:
+    return layout_mod.open_state_fd(project)
+
+
+def is_served(project: str | os.PathLike[str]) -> bool:
+    """A host serves the workspace of ``project``: its marker is under the store's ``.state``. Fails closed: absent only
+    when shown absent in both candidate places (``orch.layout.state_marker_present``); a layout that cannot be placed
+    counts as served, so a direct-mode tool never opens a store it cannot place."""
+    return layout_mod.state_marker_present(project, SERVED_MARKER)
+
+
 def served_marker(root: str, on: bool, state_dir: Path) -> None:
     """Write or remove the marker beneath the workspace's ``.state`` (no symlink followed; failures are ignored: the
     marker is a second fence next to the registry, never a reason to stop serving)."""
     import json as _json
 
     del state_dir  # kept in the signature for the callers; never written into the workspace
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        dfd = os.open(Path(root) / ".state", flags)
-    except OSError:
+        dfd = _state_fd(root)
+    except LayoutError:
+        return
+    if dfd is None:
         return
     try:
         if on:
@@ -127,6 +154,7 @@ class Host:
         journal_check_interval: float = JOURNAL_CHECK_SECONDS,
         runner_identity: Callable[[Any], bool] | None = None,
         dev_runner: bool = False,
+        dev: Any = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
@@ -136,6 +164,12 @@ class Host:
 
             if is_service_run_dir(self.run_dir):
                 raise HostError("invalid.input", f"--dev-runner is for a dev run directory only, never {self.run_dir}")
+        #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
+        #: for the life of the process; ``None`` on every normal host
+        self.dev = dev
+        #: §11A.17.3 D3: registered workspaces a normal host skipped at start (an ``SBX`` genesis), as alarms
+        self.dev_alarms: list[dict[str, Any]] = []
+        self._dev_logger: asyncio.Task[None] | None = None
         self.backend_factory = backend or self._registry_backend
         self.pins = pins or AgentPins()
         self.clock = clock
@@ -240,7 +274,7 @@ class Host:
         if service is None:
             return False
         auth = service.auth
-        if auth is not None and auth.fresh(service.entry.root):
+        if auth is not None and auth.fresh(service.entry.store_dir):
             return auth.person_ok(person, self.clock())
         try:
             asyncio.get_running_loop()
@@ -278,6 +312,7 @@ class Host:
         try:
             self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
+            self._check_dev_registry()
             self.intents.open()
             self.jobs.open()
             self.runners.load()
@@ -288,6 +323,18 @@ class Host:
         except BaseException:
             self._release_host_lock()
             raise
+
+    def _check_dev_registry(self) -> None:
+        """§11A.17.2 check 4 and 17.3 D3: a dev host refuses to start with a non-sandbox workspace registered; a
+        normal host skips every ``SBX`` workspace of its registry (an edited registry bypasses ``admit``) and raises
+        the alarm ``sandbox_workspace_registered`` for each, in ``host.list`` and ``orch host status``."""
+        from .devmode import check_registry
+
+        skipped = check_registry(self.dev, self.state_dir, self.registry.entries(), self.host_uid)
+        self.dev_alarms = [{"code": "sandbox_workspace_registered", "workspace_id": wid} for wid in skipped]
+
+    def skipped(self, workspace_id: str) -> bool:
+        return any(a["workspace_id"] == workspace_id for a in self.dev_alarms)
 
     def _release_host_lock(self) -> None:
         if self._lock_fd is not None:
@@ -311,6 +358,7 @@ class Host:
         welcome = {
             "host": HOST_NAME,
             "workspace": None,
+            "release": _release_id(),
             "tier": self._tier(),
             "caps": ["control/1", "outcome/1"],
             "ops": dict(CONTROL_OPS),
@@ -322,9 +370,13 @@ class Host:
         await self._serve_runner()
         self.bus.start()
         for entry in self.registry.entries():
+            if self.skipped(entry.workspace_id):
+                continue  # §11A.17.3 D3: a sandbox workspace on a normal host is never served
             await self.serve(entry)
         self._sweeper = asyncio.create_task(self._sweep_loop())
         self._checker = asyncio.create_task(self._check_loop())
+        if self.dev is not None:
+            self._dev_logger = asyncio.create_task(self._dev_log_loop())
 
     async def _serve_runner(self) -> None:
         """The runner socket (H11a). A failure leaves the host without a runner (``runner.unavailable``), never down."""
@@ -370,7 +422,17 @@ class Host:
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
         service.git_pool = self.git_pool
         service.runners = self.runners  # H11a: run.list / run.sub
+        service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
+        backend = self.backend_factory()
+        from .relayhook import install_seams, make_starter
+
+        install_seams()  # B1: the four relay seams (idempotent; the R6 gate is the separate switch)
+        service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
+        if self.dev is not None:
+            from .devmode import dev_gate
+
+            service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
@@ -381,10 +443,10 @@ class Host:
         except (HostError, OSError, ValueError) as exc:
             service.state, service.cause = "unavailable", f"socket: {exc}"[:300]  # and no socket at all
             return
-        backend = self.backend_factory()
         welcome = {
             "host": HOST_NAME,
             "workspace": {"id": entry.workspace_id, "prefix": entry.prefix[:10] or "?"},
+            "release": _release_id(),
             "tier": entry.tier,
             "caps": list(backend.caps),
             "ops": dict(backend.ops),
@@ -513,6 +575,15 @@ class Host:
             await asyncio.sleep(self.journal_check_interval)
             await self.check_journals()
 
+    async def _dev_log_loop(self) -> None:
+        """§11A.17.2 "Visible everywhere": the dev host's line at start and at every hour of uptime."""
+        from .devmode import LOG as DEV_LOG
+        from .devmode import status_line
+
+        while True:
+            DEV_LOG.warning("%s", status_line(self.dev))
+            await asyncio.sleep(SWEEP_SECONDS)
+
     async def _sweep_loop(self) -> None:
         while True:
             await asyncio.sleep(self.sweep_interval)
@@ -549,11 +620,11 @@ class Host:
             await asyncio.sleep(0.01)
 
     async def close(self) -> None:
-        for task in (self._sweeper, self._checker):
+        for task in (self._sweeper, self._checker, self._dev_logger):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-        self._sweeper = self._checker = None
+        self._sweeper = self._checker = self._dev_logger = None
         await self.bus.stop()
         for name in list(self.servers):
             pair = self.servers.pop(name)

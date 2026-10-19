@@ -14,6 +14,7 @@ idem, expiry) is synced to disk, and before a signature leaves the signer the re
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -28,6 +29,7 @@ from .protocol import (
     CONTRACT,
     DEPOSIT_MAX_HOURS,
     DEPOSIT_REASONS,
+    FEATURES,
     HASH,
     IDEM,
     OP_NAME,
@@ -47,6 +49,12 @@ MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
+#: the custody switch (§0.8.6 item 3a): wrong passphrases at ``custody_on`` per window, and a passphrase's length
+CUSTODY_TRIES = 5
+CUSTODY_WINDOW = 900.0
+#: the wrong-passphrase record of the switch, in the person's custody root (it survives a signer restart: Opus M1)
+CUSTODY_MISSES = "click-custody.json"
+PASSPHRASE_MAX = 1024
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -54,6 +62,8 @@ HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "
 #: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
 #: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
 READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
+
+GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 class Budget:
@@ -129,6 +139,7 @@ class ClickSigner:
         wall: Callable[[], float] = time.time,
         log: Any = None,
         records: Records | None = None,
+        sessions: Any = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -151,6 +162,10 @@ class ClickSigner:
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
+        from orch.host.sequence import Sessions
+
+        #: the durable sessions of sequences (one review, N signatures; batch 11), beside the sign records
+        self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -178,6 +193,15 @@ class ClickSigner:
         from orch.host.convenience import enabled
 
         return enabled(self.state, entry["workspace_id"], int(entry["host_uid"]))
+
+    def _risk_ack(self, entry: dict[str, Any]) -> str | None:
+        """B6: when the risk notice was acknowledged at enable time (``None``: enabled before B6, or off)."""
+        from orch.host.convenience import risk_ack
+
+        try:
+            return risk_ack(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            return None
 
     def _default_execution(self, entry: dict[str, Any]) -> bool:
         from orch.runner import enablement
@@ -334,11 +358,14 @@ class ClickSigner:
         deposit = args.get("deposit", False)
         if type(deposit) is not bool:
             raise ClickError("invalid.input", "deposit is true or false")
+        seq = args.get("sequence")
+        if seq is not None:
+            self._sequence_ok(entry, op, inner, seq, deposit, files)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
             inner = self._deposit_args(entry, inner)
-        elif op_class(op) == "terminal":
+        elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
             self._sweep()
@@ -348,6 +375,8 @@ class ClickSigner:
         _, sel = self._convenience(entry)
         device = sel["device"]
         body = {"op": op, "args": inner, "signer": {"device": device, "auth": "convenience"}}
+        if seq is not None:
+            body["sequence"] = seq
         prepared = self._call(entry, "human.prepare", body, idem=idem, files=files or None)
         prepared = canon.loads_strict(canon.dumps(prepared["data"]))
         request = prepared.get("request") or {}
@@ -388,6 +417,27 @@ class ClickSigner:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
+
+    def _sequence_ok(
+        self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
+    ) -> None:
+        """A sequence (one review, N signatures, batch 11) starts with ``new`` and nothing else; the confirmation of
+        the whole is that of its strongest step: a click, or (with a grant to the runner last) the GRANT word, which
+        needs dashboard execution on this machine. A terminal step means the terminal."""
+        from orch.host import sequence
+
+        if deposit or files or not isinstance(seq, dict) or seq.get("step") != 0:
+            raise ClickError("invalid.input", "a sequence starts at its first step, without files or a deposit")
+        try:
+            intent = sequence.validate_intent(seq.get("intent"))
+        except sequence.SequenceInvalid as exc:
+            raise ClickError("invalid.input", f"sequence: {exc}") from None
+        if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
+            raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
+        kind = sequence.confirm_kind(intent)
+        # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
+        if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
@@ -480,6 +530,8 @@ class ClickSigner:
             if args.get("word") != expected:
                 raise refused("word", "type the word the review shows")
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
+        if (stored.get("material") or {}).get("sequence") is not None:
+            return self._sign_sequence(entry, approval, backend, sel, stored)
         self.budget.reserve(len(stored["events"]))
         from orch.host import signer as host_signer
 
@@ -519,10 +571,134 @@ class ClickSigner:
         finally:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
 
+    def _sign_sequence(
+        self, entry: dict[str, Any], approval: Approval, backend: Any, sel: Any, stored: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One click signs every step of a sequence (batch 11): the engine of :mod:`orch.host.sequence`, on this
+        signer's own host connection and its own convenience key. The session record is the durable claim (a step is
+        claimed, then signed, then landed; never signed twice); the checks run HERE, in this process, never in the
+        dashboard server. A sequence that ends early leaves what landed as a visible draft."""
+        from orch.host import sequence
+        from orch.host import signer as host_signer
+
+        wid, person, device = approval.workspace_id, self._person(entry), sel["device"]
+        self._attempted.add((wid, approval.request_id))
+        intent = sequence.validate_intent(stored["material"]["sequence"]["intent"])
+
+        def prepare(op: str, args: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+            body = {"op": op, "args": args, "signer": {"device": device, "auth": "convenience"}, "sequence": meta}
+            return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body)["data"]))
+
+        box: dict[str, Any] = {}
+
+        def check(prepared: dict[str, Any]) -> None:
+            # every §0.8.1 check; what each step may be is the intent's (check_step), including a last grant, which a
+            # lone click never signs
+            try:
+                host_signer.check(prepared, workspace_id=wid, person=person, device=device, auth="convenience")
+            except host_signer.SignerRefused as exc:
+                raise refused("check_failed", str(exc)) from None
+            # in ADDITION: the click rules of every single request (event count, clean worker checks, the grant's
+            # terminal-only gate: only the runner grant of deposit mode passes, as the sequence's last step)
+            views.check_prepared(
+                prepared,
+                workspace_id=wid,
+                person=person,
+                device=device,
+                files=None,
+                deposit=prepared.get("op") == "grant",
+            )
+
+        def sign(prepared: dict[str, Any]) -> list[dict[str, Any]]:
+            signed = host_signer.sign(prepared, backend=backend, key_id=KEY_ID, workspace_id=wid)
+            if signed.secret is not None:  # the runner grant (last): this frame only, handed over after its commit
+                box["secret"] = signed.secret
+            return signed.events
+
+        def submit(rid: str, events: list[dict[str, Any]], idem: str) -> dict[str, Any]:
+            return self._call(entry, "human.submit", dict(request_id=rid, events=events), idem=idem)
+
+        def head(key: str) -> dict[str, Any]:
+            data = self._call(entry, "ticket.get", {"ref": key})["data"]
+            return {**data["doc"]["head"], "tail": (data.get("log") or [None])[-1]}
+
+        def cancel(rid: str) -> None:
+            self._call(entry, "human.cancel", {"request_id": rid})
+
+        port = sequence.Port(
+            prepare=prepare,
+            check=check,
+            sign=sign,
+            submit=submit,
+            new_idem=_new_idem,
+            head=head,
+            cancel=cancel,
+            budget=self.budget.reserve,
+        )
+        kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
+        if (
+            kind == "terminal"
+            or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
+            or approval.kind != kind
+        ):
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent, now=self.wall)
+        try:
+            live = driver.resumable()
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing was signed") from None
+        if live is not None:
+            # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
+            raise refused(
+                "resumable",
+                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                "or on the ticket page; nothing is signed here.",
+            )
+        try:
+            out = driver.run(stored)
+        except sequence.Aborted as exc:
+            self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
+            where = ""
+            if exc.landed:
+                try:
+                    held = self.sessions.get(wid, driver.digest)
+                except sequence.SessionError:
+                    held = None
+                name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
+                where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+            if exc.resumable:
+                unfinished = where.replace(" stays a draft", " is not finished")
+                raise refused(
+                    "resumable",
+                    f"The host did not confirm the last signature.{unfinished} "
+                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                ) from None
+            raise refused("stopped", f"{exc.reason}.{where}") from None
+        except sequence.SessionError as exc:
+            raise refused("record_unavailable", f"{exc}; nothing more is signed") from None
+        last = out["results"][-1]
+        approval.signed, approval.idem = ["sequence"], None  # in memory: a repeated sign answers, never re-signs
+        approval.result = last
+        self._note("committed", workspace=wid, request=approval.request_id, op=approval.op, steps=out["landed"])
+        answer: dict[str, Any] = {"result": last, "duplicate": False}
+        secret = box.pop("secret", None)
+        if secret is not None:  # the grant is signed and committed: now, and only now, to the runner
+            did = out["requests"][-1][3:]
+            outcome, reason = self._hand_over(entry, did, secret)
+            if outcome == "unknown":
+                outcome, reason = self._deposit_status(entry, did)
+            answer |= {"deposit": outcome, "deposit_id": did, "grant": secret.partition(".")[0]}
+            if outcome == "rejected":
+                answer["deposit_reason"] = reason if reason in DEPOSIT_REASONS else "other"
+            del secret
+        return answer
+
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
-        """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
+        """A deposit grant's arguments: ``hours`` 1..168 (the workspace grant_hours; default 8) and
+        ``scope``; the signer sets ``label:"runner"``
         and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
-        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner"}
+        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner", "extend"}
         if inner.get("runner", True) is not True:
             raise ClickError("invalid.input", "a deposit grant is a runner grant")
         hours, scope = inner.get("hours", 8), inner.get("scope", "workable")
@@ -534,8 +710,13 @@ class ClickSigner:
             raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
         if not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
-        # runner:true makes the op itself a runner grant (label runner, at most 12 h, verbs agent, no ORCH_GRANT hint)
-        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        # runner:true makes the op itself a runner grant (label runner, workspace grant_hours cap, verbs agent, no hint)
+        out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
+        if "extend" in inner:  # B8: the grant this one replaces; the op checks it is yours and live
+            if not (isinstance(inner["extend"], str) and GRANT_ID.fullmatch(inner["extend"])):
+                raise ClickError("invalid.input", "extend is a grant id")
+            out["extend"] = inner["extend"]
+        return out
 
     def _deposited(
         self, entry: dict[str, Any], op: str, rid: str, res: dict[str, Any], secret: str | None = None
@@ -711,27 +892,245 @@ class ClickSigner:
         from orch import __version__ as core
         from orch.custody.select import status
 
-        out = []
-        for e in self._workspaces():
-            wid = e["workspace_id"]
-            st = status(self.state, wid)
-            row = {
-                "workspace_id": wid,
-                "prefix": str(e.get("prefix")),
-                "custody": st["custody"],
-                "device": st["device"],
-                "enabled": bool(self._enabled(e)),
-            }
-            problem = st.get("problem") or self.problems.get(wid)
-            if problem is None and st["custody"] != "convenience":
-                problem = "not_convenience"
-            if problem is None and not row["enabled"]:
-                problem = "disabled"
-            row["available"] = problem is None
-            if problem is not None:
-                row["problem"] = str(problem)[:200]
-            out.append(row)
-        return {"core": str(core), "contract": CONTRACT, "workspaces": out}
+        out = [self._row(e, status) for e in self._workspaces()]
+        return {"core": str(core), "contract": CONTRACT, "features": list(FEATURES), "workspaces": out}
+
+    def _row(self, e: dict[str, Any], status: Callable[[Path, str], dict[str, Any]] | None = None) -> dict[str, Any]:
+        if status is None:
+            from orch.custody.select import status
+        wid = e["workspace_id"]
+        st = status(self.state, wid)
+        row = {
+            "workspace_id": wid,
+            "prefix": str(e.get("prefix")),
+            "custody": st["custody"],
+            "device": st["device"],
+            "enabled": bool(self._enabled(e)),
+            "risk_ack": self._risk_ack(e),
+        }
+        problem = st.get("problem") or self.problems.get(wid)
+        if problem is None and st["custody"] != "convenience":
+            problem = "not_convenience"
+        if problem is None and not row["enabled"]:
+            problem = "disabled"
+        row["available"] = problem is None
+        if problem is not None:
+            row["problem"] = str(problem)[:200]
+        return row
+
+    # -- the custody switch (§0.8.6 item 3a, owner decision 15 Oct 2026; fix-forward of the Opus review of #539) -----
+    #
+    # The invariant, enforced here and nowhere else: the dashboard turns click-to-sign on only by proving the
+    # passphrase of a key that is in passphrase custody NOW, and it never chooses a passphrase. So:
+    #   custody_on   passphrase custody            -> the conversion (the passphrase is the proof), then the flag
+    #                convenience custody, flag on  -> nothing to do (idempotent)
+    #                convenience custody, flag off -> refused: custody.terminal_needed (nothing to prove against)
+    #                an unfinished change          -> refused: custody.unavailable
+    #   custody_off  the flag goes off (no factor: it only takes authority away); a passphrase is refused
+    #                (custody.terminal_needed): moving the key back is `orch keys custody passphrase --in-place`.
+    def _misses_dir(self) -> int:
+        from orch.custody.convenience import person_root, secure_dir
+
+        root = person_root(self.state)
+        root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # the person's state directory
+        return secure_dir(root, (), create=True)
+
+    def _misses(self) -> list[float]:
+        """The recorded wrong passphrases (wall times) inside the window, from ``<person>/click-custody.json`` (0600,
+        person-owned, :data:`CUSTODY_MISSES`). An unreadable record is replaced by a full window of misses now: it
+        fails closed for one window instead of resetting the count, and not for longer."""
+        import json
+
+        from orch.custody.base import CustodyError, KeyNotFound
+        from orch.custody.convenience import read_private
+
+        now = self.wall()
+        fd = self._misses_dir()
+        try:
+            try:
+                doc = json.loads(read_private(fd, CUSTODY_MISSES))
+                misses = doc["misses"]
+                if doc.get("v") != 1 or type(misses) is not list or not all(type(t) is float for t in misses):
+                    raise ValueError("shape")
+            except KeyNotFound:
+                return []
+            except (CustodyError, ValueError, KeyError, TypeError):
+                misses = [now] * CUSTODY_TRIES
+                self._write_misses(fd, misses)
+                return misses
+        finally:
+            os.close(fd)
+        # a time ahead of the clock (it was set back) counts as now, and is written back as now once (Opus F2 on #578):
+        # otherwise it would count as "now" again at every read and the wait would last until the clock catches up
+        if any(t > now for t in misses):
+            misses = [min(t, now) for t in misses]
+            fd = self._misses_dir()
+            try:
+                self._write_misses(fd, misses)
+            finally:
+                os.close(fd)
+        return sorted(t for t in misses if t > now - CUSTODY_WINDOW)[-CUSTODY_TRIES:]
+
+    @staticmethod
+    def _write_misses(fd: int, misses: list[float]) -> None:
+        import json
+
+        from orch.custody.convenience import write_private
+
+        write_private(fd, CUSTODY_MISSES, json.dumps({"v": 1, "misses": misses}).encode("ascii"), replace=True)
+
+    def _miss(self) -> None:
+        misses = [*self._misses(), self.wall()][-CUSTODY_TRIES:]  # bounded: older ones no longer matter
+        fd = self._misses_dir()
+        try:
+            self._write_misses(fd, misses)
+        finally:
+            os.close(fd)
+
+    def _custody_budget(self) -> None:
+        """Wrong passphrases at :meth:`custody_on`: at most ``CUSTODY_TRIES`` per ``CUSTODY_WINDOW`` seconds, recorded
+        on disk so a signer restart (a crash, a dashboard ``stop``, a replaced hung signer) does not reset it. It
+        locks out the dashboard path only; ``orch host convenience on`` and ``orch keys custody convenience`` in the
+        terminal are not limited. It slows guessing through a stolen dashboard session; it is no bound against code
+        running as the person, which can read the passphrase key file itself (or keep this path locked: it fails
+        closed)."""
+        from orch.custody.base import CustodyError
+
+        try:
+            misses = self._misses()
+        except (CustodyError, OSError) as exc:
+            raise ClickError("custody.unavailable", f"the passphrase attempt record is not usable: {exc}") from None
+        if len(misses) >= CUSTODY_TRIES:
+            wait = misses[0] + CUSTODY_WINDOW - self.wall()
+            raise ClickError(
+                "rate.limited",
+                f"at most {CUSTODY_TRIES} wrong passphrases per {int(CUSTODY_WINDOW)} s here; wait, or switch it on in "
+                "the terminal (orch keys custody convenience, orch host convenience on)",
+                retry_after_ms=max(1, int(wait * 1000)),
+                retryable=True,
+            )
+
+    @staticmethod
+    def _passphrase(args: Mapping[str, Any]) -> str:
+        pw = args.get("passphrase")
+        if type(pw) is not str or not 0 < len(pw) <= PASSPHRASE_MAX:
+            raise ClickError("invalid.input", "passphrase is text")
+        return pw
+
+    @staticmethod
+    def _refuse_pending(convenience: Any, state: Path, wid: str, uid: int, clock: Callable[[], float]) -> None:
+        waiting = convenience.pending_handoffs(state, wid, uid, clock=clock)
+        if waiting:
+            raise ClickError(
+                "sign.click_only",
+                f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: let them expire "
+                "(10 minutes), then switch click-to-sign on",
+            )
+
+    def _tier_a(self, entry: dict[str, Any]) -> tuple[str, int]:
+        """The switch is tier A only (§0.8.6 item 3a): in tier B the host's flag file belongs to another UID."""
+        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        if uid != self.uid:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); switch click-to-sign in the terminal: "
+                f"orch host convenience on|off --workspace {entry.get('prefix') or wid}",
+            )
+        return wid, uid
+
+    def custody_on(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Click-to-sign on, from the dashboard (see the invariant above). The slow part (scrypt, the key store write)
+        runs before the flag lock and leaves the selection at step ``written``, where nothing signs with the key; under
+        the lock the pending hand-offs and the selection are checked again, then the conversion is finished and the
+        flag set last. A hand-off that arrived meanwhile undoes the staged move. The passphrase is never logged,
+        stored or returned."""
+        from orch.custody import select
+        from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound, WrongPassphrase
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        pw = self._passphrase(args)
+        wid, uid = self._tier_a(entry)
+        st = select.status(self.state, wid)
+        if st.get("problem") is not None:
+            raise ClickError("custody.unavailable", f"{st['problem']}; see the terminal: orch keys custody status")
+        name = entry.get("prefix") or wid
+        if st["custody"] == "convenience":
+            if self._enabled(entry):
+                return self._row(entry)  # already on: nothing changes, nothing is proved
+            raise ClickError(
+                "custody.terminal_needed",
+                "this workspace's device key is already in convenience custody, so the dashboard has no passphrase to "
+                f"check; switch it on in the terminal: orch host convenience on --workspace {name}",
+            )
+        self._custody_budget()
+        try:
+            convenience.refuse_turn_on(self.state, entry, uid)  # B10: before any passphrase work or key move
+        except HostError as exc:
+            head = exc.message.split(":", 1)[0]
+            raise ClickError(
+                exc.code, exc.message, reason=head if head in REASONS else None, detail=exc.detail
+            ) from None
+        try:
+            before = select.read_selection(self.state, wid)
+            self._refuse_pending(convenience, self.state, wid, uid, self.wall)  # early; checked again under the lock
+            try:
+                staged = select.stage_convenience(self.state, wid, prefix=str(entry.get("prefix") or ""), passphrase=pw)
+            except WrongPassphrase:
+                self._miss()
+                raise ClickError("custody.wrong_passphrase", "the passphrase was refused; nothing changed") from None
+            finished = False
+            try:
+                with convenience.workspace_lock(self.state, wid, uid):
+                    try:
+                        self._refuse_pending(convenience, self.state, wid, uid, self.wall)
+                    except ClickError:
+                        select.undo_staged(self.state, wid, staged, before)
+                        raise
+                    select.finish_convenience(self.state, wid, staged)
+                    finished = True
+                    convenience.set_enabled(self.state, wid, True, uid)  # last: no error after the flag changed
+            except HostError:
+                # lock.busy before anything was finished: put the key back where it was. After the conversion
+                # finished (Opus F3 on #578) there is nothing to undo: convenience custody with the flag off is safe,
+                # and the host error itself is what the person needs to see.
+                if not finished:
+                    select.undo_staged(self.state, wid, staged, before)
+                raise
+        except HostError as exc:  # lock.busy, custody.unsafe_mode
+            raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except (BackendUnavailable, CustodyError) as exc:
+            raise ClickError("custody.unavailable", str(exc)) from None
+        self.problems.pop(wid, None)
+        self._note("custody_on", workspace=wid)
+        return self._row(entry)
+
+    def custody_off(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Click-to-sign off, from the dashboard: the flag goes off (no factor: it only takes authority away), and that
+        is all. A ``passphrase`` is refused before anything changes: the dashboard never chooses the factor of the
+        device key (Opus H2 on #539); the key moves back in the terminal, where the new passphrase is typed on
+        ``/dev/tty``."""
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        wid, uid = self._tier_a(entry)
+        if "passphrase" in args:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the dashboard only switches signing off; move the key back under a new passphrase in the terminal: "
+                f"orch keys custody passphrase --workspace {entry.get('prefix') or wid} --in-place",
+            )
+        try:
+            with convenience.workspace_lock(self.state, wid, uid):
+                convenience.set_enabled(self.state, wid, False, uid)
+        except HostError as exc:
+            raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        self._note("custody_off", workspace=wid)
+        return self._row(entry)
 
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
@@ -754,7 +1153,14 @@ class ClickSigner:
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
-        fn = {"prepare": self.prepare, "view": self.view, "sign": self.sign, "cancel": self.cancel}.get(op)
+        fn = {
+            "prepare": self.prepare,
+            "view": self.view,
+            "sign": self.sign,
+            "cancel": self.cancel,
+            "custody_on": self.custody_on,
+            "custody_off": self.custody_off,
+        }.get(op)
         if op == "status":
             return self.status(args)
         if fn is None:

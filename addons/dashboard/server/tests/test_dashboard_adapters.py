@@ -117,3 +117,44 @@ def test_workspace_badge_equals_todays_count_and_leaves_notices_out(stub):
     counted = [n for n in today["needs_you"] if n["kind"] in ("question", "approval", "verdict")]
     assert adapters.actionable_count(items, "owner") == len(counted) == 3
     assert adapters.actionable_count(items, "viewer") == 0  # a viewer's Today has no "needs you"
+
+
+def test_host_info_passes_only_the_closed_dev_shape():
+    from orch_dashboard.adapters import host_info
+
+    wid = "a" * 32
+    assert host_info({"workspaces": []}) == {}
+    assert host_info(None) == {}
+    assert host_info({"dev": {"sim_convenience": False}}) == {}
+    got = host_info(
+        {
+            "dev": {"sim_convenience": True, "sandbox": "0123abcd", "extra": "x"},
+            "alarms": [
+                {"code": "sandbox_workspace_registered", "workspace_id": wid, "text": "<b>x</b>"},
+                {"code": "sandbox_workspace_registered", "workspace_id": "../../etc"},
+                {"code": "dev_convenience_refused", "count": 3, "first": "x", "text": "<i>"},
+                {"code": "Not A Code!"},
+                {"code": "something_new"},
+                "junk",
+            ],
+        }
+    )
+    assert got == {
+        "dev": {"sim_convenience": True, "sandbox": "0123abcd"},
+        "alarms": [
+            {"code": "sandbox_workspace_registered", "workspace_id": wid},
+            {"code": "sandbox_workspace_registered"},
+            {"code": "dev_convenience_refused"},
+            {"code": "something_new"},
+        ],
+    }
+    assert "sandbox" not in host_info({"dev": {"sim_convenience": True, "sandbox": "NOT-HEX"}})["dev"]
+
+
+def test_a_gate_carries_what_an_approval_still_lacks():
+    """B11: core's `missing` reaches the page, which never offers Approve while it lacks anything."""
+    from orch_dashboard.adapters.tickets import _gate
+
+    assert _gate({"state": "open", "missing": ["plan"]}, True)["missing"] == ["plan"]
+    assert _gate({"state": "open", "missing": []}, True)["missing"] == []
+    assert "missing" not in _gate({"state": "open"}, True)

@@ -64,6 +64,18 @@ def test_start_creates_the_worktree_and_the_agent_runs_in_it(w, tmp_path):  # no
     env = dict(line.split("=", 1) for line in (out / "codex.env").read_text().splitlines() if "=" in line)
     assert env["ORCH_WORKTREE"] == str(path) and os.path.samefile(env["PWD"], path)
     assert env["ORCH_GRANT"] == value
+    # the worktree is outside the project: the walk finds nothing there, ORCH_WORKSPACE (named by the host) does
+    from orch import discovery
+
+    root = str(w.served.lab.root)
+    assert env["ORCH_WORKSPACE"] == str(Path(w.served.lab.root))
+    assert discovery.locate(path, explicit=False) is None
+    found = discovery.locate(env["ORCH_WORKSPACE"], explicit=True)
+    assert found is not None and found.config["workspace"]["id"] == w.served.wid
+    # AGENTS.orch.md is in the project's store, not in the worktree: the prompt names it by absolute path
+    assert pre["argv"][-1].endswith(f"Follow {os.path.join(root, '.orch', 'AGENTS.orch.md')}.") or pre["argv"][
+        -1
+    ].endswith(f"Follow {os.path.join(root, 'AGENTS.orch.md')}.")
     again = ok(c.req("agent.preview", args))["data"]  # the worktree is now registered: used, not created
     assert again["will_create_worktree"] is False and again["cwd_path"] == str(path)
     no = ok(c.req("agent.preview", {**args, "worktree": False}))["data"]

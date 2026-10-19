@@ -41,7 +41,7 @@ export function DeviceName({ device }: { device: NamedDevice }) {
   if (device.member)
     return (
       <span data-testid="refusal-device">
-        a device of <Inline>{device.member}</Inline> with no name
+        <Inline>{device.member}</Inline>’s device (unnamed)
       </span>
     )
   return <span data-testid="refusal-device">a device this page does not know</span>
@@ -66,14 +66,27 @@ export function RefusalDevices({ ws, ids }: { ws: string; ids: readonly string[]
   )
 }
 
+/** Raw host text (ids, hashes) folded away: a person never has to read it. */
+export function TechnicalDetails({ text }: { text: string }) {
+  return (
+    <details data-testid="technical-details" className="mt-1 text-[12px] text-text-muted">
+      <summary className="cursor-pointer">Technical details</summary>
+      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono">
+        <Raw>{text}</Raw>
+      </pre>
+    </details>
+  )
+}
+
 /** A click-to-sign problem as the sign panel and the hand-off dialog show it: title, sentence, the devices it names. */
-export function ClickProblemBox({ problem, ws }: { problem: { title: string; body: string; next?: string; signedAt?: string | null; devices?: string[] }; ws: string | undefined }) {
+export function ClickProblemBox({ problem, ws }: { problem: { title: string; body: string; next?: string; signedAt?: string | null; details?: string; devices?: string[] }; ws: string | undefined }) {
   return (
     <div role="alert" data-testid="click-problem" data-click-next={problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
       <p className="font-medium text-text">{problem.title}</p>
       <p title={problem.signedAt ?? undefined} className="text-text-muted">
         <Raw>{problem.body}</Raw>
       </p>
+      {problem.details && <TechnicalDetails text={problem.details} />}
       {ws && problem.devices && <RefusalDevices ws={ws} ids={problem.devices} />}
     </div>
   )

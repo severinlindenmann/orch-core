@@ -9,6 +9,9 @@ What it reports, each part read on its own so one failure does not hide the rest
   the person this UID is mapped to, and the click-to-sign flag (``orch host convenience``, off by default);
 * **here**: the workspace the CLI finds from the current directory and the mode the CLI uses for it (``host`` when it is
   registered, else ``direct``), exactly as :func:`orch.hostclient.locate` decides;
+* **relay** (R5, orch-v2-host §11A.4), per workspace with a relay directory: the link state, what keeps the relay
+  worker from starting (the stop marker, the link, the R6 gate) and the outbox entries queued for publication; a
+  linked workspace whose worker cannot start for another reason than the operator's stop is a problem;
 * **problems**: what keeps host mode from working, each with the command that fixes it.
 
 Nothing here writes, starts or repairs anything.
@@ -50,8 +53,12 @@ def _host(control: Path) -> dict[str, Any]:
             res = client.call("host.list")
     except Exception as exc:  # noqa: BLE001 - no socket, refused, wrong owner: all "no host answers"
         return {"answers": False, "control": str(control), "error": str(exc)[:200], "workspaces": []}
-    rows = (res.get("result") or {}).get("data", {}).get("workspaces", []) if res.get("ok") else []
-    return {"answers": bool(res.get("ok")), "control": str(control), "workspaces": rows}
+    data = (res.get("result") or {}).get("data", {}) if res.get("ok") else {}
+    out = {"answers": bool(res.get("ok")), "control": str(control), "workspaces": data.get("workspaces", [])}
+    for key in ("dev", "alarms"):  # §11A.17: only a dev host has dev; alarms only while there are any
+        if isinstance(data.get(key), (dict, list)):
+            out[key] = data[key]
+    return out
 
 
 def _socket_answers(path: Path, host_uid: int, workspace_id: str) -> bool:
@@ -86,6 +93,29 @@ def _here(env: Mapping[str, str], state: Path) -> dict[str, Any] | None:
     if target is None:
         return {"root": str(root), "mode": "direct"}
     return {"root": str(root), "mode": "host", "workspace_id": target.workspace_id, "socket": str(target.socket)}
+
+
+def _relay(state: Path, wid: str, host_uid: int) -> dict[str, Any] | None:
+    """The relay part of a row (R5): ``None`` for a workspace without a relay directory."""
+    from . import relaylink
+
+    if not os.path.lexists(relaylink.relay_dir(state, wid)):
+        return None
+    try:
+        linked = os.path.lexists(relaylink.link_path(state, wid))
+        blocker = relaylink.start_blocker(state, wid, host_uid)
+    except Exception as exc:  # noqa: BLE001 - reported, never the reason the status fails
+        return {"error": type(exc).__name__}
+    try:
+        outbox = sum(1 for n in os.listdir(state / "hosts" / wid / "outbox") if len(n) == 25 and n.endswith(".json"))
+    except FileNotFoundError:
+        outbox = 0
+    except OSError:
+        outbox = None
+    from .relayr4 import ledger_at
+
+    ledger = ledger_at(state, wid, host_uid)
+    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox, "held": ledger["held"], "ledger": ledger}
 
 
 def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
@@ -133,6 +163,26 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             "person": ((entry.get("peers") or {}).get(str(uid)) or {}).get("person"),
             "click_to_sign": bool(isinstance(flag, dict) and flag.get("enabled") is True),
         }
+        if live and isinstance(live.get("sandbox"), bool):  # §11A.17.2: only from a dev host
+            row["sandbox"] = live["sandbox"]
+        relay = _relay(state, wid, host_uid)
+        if relay is not None:
+            row["relay"] = relay
+            from .relayr4 import held_attention
+
+            note = held_attention(str(entry.get("prefix")), relay.get("held") or [], relay.get("ledger"))
+            if note is not None:  # R4 (11A.9): held evidence the owner must publish (interim for #572)
+                problems.append(note)
+            why = relay.get("blocker") or relay.get("error")
+            if relay.get("linked") and why and why != "stopped":
+                problems.append(
+                    {
+                        "what": f"{entry.get('prefix')}: relay-linked, but its relay worker cannot start: {why}",
+                        "fix": "nothing to do until R6 lands (orch-v2-host §11A.1)"
+                        if str(why).startswith("r6_not_ready")
+                        else "orch host relay start --workspace " + wid,
+                    }
+                )
         rows.append(row)
         if len(str(sock).encode()) > SOCKET_PATH_MAX:
             problems.append(
@@ -163,6 +213,14 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
                 "fix": "decide which setup the service runs (orch host enable --help); nothing is changed for you",
             }
         )
+    for alarm in host.get("alarms") or []:  # §11A.17.3 D3
+        if isinstance(alarm, dict) and alarm.get("code") == "sandbox_workspace_registered":
+            problems.append(
+                {
+                    "what": f"workspace {alarm.get('workspace_id')} is a throwaway dev-pair sandbox (SBX): not served",
+                    "fix": f"orch host unregister {alarm.get('workspace_id')}",
+                }
+            )
     # an interpreter that differs alone is no problem: the service keeps the one it was enabled with (H7 review)
     here = _here(env, state)
     if here is not None and here.get("mode") == "refused":
@@ -185,6 +243,9 @@ def _yes(value: Any) -> str:
 def render(rep: Mapping[str, Any]) -> str:
     """The report as text for a person: one line per fact, the problems last with their fixes."""
     lines = [f"state dir {rep['state_dir']}"]
+    dev = (rep.get("host") or {}).get("dev")
+    if isinstance(dev, dict):  # §11A.17.2: the first line on a dev host
+        lines.insert(0, f"DEV HOST (Simulator convenience answers on, sandbox {dev.get('sandbox')})")
     svc = rep["service"]
     if svc is None:
         lines.append("service: none on this platform (workspaces stay in direct mode)")
@@ -204,8 +265,15 @@ def render(rep: Mapping[str, Any]) -> str:
             f"workspace {w['prefix']} ({w['workspace_id']}) {w['state']} "
             f"socket={'answers' if w['socket_answers'] else 'silent'} person={w['person'] or 'none'} "
             f"click-to-sign={'on' if w['click_to_sign'] else 'off'}"
+            + ({True: " sandbox", False: " not sandbox"}[w["sandbox"]] if "sandbox" in w else "")
         )
         lines.append(f"  root {w['root']}")
+        if "relay" in w:
+            r = w["relay"]
+            lines.append(
+                f"  relay linked={_yes(r.get('linked'))} worker={'may start' if not r.get('blocker') else r['blocker']}"
+                f" outbox={r.get('outbox_pending')}" + (f" held_evidence={len(r['held'])}" if r.get("held") else "")
+            )
     here = rep["here"]
     if here is None:
         lines.append("here: not in a workspace")

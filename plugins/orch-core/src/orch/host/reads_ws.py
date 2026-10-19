@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from orch import repopaths
 from orch.canon import HashError, canonical_policy, check_repo_identity
 from orch.model.types import WORKSPACE
 
@@ -62,16 +63,16 @@ def committed_epoch(ctx: ReadCtx) -> int:
 
 def _name(ctx: ReadCtx, prefix: str) -> str:
     from orch import schema
-    from orch.store import fsio
+    from orch.store import StoreError, fsio
 
-    try:  # the store's own rules: no symlink, size limit, bounded nesting, schema-valid
-        raw = fsio.read_or_none(ctx.store.root / "config.json")
+    try:  # the store's own rules: below its pinned root (#516), no symlink, size limit, bounded nesting, schema-valid
+        raw = ctx.store.fs.read_or_none("config.json")
         if raw is None:
             return prefix
         doc = fsio.loads(raw)
         schema.validate("workspace", doc)
         name = doc["workspace"]["name"]  # type: ignore[index]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError, StoreError):
         return prefix
     return name if isinstance(name, str) and name else prefix
 
@@ -402,6 +403,19 @@ def _linked_repos(ctx: ReadCtx) -> set[str]:
     return out
 
 
+LINKED_KEYS = 12
+
+
+def _linking_tickets(ctx: ReadCtx) -> dict[str, list[str]]:
+    """Repo name to the keys of the tickets (the viewer may see) that link it, at most ``LINKED_KEYS`` each, sorted.
+    A display aid for the person about to remove a repo; it decides nothing."""
+    out: dict[str, list[str]] = {}
+    for view in ctx.visible_tickets():
+        for name in ((view.fields.get("links") or {}).get("repos")) or []:
+            out.setdefault(name, []).append(view.key)
+    return {name: sorted(keys)[:LINKED_KEYS] for name, keys in out.items()}
+
+
 def _remote(value: Any) -> tuple[bool, str | None]:
     """``(serve, remote)``: a declared remote that is not an F1 canonical identity is not served (never repaired)."""
     if value is None:
@@ -422,6 +436,14 @@ def _repo_entry(raw: dict[str, Any], manager: bool) -> dict[str, Any]:
     return entry
 
 
+def sign_methods(service: Any, ws: Any) -> list[str] | None:
+    """B6: the workspace's signed ``settings.sign_methods``, or ``None`` when no ``settings.changed`` ever set it.
+    ``None`` means "not set": the model then judges no way, so every way is allowed; a reader must not invent a
+    narrower default."""
+    methods = ws.settings.get("sign_methods")
+    return None if methods is None else list(methods)
+
+
 def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
     from orch.store.render import thaw
 
@@ -432,6 +454,8 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "settings": {k: int(ws.settings[k]) for k in SETTINGS},
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
+        "sign_methods": sign_methods(ctx.service, ws),
+        "models": thaw(ws.settings["models"]) if "models" in ws.settings else None,
         "settings_at": settings_at,
         "policy_at": policy_at,
         "sub_cursor": cursor,
@@ -459,6 +483,10 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     linked = _linked_repos(ctx) if viewer.column == "N" else None  # each page re-applies the current visibility
     page: dict[str, Any] = {}
     nxt: int | None = None
+    keyboard = (
+        linked is None and viewer.manager and viewer.column == "P"
+    )  # the person at the keyboard (R is not served)
+    keys_of = _linking_tickets(ctx) if keyboard else {}
     for i in range(start, len(names)):
         name = names[i]
         if linked is not None and name not in linked:
@@ -470,6 +498,11 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         page[name] = (
             {"default_branch": raw.get("default_branch")} if linked is not None else _repo_entry(raw, viewer.manager)
         )
+        if keyboard and isinstance(raw.get("path"), str):
+            # the person at the keyboard (an owner or maintainer): is the folder there, and which branch (read-only)
+            page[name]["check"] = repopaths.observe(ctx.store.layout, raw["path"])
+        if keys_of.get(name):
+            page[name]["linked_by"] = keys_of[name]
     if nxt is not None and snap is None:  # a snapshot only when a later page can follow
         snap = ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, viewer.person, data)
     out: dict[str, Any] = {
@@ -477,6 +510,8 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "next_page": ctx.pages.token(snap, nxt, ctx.args) if nxt is not None else None,
         "gates": data["gates"],
         "defaults": data["defaults"],
+        "sign_methods": data["sign_methods"],
+        "models": data["models"],
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column != "N":

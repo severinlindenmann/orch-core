@@ -231,6 +231,29 @@ def test_files_go_inline_or_as_a_blob_and_the_grant_never_in_args(lab, tmp_path)
         served.close()
 
 
+def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch, tmp_path):
+    from tests.addons.helpers import make_package
+
+    served = hosted(lab)
+    try:
+        owner = lab.ws.owner
+
+        class Backend(KeyBackend):
+            def public_key(self, key_id):
+                return owner.sig_pub
+
+        monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: True)
+        keys = ops_human.keys_dir(lab.state, served.wid)
+        keys.mkdir(parents=True)
+        (keys / ops_human.KEY_FILE).write_text("{}")
+        make_package(lab.ws.root, "lint")
+        r = hcli(lab, grant=False).j("addon", "grant", "lint")
+        assert r.code == 0, r.out
+    finally:
+        served.close()
+
+
 def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeypatch, tmp_path):
     served = hosted(lab)
     try:
@@ -623,3 +646,51 @@ def test_the_ticket_key_is_compared_canonically():
     for ref in ("DEMO-2", "OTHER-1", "2"):
         with pytest.raises(Exception, match="another ticket"):
             hostclient._bound_key("DEMO-0001", ref)
+
+
+def test_every_signing_path_uses_one_device_key_lookup(tmp_path, monkeypatch):
+    """The CLI's human ops, the pairing commands and the hosted Human find the key by ``ops.human.device_backend``:
+    the passphrase file where init put it, else the convenience selection; none is ``custody.no_key``."""
+    import pytest
+
+    from orch.custody import select
+    from orch.ops.errors import OrchError
+
+    wid = "ab" * 16
+    with pytest.raises(OrchError) as e:
+        ops_human.device_backend(tmp_path, wid)
+    assert e.value.code == "custody.no_key"
+    marker = object()
+    monkeypatch.setattr(ops_human, "open_backend", lambda directory: marker)
+    keys = ops_human.keys_dir(tmp_path, wid)
+    keys.mkdir(parents=True)
+    (keys / ops_human.KEY_FILE).write_text("{}")
+    assert ops_human.device_backend(tmp_path, wid) is marker
+    (keys / ops_human.KEY_FILE).unlink()  # moved to convenience custody: the passphrase file is gone
+    conv = object()
+    monkeypatch.setattr(select, "read_selection", lambda s, w: {"custody": "convenience", "transition": None})
+    monkeypatch.setattr(select, "device_backend", lambda s, w: (conv, None))
+    assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv
+
+
+def test_a_key_in_convenience_custody_is_refused_outside_the_hosted_path(tmp_path, monkeypatch):
+    """Direct mode and the genesis pin / device pairing are passphrase-only; only the hosted CLI path (the host checks
+    the flag) may use the convenience backend."""
+    import pytest
+
+    from orch.custody import select
+    from orch.host import paircli
+    from orch.host.errors import HostError
+    from orch.ops.errors import OrchError
+
+    wid = "ab" * 16
+    conv = object()
+    monkeypatch.setattr(select, "read_selection", lambda s, w: {"custody": "convenience", "transition": None})
+    monkeypatch.setattr(select, "device_backend", lambda s, w: (conv, None))
+    with pytest.raises(OrchError) as e:
+        ops_human.device_backend(tmp_path, wid)  # what direct-mode Human.backend calls
+    assert e.value.code == "custody.no_key" and "one-click custody" in e.value.message and e.value.hint
+    with pytest.raises(HostError) as h:
+        paircli._device_backend(tmp_path, wid)  # genesis pin and pair_device
+    assert h.value.code == "custody.no_key"
+    assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv  # hosted CLI path

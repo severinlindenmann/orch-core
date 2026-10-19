@@ -26,7 +26,7 @@ const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>]
   ['activity', 'show_older', {}],
   ['wiki', 'open', { slug: 'glossary' }],
   ['wiki', 'search', { formData: { q: 'dbt' } }],
-  ['guide', 'open', { slug: 'getting-around' }],
+  ['guide', 'open', { slug: 'start-here' }],
   ['schedules', 'open_run', { run: 'R-4' }],
   ['terminals', 'open', {}],
   ['github', 'open', { id: 'acme-energy/energy-dbt#29' }],

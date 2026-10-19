@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from orch.ops import plans
+from orch.ops import plans, views
 from orch.ops._dsl import REF, STR, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
@@ -26,7 +26,9 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
         section = next((s for s in ("verification", "findings") if f"section {s} is empty" in e.detail), None)
         hint = None
         if gate:
-            hint = f'orch ask "approve the {gate} gate?"'
+            # B11: a gate that still lacks its section (a quick task without a plan) is filled first; asking for its
+            # approval would only be refused gate.incomplete
+            hint = views.fill_hint(p.last_view, gate) or f'orch ask "approve the {gate} gate?"'
         elif section:
             hint = f"orch section set {section} -m TEXT"
         raise OrchError(code, f"submit: {flat(e.detail)[:180]}", hint=hint) from None

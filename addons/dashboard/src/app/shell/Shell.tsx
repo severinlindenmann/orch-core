@@ -20,6 +20,7 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { MandateBanner } from '../mandates/MandateBanner'
 import { DeliveryHoldBanner } from './DeliveryHoldBanner'
+import { SetupUnfinishedBanner } from './SetupUnfinishedBanner'
 
 /** Keyboard shortcuts from `shortcuts.ts`. */
 function Shortcuts() {
@@ -80,7 +81,7 @@ export function Shell() {
           >
             Skip to content
           </a>
-          <div className="flex h-full min-w-[1024px]">
+          <div className="flex h-full min-w-0">
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
@@ -88,6 +89,8 @@ export function Shell() {
               <MandateBanner />
               {/* A factory full run holding before Deliver: nothing renders unless one waits out its hold window. */}
               <DeliveryHoldBanner />
+              {/* One-click was begun in setup and not finished: the key is still in the terminal's hands. */}
+              <SetupUnfinishedBanner />
               <DockArea>
               <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (

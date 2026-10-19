@@ -61,11 +61,12 @@ def maint(tmp_path):
 # --- the ops are not registry ops ------------------------------------------------------------------------------------
 
 
-def test_the_three_ops_are_host_person_ops_not_registry_ops():
+def test_the_host_person_ops_are_not_registry_ops():
     import orch.ops as ops
     from orch.model.emits import EMITS_V1
 
-    assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    want = {"move", "policy.set", "settings.set", "people.set", "relay.pair_device", "publish.share"}  # B12D, P5
+    assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
         assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched
         assert review.person_op_types(name) == review.HOST_PERSON_OPS[name]
@@ -227,6 +228,29 @@ def test_policy_set_with_a_ref_is_for_the_ticket_owner_owners_and_maintainers(ma
     assert err(quinn.prepare_res("policy.set", args)) == "role.denied"  # a viewer owning the ticket
 
 
+def test_people_set_is_for_whoever_may_manage_the_ticket_and_names_members_only(maint):
+    """B12D: ``claims.may_manage`` (ticket owner, owners, maintainers); an owner is exactly one person."""
+    w, quinn = maint
+    uid, key = w.ticket()
+    args = {"ref": key, "role": "assignees", "add": [w.quinn.ref], "remove": []}
+    assert err(quinn.prepare_res("people.set", args)) == "role.denied"  # a member who does not own the ticket
+    w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
+    quinn.run("people.set", args)
+    assert [e["add"] for e in events_of(w, uid, "people.changed")][-1] == [w.quinn.ref]
+    assert err(quinn.prepare_res("people.set", {**args, "add": ["p_" + "9" * 32]})) == "invalid.input"  # not a member
+    assert err(quinn.prepare_res("people.set", {**args, "add": [], "remove": []})) == "invalid.input"  # nothing
+    assert (
+        err(quinn.prepare_res("people.set", {**args, "add": [w.quinn.ref], "remove": [w.quinn.ref]})) == "invalid.input"
+    )
+    owner = {"ref": key, "role": "owner"}
+    assert err(quinn.prepare_res("people.set", {**owner, "add": [w.quinn.ref, w.lab.owner]})) == "invalid.input"
+    assert (
+        err(quinn.prepare_res("people.set", {**owner, "add": [w.quinn.ref], "remove": [w.lab.owner]}))
+        == "invalid.input"
+    )
+    assert err(quinn.prepare_res("people.set", {**args, "role": "watchers"})) == "invalid.input"  # not offered yet
+
+
 def test_a_ticket_owner_fixes_a_no_eligible_gate_with_policy_set(maint):
     w, quinn = maint
     uid, key = w.ticket()
@@ -245,11 +269,18 @@ def test_a_ticket_owner_fixes_a_no_eligible_gate_with_policy_set(maint):
 # --- settings.set ----------------------------------------------------------------------------------------------------
 
 
-def test_settings_set_changes_the_durations_and_repos(human, served):
+def git_dir(tmp_path, name="proj"):
+    """A folder the host accepts as a repo (it checks the folder and its .git; it runs no git)."""
+    d = tmp_path / name
+    (d / ".git").mkdir(parents=True)
+    return str(d)
+
+
+def test_settings_set_changes_the_durations_and_repos(human, served, tmp_path):
     changes = {
         "grant_hours": 4,
         "claim_ttl_min": 30,
-        "repos": {"proj": {"path": "/srv/proj", "default_branch": "main"}, "old": None},
+        "repos": {"proj": {"path": git_dir(tmp_path), "default_branch": "main"}, "old": None},
     }
     prepared, done, signed = human.run("settings.set", {"set": changes})
     (event,) = signed.events
@@ -261,20 +292,23 @@ def test_settings_set_changes_the_durations_and_repos(human, served):
     assert got["settings"]["repos"]["proj"]["default_branch"] == "main"
 
 
-def test_settings_set_shows_the_current_values_as_unsigned_before(human):
-    prepared = human.prepare("settings.set", {"set": {"grant_hours": 2, "repos": {"proj": {"path": "/p"}}}})
+def test_settings_set_shows_the_current_values_as_unsigned_before(human, tmp_path):
+    prepared = human.prepare(
+        "settings.set", {"set": {"grant_hours": 2, "repos": {"proj": {"path": git_dir(tmp_path)}}}}
+    )
     assert prepared["material"]["before"] == {"grant_hours": 8, "repos": {"proj": None}}  # the host's current values
     review_item = prepared["material"]["review"][0]
     assert review_item["type"] == "settings.changed" and review_item["payload"]["set"]["grant_hours"] == 2
     human.sign(prepared)  # the signer accepts it: each before key is a key of `set`
 
 
-def test_settings_set_checks_its_input(human):
+def test_settings_set_checks_its_input(human, tmp_path):
+    d = git_dir(tmp_path, "x")
     bad = [
         {"set": {}},
         {},
         {"set": {"grant_hours": 0}},
-        {"set": {"grant_hours": 25}},
+        {"set": {"grant_hours": 169}},
         {"set": {"claim_ttl_min": 14}},
         {"set": {"lease_ttl_min": 4}},
         {"set": {"other": 1}},
@@ -287,10 +321,19 @@ def test_settings_set_checks_its_input(human):
         assert err(human.prepare_res("settings.set", args)) == "invalid.input", args
     # the model's own rules: a remote is a canonical identity, a local one names its own repo
     assert (
-        human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "ssh://h/x"}}}})["ok"]
-        is False
+        human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": d, "remote": "ssh://h/x"}}}})["ok"] is False
     )
-    human.prepare("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "https://example.org/x"}}}})
+    human.prepare("settings.set", {"set": {"repos": {"x": {"path": d, "remote": "https://example.org/x"}}}})
+
+
+def test_settings_set_checks_repo_paths_on_the_host(human, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    for path in ("/no/such/folder", "relative/dir", str(plain), str(tmp_path / "a" / ".." / "plain")):
+        res = human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": path}}}})
+        assert err(res) == "invalid.input", path
+    # removing a name needs no path; a good folder passes
+    human.prepare("settings.set", {"set": {"repos": {"x": None}}})
 
 
 # --- the whole path --------------------------------------------------------------------------------------------------

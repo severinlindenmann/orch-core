@@ -26,7 +26,7 @@ __all__ = ["grant_person", "hooks_for", "records_for", "workspace_hooks", "works
 
 def records_for(store: Any) -> FileRecords:
     """Session records (stop rule, retry dedup) in the workspace's ``.state/sessions``, locked and atomic."""
-    return FileRecords(store.state_dir / "sessions")
+    return FileRecords(store.state_dir / "sessions", fs=store.fs)  # below the store's pinned root (#564)
 
 
 def grant_person(store: Any, grant: str | None) -> str:
@@ -125,5 +125,13 @@ def workspace_records(workspace: Any, default: MemoryRecords) -> MemoryRecords:
     """``FileRecords`` in the workspace's ``.state/sessions``, or ``default`` (process memory) outside a workspace."""
     from orch.ops.runtime import records_dir
 
-    root = workspace.root
-    return FileRecords(records_dir(root)) if root is not None else default
+    layout = workspace.layout
+    if layout is None:
+        return default
+
+    def pinned() -> Any:  # opened on first use, checked against the root and store discovery found (#564)
+        from orch.store.store import open_store_fs
+
+        return open_store_fs(layout.project, workspace.ident, workspace.store_pin)[0]
+
+    return FileRecords(records_dir(layout), fs=pinned)

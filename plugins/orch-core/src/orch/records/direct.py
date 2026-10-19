@@ -41,12 +41,14 @@ class DirectLink:
         *,
         ident: tuple[int, int] | None = None,
         config: bytes | None = None,
+        store_pin: Any = None,
     ) -> None:
         if os.name == "nt":
             raise RecordsError("records.unsupported", "direct-mode records do not run on Windows yet (D-P2-38)")
         self.root, self.workspace_id, self.state = Path(root), workspace_id, Path(state)
         #: the root's identity when it was discovered here: checked before the store opens below it
         self.ident = ident
+        self.store_pin = store_pin
         #: the config.json bytes discovery read: the store's open-time check uses them, never a re-read by path
         self.config = config
         self._store: Any = None
@@ -55,9 +57,9 @@ class DirectLink:
     def served(self) -> bool:
         """A host serves this workspace: its marker under the root (written by the host whatever state directory this
         tool was given; Opus #433 finding 3), or the registration in this state directory (the guard)."""
-        from orch.host.service import SERVED_MARKER
+        from orch.host.service import is_served
 
-        return os.path.lexists(self.root / ".state" / SERVED_MARKER)
+        return is_served(self.root)  # either layout; a layout it cannot place counts as served (fail closed)
 
     def _open(self) -> Any:
         if self.served():
@@ -86,6 +88,8 @@ class DirectLink:
                     load="lazy",
                     guard=DirectGuard(self.state, self.workspace_id),
                     config=self.config,
+                    ident=self.ident,
+                    store_pin=self.store_pin,
                 )
             except StoreError as exc:
                 raise RecordsError(exc.code, exc.detail or exc.code, exit_=3) from None

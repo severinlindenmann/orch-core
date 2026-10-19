@@ -3,12 +3,13 @@ name = "orch-core"
 version = "2.0.0.dev0"
 description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses (v2 core)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
     "jsonschema>=4.26.0",
+    "segno>=1.6.6",
 ]
 
 [project.scripts]
@@ -30,6 +31,7 @@ addopts = "--durations=15"
 markers = [
     "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
     "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
+    "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
     "relay_t2: the T2 real-relay tests (11A.10): need ORCH_RELAY_DIR (the pinned orch-relay checkout); run by the relay-t2 CI job only",
 ]
 

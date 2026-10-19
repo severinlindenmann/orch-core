@@ -47,17 +47,13 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
     """Append one event and die (``os._exit``) at ``step`` of the write order. Used by the crash tests."""
     import os
 
-    from orch.store import store as store_mod
-
     s = open_store(root, host_dir, host_state)
 
     def die(*a, **k):
         os._exit(7)
 
     if step == "after_pending":
-        orig = store_mod.append_durable
-        store_mod.append_durable = lambda *a, **k: die()  # type: ignore[assignment]
-        _ = orig
+        s.fs.append_durable = lambda *a, **k: die()  # type: ignore[method-assign]
     elif step == "after_append":
         s._finish = die  # type: ignore[method-assign]
     elif step == "before_checkpoint":
@@ -75,13 +71,13 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
 
         s._install = half  # type: ignore[method-assign]
     elif step == "torn_line":
-        real_append = store_mod.append_durable
+        real_append = s.fs.append_durable
 
         def torn(path, data, **kw):
             real_append(path, data[: len(data) // 2])
             die()
 
-        store_mod.append_durable = torn  # type: ignore[assignment]
+        s.fs.append_durable = torn  # type: ignore[method-assign]
     s.append({"type": "log.added", "actor": agent, "text": "dying"}, log=uid)
     time.sleep(0.1)
     sys.exit(0)

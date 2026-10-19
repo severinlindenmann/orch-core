@@ -131,6 +131,7 @@ def session(
     clock: Clock | None = None,
     ws: str = WS,
     stop=None,
+    relay_info=None,
 ) -> Session:
     s = sign.RelaySigner(key or Key(), sign.LinkContext(workspace_id=ws, origin=link_origin or transport_origin))
     clock = clock or Clock()
@@ -144,6 +145,7 @@ def session(
         mono=clock.mono,
         sleep=clock.sleep,
         stop=stop,
+        relay_info=relay_info,
     )
 
 

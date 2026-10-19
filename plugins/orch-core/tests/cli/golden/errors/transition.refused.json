@@ -3,7 +3,7 @@
   "error": {
     "code": "transition.refused",
     "message": "the ticket status does not allow this",
-    "hint": "orch show --section current_state",
+    "hint": "orch show REF",
     "fix": {
       "argv": [
         "orch",

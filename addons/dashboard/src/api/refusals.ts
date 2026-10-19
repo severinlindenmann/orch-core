@@ -4,7 +4,7 @@
 // names the devices by their label where it knows them (never by raw id), and shows nothing it does not know.
 import { ApiError } from './types'
 
-export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version'] as const
+export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version', 'pair_device', 'dev_host'] as const
 export const READERS_REASONS = ['no_declaration', 'reader_too_old', 'declaration_unknown', 'relay_too_old', 'unknown_readers'] as const
 export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number]
 export type ReadersReason = (typeof READERS_REASONS)[number]
@@ -13,15 +13,23 @@ export const CONVENIENCE_UNAVAILABLE = 'sign.convenience_unavailable'
 export const CONVENIENCE_READERS = 'sign.convenience_readers'
 export const DECL_INVALID = 'reader.decl_invalid'
 
+/** Signing from the dashboard on a dev sandbox host (core D1, #582): the one text, shared by the refusal and the signing card. */
+export const DEV_HOST_SENTENCE =
+  'Signing from the dashboard is off on a dev sandbox host. This host was started with --dev-sim-convenience for the Simulator test pair, which accepts click-signed answers only from the throwaway sandbox workspace, so it never uses this computer’s key store for your own signatures (and refuses it when HOME is inside a sandbox folder). Sign in the terminal with your passphrase.'
+
 /** `sign.convenience_unavailable`: the host refuses a click-signed (convenience) signature, first match wins. */
 export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
   disabled: 'Click-to-sign is switched off for this workspace.',
-  relay_paired: 'Click-to-sign is off because this workspace is paired with a phone through the relay.',
+  relay_paired:
+    'Click-to-sign is refused because the relay’s side of this workspace has not declared that it reads click-signed entries. Update the relay, or sign in the terminal.',
   other_member:
     'This workspace has another member who cannot yet read click-signed entries (their orch, or one of their devices). Click-to-sign stays off until that member updates orch and declares what it reads, on their computer and on each of their devices; a removed device no longer counts.',
   phone_device:
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
+  pair_device:
+    'Adding a phone is signed with the typed word, like adding a member: a click alone never adds a device. Sign it in the terminal (orch sign CODE) if the dashboard does not offer it.',
+  dev_host: DEV_HOST_SENTENCE,
 }
 
 /** `sign.convenience_readers`: adding a reader is refused while click-to-sign is on or the history has click-signed entries. */
@@ -47,6 +55,7 @@ export const SIGNER_PROBLEM_SENTENCE: Record<string, string> = {
   readers_old:
     'Click-to-sign is paused: another device or member of this workspace has an orch app too old to read click-signed entries. Update orch there (it then declares what it reads) or remove that device; Settings → Devices shows which. Until then, sign in the terminal.',
   disabled: 'Click-to-sign is switched off for this workspace.',
+  dev_host: DEV_HOST_SENTENCE,
   not_convenience: 'Your key for this workspace is not held for click-to-sign.',
   version_mismatch: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.',
   custody_unavailable: 'The key store is locked or refused access.',
@@ -91,4 +100,39 @@ export function refusalSentence(r: Refusal): string {
   return r.reason
     ? READERS_SENTENCE[r.reason as ReadersReason]
     : 'This would add a reader to a workspace that uses click-to-sign, and the host refused it until that reader can read click-signed entries.'
+}
+
+// Core D1 (#582): `host.dev_refused`, the dev gate's closed `detail.reason`. Each reason is said in plain words; a reason this
+// page does not know gets the generic sentence and is never shown as text.
+export const DEV_REFUSED = 'host.dev_refused'
+export const DEV_REFUSED_SENTENCE: Record<string, string> = {
+  sandbox_workspace: 'This is a throwaway dev-pair sandbox workspace, and this is a normal host. A normal host never serves one. Start a real workspace instead.',
+  not_sandbox: 'This is a dev sandbox host: it serves only the sandbox workspace of its test pair, never a real workspace.',
+  dev_origin: 'This is a dev sandbox host: it links only to the relay its sandbox was made for, not to another one.',
+  dev_host: DEV_HOST_SENTENCE,
+  not_foreground: 'The dev flag works only when the host runs in the foreground of a terminal.',
+  service_managed: 'The dev flag is refused under a service manager: a dev host is always started by hand.',
+  service_dir: 'The dev flag is refused for a service run or state folder: a dev host uses only its own sandbox folder.',
+  no_manifest: 'The dev sandbox folder has no valid sandbox manifest.',
+  state_not_in_root: 'The host’s state folder is not inside the dev sandbox folder.',
+  home_not_in_root: 'The host’s home folder is not inside the dev sandbox folder.',
+  no_dev_json: 'The dev sandbox has no dev settings file.',
+  dev_json_mismatch: 'The dev settings file does not match the sandbox manifest.',
+  no_person: 'The sandbox manifest names no sandbox person.',
+  custody_convenience: 'A key of this person is already held for click-to-sign, which a dev sandbox does not allow.',
+}
+export const DEV_REFUSED_GENERIC = 'The host refused this because it is a dev sandbox host, or because it is not one. Nothing changed.'
+
+/** The reason of a `host.dev_refused` error when it is one the page knows, else null (read from `detail.reason`, else `reason`). */
+export function devRefusedReason(e: unknown): string | null {
+  if (!(e instanceof ApiError) || e.code !== DEV_REFUSED) return null
+  const detail = e.detail && typeof e.detail === 'object' ? e.detail : null
+  const raw = detail?.reason ?? e.reason
+  return typeof raw === 'string' && Object.hasOwn(DEV_REFUSED_SENTENCE, raw) ? raw : null
+}
+
+/** The plain sentence of a `host.dev_refused` error. */
+export const devRefusedSentence = (e: unknown): string => {
+  const r = devRefusedReason(e)
+  return r ? DEV_REFUSED_SENTENCE[r] : DEV_REFUSED_GENERIC
 }

@@ -2,10 +2,12 @@
 // (adding `enabled` and their own options), and the route loaders (app/routeData.ts) warm the very same entries with
 // ensureQueryData, so a page and its loader can never drift apart. Keys are unchanged from before.
 
-import { queryOptions } from '@tanstack/react-query'
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
+import type { ActivityParams } from './activity'
 import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
+import { hostInfoOf } from './hostInfo'
 import type { HostGrant } from './settings'
 import type { QuickLimits } from './quickRecords'
 
@@ -20,6 +22,8 @@ export const queries = {
   /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
   workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
   workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
+  /** Core D1 (#582): is this host a dev sandbox host, and which alarms does it raise. Checked by `hostInfoOf`. */
+  hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false, refetchInterval: (q) => (q.state.status === 'error' ? 15_000 : false) }),
   addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
   devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
   today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
@@ -41,6 +45,8 @@ export const queries = {
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
   /** Reduced workspace settings of a real host (M4). */
+  signDefault: (ws: string) => queryOptions({ queryKey: ['sign-default', ws], queryFn: () => api.getSignDefault(ws), retry: false }),
+  addOns: (ws: string) => queryOptions({ queryKey: ['add-ons', ws], queryFn: () => api.getAddOns(ws) }),
   hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
   roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
   /** H12d-2: reader levels and `required_reader` (Settings → Devices). */
@@ -58,6 +64,16 @@ export const queries = {
       queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
       queryFn: () =>
         api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+    }),
+  /** The Activity page of a real host: pages of the timeline, newest first; follows `next_page`. */
+  activity: (ws: string, filters: Omit<ActivityParams, 'page' | 'limit'>) =>
+    infiniteQueryOptions({
+      queryKey: ['activity', ws, filters.group ?? 'all', filters.who ?? '', filters.ticket ?? ''],
+      queryFn: ({ pageParam }) => api.getActivity(ws, { ...filters, ...(pageParam ? { page: pageParam } : {}) }),
+      initialPageParam: '',
+      getNextPageParam: (last) => last.next_page || undefined,
+      refetchInterval: 30_000,
+      retry: false,
     }),
   /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
   records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),

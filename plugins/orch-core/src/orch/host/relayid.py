@@ -39,8 +39,9 @@ class RelayIdentity:
     epoch: int
     #: ``sha256:`` of the accepted member list the request was checked against
     list_hash: str
-    #: H12d hook (§0.8.6 item 9): the digest of the device's current reader declaration, carried by every column-R
-    #: request once the handshake exists. Unused in v1.7: nothing may treat its presence as a qualification.
+    #: H12d (§0.8.6 item 9.5): the digest of the device's current reader declaration, carried by every column-R
+    #: request. Its presence alone qualifies nothing: ``orch.host.readerops.check_rd`` (H12d-3) compares it with the
+    #: device's current reader record while ``required_reader`` is at least 1.
     rd: str | None = None
 
     def __post_init__(self) -> None:

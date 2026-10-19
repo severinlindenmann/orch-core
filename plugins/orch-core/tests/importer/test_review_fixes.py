@@ -302,15 +302,19 @@ def test_the_process_is_hardened_before_the_passphrase_prompt(tmp_path):
 
 
 def test_only_the_importer_unlocks_a_batch():
+    import re
     from pathlib import Path
 
     src = Path(import_run.__file__).parents[1]
     users = sorted(
         p.relative_to(src).as_posix()
         for p in src.rglob("*.py")
-        if ".unlocked(" in p.read_text() or 'getattr(backend, "unlocked"' in p.read_text()
+        # ``primary.unlocked(`` is orch.custody.primary's one-command unlock (H12c-c), not a backend batch unlock
+        if re.search(r"(?<!\bprimary)\.unlocked\(", p.read_text()) or 'getattr(backend, "unlocked"' in p.read_text()
     )
-    assert users == ["ops/import_run.py"]
+    # B9: ``orch setup`` opens its own generated passphrase once for the reviewed batch (setup/steps.py)
+    # batch 11: a signer's sequence of signatures opens its own reviewed batch once (host/sequence_terminal.py)
+    assert users == ["host/sequence_terminal.py", "ops/import_run.py", "setup/steps.py"]
 
 
 def test_a_backend_that_cannot_sign_a_batch_has_its_own_code(hws, me, v1, monkeypatch):  # noqa: F811

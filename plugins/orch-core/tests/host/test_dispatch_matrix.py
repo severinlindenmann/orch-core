@@ -17,6 +17,7 @@ from orch.host.columns import Column, refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
+from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
@@ -78,14 +79,24 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
+    host |= set(PUBLISH_OPS)  # P5
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
+    host |= {"phone.request", "phone.cancel"}  # B10 Part B
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
-        "grant.list", "workspace.settings", "ticket.text", "reader.list",
+        "grant.list", "workspace.settings", "ticket.text", "reader.list", "phone.requests", "phone.status",
+        "gate.input",
     }  # fmt: skip
-    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    assert set(HOST_PERSON_OPS) == {
+        "move",
+        "policy.set",
+        "settings.set",
+        "people.set",
+        "relay.pair_device",
+        "publish.share",
+    }  # H12c-e, B12D, P5
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -168,7 +179,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("human", "write")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
-        elif op == "reader.declare":  # H12d-2: P only (column R with rd is H12d-3)
+        elif op == "reader.declare":  # H12d-2: P only on a socket (column R: H12d-3)
+            assert kind == ("person_write", "write")
+        elif op in {"phone.request", "phone.cancel"}:  # B10 Part B: P only
             assert kind == ("person_write", "write")
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}
@@ -181,6 +194,13 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("pg_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
+        elif op in PUBLISH_OPS:  # P5: prepare and discard P and G, list reads, send/revoke/register P only
+            want = {
+                "publish.prepare": ("pg_write", "write"),
+                "publish.discard": ("pg_write", "write"),
+                "publish.list": ("pg_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert kind == want
         elif op in AGENT_OPS:  # H11c: P only
             assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
         elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only
@@ -380,7 +400,7 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
     rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
     for line in rest.splitlines():
-        m = re.match(r"\| `((?:worktree\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m and m.group(1) not in {r[0] for r in rows}:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows

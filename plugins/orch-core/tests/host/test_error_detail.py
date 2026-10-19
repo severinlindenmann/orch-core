@@ -16,6 +16,10 @@ ALLOWED = {
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level
     "sign.convenience_unavailable": {"reason": "other_member", "devices": ["d_" + "1" * 32]},
     "sign.convenience_readers": {"reason": "reader_too_old", "devices": ["d_" + "2" * 32]},
+    # §11A.17 (D1): the closed reason of a dev-host refusal
+    "host.dev_refused": {"reason": "sandbox_workspace"},
+    # P5: why the publish server said no (a closed reason, never its body)
+    "publish.server_refused": {"reason": "unknown_workspace"},
 }
 
 
@@ -31,7 +35,7 @@ def test_each_allowed_code_sends_exactly_its_allowed_keys(code):
     validate_envelope(res(err), sender="host")
 
 
-def test_the_table_is_exactly_the_seven_codes():
+def test_the_table_is_exactly_the_listed_codes():
     assert set(DETAIL_KEYS) == set(ALLOWED)
 
 

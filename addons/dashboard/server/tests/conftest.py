@@ -22,6 +22,8 @@ ORIGIN = f"http://127.0.0.1:{PORT}"
 def no_signer_child(monkeypatch):
     """No test starts a signer child unless it says so: the child would read the person's own state directory."""
     monkeypatch.setenv("ORCH_DASHBOARD_CLICK", "off")
+    for name in ("ORCH_GRANT", "ORCH_SESSION"):  # the launcher refuses under an agent's environment (#542)
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
@@ -310,6 +312,9 @@ class World:
 
     def post(self, path, body):
         return self.client.post(path, json=body, headers=self.headers(True))
+
+    def put(self, path, body):
+        return self.client.put(path, json=body, headers=self.headers(True))
 
 
 @pytest.fixture

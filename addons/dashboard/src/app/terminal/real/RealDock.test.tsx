@@ -2,7 +2,7 @@
 // "Output no longer kept" without attaching.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { runsApi, type Run, type RunList, type TermPreview } from '@/api/runs'
@@ -62,6 +62,12 @@ describe('the real dock', () => {
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('Dashboard execution: agents and terminals started here run as you.')
     expect(dialog).toHaveTextContent('$SHELL -l')
+    // B12A N15: the command and the environment sit in a collapsed Details, as in Start agent.
+    const details = within(dialog).getByTestId('term-details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    expect(details).toHaveTextContent('$SHELL -l')
+    expect(details).toHaveTextContent('Environment')
+    expect(within(dialog).getByTestId('term-preview-lines').querySelector(':scope > dl')?.textContent ?? '').not.toContain('$SHELL')
     expect(dialog).toHaveTextContent('acts as you, not as an agent')
     expect(dialog.textContent).not.toContain('‮') // the bidi override is shown, never applied
     fireEvent.click(await screen.findByRole('button', { name: 'Open terminal' }))
@@ -72,7 +78,7 @@ describe('the real dock', () => {
     expect(open.mock.calls[1][3]).toBe(open.mock.calls[0][3]) // the retry keeps the idem: one run, never two
     const term = await screen.findByTestId('term')
     expect(term.dataset.run).toBe(opened.run)
-    expect(term.dataset.initial).toBe('write') // the shell this person just opened; take is never set by itself
+    expect(term.dataset.initial).toBe('write') // the shell this tab just opened: its first attach takes control (B12A N5)
   })
 
   it('the write attach after Open is one-shot: switching away and back attaches read (review M1)', async () => {
@@ -119,6 +125,36 @@ describe('the real dock', () => {
     mount()
     expect(await screen.findByText('Output no longer kept')).toBeInTheDocument()
     expect(screen.queryByTestId('term')).toBeNull()
+  })
+
+  it('ended terminals can be cleared one by one or all at once; running ones stay', async () => {
+    const ended = { state: 'exited' as const, replay_until: '2099-01-01T00:00:00Z', exit: { code: 0, signal: null, at: '2026-01-01T00:00:00Z', reason: 'exited' as const, cleanup: 'complete' as const } }
+    list = { ...list, runs: [run('E1', { ...ended, ticket: 'RA-0001' }), run('E2', { ...ended, ticket: 'RA-0002' }), run('R1', { label: 'Live one' })] }
+    mount()
+    await screen.findByRole('tab', { name: /Live one/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear RA-0001 Shell' }))
+    expect(screen.queryByRole('tab', { name: /RA-0001/ })).toBeNull()
+    expect(screen.getByRole('tab', { name: /RA-0002/ })).toBeInTheDocument()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Dock menu' }), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear ended terminals' }))
+    expect(screen.queryByRole('tab', { name: /RA-0002/ })).toBeNull()
+    expect(screen.getByRole('tab', { name: /Live one/ })).toBeInTheDocument()
+  })
+
+  it('U6: a start that never spawned leaves no tab behind (the dialog already showed the error)', async () => {
+    const failed = { state: 'exited' as const, replay_until: null, exit: { code: null, signal: null, at: '2026-01-01T00:00:00Z', reason: 'spawn_failed' as const, cleanup: null } }
+    list = { ...list, runs: [run('F1', { ...failed, ticket: 'RA-0009', kind: 'agent' }), run('R1', { label: 'Live one' })] }
+    mount()
+    await screen.findByRole('tab', { name: /Live one/ })
+    expect(screen.queryByRole('tab', { name: /RA-0009/ })).toBeNull()
+  })
+
+  it('MED-1: a spawn_failed run whose cleanup is in doubt keeps its tab and the warning', async () => {
+    const doubtful = { state: 'exited' as const, replay_until: '2099-01-01T00:00:00Z', exit: { code: null, signal: null, at: '2026-01-01T00:00:00Z', reason: 'spawn_failed' as const, cleanup: 'incomplete' as const } }
+    list = { ...list, runs: [run('F2', { ...doubtful, ticket: 'RA-0010', kind: 'agent' })] }
+    mount()
+    expect(await screen.findByRole('tab', { name: /RA-0010/ })).toBeInTheDocument()
+    expect(await screen.findByText(/Some processes may still be running/)).toBeInTheDocument()
   })
 
   it('Start agent is not available when the host does not serve agent_start', async () => {

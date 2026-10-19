@@ -49,7 +49,9 @@ def wait_for(cond, timeout: float = 10.0):
 class Runner:
     """A runner in this process: supervisor + terminal socket + host link."""
 
-    def __init__(self, w, state: Path, gen: str = GEN1, config: RunnerConfig | None = None) -> None:
+    def __init__(
+        self, w, state: Path, gen: str = GEN1, config: RunnerConfig | None = None, release: str | None = None
+    ) -> None:
         self.sup = Supervisor(state, cgroups=None, scan_interval=0.2, exit_grace=0.5)
         self.sup.open()
         self.term = TermListener(
@@ -67,6 +69,7 @@ class Runner:
             backoff=(0.05, 0.2),
             config=config if config is not None else RunnerConfig(programs={"codex": "/bin/sh"}),
             grants=GrantStore(clock=lambda: w.lab.ws.clock[0]),  # the lab's clock, as the host's
+            release=release,
         )
         self.grants = self.link.grants
         self.link.start()
@@ -111,6 +114,12 @@ def fields(w, **kw) -> dict:
 
 
 # -- the socket ------------------------------------------------------------------------------------------------------
+
+
+def _release() -> str:
+    from orch.host.service import _release_id
+
+    return _release_id()
 
 
 def _hello(path: Path) -> tuple[socket.socket, dict]:
@@ -244,6 +253,37 @@ def test_spawn_writes_intent_first_and_runs_once(w, rstate, tmp_path):
         assert stopped == {"state": "exited", "cleanup": "complete"}
     finally:
         r.close()
+
+
+def test_a_runner_of_another_release_is_refused_every_start(w, rstate, tmp_path):
+    """A runner service left running across an upgrade applies its old rules (and env allow-list) to new requests:
+    the host refuses the spawn with a plain message; nothing is relaxed and nothing is created."""
+    r = Runner(w, rstate, release="old000000000")
+    try:
+        hub = w.h.host.runners
+        assert hub.release == "old000000000"
+        with pytest.raises(HostError) as err:
+            w.h.run(hub.spawn(w.wid, fields(w, run=new_run_id()), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
+        assert err.value.code == "runner.stale" and "orch host enable" in err.value.message
+        assert not list((Path(w.lab.state) / "hosts" / w.wid / "runs").glob("*.json"))  # no launch intent either
+    finally:
+        r.close()
+
+
+def test_a_runner_that_predates_the_release_field_is_stale(w, rstate, tmp_path):
+    sock, _ = _hello(w.h.host.runner_path)
+    try:
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "runs": [], "grants": []}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+        hub = w.h.host.runners
+        wait_for(lambda: hub.connected)
+        assert hub.release is None
+        with pytest.raises(HostError) as err:
+            hub.require_current()
+        assert err.value.code == "runner.stale"
+    finally:
+        sock.close()
 
 
 def test_lost_spawn_ack_gives_exactly_one_process(w, rstate, tmp_path):
@@ -724,7 +764,15 @@ def test_f3_a_spawn_result_is_validated(w, tmp_path):
     dec = frames.Decoder()
     try:
         term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
-        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "runs": [], "grants": []}
+        args = {
+            "version": "t",
+            "release": _release(),
+            "gen": GEN1,
+            "pid": ME,
+            "term_socket": term,
+            "runs": [],
+            "grants": [],
+        }
         sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
         _recv_all(sock, dec)
         run = new_run_id()

@@ -202,6 +202,7 @@ def test_start_spawns_exactly_the_preview_with_the_grant_only_in_the_agents_env(
     assert [pre["program"], *argv] == pre["argv"]  # the spawned argv is the previewed one
     assert env["ORCH_GRANT"] == w.value and env["ORCH_SESSION"] == run["session"]
     assert env["ORCH_TICKET"] == key and env["ORCH_HARNESS"] == "codex"
+    assert env["ORCH_WORKSPACE"] == str(Path(w.lab.root))  # the host names the workspace it started it for
     assert "SECRET_TOKEN" not in env
     allowed = set(pre["env"]) | {"PWD", "SHLVL", "_", "OLDPWD"}  # the shell's own bookkeeping
     assert set(env) <= allowed, set(env) - allowed
@@ -311,6 +312,7 @@ def test_a_person_run_harness_has_no_grant_no_session_no_claim_precheck(ready):
     )
     argv, env = read_out(w, "claude")
     assert "ORCH_GRANT" not in env and "ORCH_SESSION" not in env and env["ORCH_TICKET"] == key
+    assert "ORCH_WORKSPACE" not in env  # only an agent is told its workspace
     assert [pre["program"], *argv] == pre["argv"]
     inter = ok(c.call("term.preview", {"harness": "codex"}))["data"]
     assert inter["blocked"] is None and inter["argv"] == [str(w.out.parent / "bin" / "codex")]

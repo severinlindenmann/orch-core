@@ -73,6 +73,7 @@ __all__ = [
     "MIN_N",
     "MIN_PASSPHRASE_CHARS",
     "KdfParams",
+    "CustodyChangeBackend",
     "PassphraseBackend",
     "PassphraseRequest",
     "PrimarySession",
@@ -279,11 +280,34 @@ def _read_secret(r: int, w: int, prompt: str) -> str:
     return _decode(buf)
 
 
+_PLAIN_REVIEW = {"shown": False, "hint": True}
+
+
+def note_plain_review(hint: bool = True) -> None:
+    """The plain review of what is about to be signed was shown on the person's terminal: the passphrase prompt that
+    follows asks for the technical block with ``d`` instead of printing it (everything stays reachable)."""
+    _PLAIN_REVIEW["shown"] = True
+    _PLAIN_REVIEW["hint"] = hint  # N13: False when the person already read the full review (no point in offering it)
+
+
 def tty_passphrase_provider(request: PassphraseRequest) -> str:
     """Ask on the person's own terminal (see the module docstring). Refuses with :class:`NoPrompt` without one."""
     r, w, close = _open_tty()
+    compact = _PLAIN_REVIEW["shown"]
+    hint = _PLAIN_REVIEW["hint"]
+    _PLAIN_REVIEW["shown"] = False  # one-shot: a later signature in this process never inherits it
+    _PLAIN_REVIEW["hint"] = True
     try:
-        first = _read_secret(r, w, render_prompt(request) + "Passphrase: ")
+        if request.kind in ("unlock", "batch") and compact:
+            # A plain review was just shown on this terminal (B11-P6, finding 24): one line instead of the technical
+            # block. `d` is never a valid passphrase (too short), so it is safe to take it as the question.
+            # N13: the hint is shown only where `d` works here (not after the details were already read); the prompt
+            # keeps ending in "Passphrase: " (the dev-pair and e2e terminal drivers answer that text)
+            first = _read_secret(r, w, "\nPress d for technical details\nPassphrase: " if hint else "\nPassphrase: ")
+            while first == "d":
+                first = _read_secret(r, w, render_prompt(request) + "Passphrase: ")
+        else:
+            first = _read_secret(r, w, render_prompt(request) + "Passphrase: ")
         if request.kind == "create" and _read_secret(r, w, "Repeat passphrase: ") != first:
             raise CustodyError("passphrases differ")
         return first
@@ -386,13 +410,32 @@ class PassphraseBackend:
         _min_n: int = MIN_N,
     ) -> None:
         """``_``-prefixed arguments are test seams (an injected passphrase callback, a lowered scrypt floor). Production
-        code calls ``PassphraseBackend(directory)`` and gets the terminal prompt and the 2^15 floor."""
+        code calls ``PassphraseBackend(directory)`` and gets the terminal prompt and the 2^15 floor, or
+        :meth:`answering` for the dashboard's custody switch."""
         if not _params_ok(_kdf, _min_n):
             raise CustodyError("unacceptable scrypt parameters")
         self._dir = files.private_dir(directory)
         self._provider = _passphrase_provider or tty_passphrase_provider
         self._kdf = _kdf
         self._min_n = _min_n
+
+    @classmethod
+    def answering(cls, directory: str | Path, passphrase: str) -> CustodyChangeBackend:
+        """A backend whose one prompt is answered with ``passphrase`` instead of the terminal, for the dashboard's
+        click-to-sign switch (orch-v2-host §0.8.6 item 3a): the person types the passphrase into the dashboard and the
+        click signer passes it on. It is not a :class:`PassphraseBackend`: it only reads the public key, exports the
+        scalar for the one custody change and deletes the old file (:class:`CustodyChangeBackend`), so text that never
+        came from ``/dev/tty`` cannot sign, unlock or unseal (Opus M2 on #539). Only
+        :func:`orch.custody.select.stage_convenience` uses it (an AST test pins the callers); every other setting
+        (the scrypt floor included) is production's."""
+        return CustodyChangeBackend(cls(directory, _passphrase_provider=lambda _request: passphrase))
+
+    @classmethod
+    def generated(cls, directory: str | Path, passphrase: str) -> PassphraseBackend:
+        """A full backend whose prompt is answered with ``passphrase``: the one ``orch setup``'s own process generated
+        in memory for this run (B9). It can sign and unlock one batch. Only :func:`orch.custody.select.setup_backend`
+        calls it (an AST test pins that); a passphrase from a browser, an argument or a file never reaches it."""
+        return cls(directory, _passphrase_provider=lambda _request: passphrase)
 
     # -- file format --------------------------------------------------------------------------------------------------
 
@@ -791,3 +834,22 @@ class PassphraseBackend:
 
     def delete(self, key_id: str) -> None:
         files.delete_file(self._path(key_id))
+
+
+class CustodyChangeBackend:
+    """What :meth:`PassphraseBackend.answering` returns: the three calls a conversion to convenience needs and nothing
+    else. ``sign``, ``unlocked``, ``unseal``, ``primary_unlocked`` and ``create`` do not exist here."""
+
+    __slots__ = ("_backend",)
+
+    def __init__(self, backend: PassphraseBackend) -> None:
+        self._backend = backend
+
+    def public_key(self, key_id: str) -> bytes:
+        return self._backend.public_key(key_id)
+
+    def export_for_custody_change(self, key_id: str, *, fields: tuple[tuple[str, str], ...]) -> bytearray:
+        return self._backend.export_for_custody_change(key_id, fields=fields)
+
+    def delete(self, key_id: str) -> None:
+        self._backend.delete(key_id)

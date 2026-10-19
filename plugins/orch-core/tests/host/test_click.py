@@ -296,6 +296,18 @@ def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, h
     assert click.conns == []
 
 
+def test_publishing_and_the_publish_server_are_terminal_only_on_the_click_channel(click, served, human):
+    """P5: what sends data off the Mac or redirects where it goes is signed in the terminal (orch sign CODE), never by
+    click or one-click: refused before the host is asked (the early class sees the keys of settings.set)."""
+    value = {"server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"}
+    refused(lambda: click.prepare("settings.set", {"set": {"publish": value}}), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("settings.set", {"set": {"publish": None}}), "human.click_refused", "terminal_only")
+    refused(
+        lambda: click.prepare("publish.share", {"staged_id": "ps_" + "0" * 32}), "human.click_refused", "terminal_only"
+    )
+    assert click.conns == []
+
+
 def test_an_expired_approval_is_refused(click, served, human):
     _, key = human.ticket()
     p = click.prepare("log", {"ref": key, "text": "x"})
@@ -359,7 +371,8 @@ def test_view_digest_ignores_the_check_times_only():
 def test_op_classes_fail_closed_and_repo_settings_need_the_word():
     assert op_class("approve") == "click" and op_class("member.remove") == "word" and op_class("policy.set") == "word"
     assert op_class("grant") == "terminal" and op_class("some.future.op") == "terminal"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "word"  # B8
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "word"
     assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "word"
 

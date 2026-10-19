@@ -27,7 +27,7 @@ type Group = 'active' | 'done'
 
 /** "4 commits, 7 files"; a count the host could not read is "unknown", never zero. */
 export function countsText(q: QuickRow['quick']): string {
-  if (!q || (q.commits === null && q.files === null)) return 'counts unknown'
+  if (!q || (q.commits === null && q.files === null)) return 'size not measured yet'
   return `${q.commits === null ? 'commits unknown' : plural(q.commits, 'commit')}, ${q.files === null ? 'files unknown' : plural(q.files, 'file')}`
 }
 
@@ -49,9 +49,9 @@ function Limits({ ws, limits, onChange }: { ws: string; limits: QuickLimits; onC
   }
   return (
     <details data-testid="quick-limits" className="rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
-      <summary className="cursor-pointer select-none text-text-muted hover:text-text">Limits for "outgrew"</summary>
+      <summary className="cursor-pointer select-none text-text-muted hover:text-text">When is a quick task too big?</summary>
       <div className="mt-3 space-y-3">
-        <p className="text-text-muted">A quick task that changes more commits or files than these is marked as outgrown. Kept in this browser only, for this workspace; empty means the host's default.</p>
+        <p className="text-text-muted">A quick task that changes more commits or files than these is marked "too big" and should become a normal ticket. Kept in this browser only, for this workspace; empty means the host's default.</p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="quick-max-commits">Commits (1 to {LIMIT_RANGE.max_commits.max})</Label>
@@ -105,7 +105,7 @@ function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: bo
       </span>
       <span className="rounded-full border border-border px-2 py-px text-[11px] text-text-muted">{statusLabel(row.status)}</span>
       <span className={cn('text-[12px]', over ? 'text-warning' : 'text-text-faint')} data-testid="quick-counts">
-        {over && <span className="mr-1.5 rounded bg-warning-soft px-1.5 py-px font-medium text-warning">outgrew</span>}
+        {over && <span className="mr-1.5 rounded bg-warning-soft px-1.5 py-px font-medium text-warning">too big</span>}
         {countsText(row.quick)}
       </span>
       {canClose && !finished && row.labels?.includes(QUICK_LABEL) && (

@@ -37,6 +37,7 @@ from orch.store.checkpoints import verify_object as verify_checkpoint
 
 from . import card as cards
 from . import wire
+from .http import Transport
 from .retry import RelayRefused
 from .session import RelayMisbehaving, Session
 
@@ -69,8 +70,13 @@ def _quote(value: str) -> str:
 
 
 class Directory:
-    def __init__(self, session: Session, *, owner_pk_pub: bytes, wsk_pub: bytes) -> None:
+    def __init__(
+        self, session: Session, *, owner_pk_pub: bytes, wsk_pub: bytes, transport: Transport | None = None
+    ) -> None:
+        """``transport`` is the calling thread's own connection (11A.7: one per thread; R3's publisher thread reads
+        through its own); None uses the session's."""
         self._s = session
+        self._t = transport
         self._owner = crypto.validate_public_key(owner_pk_pub)
         self._wsk = crypto.validate_public_key(wsk_pub)
         self._ws = session.workspace_id
@@ -100,7 +106,7 @@ class Directory:
         try:
             obj = self._s.call(
                 "PUT", f"{self._base}/card", route, body={"card": dict(c)}, auth=not first, holder=not first,
-                request_cap=CARD_CAP, keys={"card_seq"},
+                request_cap=CARD_CAP, keys={"card_seq"}, transport=self._t,
             )  # fmt: skip
         except RelayRefused as e:
             if first and e.status == 401 and e.code == "unauthenticated":
@@ -178,13 +184,14 @@ class Directory:
         self._s.call(
             "PUT", f"{self._base}/genesis", "PUT /v2/workspaces/{ws}/genesis",
             body={"pin": dict(pin), "cert": dict(cert)}, holder=True, request_cap=CARD_CAP, keys=set(),
+            transport=self._t,
         )  # fmt: skip
 
     # -- reads ----------------------------------------------------------------------------------------------------
 
     def _read(self, target: str, route: str, keys: set[str], cap: int) -> dict[str, Any] | None:
         try:
-            return self._s.call("GET", target, route, cap=cap, deadline_s=READ_DEADLINE_S, keys=keys)
+            return self._s.call("GET", target, route, cap=cap, deadline_s=READ_DEADLINE_S, keys=keys, transport=self._t)
         except RelayRefused as e:
             if e.status == 404 and e.code == "not_found":
                 return None

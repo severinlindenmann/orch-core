@@ -21,21 +21,30 @@ def test_the_text_is_pinned(request):
     assert text == GOLDEN.read_text(), "run: uv run pytest tests/instructions/test_agents_md.py --update-golden"
 
 
-def test_at_most_25_lines_each_short_and_stamped_first():
+def test_at_most_40_lines_with_headings_each_short_and_stamped_under_the_title():
     text = render_agents_md()
     lines = text.splitlines()
-    assert 1 <= len(lines) <= AGENTS_MAX_LINES == 25
+    assert 1 <= len(lines) <= AGENTS_MAX_LINES == 40
     assert text.endswith("\n") and "\r" not in text
     assert all(len(x) <= 110 for x in lines), [x for x in lines if len(x) > 110]
-    assert lines[0].startswith("orch v2.0 (instructions r")
-    assert stamp_rev(text) == INSTRUCTIONS_REV
-    assert "tickets only through `orch`" in lines[0] and "never edit tickets/**" in lines[0]
+    assert lines[0] == "# orch in this project" and lines[1].startswith("orch v2.0 (instructions r")
+    assert stamp_rev(text) == INSTRUCTIONS_REV == 3
+    assert [x for x in lines if x.startswith("#")] == [
+        "# orch in this project",
+        "## First, every session",
+        "## Working on a ticket",
+        "## When you are unsure",
+        "## Never",
+        "## If orch refuses",
+        "## More",
+    ]
 
 
 def test_it_points_to_the_registry_instead_of_explaining_it():
     text = render_agents_md()
     assert "orch help work" in text and "orch describe <cmd>" in text
-    assert "orch status" in text.splitlines()[1]  # start here, also for harnesses with no hook
+    first = text.split("## First, every session")[1].splitlines()[1]
+    assert "orch status" in first  # start here, also for harnesses with no hook
 
 
 def test_every_command_and_flag_it_names_exists():
@@ -87,8 +96,8 @@ def test_a_command_missing_from_the_registry_fails_the_generator(monkeypatch):
 def test_addon_lines_fit_the_budget_and_go_before_the_last_line():
     text = render_agents_md(("dashboard: orch addon list",))
     lines = text.splitlines()
-    assert lines[-2] == "dashboard: orch addon list" and lines[-1].startswith("more: ")
-    with pytest.raises(ValueError, match="limit is 25"):
+    assert lines[-2] == "dashboard: orch addon list" and lines[-1].startswith("Run `orch help work`")
+    with pytest.raises(ValueError, match="limit is 40"):
         render_agents_md(tuple(f"addon {i}: x" for i in range(AGENTS_MAX_LINES)))
     with pytest.raises(ValueError):
         render_agents_md(("two\nlines",))
@@ -96,5 +105,6 @@ def test_addon_lines_fit_the_budget_and_go_before_the_last_line():
 
 def test_stamp_rev_reads_only_a_well_formed_first_line():
     assert stamp_rev("orch v2.0 (instructions r7) · x\nmore") == 7
+    assert stamp_rev("# orch in this project\norch v2.0 (instructions r2) · x") == 2  # r2 sits under the title
+    assert stamp_rev("a\nb\nc\norch v2.0 (instructions r2)") is None
     assert stamp_rev("hello") is None and stamp_rev("") is None
-    assert stamp_rev("line\norch v2.0 (instructions r7)") is None

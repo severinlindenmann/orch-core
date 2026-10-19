@@ -550,7 +550,7 @@ listed in `devhost/reserved.py`, excluded from the wheel, gated by ORCH_DEV and 
 The polling stub invalidates subscriptions on change; real journal replay and browser live
 updates remain M1. Op/version capability checks hide unavailable features.
 
-CI now runs dashboard Node checks and Python 3.11/3.14 checks in `.github/workflows/dashboard.yml`.
+CI now runs dashboard Node checks and Python 3.14 checks in `.github/workflows/dashboard.yml`.
 No core files or core CI were changed. Real-port/browser/layout and real-host S1/S2 verification
 remain acceptance work in the dev-kit; none of #304–#306 is closed by these stub tests.
 ## Owner answers applied — 11 Oct morning (U8)
@@ -1220,3 +1220,22 @@ Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `e
 `src/dev/layoutGuardPages.test.ts`. No new dependency.
 To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
 
+
+B10 Part B phase 1: POST `/api/w/:ws/phone/request` forwards `phone.request {ref,gate,gate_gen}` with the browser attempt's idem; POST `phone/cancel` forwards `phone.cancel {id}`; GET `phone/status/:id` forwards `phone.status {id}`. GET `phone/available` counts the pinned person's valid decide-only (plus look) devices. These are person-only, unsigned hints, never events. Requirements/plan only; no operation choice or change text is sent. The host's outcome is authoritative, including after cancel/expiry. Other methods remain available.
+## B9 setup HTTP boundary (16 Oct 2026)
+
+The browser opens plain `/setup` and bypasses dashboard shared sessions. `POST /auth/setup {}` reads and deletes the core's private 0600 `<run>/setup.code`, then calls socket-only `POST /claim {code,port}` using the listening port. Only a successful claim registers the returned token as a setup-only hashed credential. The browser keeps that token in memory and sends X-Setup-Token. No launch code is read from a URL or browser body. Core enforces 30-second single-use launch codes and 10-minute idle expiry except while running.
+
+| Browser | Unix socket | Purpose |
+|---|---|---|
+| POST /auth/setup {} | POST /claim {code,port} | Server consumes setup.code; no workspace needed |
+| GET /api/setup/state | unchanged | Initial facts and mode |
+| POST /api/setup/profile | unchanged | Exact closed profile |
+| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and three-word check |
+| POST /api/setup/review, create | unchanged | Core rows, digest, typed word and terminal confirmation |
+| GET /api/setup/progress?run_id | unchanged | Step statuses / failure / retry facts |
+| POST /api/setup/finish, cancel | unchanged | Complete or defer; drop setup scope |
+
+Transport is HTTP/1.1 over `<run>/setup.sock`; ownership, peer UID, private parent and socket mode 0600 are checked. Host is exactly `127.0.0.1:<port>` or `localhost:<port>` for setup, POST Origin must match, and only `X-Setup-Token` authorizes setup APIs. Launch/shutdown are never proxied. No events are authored by the dashboard. Both the contract fake and the actual core SetupServer test this boundary.
+
+Integration: `orch-dashboard open /setup` opens the plain path after port ownership verification. `finish` currently returns `{url:"/"}`; the wizard navigates there and forgets its setup token. This does not mint a normal dashboard session. Progress displays optional waiting text and state failures include the core message and a terminal next step. Runner grants are boolean; core supplies GRANT / AGENTS and the terminal fingerprint.

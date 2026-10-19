@@ -3,9 +3,11 @@ durable fake host (outcome store + log, with crash points) and a recording poste
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +130,28 @@ def _key(seed: bytes | None, what: bytes):
     return crypto.private_key_from_scalar(d)
 
 
-class Epochs:
+class SealLockFixture:
+    """The seal lock an :class:`orch.relay.keys.EpochKeySource` owns (R6a: the source owns it, not ``BridgeKeys``),
+    for fixture sources: one ``RLock``, ``seal_snapshot`` takes ``seal_state()`` under it."""
+
+    def _lock(self) -> threading.RLock:
+        lock = self.__dict__.get("_seal_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_seal_lock", threading.RLock())
+        return lock
+
+    @contextlib.contextmanager
+    def seal_snapshot(self) -> Iterator[SealState]:
+        with self._lock():
+            yield self.seal_state()  # type: ignore[attr-defined]
+
+    @contextlib.contextmanager
+    def serialised(self) -> Iterator[None]:
+        with self._lock():
+            yield
+
+
+class Epochs(SealLockFixture):
     """R6's key custody, fixture: committed epochs ``1..cur`` (``keys``), burned epochs above ``cur`` (``burned``:
     their keys are in ``keys`` too, so a phone fixture can seal under them), an optional pending epoch and the
     rotation gate."""
@@ -152,6 +175,9 @@ class Epochs:
 
     def refusal_key(self, epoch: int) -> bytes | None:
         return self.keys.get(epoch) if epoch in self.burned and epoch > self.cur else None
+
+    def is_burned(self, epoch: int) -> bool:
+        return epoch in self.burned
 
     def seal_state(self) -> SealState:
         ehw = max([self.cur, *self.burned, *([self.pending] if self.pending else [])])
@@ -225,6 +251,13 @@ class FakeHost:
             raise Refusal("not_found", retryable=False)
         if op == "ticket.text" and "size" in args:
             return _ok({"text": "x" * args["size"]})
+        # H12d-3 (the host's check_rd and reader.declare in column R; only the framing is normative here)
+        if op == "ticket.get" and args.get("ref") == "rd-unknown":
+            raise Refusal("sign.convenience_readers", reason="declaration_unknown")
+        if op == "ticket.get" and args.get("ref") == "rd-old":
+            raise Refusal("sign.convenience_readers", reason="reader_too_old", required=1, declared=0)
+        if op == "reader.declare":
+            return _ok({"device": identity.device_id, "reader": 1, "level": 1, "digest": "sha256:" + "cd" * 32})
         return _ok({"op": op, "viewer": identity.person_id, "principal": identity.principal})
 
     def lookup(self, identity: Identity, idem: str) -> dict[str, Any]:

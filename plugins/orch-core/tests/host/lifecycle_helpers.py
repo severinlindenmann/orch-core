@@ -130,8 +130,8 @@ class HostThread:
 class Lab:
     """One test's world: a bootstrapped workspace (``Ws``), its host state dir and a short run directory."""
 
-    def __init__(self, tmp_path: Path) -> None:
-        self.ws = Ws(tmp_path)
+    def __init__(self, tmp_path: Path, *, ws_id: str | None = None) -> None:
+        self.ws = Ws(tmp_path, **({"ws_id": ws_id} if ws_id else {}))
         self.ws.bootstrap()
         self.ws.store.close()
         self.ws.store = None

@@ -43,13 +43,15 @@ class Shown:
     """The person's terminal: what the review showed, and the word typed (the right one unless told otherwise)."""
 
     def __init__(self, answer: bool = True) -> None:
-        self.texts: list[str] = []
+        self.texts: list[str] = []  # the full review (the details behind `d`); `plain` is what is shown first
+        self.plain: list[str] = []
         self.words: list[str] = []
         self.secrets: list[str] = []
         self.answer = answer
 
     def confirm(self, text: str, word: str) -> bool:
-        self.texts.append(text)
+        self.texts.append(getattr(text, "details", "") or text)
+        self.plain.append(str(text))
         self.words.append(word)
         return self.answer
 
@@ -72,6 +74,7 @@ def sign(served, human, code: str, *, shown: Shown | None = None, device: str | 
             confirm=shown.confirm,
             show_secret=shown.secret,
             idem=kw.pop("idem", new_idem()),
+            notice=kw.pop("notice", True),
         )
 
 
@@ -183,6 +186,29 @@ def test_orch_sign_shows_the_notice_then_the_header_then_content(human, served):
     assert lines[ws_line] == f"workspace: Mine (MINE) {served.wid}"  # the signer's registry, never host text
     assert lines[op_line].startswith("op: log: ")
     assert lines[fp_line] == f"fingerprint: {p['fingerprint']}"  # the one the dashboard shows (R8)
+
+
+def test_the_first_view_of_orch_sign_prints_the_fingerprint_the_dashboard_shows(human, served):
+    """A-3: the dashboard says "check that this matches the fingerprint in your terminal". What the person reads first
+    (the plain view, before `d`) carries the same 12 hex on a labelled line under the headline, before any content."""
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "the body"}, handoff=True)
+    shown = Shown()
+    sign(served, human, p["request"]["code"], shown=shown)
+    first = shown.plain[0].splitlines()
+    at = first.index(f"Verification fingerprint: {p['fingerprint']}")  # headline, "in workspace ...", fingerprint
+    assert first[at - 1].startswith("in workspace ") and at < next(i for i, x in enumerate(first) if "the body" in x)
+    assert (
+        len(p["fingerprint"]) == 12 and f"fingerprint: {p['fingerprint']}" in shown.texts[0]
+    )  # the details keep theirs
+
+
+def test_the_warning_is_not_repeated_in_the_review_when_stderr_is_the_terminal(human, served):
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "the body"}, handoff=True)
+    shown = Shown()
+    sign(served, human, p["request"]["code"], shown=shown, notice=False)  # N13: main() passes this for a tty stderr
+    assert "only sign a code you created yourself" not in shown.texts[0] and "the body" in shown.texts[0]
 
 
 def test_orch_sign_refuses_a_workspace_outside_its_registry_before_any_prompt(human, served):

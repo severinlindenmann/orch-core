@@ -55,7 +55,7 @@ _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 #: agent ops a person may run through ``human.prepare`` (§0.8 "Person versions of agent ops"), each allowed only while
 #: every type it emits passes ``orch.ops.actors.allows("human", t)``
 PERSON_AGENT_OPS = frozenset(
-    {"new", "set", "section.set", "ac.add", "ac.edit", "log", "ask", "artifact.add", "artifact.replace"}
+    {"new", "set", "section.set", "ac.add", "ac.edit", "task.add", "log", "ask", "artifact.add", "artifact.replace"}
 )
 #: person ops of the host contract (§0.8 ``move``, ``policy.set``, ``settings.set``; H0 records them as ops). Each emits
 #: one existing person-only F1 event; they are not registry (CLI) ops and not in the frozen grant-verb table
@@ -64,19 +64,25 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "move": frozenset({"ticket.moved"}),
     "policy.set": frozenset({"policy.changed"}),
     "settings.set": frozenset({"settings.changed"}),
+    # B12D: one role's people of a ticket (the sequence engine's last steps; also a plain person op)
+    "people.set": frozenset({"people.changed"}),
+    # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
+    "relay.pair_device": frozenset({"device.added"}),
+    # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
+    "publish.share": frozenset({"log.added"}),
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 
 
 def person_op_types(op: str) -> frozenset[str] | None:
-    """The event types the person op ``op`` may emit (``EMITS_V1[op]``, the frozen table, F1 §10.7), or ``None`` when
+    """The event types the person op ``op`` may emit (``CURRENT[op]``, F1 §10.7), or ``None`` when
     ``op`` is not an op a person runs through ``human.prepare``."""
-    from orch.model.emits import EMITS_V1, HUMAN_ONLY
+    from orch.model.emits import CURRENT, HUMAN_ONLY
     from orch.ops.actors import allows
 
     if op in HOST_PERSON_OPS:  # not in EMITS_V1 (a grant verb never covers a person event): the host's own table
         return HOST_PERSON_OPS[op]
-    types = EMITS_V1.get(op)
+    types = CURRENT.get(op)
     if types is None or op in _NOT_PERSON:
         return None
     if op in HUMAN_ONLY:
@@ -94,6 +100,8 @@ def events_fit(op: str, types: list[str]) -> bool:
     allowed = person_op_types(op)
     if allowed is None or not 1 <= len(types) <= 16 or any(t not in allowed for t in types):
         return False
+    if op == "grant":  # B8: Extend = the new runner grant, then the revoke of the one it replaces
+        return types in (["grant.issued"], ["grant.issued", "grant.revoked"])
     if op in HUMAN_ONLY or op in HOST_PERSON_OPS:
         return len(types) == 1
     if op == "new":

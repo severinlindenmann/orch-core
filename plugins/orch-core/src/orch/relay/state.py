@@ -49,12 +49,28 @@ __all__ = [
 log = logging.getLogger("orch.relay.state")
 
 MAX_FILE = 1 << 20
+BIG_FILE = 8 << 20  # R3's staging manifest (<= 4 MiB) and restore records (a final body <= 2.6 MiB plus its source)
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_TEMP = re.compile(r"\.[a-z0-9][a-z0-9._-]{0,63}\.[0-9a-f]{16}\.tmp")
 _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
 # per-kind key rule of the sign ledger, on top of _KEY: a card is keyed by str(card_seq), the canonical decimal (round
 # 10, R9-1). "010", " 10", "+10", "1_0" or a fullwidth digit would be int()-equal to a seq yet missed by the exact
-# lookup, so a different card could be signed at that seq; the reader accepts only what record() writes.
-_LEDGER_KEY = {"card": re.compile(r"0|[1-9][0-9]*")}
+# lookup, so a different card could be signed at that seq; the reader accepts only what record() writes. R6a: a
+# member list by str(list_seq), a wk_commit by str(epoch), a grant by "<device hex>:<epoch>", all canonical.
+_DECIMAL = re.compile(r"0|[1-9][0-9]*")
+_LEDGER_KEY = {
+    "card": _DECIMAL,
+    "member_list": _DECIMAL,
+    "wk_commit": _DECIMAL,
+    "wk_grant": re.compile(r"[0-9a-f]{32}:(0|[1-9][0-9]*)"),
+    "cert_request": re.compile(r"[0-9a-f]{32}"),  # R6c: one signed request per request_id (11A.15.7)
+}
+
+
+def _limit(limit: int) -> int:
+    if type(limit) is not int or not 0 < limit <= BIG_FILE:
+        raise StateError("bad state file limit")
+    return limit
 
 
 class StateError(Exception):
@@ -178,6 +194,7 @@ class StateDir:
         try:
             try:
                 os.mkdir(name, 0o700, dir_fd=parent)
+                os.fsync(parent)  # the new entry is durable (R6a round 2, F2: a lost directory entry is state loss)
             except FileExistsError:
                 pass
             except OSError as e:
@@ -247,12 +264,14 @@ class StateDir:
             raise StateError("bad state file name")
         return name
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, *, limit: int = MAX_FILE) -> bytes | None:
+        """The file's bytes, or ``None`` when it does not exist. ``limit`` (default 1 MiB, at most :data:`BIG_FILE`)
+        bounds what is read; R3's manifest and restore records are larger (11A.3)."""
         name = self._name(name)
         with self.lock:
-            return self._read(name, self._dir())
+            return self._read(name, self._dir(), _limit(limit))
 
-    def _read(self, name: str, dfd: int) -> bytes | None:
+    def _read(self, name: str, dfd: int, limit: int = MAX_FILE) -> bytes | None:
         try:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
         except FileNotFoundError:
@@ -263,12 +282,12 @@ class StateDir:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_uid != _me() or stat.S_IMODE(st.st_mode) != 0o600:
                 raise StateError(f"{name}: must be a 0600 regular file owned by this user")
-            if st.st_size > MAX_FILE:
+            if st.st_size > limit:
                 raise StateError(f"{name}: too large")
             chunks, n = [], 0
             while piece := os.read(fd, 65536):
                 n += len(piece)
-                if n > MAX_FILE:
+                if n > limit:
                     raise StateError(f"{name}: too large")
                 chunks.append(piece)
             return b"".join(chunks)
@@ -282,17 +301,17 @@ class StateDir:
             st = os.fstat(self._dir())
             return st.st_dev, st.st_ino
 
-    def write(self, name: str, data: bytes) -> None:
+    def write(self, name: str, data: bytes, *, limit: int = MAX_FILE) -> None:
         name = self._name(name)
-        self._publish(name, data, claim=False)
+        self._publish(name, data, claim=False, limit=_limit(limit))
 
     def claim(self, name: str, data: bytes) -> bool:
         """Create ``name`` with ``data`` only if it does not exist (``os.link`` of a complete temp file: atomic, never
         replaces); ``False`` when another writer claimed it first."""
         return self._publish(self._name(name), data, claim=True)
 
-    def _publish(self, name: str, data: bytes, *, claim: bool) -> bool:
-        if len(data) > MAX_FILE:
+    def _publish(self, name: str, data: bytes, *, claim: bool, limit: int = MAX_FILE) -> bool:
+        if len(data) > limit:
             raise StateError(f"{name}: too large")
         with self.lock:
             dfd = self._dir()
@@ -325,6 +344,19 @@ class StateDir:
                     pass
                 raise
 
+    def remove(self, name: str) -> bool:
+        """Unlink ``name`` relative to the locked directory fd (never by path, never through a symlink: the entry
+        itself is removed). ``False`` when it did not exist."""
+        name = self._name(name)
+        with self.lock:
+            dfd = self._dir()
+            try:
+                os.unlink(name, dir_fd=dfd)
+            except FileNotFoundError:
+                return False
+            os.fsync(dfd)
+            return True
+
     def open_private(self, name: str) -> int:
         """The checked open of 11A.3 step 2 for a file a library opens by path (``rids.sqlite`` and its sidecars):
         ``O_RDWR | O_CREAT | O_NOFOLLOW`` (0600) relative to the locked directory fd, then ``fstat``: a regular file
@@ -347,6 +379,29 @@ class StateDir:
                 os.close(fd)
                 raise StateError(f"{name}: must be a 0600 regular file of this user with one link")
             return fd
+
+    def names(self) -> list[str]:
+        """The state file names here (R6a: ``membership/keys/`` and ``cards/`` are scanned for EHW recovery and
+        orphans), sorted; a crashed write's temp file (``.<name>.<hex>.tmp``) is never listed."""
+        with self.lock:
+            return sorted(n for n in os.listdir(self._dir()) if _NAME.fullmatch(n))
+
+    def discard_temps(self) -> int:
+        """Unlink every temp file a crashed write left here (``.<name>.<hex>.tmp``; a key file's temp holds the
+        key). Safe for the lock holder only, which every caller is (one live instance per directory)."""
+        n = 0
+        with self.lock:
+            dfd = self._dir()
+            for name in os.listdir(dfd):
+                if _TEMP.fullmatch(name):
+                    try:
+                        os.unlink(name, dir_fd=dfd)
+                        n += 1
+                    except FileNotFoundError:
+                        pass
+            if n:
+                os.fsync(dfd)
+        return n
 
     def file_path(self, name: str) -> Path:
         """The path of ``name`` here, only for a library that opens by path, together with :meth:`open_private`."""

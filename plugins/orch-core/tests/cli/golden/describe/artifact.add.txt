@@ -17,7 +17,7 @@ errors:
   not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  transition.refused (exit 3): orch show REF | fix: orch show
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   quota.unattended (exit 9 retry): ask the person for a grant | fix: orch status
 out: ok {key} artifact.added {name} seq={seq} / next: {next}

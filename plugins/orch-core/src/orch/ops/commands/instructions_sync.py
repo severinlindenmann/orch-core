@@ -15,7 +15,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     root = ws.require_root()
     dry = bool(ctx.dry_run or args.get("dry_run"))
     try:
-        changed, kept = write_workspace_files(root, pointers=False, force=bool(args.get("force")), dry_run=dry)
+        changed, kept = write_workspace_files(
+            root, pointers=False, force=bool(args.get("force")), dry_run=dry, store=ws.store_dir
+        )
     except UnsafePath as e:
         raise OrchError("invalid.input", f"nothing written: {e}", hint="remove the symbolic link, then retry") from e
     verb = "would write" if dry else "wrote"

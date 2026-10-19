@@ -1,6 +1,9 @@
 import '@testing-library/jest-dom/vitest'
 import { configure } from '@testing-library/react'
 
+// Times are shown in the browser's local zone (src/lib/time.ts); tests assert them in UTC unless a test sets its own TZ.
+process.env.TZ = 'UTC'
+
 // jsdom lacks these; cmdk, radix and recharts use them.
 globalThis.ResizeObserver ??= class {
   observe() {}

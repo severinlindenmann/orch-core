@@ -23,9 +23,17 @@ from .errors import HostError
 __all__ = ["default_peers", "disable", "enable", "ensure_service", "main"]
 
 
+class _Exact(argparse.ArgumentParser):
+    """No abbreviated long option (``--dev-sim`` never means ``--dev-sim-convenience``), in every subcommand."""
+
+    def __init__(self, *args: Any, **kw: Any) -> None:
+        kw["allow_abbrev"] = False
+        super().__init__(*args, **kw)
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="orch host", description="the orch host service")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = _Exact(prog="orch host", description="the orch host service")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_Exact)
     run = sub.add_parser("run", help="serve every registered workspace (the service manager runs this)")
     run.add_argument("--foreground", action="store_true", help="dev mode: run directory <state>/run")
     run.add_argument(
@@ -33,6 +41,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="dev and tests only, with --foreground: also admit a runner of your UID started with orch runner run "
         "--foreground (no service manager needed); never with a service run directory",
+    )
+    run.add_argument(
+        "--dev-sim-convenience",
+        action="store_true",
+        help="dev only, with --foreground, inside a dev-pair sandbox (orch-v2-host 11A.17): accept Simulator "
+        "convenience answers on throwaway SBX sandbox workspaces; never in a service unit",
     )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
@@ -49,6 +63,8 @@ def _parser() -> argparse.ArgumentParser:
         c = sub.add_parser(name)
         c.add_argument("--state", type=Path)
         c.add_argument("--run", type=Path)
+        if name == "restart":
+            c.add_argument("--json", action="store_true", help="machine-readable output")
     en = sub.add_parser("enable", help="install the release and the per-user service unit, start the host (tier A)")
     en.add_argument("--state", type=Path)
     en.add_argument("--run", type=Path)
@@ -58,6 +74,12 @@ def _parser() -> argparse.ArgumentParser:
         help="replace a service installed for another state dir, run dir or interpreter (its host stops)",
     )
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
+    en.add_argument(
+        "--restart-runner",
+        action="store_true",
+        help="also restart an agent runner of an older release now, even with running agents and terminals (they stop)",
+    )
+    en.add_argument("--json", action="store_true", help="machine-readable output")
     dis = sub.add_parser(
         "disable",
         help="stop and unload the per-user service and remove its unit (the reverse of enable); the state dir stays",
@@ -73,6 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     dis.add_argument(
         "--force", action="store_true", help="also remove a service installed for another state dir, run dir or setup"
     )
+    dis.add_argument("--json", action="store_true", help="machine-readable output")
     for name in ("status", "doctor"):
         st = sub.add_parser(name, help="the host, the service, the registered workspaces and this directory's mode")
         st.add_argument("--state", type=Path)
@@ -103,10 +126,44 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start"))
+    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary", "genesis-pin", "link"))
+    relay.add_argument("sub", nargs="?", help="pair: list|cancel|abandon (none: make an offer); primary: set")
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
     relay.add_argument("--run", type=Path)
+    # R6c-2 (orch-v2-host 11A.15.9): relay pairing, human only
+    relay.add_argument("--scopes", help="pair: the phone's scopes (default look,decide; operate and type refused)")
+    relay.add_argument("--ttl", help="pair: the offer's life, at most 10m")
+    relay.add_argument("--json", action="store_true", help="pair: one JSON object per state change")
+    relay.add_argument("--json-fd", type=int, help="pair --json: write to this descriptor when stdout is no TTY")
+    relay.add_argument("--no-qr", action="store_true")
+    relay.add_argument("--resume", action="store_true", help="pair: attach to --offer (made here or by the dashboard)")
+    relay.add_argument("--offer", help="pair: the offer id")
+    relay.add_argument(
+        "--primary",
+        choices=("inline", "external"),
+        help="pair: who signs the phone's certificate (default inline: this Mac, with your recovery code)",
+    )
+    relay.add_argument(
+        "--relay",
+        help="link: the relay origin, scheme://host[:port], stored verbatim (default: the registered primary's relay)",
+    )
+    relay.add_argument("--max-publication-bytes", type=int, help="link: the checkpoint cap C (1 MiB to 1 GiB)")
+    relay.add_argument("--ca-file", help="link: a PEM file of the relay's CA (a private relay)")
+    relay.add_argument("--proxy", help="link: an http proxy URL")
+    relay.add_argument(
+        "--cert",
+        help="primary set: the primary's certificate file (JSON); default: the one orch keys primary init made",
+    )
+    relay.add_argument("--label", help="primary set: your name for the primary; default: the one chosen at init")
+    rdr = sub.add_parser(
+        "readers",
+        help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
+        "operator step after a known state restore",
+    )
+    rdr.add_argument("action", choices=("reset",))
+    rdr.add_argument("--workspace", required=True, help="workspace id or prefix")
+    rdr.add_argument("--state", type=Path)
     out = sub.add_parser("outcome")
     out.add_argument("idem")
     out.add_argument("--state", type=Path)
@@ -169,8 +226,21 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             run_dir = run_dir_for(state, args.run, env)  # tier A (phase 1); the units always pass --run
             if args.dev_runner:
                 _check_dev_runner(args.foreground, run_dir, env)
+            dev = None
+            if args.dev_sim_convenience:  # §11A.17.2: the proof runs before anything binds; a failure never falls back
+                from . import devmode
+
+                devmode.check_launch(args.foreground, env, run_dir, state)
+                dev = devmode.prove(state, env)
+                from orch import devsandbox
+
+                devsandbox.mark_dev_process()  # the click signer refuses in this process whatever its arguments
             preload()
-            host = Host(state, run_dir, dev_runner=args.dev_runner)
+            host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
+            if dev is not None:
+                from .devmode import status_line
+
+                sys.stderr.write(f"orch host: {status_line(dev)}\n")
             if args.dev_runner:
                 sys.stderr.write(
                     f"orch host: DEV RUNNER MODE: a foreground runner of UID {os.getuid()} announced in {run_dir} is "
@@ -210,13 +280,18 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return _convenience(args, env, out)
         if args.cmd == "relay":
             return _relay(args, env, out)
+        if args.cmd == "readers":
+            return _readers(args, env, out)
         if args.cmd == "enable":
-            doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
-            out.write(json.dumps(doc, sort_keys=True) + "\n")
+            doc = enable(
+                _state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev,
+                runner="force" if args.restart_runner else "auto",
+            )  # fmt: skip
+            out.write(json.dumps(doc, sort_keys=True) + "\n" if args.json else human_text("enable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd == "disable":
             doc = disable(_state(args.state, env), env, run=args.run, purge=args.purge_releases, force=args.force)
-            out.write(json.dumps(doc, sort_keys=True) + "\n")
+            out.write(json.dumps(doc, sort_keys=True) + "\n" if args.json else human_text("disable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd in {"status", "doctor"}:
             from .status import render, report
@@ -262,7 +337,10 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             res = {**res, "idem": idem}
         if service is not None and service.get("started"):
             res = {**res, "service": service}
-        out.write(json.dumps(res, sort_keys=True) + "\n")
+        if args.cmd == "restart" and not args.json:
+            out.write(human_text("restart", res))
+        else:
+            out.write(json.dumps(res, sort_keys=True) + "\n")
         return 0 if res.get("ok") else int(res.get("exit", 1))
     except HostError as exc:
         out.write(json.dumps({"ok": False, "error": exc.error()}, sort_keys=True) + "\n")
@@ -271,6 +349,48 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
         error = {"code": "host.unavailable", "message": str(exc)[:400], "retryable": True}
         out.write(json.dumps({"ok": False, "error": error}, sort_keys=True) + "\n")
         return 9
+
+
+def human_text(cmd: str, doc: Mapping[str, Any], *, subject: str = "orch host") -> str:
+    """N18: ``doc`` (the result of ``enable``, ``disable`` or ``restart``, here or of ``orch runner``) as a few plain
+    lines for a person; ``--json`` keeps the document for machines. Values come from orch's own result, but go through
+    one-line cleaning anyway."""
+
+    def one(v: Any) -> str:
+        return " ".join(str(v).split())[:300]
+
+    if not doc.get("ok"):
+        err = doc.get("error") or {}
+        return f"{subject} {cmd}: {one(err.get('message', 'failed'))} [{one(err.get('code', 'error'))}]\n"
+    data = (doc.get("result") or {}).get("data") or {}
+    lines: list[str] = []
+    if cmd == "enable":
+        if data.get("mode") == "direct":
+            lines.append(
+                f"No per-user service on this platform ({one(data.get('reason'))}); workspaces stay in direct mode."
+            )
+        else:
+            lines.append(f"The orch host is running as a {one(data.get('service'))} service.")
+            if data.get("changed"):
+                lines.append("The service was installed or updated.")
+            if data.get("message"):
+                lines.append(one(data["message"]))
+            if data.get("runner_message"):
+                lines.append(one(data["runner_message"]))
+    elif cmd == "disable":
+        if data.get("service") is None:
+            lines.append(f"No per-user service on this platform ({one(data.get('reason'))}); nothing to turn off.")
+        else:
+            lines.append(f"The orch host service ({one(data['service'])}) is off.")
+            if data.get("purged_releases"):
+                lines.append(f"Removed {len(data['purged_releases'])} installed release copies.")
+            lines.append(f"Your workspaces and keys are kept ({one(data.get('state_kept'))}).")
+            if data.get("note"):
+                note = one(data["note"])
+                lines.append(note[:1].upper() + note[1:] + ".")
+    elif cmd == "restart":
+        lines.append("The host is restarting; the service brings it back in a few seconds.")
+    return "".join(line + "\n" for line in lines)
 
 
 def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str, Any]:
@@ -284,13 +404,20 @@ def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str,
 
 
 def enable(
-    state: Path, env: Mapping[str, str], *, run: Path | None = None, replace: bool = False, dev: bool = False
+    state: Path,
+    env: Mapping[str, str],
+    *,
+    run: Path | None = None,
+    replace: bool = False,
+    dev: bool = False,
+    runner: str = "auto",
 ) -> dict[str, Any]:
     """``orch host enable``: install the release (D-P2-4), write the per-user unit, start it and wait for the control
     socket (H7, tier A). Windows and other platforms without a per-user service answer ``mode: direct``. Refused before
     anything is written: a run dir whose socket paths would be too long, a control character in a unit value, dev code
     as the service (unless ``dev``), and a unit installed for another state dir, run dir or interpreter (unless
-    ``replace``)."""
+    ``replace``). ``runner``: ``auto`` restarts a stale agent runner only when it has no live runs, ``force`` always,
+    ``skip`` never (the register path)."""
     from . import enable as svc
     from .custody import ensure_private_dir
     from .listener import SOCKET_PATH_LIMIT
@@ -363,7 +490,92 @@ def enable(
         )
     data = {"mode": "host", "service": unit.kind, "unit": str(unit.unit_path), "changed": changed, "ran": ran,
             "control": str(control)}  # fmt: skip
+    from .release import code_digest
+
+    mine = code_digest()
+    theirs = _host_release(control)
+    if theirs != mine:  # a host that predates the welcome's release field is older by definition (``None``)
+        if manager.active() is True:  # started by the service manager: restart it (never a process it did not start)
+            how = _restart(manager, control, mine)
+            if how in ("drained", "current"):
+                data["restarted"] = mine
+                data["message"] = f"restarted the host on the new release {mine}"
+            elif how == "forced":
+                data["restarted"] = mine
+                data["forced"] = True
+                data["message"] = (
+                    "the host did not finish open work in time; it was restarted and a request in flight may have "
+                    "been interrupted (its outcome is recovered at start)"
+                )
+            else:
+                import shlex
+
+                data["message"] = (
+                    f"the host still runs the old release {theirs or 'unknown'} and did not restart. To restart it "
+                    f"now (this interrupts requests in flight): {shlex.join(manager.restart_command())}"
+                )
+                data["restart_needed"] = True
+        else:  # a foreground or dev host: not ours to kill
+            data["restart_needed"] = True
+            data["message"] = (
+                f"the running host (release {theirs or 'unknown'}) is not under the service manager: "
+                "stop it and start it again (or `orch host restart` when it is supervised) to run the new release"
+            )
+    if runner != "skip":
+        _restart_stale_runner(state, env, run_dir, mine, data, force=runner == "force")
     return {"ok": True, "result": {"data": data}}
+
+
+def _restart_stale_runner(
+    state: Path, env: Mapping[str, str], run_dir: Path, mine: str, data: dict[str, Any], *, force: bool = False
+) -> None:
+    """The agent runner service, when one runs here with another release than this install, is restarted by the same
+    rule as the host (its agents and terminals are stopped by that); the result says so."""
+    from orch.runner import service as runner_service
+
+    from . import enable as svc
+    from .release import releases_dir
+
+    try:
+        unit = runner_service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
+        stale = runner_service.restart_if_stale(unit, RUNNER_SERVICE_MANAGER(unit), state, mine, force=force)
+    except (svc.Unsupported, ValueError, OSError):
+        return
+    if stale is not None:
+        data["runner_restarted"] = stale["restarted"]
+        data["runner_message"] = stale["message"]
+        if stale.get("restart_needed"):
+            data["restart_needed"] = True
+
+
+def _host_release(control: Path) -> str | None:
+    """The release digest the host on ``control`` reports in its welcome (``None``: none, or it does not say)."""
+    from .control_client import ControlClient
+
+    try:
+        with ControlClient(control, timeout=2) as client:
+            release = (client.welcome or {}).get("release")
+    except Exception:  # noqa: BLE001 - nobody answers: nothing to compare
+        return None
+    return release if isinstance(release, str) else None
+
+
+def _restart(manager: Any, control: Path, mine: str) -> str | None:
+    """Make the host on ``control`` run release ``mine`` (:func:`orch.host.enable.restart_to_release`): drain it through
+    its control socket (``orch host restart``) and let the service manager bring it back; an own or another's drain
+    (``host.restarting``) is waited for, never cut short before the wait ends."""
+    from .control_client import ControlClient
+    from .enable import restart_to_release
+
+    def drain() -> bool:
+        try:
+            with ControlClient(control, timeout=10) as client:
+                frame = client.call("host.restart")
+        except (OSError, ConnectionError):
+            return False  # the drain did not start: the service is restarted at once
+        return bool(frame.get("ok")) or (frame.get("error") or {}).get("code") == "host.restarting"
+
+    return restart_to_release(manager, lambda: _host_release(control), mine, drain=drain)
 
 
 def disable(
@@ -470,7 +682,7 @@ def ensure_service(state: Path, env: Mapping[str, str], run: Path | None, *, dev
 
     if wait_for_control(_control_path(run, state, env), timeout=0):
         return {"started": False}
-    doc = enable(state, env, run=run, dev=dev)
+    doc = enable(state, env, run=run, dev=dev, runner="skip")  # a register never touches the runner
     if not doc.get("ok"):
         return doc
     data = doc["result"]["data"]
@@ -583,6 +795,10 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
     try:
+        if (
+            args.switch == "on"
+        ):  # B10: before the lock (like custody_on): never leave the flag on with every click refused
+            convenience.refuse_turn_on(state, match[0], uid)
         with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
             if args.switch == "on":
                 waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
@@ -611,6 +827,39 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     return 0
 
 
+def _readers(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host readers reset --workspace W`` (H12d-3, §0.8.6 item 9.10 "A known state restore"): drop every reader
+    record of the workspace. Fail closed: every device then counts as level 0 (convenience signing is refused while
+    another reader is below level 1, phones get ``declaration_unknown`` and re-declare on their own, cores re-declare
+    with ``orch keys reader declare``). A person's decision, never an agent's (``human_only`` under ``ORCH_GRANT``);
+    it works with the host up or down (removing a record only lowers a level)."""
+    from orch.custody.cli import write_error
+    from orch.store.readerrecs import reset_records
+
+    from .custody import read_json
+    from .registry import registry_path
+
+    state = _state(args.state, env)
+    uid = os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never resets reader records")
+    try:
+        reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    except HostError as exc:
+        return write_error(out, False, exc.code, exc.message)
+    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
+    wid = match[0]["workspace_id"]
+    try:
+        dropped = reset_records(state, wid)
+    except OSError as exc:
+        return write_error(out, False, "custody.unsafe_mode", f"the reader records could not be removed ({exc})")
+    data = {"workspace_id": wid, "dropped": ["d_" + d for d in dropped]}
+    out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+    return 0
+
+
 def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host relay stop|start --workspace W`` (orch-v2-host §11A.4, H12a). ``stop`` writes the persistent stop
     marker itself first (it works with the host down: the operator procedure after a state restore is to keep the
@@ -625,8 +874,14 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
-    if args.action == "start" and env.get("ORCH_GRANT"):
-        return write_error(out, False, "human_only", "an agent never restarts the relay worker")
+    if args.action in ("pair", "primary", "genesis-pin", "link"):
+        from . import paircli
+
+        return paircli.main(args, env, out, state=state, control=_control_path(args.run, state, env))
+    if args.sub is not None:
+        return write_error(out, False, "invalid.input", f"orch host relay {args.action} takes no {args.sub!r}")
+    if args.action in ("start", "unlink") and env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", f"an agent never runs orch host relay {args.action}")
     try:
         reg = read_json(registry_path(state), uid) or {"workspaces": []}
     except HostError as exc:
@@ -640,7 +895,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             relaylink.mark_stopped(state, wid, uid)
     except HostError as exc:
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
-    op = "host.relay_stop" if args.action == "stop" else "host.relay_start"
+    op = {"stop": "host.relay_stop", "start": "host.relay_start", "unlink": "host.relay_unlink"}[args.action]
     res: dict[str, Any] | None = None
     absent = False  # the host is confirmed not running: no socket, or nobody accepts on it
     try:
@@ -655,11 +910,15 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             message = (
                 f"host unreachable ({why}): the marker is set, a running worker may continue until the host restarts"
             )
+        elif args.action == "unlink":
+            message = f"host unreachable ({why}): nothing was unlinked"
         else:
             message = f"host unreachable ({why}): the stop was not cleared"
         error = {"code": "host.unavailable", "message": message, "retryable": True}
         out.write(json.dumps({"ok": False, "error": error, "exit": 9}, sort_keys=True) + "\n")
         return 9
+    if absent and args.action == "unlink":  # the rename needs the store lock: only through the host
+        return write_error(out, False, "host.unavailable", "unlink runs through the host: start it first")
     if absent:  # no host: the marker alone decides
         try:
             if args.action == "start":

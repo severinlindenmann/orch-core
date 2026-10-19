@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "model-routing",
+  "version": "0.1.0",
+  "title": "Model routing",
+  "entry": {"cmd": ["orch-model-routing", "serve"]},
+  "capabilities": []
+}

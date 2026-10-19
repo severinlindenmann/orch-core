@@ -40,14 +40,19 @@ export function failedSubmit(code: string): string {
 }
 
 export const POLL_MS = 2000
+/** A sequence (one review, N signatures) that makes no progress for this long has ended: the signer's session is 10 minutes. */
+export const SEQUENCE_STALL_MS = 11 * 60_000
+/** The agent access is the signer's very last step, signed right after the ticket's steps: if it does not follow, it stopped. */
+export const GRANT_STALL_MS = 45_000
 const MAX_FAILED_POLLS = 5
 
 export interface HandoffRun {
+  retry: number
   phase: HandoffPhase
   request: HandoffRequest | null
   state: HandoffState | null
   error: ApiError | null
-  prepare: (action: HandoffAction) => Promise<void>
+  prepare: (action: HandoffAction, retryFloor?: number) => Promise<void>
   cancel: () => Promise<void>
   /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
   reset: (keepKey?: boolean) => void
@@ -67,7 +72,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
   const [pinned, setPinned] = useState<string | undefined>(undefined)
   // `retry` is the explicit "do it again" counter of this action; `lost` is a prepare whose answer may have been lost.
-  const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
+  const attempt = useRef<{ sig: string; retry: number; lost: boolean; advanced?: boolean } | null>(null)
+  const prepareRef = useRef<((action: HandoffAction, retryFloor?: number) => Promise<void>) | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -86,13 +92,15 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   }, [qc])
 
   const prepare = useCallback(
-    async (action: HandoffAction) => {
+    async (action: HandoffAction, retryFloor = 0) => {
       if (!ws || busy.current || live.current.phase === 'waiting') return // a double click is one prepare
       busy.current = true
       setError(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
+      // An explicit change of signing method advances the shared action intent.
+      attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
       const { retry } = attempt.current
       try {
         const got = await api.prepareHandoff(ws, action, retry)
@@ -111,6 +119,16 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           // The host's own hashes do not recompute here: do not show it, and ask the host to drop it.
           void api.cancelHandoff(ws, got.id).catch(() => {})
           setPhase('invalid')
+          return
+        }
+        if ((got.state === 'cancelled' || got.state === 'expired') && attempt.current && !attempt.current.advanced && live.current.phase === 'preparing') {
+          // The host gave back the request this same action made earlier, and that one ended unsigned (cancelled by a wrong word or
+          // Cancel in the terminal, or expired): nothing was signed and it can never be signed. Opening the action again is the
+          // person's explicit new start, so ask for a fresh request once instead of showing a dead end.
+          attempt.current.advanced = true
+          attempt.current.retry += 1
+          busy.current = false
+          await prepareRef.current?.(action, 0)
           return
         }
         live.current.request = got
@@ -167,6 +185,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     },
     [ws, setPhase, refetch],
   )
+  prepareRef.current = prepare
 
   const finish = useCallback(
     (next: HandoffPhase, got: HandoffState | null) => {
@@ -186,6 +205,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     let failed = 0
     let stopped = false
     let inflight = false
+    let progressed = { done: -1, at: Date.now() }
     const check = async () => {
       if (stopped || inflight) return
       inflight = true
@@ -199,6 +219,25 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           stopped = true
           setError(new ApiError(409, { code: 'intent.failed', message: `The earlier attempt was submitted but did not land${got.error?.code ? ` (${got.error.code})` : ''}. It was not signed into the log.`, retryable: false }))
           finish('failed', got)
+        } else if (got.state === 'submitted' && got.progress && got.progress.done < got.progress.of) {
+          // B11: the first signature of a sequence landed; the signer goes on in the person's terminal. Not done yet.
+          setState(got)
+          if (got.progress.done !== progressed.done) progressed = { done: got.progress.done, at: Date.now() }
+          else {
+            // Only the agent access is missing: the task is made and approved, and agents were NOT given access.
+            const grantOnly = got.progress.last === 'grant' && got.progress.done === got.progress.of - 1
+            if (Date.now() - progressed.at > (grantOnly ? GRANT_STALL_MS : SEQUENCE_STALL_MS)) {
+              stopped = true
+              const newTicket = (request.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket'
+              const message = grantOnly && newTicket
+                ? `${got.key ?? 'The ticket'} was created. Agent access was NOT given: signing stopped at the last signature (your terminal says why). No agent was started; start one from the ticket to give access again.`
+                : grantOnly
+                ? `${got.key ?? 'The task'} was created and approved; agent access was NOT given: signing stopped at the last signature (your terminal says why). Agents cannot work until you give them access from the agent access control.`
+                : `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`
+              setError(new ApiError(409, { code: grantOnly ? 'sequence.no_access' : 'intent.failed', message, retryable: false }))
+              finish('failed', got)
+            }
+          }
         } else if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
           stopped = true
           finish(got.state === 'submitted' ? 'done' : got.state, got)
@@ -275,5 +314,5 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     }
   }, [])
 
-  return { phase, request, state, error, prepare, cancel, reset, switched }
+  return { retry: attempt.current?.retry ?? 0, phase, request, state, error, prepare, cancel, reset, switched }
 }

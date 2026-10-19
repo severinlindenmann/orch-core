@@ -148,7 +148,7 @@ export interface PairingApi {
   subscribe: (ws: string, onItem: (item: PairItem) => void) => () => void
 }
 
-export const PAIR_UNAVAILABLE = 'Pairing a phone is not available on this host yet.'
+export const PAIR_UNAVAILABLE = 'Pairing a phone comes later. For now you approve on this computer, in the terminal.'
 
 const unavailable = (): Promise<never> =>
   Promise.reject(new ApiError(404, { code: 'pair.unavailable', message: PAIR_UNAVAILABLE, retryable: false }))
@@ -202,3 +202,7 @@ export const SIGN_COMMAND = 'orch sign <CODE>'
 /** Typed SAS mismatches allowed per offer (orch-52); the third refuses the offer. */
 export const SAS_ATTEMPTS = 3
 export const convenienceOffCommand = (ws: string): string | null => (shellWord(ws) ? `orch host convenience off --workspace ${ws}` : null)
+export const convenienceOnCommand = (ws: string): string | null => (shellWord(ws) ? `orch host convenience on --workspace ${ws}` : null)
+/** Moving the device key back under a passphrase: terminal-only (the new passphrase is typed on /dev/tty, never here). */
+export const custodyPassphraseCommand = (ws: string): string | null =>
+  shellWord(ws) ? `orch keys custody passphrase --workspace ${ws} --in-place` : null

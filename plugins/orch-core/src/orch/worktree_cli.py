@@ -100,10 +100,12 @@ class Direct:
         *,
         ident: tuple[int, int] | None = None,
         config: bytes | None = None,
+        store_pin: Any = None,
     ) -> None:
         self.root, self.wid, self.state, self.env, self.clock = Path(root), wid, Path(state), env, clock
         #: the root's identity when it was discovered: checked before the store opens below it
         self.ident = ident
+        self.store_pin = store_pin
         #: the config.json bytes discovery read: the store's open-time check uses them, never a re-read by path
         self.config = config
         from orch.host.ownership import DirectGuard
@@ -116,9 +118,9 @@ class Direct:
 
     # -- opening
     def served(self) -> bool:
-        from orch.host.service import SERVED_MARKER
+        from orch.host.service import is_served
 
-        return os.path.lexists(self.root / ".state" / SERVED_MARKER)
+        return is_served(self.root)  # either layout; a layout it cannot place counts as served (fail closed)
 
     def store(self) -> Any:
         if self._store is None:
@@ -131,7 +133,7 @@ class Direct:
             try:
                 self._store = Store.open(self.root, expected_workspace_id=self.wid, host=None,
                                          host_state_dir=self.state, load="lazy", guard=self.guard,
-                                         config=self.config)  # fmt: skip
+                                         config=self.config, ident=self.ident, store_pin=self.store_pin)  # fmt: skip
             except StoreError as exc:
                 raise WtError(exc.code, exc.detail or exc.code) from None
             except OrchError as exc:
@@ -223,7 +225,7 @@ class Direct:
         from orch.gitread.errors import Unavailable
         from orch.gitread.pinning import pin_repo
 
-        path = self.git.repo_path(self.root, self.store().state.workspace.repos, repo)
+        path = self.git.repo_path(self.store().layout, self.store().state.workspace.repos, repo)
         if path is None:
             raise WtError("not_found", f"{repo} is not declared in settings.repos")
         real = os.path.realpath(path)
@@ -237,7 +239,7 @@ class Direct:
 
     def _rev(self, repo: str, rev: str) -> str | None:
         """A commit id through the hardened reader (never ``observe.git``: the repo's own config must run nothing)."""
-        got = read_git(repo, ["rev-parse", "--verify", "-q", rev + "^{commit}"], self._own())
+        got = read_git(repo, "commit", self._own(), rev=rev)
         return got if got and len(got) in (40, 64) else None
 
     def _git(self, args: dict[str, Any]) -> None:
@@ -344,7 +346,7 @@ class Direct:
         path = worktree_path(declared, self.wid, view.key)
         repos = self.store().state.workspace.repos
         declared_paths = {
-            os.path.realpath(p) for n in repos if (p := self.git.repo_path(self.root, repos, n)) is not None
+            os.path.realpath(p) for n in repos if (p := self.git.repo_path(self.store().layout, repos, n)) is not None
         }
         if path in declared_paths or os.path.realpath(path) in declared_paths:  # parity with the host (Opus #439 F4)
             raise WtError("worktree.exists", "the worktree path is a declared repository")
@@ -460,7 +462,16 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
             root = ws.verify_root()  # still the directory found, before anything under it is opened
         except OrchError as exc:
             raise WtError(exc.code, str(exc.message), hint=exc.hint) from None
-        direct = Direct(Path(root), wid, state_dir(env, files), env, now, ident=ws.ident, config=ws.config_bytes)
+        direct = Direct(
+            Path(root),
+            wid,
+            state_dir(env, files),
+            env,
+            now,
+            ident=ws.ident,
+            config=ws.config_bytes,
+            store_pin=ws.store_pin,
+        )
         with direct.guarded():
             if cmd == "list":
                 data: Any = direct.list(a["ticket"], a["check"])

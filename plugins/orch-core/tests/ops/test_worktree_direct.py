@@ -10,6 +10,7 @@ import pytest
 
 from orch import worktree_cli
 from orch.gitread.client import PinStore
+from orch.layout import Layout
 from tests.ops.helpers import Cli
 
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
@@ -140,7 +141,7 @@ def test_direct_d58_reads_the_registered_worktree_not_the_declared_copy(d):
     path = doc(d.run("create", d.key))["data"]["path"]
     pins = PinStore(d.ws.host_state / "hosts" / _wid(d) / "git-pins.json")
     git = Git(enabled=True, worktrees=pins)
-    copy = git.ticket_copy(d.ws.root, {"proj": {"path": str(d.repo)}}, d.ws.uid(d.key), "proj")
+    copy = git.ticket_copy(Layout.legacy_at(d.ws.root), {"proj": {"path": str(d.repo)}}, d.ws.uid(d.key), "proj")
     assert copy.registered and str(copy.path) == path and copy.gen == 1 and copy.pin["path"] == path
 
 
@@ -282,7 +283,7 @@ def problems(d):
 
     uid = d.ws.uid(d.key)
     wid = _wid(d)
-    store = SimpleNamespace(root=d.ws.root, workspace_id=wid,
+    store = SimpleNamespace(root=d.ws.root, layout=Layout.legacy_at(d.ws.root), workspace_id=wid,
                             state=SimpleNamespace(
                                 workspace=SimpleNamespace(repos={"proj": {"path": str(d.repo)}})))  # fmt: skip
     h = Human.__new__(Human)
@@ -356,7 +357,9 @@ def test_bound_copy_fails_closed_on_every_branch(tmp_path):
     def git(copy, *, enabled=True, reader=some_reader):
         return SimpleNamespace(enabled=enabled, reader=reader, principal="p", ticket_copy=lambda *a: copy)
 
-    store = SimpleNamespace(root=tmp_path, state=SimpleNamespace(workspace=SimpleNamespace(repos={})))
+    store = SimpleNamespace(
+        root=tmp_path, layout=Layout.legacy_at(tmp_path), state=SimpleNamespace(workspace=SimpleNamespace(repos={}))
+    )
     declared = WorkingCopy(tmp_path / "r", 0, None, False, None)
     want = [declared.binding("u", "proj")]
     assert bound_copy(git(declared), store, "u", "proj", want) == tmp_path / "r"  # the one open case

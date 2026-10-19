@@ -1,7 +1,7 @@
 """Finding the workspace: the one place that opens anything to do so (direct mode).
 
 **Invariant.** The user's starting path (the working directory or ``ORCH_WORKSPACE``) is resolved and trusted; the
-walk goes up from the resolved path; anything inside a discovered or candidate workspace (``orchestrator/``,
+walk goes up from the resolved path; anything inside a discovered or candidate workspace (``.orch/``,
 ``config.json``, ``tickets/``) is opened only through ``O_NOFOLLOW`` directory fds from that root, never by a path.
 There is no "check, then open by path" step for a swap to land in: a component swapped for a symlink fails the
 ``O_NOFOLLOW`` open (``ELOOP``/``ENOTDIR``) instead of being followed.
@@ -13,7 +13,10 @@ the paths in a result only name the fds.
 
 What a candidate is:
 
-* **v2**: ``config.json`` with ``"schema": "orch.workspace/2"`` and a ``workspace`` object with a string ``id``.
+* **v2**: ``config.json`` with ``"schema": "orch.workspace/2"`` and a ``workspace`` object with a string ``id``,
+  in the project root (legacy layout) or in ``<project>/.orch/`` (new layout; :mod:`orch.layout`). Both, or a ``.orch``
+  that is not a real directory, is :class:`~orch.layout.LayoutError`, never a fall-through. ``Found.path`` is the
+  project; ``Found.store`` the directory holding the config.
 * **v1** (the importer's layout, :func:`orch.importer.v1.find_v1`): a ``tickets/`` directory (by ``lstat`` below the
   fd) and ``config.json`` with ``"schema": 1`` (not a bool) and an ``id`` object. Detected, never opened.
 
@@ -24,9 +27,10 @@ opens something else under the root first checks it is still that directory (:fu
 **Ownership boundary (orch-52), for the implicit walk only** (no ``ORCH_WORKSPACE``), enforced in :func:`_walk` and
 :func:`_level` by ``fstat`` on the exact fds that are then read (never a path lookup between check and read):
 
-* A candidate counts only if its directory (the level itself for a workspace there, else its ``orchestrator/``) and
-  its ``config.json`` are owned by the current uid (:func:`_owner`) and are not group- or other-writable. A
-  workspace another user planted, or one anyone else could rewrite, is not a candidate: the walk goes on past it.
+* A candidate counts only if its directory (the level itself for a legacy workspace there, its ``.orch/``, or for
+  v1 its ``orchestrator/``) and its ``config.json`` are owned by the current uid (:func:`_owner`) and are not
+  group- or other-writable. A workspace another user planted, or one anyone else could rewrite,
+  is not a candidate: the walk goes on past it.
 * The walk **stops** (no workspace) at the first directory that is sticky or other-writable (``/tmp``,
   ``/private/tmp``, ``/Users/Shared``): it is neither a candidate nor walked past, so a workspace planted in or above
   a shared directory is never used, and it never blocks ``orch init`` below it. The stop applies to every directory
@@ -50,7 +54,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["CONFIG_LIMIT", "CONFIG_SCHEMA", "Found", "locate", "read_config", "same_root", "v2_config"]
+from orch import layout as _layout
+from orch.layout import Layout, LayoutError, StorePin
+
+__all__ = ["CONFIG_LIMIT", "CONFIG_SCHEMA", "Found", "LayoutError", "locate", "read_config", "same_root", "v2_config"]
 
 CONFIG_SCHEMA = "orch.workspace/2"
 CONFIG_LIMIT = 1 << 20
@@ -73,6 +80,20 @@ class Found:
     config: dict[str, Any]
     raw: bytes = b""
     ident: tuple[int, int] | None = None
+    #: v2 found by its fds: project and store (``None``: the legacy layout at ``path``, or found through host ``Files``)
+    layout: Layout | None = None
+    #: v2 found by its fds: what the open that follows must find again (``.orch``'s identity; see :class:`StorePin`)
+    store_pin: StorePin | None = None
+
+    @property
+    def project(self) -> Path:
+        """The project root (``path``; registry ``root``). ``ident`` is this directory's identity."""
+        return self.path
+
+    @property
+    def store(self) -> Path:
+        """The directory holding ``config.json``, ``tickets/``, ``.state/`` (legacy: the project itself)."""
+        return self.layout.store if self.layout is not None else self.path
 
 
 def _open_trusted(path: Path) -> int | None:
@@ -166,27 +187,57 @@ def _probe(fd: int, path: Path, *, v2: bool, v1: bool, owned: bool) -> tuple[Fou
     cfg = v2_config(doc) if v2 else None
     ident = (st.st_dev, st.st_ino)
     return (
-        Found(path, False, cfg, raw, ident) if cfg is not None else None,
+        Found(path, False, cfg, raw, ident, None, StorePin(None, owned)) if cfg is not None else None,
         Found(path, True, doc or {}, raw, ident) if v1 and _is_v1(fd, doc) else None,
     )
 
 
-def _level(fd: int, d: Path, *, v2_sub: bool, v1: bool, owned: bool) -> Found | None:
-    """The directory open at ``fd`` (named ``d``) and its ``orchestrator/`` (``O_NOFOLLOW`` from ``fd``): v2 first,
-    then v1. ``owned`` (the implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on
-    the exact fd that is then read (the one place it is enforced, with the stop in :func:`_walk`)."""
+def _store_probe(fd: int, d: Path, *, owned: bool, start: bool = True) -> Found | None:
+    """The v2 candidate in ``.orch/`` below the project fd (``O_NOFOLLOW``). An entry that is there but not a real
+    directory is :class:`LayoutError`, never a fall-through, except in the implicit walk (``owned``) for an entry that
+    is not the person's own (or in a project that is not their own): that is no candidate and the walk goes on (a
+    stranger's ``.orch`` in a parent directory must not block discovery). ``ident`` is the project's; ``.orch`` is
+    pinned by ``store_pin`` (identity, and ``owned``: ownership checked again on the opened fd)."""
+    if owned and not _private(os.fstat(fd)):
+        return None
+    # away from the start, another tool's ``.orch`` (a link, a file) holds no orch config and must not block the walk
+    sfd = _layout.open_store_dir(fd, (lambda st: st.st_uid != _owner()) if owned else None, lenient=owned and not start)
+    if sfd is None:
+        return None
+    try:
+        got, _ = _probe(sfd, d / _layout.STORE_DIR, v2=True, v1=False, owned=owned)
+        sst = os.fstat(sfd)
+    finally:
+        os.close(sfd)
+    if got is None:
+        return None
+    st = os.fstat(fd)
+    pin = StorePin((sst.st_dev, sst.st_ino), owned)
+    return Found(d, False, got.config, got.raw, (st.st_dev, st.st_ino), Layout.new_at(d), pin)
+
+
+def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool, start: bool = True) -> Found | None:
+    """The directory open at ``fd`` (named ``d``): v2 first (the legacy root config or ``.orch/``; both is
+    :class:`LayoutError`), then v1 (here, else in its ``orchestrator/``, ``O_NOFOLLOW`` from ``fd``). ``owned`` (the
+    implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on the exact fd that is then
+    read (the one place it is enforced, with the stop in :func:`_walk`)."""
     here2, here1 = _probe(fd, d, v2=True, v1=v1, owned=owned)
+    # a link/file ``.orch`` next to a legacy config is the double-store case: strict there, as at the start
+    new2 = _store_probe(fd, d, owned=owned, start=start or here2 is not None)
+    _layout.check_single_store(legacy=here2 is not None, new=new2 is not None)
+    if new2 is not None:
+        return new2
     if here2 is not None:
         return here2
-    sub2 = sub1 = None
-    if v2_sub or v1:
+    sub1 = None
+    if v1_sub or v1:
         sfd = _sub(fd, "orchestrator")
         if sfd is not None:
             try:
-                sub2, sub1 = _probe(sfd, d / "orchestrator", v2=v2_sub, v1=v1, owned=owned)
+                _, sub1 = _probe(sfd, d / "orchestrator", v2=False, v1=v1, owned=owned)
             finally:
                 os.close(sfd)
-    return sub2 or here1 or sub1
+    return here1 or sub1
 
 
 def _walk(here: Path, *, v1: bool) -> Found | None:
@@ -207,7 +258,7 @@ def _walk(here: Path, *, v1: bool) -> Found | None:
                 return None
             if _shared(st):
                 return None
-            found = _level(fd, d, v2_sub=True, v1=v1, owned=True)
+            found = _level(fd, d, v1_sub=True, v1=v1, owned=True, start=d == here)
             if found is not None:
                 return found
             try:
@@ -241,27 +292,54 @@ def locate(start: str | os.PathLike[str], *, explicit: bool, v1: bool = True) ->
         return None
     if not explicit:
         return _walk(here, v1=v1)
+    if here.name == _layout.STORE_DIR and here.parent != here:  # the alias: ORCH_WORKSPACE=<project>/.orch
+        pfd = _open_trusted(here.parent)
+        if pfd is not None:
+            try:
+                alias = _level(pfd, here.parent, v1_sub=False, v1=False, owned=False)
+            finally:
+                os.close(pfd)
+            if alias is not None and alias.layout is not None and alias.layout.store == here:
+                return alias  # the project's own .orch confirmed as an orch store; anything else is not an alias
     fd = _open_trusted(here)
     if fd is None:
         return None
     try:
-        return _level(fd, here, v2_sub=False, v1=v1, owned=False)
+        return _level(fd, here, v1_sub=False, v1=v1, owned=False)
     finally:
         os.close(fd)
 
 
 def read_config(root: str | os.PathLike[str]) -> dict[str, Any] | None:
-    """The v2 ``config.json`` of the workspace at ``root`` (a discovered root), or ``None``. Only ``root`` and what is
-    below it are opened, never its parent (a host serving ``root`` allows nothing outside it): ``root`` by path with
-    ``O_NOFOLLOW`` on its last component (an ``orchestrator`` swapped for a symlink after discovery is refused; the
-    ancestors are the trusted start), then ``config.json`` ``O_NOFOLLOW`` below that fd."""
+    """The v2 ``config.json`` of the workspace whose project is ``root``, or ``None`` (not a workspace, or its layout
+    is unusable: a linked ``.orch`` or two stores read as none here; discovery and the store refuse them by name).
+    Only ``root`` and what is below it are opened, never its parent (a host serving ``root`` allows nothing outside
+    it): ``root`` by path with ``O_NOFOLLOW`` on its last component (the ancestors are the trusted start), then the
+    store below that fd, every step ``O_NOFOLLOW``."""
     try:
         fd = os.open(Path(root), _DIR | _NOFOLLOW)
     except OSError:
         return None
     try:
-        got = _config_at(fd)
+        try:
+            found = _layout.resolve(fd, root)
+        except LayoutError:
+            return None
+        if found is None:
+            return None
+        if found.legacy:
+            got = _config_at(fd)
+        else:
+            sfd = _layout.open_store_dir(fd)
+            if sfd is None:
+                return None
+            try:
+                got = _config_at(sfd)
+            finally:
+                os.close(sfd)
         return v2_config(got[0] if got is not None else None)
+    except LayoutError:
+        return None
     finally:
         os.close(fd)
 

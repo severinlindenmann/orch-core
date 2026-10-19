@@ -30,6 +30,7 @@ use a fake runner and a temporary home. As a second fence, the default runner re
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -263,6 +264,16 @@ class Manager:
         if out in ("active", "activating", "reloading", "refreshing", "deactivating"):
             return True
         return False if out else None
+
+    def main_pid(self) -> int | None:
+        """The PID of the process the service manager runs now (``None``: it cannot tell, or nothing runs)."""
+        if self.plan.kind == "launchd":
+            res = self.run(["launchctl", "print", self._target()])
+            found = re.search(r"^\s*pid = (\d+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+        else:
+            res = self.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", self.plan.systemd_name])
+            found = re.fullmatch(r"\s*([1-9]\d*)\s*", res.stdout or "")
+        return int(found.group(1)) if found else None
 
     def installed(self) -> bool:
         try:

@@ -797,7 +797,7 @@ def test_enable_also_restarts_a_stale_runner_service(stale_env, monkeypatch):
     monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
     seen = []
 
-    def fake_runner(unit, manager, state, mine):
+    def fake_runner(unit, manager, state, mine, force=False):
         seen.append(mine)
         return {
             "restarted": True,
@@ -809,3 +809,31 @@ def test_enable_also_restarts_a_stale_runner_service(stale_env, monkeypatch):
     data = json.loads(out)["result"]["data"]
     assert code == 0 and len(seen) == 1 and data["runner_restarted"] is True
     assert "agents and terminals" in data["runner_message"]
+
+
+def test_register_never_touches_the_runner_and_the_flag_forces_it(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    seen = []
+    monkeypatch.setattr(
+        "orch.runner.service.restart_if_stale",
+        lambda unit, manager, state, mine, force=False: seen.append(force) or None,
+    )
+    code, out = host(["enable", "--dev"], env)
+    assert code == 0 and seen == [False]
+    code, out = host(["enable", "--dev", "--restart-runner"], env)
+    assert code == 0 and seen == [False, True]
+    doc = host_cli.enable(Path(env["ORCH_STATE_DIR"]), env, dev=True, runner="skip")
+    assert doc["ok"] is True and seen == [False, True]  # the register path: the runner is not asked
+
+
+def test_a_runner_with_live_runs_makes_enable_say_restart_needed(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    monkeypatch.setattr(
+        "orch.runner.service.restart_if_stale",
+        lambda *a, **k: {"restarted": False, "restart_needed": True, "message": "has 1 running agents/terminals"},
+    )
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert data["restart_needed"] is True and data["runner_restarted"] is False

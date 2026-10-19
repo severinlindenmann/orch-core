@@ -74,6 +74,11 @@ def _parser() -> argparse.ArgumentParser:
         help="replace a service installed for another state dir, run dir or interpreter (its host stops)",
     )
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
+    en.add_argument(
+        "--restart-runner",
+        action="store_true",
+        help="also restart an agent runner of an older release now, even with running agents and terminals (they stop)",
+    )
     en.add_argument("--json", action="store_true", help="machine-readable output")
     dis = sub.add_parser(
         "disable",
@@ -278,7 +283,10 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
         if args.cmd == "readers":
             return _readers(args, env, out)
         if args.cmd == "enable":
-            doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
+            doc = enable(
+                _state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev,
+                runner="force" if args.restart_runner else "auto",
+            )  # fmt: skip
             out.write(json.dumps(doc, sort_keys=True) + "\n" if args.json else human_text("enable", doc))
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd == "disable":
@@ -396,13 +404,20 @@ def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str,
 
 
 def enable(
-    state: Path, env: Mapping[str, str], *, run: Path | None = None, replace: bool = False, dev: bool = False
+    state: Path,
+    env: Mapping[str, str],
+    *,
+    run: Path | None = None,
+    replace: bool = False,
+    dev: bool = False,
+    runner: str = "auto",
 ) -> dict[str, Any]:
     """``orch host enable``: install the release (D-P2-4), write the per-user unit, start it and wait for the control
     socket (H7, tier A). Windows and other platforms without a per-user service answer ``mode: direct``. Refused before
     anything is written: a run dir whose socket paths would be too long, a control character in a unit value, dev code
     as the service (unless ``dev``), and a unit installed for another state dir, run dir or interpreter (unless
-    ``replace``)."""
+    ``replace``). ``runner``: ``auto`` restarts a stale agent runner only when it has no live runs, ``force`` always,
+    ``skip`` never (the register path)."""
     from . import enable as svc
     from .custody import ensure_private_dir
     from .listener import SOCKET_PATH_LIMIT
@@ -506,11 +521,14 @@ def enable(
                 f"the running host (release {theirs or 'unknown'}) is not under the service manager: "
                 "stop it and start it again (or `orch host restart` when it is supervised) to run the new release"
             )
-    _restart_stale_runner(state, env, run_dir, mine, data)
+    if runner != "skip":
+        _restart_stale_runner(state, env, run_dir, mine, data, force=runner == "force")
     return {"ok": True, "result": {"data": data}}
 
 
-def _restart_stale_runner(state: Path, env: Mapping[str, str], run_dir: Path, mine: str, data: dict[str, Any]) -> None:
+def _restart_stale_runner(
+    state: Path, env: Mapping[str, str], run_dir: Path, mine: str, data: dict[str, Any], *, force: bool = False
+) -> None:
     """The agent runner service, when one runs here with another release than this install, is restarted by the same
     rule as the host (its agents and terminals are stopped by that); the result says so."""
     from orch.runner import service as runner_service
@@ -520,12 +538,14 @@ def _restart_stale_runner(state: Path, env: Mapping[str, str], run_dir: Path, mi
 
     try:
         unit = runner_service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
-        stale = runner_service.restart_if_stale(unit, RUNNER_SERVICE_MANAGER(unit), state, mine)
+        stale = runner_service.restart_if_stale(unit, RUNNER_SERVICE_MANAGER(unit), state, mine, force=force)
     except (svc.Unsupported, ValueError, OSError):
         return
     if stale is not None:
         data["runner_restarted"] = stale["restarted"]
         data["runner_message"] = stale["message"]
+        if stale.get("restart_needed"):
+            data["restart_needed"] = True
 
 
 def _host_release(control: Path) -> str | None:
@@ -662,7 +682,7 @@ def ensure_service(state: Path, env: Mapping[str, str], run: Path | None, *, dev
 
     if wait_for_control(_control_path(run, state, env), timeout=0):
         return {"started": False}
-    doc = enable(state, env, run=run, dev=dev)
+    doc = enable(state, env, run=run, dev=dev, runner="skip")  # a register never touches the runner
     if not doc.get("ok"):
         return doc
     data = doc["result"]["data"]

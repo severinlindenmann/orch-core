@@ -136,19 +136,27 @@ def current_release() -> str:
         return "unknown"
 
 
-def write_loaded_release(state: Path, release: str) -> None:
+def write_loaded_release(state: Path, release: str, *, pid: int | None = None) -> None:
     """The running runner records the release it LOADED at start, where ``orch host enable`` / ``orch runner enable``
     read it (the host also gets it in ``runner.hello``). Best effort: a missing file reads as an older runner."""
     from orch.host.custody import write_private
 
     try:
-        write_private(loaded_release_path(state), {"release": release, "pid": os.getpid()})
+        write_private(loaded_release_path(state), {"release": release, "pid": os.getpid() if pid is None else pid})
     except OSError:
         pass
 
 
-def loaded_release(state: Path) -> str | None:
-    """The release the running runner recorded (``None``: no file, or an unreadable one: an older runner)."""
+def loaded_release(state: Path, *, pid: int | None = None) -> str | None:
+    """The release the running runner recorded (``None``: no file, or an unreadable one: an older runner). With
+    ``pid``, a file written by another process (a dev runner, or the process before a restart) reads as ``None``."""
+    doc = _release_doc(state)
+    if doc is None or (pid is not None and doc.get("pid") != pid):
+        return None
+    return doc["release"]
+
+
+def _release_doc(state: Path) -> dict[str, Any] | None:
     from orch.host.custody import read_json
     from orch.host.errors import HostError
 
@@ -156,19 +164,63 @@ def loaded_release(state: Path) -> str | None:
         doc = read_json(loaded_release_path(state), os.getuid())
     except (HostError, OSError):
         return None
-    release = doc.get("release") if isinstance(doc, dict) else None
-    return release if isinstance(release, str) else None
+    return doc if isinstance(doc, dict) and isinstance(doc.get("release"), str) else None
 
 
-def restart_if_stale(unit: Any, manager: Any, state: Path, mine: str) -> dict[str, Any] | None:
+def live_runs(state: Path) -> int | None:
+    """How many runs (agents, terminals) the runner's persisted table holds as live (``None``: unreadable, which
+    callers treat as "some")."""
+    from orch.host.errors import HostError
+
+    from .table import RunTable
+
+    table = RunTable(Path(state) / "runner", os.getuid())
+    try:
+        table.load()
+    except (HostError, OSError):
+        return None
+    return len(table.live())
+
+
+def restart_if_stale(
+    unit: Any, manager: Any, state: Path, mine: str, *, force: bool = False, wait: float = 3.0
+) -> dict[str, Any] | None:
     """The runner service of ``unit``, when the service manager runs it with another release than ``mine``, is
-    restarted at once (the same rule as the host: :func:`orch.host.enable.restart_to_release`). Everything the runner
-    started (agents, terminals) is stopped by that. ``None``: no runner is running here, or it is current."""
+    restarted by the same rule as the host (:func:`orch.host.enable.restart_to_release`), but only when it has no live
+    runs (agents, terminals): a restart stops them all, so with live runs the person is told and chooses (``force``
+    restarts anyway). A new start from a stale runner is refused by the host (``runner.stale``) meanwhile.
+    ``None``: no runner runs here, or it is current (or cannot be told yet)."""
+    import shlex
+    import time
+
     if manager.active() is not True:
         return None
-    if loaded_release(state) == mine:
+    pid = manager.main_pid()
+    # The file counts only when the service's own process wrote it. Another pid (a dev runner, or the process before a
+    # restart) is "not known yet": wait briefly for the fresh file, and never restart on that alone.
+    deadline = time.monotonic() + wait
+    while True:
+        doc = _release_doc(state)
+        if doc is None or pid is None or doc.get("pid") == pid:
+            break
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.2)
+    if doc is not None and doc["release"] == mine:
         return None
-    how = host_enable.restart_to_release(manager, lambda: loaded_release(state), mine)
+    command = shlex.join(manager.restart_command())
+    live = live_runs(state)
+    if live != 0 and not force:
+        have = "running agents or terminals" if live is None else f"{live} running agents/terminals"
+        return {
+            "restarted": False,
+            "restart_needed": True,
+            "message": (
+                f"the agent runner is from an older orch version and has {have}; it was not restarted. "
+                f"Stop them, then run: {command} (or orch host enable --restart-runner to restart it now)"
+            ),
+        }
+    how = host_enable.restart_to_release(manager, lambda: loaded_release(state, pid=None), mine)
     if how in ("drained", "forced"):
         return {
             "restarted": True,
@@ -178,8 +230,9 @@ def restart_if_stale(unit: Any, manager: Any, state: Path, mine: str) -> dict[st
         }
     return {
         "restarted": False,
+        "restart_needed": True,
         "message": (
             "the agent runner still runs an older release and did not restart: to restart it now "
-            f"(this stops its agents and terminals): {' '.join(manager.restart_command())}"
+            f"(this stops its agents and terminals): {command}"
         ),
     }

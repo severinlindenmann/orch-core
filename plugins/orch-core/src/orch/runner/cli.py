@@ -231,8 +231,8 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     enablement.set_enabled(state, wid, True, uid, terminals=terminals, text=text)
     from orch.host.release import code_digest
 
-    try:
-        stale = service.restart_if_stale(unit, manager, state, code_digest())
+    try:  # a changed unit was just re-bootstrapped: a fresh process on the new release, nothing to restart
+        stale = None if changed else service.restart_if_stale(unit, manager, state, code_digest())
     except OSError:
         stale = None
     data = {"workspace_id": wid, "enabled": True, "terminals": terminals, "service": unit.kind,

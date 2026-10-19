@@ -131,26 +131,44 @@ def test_a_screenshot_is_offered_as_bytes_only_when_core_accepts_it(client, toke
     good = _png()
     pictures = {
         "paste-20261019-101500-aaaaaaaa.png": good,
-        "meta.png": _png(b"\x00\x00\x00\x04tEXtabcd\x00\x00\x00\x00"),
+        "paste-20261019-101502-cccccccc.png": _png(b"\x00\x00\x00\x04tEXtabcd\x00\x00\x00\x00"),
         "exif.jpg": b"\xff\xd8\xff\xe1" + b"Exif\x00\x00GPS",
     }
     for name, data in pictures.items():
+        env.tick()
         env.store.append(
-            {
-                "type": "artifact.added",
-                "actor": env.agent,
-                "name": name,
-                "kind": "screenshot",
-                "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
-                "bytes": len(data),
-            },
+            env.person_event(
+                env.owner,
+                ids["First"],
+                "artifact.added",
+                name=name,
+                kind="screenshot",
+                sha256="sha256:" + hashlib.sha256(data).hexdigest(),
+                bytes=len(data),
+            ),
             log=ids["First"],
             artifacts={name: data},
         )
     got = client.get(url(stub, "DEMO-0001/artifacts/paste-20261019-101500-aaaaaaaa.png"), headers=headers(token)).json()
     digest = "sha256:" + hashlib.sha256(good).hexdigest()
     assert got["image"] == {"type": "png", "b64": base64.b64encode(good).decode(), "digest": digest}
-    for name in ("meta.png", "exif.jpg"):
+    # an agent's image (same bytes, not a person's paste) is never offered for inline drawing
+    agent_data = good
+    env.store.append(
+        {
+            "type": "artifact.added",
+            "actor": env.agent,
+            "name": "paste-20261019-101501-bbbbbbbb.png",
+            "kind": "screenshot",
+            "sha256": "sha256:" + hashlib.sha256(agent_data).hexdigest(),
+            "bytes": len(agent_data),
+        },
+        log=ids["First"],
+        artifacts={"paste-20261019-101501-bbbbbbbb.png": agent_data},
+    )
+    agent_got = client.get(url(stub, "DEMO-0001/artifacts/paste-20261019-101501-bbbbbbbb.png"), headers=headers(token))
+    assert agent_got.json()["image"] is None
+    for name in ("paste-20261019-101502-cccccccc.png", "exif.jpg"):
         assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None
 
 

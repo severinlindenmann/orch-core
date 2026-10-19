@@ -6,6 +6,7 @@ model that forbids extras, and the host op and its arguments are fixed by the ro
 
 import base64
 import hashlib
+import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Query
@@ -104,6 +105,19 @@ def recent_activity(gateway: Gateway, ws: str, want: int = RECENT):
         if not page or len(items) >= want:
             break
     return items[:want]
+
+
+PASTE_NAME = re.compile(r"^paste-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.(png|webp)$")
+
+
+def pasted_by_person(gateway: Gateway, ws: str, key: str, name: str) -> bool:
+    """R3 part B (lead decision): a picture is drawn inline only when a PERSON signed its `artifact.added` as a
+    screenshot with a paste name. An agent's image stays a placeholder with a link to the artifact."""
+    if not PASTE_NAME.fullmatch(name):
+        return False
+    data = gateway.call(ws, "ticket.get", {"ref": key})
+    art = next((a for a in data.get("artifacts") or [] if a.get("name") == name), None)
+    return bool(art and art.get("kind") == "screenshot" and (art.get("by") or {}).get("kind") == "person")
 
 
 def picture(data: bytes) -> dict | None:
@@ -211,5 +225,5 @@ def register(app: FastAPI, gateway: Gateway):
             "text": text,
             # R3 part B: a screenshot pasted into the ticket. Only a complete, verified PNG/WebP that passes core's
             # header check is offered; the page hashes the bytes itself before showing them, and only ever as an <img>.
-            "image": picture(data) if verified else None,
+            "image": picture(data) if verified and pasted_by_person(gateway, ws, key, name) else None,
         }

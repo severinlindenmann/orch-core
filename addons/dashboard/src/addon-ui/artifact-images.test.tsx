@@ -34,3 +34,16 @@ describe('pictures in markdown', () => {
     expect(container.querySelector('a, [href]')).toBeNull()
   })
 })
+
+import { isPersonPaste } from './artifactImages'
+
+describe('who may have a picture drawn inline', () => {
+  const ok = { name: NAME, kind: 'screenshot', added_by: 'p_' + 'a'.repeat(32) }
+  it('only a person-added screenshot with a paste name', () => {
+    expect(isPersonPaste(ok)).toBe(true)
+    expect(isPersonPaste({ ...ok, added_by: 'agent-claude-code' })).toBe(false)
+    expect(isPersonPaste({ ...ok, added_by: 'orch' })).toBe(false)
+    expect(isPersonPaste({ ...ok, kind: 'other' })).toBe(false)
+    expect(isPersonPaste({ ...ok, name: 'shot.png' })).toBe(false)
+  })
+})

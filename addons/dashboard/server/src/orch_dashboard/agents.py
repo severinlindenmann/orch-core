@@ -54,7 +54,7 @@ class AgentPreviewBody(BaseModel):
     """`agent.preview`'s arguments (section 12.3). A model of its own: `term.preview`'s `mode` is `context` only."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    ticket: reads.Key | None = None
+    ticket: reads.Key  # required by the host (section 12.3); a run always belongs to a ticket
     harness: Literal["claude-code", "codex"]
     mode: Literal["refine", "work", "fix", "continue", "context"]
     model: Model | None = None

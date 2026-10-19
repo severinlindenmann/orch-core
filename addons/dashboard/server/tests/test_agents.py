@@ -141,6 +141,7 @@ def test_preview_withholds_hidden_text_and_keeps_only_closed_blocked_detail():
         {"ticket": "DEMO-1", "harness": "codex", "mode": "work", "cwd": {"kind": "workspace"}},
         {"ticket": "DEMO-1", "harness": "codex", "mode": "work", "argv": ["sh"]},
         {"ticket": "../x", "harness": "codex", "mode": "work"},
+        {"harness": "codex", "mode": "work"},  # the host requires a ticket (section 12.3)
     ],
 )
 def test_preview_bodies_are_closed(client, token, stub, host, body):

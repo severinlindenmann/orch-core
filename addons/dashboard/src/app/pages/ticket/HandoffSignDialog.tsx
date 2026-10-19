@@ -120,7 +120,7 @@ export function HandoffSignDialog({
       onPending={onPending}
       onSettled={(phase) => {
         // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
-        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate)
+        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
       }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}

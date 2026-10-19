@@ -40,6 +40,15 @@ describe('a confirmed signature settles its item at once', () => {
     expect(withoutSigned('w', today(item('A-1', 'requirements')), Date.now() + 31_000).needs_you).toHaveLength(1)
   })
 
+  it('a step re-requested at a new version is not the signed one', () => {
+    const qc = new QueryClient()
+    const v = (hash: string): NeedsYouItem => ({ ...item('A-1', 'requirements'), hash })
+    qc.setQueryData(['today', 'w'], today(v('aaaaaaaaaaaa')))
+    signedNow(qc, 'w', 'A-1', 'requirements', 'sha256:aaaaaaaaaaaa1111')
+    expect((qc.getQueryData<TodayDocument>(['today', 'w'])!).needs_you).toEqual([])
+    expect(withoutSigned('w', today(v('bbbbbbbbbbbb'))).needs_you).toHaveLength(1)
+  })
+
   it('refreshes today, the ticket and the board', () => {
     const qc = new QueryClient()
     qc.setQueryData(['today', 'w'], today())

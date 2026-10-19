@@ -55,7 +55,19 @@ _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 #: agent ops a person may run through ``human.prepare`` (§0.8 "Person versions of agent ops"), each allowed only while
 #: every type it emits passes ``orch.ops.actors.allows("human", t)``
 PERSON_AGENT_OPS = frozenset(
-    {"new", "set", "section.set", "ac.add", "ac.edit", "task.add", "log", "ask", "artifact.add", "artifact.replace"}
+    {
+        "new",
+        "set",
+        "section.set",
+        "ac.add",
+        "ac.edit",
+        "task.add",
+        "task.edit",
+        "log",
+        "ask",
+        "artifact.add",
+        "artifact.replace",
+    }
 )
 #: person ops of the host contract (§0.8 ``move``, ``policy.set``, ``settings.set``; H0 records them as ops). Each emits
 #: one existing person-only F1 event; they are not registry (CLI) ops and not in the frozen grant-verb table

@@ -30,6 +30,7 @@ MODULES = (
     "task_list",
     "task_next",
     "task_add",
+    "task_edit",
     "task_start",
     "task_done",
     "task_skip",

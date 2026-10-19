@@ -166,6 +166,13 @@
         "summary": "Add a task, optionally with a verify command and the criteria it proves."
       },
       {
+        "name": "task.edit",
+        "cli": "task edit",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Change a task's text, its verify command or the criteria it proves. A task that is done keeps its verify command and its criteria."
+      },
+      {
         "name": "task.start",
         "cli": "task start",
         "group": "Edit",

@@ -183,6 +183,8 @@ CASES = {
     "task-list": (["task", "list"], None),
     "task-next": (["task", "next"], None),
     "task-add": (["task", "add", "Add tests", "--verify", "pytest -q", "--proves", "AC1"], None),
+    "task-edit": (["task", "edit", "T2", "--text", "Document the refresh", "--proves", "AC1"], None),
+    "task-edit-done": (["task", "edit", "T1", "--verify", "true"], None),
     "task-start": (["task", "start", "T2"], None),
     "task-done": (["task", "done", "T2", "-m", "documented"], None),
     "task-done-run": (["task", "done", "T3", "--run"], None),

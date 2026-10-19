@@ -547,7 +547,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'V1',
         title: 'One button creates and starts',
         text: 'Open New ticket, type a title and the requirements. Look above the buttons, then press "Create and start agent".',
-        see: 'One line "Agent: Claude Code · Do the work · (model) · Change", and two buttons: "Create and start agent" (first) and "Only create". The review has a block "Not signed: the agent start". If you have no agent access yet, a choice of 1 day, 3 days or 7 days is above the buttons and the review also asks for agent access (the typed word GRANT); if you have one, it does not.',
+        see: 'One line "Agent: Claude Code · Write requirements and plan · (model) · Change", and two buttons: "Create and start agent" (first) and "Only create". The review has a block "Not signed: the agent start". If you have no agent access yet, a choice of 1 day, 3 days or 7 days is above the buttons and the review also asks for agent access (the typed word GRANT); if you have one, it does not.',
       },
       {
         id: 'V2',

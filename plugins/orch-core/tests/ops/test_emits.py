@@ -10,6 +10,7 @@ from orch.model import emits
 
 DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
 DIGEST_V2 = "01ccface9a9524cf50c0b6286550a34c0fe8d1d66891140ee1c66a25a44d6a2e"
+DIGEST_V3 = "5c5f5f33f9acd7c6c26296f03006099432ef9d3e59f580517e2e38e7379648f5"
 HUMAN_ONLY_V1 = "63726a5fa56ebeabd06dbfc4f5b8a81d88c512c1544dc99e602b815ae58c7676"
 
 
@@ -29,8 +30,16 @@ def test_v1_is_frozen():
 
 
 def test_v2_pinned_and_differs_from_v1_only_in_human_only_keys():
-    assert digest(emits.EMITS_V2) == DIGEST_V2 and emits.CURRENT is emits.EMITS_V2
+    assert digest(emits.EMITS_V2) == DIGEST_V2
     assert {k for k in emits.EMITS_V2 if emits.EMITS_V2[k] != emits.EMITS_V1.get(k)} <= emits.HUMAN_ONLY
+
+
+def test_v3_adds_only_task_edit_and_the_model_still_reads_v1():
+    """R3: ``task.edit`` is a new agent operation. V1 and V2 are untouched, so no replay verdict changes."""
+    assert digest(emits.EMITS_V3) == DIGEST_V3 and emits.CURRENT is emits.EMITS_V3
+    assert {k for k in emits.EMITS_V3 if emits.EMITS_V3[k] != emits.EMITS_V2.get(k)} == {"task.edit"}
+    assert emits.EMITS_V3["task.edit"] == {"ticket.updated"} and "task.edit" not in emits.EMITS_V1
+    assert "task.edit" not in ops.verb_events()
 
 
 def test_the_live_registry_matches_the_current_table():

@@ -461,7 +461,11 @@ WORKDIR_DELETE_ENTRIES = 200_000
 def _child(dfd: int, name: str, listed: os.stat_result) -> int:
     """The directory ``name`` below ``dfd`` (``O_NOFOLLOW``), which must still be the one that was listed."""
     fd = os.open(name, _DIR, dir_fd=dfd)
-    st = os.fstat(fd)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise
     if (st.st_dev, st.st_ino) != (listed.st_dev, listed.st_ino):
         os.close(fd)
         raise OSError(errno.ESTALE, "changed while it was read")
@@ -528,6 +532,10 @@ def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str
     return {"files": tot["files"], "bytes": tot["bytes"], "truncated": tot["truncated"]}
 
 
+def _after_look() -> None:
+    """A seam between the scan and the delete (tests change the folder here)."""
+
+
 def delete_workdir(layout: Layout, key: str) -> bool:
     """Delete exactly the ticket's work folder (and what is in it), never following a link. ``False``: there was none.
     Nothing outside ``<project>/.orch-work/<KEY>`` is touched. A first pass only looks (another disk or mount, deeper
@@ -542,15 +550,18 @@ def delete_workdir(layout: Layout, key: str) -> bool:
         try:
             dev = _same_disk(root)
             count = [0]
+            seen: dict[tuple[str, ...], dict[str, tuple[int, int]]] = {}  # directory -> {name: (dev, ino)} as looked at
 
-            def look(dfd: int, depth: int) -> None:
+            def look(dfd: int, depth: int, where: tuple[str, ...]) -> None:
                 with os.scandir(dfd) as it:
                     entries = list(it)
                 count[0] += len(entries)
                 if count[0] > WORKDIR_DELETE_ENTRIES:
                     raise LayoutError("the work folder holds too many files to delete here; delete it in Finder")
+                known = seen[where] = {}
                 for e in entries:
                     st = e.stat(follow_symlinks=False)
+                    known[e.name] = (st.st_dev, st.st_ino)
                     if not stat.S_ISDIR(st.st_mode):
                         continue
                     if st.st_dev != dev:
@@ -559,29 +570,44 @@ def delete_workdir(layout: Layout, key: str) -> bool:
                         raise LayoutError("the work folder is nested too deeply to delete here; delete it in Finder")
                     sub = _child(dfd, e.name, st)
                     try:
-                        look(sub, depth + 1)
+                        look(sub, depth + 1, (*where, e.name))
                     finally:
                         os.close(sub)
 
-            def remove(dfd: int) -> None:
+            def remove(dfd: int, depth: int, where: tuple[str, ...]) -> None:
+                """Deletes only what ``look`` recorded, unchanged: anything added, swapped or on another disk refuses."""
+                known = seen.get(where)
+                if known is None or depth > WORKDIR_DEPTH:
+                    raise LayoutError("the work folder changed while it was being deleted; nothing more was deleted")
                 with os.scandir(dfd) as it:
                     entries = list(it)
                 for e in entries:
                     st = e.stat(follow_symlinks=False)
+                    if known.get(e.name) != (st.st_dev, st.st_ino):
+                        raise LayoutError(
+                            "the work folder changed while it was being deleted; nothing more was deleted"
+                        )
                     if stat.S_ISDIR(st.st_mode):
+                        if st.st_dev != dev:
+                            raise LayoutError(f"{e.name} is another disk or mount inside the folder; not deleted")
                         sub = _child(dfd, e.name, st)
                         try:
-                            remove(sub)
+                            if os.fstat(sub).st_dev != dev:
+                                raise LayoutError(f"{e.name} is another disk or mount inside the folder; not deleted")
+                            remove(sub, depth + 1, (*where, e.name))
                         finally:
                             os.close(sub)
                         os.rmdir(e.name, dir_fd=dfd)
                     else:
                         os.unlink(e.name, dir_fd=dfd)
 
-            look(root, 0)
-            remove(root)
+            look(root, 0, ())
+            _after_look()
+            remove(root, 0, ())
         except LayoutError:
             raise
+        except RecursionError:
+            raise LayoutError("the work folder is nested too deeply to delete here") from None
         except OSError as exc:
             raise LayoutError(f"the work folder could not be emptied ({exc.strerror})") from None
     finally:

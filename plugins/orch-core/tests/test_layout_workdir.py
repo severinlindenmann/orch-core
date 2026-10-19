@@ -191,3 +191,35 @@ def test_cost_is_linear_and_depth_is_capped(lay, monkeypatch):
     with pytest.raises(LayoutError):
         delete_workdir(lay, KEY)
     assert lay.workdir(KEY).is_dir()  # the refusal came before anything was deleted
+
+
+def test_an_entry_added_after_the_scan_is_not_deleted_and_the_delete_refuses(lay, monkeypatch):
+    import orch.layout as L
+
+    ensure_workdir(lay, KEY)
+    root = lay.workdir(KEY)
+    (root / "old.txt").write_text("a")
+    monkeypatch.setattr(L, "_after_look", lambda: (root / "new.txt").write_text("b"))
+    with pytest.raises(LayoutError):
+        delete_workdir(lay, KEY)
+    assert (root / "new.txt").exists()
+
+
+def test_a_directory_swapped_after_the_scan_refuses(lay, monkeypatch, tmp_path):
+    import orch.layout as L
+
+    ensure_workdir(lay, KEY)
+    root = lay.workdir(KEY)
+    (root / "sub").mkdir()
+    (root / "sub" / "f").write_text("x")
+
+    def swap():
+        (root / "sub" / "f").unlink()
+        (root / "sub").rmdir()
+        (root / "sub").mkdir()  # another directory under the same name
+        (root / "sub" / "g").write_text("y")
+
+    monkeypatch.setattr(L, "_after_look", swap)
+    with pytest.raises(LayoutError):
+        delete_workdir(lay, KEY)
+    assert (root / "sub" / "g").exists()

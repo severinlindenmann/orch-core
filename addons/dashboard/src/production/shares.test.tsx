@@ -33,7 +33,9 @@ let registerRefusal: { code: string; reason?: string } | null = null
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
+let serverUp = true
 const route = () => {
+  serverUp = true
   shares = [share(), share({ id: 'd'.repeat(32), kind: 'once', view_limit: 3, views: 1, state: 'revoked' })]
   staged = []
   configured = true
@@ -44,7 +46,7 @@ const route = () => {
       return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
     if (!path.includes('/shares')) return undefined
     if (method === 'GET')
-      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: true, shares, staged })
+      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: serverUp, shares, staged })
     if (path.endsWith('/shares/prepare')) {
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
@@ -245,6 +247,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   registerRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByTestId('addon-publish-expand', {}, T))
   const box = await screen.findByTestId('publish-server', {}, T)
   expect(box).toHaveTextContent('http://127.0.0.1:8103')
   expect(box).toHaveTextContent('http://127.0.0.1:8104')
@@ -255,7 +258,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect((reg.textContent ?? '').match(/Ask the person who runs the server/g)).toHaveLength(1)
   expect(within(reg).getByText('Technical details').closest('details')).toHaveTextContent('orch-publish admin ws allow')
   // changing the addresses is a signed hand-off with both addresses
-  await user.click(within(box).getByRole('button', { name: 'Change addresses' }))
+  await user.click(within(box).getByRole('button', { name: 'Edit server' }))
   const dlg = await screen.findByRole('dialog', { name: 'Where shared files go' })
   await user.clear(within(dlg).getByLabelText('Files are sent to'))
   await user.type(within(dlg).getByLabelText('Files are sent to'), 'http://evil.example')
@@ -270,7 +273,42 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect(calls('/handoff')[0].body).toEqual({ action: 'publish_setup', server: 'https://pub.example.org', share: 'https://apps.example.org' })
 })
 
+it('Settings: the Publish row says what it needs; Check connection is a read-only probe with honest states; Open Shares links on', async () => {
+  route()
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/addons')
+  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
+  await waitFor(() => expect(needs).toHaveTextContent('Ready: a server is set up and answering'), T)
+  const box = await openPublish()
+  expect(within(box).getByText('Not checked.')).toBeInTheDocument()
+  serverUp = false
+  const before = state.host.calls.filter((c) => c.method !== 'GET').length
+  await user.click(within(box).getByRole('button', { name: 'Check connection' }))
+  await within(box).findByText(/Could not connect/, {}, T)
+  serverUp = true
+  await user.click(within(box).getByRole('button', { name: 'Check connection' }))
+  await within(box).findByText(/Connected\. The server answered/, {}, T)
+  expect(state.host.calls.filter((c) => c.method !== 'GET').length).toBe(before) // nothing was written
+  expect(within(box).getByRole('link', { name: 'Open Shares' })).toHaveAttribute('href', '/w/DEMO/shares')
+})
+
+it('Settings: an unconfigured Publish says it needs a server address', async () => {
+  route()
+  configured = false
+  show('/w/DEMO/settings/addons')
+  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
+  await waitFor(() => expect(needs).toHaveTextContent('Needs a publish server address'), T)
+  const box = await openPublish()
+  expect(within(box).getByRole('button', { name: 'Set up' })).toBeInTheDocument()
+})
+
 /** Share through to the signature on the ticket page; returns when the host has been told it is signed. */
+/** Publish's settings open in place under its row. */
+async function openPublish() {
+  await userEvent.setup().click(await screen.findByTestId('addon-publish-expand', {}, T))
+  return await screen.findByTestId('publish-server', {}, T)
+}
+
 async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   window.innerWidth = 1400
   show('/w/DEMO/ticket/DEMO-0001')
@@ -356,6 +394,6 @@ it('on the Shares page the link also stays until Done when the list then fails t
 it('PL: the link dialog has no dead X, announces a copy, and the Settings note says a local link is local', async () => {
   route()
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('publish-server', {}, T)
+  const box = await openPublish()
   expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('opens only on this computer')
 })

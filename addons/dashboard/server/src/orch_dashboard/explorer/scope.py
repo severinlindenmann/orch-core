@@ -124,7 +124,7 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
     show = link.call("workspace.show")
     name = show.get("name") if isinstance(show, dict) and isinstance(show.get("name"), str) else "Workspace"
     roots = {
-        "ws": guard.Root("ws", guard.label(name), real, "workspace", frozenset(), tuple(sorted(forbidden))),
+        "ws": guard.Root("ws", guard.label(name), real, "workspace", tuple(sorted(forbidden))),
     }
     repos: dict[str, tuple[str, tuple[str, ...]]] = {}
     for rname, folder in sorted(declared_repos(link, ws).items()):
@@ -134,7 +134,7 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
             repos[rname] = ("ws", tuple(target[len(real) :].strip("/").split("/")) if target != real else ())
         else:
             rid = f"{REPO_ROOT_ID}{rname}"
-            root = guard.Root(rid, guard.label(rname), target, "repo", frozenset(), tuple(sorted(forbidden)), orch)
+            root = guard.Root(rid, guard.label(rname), target, "repo", tuple(sorted(forbidden)))
             if not _repo_root_ok(root, project, store):
                 continue  # a "repository" that is any other folder (~/.aws, ~/Library) is not shown
             roots[rid] = root

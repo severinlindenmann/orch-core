@@ -22,7 +22,7 @@ import { useWorkspace } from '@/app/workspace'
 const live = (r: Run) => r.state === 'running' || r.state === 'starting'
 const kindText = (r: Run) => (r.kind === 'agent' ? 'Agent' : 'Terminal')
 /** Who may type right now: the write lease is held by one tab or device; every other viewer reads. */
-const controlText = (r: Run) => (!live(r) ? 'Ended' : r.writer ? 'Controlled' : 'Read only')
+const controlText = (r: Run) => (!live(r) ? '' : r.writer ? 'Controlled' : 'Read only')
 
 function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: boolean }) {
   const name = r.label ? <Inline>{r.label}</Inline> : runName(r)

@@ -48,6 +48,7 @@ it('lists terminals and agents with their state and who controls them, and the m
   expect(rows[1]).toHaveTextContent('Build the docs')
   expect(rows[1]).toHaveTextContent('Controlled')
   expect(rows[2]).toHaveTextContent('Ended')
+  expect(rows[2]).not.toHaveTextContent(/Read only|Controlled/)
   expect(within(rows[2]).queryByRole('button', { name: /^Stop/ })).toBeNull()
   expect(screen.getAllByRole('link', { name: 'Terminals' }).length).toBeGreaterThan(0)
 })

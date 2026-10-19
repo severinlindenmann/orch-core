@@ -419,11 +419,11 @@ STEP_LABELS = {
     "keys": "Making your keys",
     "genesis": "Signing the workspace",
     "register": (
-        "Registering it with the host. A Mac may now show \u201cBackground Items Added: orch-host\u201d. "
-        "That is expected: leave it on"
+        "Registering it with the host. A Mac may now show \u201cBackground Items Added\u201d for orch-host. "
+        "That is expected, leave it on"
     ),
     "runner": (
-        "Turning on dashboard execution. A Mac may show \u201cBackground Items Added: orch-runner\u201d. Leave it on"
+        "Turning on dashboard execution. A Mac may show \u201cBackground Items Added\u201d for orch-runner. Leave it on"
     ),
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",

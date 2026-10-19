@@ -115,7 +115,7 @@ def test_agents_never_ask_for_a_gate_approval():
     from orch.instructions.skills import builtin_skills
 
     text = render_agents_md()
-    assert "Never ask to approve or review a gate" in text
+    assert "Never ask to approve a gate" in text
     for skill in builtin_skills():
         body = skill.text.lower()
         assert "ask the person to review" not in body and "say what and why with `orch ask`" not in body

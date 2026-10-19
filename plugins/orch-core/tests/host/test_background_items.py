@@ -141,7 +141,8 @@ def test_status_reports_a_service_that_macos_turned_off(tmp_path, monkeypatch):
         return svc.Manager(unit, run=run)
 
     monkeypatch.setattr(cli, "SERVICE_MANAGER", manager)
-    monkeypatch.setattr(svc, "plan", lambda *a, **k: plan(tmp_path))
+    unit = plan(tmp_path)
+    monkeypatch.setattr(svc, "plan", lambda *a, **k: unit)
     state = tmp_path / "s"
     plan(tmp_path).unit_path.parent.mkdir(parents=True)
     plan(tmp_path).unit_path.write_bytes(plan(tmp_path).content)

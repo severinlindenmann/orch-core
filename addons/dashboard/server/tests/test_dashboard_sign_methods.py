@@ -103,3 +103,18 @@ def test_a_risk_notice_acknowledgement_is_per_person_and_workspace(worlds, owner
     other = add_member(owner, "Tom", "member")
     assert riskack.load(other.ref, world.stub.ws) == {}
     assert riskack.load(owner.owner.ref, "w" * 32) == {}
+
+
+def test_login_shell_is_its_own_notice_and_the_sentence_matches_core(worlds, owner):
+    from pathlib import Path
+
+    from orch.host.launch import LOGIN_NOTICE
+
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.post(url, {"notice": "login_shell"}).json() == {"acknowledged": {"login_shell": True}}
+    both = world.post(url, {"notice": "start_agent"}).json()
+    assert both == {"acknowledged": {"login_shell": True, "start_agent": True}}
+    # the page matches the host's sentence exactly; this pins both copies together
+    ts = (Path(__file__).parents[2] / "src" / "api" / "agents.ts").read_text(encoding="utf-8")
+    assert f"'{LOGIN_NOTICE}'" in ts

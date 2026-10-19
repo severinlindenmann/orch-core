@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
-import { agentsApi, type AgentPreview, type Runner } from '@/api/agents'
+import { agentsApi, LOGIN_NOTICE, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
 import { mergeRunItems, type Run, type RunList } from '@/api/runs'
@@ -383,15 +383,15 @@ describe('a short, calm dialog (U6)', () => {
   })
 
   it('the login-shell notice is shown in the first-time notice', async () => {
-    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs'] }))
+    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
     expect(await screen.findByTestId('agent-login-notice', {}, T)).toHaveTextContent('login shell')
     expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-notice')).toBeInTheDocument()
   })
 
   it('acknowledged: one small line, the same words under Details, the login-shell notice there too', async () => {
-    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
-    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: ['the program is found and started through your login shell; x'] }))
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true, login_shell: true } })
+    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
     await screen.findByTestId('agent-ready', {}, T)
     expect(screen.queryByTestId('agent-risk-full')).toBeNull()
@@ -400,6 +400,42 @@ describe('a short, calm dialog (U6)', () => {
     expect(within(details).getByText(/Runs as you on this Mac/)).toBeInTheDocument()
     expect(within(details).getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
     expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
+  })
+
+  it('MED-2: the login-shell notice is its own notice: full the first time even when the main notice was read', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    s.acknowledge.mockResolvedValue({ acknowledged: { start_agent: true, login_shell: true } })
+    s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
+    mount()
+    const full = await screen.findByTestId('agent-risk-full', {}, T)
+    expect(within(full).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
+    expect(within(full).queryByTestId('execution-line')).toBeNull()
+    expect(within(screen.getByTestId('agent-details')).getByTestId('execution-line')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('agent-risk-ack'))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'login_shell'))
+    expect(s.acknowledge).not.toHaveBeenCalledWith(WS, 'start_agent')
+    await waitFor(() => expect(screen.queryByTestId('agent-risk-full')).toBeNull())
+    expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
+  })
+
+  it('MED-2: only the host\'s exact sentence is the login-shell notice; other warnings stay visible', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    s.preview.mockResolvedValue(preview({ warnings: ['something else mentions a login shell'] }))
+    mount()
+    await screen.findByTestId('agent-ready', {}, T)
+    expect(screen.queryByTestId('agent-login-notice')).toBeNull()
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+    expect(screen.getByText('something else mentions a login shell')).toBeInTheDocument()
+  })
+
+  it('L1: while the acknowledgement is being read, Start stays off', async () => {
+    let done: (v: { acknowledged: { start_agent: boolean } }) => void = () => {}
+    s.notices.mockReturnValue(new Promise((r) => { done = r }))
+    mount()
+    await screen.findByTestId('agent-ready', {}, T)
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+    done({ acknowledged: { start_agent: true } })
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
   })
 
   it('"I understand" saves the acknowledgement and folds the notice', async () => {

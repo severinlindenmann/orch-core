@@ -710,7 +710,7 @@ function install() {
   const ag = agentsApi as unknown as Record<string, unknown>
   for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
-  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true } : {} })
+  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
   ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('routing.choices', routingApi.choices)
   ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES

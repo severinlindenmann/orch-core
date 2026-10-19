@@ -20,12 +20,12 @@ from .reads import workspace
 FILE = "risk_notices.json"
 _LOCK = threading.Lock()
 # Bump a notice's version when its meaning changes: an older acknowledgement then no longer counts.
-VERSIONS = {"start_agent": 1}
+VERSIONS = {"start_agent": 1, "login_shell": 1}
 
 
 class Ack(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    notice: Literal["start_agent"]
+    notice: Literal["start_agent", "login_shell"]
 
 
 def _path(env=None) -> Path:
@@ -65,10 +65,12 @@ def store(person: str, ws: str, notice: str, env=None) -> None:
 def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/me/risk_notices")
     def get(ws: str = Depends(workspace)):
+        gateway.enabled(ws)
         return {"acknowledged": load(app.state.person_of(ws), ws)}
 
     @app.post("/api/w/{ws}/me/risk_notices")
     def post(body: Ack, ws: str = Depends(workspace)):
+        gateway.enabled(ws)
         person = app.state.person_of(ws)
         store(person, ws, body.notice)
         return {"acknowledged": load(person, ws)}

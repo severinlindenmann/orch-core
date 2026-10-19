@@ -10,7 +10,7 @@ import { KeyRound, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AGENT_MODES, agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, HARNESSES, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
-  TERMINAL_ONLY, UPDATE_ORCH, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
+  TERMINAL_ONLY, UPDATE_ORCH, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
 import { newIdem, type Run } from '@/api/runs'
@@ -142,7 +142,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     setNote('')
     try {
       const { run } = await agentsApi.start(ws, shown.args, data.spec, idem)
-      if (ackRef.current.noticeFull) void ackRef.current.acknowledge() // starting with the full notice on screen counts as reading it
+      if (ackRef.current.shownFull.length) void ackRef.current.acknowledge(ackRef.current.shownFull) // starting with the full notice on screen counts as reading it
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
       onStarted?.(run)
       onClose()
@@ -169,15 +169,19 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   // The risk notice is shown in full until it is acknowledged once (kept by the dashboard server, per person and
   // workspace); afterwards it is one line whose Details hold the same words. A failed read counts as not acknowledged.
   const ack = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false })
-  const acknowledged = ack.data?.acknowledged.start_agent === true
-  const noticeFull = !ack.isPending && !acknowledged
-  const acknowledge = useCallback(async () => {
-    try {
-      qc.setQueryData(['risk-notices', ws], await agentsApi.acknowledge(ws, 'start_agent'))
-    } catch { /* not saved: the full notice shows again next time */ }
+  // Pending or unreadable counts as not acknowledged (full notice); Start waits until the answer is in.
+  const startFull = ack.data?.acknowledged.start_agent !== true
+  const loginFull = loginNotice.length > 0 && ack.data?.acknowledged.login_shell !== true
+  const acknowledge = useCallback(async (notices: ('start_agent' | 'login_shell')[]) => {
+    for (const n of notices) {
+      try {
+        qc.setQueryData(['risk-notices', ws], await agentsApi.acknowledge(ws, n))
+      } catch { /* not saved: the full notice shows again next time */ }
+    }
   }, [qc, ws])
-  const ackRef = useRef({ noticeFull, acknowledge })
-  ackRef.current = { noticeFull, acknowledge }
+  const shownFull = [...(startFull ? ['start_agent' as const] : []), ...(loginFull ? ['login_shell' as const] : [])]
+  const ackRef = useRef({ shownFull, acknowledge })
+  ackRef.current = { shownFull, acknowledge }
 
   return (
     <>
@@ -246,7 +250,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       </div>
       {loading && !data && <Skeleton className="h-6" />}
 
-      <RiskNotice full={noticeFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge()}>
+      <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)}>
         {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
       </RiskNotice>
 
@@ -255,7 +259,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       {error && <p role="alert" className="text-xs text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
       <DialogFooter className="mt-1 flex-row justify-end">
         <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-        <Button size="sm" disabled={!data || !data.spec || !!data.blocked || unreadable || stale || busy || loading} onClick={() => void start()} data-testid="agent-start">
+        <Button size="sm" disabled={!data || !data.spec || !!data.blocked || unreadable || stale || busy || loading || ack.isPending} onClick={() => void start()} data-testid="agent-start">
           {busy ? <><Loader2 className="size-4 animate-spin" aria-hidden /> Starting…</> : 'Start agent'}
         </Button>
       </DialogFooter>
@@ -263,31 +267,29 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
   )
 }
 
-const isLoginNotice = (w: string) => /login shell/i.test(w)
+const isLoginNotice = (w: string) => w === LOGIN_NOTICE
 
 /**
  * The "runs as you" disclosure (D-P2-31). First time: the full notice, with the login-shell notice, until the person
  * says they read it. After that: one small line, and the same words under Details. Never removed, only folded.
  */
-function RiskNotice({ full, loginNotice, onAcknowledge, children }: { full: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
-  const words = (
-    <>
-      <p data-testid="execution-line">{EXECUTION_LINE}</p>
-      {loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}
-    </>
-  )
+function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, children }: { startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
+  const full = startFull || loginFull
+  const start = <p data-testid="execution-line">{EXECUTION_LINE}</p>
+  const login = <>{loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
   return (
     <section aria-label="Runs as you" className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
       {full && (
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
-          {words}
+          {startFull && start}
+          {loginFull && login}
           <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>
         </div>
       )}
       <details className="group/risk" data-testid="agent-details">
-        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{full ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
         <div className="mt-2 space-y-2">
-          {!full && <div className="space-y-1 text-text-muted">{words}</div>}
+          {(!startFull || !loginFull) && <div className="space-y-1 text-text-muted">{!startFull && start}{!loginFull && login}</div>}
           {children}
         </div>
       </details>

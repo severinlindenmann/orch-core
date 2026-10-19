@@ -376,3 +376,17 @@ body:has(> #root > .setup) {
   word-break: normal;
   overflow-wrap: normal;
 }
+
+.terminal-notice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin: 12px 0;
+  border: 2px solid var(--accent, currentColor);
+  border-radius: 10px;
+  font-size: 1.05em;
+}
+.terminal-notice small,
+.terminal-notice span { display: block; margin-top: 4px; }
+.terminal-notice svg { flex: none; }

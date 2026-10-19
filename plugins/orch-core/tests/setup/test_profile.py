@@ -33,6 +33,16 @@ def test_state_lists_the_contract_fields(flow):
     assert term["kind"] == "addon" and term["capabilities"] == ["pty"]
 
 
+def test_u1_new_setup_suggests_the_main_addons_and_agent_access(flow):
+    """U1: the important add-ons and 3 days of agent access start ticked; the rest stay off. Nothing is enabled by
+    this alone: the profile still goes through the review and the signed addon.grant / grant.issued."""
+    _, out = get(flow, "state")
+    on = {a["id"] for a in out["addons"] if a["default"]}
+    assert on == {"dashboard", "start-agent", "terminals", "worktrees", "quick"}
+    assert out["suggested"]["agent_grant"] is True and out["suggested"]["agent_hours"] == 72
+    assert 72 in out["agent_hours"]
+
+
 def test_profile_ok_moves_to_secrets_and_adds_locked_addons(flow):
     st, out = post(flow, "profile", {**PROFILE, "addons": ["terminals"]})
     assert out == {"ok": True} and flow.phase == "secrets"

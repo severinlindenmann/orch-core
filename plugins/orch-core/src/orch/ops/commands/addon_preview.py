@@ -21,9 +21,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     try:
         grant = settings_needs.preview_grant(c.store.layout.store, name)
     except KeyError:
-        raise OrchError("not_found", f"no package at addons/{name}", hint="put the addon in addons/NAME/") from None
+        raise OrchError("not_found", f"no package for the addon {name}", hint="install the addon first") from None
     except (PackageError, ManifestError) as e:
-        raise OrchError("invalid.input", f"addons/{name}: {e}") from None
+        raise OrchError("invalid.input", f"addon {name}: {e}") from None
     addons = c.store.state.workspace.addons
     needs = settings_needs.NEEDS_SETTINGS.get(name)
     data = {

@@ -114,10 +114,10 @@ def check_step(intent: Mapping[str, Any], k: int, prepared: Mapping[str, Any], s
     intent says, on the workspace log: no ticket, no texts, and (step 1) no sequence or ``before`` material. The chain
     of step 1 (the workspace tail this signer's step 0 left) is the host's check, re-checked inside its lock at submit
     (AE6), as for the runner grant of the quick task."""
-    from .sequence import _ENVELOPE
+    from .sequence import _ENVELOPE, _EVENTS
 
     plan = steps(intent)
-    events = prepared.get("events")
+    events = prepared.get(_EVENTS)
     material = prepared.get("material")
     if (
         not 0 <= k < len(plan)

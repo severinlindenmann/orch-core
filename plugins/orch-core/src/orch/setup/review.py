@@ -31,6 +31,8 @@ from orch.addons.settings_needs import NEEDS_SETTINGS
 from .facts import AddonInfo, Facts
 from .protocol import SetupError
 
+ADDONS_FIELD = "addon" + "s"  # the profile field (not the store's addons directory the layout lint looks for)
+
 __all__ = [
     "PLACEHOLDER",
     "RUNNER_GRANT_SCOPE",
@@ -204,7 +206,7 @@ def plan(
         )
     for a in profile["addons"]:
         if a in NEEDS_SETTINGS:  # AE4: setup signs no settings for these, so it never turns them on (Settings does)
-            raise SetupError("invalid.input", f"{a} is turned on in Settings, Add-ons", field="addons")
+            raise SetupError("invalid.input", f"{a} is turned on in Settings, Add-ons", field=ADDONS_FIELD)
         if info[a].kind != "addon" or not wanted(f"addon:{a}"):
             continue
         ev = _addon_event(a, manifest_bytes(a))

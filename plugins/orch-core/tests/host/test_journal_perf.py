@@ -36,7 +36,7 @@ def test_journal_build_and_append_hooks_at_1000_tickets(tmp_path, capsys):
     s.close()
     store = env.other(load="lazy")  # as the host opens it
     env.store = store
-    journal = Journal(WS, env.root, Cursors(os.urandom(32)))
+    journal = Journal(WS, env.store_dir, Cursors(os.urandom(32)))
     t = time.perf_counter()
     journal.build(store)
     build_ms = (time.perf_counter() - t) * 1000

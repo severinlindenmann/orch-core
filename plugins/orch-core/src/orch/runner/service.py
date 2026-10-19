@@ -20,11 +20,22 @@ import plistlib
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from orch.host import enable as host_enable
 from orch.host.units import systemd_quote
 
-__all__ = ["LAUNCHD_LABEL", "SYSTEMD_NAME", "launchd_plist", "plan", "program_arguments", "systemd_unit"]
+__all__ = [
+    "LAUNCHD_LABEL",
+    "SYSTEMD_NAME",
+    "launchd_plist",
+    "loaded_release",
+    "plan",
+    "program_arguments",
+    "restart_if_stale",
+    "systemd_unit",
+    "write_loaded_release",
+]
 
 LAUNCHD_LABEL = "io.orch.runner"
 SYSTEMD_NAME = "orch-runner.service"
@@ -109,3 +120,66 @@ def plan(
         content = systemd_unit(python, release, Path(state), Path(run)).encode()
         return host_enable.Plan("systemd", path, content, Path(state), Path(run), release, uid, **labels)
     raise host_enable.Unsupported(f"no runner on {platform}: no terminals and no start-agent here (D-P2-38)")
+
+
+def loaded_release_path(state: Path) -> Path:
+    return Path(state) / "runner" / "release.json"
+
+
+def current_release() -> str:
+    """The digest of the code this process loaded (taken once: :func:`orch.host.release.code_digest` is cached)."""
+    from orch.host.release import code_digest
+
+    try:
+        return code_digest()
+    except OSError:
+        return "unknown"
+
+
+def write_loaded_release(state: Path, release: str) -> None:
+    """The running runner records the release it LOADED at start, where ``orch host enable`` / ``orch runner enable``
+    read it (the host also gets it in ``runner.hello``). Best effort: a missing file reads as an older runner."""
+    from orch.host.custody import write_private
+
+    try:
+        write_private(loaded_release_path(state), {"release": release, "pid": os.getpid()})
+    except OSError:
+        pass
+
+
+def loaded_release(state: Path) -> str | None:
+    """The release the running runner recorded (``None``: no file, or an unreadable one: an older runner)."""
+    from orch.host.custody import read_json
+    from orch.host.errors import HostError
+
+    try:
+        doc = read_json(loaded_release_path(state), os.getuid())
+    except (HostError, OSError):
+        return None
+    release = doc.get("release") if isinstance(doc, dict) else None
+    return release if isinstance(release, str) else None
+
+
+def restart_if_stale(unit: Any, manager: Any, state: Path, mine: str) -> dict[str, Any] | None:
+    """The runner service of ``unit``, when the service manager runs it with another release than ``mine``, is
+    restarted at once (the same rule as the host: :func:`orch.host.enable.restart_to_release`). Everything the runner
+    started (agents, terminals) is stopped by that. ``None``: no runner is running here, or it is current."""
+    if manager.active() is not True:
+        return None
+    if loaded_release(state) == mine:
+        return None
+    how = host_enable.restart_to_release(manager, lambda: loaded_release(state), mine)
+    if how in ("drained", "forced"):
+        return {
+            "restarted": True,
+            "message": (
+                "restarted the agent runner on the new release; agents and terminals it had started were stopped"
+            ),
+        }
+    return {
+        "restarted": False,
+        "message": (
+            "the agent runner still runs an older release and did not restart: to restart it now "
+            f"(this stops its agents and terminals): {' '.join(manager.restart_command())}"
+        ),
+    }

@@ -367,6 +367,8 @@ def human_text(cmd: str, doc: Mapping[str, Any], *, subject: str = "orch host") 
                 lines.append("The service was installed or updated.")
             if data.get("message"):
                 lines.append(one(data["message"]))
+            if data.get("runner_message"):
+                lines.append(one(data["runner_message"]))
     elif cmd == "disable":
         if data.get("service") is None:
             lines.append(f"No per-user service on this platform ({one(data.get('reason'))}); nothing to turn off.")
@@ -391,10 +393,6 @@ def _failure(code: str, message: str, exit_: int = 9, **extra: Any) -> dict[str,
         "error": {"code": code, "message": message[:400], "retryable": retryable},
         **extra,
     }
-
-
-#: how many START_WAITs a drain gets before ``enable`` forces the restart
-DRAIN_WAIT_FACTOR = 2
 
 
 def enable(
@@ -484,7 +482,7 @@ def enable(
     if theirs != mine:  # a host that predates the welcome's release field is older by definition (``None``)
         if manager.active() is True:  # started by the service manager: restart it (never a process it did not start)
             how = _restart(manager, control, mine)
-            if how == "drained":
+            if how in ("drained", "current"):
                 data["restarted"] = mine
                 data["message"] = f"restarted the host on the new release {mine}"
             elif how == "forced":
@@ -508,7 +506,26 @@ def enable(
                 f"the running host (release {theirs or 'unknown'}) is not under the service manager: "
                 "stop it and start it again (or `orch host restart` when it is supervised) to run the new release"
             )
+    _restart_stale_runner(state, env, run_dir, mine, data)
     return {"ok": True, "result": {"data": data}}
+
+
+def _restart_stale_runner(state: Path, env: Mapping[str, str], run_dir: Path, mine: str, data: dict[str, Any]) -> None:
+    """The agent runner service, when one runs here with another release than this install, is restarted by the same
+    rule as the host (its agents and terminals are stopped by that); the result says so."""
+    from orch.runner import service as runner_service
+
+    from . import enable as svc
+    from .release import releases_dir
+
+    try:
+        unit = runner_service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
+        stale = runner_service.restart_if_stale(unit, RUNNER_SERVICE_MANAGER(unit), state, mine)
+    except (svc.Unsupported, ValueError, OSError):
+        return
+    if stale is not None:
+        data["runner_restarted"] = stale["restarted"]
+        data["runner_message"] = stale["message"]
 
 
 def _host_release(control: Path) -> str | None:
@@ -524,50 +541,21 @@ def _host_release(control: Path) -> str | None:
 
 
 def _restart(manager: Any, control: Path, mine: str) -> str | None:
-    """Drain the host through its control socket (``orch host restart``) and let the service manager bring it back
-    (started again if it does not). Returns ``"drained"`` when a host reports release ``mine``; else, after
-    ``DRAIN_WAIT_FACTOR`` x START_WAIT (a drain waits for requests in flight, with no deadline), restarts the service
-    at once (crash-equivalent: the host has no SIGTERM handler; recovery at start is idempotent) and returns
-    ``"forced"``; ``None`` when even that did not bring ``mine`` up."""
+    """Make the host on ``control`` run release ``mine`` (:func:`orch.host.enable.restart_to_release`): drain it through
+    its control socket (``orch host restart``) and let the service manager bring it back; an own or another's drain
+    (``host.restarting``) is waited for, never cut short before the wait ends."""
     from .control_client import ControlClient
-    from .enable import START_WAIT
+    from .enable import restart_to_release
 
-    draining = False
-    try:
-        with ControlClient(control, timeout=10) as client:
-            frame = client.call("host.restart")
-        # ok: the drain started; host.restarting: someone else's drain is running, wait for it too
-        draining = bool(frame.get("ok")) or (frame.get("error") or {}).get("code") == "host.restarting"
-    except (OSError, ConnectionError):
-        pass  # the drain did not start: the fallback below restarts it
-    if draining and _wait_for_release(manager, control, mine, START_WAIT * DRAIN_WAIT_FACTOR):
-        return "drained"
-    # The drain did not finish (a request in flight that never ends): restart the service now rather than leave the
-    # old release running. A slow-starting new host may be in startup recovery when kickstart -k hits it; recovery is
-    # idempotent, so it simply runs again.
-    try:
-        manager.restart_now()
-    except OSError:
-        return None
-    return "forced" if _wait_for_release(manager, control, mine, START_WAIT) else None
+    def drain() -> bool:
+        try:
+            with ControlClient(control, timeout=10) as client:
+                frame = client.call("host.restart")
+        except (OSError, ConnectionError):
+            return False  # the drain did not start: the service is restarted at once
+        return bool(frame.get("ok")) or (frame.get("error") or {}).get("code") == "host.restarting"
 
-
-def _wait_for_release(manager: Any, control: Path, mine: str, wait: float) -> bool:
-    import time
-
-    deadline = time.monotonic() + wait
-    started = False
-    while time.monotonic() < deadline:
-        if _host_release(control) == mine:
-            return True
-        if not started and manager.active() is not True:
-            started = True
-            try:
-                manager.start(changed=False)
-            except OSError:
-                return False
-        time.sleep(0.2)
-    return False
+    return restart_to_release(manager, lambda: _host_release(control), mine, drain=drain)
 
 
 def disable(

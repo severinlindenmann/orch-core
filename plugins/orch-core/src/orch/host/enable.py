@@ -393,3 +393,56 @@ def wait_for_control(path: Path, timeout: float = START_WAIT, *, clock: Callable
             if clock() >= deadline:
                 return False
             time.sleep(0.1)
+
+
+#: how many START_WAITs a drain gets before the service is restarted at once
+DRAIN_WAIT_FACTOR = 2
+
+
+def wait_for_release(
+    manager: Manager,
+    running: Callable[[], str | None],
+    mine: str,
+    wait: float,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Wait until ``running()`` (the release digest the service reports) is ``mine``; a service the manager does not
+    run is started once on the way."""
+    deadline = time.monotonic() + wait
+    started = False
+    while time.monotonic() < deadline:
+        if running() == mine:
+            return True
+        if not started and manager.active() is not True:
+            started = True
+            try:
+                manager.start(changed=False)
+            except OSError:
+                return False
+        sleep(0.2)
+    return False
+
+
+def restart_to_release(
+    manager: Manager,
+    running: Callable[[], str | None],
+    mine: str,
+    *,
+    drain: Callable[[], bool] | None = None,
+) -> str | None:
+    """The one rule for every service that runs orch code (host, agent runner): the release it LOADED (``running``)
+    must be ``mine``. ``drain`` (optional) asks it to finish its work and exit, and returns whether that was accepted;
+    the service manager brings it back. Returns ``"current"`` (nothing to do), ``"drained"``, ``"forced"`` (after
+    ``DRAIN_WAIT_FACTOR`` x START_WAIT, or with no drain, the service is restarted at once: crash-equivalent, work in
+    flight may be interrupted and is recovered at start) or ``None`` (it did not come back on ``mine``)."""
+    if running() == mine:
+        return "current"
+    if drain is not None and drain() and wait_for_release(manager, running, mine, START_WAIT * DRAIN_WAIT_FACTOR):
+        return "drained"
+    # A slow-starting new service may be in startup recovery when kickstart -k hits it; recovery is idempotent.
+    try:
+        manager.restart_now()
+    except OSError:
+        return None
+    return "forced" if wait_for_release(manager, running, mine, START_WAIT) else None

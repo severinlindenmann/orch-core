@@ -119,6 +119,7 @@ export function blockedText(b: AgentBlocked): string | null {
         ? 'The start-agent addon is not granted in this workspace.'
         : 'Dashboard execution is off on this machine. Turn it on in your terminal: orch runner enable.'
     case 'runner.unavailable': return 'No runner is connected. Start it in your terminal: orch runner enable.'
+    case 'runner.stale': return 'The agent runner is from an older orch version. Restart it in your terminal: orch host enable.'
     case 'launch.claimed': return 'An agent session already claims this ticket.'
     case 'launch.no_grant': return noGrantText(b.detail.reason)
     default: return null

@@ -717,8 +717,9 @@ def test_a_graceful_drain_needs_no_forced_restart(monkeypatch):
     manager = _FakeManager()
     import orch.host.control_client as cc
 
+    seen = iter(["old", "new", "new"])
     monkeypatch.setattr(cc, "ControlClient", _DrainClient)
-    monkeypatch.setattr(host_cli, "_host_release", lambda control: "new")
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: next(seen))
     assert host_cli._restart(manager, Path("/nope"), "new") == "drained"
     assert manager.calls == []
 
@@ -788,3 +789,23 @@ def test_the_manager_restart_now_commands(tmp_path, platform):
     failing = svc.Manager(unit, run=lambda argv: done(1))
     with pytest.raises(OSError):
         failing.restart_now()
+
+
+def test_enable_also_restarts_a_stale_runner_service(stale_env, monkeypatch):
+    """The runner service is checked by the same rule (fake runner manager, fake release file)."""
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    seen = []
+
+    def fake_runner(unit, manager, state, mine):
+        seen.append(mine)
+        return {
+            "restarted": True,
+            "message": "restarted the agent runner; agents and terminals it had started were stopped",
+        }
+
+    monkeypatch.setattr("orch.runner.service.restart_if_stale", fake_runner)
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and len(seen) == 1 and data["runner_restarted"] is True
+    assert "agents and terminals" in data["runner_message"]

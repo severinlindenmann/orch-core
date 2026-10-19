@@ -78,6 +78,12 @@ FIXED = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 VERSION = "orch-runner/1"
 
 
+def _loaded_release() -> str:
+    from .service import current_release
+
+    return current_release()
+
+
 def build_env(
     args: Mapping[str, Any], own: Mapping[str, str], pass_env: frozenset[str] | tuple[str, ...] = ()
 ) -> dict[str, str]:
@@ -195,8 +201,12 @@ class HostLink:
         backoff: tuple[float, float] = (0.5, 10.0),
         config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
         grants: GrantStore | None = None,
+        release: str | None = None,
     ) -> None:
         self.sup = sup
+        #: the release this process LOADED, taken now (never on the first hello): the host refuses spawns from a
+        #: runner of another release than its own (``runner.stale``)
+        self.release = release if release is not None else _loaded_release()
         self.socket_path = Path(socket_path)
         self.host_uid = host_uid
         self.gen = gen
@@ -292,8 +302,8 @@ class HostLink:
             conn = self._conn
             runs = self._runs()
         reported_running = {r["run"] for r in runs if r["state"] == "running"}
-        hello_args = {"version": VERSION, "gen": self.gen, "pid": os.getpid(), "term_socket": term_socket,
-                      "runs": runs, "grants": self.grants.report()}  # fmt: skip
+        hello_args = {"version": VERSION, "release": self.release, "gen": self.gen, "pid": os.getpid(),
+                      "term_socket": term_socket, "runs": runs, "grants": self.grants.report()}  # fmt: skip
         rid = self._send_req("runner.hello", hello_args)
         while not self._stop.is_set():
             data = recv(sock)

@@ -56,7 +56,7 @@ Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
 Verification fingerprint: <FP>
 
-Fields
+Details
   type: chore
   owner: <OWNER>
 """
@@ -1219,3 +1219,30 @@ def test_g5_repeated_notes_appear_once_and_cancel_notes_merge_in_gate_order():
     assert signcontent._dedupe_notes({"headline": "x"}) == {"headline": "x"}
     odd = "This cancels any existing approval of: wizardry. Each one has to be approved again."
     assert signcontent._dedupe_notes({"notes": [odd, odd]})["notes"] == [odd]
+
+
+def test_u3_the_title_drops_the_key_qualifier_and_names_a_new_ticket():
+    t = {"key": "DEMO-1", "title": "", "uid_tail": "ABCD1234", "key_note": "n"}
+    q = " (key per host; signed id …ABCD1234)"
+    new = signcontent._with_title({"headline": f"Create ticket DEMO-1 · Elefant Chart{q}", "ticket": t})
+    assert new["title"] == "New ticket DEMO-1: Elefant Chart" and new["headline"].endswith(q)  # headline: unchanged
+    seq = signcontent._with_title({"headline": f"Create DEMO-1{q}: Elefant Chart", "ticket": t})
+    assert seq["title"] == "New ticket DEMO-1: Elefant Chart"
+    edit = signcontent._with_title({"headline": f"Change the plan of DEMO-1{q}", "ticket": t})
+    assert edit["title"] == "Change the plan of DEMO-1"
+    plain = signcontent._with_title({"headline": "Change the workspace settings"})
+    assert "title" not in plain
+
+
+def test_u3_only_a_creation_drops_the_cancel_notes_and_never_another_note():
+    cancel = "This cancels any existing approval of: plan. Each one has to be approved again."
+    addon = "An add-on field or section can also be part of an approval; if it is, this may also cancel it."
+    other = "Agents that are running now stop."
+    out = signcontent._new_ticket(
+        {"notes": [cancel, other, addon], "fields_changed": [{"field": "type", "before": None, "after": "feature"}]}
+    )
+    assert out["notes"] == [other] and out["fields_title"] == "Details"
+    only = signcontent._new_ticket({"notes": [cancel]})
+    assert "notes" not in only
+    changed = signcontent._new_ticket({"fields_changed": [{"field": "type", "before": "bug", "after": "feature"}]})
+    assert "fields_title" not in changed  # a row with an earlier value is a change, not a detail

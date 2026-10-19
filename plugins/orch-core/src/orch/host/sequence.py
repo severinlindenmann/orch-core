@@ -946,16 +946,16 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         if intent.get("people"):
             parts.append("its people")
         if parts:
-            content["subline"] = "and " + ", ".join(parts)
+            content["subline"] = "Includes " + ", ".join(parts)
         elif intent["set"]:
-            content["subline"] = "and its details"
+            content["subline"] = "Includes its details"
         if "owner" in intent.get("people", {}):
             content.setdefault("notes", []).append(
                 "The owner is set last. After that you may no longer be able to change this ticket yourself."
             )
     content.setdefault("notes", []).append(
-        f"One confirmation signs all {n} steps, in order ({n} signatures). If the ticket changes meanwhile, "
-        "signing stops and what was already signed stays as it is."
+        f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
+        "signing stops and what is already signed stays."
     )
     return content
 

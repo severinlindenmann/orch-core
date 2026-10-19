@@ -18,7 +18,9 @@ The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Con
 
     {headline, ticket?: {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}],
      tasks?: [{n, id, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}],
-     fields_title?: str, notes?: [str]}
+     fields_title?: str, notes?: [str], title?: str}
+    title = the headline without the host-key / signed-id qualifier, for a dialog title (U3); the qualifier stays in
+    ``ticket`` (key_note, uid_tail), which the dashboard shows under "Technical details"; ``headline`` is unchanged
     ticket = {key, title, uid_tail, key_note}   // key_note: the key is the host's word; uid_tail is the signed id's end
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
@@ -627,7 +629,7 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         from . import sequence
 
         try:
-            return _dedupe_notes(sequence.build_content(prepared, verified=verified))
+            return _finish(sequence.build_content(prepared, verified=verified))
         except sequence.SequenceInvalid as exc:
             raise PlainUnavailable(str(exc)) from None
     ticket = _ticket(material, events)
@@ -644,7 +646,56 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         _payload(material, events, ticket, out, ctx, op=prepared.get("op"))
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
-    return _dedupe_notes({k: v for k, v in out.items() if v not in (None, [], "")})
+    done = {k: v for k, v in out.items() if v not in (None, [], "")}
+    if any(ev.get("type") == "ticket.created" for ev in events):
+        done = _new_ticket(done)
+    return _finish(done)
+
+
+def _new_ticket(content: dict[str, Any]) -> dict[str, Any]:
+    """U3: this request creates the ticket (a signed ``ticket.created`` is among its events, and a gate approval can
+    only follow its ticket's creation), so there is no earlier approval an edit could cancel: the two cancel notes are
+    provably empty and go. Its rows have no earlier value, so they are the ticket's details, not "changed fields"."""
+    notes = [n for n in content.get("notes") or [] if not (isinstance(n, str) and n.startswith(_NOTHING_TO_CANCEL))]
+    if notes:
+        content["notes"] = notes
+    else:
+        content.pop("notes", None)
+    rows = content.get("fields_changed") or []
+    if rows and not content.get("fields_title") and all(r.get("before") is None for r in rows):
+        content["fields_title"] = "Details"
+    return content
+
+
+_NOTHING_TO_CANCEL = (
+    "This cancels any existing approval of: ",
+    "An add-on field or section can also be part of an approval;",
+)
+
+
+def _finish(content: dict[str, Any]) -> dict[str, Any]:
+    return _with_title(_dedupe_notes(content))
+
+
+_NEW_TICKET = (re.compile(r"Create ticket (\S+) · (.*)", re.S), re.compile(r"Create (\S+): (.*)", re.S))
+
+
+def _with_title(content: dict[str, Any]) -> dict[str, Any]:
+    """U3: ``title``, the headline a person reads: no "key per host; signed id" qualifier (it is in ``ticket``, shown
+    under the technical details) and "New ticket KEY: title" for a creation. Only ever a rewording of ``headline``."""
+    head, ticket = content.get("headline"), content.get("ticket")
+    if not isinstance(head, str):
+        return content
+    if isinstance(ticket, Mapping):
+        head = head.replace(f" (key per host; signed id …{ticket.get('uid_tail')})", "")
+    for pattern in _NEW_TICKET:
+        m = pattern.fullmatch(head)
+        if m:
+            head = f"New ticket {m.group(1)}: {m.group(2)}"
+            break
+    if head != content["headline"]:
+        content["title"] = head
+    return content
 
 
 _CANCEL_HEAD, _CANCEL_TAIL = "This cancels any existing approval of: ", ". Each one has to be approved again."

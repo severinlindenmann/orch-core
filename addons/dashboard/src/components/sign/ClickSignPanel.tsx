@@ -1,7 +1,6 @@
 import { SignContent, SignDetails } from './SignContent'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
-// own preview, the host's fingerprint or a cached ticket. The risk notice is available from the One-click badge. `lines` are core's terminal
+// own preview, the host's fingerprint or a cached ticket. The risk notice is the custody line's tooltip. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
 // not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
@@ -28,8 +27,6 @@ function RiskLine({ text }: { text: string }) {
 /** The risk line alone: the workspace card and the dialog before the request exists. */
 export const ClickRisk = () => <RiskLine text={CLICK_RISK} />
 
-export const ClickBadge = () => <div className="space-y-1"><TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="w-fit rounded border border-border px-2 py-0.5 text-[11px] text-text-muted">One-click</button></TooltipTrigger><TooltipContent className="max-w-xs">{CLICK_RISK}</TooltipContent></Tooltip></TooltipProvider><p className="text-[12px] text-warning sm:hidden">{CLICK_RISK}</p></div>
-
 function When({ stamp }: { stamp: string }) {
   const t = Date.parse(stamp)
   return <time dateTime={stamp}>{Number.isNaN(t) ? stamp : fmtClock(stamp)}</time>
@@ -54,36 +51,10 @@ export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, wai
   return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} />
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
-  const armed = useArming(digest)
-  const activation = useActivation(armed)
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (waitUntil <= Date.now()) return
-    const t = setInterval(() => setNow(Date.now()), 250)
-    return () => clearInterval(t)
-  }, [waitUntil])
-  const waiting = waitUntil > now
-  const needsWord = view.confirm.kind === 'word'
-  const can = armed && !signing && !waiting
-  const hold = useHold(can, () => {
-    if (view.confirm.kind === 'word') onSign(view.confirm.word)
-  })
-  const go = () => {
-    if (!activation.take() || !can) return
-    onSign(undefined)
-  }
-  const hintId = useId()
+/** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
+function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   return (
-    <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <ClickBadge />
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} />}
-      <p data-testid="click-custody" role="note" className="text-[13px] text-warning">
-        {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
-      </p>
-      {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
-      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
-      <SignDetails>
+    <>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-text-muted">Action</dt>
         <dd>
@@ -130,7 +101,40 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           The signer checked the artifact bytes it signs.
         </p>
       )}
-      </SignDetails>
+    </>
+  )
+}
+
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+  const armed = useArming(digest)
+  const activation = useActivation(armed)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (waitUntil <= Date.now()) return
+    const t = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(t)
+  }, [waitUntil])
+  const waiting = waitUntil > now
+  const needsWord = view.confirm.kind === 'word'
+  const can = armed && !signing && !waiting
+  const hold = useHold(can, () => {
+    if (view.confirm.kind === 'word') onSign(view.confirm.word)
+  })
+  const go = () => {
+    if (!activation.take() || !can) return
+    onSign(undefined)
+  }
+  const hintId = useId()
+  const technical = <TechnicalFacts view={view} />
+  return (
+    <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} />}
+      <p data-testid="click-custody" role="note" title={view.auth === 'convenience' ? CLICK_RISK : undefined} className="text-[13px] text-warning">
+        {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
+      </p>
+      {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
+      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
+      {!view.content && <SignDetails>{technical}</SignDetails>}
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {view.confirm.kind === 'word' && (
         <p id={hintId} data-testid="click-hold-hint" className="text-[13px] text-text">

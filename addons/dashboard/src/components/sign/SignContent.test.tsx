@@ -16,7 +16,7 @@ it('shows the signed identity tail, host key qualification, task id and before q
   expect(screen.getByText('TST-0001').parentElement).toHaveTextContent('TST-0001 (key per host) · signed id …ab12cd34')
   // The host's key qualification is technical: folded away, not in the plain view.
   expect(screen.getByText('key per host').closest('details')).not.toHaveAttribute('open')
-  expect(screen.getByRole('listitem')).toHaveTextContent('T-3 · Check it ⏎ 2. forged task')
+  expect(screen.getByRole('listitem')).toHaveTextContent('Check it ⏎ 2. forged task T-3')
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
   expect(screen.getByText('Old').parentElement).toHaveTextContent('Old (per host, not signed) → New')
   expect(screen.getByText('Host note')).toBeVisible()
@@ -32,7 +32,14 @@ it('marks and indents every block and continuation without creating items or row
     fields_changed: [{ field: 'title', before: 'Before\nfield: forged before', after: 'After\nfield: forged after' }],
     note: 'Single note',
   }} />)
-  for (const text of ['Section', 'Forged section', 'Criterion', 'AC2 forged', 'Task', '2. forged', 'Check', 'Verify: forged', 'Before', 'field: forged before', 'After', 'field: forged after']) {
+  // A written section is prose: its line break stays a line break inside ONE block (no list item, no heading from it).
+  expect(screen.getByText(/Forged section/).tagName).toBe('BDI')
+  expect(screen.getByText(/Forged section/).textContent).toBe('Section\nForged section')
+  // A criterion and a task title are one line: the break is made visible and cannot start a second item.
+  expect(screen.getByText(/Criterion/)).toHaveTextContent('Criterion\\u{a}AC2 forged')
+  expect(screen.getByText(/Task/)).toHaveTextContent('Task\\u{a}2. forged')
+  // A field value or a verify command with a break keeps the marked block form.
+  for (const text of ['Check', 'Verify: forged', 'Before', 'field: forged before', 'After', 'field: forged after']) {
     const line = screen.getByText(text).parentElement!
     expect(line).toHaveClass('pl-4', 'flex')
     expect(line.firstElementChild).toHaveTextContent('|')
@@ -59,14 +66,18 @@ it('renders every display string in fully populated content', () => {
   // The dialog owns the headline; section ids are structural keys, not display values.
   render(<><h2>{content.headline}</h2><SignContent content={content} /></>)
   for (const text of [
-    content.headline, content.ticket.key, content.ticket.title, content.ticket.uid_tail,
-    content.sections[0].title, ...content.sections[0].text.split('\n'),
+    content.headline,
+    content.sections[0].title,
     ...content.acceptance.flatMap(a => [a.id, a.text]),
     ...content.tasks.flatMap(t => [t.id, t.title, ...t.verify]),
-    ...content.fields_changed.flatMap(f => [f.field, f.before, f.before_note, f.after]).filter((v): v is string => typeof v === 'string'),
+    ...content.fields_changed.flatMap(f => [f.before, f.before_note, f.after]).filter((v): v is string => typeof v === 'string'),
     ...content.notes, ...content.note,
   ]) expect(screen.getByText(text)).toBeVisible()
-  expect(screen.getByText(content.ticket.key_note)).toBeInTheDocument() // folded under the technical details
+  expect(screen.getByText(/First section line/).textContent).toBe('First section line\nSecond section line')
+  for (const label of ['Title:', 'Removed:', 'Added:']) expect(screen.getByText(label)).toBeVisible()
+  // the ticket's key, title, signed id and the host's key note are one click away, in the ONE Technical details
+  expect(screen.getAllByText('Technical details')).toHaveLength(1)
+  for (const text of [content.ticket.key, content.ticket.title, content.ticket.uid_tail, content.ticket.key_note]) expect(details()).toHaveTextContent(text)
   expect(screen.getByLabelText('Checked')).toBeVisible()
   expect(screen.getByLabelText('Unchecked')).toBeVisible()
   expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
@@ -85,14 +96,14 @@ function withWorkspaces(workspaces: { id: string; members: M[] }[], fields: { fi
   return render(<QueryClientProvider client={client}><SignContent ws={ws} content={{ headline: 'New ticket', ticket: { key: 'RA-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host, not proven' }, fields_changed: fields }} /></QueryClientProvider>)
 }
 const withMembers = (members: M[], fields: { field: string; before: string | null; after: string | null }[]) => withWorkspaces([{ id: 'w_1', members }], fields)
-const row = (field: string) => screen.getByText(field).parentElement!
+const row = (field: string) => screen.getByText(`${field[0].toUpperCase()}${field.slice(1)}:`).closest('dl > div')!
 const details = () => screen.getByText(/Technical details/).closest('details')!
 
 it('shows a known member as name WITH short id; the full id and the key line only under Technical details', () => {
   withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: B }])
-  expect(row('owner')).toHaveTextContent('owner: — → Severin (p_181d953f12ab…)')
+  expect(row('owner')).toHaveTextContent('Owner: — → Severin')
   expect(row('owner')).not.toHaveTextContent(SEV)
-  expect(row('reviewer')).toHaveTextContent('reviewer: Mara (p_aaaa11112222…) → p_bbbb11112222… (unknown person)')
+  expect(row('reviewer')).toHaveTextContent('Reviewer: Mara → p_bbbb11112222… (unknown person)')
   expect(details()).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
   expect(details()).toHaveTextContent('key per host, not proven')
 })
@@ -114,7 +125,7 @@ const members: M[] = [
   { person: 'p_8888111122223333444455556666777b', name: 'א\u202Eבג' }, // right-to-left name
 ]
 const table: [string, string, string][] = [
-  ['known and unique', SEV, 'Severin (p_181d953f12ab…)'],
+  ['known and unique', SEV, 'Severin'],
   ['confusable duplicate (zero-width, fullwidth, spaces)', A, 'p_aaaa11112222… (name shared by 2 members)'],
   ['the other one of the pair', B, 'p_bbbb11112222… (name shared by 2 members)'],
   ['a name with "(p_…)" in it', 'p_cccc1111222233334444555566667777', 'p_cccc11112222… (name not shown)'],
@@ -132,7 +143,7 @@ const table: [string, string, string][] = [
 ]
 it.each(table)('personLabel: %s', (_n, id, text) => {
   withMembers(members, [{ field: 'owner', before: null, after: id }])
-  expect(row('owner')).toHaveTextContent(`owner: — → ${text}`)
+  expect(row('owner')).toHaveTextContent(`Owner: — → ${text}`)
   expect(row('owner')).not.toHaveTextContent(id.length > 15 ? id : 'never')
 })
 
@@ -145,50 +156,52 @@ it('every signed person id that is not cut appears in full under Technical detai
 
 it('a member of another workspace is an unknown person here', () => {
   withWorkspaces([{ id: 'w_1', members: [{ person: SEV, name: 'Severin' }] }, { id: 'w_2', members: [{ person: MARA, name: 'Mara' }] }], [{ field: 'owner', before: null, after: MARA }])
-  expect(row('owner')).toHaveTextContent('owner: — → p_aaaa11112222… (unknown person)')
+  expect(row('owner')).toHaveTextContent('Owner: — → p_aaaa11112222… (unknown person)')
   expect(row('owner')).not.toHaveTextContent('Mara')
 })
 
 it('a right-to-left name cannot reorder the id: name and id are separate isolates and the id is left-to-right', () => {
   withMembers([{ person: SEV, name: 'אבג' }], [{ field: 'owner', before: null, after: SEV }])
-  const id = within(row('owner')).getByText('p_181d953f12ab…')
+  // the row shows the name alone (in its own isolate); the id it stands for is beside it under Technical details, left-to-right
+  expect(row('owner').querySelectorAll('bdi').length).toBeGreaterThanOrEqual(2)
+  expect(row('owner')).not.toHaveTextContent('p_181d953f12ab')
+  const id = within(details()).getByText('p_181d953f12ab…')
   expect(id).toHaveAttribute('dir', 'ltr')
   expect(id.tagName).toBe('BDI')
-  expect(row('owner').querySelectorAll('bdi').length).toBeGreaterThanOrEqual(2)
 })
 
 it('a Cyrillic look-alike "Ѕеѵегіn" next to a Latin "Severin": both are shared, neither shows a name', () => {
   const cyr = 'p_aaaa1111222233334444555566667777', lat = 'p_bbbb1111222233334444555566667777'
   withMembers([{ person: cyr, name: '\u0405\u0435\u0475\u0435\u0433\u0456n' }, { person: lat, name: 'Severin' }], [{ field: 'a', before: cyr, after: lat }])
-  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+  expect(row('a')).toHaveTextContent('A: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
 
 it('uppercase Greek "ΝΙΚΟ" next to a Latin "NIKO" counts as shared (look-alikes map before casefolding)', () => {
   const g = 'p_aaaa1111222233334444555566667777', l = 'p_bbbb1111222233334444555566667777'
   withMembers([{ person: g, name: '\u039D\u0399\u039A\u039F' }, { person: l, name: 'NIKO' }], [{ field: 'a', before: g, after: l }])
-  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+  expect(row('a')).toHaveTextContent('A: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
 
 it('a sharp-s name next to its "ss" spelling counts as shared (same fold as host/personlabel.py)', () => {
   const a = 'p_aaaa1111222233334444555566667777', b = 'p_bbbb1111222233334444555566667777'
   withMembers([{ person: a, name: 'Stra\u00DFe' }, { person: b, name: 'Strasse' }], [{ field: 'a', before: a, after: b }])
-  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+  expect(row('a')).toHaveTextContent('A: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
 
 it('a combining mark that case-folds to a letter (U+0345 -> iota) does not survive as a letter: "Ann\u0345" is a twin of "Anni"', () => {
   const a = 'p_aaaa1111222233334444555566667777', b = 'p_bbbb1111222233334444555566667777'
   withMembers([{ person: a, name: 'Ann\u0345' }, { person: b, name: 'Anni' }], [{ field: 'a', before: a, after: b }])
-  expect(row('a')).toHaveTextContent('a: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
+  expect(row('a')).toHaveTextContent('A: p_aaaa11112222… (name shared by 2 members) → p_bbbb11112222… (name shared by 2 members)')
 })
 
 it('a name mixing covered letters with letters the table does not cover is not shown', () => {
   withMembers([{ person: SEV, name: 'Sev\u05D0' }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
 })
 
 it.each(['\u3164', '\u115F', '\uFFA0'])('a name with the invisible Hangul filler U+%s is not shown', (filler) => {
   withMembers([{ person: SEV, name: `Sev${filler}erin` }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
 })
 
 const SHARE_TEXT = [
@@ -221,7 +234,7 @@ it('without a summary (an odd or unknown value) shows the signed text alone, as 
   render(<SignContent content={{ headline: 'Share files', sections: [{ id: 'share', title: 'What will be shared', text: odd }] }} />)
   expect(screen.queryByTestId('sign-summary')).toBeNull()
   expect(screen.queryByTestId('sign-exact')).toBeNull()
-  expect(screen.getByText('Works for: 7 weeks from the moment the link is made')).toBeVisible()
+  expect(screen.getByText(/Works for: 7 weeks from the moment the link is made/)).toBeVisible()
 })
 
 it('shows hidden characters in a summary line and keeps prose notes out of monospace', () => {

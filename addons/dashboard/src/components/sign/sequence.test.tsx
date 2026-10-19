@@ -35,7 +35,8 @@ function sequenceRequest(): HandoffRequest {
     gate_hash: null,
     headline: 'Create DEMO-0044: Plan the launch',
     content: {
-      headline: 'Create DEMO-0044: Plan the launch',
+      headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Plan the launch',
+      title: 'New ticket DEMO-0044: Plan the launch',
       subline: 'and its text (2 sections)',
       ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
       sections: [
@@ -88,7 +89,10 @@ describe('a ticket and its text on one review (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare).toHaveBeenCalledTimes(1)
     expect(s.prepare.mock.calls[0][1]).toEqual(ACTION)
-    expect(within(dialog).getByRole('heading', { name: /Create DEMO-0044: Plan the launch/ })).toBeInTheDocument()
+    // U3: the dialog title is the plain one; the key qualifier and signed id are only under Technical details
+    expect(within(dialog).getByRole('heading', { name: 'New ticket DEMO-0044: Plan the launch' })).toBeInTheDocument()
+    expect(within(dialog).getAllByText('Technical details')).toHaveLength(1)
+    expect(within(dialog).getByText('Technical details').closest('details')).toHaveTextContent('signed id …0000000A')
     expect(dialog).toHaveTextContent('and its text (2 sections)')
     expect(dialog).toHaveTextContent('Verification fingerprint:')
     expect(dialog).toHaveTextContent('Why this exists.')

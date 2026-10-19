@@ -89,7 +89,8 @@ describe('the action dialog with click-to-sign', () => {
     const { dialog } = await open()
     expect(await within(dialog).findByRole('button', { name: 'Sign' }, T)).toBeEnabled()
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
-    expect(within(dialog).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
+    expect(within(dialog).getByText('Sign with one click on this computer.')).toBeInTheDocument()
     expect(c.prepare).not.toHaveBeenCalled()
     expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
   })
@@ -131,7 +132,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(c.view).toHaveBeenCalledWith(ws, REQ)
     const panel = within(dialog).getByTestId('click-panel')
-    expect(within(panel).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
+    expect(within(panel).getAllByText('Technical details')).toHaveLength(1)
     expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()

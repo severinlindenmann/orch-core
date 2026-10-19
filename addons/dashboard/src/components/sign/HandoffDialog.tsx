@@ -20,7 +20,7 @@ import { alreadyDetails, alreadySigned, clickEligible, clickReady } from '@/api/
 import { refusalOf, refusalSentence } from '@/api/refusals'
 import { addFirst, missingOf } from '@/api/gates'
 import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevices'
-import { ClickBadge, ClickSignPanel } from './ClickSignPanel'
+import { ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
 import { Inline, Raw } from './visible'
@@ -248,7 +248,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
-            <Inline>{click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
+            <Inline>{click.view?.view.content?.title ?? click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.title ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
           </DialogTitle>
           {shared && here && (
             <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
@@ -266,7 +266,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
               ? 'Only you can approve this. Agents cannot.'
               : phase === 'idle'
                 ? method === 'click'
-                  ? 'Approve with one click.'
+                  ? 'Sign with one click on this computer.'
                   : method === 'phone' ? 'Review and approve on your phone.' : 'Approve in your terminal. This page only shows the request.'
                 : 'Approve in your terminal. Only you can approve this. Agents cannot.'}
           </DialogDescription>
@@ -280,7 +280,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {method === 'phone' && p.phoneRequest && <p className="text-[12px] text-text-muted"><Raw>{phoneRun.hint?.ref ?? p.phoneRequest.ref}</Raw> · Version {phoneRun.hint?.gate_gen ?? p.phoneRequest.gate_gen} of this step (as reported by your Mac)</p>}
         {method === 'phone' && !phone && <p className="text-[13px] text-text-muted">Review and choose on your phone. If you request changes, enter the text there.</p>}
         {phase === 'idle' && !clickOpen && !phone && method !== 'phone' && p.children}
-        {phase === 'idle' && !clickOpen && method === 'click' && <ClickBadge />}
 
 
         {(click.phase === 'preparing' || click.phase === 'viewing') && (

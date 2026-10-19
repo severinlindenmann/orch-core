@@ -594,7 +594,11 @@ def _empty_root(root: Path) -> None:
         raise _refuse("invalid.input", f"cannot list {root}: {e.strerror}") from None
     why = rootclaim.refusal(view, init_lock_ok=True)
     if why is not None:
-        hint = "if it is already an orch workspace run `orch host register .`" if view.orch else None
+        hint = (
+            "if it is already an orch workspace run `orch host register .`"
+            if view.orch and view.legacy is None
+            else None
+        )
         raise _refuse("invalid.input", f"{root}: {why}; nothing was created", hint)
 
 

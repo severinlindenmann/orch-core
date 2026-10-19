@@ -49,6 +49,9 @@ class RootView:
     markers: tuple[str, ...]
     #: project files/folders under a name orch's store would write
     collisions: tuple[str, ...]
+    #: the folder holds an orch store from before the ``.orch/`` move (an orch config in the root): the plain message
+    #: that says to delete the old files, ``None`` otherwise (or while the suite allows legacy fixtures)
+    legacy: str | None = None
 
 
 def inspect(root: str | os.PathLike[str]) -> RootView:
@@ -58,7 +61,9 @@ def inspect(root: str | os.PathLike[str]) -> RootView:
         names = set(os.listdir(fd))
         got = discovery._config_at(fd) if "config.json" in names else None
         doc = got[0] if got is not None else None
-        orch = discovery.v2_config(doc) is not None or discovery._is_v1(fd, doc)
+        root_v2 = discovery.v2_config(doc) is not None
+        orch = root_v2 or discovery._is_v1(fd, doc)
+        legacy = layout_mod.legacy_refusal(fd) if root_v2 and not layout_mod.LEGACY_ALLOWED else None
         if not orch and layout_mod.STORE_DIR in names:  # an orch store in .orch/ makes the folder a workspace too
             try:
                 orch = layout_mod.resolve(fd, root) is not None
@@ -70,6 +75,7 @@ def inspect(root: str | os.PathLike[str]) -> RootView:
         orch=orch,
         markers=tuple(n for n in markers() if n in names),
         collisions=tuple(sorted(n for n in writes() if n in names)),
+        legacy=legacy,
     )
 
 
@@ -84,11 +90,16 @@ def _own_dot_orch(view: RootView) -> bool:
 def refusal(view: RootView, *, init_lock_ok: bool = False) -> str | None:
     """The plain refusal for a **new** workspace in this folder, or ``None`` when it is free. ``init_lock_ok``: the
     caller is ``orch init`` itself (its ``flock`` on ``.orch-init.lock`` decides; a crashed init's lock is reused)."""
+    if view.legacy is not None:
+        return view.legacy
     if view.orch:
         return "this folder is already an orch workspace (its config.json is orch's)"
     held = [m for m in view.markers if not (init_lock_ok and m == ".orch-init.lock")]
     if _MIGRATING in held:
-        return "a store move is under way or was interrupted in this folder (.orch-migrating); run `orch migrate`"
+        return (
+            "an unfinished store move is in this folder (.orch-migrating); "
+            "delete the old store files and .orch-migrating, then run orch setup again"
+        )
     if held:
         return (
             f"this folder holds orch's own {', '.join(held)} from an earlier or running orch init; "

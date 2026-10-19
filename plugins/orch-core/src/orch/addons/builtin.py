@@ -40,7 +40,10 @@ def write_manifest(workspace: str, name: str, data: bytes, force: bool = False) 
     from orch.layout import move_in_progress
 
     if move_in_progress(workspace):
-        raise OSError("a store move is under way in this folder (.orch-migrating); run `orch migrate`, then retry")
+        raise OSError(
+            "an unfinished store move is in this folder (.orch-migrating); "
+            "delete the old store files and .orch-migrating, then run orch setup again"
+        )
     path = Path(os.path.abspath(workspace))
     with ExitStack() as stack:
 

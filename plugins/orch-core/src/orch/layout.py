@@ -55,12 +55,11 @@ _CONFIG_LIMIT = 1 << 20
 #: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
 WRITE_NEW = True
 
-#: Final state of the move (design step 12): ``False`` = a workspace whose store is still in the project root is
-#: refused wherever a store is opened, with the one fix, ``orch migrate`` (which does not open a legacy store, so it
-#: still works). Discovery, ``orch migrate`` and the host's registry read still SEE a legacy store. The environment
-#: variable ``ORCH_ALLOW_LEGACY_LAYOUT=1`` is the person's explicit escape hatch for a store they have not moved yet
-#: (the layout is as safe as it was; only the default is to ask for the move).
-LEGACY_ALLOWED = os.environ.get("ORCH_ALLOW_LEGACY_LAYOUT") == "1"
+#: Final state of the move (design step 12): a workspace whose store is still in the project root is refused wherever
+#: a store is opened, with one plain message (delete the old files, run ``orch setup`` again; owner decision 19 Oct:
+#: no migration). There is no switch for this in production. The test suite sets this module flag on its own legacy
+#: fixtures (``tests/conftest.py``; child processes through ``tests/_legacy_shim``).
+LEGACY_ALLOWED = False
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -104,24 +103,66 @@ class StorePin:
     owned: bool = False
 
 
-_LEGACY_FILES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", ".state", "addons")
+_LEGACY_NAMES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", ".state", "addons")
+
+
+def _has_below(project_fd: int, name: str, leaf: str, *, one_deeper: bool) -> bool:
+    """``name/leaf`` (or ``name/<any>/leaf``) exists below the project fd, a real entry (no link followed)."""
+    try:
+        dfd = os.open(name, _DIR, dir_fd=project_fd)
+    except OSError:
+        return False
+    try:
+        subs = [None] if not one_deeper else []
+        if one_deeper:
+            try:
+                subs = [n for n in os.listdir(dfd)[:200]]
+            except OSError:
+                return False
+        for sub in subs:
+            try:
+                if sub is None:
+                    os.stat(leaf, dir_fd=dfd, follow_symlinks=False)
+                else:
+                    os.stat(os.path.join(sub, leaf), dir_fd=dfd, follow_symlinks=False)
+                return True
+            except OSError:
+                continue
+        return False
+    finally:
+        os.close(dfd)
 
 
 def legacy_refusal(project_fd: int) -> str:
     """The one plain message for a store from an older version in the project root: orch now keeps its files in
-    ``.orch/``, and there is no migration (start fresh). Lists the exact names found below the project fd."""
-    found = []
-    for name in _LEGACY_FILES:
+    ``.orch/``, and there is no migration (start fresh). Names only what is recognisably orch's below the project fd
+    (``config.json`` by its schema, which the caller found; a folder only by a file orch writes in it): a project's
+    own ``events/`` or ``tickets/`` is never listed for deletion."""
+    sure = ["config.json"]
+    unsure = []
+    for name in _LEGACY_NAMES[1:]:
         try:
             st = os.stat(name, dir_fd=project_fd, follow_symlinks=False)
         except OSError:
             continue
-        found.append(name + "/" if stat.S_ISDIR(st.st_mode) else name)
-    names = ", ".join(found) if found else "config.json"
-    return (
+        if name == "keys.jsonl" or name == "AGENTS.orch.md":
+            ours = stat.S_ISREG(st.st_mode)
+        elif name == "events":
+            ours = _has_below(project_fd, name, "workspace.jsonl", one_deeper=False)
+        elif name == "tickets":
+            ours = _has_below(project_fd, name, "events.jsonl", one_deeper=True)
+        elif name == ".state":
+            ours = _has_below(project_fd, name, "lock", one_deeper=False)
+        else:  # addons
+            ours = _has_below(project_fd, name, "orch-addon.json", one_deeper=True)
+        (sure if ours else unsure).append(name + ("" if stat.S_ISREG(st.st_mode) else "/"))
+    text = (
         "this folder has an orch store from an older version in the project root; orch now keeps its files in .orch/. "
-        f"Delete {names} and run orch setup again"
+        f"Delete {', '.join(sure)} and run orch setup again"
     )
+    if unsure:
+        text += f" (check {', '.join(unsure)} before deleting: they may be your own)"
+    return text
 
 
 def is_private(st: os.stat_result) -> bool:
@@ -133,9 +174,9 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
     """An orch config in the project root AND in ``.orch/`` is refused (design §5)."""
     if legacy and new:
         raise LayoutError(
-            "two orch stores in one project (config.json in the root and in .orch/); "
-            "delete the older files in the project root (config.json, keys.jsonl, events/, tickets/, .state/, addons/)",
-            hint="delete the older store files in the project root, then run orch setup again",
+            "two orch stores in one project (an orch config.json in the project root and one in .orch/); "
+            "delete the one in the project root (config.json) and run orch setup again",
+            hint="delete config.json in the project root, then run orch setup again",
         )
 
 

@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from tests._legacy_env import ENV as LEGACY_ENV
 from tests.ops.helpers import OTHER, Ws
 from tests.ops.test_task_ac import py
 
@@ -30,7 +31,7 @@ class Bin:
             "PATH": "/usr/bin:/bin",
             "HOME": str(self.ws.tmp),
             "ORCH_STATE_DIR": str(self.ws.host_state),
-            "ORCH_ALLOW_LEGACY_LAYOUT": "1",
+            **LEGACY_ENV,
         }
         if self.session:
             e["ORCH_SESSION"] = self.session

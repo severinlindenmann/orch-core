@@ -233,7 +233,10 @@ def _no_real_service_manager(tmp_path_factory):
 
 
 # child processes the tests start (orch CLI, multiprocessing workers) build and open legacy root stores too
-os.environ.setdefault("ORCH_ALLOW_LEGACY_LAYOUT", "1")
+from tests._legacy_env import ENV as _LEGACY_ENV  # noqa: E402
+
+os.environ["PYTHONPATH"] = os.pathsep.join([_LEGACY_ENV["PYTHONPATH"], *filter(None, [os.environ.get("PYTHONPATH")])])
+os.environ["ORCH_TEST_LEGACY_LAYOUT"] = "1"
 
 from orch import layout as _layout  # noqa: E402
 

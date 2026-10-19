@@ -322,7 +322,10 @@ def write_workspace_files(
     from orch.layout import move_in_progress
 
     if not dry_run and move_in_progress(store if store is not None else root):
-        raise UnsafePath("a store move is under way in this folder (.orch-migrating); run `orch migrate`, then retry")
+        raise UnsafePath(
+            "an unfinished store move is in this folder (.orch-migrating); "
+            "delete the old store files and .orch-migrating, then run orch setup again"
+        )
     changed: list[str] = []
     kept: list[str] = []
     skip_dirs: set[str] = set()

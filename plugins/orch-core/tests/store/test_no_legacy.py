@@ -54,3 +54,44 @@ def test_orch_migrate_still_works_and_the_moved_workspace_opens(tmp_path: Path) 
         s.close()
     out = io.StringIO()
     assert main(["status", "--json"], env=e, stdout=out, stderr=io.StringIO()) == 0, out.getvalue()
+
+
+def test_only_recognisably_orch_names_are_listed_for_deletion(tmp_path: Path) -> None:
+    import os
+
+    env = _world(tmp_path)
+    fd = os.open(env.root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        text = layout.legacy_refusal(fd)
+    finally:
+        os.close(fd)
+    assert text.startswith("this folder has an orch store from an older version in the project root")
+    assert "Delete config.json" in text and "run orch setup again" in text
+    # a project's own events/ and tickets/ (no orch files in them) are never listed for deletion
+    plain = tmp_path / "plain"
+    (plain / "events").mkdir(parents=True)
+    (plain / "events" / "party.txt").write_text("x")
+    (plain / "tickets").mkdir()
+    (plain / "tickets" / "a").mkdir()
+    (plain / "config.json").write_text("{}")
+    fd = os.open(plain, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        text = layout.legacy_refusal(fd)
+    finally:
+        os.close(fd)
+    assert text.startswith("this folder has an orch store") and "Delete config.json and run" in text
+    assert "check events/, tickets/ before deleting" in text
+
+
+def test_setup_in_a_legacy_folder_shows_the_delete_message(tmp_path: Path) -> None:
+    from orch import rootclaim
+
+    env = _world(tmp_path)
+    why = rootclaim.refusal(rootclaim.inspect(env.root))
+    assert why is not None and "Delete" in why and "already an orch workspace" not in why
+
+
+def test_the_double_store_message_names_only_the_root_config(tmp_path: Path) -> None:
+    with pytest.raises(layout.LayoutError, match=r"delete the one in the project root \(config.json\)") as e:
+        layout.check_single_store(legacy=True, new=True)
+    assert "events" not in str(e.value) and "tickets" not in str(e.value)

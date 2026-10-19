@@ -12,6 +12,7 @@ from orch import canon, crypto
 from orch.custody import NoPrompt
 from orch.ops import human
 from orch.ops.base import Context
+from tests._legacy_env import ENV as LEGACY_ENV
 from tests.ops.humans import PASSPHRASE, make_ticket
 from tests.store.helpers import WS
 
@@ -23,7 +24,8 @@ def count(ws, ref="1"):
 def binary(ws, *argv, env=None, stdin=None, session=True):
     """``python -m orch`` in its own session: no controlling terminal, so /dev/tty cannot be opened."""
     e = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), **(env or {})}
-    e.setdefault("ORCH_ALLOW_LEGACY_LAYOUT", "1")  # this workspace is a legacy root store
+    for k, v in LEGACY_ENV.items():  # this workspace is a legacy root store
+        e.setdefault(k, v)
     if session:
         e.setdefault("ORCH_SESSION", "s_01J9ZP0000000000000000000S")
     return subprocess.run(

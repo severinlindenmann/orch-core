@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
-import { ALL_STEPS, RUN2_SECTIONS } from './run2'
+import { ALL_STEPS, RUN2_SECTIONS, RUN_ID } from './run2'
 import { buildReport } from './report'
 
 vi.mock('@/api/testrun', async (orig) => {
@@ -226,6 +226,17 @@ describe('F8 retry rules', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+  it('a refused field is not sent again with the next edit of the step (only the new field goes)', async () => {
+    m.saveStep.mockReset()
+    m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(422, 'invalid.input')).mockResolvedValue(undefined)
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await screen.findByText(/did not accept this change/, {}, T)
+    await userEvent.type(screen.getByLabelText('Notes for A2'), 'n')
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledTimes(2), T)
+    expect(m.saveStep).toHaveBeenLastCalledWith(RUN_ID, 'A2', { note: 'n' })
   })
   it('resends after a 503', async () => {
     m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))

@@ -1,5 +1,6 @@
 import type { StepNotes, StepStatus } from '@/api/testrun'
 import { ALL_STEPS, RUN2_TITLE } from './run2'
+import { dayText, runLabel, type Carry } from './carry'
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
   todo: 'Not yet',
@@ -18,12 +19,19 @@ export const isFailure = (n: StepNotes | undefined): boolean => n?.status === 'f
 export const hasNoteOrFailure = (n: StepNotes | undefined): boolean => !!n && (isFailure(n) || n.note.trim() !== '' || n.images.length > 0)
 
 /** The markdown report of every step that has a mark, a note or a picture, in checklist order. */
-export function buildReport(notes: Record<string, StepNotes>, imagesPath: string, savedIn: string): string {
+export function buildReport(notes: Record<string, StepNotes>, imagesPath: string, savedIn: string, carries: Record<string, Carry> = {}): string {
   const lines = [`# ${RUN2_TITLE}`, '', `Notes saved in: ${savedIn}`, '']
   const touched = ALL_STEPS.filter((s) => hasContent(notes[s.id]))
-  const counts = (Object.keys(STATUS_LABEL) as StepStatus[]).map((k) => `${STATUS_LABEL[k]}: ${ALL_STEPS.filter((s) => (notes[s.id]?.status ?? 'todo') === k).length}`)
+  const done = (id: string) => carries[id]?.kind === 'done'
+  const counts = (Object.keys(STATUS_LABEL) as StepStatus[]).map((k) => `${STATUS_LABEL[k]}: ${ALL_STEPS.filter((s) => (done(s.id) ? 'pass' : notes[s.id]?.status ?? 'todo') === k).length}`)
   lines.push(counts.join(' | '), '')
-  if (touched.length === 0) lines.push('Nothing marked yet.')
+  const carried = ALL_STEPS.filter((s) => done(s.id) && !hasContent(notes[s.id]))
+  if (touched.length === 0 && carried.length === 0) lines.push('Nothing marked yet.')
+  for (const step of carried) {
+    const c = carries[step.id] as Extract<Carry, { kind: 'done' }>
+    const when = dayText(c.date)
+    lines.push(`## ${step.id} ${step.title}: Pass (done in ${runLabel(c.run)}${when ? `, ${when}` : ''}, not tested again)`, '')
+  }
   for (const step of touched) {
     const n = notes[step.id]
     lines.push(`## ${step.id} ${step.title}: ${STATUS_LABEL[n.status]}`)

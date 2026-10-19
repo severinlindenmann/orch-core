@@ -14,7 +14,7 @@ from orch.ops.workflows import WORKFLOWS
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
     "section set", "ac add", "ac edit",
-    *(f"task {v}" for v in "list next add start done skip block reopen".split()),
+    *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),
     *(f"artifact {v}" for v in "add replace list".split()),
     "log", "apply", "approve", "request-changes", "verdict", "answer", "close", "reopen",
     "grant", "grant revoke", "member add", "member remove", "member role",

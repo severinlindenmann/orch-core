@@ -12,6 +12,8 @@ export interface AddOnRow {
   locked: string | null
   /** Why the switch cannot move now (needs something first, or work is running), or null. */
   blocked: string | null
+  /** The add-on's version from its manifest (always-on parts: the install's own); null or absent when the host does not say. */
+  version?: string | null
 }
 
 export interface AddOnsData {

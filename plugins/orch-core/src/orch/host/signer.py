@@ -286,7 +286,7 @@ def _touches(prepared: Mapping[str, Any]) -> None:
             _refuse("base_rev does not name exactly the paths the edit touches")
         if op in ("ac.add", "ac.edit"):
             ok = set(sets) == {"ticket.acceptance"} and not sections
-        elif op == "task.add":
+        elif op in ("task.add", "task.edit"):
             ok = set(sets) == {"ticket.tasks"} and not sections
         elif op == "section.set":
             ok = not sets and len(sections) == 1

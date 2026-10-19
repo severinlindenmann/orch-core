@@ -28,6 +28,17 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
   const [copyNote, setCopyNote] = useState('')
   const [reg, setReg] = useState<Registration>({ at: 'unknown' })
   const { ask, dialog } = useSettingsHandoff(ws, () => void list.refetch())
+  if (list.isError)
+    return (
+      <Section title="Publish: where files go">
+        <p role="alert" className="text-[13px] text-danger" data-testid="publish-server-error">
+          {shareError(list.error)}
+        </p>
+        <Button size="sm" variant="ghost" onClick={() => void list.refetch()}>
+          Try again
+        </Button>
+      </Section>
+    )
   if (!data) return null
   const bad = (v: string) => v !== '' && !ORIGIN.test(v)
   const problem = bad(server)

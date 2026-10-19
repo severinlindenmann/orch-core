@@ -71,8 +71,8 @@ export const agentsApi = {
     call<{ deposit: DepositOutcome | 'none'; reason?: DepositReason }>('GET', `${w(ws)}/runner/deposits/${encodeURIComponent(depositId)}`),
   forget: (ws: string, grant: string, idem: string) => call<{ forgotten: boolean }>('POST', `${w(ws)}/runner/forget`, { grant, idem }),
   /** Which risk notices this person already read (kept by the dashboard server, per person and workspace). */
-  riskNotices: (ws: string) => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('GET', `${w(ws)}/me/risk_notices`),
-  acknowledge: (ws: string, notice: 'start_agent' | 'login_shell') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
+  riskNotices: (ws: string) => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('GET', `${w(ws)}/me/risk_notices`),
+  acknowledge: (ws: string, notice: 'start_agent' | 'login_shell' | 'grant') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
 }
 
 export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws) })

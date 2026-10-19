@@ -273,7 +273,6 @@ describe('the runner grant', () => {
     await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
     expect(screen.getByTestId('runner-grant-needed')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('runner-grant-issue'))
-    fireEvent.click(await screen.findByRole('button', { name: /Terminal/ }, T))
     expect(await screen.findByTestId('runner-grant-waiting', {}, T)).toHaveTextContent('press r')
     expect(screen.queryByTestId('runner-grant-needed')).toBeNull()
   })
@@ -599,6 +598,31 @@ it('Extend preserves the runner scope and posts its id with the selected length'
   expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'all', extend: GRANT })
 })
 
+describe('sheet risk notice', () => {
+  const mountSheet = () => render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard sheet ws={WS} runner={runner({ grant: null })} loading={false} blocked={null} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  it('first time: the full notice and I understand; saving folds it to a quiet line', async () => {
+    s.notices.mockResolvedValue({ acknowledged: {} })
+    const ack = s.acknowledge.mockResolvedValue({ acknowledged: { grant: true } })
+    mountSheet()
+    fireEvent.click(await screen.findByTestId('grant-risk-ack'))
+    expect(ack).toHaveBeenCalledWith(WS, 'grant')
+    const d = await screen.findByTestId('grant-risk-details')
+    expect(d).toHaveTextContent('Runs as you on this Mac')
+    expect(d).not.toHaveAttribute('open')
+    expect(d).toHaveTextContent('standing authority')
+  })
+  it('acknowledged: quiet line only; unreadable answer: full notice (fail closed)', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { grant: true } })
+    mountSheet()
+    expect(await screen.findByTestId('grant-risk-details')).toBeInTheDocument()
+    expect(screen.queryByTestId('grant-risk-ack')).toBeNull()
+    cleanup()
+    s.notices.mockRejectedValue(new Error('x'))
+    mountSheet()
+    expect(await screen.findByTestId('grant-risk-ack')).toBeInTheDocument()
+  })
+})
+
 it.each([4, 24, 500])('caps runner lengths at workspace hours %s and 168', async (limit) => {
   vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: limit }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
   s.preview.mockResolvedValue(noGrant())
@@ -639,7 +663,6 @@ describe('terminal-approval workspace (no one-click)', () => {
     await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
     expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
     fireEvent.click(screen.getByTestId('runner-grant-issue'))
-    fireEvent.click(await screen.findByRole('button', { name: /Terminal/ }, T))
     await waitFor(() => expect(handoff).toHaveBeenCalled())
     expect(handoff.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
     expect(s.prepare).not.toHaveBeenCalled()

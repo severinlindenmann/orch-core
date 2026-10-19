@@ -28,6 +28,8 @@ const share = (over: Record<string, unknown> = {}) => ({
 let shares: unknown[] = []
 let staged: unknown[] = []
 let configured = true
+let live = true
+let listRefusal: { code: string } | null = null
 let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
@@ -37,14 +39,17 @@ const route = () => {
   shares = [share(), share({ id: 'd'.repeat(32), kind: 'once', view_limit: 3, views: 1, state: 'revoked' })]
   staged = []
   configured = true
+  live = true
+  listRefusal = null
   sendRefusal = null
   registerRefusal = null
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
       return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
     if (!path.includes('/shares')) return undefined
+    if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
-      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: true, shares, staged })
+      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live, shares: configured ? shares : [], staged })
     if (path.endsWith('/shares/prepare')) {
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
@@ -93,6 +98,36 @@ it('lists the shares: kind, end time, opens and state, with Stop sharing only on
   expect(revoked).toHaveTextContent('Stopped')
   expect(within(revoked).queryByRole('button', { name: /^Stop sharing/ })).toBeNull()
   expect(document.body.textContent).not.toContain(TOKEN)
+})
+
+it('Publish on but no server set up: the Shares page says what is missing and where to set it, not "Could not load"', async () => {
+  route()
+  configured = false
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-not-configured', {}, T)
+  expect(note).toHaveTextContent('Publish needs a publish server. Set it in Settings, Add-ons, Publish.')
+  expect(within(note).getByRole('link', { name: /Settings, Add-ons, Publish/ })).toHaveAttribute('href', expect.stringContaining('/settings/addons'))
+  expect(screen.queryByText(/Could not load/)).toBeNull()
+  expect(screen.queryByTestId('shares-empty')).toBeNull()
+})
+
+it('a server that is not running: the Shares page says so and how to start it', async () => {
+  route()
+  live = false
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-unreachable', {}, T)
+  expect(note).toHaveTextContent('not running or cannot be reached')
+  expect(note).toHaveTextContent('orch-publish dev')
+  expect(screen.getByRole('table', { name: 'Shares' })).toBeInTheDocument()
+})
+
+it('a failed load names the reason in plain words (here: no server set up), Settings keeps its Publish box', async () => {
+  route()
+  listRefusal = { code: 'publish.not_configured' }
+  show('/w/DEMO/shares')
+  const alert = await screen.findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent('No publish server is set up yet. Set one up in Settings, Add-ons.')
+  expect(alert).not.toHaveTextContent('Something went wrong')
 })
 
 it('Stop sharing asks in plain words, posts once with an idem, and the row says Stopped', async () => {

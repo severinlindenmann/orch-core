@@ -230,3 +230,36 @@ def _no_real_service_manager(tmp_path_factory):
         yield
     finally:
         monkeypatch.undo()
+
+
+# child processes the tests start (orch CLI, multiprocessing workers) build and open legacy root stores too
+from tests._legacy_env import ENV as _LEGACY_ENV  # noqa: E402
+
+os.environ["PYTHONPATH"] = os.pathsep.join([_LEGACY_ENV["PYTHONPATH"], *filter(None, [os.environ.get("PYTHONPATH")])])
+os.environ["ORCH_TEST_LEGACY_LAYOUT"] = "1"
+
+from orch import layout as _layout  # noqa: E402
+
+#: the shipped default, read before the suite overrides it
+SHIPPED_WRITE_NEW = _layout.WRITE_NEW
+SHIPPED_LEGACY_ALLOWED = False  # the default without the escape hatch (the environment above is the suite's)
+#: The fixtures of ~250 test files (module- and session-scoped ones too) build their workspace with the store in the
+#: project root: the legacy layout, still read and written everywhere. ``WRITE_NEW`` is the shipped default for NEW
+#: workspaces (``.orch/``); a test that exercises it says ``@pytest.mark.new_layout``.
+_layout.WRITE_NEW = False
+_layout.LEGACY_ALLOWED = True  # and they still open them; @pytest.mark.no_legacy runs with the shipped refusal
+
+
+@pytest.fixture(autouse=True)
+def _layout_markers(request: pytest.FixtureRequest):
+    new = request.node.get_closest_marker("new_layout") is not None
+    final = request.node.get_closest_marker("no_legacy") is not None
+    if new:
+        _layout.WRITE_NEW = SHIPPED_WRITE_NEW
+    if final:
+        _layout.LEGACY_ALLOWED = SHIPPED_LEGACY_ALLOWED
+    try:
+        yield
+    finally:
+        _layout.WRITE_NEW = False
+        _layout.LEGACY_ALLOWED = True

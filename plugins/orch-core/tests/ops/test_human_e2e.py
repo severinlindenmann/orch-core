@@ -21,6 +21,7 @@ import time
 import pytest
 
 from orch import canon, crypto
+from tests._legacy_env import ENV as LEGACY_ENV
 from tests.ops.humans import PASSPHRASE
 from tests.ops.test_task_ac import py
 from tests.store.helpers import WS
@@ -30,7 +31,13 @@ SESSION = "s_01J9ZP0000000000000000000S"
 
 
 def agent_bin(ws, grant, *argv, stdin=None):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "ORCH_SESSION": SESSION}
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(ws.tmp),
+        "ORCH_STATE_DIR": str(ws.host_state),
+        **LEGACY_ENV,
+        "ORCH_SESSION": SESSION,
+    }
     env["ORCH_GRANT"] = grant
     p = subprocess.run(
         [sys.executable, "-m", "orch", *argv],
@@ -54,7 +61,13 @@ def key_of(argv):
 
 def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
     """Run ``orch`` as the person at a terminal. Returns ``(exit code, stdout, stderr, what the terminal showed)``."""
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "TERM": "dumb"}
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(ws.tmp),
+        "ORCH_STATE_DIR": str(ws.host_state),
+        **LEGACY_ENV,
+        "TERM": "dumb",
+    }
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
     pid, tty = pty.fork()

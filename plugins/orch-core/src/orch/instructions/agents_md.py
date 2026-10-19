@@ -52,7 +52,7 @@ _TEMPLATE = (
     'Ask: `{orch:ask} "…" --options a,b --rec a`, then run `{orch:wait}` before going on.',
     "",
     "## Never",
-    "Never edit tickets/** or ignore retry:false.",
+    "Never edit tickets/**, .orch/** or ignore retry:false.",
     "Never approve, give a verdict, close or grant: those are the person's, signed by them.",
     "",
     "## If orch refuses",

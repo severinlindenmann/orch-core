@@ -138,6 +138,11 @@ def open_store_fs(
         try:
             found = _layout.resolve(pfs.fd, project)
             layout = found if found is not None else _layout.fresh(project)
+            if layout.legacy and not _layout.LEGACY_ALLOWED:
+                raise StoreError(
+                    "validation.path",
+                    _layout.legacy_refusal(pfs.fd),
+                )
             if pin is not None and (pin.ident is None) != layout.legacy:
                 raise StoreError("validation.path", "the store layout changed since the workspace was found")
             if layout.legacy:

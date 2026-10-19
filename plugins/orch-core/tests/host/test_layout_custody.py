@@ -122,3 +122,16 @@ def test_the_host_opens_a_store_that_matches_its_entry_and_fails_closed_when_it_
     assert moved.state != "unavailable", moved.cause
     assert moved.store is not None and not moved.store.layout.legacy
     moved.executor.shutdown()
+
+
+def test_a_registered_legacy_store_is_unavailable_with_the_plain_message_not_a_crash(lab) -> None:  # noqa: F811
+    from orch import layout
+
+    layout.LEGACY_ALLOWED = False  # the shipped refusal (the suite's fixture reset puts the flag back)
+    svc = _service(lab, None)
+    svc.open()
+    try:
+        assert svc.state == "unavailable" and svc.store is None
+        assert "Delete config.json" in (svc.cause or "") and "run orch setup again" in (svc.cause or "")
+    finally:
+        svc.executor.shutdown()

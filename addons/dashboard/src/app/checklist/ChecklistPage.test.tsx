@@ -1,10 +1,10 @@
-// The tester's checklist page: every step of run 2, status/notes/screenshots with autosave, the filter and the report.
+// The tester's checklist page: every step of run 3, status/notes/screenshots with autosave, the filter and the report.
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
-import { ALL_STEPS, RUN2_SECTIONS } from './run2'
+import { ALL_STEPS, RUN2_SECTIONS, RUN_ID } from './run2'
 import { buildReport } from './report'
 
 vi.mock('@/api/testrun', async (orig) => {
@@ -13,7 +13,7 @@ vi.mock('@/api/testrun', async (orig) => {
 })
 const m = vi.mocked(testrun)
 const T = { timeout: 8000 }
-const PATH = '/Users/x/.config/orch/testrun/run2'
+const PATH = '/Users/x/.config/orch/testrun/run3'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -22,7 +22,7 @@ beforeEach(() => {
   m.imageUrl.mockResolvedValue('data:image/png;base64,AAAA')
 })
 
-describe('run 2 data', () => {
+describe('run 3 data', () => {
   it('has unique ids the server accepts, and every section of the source file', () => {
     const ids = ALL_STEPS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
@@ -37,6 +37,10 @@ describe('run 2 data', () => {
     const a1 = ALL_STEPS.find((s) => s.id === 'A1')!
     expect(a1.commands).toBeUndefined()
     expect(a1.text).toContain('Use the install line the lead sent you (it names the exact version).')
+    expect(a1.text).toContain('orch host enable')
+    expect(a1.text).toContain('orch dashboard restart')
+    expect(JSON.stringify(ALL_STEPS)).not.toContain('model the model')
+    expect(JSON.stringify(ALL_STEPS.find((s) => s.id === 'H1'))).toContain('Model routing')
   })
 })
 
@@ -65,9 +69,9 @@ describe('the checklist page', () => {
     renderApp('/checklist')
     const group = await screen.findByRole('radiogroup', { name: 'Result of C1' }, T)
     await userEvent.click(within(group).getByRole('radio', { name: 'Failed, blocking' }))
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'C1', { status: 'fail_blocking' }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'C1', { status: 'fail_blocking' }))
     await userEvent.type(screen.getByLabelText('Notes for C1'), 'blank page')
-    await waitFor(() => expect(m.saveStep).toHaveBeenLastCalledWith('run2', 'C1', { note: 'blank page' }), T)
+    await waitFor(() => expect(m.saveStep).toHaveBeenLastCalledWith('run3', 'C1', { note: 'blank page' }), T)
     expect((await screen.findAllByText('Saved'))[0]).toBeInTheDocument()
   })
 
@@ -76,7 +80,7 @@ describe('the checklist page', () => {
     const box = await screen.findByLabelText('Notes for D1', {}, T)
     await userEvent.type(box, 'ok')
     fireEvent.blur(box)
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'D1', { note: 'ok' }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'D1', { note: 'ok' }))
   })
 
   it('shows what was saved before and filters to steps with notes or failures', async () => {
@@ -100,13 +104,13 @@ describe('the checklist page', () => {
     const box = await screen.findByLabelText('Notes for C5', {}, T)
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })
     fireEvent.paste(box, { clipboardData: { files: [file] } })
-    await waitFor(() => expect(m.addImage).toHaveBeenCalledWith('run2', 'C5', file))
+    await waitFor(() => expect(m.addImage).toHaveBeenCalledWith('run3', 'C5', file))
     expect(await screen.findByText(`${PATH}/images/C5-0123456789ab.png`)).toBeInTheDocument()
     expect(await screen.findByAltText('Screenshot C5-0123456789ab.png')).toHaveAttribute('src', 'data:image/png;base64,AAAA')
     m.removeImage.mockResolvedValue(undefined)
     await userEvent.click(screen.getByRole('button', { name: 'Remove screenshot C5-0123456789ab.png' }))
     await waitFor(() => expect(screen.queryByAltText('Screenshot C5-0123456789ab.png')).toBeNull())
-    expect(m.removeImage).toHaveBeenCalledWith('run2', 'C5-0123456789ab.png')
+    expect(m.removeImage).toHaveBeenCalledWith('run3', 'C5-0123456789ab.png')
   })
 
   it('refuses a wrong type or an oversized picture before sending it', async () => {
@@ -168,8 +172,8 @@ describe('first save', () => {
     expect(within(screen.getByRole('radiogroup', { name: 'Result of A2' })).getByRole('radio', { name: 'Pass' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByLabelText('Notes for B1.1')).toHaveValue('n')
     expect(await screen.findByAltText('Screenshot A2-aaaaaaaaaaaa.png')).toBeInTheDocument()
-    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run2', 'A2', { status: 'pass' }))
-    expect(m.saveStep).not.toHaveBeenCalledWith('run2', 'A2', expect.objectContaining({ note: expect.anything() }))
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run3', 'A2', { status: 'pass' }))
+    expect(m.saveStep).not.toHaveBeenCalledWith('run3', 'A2', expect.objectContaining({ note: expect.anything() }))
   })
 })
 
@@ -182,7 +186,7 @@ describe('a save that fails once', () => {
     await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
     await userEvent.type(screen.getByLabelText('Notes for A2'), 'x')
     await waitFor(() => expect(m.saveStep.mock.calls.filter((c) => c[2].status === 'pass').length).toBeGreaterThanOrEqual(2), T)
-    expect(m.saveStep.mock.calls.at(-1)).toEqual(['run2', 'A2', expect.objectContaining({ status: 'pass' })])
+    expect(m.saveStep.mock.calls.at(-1)).toEqual(['run3', 'A2', expect.objectContaining({ status: 'pass' })])
     expect((await screen.findAllByText('Saved', {}, T))[0]).toBeInTheDocument()
   })
   it('keeps trying while the server answers nothing, and says so', async () => {
@@ -223,6 +227,17 @@ describe('F8 retry rules', () => {
       vi.useRealTimers()
     }
   })
+  it('a refused field is not sent again with the next edit of the step (only the new field goes)', async () => {
+    m.saveStep.mockReset()
+    m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(422, 'invalid.input')).mockResolvedValue(undefined)
+    renderApp('/checklist')
+    const group = await screen.findByRole('radiogroup', { name: 'Result of A2' }, T)
+    await userEvent.click(within(group).getByRole('radio', { name: 'Pass' }))
+    await screen.findByText(/did not accept this change/, {}, T)
+    await userEvent.type(screen.getByLabelText('Notes for A2'), 'n')
+    await waitFor(() => expect(m.saveStep).toHaveBeenCalledTimes(2), T)
+    expect(m.saveStep).toHaveBeenLastCalledWith(RUN_ID, 'A2', { note: 'n' })
+  })
   it('resends after a 503', async () => {
     m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))
     renderApp('/checklist')
@@ -238,8 +253,8 @@ describe('keepalive only for small bodies', () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     try {
-      await real.saveStep('run2', 'A2', { note: '€'.repeat(20000) })
-      await real.saveStep('run2', 'A2', { note: 'short ü' })
+      await real.saveStep('run3', 'A2', { note: '€'.repeat(20000) })
+      await real.saveStep('run3', 'A2', { note: 'short ü' })
       const calls = fetchMock.mock.calls as unknown as [string, { keepalive: boolean }][]
       expect(calls[0][1].keepalive).toBe(false)
       expect(calls[1][1].keepalive).toBe(true)

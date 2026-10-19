@@ -9,10 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label'
 import type { StartPlan } from './useStartPlan'
 
-/** "Opus (set in Settings)", "Opus", or "the model the agent app chooses". */
+/** "Opus (set in Settings)", "Opus", or "chosen by the agent app". */
 export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>): string {
   const { model, source } = plan.shown
-  if (!model) return 'the model the agent app chooses'
+  if (!model) return 'chosen by the agent app'
   return `${modelLabel(plan.choices, plan.choice.harness, model)}${source === 'workspace' ? ' (set in Settings)' : ''}`
 }
 

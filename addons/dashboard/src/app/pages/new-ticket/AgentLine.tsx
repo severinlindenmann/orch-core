@@ -74,7 +74,7 @@ function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void 
 export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'> }) {
   const { choice } = plan
   return (
-    <section aria-label="Not signed: the agent start" data-testid="not-signed-start" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
+    <section aria-label="Not signed: the agent start" data-testid="not-signed-start" className="space-y-1 border-t border-border pt-3 text-[13px] leading-relaxed">
       <p className="font-medium text-text">Not signed: the agent start</p>
       <p className="text-text-muted">
         After the ticket exists, this page starts an agent with your agent access: {harnessName(choice.harness)}, {MODE_LABEL[choice.mode]}, model {modelText(plan)}, in the project folder.

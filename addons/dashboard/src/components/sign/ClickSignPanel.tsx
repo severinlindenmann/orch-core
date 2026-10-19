@@ -1,10 +1,9 @@
 import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
-// own preview, the host's fingerprint or a cached ticket. The risk notice is one tap away under the custody line (a details toggle). `lines` are core's terminal
+// own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
-// A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
-// not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
-// item 0); the hold keeps the gesture deliberate. Every other op signs on one click.
+// A word op (grant, policy, members) is confirmed by typing the View's word next to Sign (Sign stays off until it matches); every
+// other op signs on one click. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'

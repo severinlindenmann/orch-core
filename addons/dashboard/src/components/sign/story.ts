@@ -37,7 +37,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const hours = action.agent?.hours
       const access = hours ? { length: accessLength(hours) } : undefined
       return {
-        signLabel: hours || ctx.startsAgent ? 'Sign and start agent' : 'Sign and create task',
+        signLabel: ctx.startsAgent ? 'Sign and start agent' : 'Sign and create task',
         access,
         steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
@@ -49,7 +49,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend
-        ? { signLabel: 'Sign and extend', access: { length }, steps: ['You sign.', `The old access ends and the new one starts, for ${length} from now.`, 'Agents that are working now pause briefly, then continue.'] }
+        ? { signLabel: 'Sign and extend', access: { length }, steps: ['You sign.', `The old access ends and the new one starts, for ${length} from now.`, 'Running agents stop. Start them again to use the new access.'] }
         : { signLabel: 'Sign and allow access', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`] }
     }
     default:

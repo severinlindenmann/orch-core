@@ -44,13 +44,13 @@ describe('storyOf', () => {
     const s = storyOf({ action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' })!
     expect(s.signLabel).toBe('Sign and extend')
     expect(s.access).toEqual({ length: '3 days' })
-    expect(s.steps).toEqual(['You sign.', 'The old access ends and the new one starts, for 3 days from now.', 'Agents that are working now pause briefly, then continue.'])
+    expect(s.steps).toEqual(['You sign.', 'The old access ends and the new one starts, for 3 days from now.', 'Running agents stop. Start them again to use the new access.'])
   })
 
   it('allow access without an earlier one does not talk about replacing anything', () => {
     const s = storyOf({ action: 'runner_grant', hours: 24, scope: 'workable' })!
     expect(s.signLabel).toBe('Sign and allow access')
-    expect(s.steps.join(' ')).not.toMatch(/old access|pause/)
+    expect(s.steps.join(' ')).not.toMatch(/old access|stop/)
   })
 
   it('an action without a story gets none (the plain Sign stays)', () => {

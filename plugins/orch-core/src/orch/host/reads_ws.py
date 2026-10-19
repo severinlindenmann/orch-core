@@ -515,8 +515,9 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "models": data["models"],
         "sub_cursor": data["sub_cursor"],
     }
+    if viewer.column in ("P", "R"):  # the Publish server addresses: for a person (or their phone), not an agent (G, N)
+        out["publish"] = data["publish"]
     if viewer.column != "N":
-        out["publish"] = data["publish"]  # the Publish server addresses: for a person, never for an agent
         out["settings_at"] = data["settings_at"]
         out["policy_at"] = data["policy_at"]
     return out

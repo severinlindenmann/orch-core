@@ -1934,3 +1934,11 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 **Why:** Core validates task proofs against the acceptance snapshot; an unchanged acceptance block is accepted and produces no steps. A done task's receipt stands for its check and criteria. Cancellation context explains the consequences without changing signed material.
 
 **Revert:** Remove task editing, row shortcuts and the cancellation context block together with their dashboard-only types and tests; retain the existing edit and signing checks.
+
+## 2026-10-19 — Manual acceptance and completion
+
+**Decision:** Route manual acceptance, withdrawal and task completion through the existing handoff/one-click signing surface. Preserve host proof and coverage independently. Show manual and stale acceptance in the ticket verdict form, and support an optional host `SignContent.acceptance[].manual` annotation.
+
+**Why:** A person's acceptance signs authority but is not an automated receipt. The current core SignContent acceptance builder emits only id, text and checked, so the ticket context supplies the reviewer warning before choosing a verdict; it is not substituted into host signing material. Task reads do not expose the completion actor, so completion without a receipt uses the plain fallback.
+
+**Revert:** Remove the three typed dashboard actions, manual controls and annotations; keep host receipt and coverage rules unchanged.

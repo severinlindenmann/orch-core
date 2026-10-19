@@ -775,6 +775,29 @@ class Move(Action):
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
+AcceptanceText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000), OneLine]
+
+
+class AcceptCriterion(Action):
+    action: Literal["accept_criterion"]
+    key: Key
+    ac: AcId
+    note: AcceptanceText | None = None
+
+
+class WithdrawAcceptance(Action):
+    action: Literal["withdraw_acceptance"]
+    key: Key
+    ac: AcId
+    reason: AcceptanceText
+
+
+class MarkTaskDone(Action):
+    action: Literal["mark_task_done"]
+    key: Key
+    task: TaskId
+
+
 class RunnerGrant(Action):
     """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
     server, never by the browser. The click path maps to the
@@ -798,6 +821,9 @@ PrepareBody = Annotated[
     | Close
     | Reopen
     | Move
+    | AcceptCriterion
+    | WithdrawAcceptance
+    | MarkTaskDone
     | NewTicket
     | NewTicketSequence
     | EditTicket
@@ -928,6 +954,12 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "close", args | ({"message": action.message} if action.message else {})
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
+        case AcceptCriterion():
+            return "ac.accept", {"ref": action.key, "ac": action.ac} | ({"note": action.note} if action.note else {})
+        case WithdrawAcceptance():
+            return "ac.unaccept", {"ref": action.key, "ac": action.ac, "reason": action.reason}
+        case MarkTaskDone():
+            return "task.mark_done", {"ref": action.key, "task": action.task}
         case Move():
             return "move", {"ref": action.key, "to": action.to} | ({"reason": action.reason} if action.reason else {})
         case NewTicket():
@@ -1042,6 +1074,15 @@ def expected(action: Action, person: str | None = None):
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
             return lambda ev: len(ev) == 1 and ev[0].get("type") in ("ticket.updated", "people.changed")
+        case AcceptCriterion():
+            return lambda ev: one(ev, "artifact.added", kind="feedback", ac=action.ac)
+        case WithdrawAcceptance():
+            return (
+                lambda ev: one(ev, "artifact.replaced", kind="feedback", label=f"withdrawn {action.ac}")
+                and "ac" not in ev[0]
+            )
+        case MarkTaskDone():
+            return lambda ev: one(ev, "task.done", task=action.task) and "receipt" not in ev[0]
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():

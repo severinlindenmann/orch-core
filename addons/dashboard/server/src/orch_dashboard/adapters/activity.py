@@ -2,6 +2,8 @@
 never repaired. The host already filters each item on its own (a restricted ticket's events never arrive for a viewer
 who cannot see it), so a row carries only what the host sent for this viewer."""
 
+import re
+
 from ..text import hidden
 from .shell import safe_name
 from .tickets import ui_actor
@@ -113,6 +115,17 @@ def repo_sentence(repos) -> str | None:
 def sentence(item: dict, name_of) -> str:
     """What happened, in words, after the actor's name. Unknown types and unsafe fields get a general sentence."""
     kind, data = item["type"], item.get("data") or {}
+    if (
+        kind in ("artifact.added", "artifact.replaced")
+        and data.get("kind") == "feedback"
+        and item.get("actor", {}).get("kind") == "person"
+    ):
+        accepted = re.fullmatch(r"accepted (AC[1-9][0-9]*) [0-9a-f]{16}", data.get("label") or "")
+        if accepted and data.get("ac") == accepted[1]:
+            return f"accepted {accepted[1]} manually"
+        withdrawn = re.fullmatch(r"withdrawn (AC[1-9][0-9]*)", data.get("label") or "")
+        if kind == "artifact.replaced" and "ac" not in data and withdrawn:
+            return f"withdrew the manual acceptance of {withdrawn[1]}"
     if kind in ("status.changed", "ticket.moved"):
         before, after = label(data.get("from")), label(data.get("to"))
         return f"moved the ticket from {before} to {after}" if before and after else "moved the ticket"

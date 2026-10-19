@@ -916,3 +916,36 @@ it('reviews the exact task edit and relays that action through the existing hand
   expect(screen.getByText('(not set)')).toBeVisible()
   expect(prepare).toHaveBeenCalledWith(ws, action, 0)
 })
+
+// R3: each manual authority path uses the existing host signing dialog, posting only its reviewed intent.
+describe('manual acceptance signing paths', () => {
+  it.each(['accept', 'withdraw', 'done'] as const)('reviews and prepares %s without signing after a host refusal', async kind => {
+    const { ManualDialog } = await import('@/app/pages/ticket/ManualAcceptance')
+    const { refusal } = await import('./handoffHarness')
+    const { setFeatures } = await import('@/api/features')
+    const ws = 'a'.repeat(32)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+    const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(refusal('role.denied', 403))
+    const post = vi.spyOn(api, 'postAction')
+    const ticket = { key: 'DEMO-0001' } as import('@/api/types').TicketDocument
+    const ac = { id: 'AC2', text: 'Exact criterion wording' } as import('@/api/types').AcceptanceStatus
+    const task = { id: 'T2', text: 'Exact task wording', lease: null } as import('@/api/types').TaskStatus
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><ManualDialog ticket={ticket} ws={ws} choice={kind === 'done' ? { kind, task } : { kind, ac }} onClose={() => {}} /></QueryClientProvider>)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(kind === 'done' ? task.text : ac.text)
+    if (kind !== 'done') await user.type(within(dialog).getByRole('textbox'), ' Checked personally ')
+    const button = await within(dialog).findByRole('button', { name: 'Sign in Terminal' })
+    await waitFor(() => expect(button).toBeEnabled())
+    await user.click(button)
+    const expected = kind === 'done' ? { action: 'mark_task_done', key: ticket.key, task: 'T2' }
+      : kind === 'accept' ? { action: 'accept_criterion', key: ticket.key, ac: 'AC2', note: 'Checked personally' }
+      : { action: 'withdraw_acceptance', key: ticket.key, ac: 'AC2', reason: 'Checked personally' }
+    await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, expected, 0))
+    expect(post).not.toHaveBeenCalled()
+    setFeatures(null)
+  })
+})

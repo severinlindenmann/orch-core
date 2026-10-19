@@ -651,3 +651,9 @@ Review Welcome → You → Agents may → Approval → Secret words → Review, 
 ### B9 core-aligned setup (2026-10-16)
 
 From a supported installed checkout, run `orch setup` in a new project folder. The browser opens plain `/setup`; the server consumes the private setup.code file and claims its listening port. A second tab cannot claim again. Review GRANT for runner access or AGENTS for extended access, terminal confirmation, and waiting/failure text. Finish navigates to `/` as core currently specifies; a normal dashboard session is not created by setup. Automated coverage includes the real core socket boundary and the UI contract.
+
+### Manual acceptance (2026-10-19)
+
+As a ticket owner/reviewer or workspace owner/maintainer on a live host, open Acceptance: accept a criterion with an optional note, review the host statement, then sign. Withdraw requires a reason. An earlier-wording acceptance offers Accept again. Mark done explains that no criterion is proved and warns when it ends an agent lease. Verify review lists current manual acceptance and stale wording. Check that viewers and unrelated members have no controls, progress follows host coverage, and History names acceptance/withdrawal plainly.
+
+Tests were added for the lead to run; this task does not run Vitest or pytest.

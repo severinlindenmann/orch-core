@@ -10,7 +10,7 @@ export interface SignContent {
   subline?: string
   ticket?: { key: string; title: string; uid_tail: string; key_note: string; /** This review creates the ticket (U3): its signed id is then only a technical detail. */ new?: boolean }
   sections?: { id: string; title: string; text: string }[]
-  acceptance?: { id: string; text: string; checked?: boolean }[]
+  acceptance?: { id: string; text: string; checked?: boolean; manual?: string }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]
   fields_title?: string
   fields_changed?: { field: string; before: string | null; after: string | null; before_note?: string }[]

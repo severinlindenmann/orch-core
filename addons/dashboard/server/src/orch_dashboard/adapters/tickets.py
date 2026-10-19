@@ -202,6 +202,12 @@ def event(e: dict, ident: str | None = None) -> dict:
         "actor": ui_actor(e["actor"]),
         "summary": e["summary"],
     }
+    if e["type"] in ("artifact.added", "artifact.replaced"):
+        from .activity import sentence
+
+        words = sentence(e, lambda _: "someone")
+        if words.startswith(("accepted ", "withdrew the manual acceptance of ")):
+            out["summary"] = words
     if e["type"] == "verdict.given" and "outcome" in data:
         out["result"] = data["outcome"]  # the mock's name for it
     cut = sorted(k[: -len("_cut")] for k, v in data.items() if k.endswith("_cut") and v is True)
@@ -294,6 +300,17 @@ def _verify(v) -> dict | None:
 def _attested(value) -> str:
     """Who vouches for a receipt: only the host's `agent` label is shown as such; anything else is "unknown"."""
     return "agent" if value == "agent" else "unknown"
+
+
+def _manual_acceptance(row: dict) -> dict:
+    out = {k: row[k] for k in ("proof", "accepted_stale") if k in row}
+    if isinstance(row.get("accepted"), dict):
+        accepted = row["accepted"]
+        out["accepted"] = {k: accepted[k] for k in ("by", "at", "note", "auth") if k in accepted}
+        at = out["accepted"].get("at")
+        if hasattr(at, "isoformat"):
+            out["accepted"]["at"] = at.isoformat()
+    return out
 
 
 def _task(t: dict, host: dict | None, ext: bool) -> dict:
@@ -514,6 +531,7 @@ def document(
                 or src["evidence"]
                 else "unproven",
                 "evidence": _evidence(src["evidence"]),
+                **_manual_acceptance(full.get(a["id"], {})),
             }
             for a, src in zip(acceptance, doc["acceptance"], strict=True)
         ],

@@ -285,3 +285,8 @@ it.each([undefined, [], null, 'bad', {}, [null], [{ gate: 'unknown', people: [SE
   expect(screen.queryByText('Signing cancels:')).not.toBeInTheDocument()
   expect(screen.getByText('Existing note')).toBeVisible()
 })
+
+it('renders a host manual-acceptance annotation under the criterion', () => {
+  render(<SignContent content={{ headline: 'Review result', acceptance: [{ id: 'AC2', text: 'Works', manual: 'AC2: accepted manually by Severin (no automated check)' }] }} />)
+  expect(screen.getByRole('listitem')).toHaveTextContent('AC2: accepted manually by Severin (no automated check)')
+})

@@ -19,8 +19,6 @@ from ..gateway import Gateway
 from . import guard
 
 ADDON = "explorer"
-#: the store entries directly in a legacy workspace folder, spelled as they are on disk
-LEGACY_FILES = (".state", "events", "tickets", "addons", "config.json", "keys.jsonl", "AGENTS.orch.md")
 REPO_ROOT_ID = "repo:"
 #: repositories declared in the settings, per workspace, for this long (the decision about WHO may read is not cached)
 REPOS_TTL = 15.0
@@ -88,7 +86,7 @@ def declared_repos(link, ws: str) -> dict[str, str]:
     return out
 
 
-def _repo_root_ok(root: guard.Root, project: Path, store: Path | None) -> bool:
+def _repo_root_ok(root: guard.Root, project: Path, store: Path) -> bool:
     """May a declared repository OUTSIDE the workspace folder be a root? Only a real git working copy that git itself
     reads from where it stands, and not a place the declaration check refuses (home, `/`, orch's own data), nor a
     hidden folder or `~/Library` of the home folder (`~/.aws`, `~/.config/gh`): the same refusals as when it is
@@ -103,7 +101,7 @@ def _repo_root_ok(root: guard.Root, project: Path, store: Path | None) -> bool:
         first = root.path[len(home.rstrip("/")) + 1 :].split("/")[0]
         if first.startswith(".") or first == "Library":
             return False
-    layout = Layout(project, store, False) if store is not None else Layout.legacy_at(project)
+    layout = Layout(project, store)
     try:
         repopaths.check_declared(layout, root.path)
         return root.has_git(()) and git.confirmed(root.path)
@@ -122,14 +120,11 @@ def open_scope(gateway: Gateway, ws: str) -> Scope:
         forbidden.update(os.path.realpath(d) for d in repopaths._config_dirs())
     except Exception:  # noqa: BLE001 - the fixed places below still apply
         pass
-    if store is not None:
-        forbidden.add(os.path.realpath(store))
-    legacy = frozenset(guard.LEGACY_STORE) if store is None else frozenset()
+    forbidden.add(os.path.realpath(store))
     show = link.call("workspace.show")
     name = show.get("name") if isinstance(show, dict) and isinstance(show.get("name"), str) else "Workspace"
-    orch = tuple(sorted(os.path.join(real, n) for n in LEGACY_FILES)) if store is None else ()
     roots = {
-        "ws": guard.Root("ws", guard.label(name), real, "workspace", legacy, tuple(sorted(forbidden)), orch),
+        "ws": guard.Root("ws", guard.label(name), real, "workspace", frozenset(), tuple(sorted(forbidden))),
     }
     repos: dict[str, tuple[str, tuple[str, ...]]] = {}
     for rname, folder in sorted(declared_repos(link, ws).items()):

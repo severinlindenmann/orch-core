@@ -18,8 +18,7 @@ the single place a later move to host-mediated `fs.*` ops replaces.
   store is refused whatever its name or path (a bind mount or a hard-linked name cannot sneak it in).
 
 **Deny list** (`deny`; one list, applies to every root, case-insensitive because macOS volumes are):
-git internals (`.git`, at any depth, file or folder), the orch store (`.orch` at any depth; in the legacy layout also
-`.state events tickets addons config.json keys.jsonl AGENTS.orch.md` directly in the workspace folder), key material
+git internals (`.git`, at any depth, file or folder), the orch store (`.orch` at any depth), key material
 (`*.pem *.key *.p8 *.p12 *.pfx`, `id_rsa`-style private keys, `.ssh`, `.gnupg`, `.netrc`, `keys.jsonl`) and every
 `.env*` file. The names live in `orch.gitbrowse` and git excludes the same ones with pathspecs.
 A denied entry is **shown locked** in its folder (name and kind of lock, no size, no content); reading, listing,
@@ -52,9 +51,6 @@ MAX_ENTRIES = 3000
 WALK_LIMIT = 50_000
 MAX_PATH_PARTS = 64
 MAX_PART = 255
-
-#: directly in the workspace folder, in the legacy layout (config.json next to the folders); in the new layout `.orch`
-LEGACY_STORE = frozenset({".state", "events", "tickets", "addons", "config.json", "keys.jsonl", "agents.orch.md"})
 
 
 class GuardError(Exception):

@@ -125,7 +125,12 @@ def _hosted_layout(path: Path, files: Files) -> tuple[Layout, dict[str, Any]] | 
     layout_mod.check_single_store(legacy=old is not None, new=new is not None)
     if new is not None:
         return Layout.new_at(path), new
-    return (Layout.legacy_at(path), old) if old is not None else None
+    if old is not None:  # a store from an older version in the root: never read as a store
+        raise layout_mod.LegacyStoreError(
+            "this folder has an orch store from an older version in the project root; orch now keeps its files in "
+            ".orch/. Delete config.json and run orch setup again"
+        )
+    return None
 
 
 def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:
@@ -257,8 +262,7 @@ class Workspace:
     @property
     def root(self) -> Path | None:
         """The **project** root, NOT the store directory (that is :attr:`store_dir`). The name is kept for the many
-        callers; while the store is the project (legacy layout) the two are equal, so a caller that reads store files
-        under ``root`` is only correct for the legacy layout and moves to :attr:`store_dir` in design steps 4 and 5."""
+        callers; a caller that reads store files reads them under :attr:`store_dir`."""
         if not self._looked:
             found = discover(self.env, self._cwd, self.files)
             self._looked = True
@@ -271,8 +275,7 @@ class Workspace:
     @property
     def layout(self) -> Layout | None:
         """Project and store directory of the workspace as discovery found them (``None`` without a workspace; the
-        hosted view, which discovers nothing, is the legacy layout of its injected root until the host learns
-        ``.orch``, design step 3)."""
+        hosted view, which discovers nothing, is its injected root with the store in ``.orch``)."""
         root = self.root
         if root is None:
             return None
@@ -280,7 +283,7 @@ class Workspace:
         if found is not None and found.layout is not None:
             return found.layout
         injected = getattr(self._store, "layout", None) if self.hosted else None  # the host's own store knows
-        return injected if isinstance(injected, Layout) else Layout.legacy_at(root)
+        return injected if isinstance(injected, Layout) else Layout.new_at(root)
 
     @property
     def project(self) -> Path | None:
@@ -289,12 +292,12 @@ class Workspace:
 
     @property
     def store_pin(self) -> StorePin | None:
-        """What discovery saw of the store (``.orch``'s identity, or legacy), for the open that follows."""
+        """What discovery saw of the store (``.orch``'s identity), for the open that follows."""
         return self._found.store_pin if self.root is not None and self._found is not None else None
 
     @property
     def store_dir(self) -> Path | None:
-        """The directory that holds ``config.json``, ``tickets/`` and ``.state/`` (``.orch``; legacy: the project)."""
+        """The directory that holds ``config.json``, ``tickets/`` and ``.state/`` (``<project>/.orch``)."""
         layout = self.layout
         return layout.store if layout is not None else None
 
@@ -357,44 +360,6 @@ class Workspace:
             self._store = self._open(self.require_root())
         return self._store
 
-    def _finish_unfinished_migration(self, root: Path, sd: Path, wid: str) -> None:
-        """Direct mode: a store move that was interrupted (its journal for THIS project directory is not terminal) is
-        completed or rolled back before the store is opened, under ``owner.lock`` (exclusive, briefly); the command then
-        asks to be run again (what was found is stale). Host mode never gets here (the host does it at its start)."""
-        from orch.store import migrate as mg
-
-        if self.hosted or self.files.roots is not None:
-            return
-        try:
-            step = mg.journal_step(sd, wid, root)
-        except mg.MigrateError:
-            return  # an unreadable journal is `orch migrate`'s to report, not every command's
-        if step in (None, "done", "rolled_back"):
-            return
-        from orch.host.errors import HostError
-        from orch.host.ownership import OwnershipLock, is_registered
-
-        if is_registered(sd, wid):  # the host owns the registry write (set_store): it finishes the move at its start
-            raise OrchError(
-                "host.required",
-                "a store move of this workspace is unfinished; the orch host finishes it when it starts",
-                hint="start the host service",
-            )
-        try:
-            with OwnershipLock(sd, wid).exclusive(10.0):
-                mg.finish_interrupted(root, state_dir=sd, workspace_id=wid)
-        except (HostError, mg.MigrateError) as exc:
-            raise OrchError(
-                "retry.later",
-                f"a store move was interrupted and could not be finished yet ({exc})",
-                hint="orch migrate",
-            ) from None
-        raise OrchError(
-            "retry.later",
-            "an interrupted store move was just finished; the workspace was found before it",
-            hint="run the command again",
-        )
-
     def _open(self, root: Path) -> Any:
         from orch.custody import FileBackend
         from orch.host.ownership import DirectGuard
@@ -404,7 +369,6 @@ class Workspace:
         wid = cfg["workspace"]["id"]
         root = self.verify_root()  # Store.open opens below the root by path: it must still be the one found
         sd = state_dir(self.env, self.files)
-        self._finish_unfinished_migration(root, sd, wid)
         host = None
         keys = sd / "hosts" / wid / "keys"
         if keys.is_dir():

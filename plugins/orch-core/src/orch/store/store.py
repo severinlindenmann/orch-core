@@ -87,8 +87,8 @@ def _lock_opener(fs: RootFS) -> Callable[[], int]:
     def opener() -> int:
         fs.revalidate()
         try:
-            # no parents=True: .state is made when the store is opened; a stale opener (after a migrate moved the
-            # store) must never re-create ``.state`` in a root that is no longer the store
+            # no parents=True: .state is made when the store is opened; a stale opener must never re-create
+            # ``.state`` in a root that is no longer the store
             return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600)
         except FileNotFoundError:
             raise StoreError("validation.path", ".state is gone; the store was moved or removed") from None
@@ -132,24 +132,12 @@ def open_store_fs(
     if create and ident is not None:
         raise StoreError("validation.path", "a store found by its identity is never created")
     pfs = RootFS.at(project, ident=ident, create=make_project and ident is None)
-    keep = False
     created: tuple[int, int] | None = None
     try:
         try:
-            found = _layout.resolve(pfs.fd, project)
+            found = _layout.resolve(pfs.fd, project)  # a store from an older version in the root: LegacyStoreError
             layout = found if found is not None else _layout.fresh(project)
-            if layout.legacy and not _layout.LEGACY_ALLOWED:
-                raise StoreError(
-                    "validation.path",
-                    _layout.legacy_refusal(pfs.fd),
-                )
-            if pin is not None and (pin.ident is None) != layout.legacy:
-                raise StoreError("validation.path", "the store layout changed since the workspace was found")
-            if layout.legacy:
-                keep = True
-                pfs.config_seen = found is not None
-                return pfs, layout, None
-            if found is None and create and _layout.WRITE_NEW:  # a new workspace: made here, owner only, never reused
+            if found is None and create:  # a new workspace: made here, owner only, never reused
                 try:
                     os.mkdir(_layout.STORE_DIR, 0o700, dir_fd=pfs.fd)
                 except FileExistsError:
@@ -188,8 +176,7 @@ def open_store_fs(
             os.close(sfd)
             raise
     finally:
-        if not keep:
-            pfs.close()
+        pfs.close()
 
 
 def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
@@ -365,7 +352,7 @@ class Store:
         if Path(root) != layout.store:
             raise ValueError("the store root is not the layout's store directory")
         self.root = root
-        #: project (the directory agents work in) and store (``root``); the same directory in the legacy layout. There
+        #: project (the directory agents work in) and store (``root``). There
         #: is no default: :meth:`open` resolves it from the directory (``orch.layout.resolve``).
         self.layout = layout
         #: a ``config.json`` was seen by the layout check: its later absence refuses (``_resolve_checked``)
@@ -473,7 +460,6 @@ class Store:
         ident: tuple[int, int] | None = None,
         store_pin: StorePin | None = None,
         create: bool = False,
-        scaffold: bool = True,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -493,16 +479,14 @@ class Store:
         them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
         it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
         below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516). ``path`` is the **project**
-        directory (and ``ident`` is its identity): the layout (legacy: the store is the project; new: the store is
-        ``.orch``) is resolved here from that one fd (:func:`orch.layout.resolve`), a linked or double store is
+        directory (and ``ident`` is its identity): the layout (the store is ``.orch``) is resolved here from that one
+        fd (:func:`orch.layout.resolve`), a linked or double store, or a store from an older version in the root, is
         ``validation.path``, and a directory with no store yet gets :func:`orch.layout.fresh`. ``store_pin``: what
         discovery saw of the store (:class:`~orch.layout.StorePin`): the opened ``.orch`` must be that directory (an
         inode swapped in between is ``validation.path``), and after an implicit walk it must still be the current
         user's and not group/other-writable. ``create`` (default ``False``; only ``orch init`` and ``host.bootstrap``
         set it): a new workspace may be made: in the new layout its ``.orch`` (which
         must not exist: ``Store.created_store`` is its identity). Without it no ``.orch`` is ever made.
-        ``scaffold=False`` (the migrate check): the ``events``, ``tickets`` and ``.state``
-        directories are not made, so a store that lacks one cannot pass.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
@@ -527,7 +511,7 @@ class Store:
                 layout=layout,
             )
             store.created_store = created
-            store._open(load == "all", config, scaffold)
+            store._open(load == "all", config)
         except BaseException:
             fs.close()
             if created is not None:  # this open made .orch and failed: it leaves nothing behind
@@ -535,7 +519,7 @@ class Store:
             raise
         return store
 
-    def _open(self, eager: bool, config: bytes | None = None, scaffold: bool = True) -> None:
+    def _open(self, eager: bool, config: bytes | None = None) -> None:
         # the window between open_store_fs's resolve and the first check under the lock fails closed too: a store that
         # had its config then is checked before anything below the root is made
         self._config_seen = self.fs.config_seen
@@ -543,8 +527,7 @@ class Store:
         for d in ("events", "tickets", ".state"):
             if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")
-            if scaffold:
-                self.fs.mkdir(d)
+            self.fs.mkdir(d)
         self._known_config = config
         try:
             self._open_checked(eager)
@@ -1297,18 +1280,12 @@ class Store:
         """Under the guard and the lock, on every transaction: the store this object has open is still the store of
         its project.
 
-        ``orch.layout.resolve`` runs afresh and must find the layout this store was opened with; in the new layout the
-        ``.orch`` it names must be the very directory pinned (same ``st_dev``/``st_ino``). The legacy layout is
-        resolved below the PINNED root fd (the project is the store, and a project path swapped later is no concern of
-        a pinned fd), the new one below the project opened afresh by path (``O_NOFOLLOW``).
-
-        A migrate that moved the store (it holds ``owner.lock`` exclusively, which a direct-mode guard waits for), a
-        swapped ``.orch`` or a store that vanished fails closed with ``validation.path``: a stale opener never writes
-        to a store that is no longer where it was. A workspace whose ``config.json`` is not written yet (genesis in
-        progress) resolves to nothing and keeps the layout it was opened with."""
-        if self.layout.legacy:
-            self._resolve_checked(self.fs.fd)
-            return
+        ``orch.layout.resolve`` runs afresh below the project opened afresh by path (``O_NOFOLLOW``) and must find the
+        layout this store was opened with; the ``.orch`` it names must be the very directory pinned (same
+        ``st_dev``/``st_ino``). A swapped ``.orch``, a store that vanished or a layout that changed under a running
+        process fails closed with ``validation.path``: a stale opener never writes to a store that is no longer where it
+        was. A workspace whose ``config.json`` is not written yet (genesis in progress) resolves to nothing and keeps
+        the layout it was opened with."""
         try:
             pfd = os.open(self.layout.project, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC)
         except OSError as exc:
@@ -1326,14 +1303,10 @@ class Store:
         if found is not None:
             self._config_seen = True
         elif self._config_seen:
-            # once this store has seen its config.json (or opened with one), a missing one is a migrate window, a
-            # deleted, invalid, oversized or FIFO file, never "no config yet": fail closed, never write into a root that
-            # is no longer a store. Only a store opened before any config existed keeps its layout.
+            # once this store has seen its config.json (or opened with one), a missing one is a deleted, invalid,
+            # oversized or FIFO file, never "no config yet": fail closed, never write into a root that is no longer a
+            # store. Only a store opened before any config existed keeps its layout.
             raise StoreError("validation.path", "the workspace's config.json is gone or unreadable; nothing is written")
-        if found is not None and found.legacy != self.layout.legacy:
-            raise StoreError("validation.path", "the store layout changed since it was opened; run the command again")
-        if self.layout.legacy:
-            return
         try:
             sfd = _layout.open_store_dir(pfd)
         except LayoutError as exc:

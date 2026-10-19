@@ -1241,7 +1241,9 @@ def test_u3_a_request_on_an_existing_ticket_is_not_new_so_the_dashboard_keeps_th
     for head in (f"Change the plan of DEMO-1{q}", f"Approve the requirements of DEMO-1{q}", f"Edit DEMO-1{q}"):
         out = signcontent._with_title({"headline": head, "ticket": dict(t)})
         assert out["ticket"]["new"] is False and out["ticket"]["uid_tail"] == "ABCD1234"
-        assert out["headline"] == head and "signed id" not in out["title"]  # the id is the dashboard's muted line, not words
+        assert (
+            out["headline"] == head and "signed id" not in out["title"]
+        )  # the id is the dashboard's muted line, not words
 
 
 def test_u3_only_a_creation_drops_the_cancel_notes_and_never_another_note():

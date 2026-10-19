@@ -21,7 +21,8 @@ The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Con
      fields_title?: str, notes?: [str], title?: str}
     title = the headline without the host-key / signed-id qualifier, for a dialog title (U3); the qualifier stays in
     ``ticket`` (key_note, uid_tail), which the dashboard shows under "Technical details"; ``headline`` is unchanged
-    ticket = {key, title, uid_tail, key_note, new}   // new: this review creates the ticket; key_note: the key is the host's word; uid_tail is the signed id's end
+    ticket = {key, title, uid_tail, key_note, new}
+    // key_note: the key is the host's word; uid_tail is the signed id's end; new: this review creates the ticket
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
 shown only when a signed event states it (a ``ticket.created``): a gate does not bind the title, so ``ticket.title`` is

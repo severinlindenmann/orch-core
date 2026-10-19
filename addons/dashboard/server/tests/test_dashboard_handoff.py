@@ -752,7 +752,7 @@ def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls)
     # the one view carries the ticket AND its written text
     content = got["content"]
     assert sorted(s["id"] for s in content["sections"]) == ["context", "summary"]
-    assert content["headline"].startswith("Create DEMO-") and content["subline"] == "and its text (2 sections)"
+    assert content["headline"].startswith("Create DEMO-") and content["subline"] == "Includes its text (2 sections)"
     assert any("one confirmation" in n.lower() for n in content["notes"])
     # a second post of the same intent is the same request (the intent's idem covers the whole intent)
     again = post(client, token, stub, {**SEQ}).json()

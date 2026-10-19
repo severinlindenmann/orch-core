@@ -67,6 +67,7 @@ export function ArtifactPreview({ item, members, onClose, opener }: { item: Arti
   return (
     <ArtifactDrawer
       artifact={shown}
+      ticket={item?.ticket}
       agentHtml={agentHtml}
       onClose={onClose}
       opener={opener}
@@ -109,7 +110,7 @@ export function ArtifactPane({ item, members, onClose }: { item: ArtifactItem; m
       </header>
       {/* The pane is the viewer's own scroller: wide datasets and logs scroll here, never the page (N11). */}
       <div className="min-h-0 flex-1 overflow-auto p-3" data-scroll-x>
-        {stateBody(state, retry) ?? <Viewer key={a.name + a.sha256} a={a} agentHtml={agentHtml} />}
+        {stateBody(state, retry) ?? <Viewer key={a.name + a.sha256} a={a} agentHtml={agentHtml} ticket={item.ticket} />}
       </div>
     </aside>
   )

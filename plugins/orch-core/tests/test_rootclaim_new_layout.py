@@ -52,7 +52,7 @@ def test_a_projects_own_dot_orch_is_a_named_collision_not_orch(tmp_path: Path) -
 
 def test_a_store_move_in_progress_is_a_named_marker(tmp_path: Path) -> None:
     (tmp_path / ".orch-migrating").mkdir()
-    assert "orch migrate" in (_free(tmp_path) or "")
+    assert "run orch setup again" in (_free(tmp_path) or "")
     (tmp_path / ".orch-migrating").rmdir()
     (tmp_path / ".orch-init.lock").write_text("")
     assert _free(tmp_path) is None  # init's own lock is fine for init

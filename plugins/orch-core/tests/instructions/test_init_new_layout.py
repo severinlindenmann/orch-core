@@ -75,7 +75,7 @@ def test_a_legacy_root_store_and_a_store_move_in_progress_are_refused(where, ter
     (root / ".orch-migrating").mkdir()
     with pytest.raises(OrchError) as e:
         run_init(where)
-    assert "orch migrate" in e.value.message
+    assert "run orch setup again" in e.value.message
 
 
 @pytest.mark.parametrize("at", ["Passphrase: ", "Press Enter"])

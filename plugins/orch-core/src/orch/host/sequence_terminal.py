@@ -106,11 +106,14 @@ def sign_sequence(
         review = signer.plain(prepared, workspace, prefix=prefix, members=signer.members_of(call))
         if resumed is not None:
             n = sum(1 for s in resumed["steps"] if s["state"] == "landed")
-            note = (
-                f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
-                f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
-                f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
-            )
+            if resumed["ticket"] is None:  # a sequence on the workspace log (turning on an add-on): no ticket
+                note = f"RESUMING: {n} of {driver.total} signatures of this exact review are already signed.\n\n"
+            else:
+                note = (
+                    f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
+                    f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
+                    f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
+                )
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):
             signer._refuse("not confirmed")

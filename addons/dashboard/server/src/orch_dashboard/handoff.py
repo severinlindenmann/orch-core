@@ -1214,7 +1214,7 @@ class Handoffs:
 
     def __init__(self, clock=time.monotonic):
         #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
-        #: signer drives in the person's terminal). Not a guard of anything. Kept per person (INTENTS_PER_PERSON each), so
+        #: signer drives in the person's terminal). Not a guard of anything. Kept per person, so
         #: another person's burst of prepares cannot evict mine.
         self.intents: dict[str, dict[str, dict]] = {}
         self.clock = clock

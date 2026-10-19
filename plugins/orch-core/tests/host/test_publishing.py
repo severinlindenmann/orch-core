@@ -279,6 +279,14 @@ def test_the_server_setting_is_signed_by_the_owner_and_shown_in_words(bare, huma
     ok(human.submit_res(prepared["request"]["id"], signed.events))
     listing = ok(bare.req("publish.list", {}))["data"]
     assert listing["configured"] is True and listing["server"] == SERVER and listing["share"] == SHARE
+    refused = human.prepare_res("settings.set", {"set": {"publish": None}})  # AE4: not while Publish is on
+    assert (
+        not refused["ok"]
+        and refused["error"]["code"] == "invalid.input"
+        and "turn it off" in refused["error"]["message"]
+    )
+    off = human.prepare("addon.disable", {"name": "publish"})
+    ok(human.submit_res(off["request"]["id"], human.sign(off).events))
     cleared = human.prepare("settings.set", {"set": {"publish": None}})
     assert signcontent.build(cleared, verified=True)["fields_changed"][0]["after"].startswith("(removed")
 

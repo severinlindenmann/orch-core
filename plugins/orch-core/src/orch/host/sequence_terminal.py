@@ -34,8 +34,12 @@ class _Unlocked:
 
 def labels_for(intent: Mapping[str, Any]) -> tuple[bytes, ...]:
     """The domain labels the reviewed intent's steps need, and no more: a ticket event's label for every step on the
-    ticket, the workspace event's label only when a step is the grant (``grant.issued`` is a workspace event)."""
-    names = ["sig_ws_event" if s["kind"] == "grant" else "sig_ticket_event" for s in sequence.steps(intent)]
+    ticket, the workspace event's label only when a step is on the workspace log: the grant (``grant.issued``) or a step
+    that names ``log: "workspace"`` (the settings and add-on events of ``addon_enable``)."""
+    names = [
+        "sig_ws_event" if s["kind"] == "grant" or s.get("log") == "workspace" else "sig_ticket_event"
+        for s in sequence.steps(intent)
+    ]
     return tuple(canon.LABELS[n].encode("ascii") for n in dict.fromkeys(names))
 
 

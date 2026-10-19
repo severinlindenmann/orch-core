@@ -177,8 +177,11 @@ def _validate(op: str, args: Any) -> None:
 def _tail_id(store: Any, log: str) -> str | None:
     """The id of the last event of ``log`` (``None`` for an empty or unknown log): what a sequence's chain compares."""
     nxt = int(store.peek_stamp(log)["seq"])
-    last = store.events(log, after=max(nxt - 2, 0), limit=2)
-    return str(last[-1]["id"]) if last and nxt > 1 else None
+    if log == "workspace":  # the workspace log is read by events_after (events() takes a ticket)
+        tail = [e for e, _ in store.events_after(log, max(nxt - 2, 0), 2)]
+    else:
+        tail = store.events(log, after=max(nxt - 2, 0), limit=2)
+    return str(tail[-1]["id"]) if tail and nxt > 1 else None
 
 
 def _store_error(exc: Any) -> HostError:
@@ -532,6 +535,17 @@ class HumanOps:
             )
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.ADDON:
+            from . import seqaddon
+
+            seqaddon.host_check_first(
+                store, person, checked["intent"], dry_run=dry_run, err=lambda code, why: HostError(code, why)
+            )
+        if checked["step"] > 0 and checked.get("log") == "workspace":
+            # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
+            if not dry_run and _tail_id(store, "workspace") != checked["prev"]:
+                raise HostError("human.request_mismatch", sequence.CHANGED)
+            return checked
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and checked["intent"].get("people"):
             from orch.model import claims
 
@@ -960,7 +974,16 @@ class HumanOps:
                 # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
                 if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", sequence.CHANGED)
-            if meta is not None and meta["step"] > 0:
+            if meta is not None and meta["step"] > 0 and meta.get("log") == "workspace":
+                # the add-on sequence's grant (AE6): on the workspace tail the signer's own settings step left, re-read
+                # here under the lock; it is the grant of an add-on, on the workspace log, and nothing else
+                if (
+                    record["op"] != "addon.grant"
+                    or record["prepared"]["log"] != "workspace"
+                    or _tail_id(store, "workspace") != meta["prev"]
+                ):
+                    raise HostError("human.request_mismatch", "the workspace changed while signing, review again")
+            elif meta is not None and meta["step"] > 0:
                 # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
                 # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)
                 log = record["prepared"]["log"]

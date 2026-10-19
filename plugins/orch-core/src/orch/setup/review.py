@@ -26,6 +26,7 @@ from datetime import UTC
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_needs import NEEDS_SETTINGS
 
 from .facts import AddonInfo, Facts
 from .protocol import SetupError
@@ -202,6 +203,8 @@ def plan(
             )
         )
     for a in profile["addons"]:
+        if a in NEEDS_SETTINGS:  # AE4: setup signs no settings for these, so it never turns them on (Settings does)
+            raise SetupError("invalid.input", f"{a} is turned on in Settings, Add-ons", field="addons")
         if info[a].kind != "addon" or not wanted(f"addon:{a}"):
             continue
         ev = _addon_event(a, manifest_bytes(a))

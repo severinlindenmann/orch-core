@@ -52,6 +52,15 @@ orchestrator/
 └── .state/                  # git-ignored: index.sqlite (derived state), locks, sessions, checkpoints
 ```
 
+**As built (the `.orch/` store move).** The folder above is `<project>/.orch/`, a real directory (never a link) of the
+host UID, mode 0700 (0750 on Tier B). The project root keeps only what other tools read from there: `AGENTS.md` (the
+orch block, which names `.orch/AGENTS.orch.md`), `CLAUDE.md` (`@AGENTS.md` only), `.agents/skills/orch-*` and
+`.claude/skills/orch-*`, and a `.gitignore` line `.orch/`. Records travel through `orch records` (the records
+repository is `.orch/.git`). The marker of a workspace is `.orch/config.json` with `"schema": "orch.workspace/2"`; a
+config in the project root AND in `.orch/` is refused ("two orch stores"). A workspace made before the move (the store
+in the project root, "legacy") is read as before and moved by `orch migrate`. Decisions and the migration are in
+`design-orch-subfolder` (state) and §10.7 "Decisions of the `.orch/` store move".
+
 `config.json` (excerpt; ids are shortened in all examples, the real forms are in §11.1):
 
 ```json
@@ -1979,6 +1988,30 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
   and gives the question the next free `Q` id.
+
+**Decisions of the `.orch/` store move (B11).** `orch.layout` is the one place that knows the names: `STORE_DIR`,
+`Layout(project, store, legacy)`, `resolve`, `WRITE_NEW` (the flip switch; on). Rules the tests pin:
+
+- **Discovery** probes `.orch/config.json` and the legacy root config; the v2 `orchestrator/` probe is gone (v1 stays for
+  `import v1`). `ORCH_WORKSPACE` is the project root; `<project>/.orch` is accepted as an alias once it is a confirmed
+  store. A `.orch` that is a link or a file is refused (`LayoutError`), never read around; in the implicit walk another
+  tool's `.orch` away from the start directory is passed.
+- **Registry** entries carry `root` (the project) and, once the store moved, `"store": ".orch"` (exact key set; any
+  other value is refused). The host serves and checks (`check_workspace_files`: owner, mode 0o022, ACL) the store, and
+  agents, terminals and worktrees keep using the project. A store whose layout differs from its entry is unavailable.
+- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
+  `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
+  what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
+  layout under the guard and the lock, so a stale opener fails closed after a migrate.
+- **`orch migrate`** (host op `host.store_migrate`, or direct mode under `owner.lock`) plans with dev/ino and log digests,
+  journals (`hosts/<ws>/migrate.json`, bound to the project's dev/ino), moves every entry into `.orch-migrating` by
+  `renameat`, renames it to `.orch`, verifies (entries, digests, a full replay) and only then commits and records
+  `store`; before the commit point it rolls back by reverse renames, after it only forward; nothing is ever deleted.
+  The host refuses running work (live sessions, terminals, pending sign requests) and a host that does not list the
+  op is `migrate.version_skew`. The records repository (`.git`) moves with it only when records are configured, HEAD is
+  a commit the host itself recorded and every commit under every ref is a records commit of the workspace.
+- **Unfinished moves** are finished or rolled back by the next host start (it follows the journal) or by `orch migrate`;
+  a direct command meeting one finishes it (unregistered) or answers `host.required` (registered).
 
 **Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).

@@ -145,7 +145,17 @@ def _unquote_systemd(line: str) -> list[str]:
     return [re.sub(r"\\(.)", r"\1", w).replace("%%", "%").replace("$$", "$") for w in words]
 
 
-def unit_fields(kind: str, content: bytes) -> dict[str, str | None] | None:
+def _launcher_interpreter(path: str) -> str:
+    """The interpreter a launcher's shebang names (``#!<python> -I``); the launcher's own path when it cannot be read,
+    so an unreadable launcher never looks like the expected interpreter."""
+    try:
+        first = Path(path).read_text().split("\n", 1)[0]
+    except (OSError, UnicodeDecodeError):
+        return path
+    return first[2:].removesuffix(" -I") if first.startswith("#!") and first.endswith(" -I") else path
+
+
+def unit_fields(kind: str, content: bytes, release: Path | None = None) -> dict[str, str | None] | None:
     """``{python, state, run}`` of a unit file's command, or ``None`` when it cannot be read as one of ours."""
     try:
         if kind == "launchd":
@@ -159,9 +169,16 @@ def unit_fields(kind: str, content: bytes) -> dict[str, str | None] | None:
         return None
     if not args:
         return None
-    # a launchd unit that runs the release's launcher directly (macOS lists it by that name) names no interpreter:
-    # its python is the launcher's shebang. ``None`` never counts as a difference (see :func:`differences`)
-    python = None if kind == "launchd" and Path(args[0]).name in ("orch-host", "orch-runner") else args[0]
+    # a launchd unit that runs the release's launcher directly (macOS lists it by that name): its interpreter is the
+    # launcher's shebang. Only the expected launcher counts as one (``release`` given); any other program is its own
+    # "python", so it differs
+    python = args[0]
+    if (
+        kind == "launchd"
+        and release is not None
+        and Path(args[0]) in (release / "bin" / "orch-host", release / "bin" / "orch-runner")
+    ):
+        python = _launcher_interpreter(args[0])
     return {"python": python, "state": _arg_after(args, "--state"), "run": _arg_after(args, "--run")}
 
 
@@ -174,12 +191,10 @@ def differences(unit: Plan) -> list[str] | None:
         return None
     except OSError:
         return ["python", "state", "run"]
-    old, new = unit_fields(unit.kind, have), unit_fields(unit.kind, unit.content)
+    old, new = unit_fields(unit.kind, have, unit.release), unit_fields(unit.kind, unit.content, unit.release)
     if old is None or new is None:
         return ["python", "state", "run"]
-    return [
-        k for k in ("python", "state", "run") if old[k] != new[k] and not (k == "python" and None in (old[k], new[k]))
-    ]
+    return [k for k in ("python", "state", "run") if old[k] != new[k]]
 
 
 _INSTALLED = frozenset({"site-packages", "dist-packages"})
@@ -422,7 +437,7 @@ class Manager:
         fields = None
         if present:
             try:
-                fields = unit_fields(self.plan.kind, self.plan.unit_path.read_bytes())
+                fields = unit_fields(self.plan.kind, self.plan.unit_path.read_bytes(), self.plan.release)
             except OSError:
                 fields = None
         return {

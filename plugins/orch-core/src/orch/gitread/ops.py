@@ -8,7 +8,7 @@
   ``remote.origin.url`` values.
 * ``diff {branch, default_branch, context, max_bytes}`` (profile ``gitdir``): base and head per section 0.8 and the
   patch text of ``git diff --no-ext-diff --no-textconv --no-renames base head``.
-* ``tree_check {}`` (profile ``worktree`` only): is the working copy clean relative to ``HEAD``
+* ``tree_check {removal?}`` (profile ``worktree`` only): is the working copy clean relative to ``HEAD``
   (:mod:`orch.gitread.treecheck`; H10, F2, N3).
 
 Every request first opens the repository under its pins and reads all its refs, so a config, extension or ref store
@@ -449,11 +449,13 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
     pins = RepoPins.from_json(hello.get("pins"))
     with Repo(pins) as repo:
         if op == "tree_check":
-            if args:
-                raise Unavailable("bad request: tree_check takes no arguments")
+            if set(args) - {"removal"} or type(args.get("removal", False)) is not bool:
+                raise Unavailable("bad request: tree_check takes only removal (a boolean)")
             worktree = open_pin(pins.worktree)  # device and inode checked: still the pinned working copy
             try:
-                return treecheck.check(repo, worktree)
+                # no person configuration here: the policy matches the repository's own ignore files in the case modes
+                # its config allows (orch.gitread.ignorepolicy); a removal check never applies any (#583 round 3)
+                return treecheck.check(repo, worktree, removal=bool(args.get("removal")))
             finally:
                 worktree.close()
         if op == "observe":

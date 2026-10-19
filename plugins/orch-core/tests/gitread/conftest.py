@@ -90,3 +90,15 @@ def git_version() -> tuple[int, ...]:
     out = subprocess.run([GIT, "version"], capture_output=True, text=True, check=True).stdout
     nums = out.split()[2].split(".")
     return tuple(int("".join(ch for ch in n if ch.isdigit()) or 0) for n in nums[:3])
+
+
+def case_sensitive(r) -> None:
+    r.git("config", "core.ignorecase", "false")
+
+
+def untracked_by_git(r) -> set[str]:
+    """Every path plain git lists as untracked or changed (``status --untracked-files=all``)."""
+    out = subprocess.run([GIT, "--no-optional-locks", "-C", str(r.path), "status", "--porcelain=v1", "-z",
+                          "--untracked-files=all"], capture_output=True, env=r.env, check=True,
+                         stdin=subprocess.DEVNULL).stdout  # fmt: skip
+    return {e[3:].decode() for e in out.split(b"\0") if e}

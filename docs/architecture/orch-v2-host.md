@@ -4488,6 +4488,43 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     for the rest), `gate.stale` as retry class `C-review`, the push kind `ticket.update` (a generic wake with the hint's id, no ticket text).
     No F1, hash or error-code change; the model judges the phone's decision as any person event (device validity and
     generation at the append).
+76. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
+    be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the caller
+    spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file)
+    could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through
+    `orch.gitread.local.READER` (`LocalGitReader`), orch's own reader in-process, as host mode's reader children always
+    did: discovery from a path, `HEAD` (a detached one too), refs, the identity, the clean check (`tree.check`'s reader
+    over the whole repository from its top, with the person's global ignore file read as data), `orch worktree`'s
+    checks, direct D58 and the dashboard dev host's diff. `gitsafe.OPS` keeps only `check --staged`'s `staged_raw` and
+    `staged_blob`; `observe.git`/`lookup`, `wtgit.read_git`/`tree_dirty`, `gitsafe.submodules` and `person_entries` are
+    gone. The git-process families left keep the gate and carry a race note at the call site (`gitbrowse`, the explorer's closed table of history-only reads, is the third: no work-tree command, so the window is harmless; §12.7): `wtgit.run_git`
+    (`worktree remove` now **always** runs `--force`, after orch's own clean check, so git's own `status` never runs;
+    `prune` checks out nothing; `add`'s checkout is the one open residual, tier A: an agent that commits a repo config
+    in its worktree, then a column-G `worktree.create` runs its smudge filter, once per checked-out file it selects; the
+    UID is the boundary in tier A (D-P2-31); fix tracked in #584) and `check --staged` (no work-tree contents, inside
+    the person's own `git commit`). gitread now skips git clone's `refs/remotes/<r>/HEAD` symref (never followed; any
+    other loose symref still refuses the repository, F7), and reads ref names as UTF-8, checked by #561's validator
+    (moved to `orch.gitread.refs.branch_ok`), so a non-ASCII branch reads in both modes. Hardening from the review of
+    #583: `.gitignore` globs are git's `wildmatch`, matched without backtracking (`gitread.wildmatch`: an unclosed `[`
+    and an unknown `[:class:]` match nothing, the twelve POSIX classes are supported; a 17-byte line had taken 21 s),
+    and a direct-mode tree check has a 30 s work budget that ends as unknown; the person's global ignore file fails
+    toward "nothing ignored" when their config has an include, an `includeIf`, an empty or unreadable value; a
+    `packed-refs` that claims `sorted` and is not, a name that differs from a loose ref only in case or Unicode
+    normalisation, and the skipped `refs/remotes/<r>/HEAD` are unknown, never a different answer; direct D58 reads
+    `HEAD` and the tree in one read of the registration's pins. Round 3 (orch-07, structural): removal never depends on
+    ignore rules (`orch worktree remove` lists every file that is not tracked-and-unchanged, ignored ones too, with
+    sizes; `--discard-untracked` deletes exactly that set after a re-check); status checks match ignore rules as git
+    does, `core.ignorecase` included (`gitread.ignorepolicy`, the one entry point; git's `WM_CASEFOLD` in
+    `gitread.wildmatch`; both case modes, ignored only if both ignore, where the value is not known, e.g. host mode
+    without a value in the repository's config); ignore bytes are capped at 256 KiB; a ref lookup the file system folds
+    but the listing does not name exactly is unknown. **Behaviour changes:** `orch worktree remove` blocks on ignored
+    files too (`--discard-untracked`); direct mode reads what the reader reads: a repository with an extension
+    it does not support (`worktreeConfig`, `refStorage`, `partialClone`, ...), a split or sparse index, objects only in
+    an alternate, or a ref name that is not UTF-8 or that git's rules refuse is "cannot be told" (`None`,
+    `observe.unavailable`, "diff unavailable"), never clean; a repository whose own config names a program is read (the
+    config is data), no longer refused; `core.autocrlf`/`core.eol` are not applied (the raw bytes are hashed: only ever
+    dirtier); dirty lines are `why: path` (`modified`, `untracked`, `deleted`, `type`, `flag`); the dev host's diff
+    shows a rename as a deletion and an addition. No op, code, wire, hash or schema change.
 
 ---
 
@@ -4896,9 +4933,13 @@ UID. P2 adds no keychain.**
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.
   - **Refs (F7).**
-    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`.
+    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`. Ref names are
+      UTF-8 and follow git's rules (#561's validator, `gitread.refs.branch_ok`; #583): a non-ASCII branch is read, a
+      name that is not UTF-8 or that the rules refuse is never resolved.
     - A loose ref that is itself a symref, a ref name differing only in case from another ref in either store, or an
-      unparsable `packed-refs` line makes the repo observe.unavailable.
+      unparsable `packed-refs` line makes the repo observe.unavailable. The one exception (#565): git clone's
+      `refs/remotes/<remote>/HEAD` naming a branch of the same remote is skipped, never followed (orch resolves only
+      `HEAD` and `refs/heads/*`).
   - **Bounds:** §0.11. Every object is checked against its id, so `diff` is computed from exactly the commits in
     `source_sha`. Gitlinks show as commit ids, and LFS files as their pointers.
 - **The D58 branch check** (HEAD is the symbolic ref `refs/heads/<branch>` at the bound sha) is done by the host
@@ -12458,7 +12499,31 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   and the clean-tree check read that worktree's pins; refs and objects still come from the common dir (`branch.pushed`,
   `diff`, `commit.list` unchanged). The prepared request, each binding and the precommit carry the generation; a
   changed generation, pin, or a HEAD not on the current branch is `observe.unavailable`, never a fallback.
-- **Remove:** `tree.check` first; dirty is `worktree.dirty` unless `force` (P only); a live run with that cwd is
+- **Ignore rules and removal (#583 round 3, orch-07's structural rule; owner decision B of 19 Oct 2026):** *removal
+  never depends on ignore rules; a status check applies a rule only as git would, and where it cannot tell which way
+  git matches it applies the rule only if git would in either case.* `orch.gitread.ignorepolicy` is the one place that
+  decides (and the only code that parses or applies a pattern):
+  - a **removal** check (host `worktree.remove`, `orch worktree remove`) applies no ignore rule: every file that is
+    not tracked-and-unchanged blocks it, ignored or not, listed with paths and, for an untracked directory, its file
+    count and size. Direct mode's `--discard-untracked` deletes exactly the listed untracked set: it prints it, checks
+    again right before deleting (a fingerprint of every untracked path, size, mtime and mode) and refuses when it
+    changed; modified tracked files still block. The host keeps `force` (P only);
+  - a **status** check applies git's sources in git's order (the person's `core.excludesFile`, `info/exclude`, the
+    `.gitignore` files), **on macOS and in host mode too**. Matching is git's `wildmatch`; with `core.ignorecase` true
+    (what `git init` writes on a case-insensitive file system) it is git's `WM_CASEFOLD` exactly, quirks included (an
+    escaped letter and a set member are not folded, `[!a]` excludes `A`). The value is read as git does: the
+    repository's config (last value), else the person's, else false. **Where it cannot be told** (the repository's
+    config has an `include`/`includeIf` or a value that is not a boolean; host mode with no value in the repository's
+    config; the person's configuration has an include, is unreadable, or is redirected by the environment) the path is
+    matched in both modes and counts as ignored only if both ignore it, so the answer is never cleaner than git's in
+    either case. The person's `excludesFile` (lowest) is applied only when the person's configuration is known and
+    the repository's config sets no `core.excludesFile`; otherwise it is dropped (only dirtier). Parsing is git's
+    (BOM skipped, `trim_trailing_spaces`, one CR dropped, escapes). A line the reader cannot be sure it reads as git
+    does (a negation with non-ASCII bytes, a control byte, bytes that are not UTF-8, text that is not NFC) drops its
+    file **with every source of lower precedence below it**. Every answer is dirtier than git's or equal;
+  - all ignore files of one check together are capped at 256 KiB (more: unknown), and the reader's 30 s budget reads
+    the clock per directory, per pattern and per ignore file; a bracket class compiles in O(members + 256).
+- **Remove:** `tree.check` first (the removal check above); dirty is `worktree.dirty`, listing the files, unless `force` (P only); a live run with that cwd is
   `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
   after the runner reports success, and the removal bumps the registration generation, so any request prepared against
   the removed worktree is invalidated (`observe.unavailable`).
@@ -12492,27 +12557,33 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   - **Isolation (#541, #546).** The invariant's second half: *no git invocation by orch reads configuration the
     person or a repo controls, except through an explicit allow-list.* The repo's half is the gate above. The person's
     half is one mechanism in `orch.gitsafe`: `isolated_env` (built from scratch, no `GIT_*` of the caller,
-    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (an operation's own allow-list of the
-    person's keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `command`
-    (a closed set of operations, `gitsafe.OPS`, each with fixed arguments and at most one validated operand: no
-    caller can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null`
-    and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`). Every invocation
-    site:
+    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (configuration passed as command-scope
+    entries; no operation keeps any of the person's) and `command` (a closed set of operations, `gitsafe.OPS`, since
+    #565 only `staged_raw` and `staged_blob`, each with fixed arguments and at most one validated operand: no caller
+    can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null` and
+    `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`).
+  - **The gate-then-spawn race (#565).** The gate lists the config and git reads it again when it starts; a
+    concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file) can add, for example,
+    `filter.x.clean=<program>` in between, and `status` ran it (reproduced). Filters cannot be switched off by
+    command-scope config. So no direct-mode read runs git: repository discovery, `HEAD`, refs, the identity, the
+    clean check, `orch worktree`'s checks, direct D58 and the dashboard dev host's diff are orch's own reader
+    in-process (`orch.gitread.local.READER`), which reads the config as data (three keys) and never reads an
+    attribute, filter, hook or fsmonitor. What it cannot read is unknown, never clean. The git processes left keep
+    the gate and carry a written race note at the call site saying why the window is acceptable there. Every
+    invocation site:
 
     | Site | Isolation |
     |---|---|
     | `gitsafe` gate's own reads | its fixed reads, `isolated_env`, no person keys |
-    | `gitsafe.person_entries` (`config --list --show-scope --includes -z`, no repository) | reads the person's system and global config as data, keeps only the operation's allow-list, executes nothing |
     | `gitsafe.git_version` (`git --version`) | `isolated_env`; once per `PATH`; the gate refuses git older than 2.32 |
-    | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=dirty` for `status`; `index_flags` over the whole repository; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
-    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
-    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_tree`, `index_flags` |
-    | dashboard dev host `devhost/reads.diff` (through `store/observe.git`) | `gitsafe.command`: `commit`, `ref`, `merge_base`, `parent`, `diff_numstat`, `diff_names`, `diff_patch` |
+    | `store/observe` (`head`, `symbolic_head`, `toplevel`, `dirty`, `refusal`, `repo_identity`, `observe`; `ops/caps.Git`, `hostclient` and D58 in direct mode), `worktree_cli` revisions and clean checks, dashboard dev host `devhost/reads.diff` | **no git process** (#565): `orch.gitread.local.READER` in-process; the config read as data (three keys); status checks apply ignore rules as git does (`gitread.ignorepolicy`: `core.ignorecase` honoured, the person's global ignore file read as data when their config is certain), removal checks apply none (rule A); `ops/caps.Git.run` (free argv) is removed (#546) |
+    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546). **Race note (#565):** no work-tree file is read (index against `HEAD` by id, a stored blob as stored), so no filter, textconv or diff driver applies; it runs inside the person's own `git commit` |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |
-    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would |
-    | `gitread/*` | no git process |
+    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would. **Race note (#565):** `remove` always runs `--force`, after orch's own clean check (the host's `tree.check`, or `LocalGitReader` in direct mode; only a person's force skips it), so git's own `status` never runs; `prune` checks out nothing; **`add`'s checkout is the open residual (tier A):** an agent that commits a repo config in its worktree, then a column-G `worktree.create` runs its smudge filter, once per checked-out file the filter's attribute selects, on every `add` that hits the window; the UID is the boundary in tier A (D-P2-31); fix tracked in #584. **What `--force` costs:** host mode no longer has git's own second clean check at remove time (a non-forced remove ran `status` again). Accepted: that check is exactly the `status` that runs the repository's clean filters (the #565 race), orch's reader check is the one that decides, and what can change between the two is data the worktree's own agent (or the person) writes, not code that runs; such a file is deleted with the worktree. Since #583 the reader's ignore rules fail toward "nothing ignored" (an include or empty `excludesFile` in the person's config, an unclosed `[`), so a file git shows is never one it misses |
+    | `gitbrowse.run` (the explorer: `dashboard/server/explorer/git.py` and `search.py`; `gitbrowse.py` `command`/`run`) | `gitbrowse.OPS` is its own closed table over `gitsafe.gate`, `isolated_env`, `_argv` (`--no-ext-diff --no-textconv`, diff pins) and a layout confirmed by `layout`. **Race note (#565):** only history commands (`log`, `show`, `diff` between two commits, `cat-file`, `rev-parse`), no work-tree or index command: no `status`, no clean/smudge filter, no checkout, which is what the #565 race needed. A key written into the config between the gate and the spawn cannot name a program one of these commands runs (`--no-ext-diff`, `--no-textconv`, `--no-pager`, hooks are not run by read commands); so the window is harmless here. Not moved to gitread (it needs `log`/`show` formats the reader does not produce) |
+    | `gitread/*` (host mode's reader children) | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
     itself checks only the directory's owner.
@@ -12539,19 +12610,20 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
       never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too
       (`gitsafe.BUILTIN_DRIVERS`: git's userdiff set as of git 2.54, 27 drivers; a built-in a newer git adds stays
       unpinned until it is listed, which is harmless: its regex is git's, and the stripping below is the backstop);
-      the text it would choose after a hunk header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
-      strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
+      since #565 the only diff operation left is `staged_raw` (`--raw`: no hunk at all), and the dashboard dev host's
+      diff is the reader's, whose hunk headers the dev host still cuts after the second `@@`;
     - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
 
     An empty driver name (`[diff ""]`, which an empty `diff=` attribute selects) is never read as a top-level key:
     it is refused, and every diff passes `--diff-algorithm=default`. A diff git cannot produce (it fails, is refused
-    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch; so
-    is a revision lookup (head, default branch, merge base, parent) git gives no answer to (`observe.lookup` tells
-    git's honest "no result" from no answer).
+    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch.
+    Since #565 the dashboard dev host's diff is orch's reader (tree to tree, no renames: a rename is a deletion and an
+    addition); anything it cannot produce (a refused repository, a missing object, a base it cannot establish, a
+    limit) is that same "diff unavailable" (409).
     Any other `diff.*` key is refused, naming it: "this repo sets diff.X, which orch doesn't support yet; remove it
     or tell us". A key a future git adds is therefore refused by default. No other operation reads diff config, and
     the runner's `worktree add`/`remove` run no diff. A test sets every tolerated key to a hostile value and gets
-    byte-identical output to a clean repository from every operation. The shared allow-list (`exec_risk`, which the
+    byte-identical output to a clean repository from every operation and from the reader's reads. The shared allow-list (`exec_risk`, which the
     records tool also applies) still refuses the program-running `diff` keys.
   - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
     `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
@@ -12559,7 +12631,8 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   - **Why.** A working copy with a **populated** submodule (a gitlink in the index whose directory is not empty)
     contains a second repository with its own config. The gate does not list that config. `git status` would run the
     submodule's filters, and `--ignore-submodules` would instead hide its changes.
-  - **What is refused.** Every cleanliness verdict refuses such a tree (`gitsafe.submodules`):
+  - **What is refused.** Every cleanliness verdict refuses such a tree (since #565 orch's reader does, in both modes;
+    `gitsafe.submodules` is gone):
     - direct-mode D58 on a registered worktree gives `observe.unavailable`;
     - direct `list --check` gives `dirty: null` (unknown, never `0`);
     - direct `remove` without `--force` gives `observe.unavailable`.
@@ -12581,7 +12654,8 @@ Where the code differs from or adds to §12.7, the code is this:
   `HostGitReader.verify_worktree`, which pins the path again from the commondir's root and compares worktree, gitdir and
   commondir (device and inode): a re-pointed file, a swapped or moved directory is `observe.unavailable` (`moved` in the list).
 - **Runner `git`** (`orch.runner.wtgit`): the `orch.gitsafe` gate on the repo (and, on remove, on the worktree, whose
-  status git runs) before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
+  config git reads; `remove` always runs `--force` after orch's own clean check, so git's own status never runs, #565)
+  before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
   environment, 30 s, own process group. A gate refusal is the runner code `observe.unavailable`. **Confinement:** the
   path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); every directory from `/` to `<repo>.worktrees`
   is opened with `O_NOFOLLOW|O_DIRECTORY` per component and must be owned by root or the runner's effective UID and not
@@ -12600,14 +12674,15 @@ Where the code differs from or adds to §12.7, the code is this:
   ownership lock is held shared for the whole command; a served workspace is `host.required`; `ORCH_GRANT` is
   `op.not_allowed`; Windows is `unsupported.platform`. `create` and `remove` hold an exclusive per-workspace `flock`
   (`<state>/hosts/<ws>/worktrees.lock`, 10 s, then `lock.busy`) from loading `git-pins.json` through git and the write,
-  so concurrent direct commands never lose a registration. Git runs through the same gated, confined `run_git` and
-  `read_git`; `create` refuses a path that is a declared repository (as the host); the new worktree is pinned in
+  so concurrent direct commands never lose a registration. Git runs only through the same gated, confined `run_git`
+  (revisions and clean checks are orch's reader in-process, #565); `create` refuses a path that is a declared repository (as the host); the new worktree is pinned in
   process (`pin_repo`) and registered in the same pin file, which direct-mode D58 (`orch verdict`, `approve code`)
   reads. `list --check` observes as the host: the pins verified again (`moved`), `HEAD` read from the pinned gitdir
   without git and the ticket's current branch (`stale_branch`). `remove` refuses a dirty tree without `--force` (the
   person is at the terminal); the branch is never deleted. `remove` (host and direct) checks cleanliness through the
-  registration's path without re-verifying the pins first; git's own non-`--force` remove refuses a dirty or untracked
-  tree as the backstop, and G can never force.
+  registration's path without re-verifying the pins first, and G can never force. Since #565 git's own remove always
+  runs `--force` (its built-in clean check would run `status`, and so the repository's clean filters), so orch's
+  reader check is the only one; a file written between that check and the remove is deleted with the worktree.
 - **Fail closed.** `bound_copy` refuses (`observe.unavailable`) with no reader, a missing or mismatched binding, generation,
   registration or pin, and an unpinned registration. Host mode checks the bindings (`check_bindings`: `bound_copy` for
   every linked repo plus the ticket's **current** `links.branches`, loaded fresh, against the bound ref) on every

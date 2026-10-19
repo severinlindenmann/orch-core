@@ -18,7 +18,8 @@ ticket's **current** ``links.branches.<repo>`` branch (none: ``worktree.no_branc
   generation, pin or working copy is ``observe.unavailable`` at binding and at precommit
   (:func:`orch.host.human.bound_copy`), never a fallback to the declared working copy.
 * **Remove**: no registration is ``worktree.none``; a live run with that worktree as its cwd is ``worktree.in_use``;
-  ``tree.check`` first, and dirty (or unknown) is ``worktree.dirty`` unless ``force`` (P only); the branch is never
+  ``tree.check`` first, as a removal check (no ignore rule applies: an ignored file blocks too, #583 round 3), and
+  dirty (or unknown) is ``worktree.dirty``, listing the files, unless ``force`` (P only); the branch is never
   deleted; the registration goes only after the runner reports success.
 * **Observations.** ``worktree.list {check}`` reports what the reader saw in that directory at that moment (``head``,
   ``dirty``, ``state``); like every clean-tree result it is not proof of which bytes any test ran on.
@@ -322,10 +323,17 @@ def _recheck(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     if not os.path.lexists(reg["path"]):
         return plan  # missing: only the registration (and git's record) is left to remove
     if not plan["force"]:
-        got = git.tree_check(reg["path"], plan["repo"]) if reg["pins"] is not None else None
-        if got is None or got["changed"] or got["more"]:
-            raise HostError("worktree.dirty", "the worktree has uncommitted changes (or cannot be checked); "
-                            "commit them, or remove with force (a person only)")  # fmt: skip
+        # #583 round 3: removal never depends on ignore rules. Every file that is not tracked-and-unchanged blocks
+        # it, ignored or not (node_modules, .venv, build output), listed with sizes; git's remove runs --force next.
+        got = git.tree_check(reg["path"], plan["repo"], removal=True) if reg["pins"] is not None else None
+        if got is None:
+            raise HostError("worktree.dirty", "the worktree cannot be checked; remove with force (a person only)")
+        if got["changed"] or got["more"]:
+            from orch.gitread.treejob import render
+
+            raise HostError("worktree.dirty", ("the worktree has files that are not committed (ignored files count "
+                            "too): " + "; ".join(render(got, 10).splitlines()) + ". Commit or delete them, or remove "
+                            "with force (a person only)")[:600])  # fmt: skip
     return plan
 
 

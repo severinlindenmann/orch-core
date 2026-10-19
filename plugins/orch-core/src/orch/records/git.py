@@ -288,6 +288,13 @@ class Git:
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         argv = ["git", *_HARDEN, *args]
+        # Out of #565's scope (the gate-then-spawn race that moved direct-mode reads to orch.gitread; excluded by
+        # orch-07): this is the person's dedicated records repository, run by the person-side tool, not a linked
+        # working copy an agent works in. Its local config is checked by check_local and its digest again right
+        # before the push (#430); no command here checks out, runs status or reads a work-tree file through git (the
+        # blobs come from bytes orch read itself, the index is a temporary one built from empty), so no clean or
+        # smudge filter applies. It needs git itself (fast-import, commit-tree, ls-remote, push), which the reader
+        # cannot do.
         try:
             res = subprocess.run(
                 argv,

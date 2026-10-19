@@ -67,10 +67,12 @@ def pins_of(job: dict[str, Any]) -> RepoPins:
     return RepoPins.from_json({k: job[k] for k in ("worktree", "gitdir", "commondir")})
 
 
-def run_child(pool: Any, principal: str, job: dict[str, Any]) -> dict[str, Any]:
-    """Run one ``tree.check`` in a reader child (``worktree`` profile) and return the checked ``TreeCheckResult``."""
+def run_child(pool: Any, principal: str, job: dict[str, Any], *, removal: bool = False) -> dict[str, Any]:
+    """Run one ``tree.check`` in a reader child (``worktree`` profile) and return the checked ``TreeCheckResult``.
+    ``removal``: the check a removal needs (no ignore rule, untracked directories whole with sizes; #583 round 3)."""
     hello = {"profile": "worktree", "pins": pins_of(job).to_json()}
-    return result_of(pool.call(principal, hello, {"op": "tree_check", "args": {}}))
+    args = {"removal": True} if removal else {}
+    return result_of(pool.call(principal, hello, {"op": "tree_check", "args": args}))
 
 
 def escape_path(raw: bytes, cut: bool = False) -> str:
@@ -133,12 +135,49 @@ def result_of(raw: Any) -> dict[str, Any]:
         if not path or len(path) > PATH_MAX:
             raise Unavailable("the tree check answered a malformed path")
         changed.append({"path": escape_path(path, c["cut"]), "why": c["why"]})
-    return {"changed": changed, "more": raw["more"], "head": head, "head_ref": head_ref}
+    out = {"changed": changed, "more": raw["more"], "head": head, "head_ref": head_ref}
+    if "sizes" in raw or "fingerprint" in raw:  # a removal check (#583 round 3): sizes of whole directories
+        sizes, fp = raw.get("sizes"), raw.get("fingerprint")
+        if not isinstance(sizes, list) or len(sizes) > MAX_CHANGED:
+            raise Unavailable("the tree check answered malformed sizes")
+        if not isinstance(fp, str) or len(fp) != 64 or any(ch not in "0123456789abcdef" for ch in fp):
+            raise Unavailable("the tree check answered a malformed fingerprint")
+        by_path: dict[str, tuple[int, int]] = {}
+        for e in sizes:
+            if not isinstance(e, dict) or set(e) != {"path_b64", "bytes", "files"}:
+                raise Unavailable("the tree check answered malformed sizes")
+            if type(e["bytes"]) is not int or type(e["files"]) is not int or e["bytes"] < 0 or e["files"] < 0:
+                raise Unavailable("the tree check answered malformed sizes")
+            try:
+                raw_path = base64.b64decode(e["path_b64"], validate=True)
+            except (binascii.Error, ValueError, TypeError):
+                raise Unavailable("the tree check answered a malformed path") from None
+            by_path[escape_path(raw_path[:PATH_MAX])] = (e["bytes"], e["files"])
+        for c in changed:
+            if c["path"] in by_path:
+                c["bytes"], c["files"] = by_path[c["path"]]
+        out["fingerprint"] = fp
+    rules = raw.get("ignore_rules")
+    if isinstance(rules, str):
+        out["ignore_rules"] = canon.clean(rules)[:300]
+    return out
+
+
+def _size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024  # type: ignore[assignment]
+    return f"{n} B"
 
 
 def render(result: dict[str, Any], limit: int = 20) -> str:
-    """``TreeCheckResult`` as lines (``why: path``); empty when clean. Paths are already escaped."""
-    lines = [f"{c['why']}: {c['path']}" for c in result["changed"][:limit]]
+    """``TreeCheckResult`` as lines (``why: path``, with ``(N files, size)`` for an untracked directory a removal
+    check reported whole); empty when clean. Paths are already escaped."""
+    lines = [
+        f"{c['why']}: {c['path']}" + (f" ({c['files']} files, {_size(c['bytes'])})" if "files" in c else "")
+        for c in result["changed"][:limit]
+    ]
     if result["more"] or len(result["changed"]) > limit:
         lines.append("and more")
     return "\n".join(lines)

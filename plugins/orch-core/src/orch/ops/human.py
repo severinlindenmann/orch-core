@@ -377,6 +377,7 @@ class Human:
                 where = "the ticket's worktree is missing" if copy.registered else "no working copy in settings.repos"
                 out.append(f"{name}: {where}")
                 continue
+            reg_pins = None  # direct mode, a registered worktree: read exactly its registered pins (#583, L4)
             if copy.registered and git.reader is None:  # direct mode: the pin must still hold (host mode: bound_copy)
                 from orch.gitread.errors import Unavailable
                 from orch.gitread.fs import RepoPins
@@ -386,24 +387,28 @@ class Human:
                 try:
                     if reg is None or reg.get("pins") is None:
                         raise Unavailable("the worktree registration has no pins")
-                    verify_worktree_pins(os.fspath(path), RepoPins.from_json(reg["pins"]))
+                    reg_pins = RepoPins.from_json(reg["pins"])
+                    verify_worktree_pins(os.fspath(path), reg_pins)
                 except Unavailable as exc:
                     out.append(f"{name}: {exc.reason}"[:300])
                     continue
-                from orch import gitsafe
-
-                try:  # the invariant of orch.gitsafe before P1's git reads the registered worktree
-                    gitsafe.gate(os.fspath(path), self.ctx.caps.env)
-                    # a populated submodule (Codex #439): its own config is not gated and status would hide or run it
-                    gitsafe.submodules(os.fspath(path), self.ctx.caps.env)
-                except gitsafe.Unsafe as exc:
-                    out.append(f"{name}: {exc.reason}"[:300])
-                    continue
+                # no git gate here any more (#565): direct mode reads the worktree with orch's own reader, which runs
+                # no program and refuses a populated submodule itself (unknown, never clean)
             if self.ctx.prepare is not None:
                 self.ctx.prepare.copies.append(copy.binding(view.uid, name))
             ref = f"refs/heads/{branch}"
-            head = git.head(path)
-            on = git.symbolic_head(path)
+            state = why = None
+            if git.reader is None:
+                # direct mode (#583, L4): HEAD, its branch and the tree from ONE read of the reader (as host mode's
+                # tree.check), so "clean" is clean at the commit compared with the signed one
+                from orch.store.observe import tree_state
+
+                state, why = tree_state(path, pins=reg_pins)
+                head = state["head"] if state is not None else None
+                on = state["head_ref"] if state is not None else None
+            else:
+                head = git.head(path)
+                on = git.symbolic_head(path)
             identity = git.identity(path, name)
             checked.add(identity)
             entry = next((e for e in signed if e["repo"] == identity), None)
@@ -411,11 +416,10 @@ class Human:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
                 out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
-            if git.reader is None:  # direct mode: P1's git status (the person's own terminal)
-                dirty = git.dirty(path, name)
-                if dirty is None:
-                    out.append(f"{name}: git cannot be asked about the working tree")
-                elif dirty:
+            if git.reader is None:  # direct mode: the reader in-process (no git process, #565)
+                if state is None:
+                    out.append((f"{name}: the working tree cannot be read" + (f": {why}" if why else ""))[:300])
+                elif state["dirty"]:
                     out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
                 continue
             out += self._tree_check(git, path, name, entry, ref)

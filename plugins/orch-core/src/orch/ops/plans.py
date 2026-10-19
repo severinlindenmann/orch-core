@@ -320,7 +320,8 @@ def task_edit(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if t.state == "done" and (new.get("verify") != old.get("verify") or new.get("proves") != old.get("proves")):
         raise OrchError(
             "transition.refused",
-            f"{tid} is done: its verify command and criteria cannot change, because its receipt stands for them; reopen it first",
+            f"{tid} is done: its verify command and criteria cannot change, because its receipt stands for them; "
+            "reopen it first",
             hint=f"orch task reopen {tid}",
         )
     p.add(

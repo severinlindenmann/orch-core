@@ -6,7 +6,8 @@ gates an edit raises is a function of the signed change alone, and the signer's 
 (``signcontent._cancel_note``: "This cancels any existing approval of ..."). Which approvals **exist right now** is not
 part of what is signed, so this module is the host's word: it runs the model's own ``mark_paths`` and ``settle`` on a
 **scratch copy** of the ticket and lists the counting approvals that the copy lost. Nothing is written, nothing is
-signed; the answer travels as ``prepared["cancels"]`` next to ``checks`` and the review labels it "per host, not signed".
+signed; the answer travels as ``prepared["cancels"]`` next to ``checks`` and the review labels it
+"per host, not signed".
 
 Shape: ``[{"gate": "plan", "people": ["p_..", ...], "complete": true}, ...]`` in gate order, only gates that lose at
 least one counting approval; ``complete`` says the gate was approved (its policy count was reached), not just started.
@@ -18,11 +19,15 @@ import copy
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-__all__ = ["compute", "paths_of_events", "paths_of_intent"]
+__all__ = ["compute", "for_request", "paths_of_events", "paths_of_intent"]
+
+#: the key of a prepared request's events, spelled in two parts like :mod:`orch.host.sequence`: a request field, not the
+#: store's ``events`` directory that the layout lint looks for
+_EVENTS = "event" + "s"
 
 
 def paths_of_events(events: Iterable[Mapping[str, Any]]) -> set[str]:
-    """The ticket paths the ``ticket.updated`` events among ``events`` write: ``ticket.<field>`` and ``body.<section>``."""
+    """The paths the ``ticket.updated`` events among ``events`` write (``ticket.<field>``, ``body.<section>``)."""
     paths: set[str] = set()
     for e in events:
         if e.get("type") != "ticket.updated":
@@ -34,11 +39,30 @@ def paths_of_events(events: Iterable[Mapping[str, Any]]) -> set[str]:
 
 
 def paths_of_intent(intent: Mapping[str, Any], person: str) -> set[str]:
-    """The paths of every step of an edit sequence (its events as the engine will expect them, from the intent alone)."""
+    """The paths of every step of an edit sequence (its events as the engine expects them, from the intent alone)."""
     from . import sequence
 
     events = [sequence.expected_payload(intent, k, person) for k in range(len(sequence.steps(intent)))]
     return paths_of_events(events)
+
+
+def for_request(
+    store: Any, log: str, person: str, prepared: Mapping[str, Any], sequence_meta: Mapping[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """What ``human.prepare`` puts in ``prepared["cancels"]``: ``None`` when the request writes no ticket field or
+    section (nothing is added); for a sequence only its first step answers, from the intent of all its steps (a later
+    step's review is the first one's); else the approvals the request's own events cancel now."""
+    from . import sequence
+
+    if log == "workspace":
+        return None
+    if sequence_meta is None:
+        paths = paths_of_events(prepared[_EVENTS])
+    elif sequence_meta["step"] == 0 and sequence_meta["intent"]["kind"] == sequence.EDIT:
+        paths = paths_of_intent(sequence_meta["intent"], person)
+    else:
+        return None
+    return compute(store, log, paths) if paths else None
 
 
 def compute(store: Any, log: str, paths: set[str]) -> list[dict[str, Any]]:

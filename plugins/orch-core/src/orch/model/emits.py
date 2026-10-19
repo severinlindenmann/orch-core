@@ -110,9 +110,9 @@ means a new table version, like a change of the emits."""
 # EMITS_V1 and VERSION stays 1. ``grant`` (Extend) also emits the ``grant.revoked`` of the runner grant it replaces.
 EMITS_V2: dict[str, frozenset[str]] = {**EMITS_V1, "grant": frozenset({"grant.issued", "grant.revoked"})}
 
-# R3: ``task.edit`` (an agent op: one ``ticket.updated`` of ``ticket.tasks``). A NEW key, so no verdict of EMITS_V1 changes:
-# the model keeps judging by V1, where the name ``task.edit`` grants nothing (a grant that wants an agent to edit tasks
-# names ``task.add`` or ``agent``, which cover every ``ticket.updated``). Only the registry and the person op table move.
+# R3: ``task.edit`` (an agent op: one ``ticket.updated`` of ``ticket.tasks``). A NEW key: no EMITS_V1 verdict changes:
+# the model keeps judging by V1, where the name ``task.edit`` grants nothing (a grant that wants an agent to edit
+# tasks names ``task.add`` or ``agent``, which cover every ``ticket.updated``). Only the registry and person ops move.
 EMITS_V3: dict[str, frozenset[str]] = {**EMITS_V2, "task.edit": frozenset({"ticket.updated"})}
 
 CURRENT = EMITS_V3

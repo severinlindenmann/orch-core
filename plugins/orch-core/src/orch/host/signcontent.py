@@ -724,7 +724,8 @@ _PERSON = re.compile(r"p_[0-9a-f]{32}")
 def _with_cancels(content: dict[str, Any], prepared: Mapping[str, Any]) -> dict[str, Any]:
     """R3: the host's word on which approvals exist now and would be cancelled, beside the signed (deterministic)
     note "This cancels any existing approval of ...". ``content["cancels"]`` is the structure (the dashboard shows the
-    names); one note says it in words, always with "per host, not signed". A request without ``cancels`` is unchanged."""
+    names); one note says it in words, always with "per host, not signed". A request without ``cancels`` is
+    unchanged."""
     if "cancels" not in prepared or prepared["cancels"] is None:
         return content
     rows = _cancels(prepared["cancels"])
@@ -736,7 +737,9 @@ def _with_cancels(content: dict[str, Any], prepared: Mapping[str, Any]) -> dict[
             for g in rows
         ]
         notes.append(
-            "Per the host (not signed): approvals that stand right now and are cancelled by this: " + ", ".join(parts) + "."
+            "Per the host (not signed): approvals that stand right now and are cancelled by this: "
+            + ", ".join(parts)
+            + "."
         )
         content = {**content, "cancels": rows}
     elif any(isinstance(n, str) and n.startswith(_CANCEL_HEAD) for n in notes):

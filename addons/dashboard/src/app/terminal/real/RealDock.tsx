@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
@@ -168,6 +168,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
       )}
+      {current && !outputGone(current) && exitText(current) && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted" data-testid="run-exit">{exitText(current)}</p>}
       {current && (doubt[current.run] || (current.exit && cleanupDoubt(current.exit.cleanup))) && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-cleanup-doubt>Some processes may still be running.</p>
       )}

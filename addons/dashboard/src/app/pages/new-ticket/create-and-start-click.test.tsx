@@ -76,7 +76,7 @@ describe('the real click path', () => {
     await waitFor(() => expect(s.state).toHaveBeenCalledWith(expect.any(String), REQ), T)
     await r.user.click(within(dialog).getAllByRole('button', { name: /^(Close|Cancel)$/ }).at(-1)!)
     const info = await screen.findByTestId('agent-no-access', {}, T)
-    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access was not given')
+    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access is not confirmed yet')
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
     // what was typed is cleared: a second Create would be an empty form, not a second ticket

@@ -26,6 +26,7 @@ import { AgentLine, NotSignedBlock } from './AgentLine'
 import { harnessName } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
 import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
+import { cn } from '@/lib/utils'
 import { newIdem } from '@/api/runs'
 import { useStartAfterCreate } from './useStartAfterCreate'
 import { useStartPlan } from './useStartPlan'
@@ -494,7 +495,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   return (
     <div
       ref={root}
-      className={overlay ? undefined : 'mx-auto max-w-[1100px]'}
+      // M-1: once the ticket exists and the Start agent dialog (or the "no access" notice) is open, the emptied form is not shown behind it.
+      className={cn(overlay ? undefined : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
+      data-ticket-created={after.state.kind === 'ask' || after.state.kind === 'no-access' ? '' : undefined}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
@@ -671,7 +674,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             <DialogHeader>
               <DialogTitle>Ticket created</DialogTitle>
               <DialogDescription>
-                {after.state.key} exists. Agent access was not given: signing stopped before the last signature, so no agent was started. Start one now to give access again, or open the ticket.
+                {after.state.key} exists. Agent access is not confirmed yet: the last signature has not arrived, so no agent was started. Start one now to give access, or open the ticket.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

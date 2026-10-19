@@ -290,7 +290,9 @@ describe('partial failures', () => {
     await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
     const info = await screen.findByTestId('agent-no-access', {}, T)
-    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access was not given')
+    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access is not confirmed yet')
+    // M-1: the emptied form is not left open behind the notice and the dialog that follows.
+    expect(document.querySelector('[data-ticket-created]')).not.toBeNull()
     await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
     const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
     expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')

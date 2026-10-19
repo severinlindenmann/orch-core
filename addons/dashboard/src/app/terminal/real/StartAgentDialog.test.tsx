@@ -648,3 +648,30 @@ it('Start agent folds the technical lines into Details and explains each mode', 
   fireEvent.change(screen.getByLabelText('What it does'), { target: { value: 'refine' } })
   expect(screen.getByTestId('agent-mode-help')).toHaveTextContent(/changes no code/)
 })
+
+describe('prefilled by the New ticket form (initial)', () => {
+  it('takes the choice, says why the person is asked, and previews the ticket as asked', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}><TooltipProvider>
+        <StartAgentDialog ws={WS} ticket="DEMO-1" open onClose={vi.fn()} initial={{ harness: 'codex', mode: 'refine', model: 'o3', note: 'Created DEMO-1. The agent was not started: the model differs.' }} />
+      </TooltipProvider></QueryClientProvider>,
+    )
+    expect(await screen.findByTestId('agent-initial-note', {}, T)).toHaveTextContent('The agent was not started: the model differs.')
+    await waitFor(() => expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'codex', mode: 'refine', model: 'o3', worktree: true }), T)
+    expect(s.start).not.toHaveBeenCalled() // one explicit Start
+  })
+  it('reuses the idem of a start whose answer was lost', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}><TooltipProvider>
+        <StartAgentDialog ws={WS} ticket="DEMO-1" open onClose={vi.fn()} initial={{ idem: 'idem-from-review' }} />
+      </TooltipProvider></QueryClientProvider>,
+    )
+    const start = await screen.findByTestId('agent-start', {}, T)
+    await waitFor(() => expect(start).toBeEnabled(), T)
+    fireEvent.click(start)
+    await waitFor(() => expect(s.start).toHaveBeenCalled(), T)
+    expect(s.start.mock.calls[0][3]).toBe('idem-from-review')
+  })
+})

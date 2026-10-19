@@ -13,12 +13,15 @@ import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { useSlot } from '@/addon-ui/slots'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
+import { artifactTextQuery, capText, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
+import { prose } from '@/components/sign/visible'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -202,8 +205,35 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   )
 }
 
+const NO_PREVIEW = <p className="text-[13px] text-text-muted">No inline preview for this kind of file. Its content is not shown here; the sha256 above is what an approval binds.</p>
+
+/**
+ * The text of a receipt, log or notes file, read from the host through the dashboard server. Shown as escaped plain text
+ * (invisible, control and direction-changing characters become visible \u{...}), never as HTML, and only its first
+ * 64 KiB. A file that is not text, or cannot be read, keeps the "no inline preview" line.
+ */
+function RemoteText({ a, ticket }: { a: Artifact; ticket: string }) {
+  const workspaces = useQuery(queries.workspaces())
+  const home = workspaceOfTicket(ticket, workspaces.data ?? [])
+  const q = useQuery({ ...artifactTextQuery(home?.id ?? '', ticket, a.name, a.sha256), enabled: !!home })
+  if (!home && !workspaces.isPending) return NO_PREVIEW
+  if (q.isPending) return <Skeleton className="h-40 w-full" aria-label="Loading the file" />
+  if (q.isError || !q.data || q.data.binary || q.data.text == null || looksBinary(q.data.text)) return NO_PREVIEW
+  const { shown, cut, bytes } = capText(q.data.text.replace(/\r\n/g, '\n'))
+  return (
+    <div className="space-y-2">
+      <p className="text-[12px] text-text-muted">
+        {cut ? `Showing the first ${TEXT_PREVIEW_BYTES / 1024} KiB of ${fmtBytes(Math.max(bytes, q.data.size))}. ` : ''}
+        {q.data.truncated ? 'This file is very large and was only read in part, so it could not be checked against its sha256. ' : ''}
+        Shown as plain text; hidden characters appear as {'\\u{...}'}.
+      </p>
+      <TextViewer text={prose(shown)} label={`Text of ${a.name}`} />
+    </div>
+  )
+}
+
 /** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
-export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boolean; /** The ticket it is on: lets a file with no inline content be read as text. */ ticket?: string }) {
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">
@@ -211,7 +241,7 @@ export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
         <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the sha256 above is what an approval binds.</p>
       </div>
     )
-  if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this kind of file. Its content is not shown here; the sha256 above is what an approval binds.</p>
+  if (!a.preview) return ticket && isTextArtifact(a) ? <RemoteText a={a} ticket={ticket} /> : NO_PREVIEW
   if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
@@ -405,7 +435,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
         </ul>
       </div>
 
-      <ArtifactDrawer artifact={open} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
+      <ArtifactDrawer artifact={open} ticket={ticket.key} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
     </>
   )
 }
@@ -438,6 +468,7 @@ export function ArtifactDrawer({
   by,
   body,
   denied = false,
+  ticket,
 }: {
   artifact: Artifact | null
   agentHtml: boolean
@@ -448,6 +479,7 @@ export function ArtifactDrawer({
   by?: string
   body?: ReactNode
   denied?: boolean
+  ticket?: string
 }) {
   return (
     <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
@@ -477,7 +509,7 @@ export function ArtifactDrawer({
                 </>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />}</div>
+            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} ticket={ticket} />}</div>
           </>
         )}
       </SheetContent>

@@ -1,3 +1,4 @@
+import { versionQueries, vLabel } from '@/api/versions'
 import { AccessLength } from '../AccessLength'
 import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
@@ -38,6 +39,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const identity = useQuery(queries.identity(workspace.id))
   const role = useViewerRole(workspace)
   const hostInfo = useQuery(queries.hostInfo())
+  const versions = useQuery(versionQueries.get(workspace.id))
   const { ask, dialog } = useSettingsHandoff(workspace.id)
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
@@ -95,6 +97,21 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           </dl>
         </details>
       </Section>
+
+      {versions.data && (versions.data.core.version || versions.data.core.release || versions.data.dashboard.version) && (
+        <Section title="Versions">
+          <dl data-testid="versions" className="divide-y divide-border">
+            <Row label="orch core">
+              <span>{versions.data.core.version ? vLabel(versions.data.core.version) : 'version not known'}</span>
+              {versions.data.core.release && <Mono>release {versions.data.core.release}</Mono>}
+            </Row>
+            <Row label="Dashboard">
+              <span>{versions.data.dashboard.version ? vLabel(versions.data.dashboard.version) : 'version not known'}</span>
+            </Row>
+          </dl>
+          <p className="mt-1 text-[12px] text-text-muted">Each add-on's version is in the Add-ons list. The release is the running host's build; if it differs from your terminal's, restart the host.</p>
+        </Section>
+      )}
 
       <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
 

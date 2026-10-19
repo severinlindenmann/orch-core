@@ -18,11 +18,12 @@ The new worktree is pinned in process
 generation in ``<state>/hosts/<ws>/git-pins.json``, the file a host reads when the workspace is registered later.
 **Removal never depends on ignore rules** (#583 round 3): every file that is not tracked-and-unchanged blocks
 ``remove``, ignored or not (``node_modules``, ``.venv``, build output), listed with paths and, for untracked
-directories, their file count and size. ``--discard-untracked=TOKEN`` deletes exactly that untracked set: the refusal prints the
-set with a token (a fingerprint of the set); the command deletes only when the set it finds now has that token, else it
-refuses and prints the new set with the new token (#723: what is deleted is what the person saw). It prints the set,
-checks the worktree again right before deleting and refuses when anything changed in between; modified tracked
-files still block it. ``--force`` skips the check (in direct mode the person is at the terminal and could ``rm -rf``
+directories, their file count and size. ``--discard-untracked=TOKEN`` deletes exactly that untracked set: the
+refusal prints the set with a token (a fingerprint of the set); the command deletes only when the set it finds now has
+that token, else it refuses and prints the new set with the new token (#723: what is deleted is what the person saw).
+It prints the set, checks the worktree again right before deleting and refuses when anything changed in between;
+modified tracked files still block it. ``--force`` skips the check (in direct mode the person is at the terminal and
+could ``rm -rf``
 it anyway); the branch is never deleted.
 
 The ownership lock is held **shared** for the whole command and the registration is checked under it, so the tool never
@@ -449,8 +450,8 @@ class Direct:
         return render({"changed": entries, "more": len(entries) > limit}, limit).splitlines()
 
     def _token(self, raw: dict[str, Any]) -> str:
-        """The token of an untracked set (#723): a fingerprint of what the listing shows (paths, kinds, sizes) and of the
-        reader's fingerprint of the whole set; a person who passes it has read this set."""
+        """The token of an untracked set (#723): a fingerprint of what the listing shows (paths, kinds, sizes) and of
+        the reader's fingerprint of the whole set; a person who passes it has read this set."""
         import hashlib
 
         doc = json.dumps([self._entries(raw), raw.get("fingerprint"), raw["changed"]], sort_keys=True)
@@ -483,7 +484,9 @@ class Direct:
             if tracked or first["more"] or (untracked and not discard):
                 hint = "commit them" if tracked else "commit or delete them"
                 if untracked and not tracked and not first["more"]:
-                    hint += f", or `orch worktree remove {view.key} --discard-untracked={token}` (deletes exactly these)"
+                    hint += (
+                        f", or `orch worktree remove {view.key} --discard-untracked={token}` (deletes exactly these)"
+                    )
                 raise WtError("worktree.dirty", ("the worktree has files that are not committed (ignored files count "
                               "too: a removal never depends on ignore rules): " + "; ".join(self._lines(entries, 20))
                               + f". {hint[0].upper()}{hint[1:]}, or remove with --force")[:2000])  # fmt: skip

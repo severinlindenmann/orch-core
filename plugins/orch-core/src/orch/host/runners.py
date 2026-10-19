@@ -131,7 +131,9 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
     try:
         if platform == "darwin":
             res = run(["launchctl", "print", f"gui/{uid}/{LAUNCHD_LABEL}"])
-            found = re.search(r"^\s*pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            found = (
+                re.search(r"^(?:\t| {4})pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            )
         elif platform.startswith("linux"):
             res = run(["systemctl", "--user", "show", "-p", "MainPID", "--value", SYSTEMD_NAME])
             found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None

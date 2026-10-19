@@ -252,6 +252,35 @@ def test_an_unknown_workspace_prints_what_the_admin_must_run(monkeypatch):
     assert f"orch-publish admin --data DATA_DIR owners add {'2' * 32}" in out
     assert f"orch-publish admin --data DATA_DIR ws allow {'1' * 32} {'2' * 32}" in out
     assert "Then run: orch publish register" in out
+    assert f"--owner {'2' * 32} --workspace {'1' * 32}={'2' * 32}" in out
+
+
+def test_list_shows_local_end_times_and_json_keeps_utc(monkeypatch):
+    data = {
+        "configured": True,
+        "staged": [],
+        "shares": [
+            {
+                "id": "s1",
+                "ticket": "T-1",
+                "kind": "secret",
+                "state": "live",
+                "expires_at": "2026-10-25T16:40:06Z",
+                "views": 0,
+            }
+        ],
+    }
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", lambda *a: data)
+    code, out = run(["list"], {})
+    assert (
+        code == 0
+        and "2026-10-25T16:40:06Z" not in out
+        and "until " in out
+        and re.search(r"until \w{3} 2\d \w{3} \d\d:\d\d", out)
+    )
+    code, out = run(["list", "--json"], {})
+    assert "2026-10-25T16:40:06Z" in out
 
 
 def test_setup_with_the_addon_off_saves_and_says_what_is_next(monkeypatch):

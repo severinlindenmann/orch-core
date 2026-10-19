@@ -170,6 +170,8 @@ class SetupFlow:
         sug = facts.suggest(dict(self.e.env), Path(self.dir)) if self.dir else {"name": "", "prefix": ""}
         if self.facts is not None:
             sug = {"name": self.facts.name, "prefix": self.facts.prefix}
+        if self.mode != "finish":  # U1: a new workspace starts with "let agents work for you" ticked (3 days)
+            sug = {**sug, "agent_hours": facts.DEFAULT_AGENT_HOURS, "agent_grant": True}
         missing: list[str] = []
         current: dict[str, Any] | None = None
         if self.mode == "finish" and self.facts is not None:
@@ -622,9 +624,9 @@ def main(
         server.stop()
         err.write(f"orch setup: {e.message}\n")
         return 1
-    err.write(
-        f"orch setup: {flow.dir} ({'finishing an existing workspace' if flow.mode == 'finish' else 'new workspace'})\n"
-    )
+    finishing = "this folder already has a workspace: checking what is still missing"
+    kind = finishing if flow.mode == "finish" else "new workspace"
+    err.write(f"orch setup: {flow.dir} ({kind})\n")
     opener = open_browser or _open_browser
     opened = opener(env, err, launch, no_browser=True) if no_browser else opener(env, err, launch)
     if opened is True:

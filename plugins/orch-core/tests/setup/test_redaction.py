@@ -141,3 +141,80 @@ def test_encoded_forms_are_hidden():
 def test_ordinary_text_still_passes():
     s, _, _ = _held()
     assert redact_reason("the host said no (code 42)", s.held()) == "the host said no (code 42)"
+
+
+# ---- word collisions: a secret word inside OUR OWN fixed sentence is not a leak; anywhere else it still is ----
+
+_FIXED = "macOS did not let orch use the keychain"
+
+
+def test_a_secret_word_inside_a_fixed_sentence_does_not_hide_the_reason():
+    for secrets in (
+        ["use the let orch did not macos unlock zoo", "use", "the", "let", "orch", "did", "macos"],
+        ["abandon use the keychain", "keychain", "use", "the", "usethe", "letorch", "notlet"],
+        ["orchuse thekeychain keychain"],
+    ):
+        assert redact_reason(_FIXED, secrets) == _FIXED, secrets
+    full = "one-click could not be set up because " + _FIXED + "; your key stays as it was"
+    held = ["use the keychain", "keychain", "stays as it was now", "uses", "terminal"]
+    assert redact_reason(full, held, 400) == full
+
+
+def test_a_secret_word_anywhere_else_still_hides_the_text():
+    held = ["keychain", "spoon tray", "use the let orch", "usethe"]
+    for text in (
+        "macOS did not let orch use the keychain; the word was keychain",  # the word again outside the sentence
+        "macOS did not let orch use the keychain spoon tray",  # a pasted pair outside
+        _FIXED + " and then use the let orch",  # the whole secret outside
+        _FIXED + " (usethe)",
+    ):
+        assert redact_reason(text, held) == HIDDEN_REASON, text
+    # secret words only in the fixed part are fine; the same secret split by line breaks elsewhere is not
+    assert redact_reason(_FIXED + "\nuse\nthe\nlet\norch", ["use the let orch"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + " ok", ["use the let orch"]) == _FIXED + " ok"
+
+
+def test_encoded_secrets_next_to_a_fixed_sentence_are_hidden():
+    import base64
+    import urllib.parse
+
+    w = "keychain"
+    code = "use the let orch spoon tray"
+    for sec in (w, code):
+        b = sec.encode()
+        for f in (
+            b.hex(),
+            base64.b64encode(b).decode(),
+            urllib.parse.quote(sec),
+            urllib.parse.quote_plus(sec),
+            sec.replace(" ", "%20"),
+        ):
+            assert redact_reason(f"{_FIXED}: {f}", [sec, *sec.split()]) == HIDDEN_REASON, f
+    # a base64 secret split by spaces / line breaks (whitespace-removed comparison)
+    for sec in (w, code):
+        enc = base64.b64encode(b"q" + sec.encode() + b"zz").decode()
+        split = " ".join(enc[i : i + 4] for i in range(0, len(enc), 4))
+        assert redact_reason(f"{_FIXED}\n{split}", [sec, *sec.split()]) == HIDDEN_REASON, sec
+        assert redact_reason(f"{_FIXED}\n" + "\n".join(split.split()), [sec, *sec.split()]) == HIDDEN_REASON, sec
+
+
+def test_stripping_is_a_closed_exact_list():
+    from orch.setup.steps import KNOWN_WORDING, strip_known_wording
+
+    assert strip_known_wording("a " + _FIXED + " b").split() == ["a", "b"]
+    glued = "macOS did not let orch use the keychains"
+    assert strip_known_wording(glued) == glued
+    assert strip_known_wording(_FIXED.lower()) == _FIXED.lower()
+    assert all(len(w) > 20 for w in KNOWN_WORDING)  # whole sentences, never a bare word
+
+
+def test_a_secret_running_into_a_fixed_sentence_edge_is_hidden():
+    assert redact_reason("rando" + _FIXED, ["random"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + "x", ["keychainx"]) == HIDDEN_REASON
+    assert redact_reason("abc" + _FIXED, ["abcmacos"]) == HIDDEN_REASON
+
+
+def test_non_ascii_letters_glued_to_a_fixed_sentence_are_hidden():
+    assert redact_reason("caf\u00e9" + _FIXED, ["caf\u00e9macos"]) == HIDDEN_REASON
+    assert redact_reason(_FIXED + "\u00e9", ["keychain\u00e9"]) == HIDDEN_REASON
+    assert redact_reason("\ufb01" + _FIXED, ["\ufb01macos"]) == HIDDEN_REASON

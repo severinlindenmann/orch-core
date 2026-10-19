@@ -6,13 +6,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/api/types'
-import { runsApi, type Run } from '@/api/runs'
+import { markNoReplay, runsApi, type Run } from '@/api/runs'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { BACKOFF_MS, closePolicy, endWords, termTransport, type connectTerm, type TermConnection, type TermEnd } from './termProtocol'
 import { createTermView, termOptions, type TermView } from './termView'
-
-const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
+import { termTheme, TERM_PADDING } from './termTheme'
 
 /** One attach request: the mode asked for, and whether it takes the lease (only after the person's own click). */
 export interface AttachRequest {
@@ -37,6 +36,9 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const conn = useRef<TermConnection | null>(null)
   const [req, setReq] = useState<AttachRequest>({ mode: initial, take: initial === 'write', n: 0 })
   const [lease, setLease] = useState<LeaseState>('reading')
+  // An ended run is not attached by itself: every page load would use up one of the few attach tickets a minute (and
+  // log a refusal when they run out) for output nobody asked to see. "Show output" attaches it, once.
+  const [replay, setReplay] = useState(() => run.state !== 'exited' && run.state !== 'lost')
   const [status, setStatus] = useState<{ words: string; detail?: string; final: boolean } | null>(null)
   const [paused, setPaused] = useState(false)
   const [lost, setLost] = useState(false)
@@ -51,7 +53,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
     const el = host.current
     if (!el) return
     const v = createTermView(el, termOptions({
-      theme: { background: token(el, '--bg'), foreground: token(el, '--text'), cursor: token(el, '--brand'), green: token(el, '--success'), red: token(el, '--danger'), cyan: token(el, '--brand'), yellow: token(el, '--warning'), blue: token(el, '--info'), brightBlack: token(el, '--text-faint') },
+      theme: termTheme(el),
     }))
     v.term.textarea?.setAttribute('aria-label', 'Terminal input')
     view.current = v
@@ -74,6 +76,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
     let pausedTimer: ReturnType<typeof setTimeout> | undefined
     const again = (ms: number) => { retry = setTimeout(() => { if (!cancelled) setReq((r) => ({ mode: 'read', take: false, n: r.n + 1 })) }, ms) }
     const start = async () => {
+      if (!replay) return
       let ticket: string
       try {
         ticket = (await runsApi.ticket(ws, run.run, req.mode, req.take)).ticket
@@ -82,6 +85,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
         // An ended run is never retried: asking again cannot bring it back (and every try is a logged 503).
         const ended = runRef.current.state === 'exited' || runRef.current.state === 'lost'
         const retryable = e instanceof ApiError && e.status >= 500 && !ended
+        if (ended) markNoReplay(runRef.current.run)
         setStatus({ words: ended ? 'This terminal has ended and its output can no longer be shown.' : retryable ? 'The terminal is not reachable. Trying again…' : 'This terminal cannot be attached.', final: !retryable })
         if (retryable) again(BACKOFF_MS[Math.min(failures.current++, BACKOFF_MS.length - 1)])
         return
@@ -130,6 +134,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
             // The run is over: reconnecting cannot help, so stop asking.
             setLease('reading')
             setStatus({ words: endWords(code, end), detail, final: true })
+            if (code === 4422 || end?.code === 'term.not_attachable') markNoReplay(runRef.current.run)
           } else if (policy.kind === 'ticket') {
             setStatus({ words: endWords(code, end), final: false })
             again(250)
@@ -158,7 +163,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
       conn.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws, run.run, req.n])
+  }, [ws, run.run, req.n, replay])
 
   const take = () => setReq((r) => ({ mode: 'write', take: true, n: r.n + 1 }))
   const writing = lease === 'writing'
@@ -175,6 +180,12 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
           <Button variant="link" size="xs" className="shrink-0" onClick={take}>{lease === 'lost' ? 'Take back' : 'Take control'}</Button>
         </div>
       )}
+      {!replay && (
+        <div role="status" className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1 text-xs text-text-muted" data-term-status data-ended-idle>
+          <span className="min-w-0 truncate">This terminal has ended.</span>
+          <Button variant="link" size="xs" className="shrink-0" onClick={() => setReplay(true)}>Show output</Button>
+        </div>
+      )}
       {status && (
         <div role="status" className="shrink-0 border-b border-border bg-surface px-2 py-1 text-xs text-text-muted" data-term-status>
           {status.words}{status.detail && <> <span className="text-text-faint">(<Inline>{status.detail}</Inline>)</span></>}
@@ -189,7 +200,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
       {lost && <p role="alert" className="shrink-0 px-2 py-0.5 text-xs text-warning">Some input was not delivered. Check the terminal before typing again.</p>}
       {/* A read-only viewer renders at the writer's size and scrolls; the writer's terminal fits this box. */}
       <div ref={host} role="group" aria-label="Terminal" aria-readonly={writing ? undefined : true} data-terminal-session={run.run}
-        className={`min-h-0 flex-1 bg-bg p-2 ${writing ? 'overflow-hidden' : 'overflow-auto'}`} />
+        style={{ padding: TERM_PADDING }}
+        className={`min-h-0 flex-1 bg-bg ${writing ? 'overflow-hidden' : 'overflow-auto'}`} />
     </div>
   )
 }

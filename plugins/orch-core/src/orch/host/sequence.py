@@ -383,8 +383,8 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
 
     base = {"v", "kind", "title", "ticket_type", "set", "sections"}
     # B12D: acceptance and people are optional (left out when empty, so every earlier intent keeps its digest)
-    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people"}:
-        raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance and people")
+    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people", "agent"}:
+        raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance, people and agent")
     if intent["v"] != VERSION or intent["kind"] != KIND:
         raise bad("this signer does not know that sequence")
     title, kind = intent["title"], intent["ticket_type"]
@@ -450,6 +450,10 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
         result["acceptance"] = [_one_line(t, "a criterion", 200) for t in ac]
     if "people" in intent:
         result["people"] = _new_people(intent["people"])
+    if "agent" in intent:  # U4: the runner grant, signed last in the same confirmation (left out when none)
+        from . import seqquick
+
+        result["agent"] = seqquick.validate_agent(intent["agent"], SequenceInvalid)
     if len(steps(result)) > MAX_STEPS:
         raise bad("too many changes for one review")
     return result
@@ -510,6 +514,10 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
                 add = [who] if role == "owner" else list(who)
                 args = {"role": role, "add": add, "remove": []}
                 out.append({"op": "people.set", "args": args, "kind": "people", "ref": True})
+        if "agent" in intent:  # always LAST: a prefix without it is a ticket and no agent access
+            from . import seqquick
+
+            out.append(seqquick.grant_step(intent["agent"]))
         return out
     # EDIT: the existing ticket's sections, then its acceptance criteria, then its people (owner last)
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
@@ -579,6 +587,10 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
 
         return seqquick.payloads(intent, person)[k]
     plan = steps(intent)
+    if plan[k]["kind"] == "grant":
+        from . import seqquick
+
+        return seqquick.grant_payload(intent["agent"])
     if k == 0 and intent["kind"] == KIND:
         return {
             "type": "ticket.created",
@@ -935,6 +947,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             "stops and nothing more is signed."
         )
     else:
+        content.setdefault("notes", []).extend(extra_lines(intent))
         count = len(intent["sections"])
         # one headline for the whole review; the text is a subline (not one clause per signature)
         content["headline"] = f"Create {key}: {signcontent.one(intent['title'])}"
@@ -946,16 +959,16 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         if intent.get("people"):
             parts.append("its people")
         if parts:
-            content["subline"] = "and " + ", ".join(parts)
+            content["subline"] = "Includes " + ", ".join(parts)
         elif intent["set"]:
-            content["subline"] = "and its details"
+            content["subline"] = "Includes its details"
         if "owner" in intent.get("people", {}):
             content.setdefault("notes", []).append(
                 "The owner is set last. After that you may no longer be able to change this ticket yourself."
             )
     content.setdefault("notes", []).append(
-        f"One confirmation signs all {n} steps, in order ({n} signatures). If the ticket changes meanwhile, "
-        "signing stops and what was already signed stays as it is."
+        f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
+        "signing stops and what is already signed stays."
     )
     return content
 
@@ -974,25 +987,27 @@ def technical_lines(intent: Mapping[str, Any]) -> list[str]:
 
 def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
-    the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5)."""
+    the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5).
+    A new ticket with an agent part: the grant sentence, and that the start itself is NOT signed (U4, I5)."""
+    from . import seqquick
+
+    if intent["kind"] == KIND:
+        if "agent" not in intent:
+            return []
+        return [
+            seqquick.grant_line(intent["agent"], now),
+            "Not signed: the agent start. After the ticket exists, the dashboard may start an agent that uses this "
+            "access; that start is not part of this confirmation. Nothing here approves the requirements or the plan.",
+        ]
     if intent["kind"] != QUICK:
         return []
-    from .signcontent import span
-
     out = [
         "Approves the requirements as written above, and the plan as written above "
         "(the signer checks that each approval covers exactly this text).",
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
-    agent = intent["agent"]
-    if agent is not None:
-        t = time.time() if now is None else now
-        until = time.strftime("%a %d %b %H:%M %Z", time.localtime(t + agent["hours"] * 3600))  # this computer's time
-        out.append(
-            f"Agents may work on any ticket they are allowed to work on, not only this one, until about {until} "
-            f"({span(agent['hours'])}). Typed word: GRANT. The grant is signed last; its secret goes to your orch "
-            "runner or your own terminal, never to the dashboard."
-        )
+    if intent["agent"] is not None:
+        out.append(seqquick.grant_line(intent["agent"], now))
     return out
 
 

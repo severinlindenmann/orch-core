@@ -37,6 +37,9 @@ GROUP_TYPES = {
 GROUPS = ("all", *GROUP_TYPES, "workspace")
 GROUP_OF = {t: g for g, types in GROUP_TYPES.items() for t in types}
 
+#: the start of the note a signed Publish share leaves in the ticket's log (see handoff.PUBLISH_MARK)
+PUBLISH_NOTE = "Publish approval:"
+
 GATE = {"requirements": "requirements", "plan": "plan", "verify": "result", "code": "code"}
 
 # Types whose host summary is something a person wrote (a note, a reason, a comment); the others' summaries are
@@ -95,7 +98,7 @@ def display(value):
 
 
 def repo_sentence(repos) -> str | None:
-    """"updated repo x" / "removed repo y" from the host's `repos` ({name: "set" | "removed"}); None when it names none.
+    """Sentences for a repo change from the host's `repos` ({name: "set" | "removed"}); None when it names none.
     The event alone cannot tell a new repo from a changed one, so a set is "updated"."""
     if not isinstance(repos, dict):
         return None
@@ -103,7 +106,7 @@ def repo_sentence(repos) -> str | None:
     for name, how in sorted(repos.items()):
         shown = display(name)
         if shown and how in ("set", "removed"):
-            parts.append(f"{'removed' if how == 'removed' else 'updated'} repo {shown}")
+            parts.append(f"{'removed' if how == 'removed' else 'updated'} the repository “{shown}”")
     return "; ".join(parts) or None
 
 
@@ -126,7 +129,8 @@ def sentence(item: dict, name_of) -> str:
         return "limited the ticket to some people" if data.get("restricted") else "opened the ticket to the workspace"
     if kind == "branch.pushed":
         repo = display(data.get("repo_name"))
-        return f"pushed code to {repo}" if repo else "pushed code"
+        # the host saw the branch (a worktree was made, or work was committed): nobody "pushed" anything to a server
+        return f"saw the ticket's branch in the repository “{repo}”" if repo else "saw the ticket's branch"
     if kind == "member.added":
         return f"added {name_of(data.get('person'))} as {label(data.get('role')) or 'a member'}"
     if kind == "member.removed":
@@ -164,7 +168,11 @@ def item(a: dict, names: dict[str, str]) -> dict:
     title = a.get("title")
     out["title"] = display(title)
     out["title_hidden"] = isinstance(title, str) and hidden(title)
-    if a["type"] in DETAIL and isinstance(a.get("summary"), str) and a["summary"]:
+    summary = a.get("summary")
+    if a["type"] == "log.added" and isinstance(summary, str) and summary.startswith(PUBLISH_NOTE):
+        # The note a share approval leaves on the ticket (its text is cut by the host): say what it is, in words.
+        out["did"] = "approved sharing files outside this computer"
+    elif a["type"] in DETAIL and isinstance(a.get("summary"), str) and a["summary"]:
         out["detail"] = display(a["summary"])
         out["detail_hidden"] = hidden(a["summary"])
     return out

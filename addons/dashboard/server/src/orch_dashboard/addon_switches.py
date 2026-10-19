@@ -15,7 +15,7 @@ from .errors import fail
 from .gateway import Gateway
 
 #: the add-ons a person can switch here: shipped inside orch-core, signed with `addon.grant` / `addon.disable`
-SWITCHABLE = ("start-agent", "terminals", "worktrees", "publish")
+SWITCHABLE = ("start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing")
 #: what the dashboard cannot turn off or on at all
 LOCKED = {
     "dashboard": "The dashboard is always on: it is what shows this workspace.",
@@ -127,3 +127,49 @@ def check_off(gateway: Gateway, ws: str, name: str) -> None:
     why = busy(name, live_runs(gateway, ws))
     if why:
         raise fail("addon.busy", why, exit=1)
+
+
+#: `addon.list` states that mean "off" ("changed" and "missing" are neither: granting again is a real change)
+OFF_STATES = ("disabled", "not_granted", "purged")
+
+
+def addon_title(name: str) -> str:
+    from orch.setup import facts
+
+    return next((a.title for a in facts.catalog(optional=True) if a.id == name), name)
+
+
+def addon_base(link, name: str, turning_on: bool) -> dict:
+    """The intent base of an add-on switch: the add-on and its latest `addon.granted` / `addon.disabled` event.
+
+    The host dedupes one idem to ONE request for 24 h, so an intent that is the same text again (on, off, on) would
+    return the first, already signed request and the person's new change would never be asked for. The latest
+    switch event moves whenever the state moves, so each real change is its own intent; a double click, with no
+    event in between, is still one. The state is read here too: asking for what already is, is refused in plain
+    words (`addon.already`) and never prepared, signed or dressed up as "do it again".
+
+    Fails closed: if the host cannot say, nothing is prepared (the host error passes through)."""
+    state = next(
+        (a.get("state") for a in link.call("addon.list")["addons"] if isinstance(a, dict) and a.get("name") == name),
+        "not_granted",
+    )
+    if turning_on and state == "active":
+        raise fail("addon.already", f"{addon_title(name)} is already on.", exit=1)
+    if not turning_on and state in OFF_STATES:
+        raise fail("addon.already", f"{addon_title(name)} is already off.", exit=1)
+    page = None
+    for _ in range(5):
+        args = {"scope": "workspace", "types": ["addon.granted", "addon.disabled"], "order": "desc", "limit": 100}
+        data = link.call("activity.list", {**args, **({"page": page} if page else {})})
+        for item in data.get("items") or []:
+            if (
+                isinstance(item, dict)
+                and item.get("type") in ("addon.granted", "addon.disabled")
+                and (item.get("data") or {}).get("name") == name
+                and isinstance(item.get("id"), str)
+            ):
+                return {"addon": name, "head": item["id"]}
+        page = data.get("next_page")
+        if not page:
+            return {"addon": name, "head": None}
+    raise fail("host.busy", "Could not read this add-on's history. Try again in a moment.", exit=5)

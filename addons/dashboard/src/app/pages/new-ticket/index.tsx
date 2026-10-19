@@ -22,6 +22,14 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK, TYPE_ICON } from '../board/lib'
 import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
+import { AgentLine, NotSignedBlock } from './AgentLine'
+import { harnessName } from '@/components/agents/AgentChoice'
+import type { StartPlan } from './useStartPlan'
+import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
+import { newIdem } from '@/api/runs'
+import { useStartAfterCreate } from './useStartAfterCreate'
+import { useStartPlan } from './useStartPlan'
+import type { Reviewed } from './startAfterCreate'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
 
@@ -53,7 +61,12 @@ export function sequencePeople(p: PeopleValue, creator?: string): { owner?: stri
   return Object.keys(out).length ? out : undefined
 }
 
-export function handoffNewTicket(d: Draft, creator?: string): { action: HandoffAction } | { problem: string } {
+/**
+ * `agentHours`: the person has no usable agent access, so it is signed as the LAST step of the same confirmation (one
+ * more signature against the limit). `tooMany` marks a refusal that only the limit causes, so the form can fall back to
+ * creating without the start instead of failing.
+ */
+export function handoffNewTicket(d: Draft, creator?: string, agentHours?: number | null): { action: HandoffAction } | { problem: string; tooMany?: true } {
   const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
   const later = [d.visibility !== 'workspace' && 'restricted visibility', d.due && 'a due date'].filter(Boolean)
   const big = written.find(([, t]) => new TextEncoder().encode((t as string).trim()).length > MAX_SECTION_BYTES)
@@ -65,8 +78,8 @@ export function handoffNewTicket(d: Draft, creator?: string): { action: HandoffA
   const sections = Object.fromEntries(written.map(([name, text]) => [d.type === 'spike' && name === 'verification' ? 'findings' : name, (text as string).trim()]))
   const people = sequencePeople(d.people, creator)
   const hasFields = d.priority !== 'medium' || !!d.size || d.labels.length > 0 || !!(d.parent && d.type !== 'epic')
-  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0)
-  if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Leave some sections or criteria for later.` }
+  const steps = 1 + (hasFields ? 1 : 0) + written.length + criteria.length + (people ? Object.keys(people).length : 0) + (agentHours ? 1 : 0)
+  if (steps > MAX_SEQUENCE_STEPS) return { tooMany: true, problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Leave some sections or criteria for later.` }
   return {
     action: {
       action: 'new_sequence',
@@ -79,6 +92,7 @@ export function handoffNewTicket(d: Draft, creator?: string): { action: HandoffA
       sections,
       ...(criteria.length ? { acceptance: criteria } : {}),
       ...(people ? { people } : {}),
+      ...(agentHours ? { agent: { hours: agentHours } } : {}),
     } as HandoffAction,
   }
 }
@@ -320,8 +334,23 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
   const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean } | null>(null)
+  // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
+  // compared with exactly that (never with whatever the form says by then). One idem per review.
+  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean; start: StartSnapshot | null } | null>(null)
   const handoffOn = handoffMode(workspace.id)
+  const plan = useStartPlan(workspace, me.person)
+  const after = useStartAfterCreate()
+  const partialKey = useRef<{ key: string; initial: StartInitial } | null>(null)
+  const busyAfter = after.state.kind !== 'idle'
+  // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
+  const tooMany = useMemo(() => {
+    if (!plan.available || !plan.needsGrant) return false
+    const withAccess = handoffNewTicket(draft, me.person, plan.hours)
+    return 'problem' in withAccess && !!withAccess.tooMany && !('problem' in handoffNewTicket(draft, me.person, null))
+  }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
+  const startPossible = plan.available && !tooMany
+  const startFirst = startPossible && plan.pref.start
 
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
@@ -329,8 +358,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   })
 
   const submitting = useRef(false)
-  const submit = async (another: boolean) => {
+  // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
+  const flushAc = useRef<(() => string) | null>(null)
+  const submit = async (another: boolean, wantStart = false) => {
     if (submitting.current) return
+    const extra = flushAc.current?.() ?? ''
+    const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
+    if (extra) patch({ acceptance: full.acceptance })
     setAttempted(true)
     setServerError(null)
     if (!canCreate) return
@@ -340,27 +374,35 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const made = handoffNewTicket(draft, me.person)
+      const startNow = wantStart && startPossible && !another
+      if (startPossible) plan.setPref({ start: wantStart })
+      // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
+      const fresh = plan.grantNow()
+      const withAccess = startNow && !fresh
+      const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
-      return setHandoffNew({ action: made.action, another })
+      const start: StartSnapshot | null = startNow
+        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
+        : null
+      return setHandoffNew({ action: made.action, another, start })
     }
     submitting.current = true
-    const needs = SECTIONS_BY_TYPE[draft.type]
+    const needs = SECTIONS_BY_TYPE[full.type]
     const sections: BodySections = {}
-    for (const [n, text] of Object.entries(draft.sections) as [SectionName, string | undefined][]) if (needs[n] !== 'absent' && text?.trim()) sections[n] = text.trim()
+    for (const [n, text] of Object.entries(full.sections) as [SectionName, string | undefined][]) if (needs[n] !== 'absent' && text?.trim()) sections[n] = text.trim()
     const res = await create
       .mutateAsync({
-        type: draft.type,
-        title: draft.title.trim(),
-        priority: draft.priority,
-        size: draft.size,
-        labels: draft.labels,
-        parent: draft.parent,
-        due: draft.due || null,
-        visibility: draft.visibility,
-        people: draft.people,
+        type: full.type,
+        title: full.title.trim(),
+        priority: full.priority,
+        size: full.size,
+        labels: full.labels,
+        parent: full.parent,
+        due: full.due || null,
+        visibility: full.visibility,
+        people: full.people,
         sections,
-        acceptance: draft.acceptance,
+        acceptance: full.acceptance,
       })
       .catch(() => null)
       .finally(() => {
@@ -385,17 +427,33 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
   }
 
-  /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null) => {
+  /** The ticket exists: nothing typed is unsaved any more. Clean at once (the sheet reads this synchronously, before
+   * the next render), so no "Discard unsaved changes?" can appear while the follow-up signature or the close runs. */
+  const ticketExists = () => {
     void qc.invalidateQueries()
     writeDraft(key, null)
     setShowRestored(false)
-    setHandoffNew(null)
-    // The ticket exists: nothing typed is unsaved any more. Clean at once (the sheet reads this synchronously, before
-    // the next render), so no "Discard unsaved changes?" can appear while the follow-up signature or the close runs.
     setDraft(EMPTY)
     onDirtyChange?.(false)
+  }
+  /** The signer's event is in the log: the ticket exists. */
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string) => {
+    ticketExists()
+    setHandoffNew(null)
+    // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
+    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') return after.noAccess(ticketKey, initialOf(start))
+    // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
+    if (start && ticketKey) return void beginStart(ticketKey, start)
     afterCreate(another, ticketKey)
+  }
+  const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
+  /** Every signature landed: preview for the ticket's own key and start only if it is what the review showed. */
+  const beginStart = async (ticketKey: string, snap: StartSnapshot) => {
+    const out = await after.run({ ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
+    if (out.kind === 'started') {
+      toast.success(`Created ${ticketKey} and started ${harnessName(snap.reviewed.choice.harness)}`)
+      afterCreate(false, ticketKey)
+    } else toast.warning(out.reason)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
     if (another) {
@@ -422,6 +480,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
+  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : 'Create'
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
@@ -431,7 +490,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false)
+          void submit(false, startFirst)
         }
       }}
     >
@@ -483,6 +542,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             onAcceptance={(acceptance) => patch({ acceptance })}
             invalid={attempted ? check.sections : {}}
             collapsible={overlay}
+            flushRef={flushAc}
           />
         </div>
         <aside className="space-y-4" aria-label="Properties">
@@ -537,14 +597,23 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             </ul>
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <Button type="button" aria-label="Create" aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false)} disabled={!canCreate || create.isPending || !!handoffNew}>
-            Create
+        <AgentLine plan={plan} tooMany={tooMany} />
+        {after.state.kind === 'running' && <p role="status" data-testid="agent-starting" className="mb-2 text-[13px] text-text-muted">Created {after.state.key}. Starting the agent…</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" aria-label={primaryLabel} aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false, startFirst)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
+            {primaryLabel}
             <kbd className="ml-1 rounded border border-border/40 px-1 font-mono text-[10px] opacity-70">{isMac ? '⌘↵' : 'Ctrl ↵'}</kbd>
           </Button>
-          <Button type="button" variant="outline" onClick={() => void submit(true)} disabled={!canCreate || create.isPending}>
-            Create and open another
-          </Button>
+          {startPossible && (
+            <Button type="button" variant="outline" onClick={() => void submit(false, !startFirst)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
+              {startFirst ? 'Only create' : 'Create and start agent'}
+            </Button>
+          )}
+          {!startFirst && (
+            <Button type="button" variant="outline" onClick={() => void submit(true)} disabled={!canCreate || create.isPending || busyAfter}>
+              Create and open another
+            </Button>
+          )}
           {footerExtra}
           <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
             Cancel
@@ -558,9 +627,51 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           ws={workspace.id}
           action={handoffNew.action}
           autoStart
-          onClose={() => setHandoffNew(null)}
-          onSettled={(phase, state, request) => phase === 'done' && handoffDone(handoffNew.another, ownKey(state, request))}
+          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
+          onClose={() => {
+            // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
+            const landed = partialKey.current
+            partialKey.current = null
+            setHandoffNew(null)
+            if (landed) { ticketExists(); after.noAccess(landed.key, landed.initial) }
+          }}
+          onSettled={(phase, state, request) => {
+            const ticketKey = ownKey(state, request)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit)
+            const p = state?.progress
+            if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
+              partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }
+              ticketExists() // the ticket is there: nothing typed is unsaved, and a second Create would make a second ticket
+            }
+          }}
         />
+      )}
+
+      {after.state.kind === 'ask' && (
+        <StartAgentDialog
+          ws={workspace.id}
+          ticket={after.state.key}
+          open
+          initial={after.state.initial}
+          onStarted={() => toast.success('Agent started')}
+          onClose={() => { const k = after.state.kind === 'ask' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}
+        />
+      )}
+      {after.state.kind === 'no-access' && (
+        <Dialog open onOpenChange={(o) => { if (!o) { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) } }}>
+          <DialogContent data-testid="agent-no-access">
+            <DialogHeader>
+              <DialogTitle>Ticket created</DialogTitle>
+              <DialogDescription>
+                {after.state.key} exists. Agent access was not given: signing stopped before the last signature, so no agent was started. Start one now to give access again, or open the ticket.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}>Open the ticket</Button>
+              <Button onClick={() => { if (after.state.kind === 'no-access') after.ask(after.state.key, after.state.initial) }}>Start agent</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>

@@ -172,6 +172,7 @@ export function endWords(code: number, end: TermEnd | null): string {
     case 'host.restarting': case 'host.unavailable': return 'The host is not reachable. Trying again…'
     case 'term.not_attachable': return 'This terminal can no longer be attached.'
     case 'not_visible': case 'person.removed': case 'op.not_allowed': case 'not_found': return 'You can no longer see this terminal.'
+    case 'runner.stale': return 'The agent runner is from an older orch version. Restart it in your terminal: orch host enable.'
     case 'runner.disabled': return 'Terminals are switched off for this workspace.'
     case 'ticket_invalid': return 'The terminal refused the attachment.'
     case 'overflow': return 'The terminal fell behind. Reconnecting…'

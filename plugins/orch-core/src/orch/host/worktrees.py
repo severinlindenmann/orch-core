@@ -191,6 +191,7 @@ def _gate(call: Call) -> None:
         )
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
+    hub.require_current()
 
 
 def _rate(call: Call) -> None:
@@ -402,6 +403,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
         args = {"op": "worktree.add" if plan["op"] == "worktree.create" else "worktree.remove",
                 "repo_pin": plan["repo_pin"], "path": plan["path"], "branch": plan["branch"],
                 "base": plan.get("base_sha"), "force": plan["force"], "generation": plan["gen"] + 1}  # fmt: skip
+        hub.require_current()  # a runner of another release applies its old rules to this command too
         await hub.command("git", args, timeout=GIT_TIMEOUT)
         after = _register if plan["op"] == "worktree.create" else _unregister
         return await asyncio.wrap_future(service.submit(after, call, plan))

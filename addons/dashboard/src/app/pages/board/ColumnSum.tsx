@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { selectContributions, useAddons } from '@/addon-ui'
 import { useAddonStates } from '@/addon-ui/slots'
 import { addonActive } from '@/api/addons'
+import { estimateOn, notEstimatedText, pointsText, rollup } from '@/api/estimate'
 import type { TicketSummary } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
 
@@ -50,10 +51,29 @@ export function useColumnSums(tickets: TicketSummary[]): ColumnSumItem[] {
   }, [addons, names.join(','), tickets, workspace, states]) // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-export function ColumnSums({ tickets }: { tickets: TicketSummary[] }) {
+/**
+ * Estimate on a real host: the sum of the cards' points and, in words, how many cards have none ("n not estimated"),
+ * so a total never reads as complete when it is not. `showMissing` (an epic's lane) also shows a lane whose children
+ * have no points at all.
+ */
+function EstimateSum({ tickets, showMissing }: { tickets: TicketSummary[]; showMissing: boolean }) {
+  const r = rollup(tickets)
+  if (r.estimated === 0 && !(showMissing && r.notEstimated > 0)) return null
+  const missing = r.notEstimated > 0 ? notEstimatedText(r.notEstimated) : ''
+  return (
+    <span aria-label={`Sum of points${missing ? `, ${missing}` : ''}`} title={[pointsText(r.total), missing].filter(Boolean).join(' · ')} className="inline-flex items-center gap-1 font-mono text-[11px] text-text-muted" data-testid="estimate-sum">
+      <span className="whitespace-nowrap">{r.total} {r.total === 1 ? 'pt' : 'pts'}</span>
+      {missing && <span className="font-sans text-text-faint" data-testid="estimate-missing"> · {missing}</span>}
+    </span>
+  )
+}
+
+export function ColumnSums({ tickets, showMissing = false }: { tickets: TicketSummary[]; showMissing?: boolean }) {
   const sums = useColumnSums(tickets)
+  const { workspace } = useWorkspace()
   return (
     <>
+      {estimateOn(workspace) && <EstimateSum tickets={tickets} showMissing={showMissing} />}
       {sums.map((s) => (
         <span key={`${s.addon}/${s.id}`} aria-label={`Sum of ${s.title}`} title={withUnit(s.total, s.unit)} className="inline-flex items-center gap-1 shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">
           {s.total}

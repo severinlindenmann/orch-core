@@ -30,6 +30,7 @@ use a fake runner and a temporary home. As a second fence, the default runner re
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -264,6 +265,16 @@ class Manager:
             return True
         return False if out else None
 
+    def main_pid(self) -> int | None:
+        """The PID of the process the service manager runs now (``None``: it cannot tell, or nothing runs)."""
+        if self.plan.kind == "launchd":
+            res = self.run(["launchctl", "print", self._target()])
+            found = re.search(r"^\s*pid = (\d+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+        else:
+            res = self.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", self.plan.systemd_name])
+            found = re.fullmatch(r"\s*([1-9]\d*)\s*", res.stdout or "")
+        return int(found.group(1)) if found else None
+
     def installed(self) -> bool:
         try:
             return self.plan.unit_path.read_bytes() == self.plan.content
@@ -311,6 +322,22 @@ class Manager:
         do(["systemctl", "--user", "enable", self.plan.systemd_name])
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
+
+    def restart_command(self) -> list[str]:
+        """The command that restarts the loaded service at once, for this platform only."""
+        if self.plan.kind == "launchd":
+            return ["launchctl", "kickstart", "-k", self._target()]
+        return ["systemctl", "--user", "restart", self.plan.systemd_name]
+
+    def restart_now(self) -> list[list[str]]:
+        """Restart the loaded service without waiting for the host (``launchctl kickstart -k``, ``systemctl --user
+        restart``): the fallback when a graceful drain never finished. The host's state is crash-safe (the service
+        manager restarts a crashed host the same way); the caller says so to the person."""
+        argv = self.restart_command()
+        res = self.run(argv)
+        if res.returncode != 0:
+            raise OSError(_failed(argv, res))
+        return [argv]
 
     def stop(self) -> list[list[str]]:
         """Stop and unload the service, then remove the unit file (``orch host disable``). A loaded service that
@@ -377,3 +404,56 @@ def wait_for_control(path: Path, timeout: float = START_WAIT, *, clock: Callable
             if clock() >= deadline:
                 return False
             time.sleep(0.1)
+
+
+#: how many START_WAITs a drain gets before the service is restarted at once
+DRAIN_WAIT_FACTOR = 2
+
+
+def wait_for_release(
+    manager: Manager,
+    running: Callable[[], str | None],
+    mine: str,
+    wait: float,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Wait until ``running()`` (the release digest the service reports) is ``mine``; a service the manager does not
+    run is started once on the way."""
+    deadline = time.monotonic() + wait
+    started = False
+    while time.monotonic() < deadline:
+        if running() == mine:
+            return True
+        if not started and manager.active() is not True:
+            started = True
+            try:
+                manager.start(changed=False)
+            except OSError:
+                return False
+        sleep(0.2)
+    return False
+
+
+def restart_to_release(
+    manager: Manager,
+    running: Callable[[], str | None],
+    mine: str,
+    *,
+    drain: Callable[[], bool] | None = None,
+) -> str | None:
+    """The one rule for every service that runs orch code (host, agent runner): the release it LOADED (``running``)
+    must be ``mine``. ``drain`` (optional) asks it to finish its work and exit, and returns whether that was accepted;
+    the service manager brings it back. Returns ``"current"`` (nothing to do), ``"drained"``, ``"forced"`` (after
+    ``DRAIN_WAIT_FACTOR`` x START_WAIT, or with no drain, the service is restarted at once: crash-equivalent, work in
+    flight may be interrupted and is recovered at start) or ``None`` (it did not come back on ``mine``)."""
+    if running() == mine:
+        return "current"
+    if drain is not None and drain() and wait_for_release(manager, running, mine, START_WAIT * DRAIN_WAIT_FACTOR):
+        return "drained"
+    # A slow-starting new service may be in startup recovery when kickstart -k hits it; recovery is idempotent.
+    try:
+        manager.restart_now()
+    except OSError:
+        return None
+    return "forced" if wait_for_release(manager, running, mine, START_WAIT) else None

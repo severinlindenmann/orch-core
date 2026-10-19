@@ -466,6 +466,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e; H12d-3: the pair gate of 11A.15.6 step 4, `reader.declare` in column R, a `pk_pin` pair declaration whose pin does not name the certificate's person key, reason `who`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2); a column-R refusal carries it as `reason` (H12d-3) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
+| `runner.stale` | 3 | no | stays | the connected runner runs another orch release than the host (its `runner.hello.release` differs or is missing); every start is refused until `orch host enable` restarts it | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
 | `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
 | `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
@@ -1819,7 +1820,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
    starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
    (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
-   changed) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   changed; a running host of another release is drained with `host.restart`, and if it has not come back on the new release after 2 x START_WAIT (40 s) `enable` forces the restart with `kickstart -k` / `systemctl --user restart`: crash-equivalent, a request in flight may be interrupted and is recovered at start; result `forced: true`) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
    `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
    CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is
@@ -2031,6 +2032,7 @@ A client must not call an op or send an argument whose cap it did not see (§0.4
  gates:{Gate: Policy},
  defaults:["grant_hours"|"claim_ttl_min"|"lease_ttl_min"]{0..3},
  sign_methods:["terminal"|"click"|"phone"] | null,    // B6, additive: the signed setting; null: never set (every way allowed)
+ models:{Harness:{Mode:Model}} | null,                // Model routing, additive: the signed setting; null: none set (harness default)
  settings_at?:{seq:int, at:Time, by:Person} | null,
  policy_at?:{seq:int, at:Time, by:Person} | null,
  sub_cursor:Cursor}
@@ -2789,13 +2791,13 @@ member, policy or addon operations.
 - **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
   shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
   prepares a separate hand-off request.
-- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (a badge with the line as its tooltip, B6); the checks with
+- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (the one-click custody line with a "What this means" toggle that holds the risk sentence); the checks with
   their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
   as "what you sign".
 - **Workspace card**: when `status` reports `custody:"convenience"`, the card shows "Convenience signing: agents running
   as you, or anything that takes over this dashboard, could sign." **Amended 16 Oct 2026 (owner decision F, "As built
   in B6"):** the line is required at enable time and in Settings, and is *not* repeated in every sign panel: a panel
-  shows a "One-click" badge whose tooltip carries the line. The View's `risk` field stays (same text, in `view_digest`);
+  shows its custody line ("One click on this computer, no fingerprint/passphrase") with a focusable "What this means" toggle that shows the line (U3, 19 Oct 2026; the earlier badge and tooltip were not reachable by touch or keyboard). The View's `risk` field stays (same text, in `view_digest`);
   the dashboard may render it as a badge with a tooltip instead of a banner.
 - **HTTP.** Bind only the intended loopback listener and validate the exact Host on every route. Require the bearer on
   every authenticated API and never accept it through cookies or URLs; keep it in tab memory or `sessionStorage`, never

@@ -5,7 +5,7 @@ export interface SetupState {
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
-  suggested: { name: string; prefix: string }
+  suggested: { name: string; prefix: string; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string
     title: string

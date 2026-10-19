@@ -55,9 +55,14 @@ class AddonInfo:
         }
 
 
+#: add-ons ticked at the start of a NEW setup (U1): the person still sees each as a switch, can untick it, and every one
+#: of them is signed (``addon.granted``) in the same review; nothing is enabled without that signature
+DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
+#: the agent-access choice a NEW setup starts on (3 days, ticked); the person can pick "No agent access" or 1/7 days
+DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -85,6 +90,30 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
             False,
             False,
         ),
+        "usage": (
+            "Usage",
+            "See how much agent time went into each ticket. Read-only; it measures the time agents ran, nothing else.",
+            False,
+            False,
+        ),
+        "estimate": (
+            "Estimate",
+            "Give tickets a size in points and see the total on epics and board columns. Points are the ticket's size.",
+            False,
+            False,
+        ),
+        "explorer": (
+            "File Explorer",
+            "Look through this workspace's files and their history in the dashboard. Read only; only owners see it.",
+            False,
+            False,
+        ),
+        "model-routing": (
+            "Model routing",
+            "Choose which AI model each kind of agent work starts on. You still see the model before every start.",
+            False,
+            False,
+        ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []
@@ -97,7 +126,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
                 title,
                 desc,
                 required=name == "dashboard",
-                default=name == "dashboard",
+                default=name == "dashboard" or name in DEFAULT_ON,
                 kind="addon",
                 capabilities=tuple(str(c) for c in doc.get("capabilities") or ()),
                 needs_runner=runner,

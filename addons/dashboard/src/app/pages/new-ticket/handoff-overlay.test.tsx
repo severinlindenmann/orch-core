@@ -74,6 +74,20 @@ describe('New ticket with signed hand-off', () => {
     })
   })
 
+  it('E-7: a criterion typed but not added with Add is still part of the ticket', async () => {
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
+    await r.user.click(within(sheet).getByRole('button', { name: /More sections/ }))
+    await r.user.type(within(sheet).getByLabelText('New acceptance criterion'), 'A header row is exported')
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create' }))
+    const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
+    expect(sent.acceptance).toEqual(['A header row is exported'])
+  })
+
   it('cancelled before it was signed: nothing is created and the form keeps what was typed', async () => {
     const r = await fill()
     await r.user.click(await screen.findByRole('button', { name: 'cancelled' }))

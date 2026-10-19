@@ -31,7 +31,7 @@ describe('the hand-off dialog (real host)', () => {
     expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent(`orch sign ${CODE}`)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toBeVisible()
-    expect(dialog).toHaveTextContent('Check the same fingerprint in your terminal')
+    expect(dialog).toHaveTextContent('Check that this matches the fingerprint in your terminal')
     expect(dialog).toHaveTextContent(/This dashboard is not where you sign/)
     expect(dialog).toHaveTextContent('Preview. Your terminal shows what you sign.')
     expect(dialog).toHaveTextContent('Content hash')
@@ -182,10 +182,22 @@ describe('the hand-off dialog (real host)', () => {
     expect(dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(within(dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', done.signed_at)
+    expect(within(dialog).getByText(/A similar comment/).closest('p')).not.toHaveTextContent('HOST-SIGNED') // folded below
+    expect(within(dialog).getByTestId('technical-details')).not.toHaveAttribute('open')
     expect(s.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     await user.click(within(dialog).getByRole('button', { name: 'Do it again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
+  })
+
+  it('an add-on already as asked is said in plain words, with nothing to do again', async () => {
+    s.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'addon.already', message: 'Terminals is already on.', retryable: false }))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('Terminals is already on.')
+    expect(within(dialog).queryByRole('button', { name: 'Do it again' })).toBeNull()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
   })
 
   it('a failed submitted intent offers Start again with the next retry', async () => {

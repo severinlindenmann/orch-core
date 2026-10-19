@@ -41,6 +41,7 @@ from .handoff import (
     plan,
     read_done,
     send_prepare,
+    sequence_progress,
 )
 from .reads import workspace
 
@@ -393,6 +394,10 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
+        if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
+            handoffs.intents[rid] = planned.sequence["intent"]
+            while len(handoffs.intents) > 64:
+                handoffs.intents.pop(next(iter(handoffs.intents)))
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
@@ -490,7 +495,19 @@ def register(app: FastAPI, gateway: Gateway):
             clicks.forget(rid)
         if got == "submitted" and row.get("seq") is None:
             raise done_error({}, row)
-        return {"id": rid, "state": got}
+        out: dict = {"id": rid, "state": got}
+        intent = handoffs.intents.get(rid)
+        key = row.get("key")
+        if intent is not None and isinstance(key, str) and got != "prepared":
+            # A stopped sequence: which ticket exists and how many steps are in it, read from the host (never typed).
+            progress = sequence_progress(
+                gateway, ws, key, intent, person=app.state.person_of(ws), since=row.get("created_at")
+            )
+            if progress is not None:
+                if intent.get("agent") is not None:
+                    progress["last"] = "grant"
+                out |= {"key": key, "progress": progress}
+        return out
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, ws: str = Depends(workspace)):

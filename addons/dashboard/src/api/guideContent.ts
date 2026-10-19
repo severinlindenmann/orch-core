@@ -163,7 +163,10 @@ Some pages are added by add-ons, small extras that an owner can switch on. You s
 
 - **Worktrees**: each agent works in its own copy of your project, so agents do not get in each other's way. This page lists those copies and says which ticket each belongs to.
 - **Activity**: a time line of what happened across the workspace: who did what, and when. Times are in your local time.
-- **Repos**: the project folders this workspace works on.
+- **Repos**: the project folders this workspace works on (see Repositories).
+- **Shares**: links to ticket files, from the Publish add-on (see Shares and Publish).
+- **Usage**: how long agents worked on each ticket (time and runs; tokens and cost say "Not reported").
+- **Files**: look through the workspace's files and their history, read only, for owners.
 - **Add-ons**: in **Settings, Add-ons**, an owner switches add-ons on or off. Turning one on shows what it may do and asks for approval first. An orange **A** marks anything an add-on added.
 
 If you do not see one of these yet, it is not available on your host. Do not worry, nothing is missing from the core tool.
@@ -184,6 +187,72 @@ Open **Settings** at the bottom of the sidebar.
 - **Devices**: pairing a phone. Phones come later, with the relay.
 
 Changing a setting is a change like any other: you review it and approve it.
+`,
+  },
+  {
+    slug: 'repos',
+    title: 'Repositories',
+    markdown: `# Repositories
+
+A repository is a project folder on this computer that your tickets work in. The workspace keeps a list of them.
+
+## Add one
+
+Open **Settings, General**, find **Repositories** and press **Add repository**. Give it a short name, then the full path of its folder, for example \`/Users/you/code/billing\`. orch checks the folder right away: it must exist, be a git folder, and not be your home folder or orch's own data. If something is wrong the form tells you before you sign anything. Only an owner can add, change or remove a repository.
+
+## Use it on a ticket
+
+On a ticket, change the ticket and link the repository. A linked ticket can get its own worktree (see Worktrees).
+
+## Remove one
+
+Removing a repository only takes it off the list. Its folder and files stay on your disk. If tickets still link it, you are told which ones before you sign.
+
+orch does not download repositories yet: clone the project yourself first, then add its folder.
+`,
+  },
+  {
+    slug: 'worktrees',
+    title: 'Worktrees',
+    markdown: `# Worktrees
+
+A worktree is a separate copy of a repository for one ticket. An agent works in it, so the agent never touches your own copy and agents on other tickets do not get in its way.
+
+## Make one
+
+The ticket must link a repository first. Open the ticket and press **Add worktree**. It appears under **Worktrees** in the sidebar with the ticket it belongs to. When you start an agent on the ticket, it works there.
+
+## What you see
+
+The **Worktrees** page lists every copy, the ticket, and whether there are changes that are not saved yet. The ticket page shows the same state.
+
+## Remove one
+
+Press **Remove worktree** on the page or the ticket and confirm. You do not need to sign for this. The folder is deleted, but the branch and everything saved on it stay. A folder with changes that are not saved in git is not removed.
+
+Worktrees come from an add-on: you see them only when it is switched on in **Settings, Add-ons**.
+`,
+  },
+  {
+    slug: 'shares',
+    title: 'Shares and Publish',
+    markdown: `# Shares and Publish
+
+With the **Publish** add-on you can give someone a link to files of a ticket. Nothing leaves this computer until you review and sign.
+
+## Set up once
+
+In **Settings, Add-ons** switch Publish on, then press **Set up** and enter the two addresses of your publish server: where files are sent, and where links open. Press **Check now** to see whether the server knows this workspace. If not, its admin must allow it once.
+
+## Share files
+
+On a ticket, in the **Shares** box, press **Share files**. Tick the files, choose a **secret link** (works until it ends) or a **show-once link** (works for one or a few opens), and how long it lasts. Read the list, then **Review and sign**. You see the link **once**: copy it before you press Done. orch keeps no copy.
+
+## The Shares page
+
+**Shares** lists every link you made: its kind, when it ends, how often it was opened and its state (Live, Used up, Expired or Revoked). **Revoke** stops a link at once.
+
+An agent can only prepare a share. A person always signs it in the terminal.
 `,
   },
   {
@@ -213,7 +282,10 @@ export const GUIDE_ROUTES: HelpRoute[] = [
   { match: '/agents', page: 'agents' },
   { match: '/settings*', page: 'settings' },
   { match: '/addon/*', page: 'more-tools' },
-  { match: '/worktrees*', page: 'more-tools' },
+  { match: '/worktrees*', page: 'worktrees' },
+  { match: '/shares*', page: 'shares' },
   { match: '/activity*', page: 'more-tools' },
-  { match: '/repos*', page: 'more-tools' },
+  { match: '/usage*', page: 'more-tools' },
+  { match: '/explorer*', page: 'more-tools' },
+  { match: '/repos*', page: 'repos' },
 ]

@@ -10,6 +10,7 @@
     { "op": "member.add", "event": { "person": "p_new" }, "word": "p_new" },
     { "op": "member.role", "event": { "person": "p_member" }, "word": "p_member" },
     { "op": "member.remove", "event": { "person": "p_gone" }, "word": "p_gone" },
-    { "op": "grant.revoke", "event": {}, "word": "GRANT.REVOKE" }
+    { "op": "grant.revoke", "event": {}, "word": "GRANT.REVOKE" },
+    { "op": "grant", "event": {}, "word": "GRANT", "click_word": "DEMO~89abcdef/GRANT" }
   ]
 }

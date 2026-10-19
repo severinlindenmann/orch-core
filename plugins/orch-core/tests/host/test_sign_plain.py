@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import pty
+import re
 import threading
 import time
 
@@ -29,6 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
 Context
   | the context
@@ -52,8 +54,9 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
+Verification fingerprint: <FP>
 
-Fields
+Details
   type: chore
   owner: <OWNER>
 """
@@ -64,8 +67,13 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
-    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:])
-    for hidden in ("sha256", "fingerprint", "uid ", "pid ", "self-declared", "policy", "gate input"):
+    assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
+    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
+    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+        r"[0-9a-f]{12}", p["fingerprint"]
+    )
+    for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):
         assert hidden not in text
     assert "fingerprint: " + p["fingerprint"] in text.details and "gate input:" in text.details
     assert "ticket key per host, not proven" in text.details and "self-declared, unverified" in text.details
@@ -79,7 +87,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
 def test_the_plain_view_of_a_new_ticket(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("new", {"title": "Elefant Chart", "type": "chore"})
-    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace("<TAIL>", p["log"][-8:])
+    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"]).replace(
+        "<TAIL>", p["log"][-8:]
+    ).replace("<FP>", p["fingerprint"])
 
 
 def test_the_content_comes_from_the_signed_events_and_material_only(human, served):
@@ -696,6 +706,29 @@ def test_settings_repos_read_as_labelled_rows_per_repo(human, served):
     assert rows["repository api"]["before_note"] == "per host, not signed"
 
 
+def test_a_repo_change_shows_unchanged_fields_once_without_an_arrow(human, served):
+    event = {
+        **sample("settings.changed"),
+        "set": {
+            "repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "dev"}}
+        },
+    }
+    mat = material_for("settings.changed", event)
+    mat["before"] = {
+        "repos": {"api": {"path": "/work/api", "remote": "https://example.org/a/api", "default_branch": "main"}}
+    }
+    c = build({"op": "settings.set", "events": [event], "material": mat})
+    rows = {r["field"]: r for r in c["fields_changed"]}
+    assert (rows["repository api: main branch"]["before"], rows["repository api: main branch"]["after"]) == (
+        "main",
+        "dev",
+    )
+    for label, value in (("folder", "/work/api"), ("remote", "https://example.org/a/api")):
+        row = rows[f"repository api: {label} (unchanged, per host)"]
+        assert row["before"] is None and row["after"] == value  # the signed value stays on the screen
+        assert f"repository api: {label}" not in rows
+
+
 def _repo_event_rows(entry):
     event = {**sample("settings.changed"), "set": {"repos": {"api": entry}}}
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
@@ -784,6 +817,29 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     none = build(_addon(name="worktrees", capabilities=[]))
     assert none["headline"] == "Turn on Worktrees: it declares no capabilities"
     assert signcontent.ADDON_TRUST in none["notes"]
+
+
+def _explorer_digest():
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: builtin.manifest_bytes("explorer")})
+
+
+def test_the_builtin_file_explorer_says_that_it_lets_owners_read_files():
+    c = build(_addon(name="explorer", capabilities=[], package_sha256=_explorer_digest()))
+    assert c["headline"] == (
+        "Turn on File Explorer: owners can read this workspace's files and git history in the dashboard"
+    )
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["it lets owners"] == (
+        "read every file of this workspace and its declared repositories, and their git history "
+        "(read only; keys, .env files, .git and orch's own files stay locked)"
+    )
+    assert "declares no capabilities" not in flat(c) and signcontent.ADDON_TRUST in c["notes"]
+    # the name alone is not enough: another package called explorer keeps the plain "declares no capabilities" words
+    other = build(_addon(name="explorer", capabilities=[], package_sha256="sha256:" + "bb" * 32))
+    assert other["headline"] == "Turn on Explorer: it declares no capabilities"
 
 
 @pytest.mark.parametrize(
@@ -969,3 +1025,233 @@ def test_f8_two_different_accesses_with_one_short_form_are_refused_in_the_plain_
     assert old["grant"][-10:] == new["grant"][-10:] and old["grant"] != new["grant"]
     with pytest.raises(signcontent.PlainUnavailable):
         build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+
+
+# --- V4: the plain lead of a share approval and of an Extend (WYSIWYS: a summary never replaces the signed text) ----------
+
+
+def _share_text(kind="secret", views=0, days=7, names=("report.md", "data.csv")):
+    from orch.publishclient import approval
+
+    files = [{"name": n, "size": 1200 + i, "sha256": f"{i + 1:x}" * 64} for i, n in enumerate(names)]
+    return approval.approval_text(
+        staged_id="ps_" + "a" * 32,
+        ticket_key="DEMO-0001",
+        origin="person",
+        kind=kind,
+        days=days,
+        views=views,
+        files=files,
+        server="https://pub.example.com",
+        share="https://share.example.com",
+        manifest="sha256:" + "ab" * 32,
+    )
+
+
+def _share_build(text, op="publish.share"):
+    ev = {**sample("log.added"), "text": text}
+    return build({"op": op, "events": [ev], "material": material_for("log.added", ev)})
+
+
+def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_text():
+    text = _share_text()
+    c = _share_build(text)
+    lines = c["summary"]["lines"]
+    assert c["summary"]["title"] == "Share these files"
+    joined = "\n".join(lines)
+    for needle in ("report.md", "data.csv", "https://pub.example.com", "https://share.example.com", "7 days"):
+        assert needle in joined
+    assert "Anyone who has the link can open the files." in joined
+    assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text  # the exact signed text is still there
+
+
+def test_v4_a_limited_view_link_says_how_many_views():
+    c = _share_build(_share_text(kind="once", views=3, days=1))
+    joined = "\n".join(c["summary"]["lines"])
+    assert "at most 3 times" in joined and "1 day " in joined
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda t: t.replace("Works for: 7 days", "Works for: 7 weeks"),
+        lambda t: t + "\nExtra: line",
+        lambda t: t.replace("Prepared by: you", "Prepared by: someone"),
+        lambda t: t.replace("- report.md  (", "- report.md\nx  ("),
+        lambda t: t.replace("Files (2,", "Files (3,"),
+        lambda t: t.replace("The files are sent to: https://pub.example.com", "The files are sent to: a b"),
+    ],
+)
+def test_v4_an_odd_share_text_gets_no_summary_but_still_the_whole_text(mutate):
+    text = mutate(_share_text())
+    c = _share_build(text)
+    assert "summary" not in c
+    assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text
+
+
+def _extend(**over):
+    new = {
+        **sample("grant.issued"),
+        "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA",
+        "label": "runner",
+        "scope": "workable",
+        "verbs": "agent",
+        "hours": 72,
+        **over,
+    }
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    return build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+
+
+def test_v4_an_extend_is_titled_and_says_running_agents_stop():
+    c = _extend(expires_at="2026-10-21T12:00:00Z")
+    assert c["headline"].startswith("Extend agent access: ") and c["summary"]["title"] == "Extend agent access"
+    joined = "\n".join(c["summary"]["lines"])
+    assert (
+        "Running agents will stop." in joined
+        and "per host, not signed" in joined
+        and "3 days" in joined
+        and "ends " in joined
+        and "gr_…" in joined
+    )
+    assert any(r["field"] == "access taken back" for r in c["fields_changed"])  # the exact rows stay
+
+
+def test_v4_an_extend_with_other_scope_verbs_or_label_keeps_the_generic_review():
+    for over in ({"scope": "all"}, {"verbs": "all"}, {"label": "other"}, {"hours": "x"}):
+        c = _extend(**over)
+        assert "summary" not in c and not c["headline"].startswith("Extend agent access"), over
+
+
+def test_v4_only_one_share_event_of_the_share_op_is_summarised():
+    one_text = _share_text()
+    other = _share_text(names=("other.txt",))
+    ev1, ev2 = ({**sample("log.added"), "text": t} for t in (one_text, other))
+    two = build({"op": "publish.share", "events": [ev1, ev2], "material": material_for("log.added", ev1)})
+    assert "summary" not in two  # the first share's files are never hidden behind the second's summary
+    assert "summary" not in _share_build(one_text, op="log.add")  # not the share op: the text alone
+
+
+def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
+    c = _extend(expires_at="2026-10-21T12:00:00Z")
+    first = signcontent.text(c, signer._clean)[0]
+    assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first
+
+
+def test_g2_an_estimate_says_points_and_that_it_cancels_approvals(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["size=m"]}))
+    row = c["fields_changed"][0]
+    assert (row["field"], row["after"]) == ("estimate", "3 points (size M)")
+    assert c["headline"].startswith("Change the estimate of DEMO-0001")
+    note = " ".join(c["notes"])
+    assert "cancels any existing approval of: requirements, plan, verify, code." in note
+    assert "approved again" in note
+    assert "cancels" in "\n".join(signcontent.text(c, signer._clean))
+
+
+def test_g2_a_change_that_no_gate_binds_makes_no_cancel_claim(human, served):
+    _, key = human.ticket("Owner CLI test")
+    c = build(human.prepare("set", {"ref": key, "pairs": ["priority=high"]}))
+    assert not any("cancels" in n for n in c.get("notes") or [])
+
+
+def _cancel_notes(ev):
+    out: dict = {}
+    signcontent._cancel_note(ev, out)
+    return " ".join(out.get("notes") or [])
+
+
+def test_g2_the_cancel_note_follows_the_cascade_of_later_gates():
+    assert "requirements, plan, verify, code." in _cancel_notes({"sections": {"summary": {}}})
+    assert "verify, code." in _cancel_notes({"sections": {"verification": {}}})
+    assert "of: plan, verify, code." in _cancel_notes({"sections": {"plan": {}}})
+    assert "of: verify, code." in _cancel_notes({"set": {"ticket.links": []}})
+
+
+def test_g2_an_addon_section_or_field_gets_the_generic_note():
+    assert "may also cancel that approval and every later one" in _cancel_notes({"sections": {"estimate.notes": {}}})
+    assert "may also cancel that approval and every later one" in _cancel_notes(
+        {"set": {"ticket.addons.estimate.points": 3}}
+    )
+
+
+def test_g2_the_size_scale_matches_the_schema_and_the_dashboard():
+    import json
+    import re
+    from pathlib import Path
+
+    schema = json.loads((Path(signcontent.__file__).parents[1] / "schema/schemas/ticket.json").read_text())
+    enum = next(_find_enum(schema))["enum"]
+    assert set(enum) == set(signcontent._SIZE_POINTS)
+    ts = Path(__file__).parents[4] / "addons/dashboard/src/api/estimate.ts"
+    if ts.exists():
+        pairs = re.findall(r"size: '(\w+)', points: (\d+)", ts.read_text())
+        assert {k: int(v) for k, v in pairs} == signcontent._SIZE_POINTS
+
+
+def _find_enum(node):
+    if isinstance(node, dict):
+        if node.get("enum") and "xl" in node["enum"]:
+            yield node
+        for v in node.values():
+            yield from _find_enum(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _find_enum(v)
+
+
+def test_g5_repeated_notes_appear_once_and_cancel_notes_merge_in_gate_order():
+    notes = [
+        "This cancels any existing approval of: plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "This cancels any existing approval of: requirements, plan, verify, code. Each one has to be approved again.",
+        "This cancels any existing approval of: plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "One confirmation signs all 3 steps.",
+    ]
+    out = signcontent._dedupe_notes({"headline": "x", "notes": notes})["notes"]
+    assert out == [
+        "This cancels any existing approval of: requirements, plan, verify, code. Each one has to be approved again.",
+        "Other note.",
+        "One confirmation signs all 3 steps.",
+    ]
+    assert signcontent._dedupe_notes({"headline": "x"}) == {"headline": "x"}
+    odd = "This cancels any existing approval of: wizardry. Each one has to be approved again."
+    assert signcontent._dedupe_notes({"notes": [odd, odd]})["notes"] == [odd]
+
+
+def test_u3_the_title_drops_the_key_qualifier_and_names_a_new_ticket():
+    t = {"key": "DEMO-1", "title": "", "uid_tail": "ABCD1234", "key_note": "n"}
+    q = " (key per host; signed id …ABCD1234)"
+    new = signcontent._with_title({"headline": f"Create ticket DEMO-1 · Elefant Chart{q}", "ticket": dict(t)})
+    assert new["title"] == "New ticket DEMO-1: Elefant Chart" and new["headline"].endswith(q)  # headline: unchanged
+    seq = signcontent._with_title({"headline": f"Create DEMO-1{q}: Elefant Chart", "ticket": dict(t)})
+    assert seq["title"] == "New ticket DEMO-1: Elefant Chart"
+    for head in (f"Change the plan of DEMO-1{q}", f"Edit DEMO-1{q}"):
+        out = signcontent._with_title({"headline": head, "ticket": dict(t)})
+        assert out["headline"] == head and "signed id" not in out["title"]
+    assert "title" not in signcontent._with_title({"headline": "Change the workspace settings"})
+
+
+def test_u3_ticket_new_comes_from_the_events_not_the_headline(human, served):
+    _, key = human.ticket("Owner CLI test")
+    ready(human, key)
+    approve = signcontent.build(human.prepare("approve", {"ref": key, "gate": "requirements"}), verified=True)
+    assert approve["ticket"]["new"] is False and approve["ticket"]["uid_tail"]
+    created = signcontent.build(human.prepare("new", {"title": "Elefant Chart", "type": "chore"}), verified=True)
+    assert created["ticket"]["new"] is True
+
+
+def test_u3_only_a_creation_drops_the_cancel_notes_and_never_another_note():
+    cancel = "This cancels any existing approval of: plan. Each one has to be approved again."
+    addon = "An add-on field or section can also be part of an approval; if it is, this may also cancel it."
+    other = "Agents that are running now stop."
+    out = signcontent._new_ticket(
+        {"notes": [cancel, other, addon], "fields_changed": [{"field": "type", "before": None, "after": "feature"}]}
+    )
+    assert out["notes"] == [other] and out["fields_title"] == "Details"
+    only = signcontent._new_ticket({"notes": [cancel]})
+    assert "notes" not in only
+    changed = signcontent._new_ticket({"fields_changed": [{"field": "type", "before": "bug", "after": "feature"}]})
+    assert "fields_title" not in changed  # a row with an earlier value is a change, not a detail

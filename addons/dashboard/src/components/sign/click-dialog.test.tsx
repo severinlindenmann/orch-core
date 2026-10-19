@@ -89,7 +89,8 @@ describe('the action dialog with click-to-sign', () => {
     const { dialog } = await open()
     expect(await within(dialog).findByRole('button', { name: 'Sign' }, T)).toBeEnabled()
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
-    expect(within(dialog).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
+    expect(within(dialog).getByText('Sign with one click on this computer.')).toBeInTheDocument()
     expect(c.prepare).not.toHaveBeenCalled()
     expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
   })
@@ -131,7 +132,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(c.view).toHaveBeenCalledWith(ws, REQ)
     const panel = within(dialog).getByTestId('click-panel')
-    expect(within(panel).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
+    expect(within(panel).getAllByText('Technical details')).toHaveLength(1)
     expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
@@ -316,12 +318,25 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(m.dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(m.dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(within(m.dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', expect.stringMatching(/^202/))
+    // A-1: the host's record is never part of the sentence: it is folded under "Technical details"
+    expect(within(m.dialog).getByText(/A similar comment/).closest('p')).not.toHaveTextContent('HOST-SIGNED')
+    expect(within(m.dialog).getByTestId('technical-details')).not.toHaveAttribute('open')
     expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
     await within(m.dialog).findByTestId('click-panel', {}, T).catch(() => undefined)
     await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('an add-on that is already as asked says so in plain words: no raw JSON, no Do it again', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'addon.already', message: 'Terminals is already on.', retryable: false }, 1))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(m.dialog).toHaveTextContent('Terminals is already on.')
+    expect(m.dialog).not.toHaveTextContent(/event_id|package_sha256|\{"/)
+    expect(within(m.dialog).queryByRole('button', { name: /Do it again|^Sign$|Try again/ })).toBeNull()
   })
 
   it('a submitted failure needs an explicit Start again and advances retry', async () => {

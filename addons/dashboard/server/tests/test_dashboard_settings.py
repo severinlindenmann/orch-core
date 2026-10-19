@@ -98,7 +98,9 @@ def test_a_member_gets_names_and_branches_only(worlds, team):
     )
     world = worlds(people["tom"].ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["repos"] == [{"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None}]
+    assert got["repos"] == [
+        {"name": "code", "default_branch": "main", "remote": None, "path": None, "check": None, "tickets": None}
+    ]
     assert "/srv/x" not in json.dumps(got) and "git.example.test" not in json.dumps(got)
 
 
@@ -811,3 +813,51 @@ def test_f8_the_repo_path_check_runs_before_any_request_and_says_why_in_plain_wo
     Gateway.check_repo_path(
         SimpleNamespace(_pins=lambda: {}), ws, str(home)
     )  # a workspace not known here: the host decides
+
+
+def test_an_owner_gets_the_keys_of_the_tickets_that_link_a_repo_and_only_plain_keys():
+    from orch_dashboard.adapters import settings as adapter
+
+    entry = {"default_branch": "main", "path": "/x", "linked_by": ["DEMO-0001", "TQ-2", "DEMO-12345678901"]}
+    assert adapter.repo("code", entry).tickets == ["DEMO-0001", "TQ-2", "DEMO-12345678901"]
+    for bad in (["no key"], ["DEMO-1\n"], [f"DEMO-{i}" for i in range(13)], "DEMO-1"):
+        try:
+            adapter.repo("code", {**entry, "linked_by": bad})
+        except Exception:
+            continue
+        raise AssertionError(bad)
+
+
+def test_the_form_can_ask_the_path_check_before_anything_is_prepared(worlds, team, host_calls, tmp_path):
+    world = worlds(team[0].owner.ref)
+    (tmp_path / "api" / ".git").mkdir(parents=True)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    base = {"action": "repo_set", "name": "api"}
+    bad = world.post(url, {**base, "path": "/no/such/folder"})
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input", bad.text
+    assert world.post(url, {**base, "path": str(tmp_path / "api")}).json() == {"ok": True}
+    assert world.post(url, {**base, "path": "/x", "extra": 1}).status_code == 400
+    assert not world.stub.requests.table  # a dry run stores no request
+    for who in ("mara", "tom", "vic"):
+        other = worlds(team[1][who].ref)
+        res = other.post(url, {**base, "path": str(tmp_path / "api")})
+        assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied", (who, res.text)
+
+
+def test_the_path_check_route_is_rate_limited_per_session(worlds, team):
+    world = worlds(team[0].owner.ref)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    body = {"action": "repo_set", "name": "api", "path": "/no/such/folder"}
+    codes = [world.post(url, body).status_code for _ in range(22)]
+    assert codes[:20] == [400] * 20 and codes[20:] == [503, 503]
+
+
+def test_concurrent_path_checks_cannot_pass_the_limit(worlds, team):
+    from concurrent.futures import ThreadPoolExecutor
+
+    world = worlds(team[0].owner.ref)
+    url = f"/api/w/{world.stub.ws}/repos/check"
+    body = {"action": "repo_set", "name": "api", "path": "/no/such/folder"}
+    with ThreadPoolExecutor(8) as pool:
+        codes = list(pool.map(lambda _: world.post(url, body).status_code, range(40)))
+    assert codes.count(400) == 20 and codes.count(503) == 20

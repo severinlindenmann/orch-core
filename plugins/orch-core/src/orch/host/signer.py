@@ -222,7 +222,9 @@ _SET_FIELDS = frozenset(
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish"})
+_SETTINGS_KEYS = frozenset(
+    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models"}
+)
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
@@ -761,6 +763,10 @@ def plain(
         )
     except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
         return Review(prefix + full)
+    # The dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex it shows, on a
+    # labelled line under the headline (before the first blank line). The full review's `fingerprint:` line stays too.
+    fp = f"Verification fingerprint: {_clean(prepared['fingerprint'])}"
+    lines.insert(lines.index("") if "" in lines else len(lines), fp)
     if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
         lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]
     for c in prepared.get("checks") or []:

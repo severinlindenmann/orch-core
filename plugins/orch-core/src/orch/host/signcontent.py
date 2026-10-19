@@ -18,8 +18,11 @@ The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Con
 
     {headline, ticket?: {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}],
      tasks?: [{n, id, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}],
-     fields_title?: str, notes?: [str]}
-    ticket = {key, title, uid_tail, key_note}   // key_note: the key is the host's word; uid_tail is the signed id's end
+     fields_title?: str, notes?: [str], title?: str}
+    title = the headline without the host-key / signed-id qualifier, for a dialog title (U3); the qualifier stays in
+    ``ticket`` (key_note, uid_tail), which the dashboard shows under "Technical details"; ``headline`` is unchanged
+    ticket = {key, title, uid_tail, key_note, new}
+    // key_note: the key is the host's word; uid_tail is the signed id's end; new: this review creates the ticket
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
 shown only when a signed event states it (a ``ticket.created``): a gate does not bind the title, so ``ticket.title`` is
@@ -189,6 +192,109 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     return f"{name} (key per host; signed id …{ticket['uid_tail']})"
 
 
+_SHARE_SIZE = r"\d+(?:\.\d+)? ?[A-Za-z]+"
+_SHARE_FILE = re.compile(r"- (.+)  \((" + _SHARE_SIZE + r"), sha256 ([0-9a-f]{16})\)")
+_SHARE_HEAD = re.compile(r"Files \((\d+), (" + _SHARE_SIZE + r")\):")
+_SHARE_TICKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _share_summary(text: str) -> dict[str, Any] | None:
+    """The plain lead of a share approval (the PF1 review): files, who can open them, how long, where they go, read
+    from the SIGNED text only (``orch.publishclient.approval.approval_text``). It is a summary that never replaces the
+    text: the dashboard shows the whole signed text beside it. ``None`` (no summary, the text alone) as soon as one
+    line is not exactly what that function writes (its own name, origin, staged-id, digest, day and view patterns are
+    reused), so an odd value can never be summarised into something it is not."""
+    from orch.publishclient import approval as ap
+
+    lines = text.split("\n")
+    if len(lines) < 11 or lines[0] != ap.MARK:
+        return None
+    ticket = re.fullmatch(r"Ticket: (\S+)", lines[1])
+    prepared = re.fullmatch(r"Prepared by: (an agent|you)", lines[2])
+    secret = lines[3] == "Link: a secret link: anyone who has the link can open the files"
+    once = re.fullmatch(r"Link: a show-once link: it opens at most (\d+) times?", lines[3])
+    works = re.fullmatch(r"Works for: (\d+) days? from the moment the link is made", lines[4])
+    server = re.fullmatch(r"The files are sent to: (\S+)", lines[5])
+    share = re.fullmatch(r"The link opens at: (\S+)", lines[6])
+    head = _SHARE_HEAD.fullmatch(lines[7])
+    if not (ticket and prepared and (secret or once) and works and server and share and head):
+        return None
+    if not (_SHARE_TICKET.fullmatch(ticket.group(1)) and int(works.group(1)) in ap.DAYS):
+        return None
+    if once and (int(once.group(1)) not in ap.VIEWS or lines[3] != _views_line(int(once.group(1)))):
+        return None
+    nd = int(works.group(1))
+    if lines[4] != f"Works for: {nd} day{'' if nd == 1 else 's'} from the moment the link is made":
+        return None
+    if not (ap._ORIGIN.fullmatch(server.group(1)) and ap._ORIGIN.fullmatch(share.group(1))):
+        return None
+    if not (
+        re.fullmatch(r"Staged copy: " + ap._STAGED.pattern, lines[-2])
+        and re.fullmatch(r"Manifest: sha256:" + ap._HEX64.pattern, lines[-1])
+    ):
+        return None
+    rows = lines[8:-2]
+    names = []
+    for row in rows:
+        m = _SHARE_FILE.fullmatch(row)
+        if m is None or ap.NAME.fullmatch(m.group(1)) is None:
+            return None
+        names.append(m.group(1))
+    if len(rows) != int(head.group(1)) or not 1 <= len(rows) <= ap.LIMITS["files"]:
+        return None
+    n, days = int(head.group(1)), int(works.group(1))
+    who = "Anyone who has the link can open the files"
+    if once:
+        views = int(once.group(1))
+        who += f", at most {views} time{'' if views == 1 else 's'}"
+    out = [
+        f"Files: {n} ({head.group(2)}): " + ", ".join(names),
+        f"Who can open them: {who}.",
+        f"The link works for {days} day{'' if days == 1 else 's'} from the moment it is made.",
+        f"The files are sent to {server.group(1)}; the link opens at {share.group(1)}.",
+        f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
+    ]
+    return {"title": "Share these files", "lines": out}
+
+
+def _views_line(views: int) -> str:
+    return f"Link: a show-once link: it opens at most {views} time{'' if views == 1 else 's'}"
+
+
+def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """The plain lead of an Extend (the ordinary runner grant plus the take-back of the access it replaces, B8).
+    Only for exactly that shape; anything else keeps the generic review (nothing here may claim less than is signed)."""
+    kinds = [e.get("type") for e in events]
+    if sorted(map(str, kinds)) != ["grant.issued", "grant.revoked"]:
+        return None
+    new = next(e for e in events if e.get("type") == "grant.issued")
+    old = next(e for e in events if e.get("type") == "grant.revoked")
+    hours = new.get("hours")
+    if (
+        old.get("reason") != "extended"
+        or new.get("label") != "runner"
+        or new.get("scope") != "workable"
+        or new.get("verbs") != "agent"
+        or type(hours) is not int
+    ):
+        return None
+    until = local_time(new.get("expires_at"), hours)
+    lines = [
+        f"New access: agents working for you, for {span(hours)}.",
+        *([f"The new access ends {until} (your time)."] if until else []),
+        f"It replaces the access {_grant_short(old.get('grant'))}, which is taken back when you sign.",
+        "Affected: agents working for you (per host, not signed).",
+        "Running agents will stop. New agents use the extended access (per host, not signed).",
+    ]
+    # the headline is all the terminal's plain view prints first: it keeps the length, the end and the replaced access
+    head = (
+        f"Extend agent access: agents working for you, for {span(hours)}"
+        + (f" (until {until}, your time)" if until else "")
+        + f"; takes back {_grant_short(old.get('grant'))}"
+    )
+    return {"title": "Extend agent access", "lines": lines, "headline": head}
+
+
 def _grant_short(value: Any) -> str:
     """A grant id as ``gr_…`` and its last 10 characters: enough to tell two grants apart on the screen; the full id is
     in the technical details. Two different ids with one short form are refused by the caller (:func:`_payload`)."""
@@ -221,7 +327,9 @@ def local_time(iso: Any, hours: Any = None) -> str | None:
         return None
     zone = when.tzname() or "UTC"
     day = (
-        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}" if (hours or 0) > 24 else _DAYS[when.weekday()]
+        f"{_DAYS[when.weekday()]} {when.day} {_MONTHS[when.month - 1]}"
+        if type(hours) is int and hours > 24
+        else _DAYS[when.weekday()]
     )
     return f"{day} {when:%H:%M} {zone}"
 
@@ -296,7 +404,13 @@ def _repo_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
         )
         for key, label in _REPO_FIELDS:
             after = "(removed)" if entry is None else _repo_value(entry, key)
-            _row(out, f"{who}: {label}", after, _repo_value(old, key) if old is not None else "(none)", ctx.note(False))
+            was = _repo_value(old, key) if old is not None else "(none)"
+            if entry is not None and old is not None and was == after:
+                # E-4: a field that stays as it is says so (the host's unsigned word) and shows its value once, no
+                # arrow; the value is still on the screen, so every signed byte is still shown
+                _row(out, f"{who}: {label} (unchanged, per host)", after)
+                continue
+            _row(out, f"{who}: {label}", after, was, ctx.note(False))
     return True
 
 
@@ -315,6 +429,50 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
         _row(out, label, value[key], old.get(key) or "(none)", ctx.note(False))
     out.setdefault("notes", []).append(
         "Files you share go to this server, signed by this workspace. Only a person can change it."
+    )
+    return True
+
+
+_MODE_WORDS = {
+    "work": "Do the work", "refine": "Write requirements and plan", "fix": "Fix what was sent back",
+    "continue": "Continue", "context": "Read and answer",
+}  # fmt: skip
+_HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
+
+
+def _model_word(name: str | None) -> str:
+    from orch.modelchoices import MODEL_LABELS
+
+    return "Harness default" if name is None else MODEL_LABELS[name]
+
+
+def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.models`` (Model routing): one row per harness and mode, the model in words, ``Harness
+    default`` where none is set. The new value replaces the whole table, so every mode of every harness is listed.
+    ``False`` (the generic row, every byte) when the value is not a plain table of the closed lists."""
+    from orch.modelchoices import MODEL_CHOICES
+
+    def plain(v: Any) -> bool:
+        return isinstance(v, Mapping) and all(
+            h in MODEL_CHOICES
+            and isinstance(per, Mapping)
+            and all(m in _MODE_WORDS and per[m] in MODEL_CHOICES[h] for m in per)
+            for h, per in v.items()
+        )
+
+    if value is not None and not plain(value):
+        return False
+    if before is not None and not plain(before):
+        return False  # the host's current value is not a plain table: the generic row shows every byte
+    new = value or {}
+    old = before if plain(before) else {}
+    for harness, hword in _HARNESS_WORDS.items():
+        for mode, mword in _MODE_WORDS.items():
+            after = new.get(harness, {}).get(mode)
+            was = old.get(harness, {}).get(mode)
+            _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
+    out.setdefault("notes", []).append(
+        "Start agent uses these models for new agents. You still see the model before each start."
     )
     return True
 
@@ -472,7 +630,7 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         from . import sequence
 
         try:
-            return sequence.build_content(prepared, verified=verified)
+            return _finish(sequence.build_content(prepared, verified=verified))
         except sequence.SequenceInvalid as exc:
             raise PlainUnavailable(str(exc)) from None
     ticket = _ticket(material, events)
@@ -486,10 +644,101 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     elif kind == "question":
         _question(material, events, ticket, out)
     elif kind == "payload":
-        _payload(material, events, ticket, out, ctx)
+        _payload(material, events, ticket, out, ctx, op=prepared.get("op"))
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
-    return {k: v for k, v in out.items() if v not in (None, [], "")}
+    done = {k: v for k, v in out.items() if v not in (None, [], "")}
+    creates = any(ev.get("type") == "ticket.created" for ev in events)
+    if creates:
+        done = _new_ticket(done)
+    if isinstance(done.get("ticket"), dict):  # from the signed events, never from the headline's words
+        done["ticket"] = {**done["ticket"], "new": creates}
+    return _finish(done)
+
+
+def _new_ticket(content: dict[str, Any]) -> dict[str, Any]:
+    """U3: this request creates the ticket (a signed ``ticket.created`` is among its events, and a gate approval can
+    only follow its ticket's creation), so there is no earlier approval an edit could cancel: the two cancel notes are
+    provably empty and go. Its rows have no earlier value, so they are the ticket's details, not "changed fields"."""
+    notes = [n for n in content.get("notes") or [] if not (isinstance(n, str) and n.startswith(_NOTHING_TO_CANCEL))]
+    if notes:
+        content["notes"] = notes
+    else:
+        content.pop("notes", None)
+    rows = content.get("fields_changed") or []
+    if rows and not content.get("fields_title") and all(r.get("before") is None for r in rows):
+        content["fields_title"] = "Details"
+    return content
+
+
+_NOTHING_TO_CANCEL = (
+    "This cancels any existing approval of: ",
+    "An add-on field or section can also be part of an approval;",
+)
+
+
+def _finish(content: dict[str, Any]) -> dict[str, Any]:
+    return _with_title(_dedupe_notes(content))
+
+
+_NEW_TICKET = (re.compile(r"Create ticket (\S+) · (.*)", re.S), re.compile(r"Create (\S+): (.*)", re.S))
+
+
+def _with_title(content: dict[str, Any]) -> dict[str, Any]:
+    """U3: ``title``, the headline a person reads: no "key per host; signed id" qualifier in the words and "New ticket
+    KEY: title" for a creation. Only ever a rewording of ``headline``.
+
+    ``ticket.new`` (set by :func:`build` from the request's own events: any ``ticket.created``; a sequence takes it from
+    its expanded events) says whether this review creates the ticket (a creation signs the key and the title, so the
+    signed id is only a technical detail there). For a request on an existing ticket the qualifier is not in the title
+    but the dashboard keeps "key per host · signed id …tail" visible in the main view (``ticket.new`` false)."""
+    head, ticket = content.get("headline"), content.get("ticket")
+    if not isinstance(head, str):
+        return content
+    if isinstance(ticket, Mapping):
+        head = head.replace(f" (key per host; signed id …{ticket.get('uid_tail')})", "")
+    for pattern in _NEW_TICKET:
+        m = pattern.fullmatch(head)
+        if m:
+            head = f"New ticket {m.group(1)}: {m.group(2)}"
+            break
+    if head != content["headline"]:
+        content["title"] = head
+    return content
+
+
+_CANCEL_HEAD, _CANCEL_TAIL = "This cancels any existing approval of: ", ". Each one has to be approved again."
+
+
+def _dedupe_notes(content: dict[str, Any]) -> dict[str, Any]:
+    """Each note once: a review of several events (a sequence, a new ticket) would otherwise repeat the same sentence.
+    Only exact repeats go. The cancel notes that differ only in their gate list become one note at the place of the
+    first, naming the union of the gates in gate order; every other note keeps its text and its place."""
+    notes = content.get("notes")
+    if not notes:
+        return content
+    from orch.model.generations import GATES
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    cancel_at: int | None = None
+    cancelled: set[str] = set()
+    for note in notes:
+        if isinstance(note, str) and note.startswith(_CANCEL_HEAD) and note.endswith(_CANCEL_TAIL):
+            names = {g.strip() for g in note[len(_CANCEL_HEAD) : -len(_CANCEL_TAIL)].split(",")}
+            if names <= set(GATES):
+                cancelled |= names
+                if cancel_at is None:
+                    cancel_at = len(kept)
+                    kept.append("")  # filled below
+                continue
+        if note not in seen:
+            seen.add(note)
+            kept.append(note)
+    if cancel_at is not None:
+        kept[cancel_at] = _CANCEL_HEAD + ", ".join(g for g in GATES if g in cancelled) + _CANCEL_TAIL
+    content["notes"] = kept
+    return content
 
 
 class _Ctx:
@@ -631,7 +880,12 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
 
 
 def _payload(
-    material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any], ctx: _Ctx
+    material: Mapping[str, Any],
+    events: list[Mapping[str, Any]],
+    ticket: Any,
+    out: dict[str, Any],
+    ctx: _Ctx,
+    op: Any = None,
 ) -> None:
     before = material.get("before") or {}
     texts = material.get("texts") or {}
@@ -654,8 +908,17 @@ def _payload(
     for gid in [*issued, *revoked]:
         if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
             raise PlainUnavailable("two accesses share one short form")
+    if op == "publish.share" and len(events) == 1 and events[0].get("type") == "log.added":
+        # exactly one share: a mix, or a second share, is never summarised (a summary of one would hide the other)
+        summary = _share_summary(_s(events[0].get("text")))
+        if summary is not None:
+            out["summary"] = summary
     uniq = list(dict.fromkeys(heads))
-    if len(uniq) == 1:
+    extend = _extend_summary(events) if issued and revoked else None
+    if extend is not None:
+        out["headline"] = extend.pop("headline")
+        out["summary"] = extend
+    elif len(uniq) == 1:
         out["headline"] = uniq[0]
     elif len(uniq) <= 3:
         out["headline"] = " and ".join(uniq)
@@ -726,6 +989,8 @@ def _event(
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
+                continue
+            if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
@@ -811,6 +1076,27 @@ def _capability_words(value: Any) -> str | None:
     return "; ".join(_CAPABILITY_WORDS[c] for c in value) or ""
 
 
+#: the built-in File Explorer reads project files inside the dashboard server, which no capability word names. Its grant
+#: review says so in its own words (matched by name AND the digest of the built-in package, never by name alone)
+EXPLORER_HEADLINE = "Turn on File Explorer: owners can read this workspace's files and git history in the dashboard"
+EXPLORER_ROW = (
+    "read every file of this workspace and its declared repositories, and their git history "
+    "(read only; keys, .env files, .git and orch's own files stay locked)"
+)
+
+
+def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    try:
+        return ev.get("name") == "explorer" and ev.get("package_sha256") == package_digest(
+            {MANIFEST_FILE: builtin.manifest_bytes("explorer")}
+        )
+    except (ValueError, OSError):
+        return False
+
+
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     """The add-on reviews. The plain view of an add-on that declares nothing but known capabilities (no fields,
     sections or artifact kinds) is its name, its version and what it may do in words; the package digest and the exact
@@ -829,10 +1115,16 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
-        _row(out, "it says it will", words or "(declares no capabilities)")
+        explorer = not words and _is_builtin_explorer(ev)
+        if explorer:
+            _row(out, "it lets owners", EXPLORER_ROW)
+        else:
+            _row(out, "it says it will", words or "(declares no capabilities)")
         notes = out.setdefault("notes", [])
         notes.append(ADDON_TRUST)
         notes.append("The package digest and the exact capability names are in the technical details.")
+        if explorer:
+            return EXPLORER_HEADLINE
         return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))
@@ -851,6 +1143,38 @@ def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:
     for k in ("person_id", "device_id", "scopes_max", "expires_ms"):
         if o.get(k) is not None:
             _row(out, f"{label} {k.replace('_', ' ')}", o[k])
+
+
+#: the Estimate add-on's scale (the dashboard's ESTIMATE_SCALE): the signed value stays visible next to the points
+_SIZE_POINTS = {"xs": 1, "s": 2, "m": 3, "l": 5, "xl": 8}
+
+
+def _size_words(value: Any) -> Any:
+    if isinstance(value, str) and value in _SIZE_POINTS:
+        n = _SIZE_POINTS[value]
+        return f"{n} point{'' if n == 1 else 's'} (size {value.upper()})"
+    return value
+
+
+def _cancel_note(ev: Mapping[str, Any], out: dict[str, Any]) -> None:
+    """The gates an approval of which this edit cancels, from core's own binding list (``generations.BOUND_BASE``): a
+    deterministic function of the signed change, so the host's word is not needed. Whether a gate is approved right
+    now is not part of what is signed, so the words say "any existing approval"."""
+    from orch.model.generations import BOUND_BASE, GATES
+
+    paths = {p if p.startswith("ticket.") else "ticket." + p for p in (ev.get("set") or {})}
+    paths |= {"body." + sid for sid in (ev.get("sections") or {})}
+    hit = [g for g in GATES if paths & BOUND_BASE.get(g, set())]
+    # ``generations.settle``: a raise of one gate raises every later gate
+    gates = list(GATES[GATES.index(hit[0]) :]) if hit else []
+    notes = out.setdefault("notes", [])
+    if gates:
+        notes.append(f"This cancels any existing approval of: {', '.join(gates)}. Each one has to be approved again.")
+    if any(p.startswith("ticket.addons.") or ("." in p[len("body.") :] and p.startswith("body.")) for p in paths):
+        notes.append(
+            "An add-on field or section can also be part of an approval; "
+            "if it is, this may also cancel that approval and every later one."
+        )
 
 
 def _updated(
@@ -880,10 +1204,14 @@ def _updated(
             names.append("plan")
         elif field == "links" and _links_rows(out, value, before.get(path), ctx.note(path in checked)):
             names.append("repositories")
+        elif field == "size":
+            _row(out, "estimate", _size_words(value), _size_words(before.get(path)), ctx.note(path in checked))
+            names.append("estimate")
         else:
             # `before` is shown as checked only when the event's base_rev binds it; otherwise it is the host's word
             _row(out, field, value, before.get(path), ctx.note(path in checked))
             names.append(field)
+    _cancel_note(ev, out)
     return f"Change the {', '.join(names)} of {ref}" if names else f"Change {ref}"
 
 

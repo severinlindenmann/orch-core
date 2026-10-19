@@ -44,3 +44,37 @@ it.each(['policy', 'before', 'derived', 'none'])('only summarizes present host c
   if (kind === 'none') expect(note).toBeNull()
   else expect(note).toBeVisible()
 })
+
+const grantEvent = (type: string, extra: Record<string, unknown>) => ({ type, actor: { kind: 'person', id: 'p_sev', device: null }, auth: null, ...extra })
+
+it('separates the command from the verification fingerprint', () => {
+  const request = { ...fakeRequest(), content: { headline: 'Approve' } }
+  render(<HandoffPanel request={request} />)
+  expect(screen.getByText('Copy this command into Terminal')).toBeVisible()
+  expect(screen.getByTestId('handoff-command')).toHaveTextContent(`orch sign ${request.code}`)
+  const note = screen.getByTestId('handoff-fingerprint').parentElement!
+  expect(note).toHaveTextContent(`Verification fingerprint: ${request.fingerprint}. Check that this matches the fingerprint in your terminal.`)
+  expect(note).not.toHaveTextContent('same code')
+  expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
+})
+
+it('tells an Extend that running agents stop and what r does, from the signed events', () => {
+  const events = [grantEvent('grant.issued', { grant: 'gr_new', label: 'runner' }), grantEvent('grant.revoked', { grant: 'gr_old', reason: 'extended' })]
+  render(<HandoffPanel request={{ ...fakeRequest({ events }), content: { headline: 'Extend agent access' } }} />)
+  const note = screen.getByTestId('handoff-runner-note')
+  expect(note).toHaveTextContent('Running agents will stop.')
+  expect(note).toHaveTextContent('choose r in Terminal to give the new access to this Mac’s agent runner')
+  expect(note).toHaveTextContent('The agent runner is the part of orch on this Mac that starts agents for you.')
+  const text = document.body.textContent!
+  expect(text.indexOf('Running agents will stop.')).toBeLessThan(text.indexOf('orch sign'))
+})
+
+it('a plain runner grant gets the r note but not the stop warning; another grant gets neither', () => {
+  const issued = (label: string) => [grantEvent('grant.issued', { grant: 'gr_new', label })]
+  const { unmount } = render(<HandoffPanel request={{ ...fakeRequest({ events: issued('runner') }), content: { headline: 'g' } }} />)
+  expect(screen.getByTestId('handoff-runner-note')).not.toHaveTextContent('Running agents will stop.')
+  expect(screen.getByTestId('handoff-runner-note')).toHaveTextContent('choose r in Terminal')
+  unmount()
+  render(<HandoffPanel request={{ ...fakeRequest({ events: issued('ci') }), content: { headline: 'g' } }} />)
+  expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
+})

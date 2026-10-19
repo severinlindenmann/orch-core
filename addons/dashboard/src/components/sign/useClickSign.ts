@@ -58,7 +58,7 @@ const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'event
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
 export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state: HandoffState; request: HandoffRequest } {
-  const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: signed.key ?? null, expires_at: prepared.expires_at, event_ids: [], seq: signed.seq ?? null }
+  const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: signed.key ?? null, expires_at: prepared.expires_at, event_ids: [], seq: signed.seq ?? null, ...(signed.deposit ? { deposit: signed.deposit } : {}) }
   const request = { id: prepared.request_id, code: null, expires_at: prepared.expires_at, state: 'submitted', op: prepared.op, key: signed.key ?? null } as unknown as HandoffRequest
   return { state, request }
 }

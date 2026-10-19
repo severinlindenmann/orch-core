@@ -35,7 +35,7 @@ function RevokeDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGra
         <Label htmlFor="revoke-reason">Why (optional)</Label>
         <Input id="revoke-reason" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
         <p className="text-[12px] text-text-faint">
-          One line, at most 200 characters. Every agent session using this grant ends. Grant <Mono>{grant.id}</Mono>.
+          One line, at most 200 characters. Every agent session using this grant ends. 
         </p>
       </div>
     </HandoffDialog>
@@ -98,9 +98,12 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                         ) : g.label ? (
                           <span>label <Raw>{g.label}</Raw></span>
                         ) : null}
-                        {g.label && <span aria-hidden>·</span>}
-                        <Mono className="break-all text-[11px] text-text-faint">{g.id}</Mono>
                       </span>
+                      <details className="text-[11px] text-text-faint">
+                        <summary className="cursor-pointer">Technical details</summary>
+                        <span className="block break-all">Grant <Mono className="text-[11px] text-text-faint">{g.id}</Mono></span>
+                        {g.session_ids && g.session_ids.length > 0 && <span className="block break-all">Sessions <Mono className="text-[11px] text-text-faint"><Raw>{g.session_ids.join(', ')}</Raw>{g.sessions_more ? ', …' : ''}</Mono></span>}
+                      </details>
                     </TableCell>
                     <TableCell>
                       <Mono><Raw>{g.scope}</Raw></Mono>
@@ -117,7 +120,6 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {g.sessions}
-                      {g.session_ids && g.session_ids.length > 0 && <span className="block text-[11px] text-text-faint"><Raw>{g.session_ids.join(', ')}</Raw>{g.sessions_more ? ', …' : ''}</span>}
                     </TableCell>
                     <TableCell>
                       <Pill tone={TONE[s]} className="capitalize">

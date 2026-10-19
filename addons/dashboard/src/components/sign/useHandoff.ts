@@ -228,7 +228,10 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
             const grantOnly = got.progress.last === 'grant' && got.progress.done === got.progress.of - 1
             if (Date.now() - progressed.at > (grantOnly ? GRANT_STALL_MS : SEQUENCE_STALL_MS)) {
               stopped = true
-              const message = grantOnly
+              const newTicket = (request.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket'
+              const message = grantOnly && newTicket
+                ? `${got.key ?? 'The ticket'} was created. Agent access was NOT given: signing stopped at the last signature (your terminal says why). No agent was started; start one from the ticket to give access again.`
+                : grantOnly
                 ? `${got.key ?? 'The task'} was created and approved; agent access was NOT given: signing stopped at the last signature (your terminal says why). Agents cannot work until you give them access from the agent access control.`
                 : `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`
               setError(new ApiError(409, { code: grantOnly ? 'sequence.no_access' : 'intent.failed', message, retryable: false }))

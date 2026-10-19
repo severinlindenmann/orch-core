@@ -24,9 +24,29 @@ export function reasonOf(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
   return `client: ${name}: ${message.split('#')[0].replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 120)}`
 }
+/** The cause in plain words; the code itself stays under "Technical details". */
+export function plainReason(code: string): string {
+  if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
+  if (code === 'setup.ended') return 'This setup was already finished or stopped.'
+  if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
+  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this Mac.'
+  return 'Setup could not go on.'
+}
+function Reason({ reason }: { reason: string }) {
+  return (
+    <>
+      <small>{plainReason(reason)}</small>
+      <details className="reason">
+        <summary>Technical details</summary>
+        <small>Reason: {reason}</small>
+      </details>
+    </>
+  )
+}
 function report(e: unknown): string {
   const reason = reasonOf(e)
-  console.error('[orch setup]', reason)
+  // A link that ended or a reload is an ordinary outcome the page explains in words: no console error for it.
+  if (!/^(session\.|setup\.(ended|token|unavailable)|secrets\.)/.test(reason)) console.error('[orch setup]', reason)
   return reason
 }
 function clearClipboard() {
@@ -236,6 +256,24 @@ function FinishChoices({
     </>
   )
 }
+/** U2: the one plain message wherever setup waits for the terminal. */
+export const terminalMessage = 'Now look at your terminal: orch asks you to confirm there.'
+function TerminalNotice({ children }: { children?: React.ReactNode }) {
+  return (
+    <div className="terminal-notice" role="status">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2.5" y="4" width="19" height="16" rx="2.5" />
+        <path d="M7 10l3 2.5L7 15" />
+        <path d="M12.5 15h4.5" />
+      </svg>
+      <div>
+        <strong>{terminalMessage}</strong>
+        {children}
+        <small>Waiting for your confirmation…</small>
+      </div>
+    </div>
+  )
+}
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -359,7 +397,14 @@ export function Setup({ api }: { api: SetupAPI }) {
             }))
           } else {
             const addons = s.addons.filter((a) => a.required || a.default).map((a) => a.id)
-            setProfile((p) => ({ ...p, ...s.suggested, addons }))
+            // agent_hours/agent_grant are seeded only together with the access picker, so the two never disagree
+            const { agent_hours: sugHours, agent_grant: sugGrant, ...rest } = s.suggested
+            setProfile((p) => ({ ...p, ...rest, addons }))
+            // U1: "let agents work for you" starts ticked (3 days); the person can still pick "No agent access"
+            if (sugGrant && typeof sugHours === 'number' && s.agent_hours.includes(sugHours)) {
+              chooseAccess(sugHours)
+              setProfile((p) => ({ ...p, agent_grant: true }))
+            }
           }
           if (s.error || s.phase !== 'profile') {
             setEnded(true)
@@ -600,7 +645,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
-      {error && reason && <small className="reason">Reason: {reason}</small>}
+      {error && reason && <Reason reason={reason} />}
       {state?.error && (
         <p role="alert" className="warning">
           <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
@@ -966,7 +1011,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       </li>
                     )}
                     <li>
-                      Then the terminal that started setup shows three words. If they match <Words words={review.fingerprint} />,
+                      Then look at your terminal: orch asks you to confirm there. It shows three words. If they match <Words words={review.fingerprint} />,
                       type yes there.
                     </li>
                   </ol>
@@ -1016,19 +1061,22 @@ export function Setup({ api }: { api: SetupAPI }) {
           {review?.tty_confirm &&
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
-              <p>
-                Your terminal now asks you to confirm. If it shows <Words words={review.fingerprint} />, type
-                yes there.
-              </p>
+              <TerminalNotice>
+                <span>
+                  If it shows <Words words={review.fingerprint} />, type yes there.
+                </span>
+              </TerminalNotice>
             )}
           {progress?.waiting && title !== 'Confirm in your terminal' && (
+            progress.waiting === 'waiting for terminal' ? (
+              <TerminalNotice />
+            ) : (
             <p role="status">
-              {progress.waiting === 'waiting for terminal'
-                ? 'Confirm in your terminal'
-                : progress.waiting === 'runner' || progress.waiting === 'waiting for runner'
+              {progress.waiting === 'runner' || progress.waiting === 'waiting for runner'
                   ? 'Waiting for the agent runner to connect…'
                   : <Raw>{progress.waiting}</Raw>}
             </p>
+            )
           )}
           <ol className="progress">
             {progress?.steps.map((s) => (
@@ -1112,7 +1160,7 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
       <main className="setup">
         <h1>Open setup from your terminal</h1>
         <p>{expiredCopy}</p>
-        <small className="reason">Reason: {reason}</small>
+        <Reason reason={reason} />
       </main>,
     )
   }

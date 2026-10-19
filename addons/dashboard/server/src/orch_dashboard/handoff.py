@@ -132,14 +132,20 @@ class Details(Action):
     action: Literal["details"]
     key: Key
     priority: Literal["low", "medium", "high", "urgent"] | None = None
-    size: Literal["xs", "s", "m", "l", "xl"] | None = None
+    #: "none" takes the size away (core `set size=none`); the Estimate add-on's "not estimated"
+    size: Literal["xs", "s", "m", "l", "xl", "none"] | None = None
     labels: list[Label] | None = Field(default=None, min_length=0, max_length=16)
     parent: Key | None = None
+    #: the Estimate box names itself: then the size is all this carries and the add-on must be ON (see `plan`).
+    #: Not signed and not sent to the host; the host sees an ordinary `set size=...`.
+    via: Literal["estimate"] | None = None
 
     @model_validator(mode="after")
     def something(self):
         if self.priority is None and self.size is None and self.labels is None and self.parent is None:
             raise ValueError("details change at least one field")
+        if self.via == "estimate" and (self.size is None or self.priority or self.labels is not None or self.parent):
+            raise ValueError("an estimate changes the size and nothing else")
         return self
 
 
@@ -206,6 +212,11 @@ def _new_people(people: "NewPeople | None") -> dict:
     return out
 
 
+class QuickAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hours: Annotated[int, Field(ge=1, le=168)]
+
+
 class NewTicketSequence(Action):
     """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
@@ -222,6 +233,9 @@ class NewTicketSequence(Action):
     #: B12D: acceptance criteria and people in the same review (N3)
     acceptance: list[Criterion] = Field(default_factory=list, max_length=8)
     people: NewPeople | None = None
+    #: U4: "Create and start agent" without a usable runner grant: the agent access, signed LAST in the same review
+    #: (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
+    agent: QuickAgent | None = None
 
     def intent(self) -> dict:
         """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
@@ -254,6 +268,8 @@ class NewTicketSequence(Action):
             people = _new_people(self.people)
             if people:
                 intent["people"] = people
+            if self.agent is not None:
+                intent["agent"] = {"hours": self.agent.hours, "scope": "workable"}
             return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid) as exc:
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
@@ -375,11 +391,6 @@ class QuickCheck(BaseModel):
     cmd: Annotated[str, StringConstraints(min_length=1, max_length=300)] | None = None
 
 
-class QuickAgent(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    hours: Annotated[int, Field(ge=1, le=168)]
-
-
 class QuickStart(Action):
     """B11 step (ii): a quick task on ONE review and ONE confirmation. The signer signs the ticket (labelled quick), its
     requirements, the acceptance criteria and tasks (one per check), the plan derived from them, both approvals and,
@@ -460,6 +471,28 @@ class SettingsSet(Action):
             "terminal" not in self.sign_methods or len(set(self.sign_methods)) != len(self.sign_methods)
         ):
             raise ValueError("sign_methods always contains terminal, once each")
+        return self
+
+
+class ModelsSet(Action):
+    """`settings.set {set:{models}}` (Model routing): for each harness and Start agent mode, the model a start uses; a
+    mode that is not named uses the harness default; an empty table clears every choice (sent as `null`). Every name is
+    checked against core's closed per-harness list here, and again by the host. Signed with the typed word."""
+
+    action: Literal["models_set"]
+    models: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=2)
+
+    @model_validator(mode="after")
+    def closed(self):
+        from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
+
+        for harness, per in self.models.items():
+            if harness not in MODEL_CHOICES:
+                raise ValueError("models: an unknown agent")
+            for mode, name in per.items():
+                if mode not in ROUTE_MODES or name not in MODEL_CHOICES[harness]:
+                    raise ValueError("models: a mode or model that orch does not offer")
+        self.models = {h: dict(sorted(per.items())) for h, per in sorted(self.models.items()) if per}
         return self
 
 
@@ -586,7 +619,9 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish"]
+AddonName = Literal[
+    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing"
+]
 
 
 class AddonGrant(Action):
@@ -688,6 +723,7 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
+    | ModelsSet
     | RepoSet
     | RepoRemove
     | PolicySet
@@ -833,6 +869,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case ModelsSet():
+            return "settings.set", {"set": {"models": action.models or None}}
         case PublishSetup():
             return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
         case PublishShare():
@@ -897,7 +935,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | RepoSet() | RepoRemove() | PublishSetup():
+        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -915,8 +953,9 @@ def expected(action: Action, person: str | None = None):
         case NewTicketSequence() | QuickStart():
             intent = action.intent()
             kind = intent.get("ticket_type", "chore")
-            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=kind) and (
-                person is None or ev[0].get("owner") == person
+            return lambda ev: (
+                one(ev, "ticket.created", title=intent["title"], ticket_type=kind)
+                and (person is None or ev[0].get("owner") == person)
             )
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
@@ -1018,10 +1057,16 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
-    if isinstance(body, AddonDisable):
-        from .addon_switches import check_off
+    if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
+        raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
+    addon_base_ = None
+    if isinstance(body, AddonDisable | AddonGrant):
+        from .addon_switches import addon_base, check_off
 
-        check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        if isinstance(body, AddonDisable):
+            check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        # the latest switch of this add-on is part of the intent: on, off, on is three requests
+        addon_base_ = addon_base(link, body.name, isinstance(body, AddonGrant))
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
@@ -1036,6 +1081,8 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = gate_base(data, gate(body))
         elif isinstance(body, Answer):
             base = question_base(data, body.question)
+    if addon_base_ is not None:
+        base = addon_base_
     person = link.welcome["peer"]["person"]
     meta = None
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
@@ -1308,6 +1355,31 @@ def register(app: FastAPI, gateway: Gateway):
         return gateway.link(ws).welcome["peer"]["person"]
 
     app.state.person_of = person_of
+
+    checks_lock = threading.Lock()
+    checks: dict[str, list[float]] = {}  # per bearer token: times of its recent folder checks
+
+    @app.post("/api/w/{ws}/repos/check")
+    def check_repo(body: RepoSet, request: Request, ws: str = Depends(workspace)):
+        """The host's own look at a repository to add, asked from the form before it closes, so a refusal (home folder,
+        not a git folder, inside orch's data, missing, not an owner) stays next to the field. A dry run of the same
+        prepare the hand-off makes: nothing is stored, no request exists, nothing is signed. The same check runs again
+        when the change is really prepared."""
+        gateway.enabled(ws)
+        # At most 20 folder checks a minute per session: this route says what exists on this computer.
+        now = time.monotonic()
+        with checks_lock:  # read, check, append and clean up as one step: concurrent requests cannot overshoot
+            recent = [t for t in checks.get(request.state.token, []) if t > now - 60]
+            if len(recent) >= 20:
+                checks[request.state.token] = recent
+                raise fail("rate.limited")
+            checks[request.state.token] = [*recent, now]
+            for k in [k for k, v in checks.items() if not v or v[-1] <= now - 60]:
+                del checks[k]  # tokens with no recent check are dropped: the dict stays small
+        # The host decides first (it checks the role, then the folder); the local look is not run before it.
+        op, args = host_call(body)
+        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        return {"ok": True}
 
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):

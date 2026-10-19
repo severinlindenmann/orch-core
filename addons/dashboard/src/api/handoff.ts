@@ -26,7 +26,7 @@ export type HandoffAction =
    * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
    * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
    */
-  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] } }
+  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number } }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
    * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
@@ -35,12 +35,15 @@ export type HandoffAction =
   | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
-  | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }
+  /** `via: 'estimate'`: the Estimate box (size only, 'none' = not estimated); the server refuses it while the add-on is off. */
+  | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl' | 'none'; labels?: string[]; parent?: string; via?: 'estimate' }
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** Model routing: the model per agent and mode (`settings.set` of `models`, the typed word). An empty table clears it. */
+  | { action: 'models_set'; models: import('./modelRouting').ModelTable }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */
@@ -53,8 +56,8 @@ export type HandoffAction =
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' }
+  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
+  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
   | { action: 'publish_setup'; server: string; share: string }
   /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
@@ -136,6 +139,8 @@ export interface HandoffState {
   error?: { code: string } | null
   /** B11: a sequence (one review, N signatures) that has landed `done` of its `of` steps; absent for other requests. */
   progress?: { done: number; of: number; last?: 'grant' } | null
+  /** One click only: where the runner grant's secret went (a sequence that ends with agent access). */
+  deposit?: 'confirmed' | 'rejected' | 'unknown'
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -265,13 +270,15 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
     const name = request.events[0]?.name
     return typeof name === 'string' ? name : null
   }
+  // Agent access (Extend, Start again, a plain runner grant): the signer's word is GRANT (signer.confirm_word, op "grant").
+  if (request.op === 'grant') return 'GRANT'
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }
 
 export const signCommand = (code: string): string => `orch sign ${code}`
 
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
-export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
+export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused', 'addon.already'])
 /**
  * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
  * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended

@@ -1,5 +1,5 @@
 import { ChevronRight, Eye, Pencil, Plus, X } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState, type MutableRefObject } from 'react'
 import { SECTIONS_BY_TYPE, SECTION_ORDER, neededBefore, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { BodySections, TicketType } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
@@ -72,6 +72,7 @@ export function SectionsEditor({
   onAcceptance,
   invalid,
   collapsible = false,
+  flushRef,
 }: {
   type: TicketType
   sections: BodySections
@@ -82,8 +83,13 @@ export function SectionsEditor({
   invalid: Partial<Record<SectionName, string>>
   /** The sections needed at creation stay open; the others and the acceptance criteria fold under "More sections". */
   collapsible?: boolean
+  /** E-7: the owner of the form asks for a criterion typed but not yet added (returned trimmed, and cleared here). */
+  flushRef?: MutableRefObject<(() => string) | null>
 }) {
   const [next, setNext] = useState('')
+  const pending = useRef('')
+  pending.current = next
+  if (flushRef) flushRef.current = () => { const t = pending.current.trim(); if (t) setNext(''); return t }
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[type][n] !== 'absent')
   const first = collapsible ? shown.filter((n) => requiredAtCreation(type).includes(n)) : shown
   const rest = shown.filter((n) => !first.includes(n))

@@ -34,4 +34,4 @@ def _prepared(case: dict) -> dict:
 def test_terminal_click_and_dashboard_words_are_one_word(case):
     p = _prepared(case)
     assert signer.confirm_word(p, _registry) == case["word"]  # what `orch sign` accepts
-    assert views.word(p, _registry) == case["word"]  # what the one-click view shows
+    assert views.word(p, _registry) == case.get("click_word", case["word"])  # what the one-click view shows

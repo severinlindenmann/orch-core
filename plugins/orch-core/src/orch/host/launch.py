@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Mapping
 from typing import Any
 
+from orch.modelchoices import MODEL_CHOICES, MODEL_LABELS, ROUTE_MODES
 from orch.runner.config import RunnerConfig
 
 from .errors import HostError
@@ -31,12 +33,16 @@ __all__ = [
     "LOGIN_EXEC",
     "MODES",
     "MODEL",
+    "MODEL_CHOICES",
+    "MODEL_LABELS",
+    "ROUTE_MODES",
     "PROGRAMS",
     "TERM_HARNESSES",
     "check_model",
     "display",
     "launch_argv",
     "prompt",
+    "routed_model",
 ]
 
 HARNESSES = ("claude-code", "codex")
@@ -55,13 +61,32 @@ LOGIN_NOTICE = (
 KEY = re.compile(r"(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}")
 
 
-def check_model(field: str, value: Any) -> str | None:
-    """``None`` when absent or valid, else the ``launch.invalid`` message naming the field."""
+def check_model(field: str, value: Any, harness: str | None = None) -> str | None:
+    """``None`` when absent or valid, else the ``launch.invalid`` message naming the field. With ``harness`` the name
+    must also be one of that harness's closed list (:data:`MODEL_CHOICES`): no free text reaches an argv."""
     if value is None:
         return None
     if not isinstance(value, str) or not MODEL.fullmatch(value):
         return f"{field} is not a model name (letters, digits and ._:[]/-, at most 64, never starting with -)"
+    if harness is not None and value not in MODEL_CHOICES.get(harness, ()):
+        return f"{field} is not a model orch offers for {harness}"
     return None
+
+
+def routed_model(settings: Any, harness: str, mode: str | None) -> tuple[str | None, str | None]:
+    """``(model, problem)`` the workspace's signed ``settings.models`` gives ``harness`` in ``mode``. ``(None, None)``
+    when nothing is set (the harness default). A value this version does not offer is a ``problem`` (fail closed: the
+    launch is blocked, nothing is guessed)."""
+    table = settings.get("models") if hasattr(settings, "get") else None
+    if mode is None or not isinstance(table, Mapping):
+        return None, None
+    per = table.get(harness)
+    if not isinstance(per, Mapping) or per.get(mode) is None:
+        return None, None
+    value = per[mode]
+    if not isinstance(value, str) or value not in MODEL_CHOICES.get(harness, ()):
+        return None, "the model set for this mode is not one this version of orch offers: change it in Settings"
+    return value, None
 
 
 def prompt(mode: str | None, key: str | None, instructions: str | None = None) -> str | None:
@@ -96,7 +121,7 @@ def launch_argv(
         return ["$SHELL", "-l"], False, None
     if harness not in HARNESSES:
         raise HostError("launch.invalid", "harness is not one of claude-code, codex, shell")
-    bad = check_model("model", model)
+    bad = check_model("model", model, harness)
     if bad:
         raise HostError("launch.invalid", bad)
     rest: list[str] = []

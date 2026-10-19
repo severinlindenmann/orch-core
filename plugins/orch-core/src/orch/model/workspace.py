@@ -274,6 +274,17 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             if server["server"] == server["share"]:
                 return Refusal(Code.SETTINGS_INVALID, "publish: the share address must differ from the server address")
             ws.settings["publish"] = dict(server)
+    if "models" in s:  # Model routing: harness -> mode -> model; null clears; each value is a name of the closed list
+        table = s["models"]
+        if table is None:
+            ws.settings.pop("models", None)
+        else:
+            from orch.modelchoices import MODEL_CHOICES
+
+            for harness, per in table.items():
+                if harness not in MODEL_CHOICES or any(m not in MODEL_CHOICES[harness] for m in per.values()):
+                    return Refusal(Code.SETTINGS_INVALID, "models: a model that orch does not offer for its harness")
+            ws.settings["models"] = {h: dict(sorted(per.items())) for h, per in sorted(table.items()) if per}
     return None
 
 

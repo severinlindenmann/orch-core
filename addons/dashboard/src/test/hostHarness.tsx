@@ -187,6 +187,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'models_set':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { models: Object.keys(body.models as object).length ? body.models : null } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':
@@ -265,6 +267,11 @@ export class FakeHost {
     if (rest === 'members') return json(ws.roster)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
+    if (rest === 'repos/check' && method === 'POST') {
+      return String(body?.path).startsWith('/refused')
+        ? json({ ok: false, error: { code: 'invalid.input', message: 'This folder is not a git repository.', retryable: false } }, 400)
+        : json({ ok: true })
+    }
     if (rest === 'handoff' && method === 'POST') {
       const request = prepare(body!)
       this.requests.set(request.id, request)

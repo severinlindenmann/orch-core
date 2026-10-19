@@ -188,6 +188,21 @@ def test_orch_sign_shows_the_notice_then_the_header_then_content(human, served):
     assert lines[fp_line] == f"fingerprint: {p['fingerprint']}"  # the one the dashboard shows (R8)
 
 
+def test_the_first_view_of_orch_sign_prints_the_fingerprint_the_dashboard_shows(human, served):
+    """A-3: the dashboard says "check that this matches the fingerprint in your terminal". What the person reads first
+    (the plain view, before `d`) carries the same 12 hex on a labelled line under the headline, before any content."""
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "the body"}, handoff=True)
+    shown = Shown()
+    sign(served, human, p["request"]["code"], shown=shown)
+    first = shown.plain[0].splitlines()
+    at = first.index(f"Verification fingerprint: {p['fingerprint']}")  # headline, "in workspace ...", fingerprint
+    assert first[at - 1].startswith("in workspace ") and at < next(i for i, x in enumerate(first) if "the body" in x)
+    assert (
+        len(p["fingerprint"]) == 12 and f"fingerprint: {p['fingerprint']}" in shown.texts[0]
+    )  # the details keep theirs
+
+
 def test_the_warning_is_not_repeated_in_the_review_when_stderr_is_the_terminal(human, served):
     _, key = human.ticket()
     p = human.prepare("log", {"ref": key, "text": "the body"}, handoff=True)

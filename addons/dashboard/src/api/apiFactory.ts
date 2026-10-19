@@ -39,7 +39,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
@@ -126,6 +126,7 @@ export function createApi(transport: Transport) {
      * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
      * sign request; the person signs in a terminal. Nothing here signs.
      */
+    checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>('POST', `/api/w/${ws}/repos/check`, action),
     prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
@@ -133,7 +134,7 @@ export function createApi(transport: Transport) {
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
     signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
-    stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
+    stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),

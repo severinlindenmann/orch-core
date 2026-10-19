@@ -585,6 +585,42 @@ def _tasks(items: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _task_words(t: Mapping[str, Any]) -> str:
+    """One task on one line: its text, its verify command and the criteria it proves (every shown key is in it)."""
+    out = one(t.get("text"))
+    verify = t.get("verify")
+    cmd = verify.get("cmd") if isinstance(verify, Mapping) else None
+    if cmd:
+        out += f" · verify: {one(cmd)}"
+    if t.get("proves"):
+        out += f" · proves {one(', '.join(_s(x) for x in t['proves']))}"
+    return out
+
+
+def _task_rows(out: dict[str, Any], value: Any, before: Any, note: str | None) -> None:
+    """R3 (``task.edit``): what changed in the plan as ``before -> after`` rows, one per task that was added, changed or
+    removed. ``before`` is the plan as the host read it; the signer has checked it against the event's ``base_rev``
+    (``signer._before``), so ``note`` is ``None`` for a checked ``before``. A plan the plain view cannot compare shows
+    only the whole new list (``tasks``), which is still complete."""
+    if not isinstance(before, list) or not all(isinstance(t, Mapping) for t in before):
+        return
+    new = {_s(t.get("id")): t for t in value or [] if isinstance(t, Mapping)}
+    old = {_s(t.get("id")): t for t in before}
+    if len(new) != len(value or []) or len(old) != len(before):  # a repeated id: no comparison is claimed
+        return
+    for tid in [*old, *(i for i in new if i not in old)]:
+        was, now = old.get(tid), new.get(tid)
+        if was is not None and now is not None and dict(was) == dict(now):
+            continue
+        _row(
+            out,
+            f"Task {tid}",
+            _task_words(now) if now is not None else "(removed)",
+            _task_words(was) if was is not None else None,
+            note,
+        )
+
+
 def policy_words(policy: Mapping[str, Any]) -> str:
     """A gate policy in plain words; every key of it is in the sentence."""
     _check_keys("policy keys", policy, _POLICY_SHOWN)
@@ -630,7 +666,7 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         from . import sequence
 
         try:
-            return _finish(sequence.build_content(prepared, verified=verified))
+            return _with_cancels(_finish(sequence.build_content(prepared, verified=verified)), prepared)
         except sequence.SequenceInvalid as exc:
             raise PlainUnavailable(str(exc)) from None
     ticket = _ticket(material, events)
@@ -653,7 +689,61 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
         done = _new_ticket(done)
     if isinstance(done.get("ticket"), dict):  # from the signed events, never from the headline's words
         done["ticket"] = {**done["ticket"], "new": creates}
-    return _finish(done)
+    return _with_cancels(_finish(done), prepared)
+
+
+def _cancels(value: Any) -> list[dict[str, Any]]:
+    """``prepared["cancels"]`` (:mod:`orch.host.cancels`) checked to its exact shape; anything else is refused, so a
+    host cannot slip text into the review through it."""
+    from orch.model.types import GATES
+
+    if not isinstance(value, list):
+        raise PlainUnavailable("cancels is not a list")
+    out = []
+    seen: set[str] = set()
+    for c in value:
+        if not isinstance(c, Mapping) or set(c) != {"gate", "people", "complete"}:
+            raise PlainUnavailable("a cancels entry has other keys than gate, people, complete")
+        gate, people = c["gate"], c["people"]
+        if gate not in GATES or gate in seen or type(c["complete"]) is not bool:
+            raise PlainUnavailable("a cancels entry names an unknown or repeated gate")
+        if not isinstance(people, list) or not people or len(people) > 64:
+            raise PlainUnavailable("a cancels entry without people")
+        if not all(isinstance(x, str) and _PERSON.fullmatch(x) for x in people) or len(set(people)) != len(people):
+            raise PlainUnavailable("a cancels entry names a malformed person")
+        seen.add(gate)
+        out.append({"gate": gate, "people": list(people), "complete": c["complete"]})
+    if [c["gate"] for c in out] != [g for g in GATES if g in seen]:
+        raise PlainUnavailable("cancels are not in gate order")
+    return out
+
+
+_PERSON = re.compile(r"p_[0-9a-f]{32}")
+
+
+def _with_cancels(content: dict[str, Any], prepared: Mapping[str, Any]) -> dict[str, Any]:
+    """R3: the host's word on which approvals exist now and would be cancelled, beside the signed (deterministic)
+    note "This cancels any existing approval of ...". ``content["cancels"]`` is the structure (the dashboard shows the
+    names); one note says it in words, always with "per host, not signed". A request without ``cancels`` is unchanged."""
+    if "cancels" not in prepared or prepared["cancels"] is None:
+        return content
+    rows = _cancels(prepared["cancels"])
+    notes = list(content.get("notes") or [])
+    if rows:
+        parts = [
+            f"{g['gate']} ({len(g['people'])} {'person' if len(g['people']) == 1 else 'people'}"
+            f"{'' if g['complete'] else ', not yet complete'})"
+            for g in rows
+        ]
+        notes.append(
+            "Per the host (not signed): approvals that stand right now and are cancelled by this: " + ", ".join(parts) + "."
+        )
+        content = {**content, "cancels": rows}
+    elif any(isinstance(n, str) and n.startswith(_CANCEL_HEAD) for n in notes):
+        notes.append("Per the host (not signed): no approval stands right now, so this cancels none.")
+    if notes:
+        content = {**content, "notes": notes}
+    return content
 
 
 def _new_ticket(content: dict[str, Any]) -> dict[str, Any]:
@@ -1201,6 +1291,7 @@ def _updated(
             names.append("acceptance criteria")
         elif field == "tasks":
             out["tasks"] = _tasks(value)
+            _task_rows(out, value, before.get(path), ctx.note(path in checked))
             names.append("plan")
         elif field == "links" and _links_rows(out, value, before.get(path), ctx.note(path in checked)):
             names.append("repositories")
@@ -1277,6 +1368,11 @@ def text(
             else:
                 note = f" ({v(c['before_note'])})" if c.get("before_note") else ""
                 out.append(f"  {v(c['field'])}: {who(c['before'])}{note} -> {new}")
+        out.append("")
+    if content.get("cancels"):
+        out.append("Approvals this cancels (per host, not signed)")
+        for c in content["cancels"]:
+            out.append(f"  {v(c['gate'])}: " + ", ".join(who(x) for x in c["people"]))
         out.append("")
     for note in content.get("notes") or []:
         out += [v(note), ""]

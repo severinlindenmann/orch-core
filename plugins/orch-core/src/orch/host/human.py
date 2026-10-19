@@ -453,6 +453,9 @@ class HumanOps:
         convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
+        cancels = self._cancels(store, log, person, prepared, capture)
+        if cancels is not None:  # R3: the approvals this edit cancels right now: the host's word, not signed
+            prepared["cancels"] = cancels
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
             # a decision that binds commits is never prepared without its checks
             require_checks(call, prepared, capture.copies)
@@ -647,6 +650,23 @@ class HumanOps:
             },
         }
         return prepared, extras
+
+    @staticmethod
+    def _cancels(store: Any, log: str, person: str, prepared: dict[str, Any], capture: Any) -> list[dict[str, Any]] | None:
+        """R3: ``None`` when the request writes no ticket field or section (a sequence's later steps included: the first
+        step's review already counted every step); else the approvals the write cancels now (:mod:`.cancels`)."""
+        from . import cancels, sequence
+
+        if log == "workspace":
+            return None
+        meta = capture.sequence
+        if meta is None:
+            paths = cancels.paths_of_events(prepared["events"])
+        elif meta["step"] == 0 and meta["intent"]["kind"] == sequence.EDIT:
+            paths = cancels.paths_of_intent(meta["intent"], person)
+        else:
+            return None
+        return cancels.compute(store, log, paths) if paths else None
 
     @staticmethod
     def _material(store: Any, log: str, events: list[dict[str, Any]], capture: Any, extras: list) -> dict[str, Any]:

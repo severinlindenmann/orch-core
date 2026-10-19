@@ -36,6 +36,7 @@ interface ServerWorkspace {
   members: Member[]
   needs_you: number | null
   host_state: string
+  host_message?: string | null
   features: string[]
   click?: Workspace['click']
   runner?: Workspace['runner']
@@ -142,6 +143,7 @@ function workspace(s: ServerWorkspace): Workspace {
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
+    ...(s.host_state !== 'ok' && s.host_message ? { host_message: s.host_message } : {}),
     // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
     ...(s.runner !== undefined ? { runner: s.runner } : {}),
     ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),

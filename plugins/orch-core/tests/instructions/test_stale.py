@@ -99,7 +99,7 @@ def test_orch_check_reports_stale_instructions_and_sync_fixes_them(ws):
     assert "AGENTS.orch.md: missing" in out and out.splitlines()[-1] == "next: orch instructions sync"
     code, out, err = cli(ws, "instructions", "sync", grant=False)  # no grant needed, no event
     assert code == 0 and out.splitlines()[0] == f"ok instructions.sync r{INSTRUCTIONS_REV}", out + err
-    assert (ws.root / "AGENTS.orch.md").is_file()
+    assert (ws.store_dir / "AGENTS.orch.md").is_file()
     code, out, _ = cli(ws, "check")
     assert code == 0 and out.splitlines()[0] == "ok check 0"
     code, out, err = cli(ws, "instructions", "sync")
@@ -123,7 +123,7 @@ def test_outside_a_workspace_sync_and_check_say_so(tmp_path, monkeypatch):
 
 def test_sync_dry_run_writes_nothing_and_force_is_needed_for_a_hand_edited_skill(ws):
     code, out, _ = cli(ws, "instructions", "sync", "--dry-run")
-    assert code == 0 and "would write AGENTS.orch.md" in out and not (ws.root / "AGENTS.orch.md").exists()
+    assert code == 0 and "would write AGENTS.orch.md" in out and not (ws.store_dir / "AGENTS.orch.md").exists()
     cli(ws, "instructions", "sync")
     skill = ws.root / ".agents/skills/orch-tickets/SKILL.md"
     skill.write_text(skill.read_text() + "- my own rule\n")

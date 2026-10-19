@@ -1991,28 +1991,22 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   and gives the question the next free `Q` id.
 
 **Decisions of the `.orch/` store move (B11).** `orch.layout` is the one place that knows the names: `STORE_DIR`,
-`Layout(project, store, legacy)`, `resolve`, `WRITE_NEW` (the flip switch; on). Rules the tests pin:
+`Layout(project, store)`, `resolve`. There is no legacy support (owner decision 19 Oct): a store in the project root is
+detected and refused with one message that says to delete it; nothing reads, moves or migrates it. Rules the tests pin:
 
-- **Discovery** probes `.orch/config.json` and the legacy root config; the v2 `orchestrator/` probe is gone (v1 stays for
+- **Discovery** probes `.orch/config.json`, and the root config only to name an old-version store (found, then refused
+  by the open that follows: `LegacyStoreError`, "delete config.json ... run orch setup again"); the v2 `orchestrator/` probe is gone (v1 stays for
   `import v1`). `ORCH_WORKSPACE` is the project root; `<project>/.orch` is accepted as an alias once it is a confirmed
   store. A `.orch` that is a link or a file is refused (`LayoutError`), never read around; in the implicit walk another
   tool's `.orch` away from the start directory is passed.
-- **Registry** entries carry `root` (the project) and, once the store moved, `"store": ".orch"` (exact key set; any
-  other value is refused). The host serves and checks (`check_workspace_files`: owner, mode 0o022, ACL) the store, and
-  agents, terminals and worktrees keep using the project. A store whose layout differs from its entry is unavailable.
+- **Registry** entries carry `root` (the project); the store is always `<root>/.orch`. An earlier host's `"store": ".orch"`
+  key is tolerated on read (any other value is refused) and never written. The host serves and checks
+  (`check_workspace_files`: owner, mode 0o022, ACL) the store, and agents, terminals and worktrees keep using the
+  project. An entry whose root holds an old-version store is unavailable with the delete message.
 - **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
   `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
   what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
-  layout under the guard and the lock, so a stale opener fails closed after a migrate.
-- **`orch migrate`** (host op `host.store_migrate`, or direct mode under `owner.lock`) plans with dev/ino and log digests,
-  journals (`hosts/<ws>/migrate.json`, bound to the project's dev/ino), moves every entry into `.orch-migrating` by
-  `renameat`, renames it to `.orch`, verifies (entries, digests, a full replay) and only then commits and records
-  `store`; before the commit point it rolls back by reverse renames, after it only forward; nothing is ever deleted.
-  The host refuses running work (live sessions, terminals, pending sign requests) and a host that does not list the
-  op is `migrate.version_skew`. The records repository (`.git`) moves with it only when records are configured, HEAD is
-  a commit the host itself recorded and every commit under every ref is a records commit of the workspace.
-- **Unfinished moves** are finished or rolled back by the next host start (it follows the journal) or by `orch migrate`;
-  a direct command meeting one finishes it (unregistered) or answers `host.required` (registered).
+  layout under the guard and the lock, so a stale opener fails closed (in a running host the message says `restart the host: orch host restart`).
 
 **Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).

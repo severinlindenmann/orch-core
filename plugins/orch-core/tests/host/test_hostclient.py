@@ -153,11 +153,11 @@ def test_mode_is_by_registration_and_a_dead_host_is_never_a_direct_write(lab):
         assert target.role == "person" and target.host_uid == UID
     finally:
         served.close()
-    n = len(list((lab.ws.root / "tickets").iterdir()))
+    n = len(list((lab.ws.store_dir / "tickets").iterdir()))
     r = hcli(lab).j("new", "Nowhere")
     assert (r.code, r.err_code) == (9, "host.unavailable"), r.out
     assert "host" in r.doc["error"]["message"] and r.doc["error"]["retryable"] is True
-    assert len(list((lab.ws.root / "tickets").iterdir())) == n  # nothing written directly
+    assert len(list((lab.ws.store_dir / "tickets").iterdir())) == n  # nothing written directly
     r = hcli(lab).j("show", "1")
     assert (r.code, r.err_code) == (9, "host.unavailable")
 
@@ -247,7 +247,7 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
-        make_package(lab.ws.root, "lint")
+        make_package(lab.ws.store_dir, "lint")
         r = hcli(lab, grant=False).j("addon", "grant", "lint")
         assert r.code == 0, r.out
     finally:

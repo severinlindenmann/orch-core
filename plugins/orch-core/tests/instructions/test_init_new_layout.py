@@ -12,8 +12,6 @@ from orch.ops.errors import OrchError
 from orch.store import Store
 from tests.instructions.test_init import ARGS, run_init, tree
 
-pytestmark = pytest.mark.new_layout
-
 
 def test_init_makes_dot_orch_and_only_the_pointer_files_beside_it(where, term, passphrases):
     res = run_init(where)

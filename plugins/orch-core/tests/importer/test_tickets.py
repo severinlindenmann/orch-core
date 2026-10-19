@@ -69,16 +69,16 @@ def test_criteria_tasks_and_questions(imported, hws):
 
 
 def test_sections_and_the_note(imported, hws):
-    body = (hws.root / "tickets" / hws.uid("DEMO-0003") / "body.md").read_text()
+    body = (hws.store_dir / "tickets" / hws.uid("DEMO-0003") / "body.md").read_text()
     assert "## Context" in body and "Show cost by month." in body and "## Out of scope" in body
     assert "Imported from v1 as DEMO-0003 (v1 status: in-progress" in body
     assert "v1 task state: T1 done, T2 doing, T3 todo." in body and "Dashboard half done." in body
     # a feature ticket has no Findings and no Log section: both are kept at the end of Context, labelled
     assert "**v1 Findings:**\n\nA finding." in body and "**v1 Log:**" in body and "## Log" not in body
     assert "2 v1 sections kept at the end of Context: Findings, Log" in body
-    spike = (hws.root / "tickets" / hws.uid("DEMO-0004") / "body.md").read_text()
+    spike = (hws.store_dir / "tickets" / hws.uid("DEMO-0004") / "body.md").read_text()
     assert "## Findings" in spike and "The join." in spike
-    ask = (hws.root / "tickets" / hws.uid("DEMO-0008") / "body.md").read_text()
+    ask = (hws.store_dir / "tickets" / hws.uid("DEMO-0008") / "body.md").read_text()
     assert "Ask (v1):\n\nPick one.\n\nSome context." in ask
 
 
@@ -177,7 +177,7 @@ def test_edits_made_in_v2_after_the_import_survive_a_rerun(imported, me, hws, ag
     before = snapshot(hws.root)
     assert me("import", "v1", str(v1)).code == 0
     assert snapshot(hws.root) == before
-    assert "mine" in (hws.root / "tickets" / hws.uid("DEMO-0001") / "body.md").read_text()
+    assert "mine" in (hws.store_dir / "tickets" / hws.uid("DEMO-0001") / "body.md").read_text()
 
 
 def test_an_interrupted_import_resumes_where_it_stopped(hws, me, v1, monkeypatch):  # noqa: F811

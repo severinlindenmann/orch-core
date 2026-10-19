@@ -342,7 +342,15 @@ class Gateway:
                 )
             except HostError as exc:
                 # No untrusted title or principal is fabricated when the host is unavailable.
-                result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
+                result.append(
+                    adapters.Workspace(
+                        id=ws,
+                        prefix=adapters.pinned_prefix(pins[ws]),
+                        name=ws,
+                        host_state=exc.error["code"],
+                        host_message=adapters.unavailable_reason(exc.error),
+                    )
+                )
         return result
 
     def host_info(self):

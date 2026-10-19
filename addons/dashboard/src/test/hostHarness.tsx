@@ -36,6 +36,8 @@ export interface FakeWs {
   prefix: string
   name: string
   host_state: string
+  /** The host's reason it cannot serve this workspace (the dashboard server sends it with a non-ok host_state). */
+  host_message?: string
   features: string[]
   /** The signed-in person (this dashboard server's person) in this workspace. */
   me: string
@@ -246,7 +248,7 @@ export class FakeHost {
         this.workspaces.map((w) =>
           w.host_state === 'ok'
             ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features, click: w.click ?? null, ...(w.runner !== undefined ? { runner: w.runner } : {}) }
-            : { id: w.id, prefix: '', name: w.id, members: [], needs_you: null, host_state: w.host_state, features: [] },
+            : { id: w.id, prefix: w.host_message ? w.prefix : '', name: w.id, members: [], needs_you: null, host_state: w.host_state, ...(w.host_message ? { host_message: w.host_message } : {}), features: [] },
         ),
       )
     if (path === '/api/me') return json(this.running().map((w) => ({ person: w.me, name: w.roster.find((m) => m.person === w.me)?.name ?? 'Sev', role: w.role, tier: 'A', workspace: w.id })))

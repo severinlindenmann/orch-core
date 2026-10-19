@@ -1,5 +1,5 @@
-"""Discovery reads both layouts (design B11-P2 step 2): the legacy root store and ``<project>/.orch``. Nothing writes
-``.orch`` yet; these tests build it by hand."""
+"""Discovery reads ``<project>/.orch``; a store from an older version in the project root is found (so the person is
+told to delete it) but never read as a store. These tests build the stores by hand."""
 
 from __future__ import annotations
 
@@ -40,10 +40,14 @@ def test_finds_the_new_layout_from_the_project_and_below(tmp_path: Path) -> None
         assert found.config["workspace"]["id"] == "w"
 
 
-def test_finds_the_legacy_layout(tmp_path: Path) -> None:
+def test_an_old_root_store_is_found_but_never_read_as_a_store(tmp_path: Path) -> None:
     project = _store(tmp_path / "p")
     found = discovery.locate(project, explicit=True)
-    assert found is not None and found.store == found.project == project.resolve()
+    assert found is not None and found.layout is None and found.project == project.resolve()
+    assert found.store == project.resolve() / ".orch"  # where a store would be, not the old files
+    assert discovery.read_config(project) is None
+    with pytest.raises(StoreError, match="older version.*run orch setup again"):
+        Store.open(project, expected_workspace_id="w" * 32, load="lazy")
 
 
 def test_the_v2_orchestrator_subfolder_is_no_longer_probed(tmp_path: Path) -> None:
@@ -90,10 +94,10 @@ def test_runtime_maps_the_refusal_to_a_named_error(tmp_path: Path) -> None:
         runtime.discover({"ORCH_WORKSPACE": str(project)}, None, FILES)
 
 
-def test_read_config_reads_either_layout(tmp_path: Path) -> None:
+def test_read_config_reads_dot_orch_only(tmp_path: Path) -> None:
     _store(tmp_path / "old")
     _store(tmp_path / "new" / ".orch")
-    assert discovery.read_config(tmp_path / "old")["workspace"]["id"] == "w"
+    assert discovery.read_config(tmp_path / "old") is None
     assert discovery.read_config(tmp_path / "new")["workspace"]["id"] == "w"
     assert discovery.read_config(tmp_path) is None
 
@@ -111,8 +115,8 @@ def test_workspace_exposes_project_and_store(tmp_path: Path) -> None:
 def test_store_open_resolves_the_new_layout_and_refuses_a_linked_one(ws, tmp_path: Path) -> None:
     project = tmp_path / "proj"
     project.mkdir()
-    shutil.copytree(ws.root, project / ".orch", symlinks=True)
-    wid = json.loads((ws.root / "config.json").read_text())["workspace"]["id"]
+    shutil.copytree(ws.store_dir, project / ".orch", symlinks=True)
+    wid = json.loads((ws.store_dir / "config.json").read_text())["workspace"]["id"]
     store = Store.open(project, expected_workspace_id=wid, load="lazy")
     try:
         assert store.layout == Layout.new_at(project)
@@ -127,11 +131,11 @@ def test_store_open_resolves_the_new_layout_and_refuses_a_linked_one(ws, tmp_pat
     assert exc.value.code == "validation.path"
 
 
-def test_store_open_on_a_legacy_root_keeps_project_equal_store(ws) -> None:
-    wid = json.loads((ws.root / "config.json").read_text())["workspace"]["id"]
+def test_store_open_on_a_project_puts_the_store_in_dot_orch(ws) -> None:
+    wid = json.loads((ws.store_dir / "config.json").read_text())["workspace"]["id"]
     store = Store.open(ws.root, expected_workspace_id=wid, load="lazy")
     try:
-        assert store.layout == Layout.legacy_at(ws.root)
+        assert store.layout == Layout.new_at(ws.root)
     finally:
         store.close()
 
@@ -139,8 +143,8 @@ def test_store_open_on_a_legacy_root_keeps_project_equal_store(ws) -> None:
 def _project_with_store(ws, tmp_path: Path) -> tuple[Path, str]:
     project = tmp_path / "proj"
     project.mkdir()
-    shutil.copytree(ws.root, project / ".orch", symlinks=True)
-    return project, json.loads((ws.root / "config.json").read_text())["workspace"]["id"]
+    shutil.copytree(ws.store_dir, project / ".orch", symlinks=True)
+    return project, json.loads((ws.store_dir / "config.json").read_text())["workspace"]["id"]
 
 
 def test_an_inode_swap_of_the_store_dir_between_discovery_and_open_is_refused(ws, tmp_path: Path) -> None:
@@ -161,9 +165,9 @@ def test_the_store_layout_changing_under_a_found_workspace_is_refused(ws, tmp_pa
     project, wid = _project_with_store(ws, tmp_path)
     found = discovery.locate(project, explicit=False)
     assert found is not None
-    shutil.move(project / ".orch" / "config.json", project / "config.json")  # now the legacy layout
+    shutil.move(project / ".orch" / "config.json", project / "config.json")  # now an old-version root store
     shutil.rmtree(project / ".orch")
-    with pytest.raises(StoreError, match="layout changed"):
+    with pytest.raises(StoreError, match="older version"):
         Store.open(project, expected_workspace_id=wid, ident=found.ident, store_pin=found.store_pin)
 
 
@@ -206,7 +210,7 @@ def _served(project: Path) -> bool:
     return is_served(project)
 
 
-def test_the_served_marker_lives_in_the_store_and_the_guard_holds_in_both_layouts(ws, tmp_path: Path) -> None:
+def test_the_served_marker_lives_in_the_store_and_the_guard_holds(ws, tmp_path: Path) -> None:
     from orch.host.service import SERVED_MARKER, served_marker
     from orch.records.direct import DirectLink
 
@@ -228,9 +232,6 @@ def test_the_served_marker_lives_in_the_store_and_the_guard_holds_in_both_layout
     shutil.move(project / ".orch", tmp_path / "moved")
     (project / ".orch").symlink_to(tmp_path / "moved")
     assert _served(project)
-    # legacy layout
-    served_marker(str(ws.root), True, tmp_path)
-    assert _served(ws.root)
 
 
 def test_a_non_orch_dot_orch_away_from_the_start_does_not_block_the_walk(tmp_path: Path) -> None:
@@ -284,7 +285,6 @@ def test_store_open_never_makes_a_dot_orch_that_vanished_after_the_resolve(
     from orch import layout as lay
 
     project, wid = _project_with_store(ws, tmp_path)
-    monkeypatch.setattr(lay, "WRITE_NEW", True)  # even with the switch on
     monkeypatch.setattr(lay, "open_store_dir", lambda *a, **k: None)  # resolve saw it, the open does not
     # (resolve itself uses open_store_dir; patch only the second use by counting)
     calls = {"n": 0}
@@ -293,7 +293,6 @@ def test_store_open_never_makes_a_dot_orch_that_vanished_after_the_resolve(
     def resolve(fd, project_path):
         calls["n"] += 1
         monkeypatch.undo()
-        monkeypatch.setattr(lay, "WRITE_NEW", True)
         out = real(fd, project_path)
         monkeypatch.setattr(lay, "open_store_dir", lambda *a, **k: None)
         return out

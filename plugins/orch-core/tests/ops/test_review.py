@@ -145,7 +145,7 @@ def test_a_dry_run_writes_nothing_not_even_the_observation(hws, agent, me):
 def test_a_forged_evidence_file_is_refused(hws, agent, me):
     key = make_ticket(agent)
     to_testing(agent, me, hws.tmp, key)
-    (hws.root / "tickets" / hws.uid("1") / "artifacts" / "evidence.log").write_text("FORGED: all green\n")
+    (hws.store_dir / "tickets" / hws.uid("1") / "artifacts" / "evidence.log").write_text("FORGED: all green\n")
     hws.provider.requests.clear()
     hws.reviews.clear()
     r = me("verdict", "pass", "--ref", key, "--json")
@@ -156,7 +156,7 @@ def test_a_forged_evidence_file_is_refused(hws, agent, me):
 def test_a_missing_evidence_file_is_refused(hws, agent, me):
     key = make_ticket(agent)
     to_testing(agent, me, hws.tmp, key)
-    (hws.root / "tickets" / hws.uid("1") / "artifacts" / "evidence.log").unlink()
+    (hws.store_dir / "tickets" / hws.uid("1") / "artifacts" / "evidence.log").unlink()
     assert me("verdict", "pass", "--ref", key, "--json").err_code == "artifact.mismatch"
 
 

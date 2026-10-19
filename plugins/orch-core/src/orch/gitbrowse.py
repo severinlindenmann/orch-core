@@ -200,9 +200,10 @@ def command(
 
     **Race note (#565).** The gate checks the repository's config and the caller spawns git afterwards. Harmless here:
     every operation of :data:`OPS` is a history read (``log``, ``show`` and ``diff`` between commits, ``cat-file``,
-    ``rev-parse``). None touches the work tree or refreshes the index, so no clean/smudge filter or ``fsmonitor`` can
-    run; ``gitsafe._argv`` adds ``--no-ext-diff --no-textconv --no-pager`` and the diff pins, and git runs no hook for
-    a read. A key a concurrent writer adds in the window therefore names no program these commands run."""
+    ``rev-parse``) or ``grep --cached``, which only reads the index: it opens no work-tree file, does not refresh the
+    index and applies no filters. None touches the work tree, so no clean/smudge filter or ``fsmonitor`` can run;
+    ``gitsafe._argv`` adds ``--no-ext-diff --no-textconv --no-pager`` and the diff pins, and git runs no hook for a
+    read. A key a concurrent writer adds in the window therefore names no program these commands run."""
     spec = OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")

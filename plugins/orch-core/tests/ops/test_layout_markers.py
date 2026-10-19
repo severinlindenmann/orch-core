@@ -47,12 +47,14 @@ def test_dev_marker_fails_closed_on_an_unusable_layout(tmp_path: Path) -> None:
         devsandbox.read_marker(p)
 
 
-def test_legacy_marker_still_works(tmp_path: Path) -> None:
+def test_a_root_store_is_refused_and_counts_as_marked(tmp_path: Path) -> None:
     p = tmp_path / "old"
     (p / ".state").mkdir(parents=True)
     (p / "config.json").write_text(CFG)
-    devsandbox.write_marker(p, "sbx", "w")
-    assert devsandbox.marker_present(p) and (p / ".state" / devsandbox.WS_MARKER).is_file()
+    assert devsandbox.marker_present(p) is True  # an old-version store is refused: fail closed
+    with pytest.raises(devsandbox.SandboxRefused):
+        devsandbox.write_marker(p, "sbx", "w")
+    assert not (p / ".state" / devsandbox.WS_MARKER).exists()
 
 
 def test_bootstrap_probes_read_the_store(tmp_path: Path) -> None:
@@ -100,7 +102,6 @@ def test_rollback_never_follows_a_link_or_a_swapped_dot_orch(tmp_path: Path) -> 
 
 
 def test_a_failing_bootstrap_leaves_a_pre_existing_dot_orch_untouched(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
     p = tmp_path / "proj"
     (p / ".orch").mkdir(parents=True)
     (p / ".orch" / "notes.txt").write_text("another tool's")
@@ -114,7 +115,6 @@ def test_a_failing_bootstrap_leaves_a_pre_existing_dot_orch_untouched(tmp_path: 
 
 
 def test_store_open_creates_dot_orch_only_with_create_and_records_what_it_made(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
     p = tmp_path / "proj"
     p.mkdir()
     with pytest.raises(StoreError):
@@ -171,10 +171,10 @@ def test_the_store_dir_owner_and_acl_check_runs_on_the_opened_directory(tmp_path
         return real(fd, path, uid, last=last)
 
     monkeypatch.setattr(custody, "_check_component", spy)
-    custody.check_workspace_files(tmp_path / "s", "w" * 32, p, os.getuid(), store=".orch")
+    custody.check_workspace_files(tmp_path / "s", "w" * 32, p, os.getuid())
     assert (p / ".orch", True) in seen
     with pytest.raises(HostError, match="owner"):
-        custody.check_workspace_files(tmp_path / "s", "w" * 32, p, os.getuid() + 1, store=".orch")
+        custody.check_workspace_files(tmp_path / "s", "w" * 32, p, os.getuid() + 1)
 
 
 def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -> None:
@@ -182,12 +182,11 @@ def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -
     with pytest.raises(OSError):
         open_store_fs(missing, None, None)
     assert not missing.exists()
-    fs, lay, made = open_store_fs(missing, None, None, make_project=True)
-    fs.close()
-    assert missing.is_dir() and lay.legacy and made is None  # WRITE_NEW is off
+    with pytest.raises(StoreError):  # the project is made, the store is not (no create)
+        open_store_fs(missing, None, None, make_project=True)
+    assert missing.is_dir() and not (missing / ".orch").exists()
     with pytest.raises(StoreError):
         open_store_fs(missing, (1, 2), None, create=True)
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
     fresh = tmp_path / "fresh"
     fresh.mkdir()
     with pytest.raises(StoreError):  # no create: no .orch made, the open refuses
@@ -195,7 +194,7 @@ def test_open_store_fs_never_creates_unless_asked(tmp_path: Path, monkeypatch) -
     assert not (fresh / ".orch").exists()
     fs, lay, made = open_store_fs(fresh, None, None, create=True)
     fs.close()
-    assert (fresh / ".orch").is_dir() and not lay.legacy and made is not None
+    assert (fresh / ".orch").is_dir() and lay.store == fresh / ".orch" and made is not None
     shutil.rmtree(fresh / ".orch")
 
 
@@ -276,7 +275,6 @@ def test_rollback_empties_the_verified_directory_and_rmdirs_an_empty_tombstone(t
 
 
 def test_a_failed_open_after_its_own_mkdir_removes_the_dot_orch_it_made(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
     p = tmp_path / "proj"
     p.mkdir()
     monkeypatch.setattr(Store, "_open", lambda self, *a, **k: (_ for _ in ()).throw(StoreError("validation.path", "x")))
@@ -304,21 +302,3 @@ def test_read_only_opens_never_make_the_project_directory(tmp_path: Path) -> Non
     with pytest.raises(OSError):
         Store.open(missing, expected_workspace_id="w" * 32)
     assert not missing.exists()
-
-
-def test_path_writers_refuse_while_a_store_move_is_under_way(tmp_path: Path) -> None:
-    from orch.addons import builtin
-    from orch.instructions import UnsafePath
-
-    p = _proj(tmp_path)
-    (p / ".orch-migrating").mkdir()
-    assert layout.move_in_progress(p) and layout.move_in_progress(p / ".orch")
-    with pytest.raises(OSError, match="store move"):
-        builtin.write_manifest(str(p / ".orch"), "demo", b"{}")
-    with pytest.raises(UnsafePath, match="store move"):
-        write_workspace_files(p, store=p / ".orch", pointers=False)
-    assert write_workspace_files(p, store=p / ".orch", pointers=False, dry_run=True)  # a dry run writes nothing
-    assert not (p / ".orch" / "addons").exists() and not (p / "AGENTS.md").exists()
-    (p / ".orch-migrating").rmdir()
-    assert not layout.move_in_progress(p)
-    builtin.write_manifest(str(p / ".orch"), "demo", b"{}")

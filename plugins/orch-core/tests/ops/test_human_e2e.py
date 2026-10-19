@@ -21,7 +21,6 @@ import time
 import pytest
 
 from orch import canon, crypto
-from tests._legacy_env import ENV as LEGACY_ENV
 from tests.ops.humans import PASSPHRASE
 from tests.ops.test_task_ac import py
 from tests.store.helpers import WS
@@ -35,7 +34,6 @@ def agent_bin(ws, grant, *argv, stdin=None):
         "PATH": "/usr/bin:/bin",
         "HOME": str(ws.tmp),
         "ORCH_STATE_DIR": str(ws.host_state),
-        **LEGACY_ENV,
         "ORCH_SESSION": SESSION,
     }
     env["ORCH_GRANT"] = grant
@@ -44,7 +42,7 @@ def agent_bin(ws, grant, *argv, stdin=None):
         input=stdin,
         capture_output=True,
         text=True,
-        cwd=ws.root / "tickets",
+        cwd=ws.store_dir / "tickets",
         env=env,
         timeout=60,
         start_new_session=True,
@@ -65,7 +63,6 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
         "PATH": "/usr/bin:/bin",
         "HOME": str(ws.tmp),
         "ORCH_STATE_DIR": str(ws.host_state),
-        **LEGACY_ENV,
         "TERM": "dumb",
     }
     out_r, out_w = os.pipe()
@@ -75,7 +72,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
         try:
             os.dup2(out_w, 1)
             os.dup2(err_w, 2)
-            os.chdir(ws.root / "tickets")
+            os.chdir(ws.store_dir / "tickets")
             os.execve(sys.executable, [sys.executable, "-m", "orch", *argv], env)
         finally:
             os._exit(127)

@@ -153,12 +153,12 @@ def test_no_new_ticket_while_a_log_lacks_a_verified_creation_line(trio):
     lines = p.read_bytes().splitlines(keepends=True)
     lines[0] = b"x" + lines[0]
     p.write_bytes(b"".join(lines))
-    k = env.root / "keys.jsonl"
+    k = env.store_dir / "keys.jsonl"
     k.write_bytes(b"".join(x for x in k.read_bytes().splitlines(keepends=True) if b"0003" not in x))
     s = env.open(load="lazy")
     with pytest.raises(StoreError) as e:
         s.create_ticket(actor=env.agent, ticket_type="chore", title="C", owner=env.owner.ref)
-    assert e.value.code == "chain.broken" and len(env.root.joinpath("tickets").iterdir().__class__.__name__) > 0
+    assert e.value.code == "chain.broken" and len(env.store_dir.joinpath("tickets").iterdir().__class__.__name__) > 0
 
 
 def test_an_unattended_event_loads_every_ticket_for_its_workspace_wide_quota(trio):

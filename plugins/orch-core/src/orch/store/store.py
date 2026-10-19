@@ -1295,6 +1295,15 @@ class Store:
         finally:
             os.close(pfd)
 
+    def _layout_changed(self, what: str) -> StoreError:
+        """The store is no longer where this object opened it. A command run again opens the store afresh; a running
+        host keeps the object (and the refusal) until it is restarted, so its message says that."""
+        hosted = self.before_append is not None or self.append_check is not None
+        return StoreError(
+            "validation.path",
+            f"{what}; " + ("restart the host: orch host restart" if hosted else "run the command again"),
+        )
+
     def _resolve_checked(self, pfd: int) -> None:
         try:
             found = _layout.resolve(pfd, self.layout.project)
@@ -1306,19 +1315,19 @@ class Store:
             # once this store has seen its config.json (or opened with one), a missing one is a deleted, invalid,
             # oversized or FIFO file, never "no config yet": fail closed, never write into a root that is no longer a
             # store. Only a store opened before any config existed keeps its layout.
-            raise StoreError("validation.path", "the workspace's config.json is gone or unreadable; nothing is written")
+            raise self._layout_changed("the workspace's config.json is gone or unreadable; nothing is written")
         try:
             sfd = _layout.open_store_dir(pfd)
         except LayoutError as exc:
             raise StoreError("validation.path", str(exc)) from None
         if sfd is None:
-            raise StoreError("validation.path", f"{_layout.STORE_DIR} is gone")
+            raise self._layout_changed(f"{_layout.STORE_DIR} is gone")
         try:
             now = os.fstat(sfd)
         finally:
             os.close(sfd)
         if (now.st_dev, now.st_ino) != tuple(self.fs.ident):
-            raise StoreError("validation.path", "the store directory is no longer the one that was opened")
+            raise self._layout_changed("the store directory is no longer the one that was opened")
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:

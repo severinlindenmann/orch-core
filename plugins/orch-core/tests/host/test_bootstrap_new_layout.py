@@ -13,25 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from orch import layout as _layout
 from orch.host.registry import registry_path
 from tests.host.lifecycle_helpers import Lab
 from tests.host.test_bootstrap import fresh_root, ok, passphrases, recording, term  # noqa: F401  (fixtures)
 
 pytestmark = [
-    pytest.mark.new_layout,
     pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="Unix host"),
 ]
 
 
 @pytest.fixture
 def lab(tmp_path):
-    # the lab's own seed workspace is a legacy root store; the test itself runs with the shipped default
-    _layout.WRITE_NEW = False
-    try:
-        value = Lab(tmp_path)
-    finally:
-        _layout.WRITE_NEW = True
+    value = Lab(tmp_path)
     try:
         yield value
     finally:
@@ -78,7 +71,7 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
         assert '"store":".orch"' in registry_path(lab.state).read_text()
         service = h.host.services[wid]
         assert service.state == "ok", service.cause
-        assert service.store is not None and not service.store.layout.legacy
+        assert service.store is not None and service.store.layout.store.name == ".orch"
         with h.client() as c:
             rows = ok(c.call("host.list"))["data"]["workspaces"]
         assert [(r["workspace_id"], r["state"]) for r in rows] == [(wid, "ok")]

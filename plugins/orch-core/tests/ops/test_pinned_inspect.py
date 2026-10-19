@@ -60,14 +60,14 @@ def test_inspect_never_follows_a_directory_swapped_after_open(env, outside, tmp_
     env.store.checkpoint()
     env.store.close()
     env.store = None
-    shutil.copytree(env.root / "tickets" / uid, outside / uid)
-    shutil.copytree(env.root / ".state" / "checkpoints", outside / "checkpoints")
+    shutil.copytree(env.store_dir / "tickets" / uid, outside / uid)
+    shutil.copytree(env.store_dir / ".state" / "checkpoints", outside / "checkpoints")
     real = health.InspectStore.open.__func__
 
     def opened(cls, *a, **k):
         s = real(cls, *a, **k)  # the store is open: now the swaps land
-        swap(env.root / "tickets" / uid, outside / uid, tmp_path / "t-moved")
-        swap(env.root / ".state" / "checkpoints", outside / "checkpoints", tmp_path / "cp-moved")
+        swap(env.store_dir / "tickets" / uid, outside / uid, tmp_path / "t-moved")
+        swap(env.store_dir / ".state" / "checkpoints", outside / "checkpoints", tmp_path / "cp-moved")
         return s
 
     monkeypatch.setattr(health.InspectStore, "open", classmethod(opened))
@@ -88,7 +88,7 @@ def test_the_workspace_name_is_read_below_the_pinned_root(env, outside, tmp_path
 
     s = env.bootstrap()
     shutil.copytree(env.root, outside / "ws")
-    cfg = outside / "ws" / "config.json"
+    cfg = outside / "ws" / ".orch" / "config.json"
     cfg.write_bytes(cfg.read_bytes().replace(b'"Acme"', b'"Evil"'))
     assert reads_ws._name(SimpleNamespace(store=s), "X") == "Acme"
     env.root.rename(tmp_path / "ws-moved")
@@ -107,7 +107,7 @@ def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
     ctx = SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS)
     want = host_records._take(ctx)
     shutil.copytree(env.root, outside / "ws")
-    (outside / "ws" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
+    (outside / "ws" / ".orch" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
     env.root.rename(tmp_path / "ws-moved")
     os.symlink(outside / "ws", env.root)
     with watch(outside) as seen:

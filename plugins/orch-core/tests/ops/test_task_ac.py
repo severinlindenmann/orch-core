@@ -131,7 +131,7 @@ def test_task_done_run_stores_a_receipt_and_the_run_log(ws, cli):
     assert isinstance(rec["ms"], int) and done["log"] == "T1-receipt.log"
     art = ev[-2]
     assert (art["type"], art["name"], art["kind"], art["task"]) == ("artifact.added", "T1-receipt.log", "receipt", "T1")
-    stored = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
+    stored = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
     assert b"built" in stored and b"to-stderr" in stored and art["sha256"] == canon.artifact_digest(stored)
     assert ws.view("1").acceptance[0].evidence == ("task:T1",)  # a done task with an exit-0 receipt proves its AC
 
@@ -165,7 +165,7 @@ def test_task_done_run_needs_a_verify_command_and_never_gets_the_grant(ws, cli, 
         ),
     )
     assert cli("task", "done", "T2", "--run").code == 0
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T2-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T2-receipt.log").read_text()
     assert "grant=[] token=[]" in log and ws.grant.partition(".")[2] not in log
 
 
@@ -189,7 +189,7 @@ def test_task_done_run_records_the_repo_and_commit_of_the_linked_repository(ws, 
     assert cli("task", "done", "T1", "--run").code == 0
     done = ws.events("1")[-1]
     assert done["receipt"]["repo"] == "proj" and done["receipt"]["commit"] == head
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip()
     assert os.path.realpath(log) == os.path.realpath(repo)  # the command ran inside the repository
     assert ws.view("1").acceptance == () or ws.view("1").acceptance[0].evidence == ()  # no source sha observed yet
 
@@ -295,7 +295,7 @@ def test_a_verify_command_with_shell_metacharacters_runs_them_as_arguments(ws, c
     r = cli("task", "done", "T1", "--run")
     assert r.code == 0, r.err
     assert not victim.exists()
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
     assert "';'" in log and "'touch'" in log and "'$(id)'" in log  # every piece arrived as a plain argument
 
 
@@ -326,7 +326,7 @@ def test_a_child_that_prints_a_lot_costs_a_bounded_buffer(ws, cli, td, monkeypat
     assert r.code == 0, r.err
     art = ws.events("1")[-2]
     assert art["bytes"] <= 100_000 + len(td.TRUNCATED)
-    stored = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
+    stored = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
     assert stored.endswith(td.TRUNCATED) and art["sha256"] == canon.artifact_digest(stored)
 
 

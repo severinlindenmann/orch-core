@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-IDX = lambda env: env.root / ".state" / "index.sqlite"  # noqa: E731
+IDX = lambda env: env.store_dir / ".state" / "index.sqlite"  # noqa: E731
 
 
 @pytest.fixture

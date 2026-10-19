@@ -61,7 +61,7 @@ def test_an_unvalidated_bootstrap_intent_never_touches_an_existing_workspace(lab
     with lab.host() as h, h.client() as c:
         assert h.host.recovered == [("host.bootstrap", "failed")]
         assert ok(c.call("host.list"))["data"]["workspaces"][0]["state"] == "ok"
-    assert (lab.ws.root / "events").is_dir() and (lab.ws.root / "config.json").is_file()
+    assert (lab.ws.store_dir / "events").is_dir() and (lab.ws.store_dir / "config.json").is_file()
     assert (lab.state / "hosts" / wid / "keys").is_dir() and (lab.state / "hosts" / wid / "genesis").is_file()
 
 
@@ -72,7 +72,7 @@ def test_a_validated_bootstrap_intent_never_touches_a_registered_workspace_or_a_
     started_bootstrap(lab, wid, lab.root, validated=True)
     with lab.host() as h:
         assert h.host.recovered == [("host.bootstrap", "failed")]
-    assert (lab.ws.root / "events").is_dir() and (lab.state / "hosts" / wid / "keys").is_dir()
+    assert (lab.ws.store_dir / "events").is_dir() and (lab.state / "hosts" / wid / "keys").is_dir()
 
 
 def test_bootstrap_refusals_before_validation_store_nothing(lab, tmp_path):
@@ -184,9 +184,9 @@ def key_file(lab):
         lambda lab: os.chmod(key_file(lab), 0o644),
         lambda lab: os.chmod(lab.state / "hosts" / WS / "keys", 0o755),
         lambda lab: os.chmod(lab.state / "hosts" / WS / "genesis", 0o666),
-        lambda lab: os.chmod(lab.ws.root / "events", 0o777),
-        lambda lab: os.chmod(lab.ws.root / ".state", 0o777),
-        lambda lab: os.chmod(lab.ws.root / "tickets", 0o777),
+        lambda lab: os.chmod(lab.ws.store_dir / "events", 0o777),
+        lambda lab: os.chmod(lab.ws.store_dir / ".state", 0o777),
+        lambda lab: os.chmod(lab.ws.store_dir / "tickets", 0o777),
     ],
     ids=["wsk-0644", "keys-0755", "pin-0666", "events-0777", "state-0777", "tickets-0777"],
 )

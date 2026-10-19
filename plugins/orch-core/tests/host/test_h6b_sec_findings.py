@@ -80,7 +80,7 @@ def test_workspace_name_does_not_follow_a_symlinked_config_json(tmp_path):
     env = Env(tmp_path / "control")
     env.bootstrap().close()
     (root / "config.json").unlink()
-    (root / "config.json").write_bytes((env.root / "config.json").read_bytes())
+    (root / "config.json").write_bytes((env.store_dir / "config.json").read_bytes())
     assert reads_ws._name(ctx, "DEMO") == "Acme"
 
 

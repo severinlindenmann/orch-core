@@ -223,7 +223,9 @@ def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool, start: bool
     :class:`LayoutError`), then v1 (here, else in its ``orchestrator/``, ``O_NOFOLLOW`` from ``fd``). ``owned`` (the
     implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on the exact fd that is then
     read (the one place it is enforced, with the stop in :func:`_walk`)."""
-    here2, here1 = _probe(fd, d, v2=True, v1=v1, owned=owned)
+    # a ``config.json`` inside a folder named ``.orch`` is the store of the project above it, never an old-version root
+    # store: the walk goes on up and finds it there (through :func:`_store_probe`, with every check of that path)
+    here2, here1 = _probe(fd, d, v2=d.name != _layout.STORE_DIR, v1=v1, owned=owned)
     # a link/file ``.orch`` next to a legacy config is the double-store case: strict there, as at the start
     new2 = _store_probe(fd, d, owned=owned, start=start or here2 is not None)
     _layout.check_single_store(legacy=here2 is not None, new=new2 is not None)

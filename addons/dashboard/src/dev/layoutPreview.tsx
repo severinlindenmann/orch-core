@@ -31,6 +31,7 @@ import { agentsApi, type AgentPreview } from '@/api/agents'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
+import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
 import { clickProblem, type ClickCard } from '@/api/click'
 import { signerProblem } from '@/api/refusals'
@@ -78,6 +79,7 @@ export const LAYOUT_SCENARIOS = [
   'agent-pill',
   'agent-pill-stopped',
   'agent-pill-off',
+  'setup-words',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -842,6 +844,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
+  if (scenario === 'setup-words') return <div className="setup max-w-xl p-4"><ConfirmWords words={['apple', 'river', 'cloud']} /></div>
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))

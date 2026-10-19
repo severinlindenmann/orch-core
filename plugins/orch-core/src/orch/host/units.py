@@ -20,6 +20,7 @@ from pathlib import Path
 __all__ = [
     "LAUNCHD_LABEL",
     "SYSTEMD_NAME",
+    "launcher_arguments",
     "launchd_plist",
     "program_arguments",
     "systemd_quote",
@@ -65,6 +66,33 @@ def program_arguments(
     return args
 
 
+def launcher_arguments(
+    release: Path,
+    state_dir: Path,
+    run_dir: Path | None = None,
+    extra_args: tuple[str, ...] = (),
+    *,
+    name: str = "orch-host",
+) -> list[str]:
+    """The launchd argv: the release's launcher itself, no interpreter in front (its first line is
+    ``#!<python> -I``, written when the release was installed, so the isolation is the same).
+
+    macOS lists a login/background item under the name of its program (System Settings, General, Login Items &
+    Extensions, "Allow in the Background", and the "Background Items Added" notification). An unsigned item with
+    ``python3 -I <script>`` is listed as ``python3.14``; with the launcher as the program it is listed as ``orch-host``
+    (the runner: ``orch-runner``). ``AssociatedBundleIdentifiers`` would show an app's name and icon instead, but it
+    needs a signed app that is installed, and orch ships none."""
+    args = [str(release / "bin" / name), "run", "--state", str(state_dir)]
+    if run_dir is not None:
+        args += ["--run", str(run_dir)]
+    args += list(extra_args)
+    refuse_dev_flags(args)
+    for arg in args:
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in arg):
+            raise ValueError(f"a control character in a unit argument: {arg!r}")
+    return args
+
+
 def systemd_quote(arg: str) -> str:
     """One ``ExecStart`` word in systemd's own syntax (systemd.service "Command lines", systemd.unit specifiers): a
     double-quoted word with ``\\`` and ``\"`` escaped, ``%`` written ``%%`` (specifiers expand even inside quotes) and
@@ -84,10 +112,11 @@ def launchd_plist(
     run_dir: Path | None = None,
     extra_args: tuple[str, ...] = (),
 ) -> bytes:
-    """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default."""
+    """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default.
+    ``python`` is not in the plist (the launcher's shebang names it, see :func:`launcher_arguments`)."""
     doc: dict[str, object] = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": program_arguments(python, release, state_dir, run_dir, extra_args),
+        "ProgramArguments": launcher_arguments(release, state_dir, run_dir, extra_args),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Background",

@@ -60,7 +60,7 @@ let s: { runner: ReturnType<typeof vi.spyOn>; preview: ReturnType<typeof vi.spyO
 function setup(opts: { grant?: typeof GRANT | null; runner?: { connected: boolean; enabled: boolean } | null; acked?: { start_agent?: boolean; login_shell?: boolean } } = {}) {
   const grant = opts.grant === undefined ? GRANT : opts.grant
   const runner = opts.runner === undefined ? { connected: true, enabled: true } : opts.runner
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168, models: { 'claude-code': { work: 'opus' } } } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168, models: { 'claude-code': { work: 'opus', refine: 'opus' } } } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
     runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, grant } : null }),
@@ -92,7 +92,7 @@ describe('the form', () => {
     expect(within(sheet).getByRole('button', { name: 'Only create' })).toBeInTheDocument()
     expect(within(sheet).queryByRole('button', { name: 'Create and open another' })).toBeNull() // only on Only create
     const line = await within(sheet).findByTestId('agent-line', {}, T)
-    expect(line).toHaveTextContent('Agent: Claude Code · Do the work · Opus (set in Settings) · Change')
+    expect(line).toHaveTextContent('Agent: Claude Code · Write requirements and plan · Opus (set in Settings) · Change')
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {
@@ -113,6 +113,19 @@ describe('the form', () => {
     expect(within(sheet).getByTestId('agent-line')).toHaveTextContent('Agent: Codex · Write requirements and plan')
     const stored = JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}')
     expect(stored).toMatchObject({ harness: 'codex', mode: 'refine', start: true })
+  })
+
+  it('a new ticket defaults to writing the requirements and plan; a kind of work the person picked is remembered, an old default is not', async () => {
+    const key = `orch.dashboard.new-ticket.agent.p_sev.${WS()}`
+    const { readPref } = await import('./useStartPlan')
+    expect(readPref(key).mode).toBe('refine')
+    localStorage.setItem(key, JSON.stringify({ start: true, harness: 'claude-code', mode: 'work', model: '' })) // saved by an older page: indistinguishable from the old default
+    expect(readPref(key).mode).toBe('refine')
+    localStorage.setItem(key, JSON.stringify({ start: true, harness: 'claude-code', mode: 'work', modeChosen: true, model: '' }))
+    expect(readPref(key).mode).toBe('work')
+    localStorage.setItem(key, JSON.stringify({ start: true, harness: 'claude-code', mode: 'fix', model: '' }))
+    expect(readPref(key).mode).toBe('fix')
+    localStorage.removeItem(key)
   })
 
   it('remembers Only create as the default button for this workspace', async () => {
@@ -186,9 +199,9 @@ describe('after the ticket exists', () => {
   it('previews for the ticket\'s own key, then starts once with the preview\'s spec and the review\'s idem', async () => {
     const { r } = await signed()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
-    expect(s.preview).toHaveBeenCalledWith(WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'work', worktree: true })
+    expect(s.preview).toHaveBeenCalledWith(WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true })
     const [ws, args, spec, idem] = s.start.mock.calls[0]
-    expect([ws, args, spec]).toEqual([WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'work', worktree: true }, 'f'.repeat(64)])
+    expect([ws, args, spec]).toEqual([WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true }, 'f'.repeat(64)])
     expect(String(idem)).toMatch(/^[0-9A-Za-z_-]{8,}$/)
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
     expect(screen.queryByRole('dialog', { name: 'Start agent dialog' })).toBeNull()
@@ -215,7 +228,7 @@ describe('after the ticket exists', () => {
     await signed()
     const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
     expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toMatchObject({ harness: 'claude-code', mode: 'work' })
+    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toMatchObject({ harness: 'claude-code', mode: 'refine' })
     expect(s.start).not.toHaveBeenCalled()
     await userClose()
   })
@@ -322,7 +335,7 @@ describe('partial failures', () => {
     const info = await screen.findByTestId('agent-no-access', {}, T)
     await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
     const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toEqual({ harness: 'claude-code', mode: 'work' })
+    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toEqual({ harness: 'claude-code', mode: 'refine' })
   })
 })
 

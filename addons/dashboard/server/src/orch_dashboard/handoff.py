@@ -233,8 +233,8 @@ class NewTicketSequence(Action):
     #: B12D: acceptance criteria and people in the same review (N3)
     acceptance: list[Criterion] = Field(default_factory=list, max_length=8)
     people: NewPeople | None = None
-    #: U4: "Create and start agent" when the person has no usable runner grant: the agent access, signed LAST in the same
-    #: review (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
+    #: U4: "Create and start agent" without a usable runner grant: the agent access, signed LAST in the same review
+    #: (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
     agent: QuickAgent | None = None
 
     def intent(self) -> dict:

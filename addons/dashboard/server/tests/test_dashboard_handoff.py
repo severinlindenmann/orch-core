@@ -761,6 +761,23 @@ def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls)
     assert other["id"] != got["id"]
 
 
+def test_a_new_ticket_with_agent_access_adds_the_grant_as_the_last_step_only_when_asked(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    plain = post(client, token, stub, {**SEQ}).json()
+    assert "agent" not in plain["material"]["sequence"]["intent"]  # without `agent` the intent is exactly as before
+    res = post(client, token, stub, {**SEQ, "agent": {"hours": 72}})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"]
+    meta = sent[-1]["sequence"]
+    assert meta["of"] == 5  # new, set, two sections, then the agent access
+    assert meta["intent"]["agent"] == {"hours": 72, "scope": "workable"}
+    assert got["id"] != plain["id"] and got["material"]["sequence"]["digest"] != plain["material"]["sequence"]["digest"]
+    # the access is only ever the workable scope, 1..168 hours, and nothing else
+    for bad in ({"hours": 0}, {"hours": 169}, {"hours": 24, "scope": "all"}, {"hours": 24.5}):
+        assert post(client, token, stub, {**SEQ, "agent": bad}).status_code in (400, 422)
+
+
 @pytest.mark.parametrize(
     "change",
     [

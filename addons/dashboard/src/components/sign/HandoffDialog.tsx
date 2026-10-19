@@ -89,6 +89,8 @@ export interface HandoffDialogProps {
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
   warning?: (request: HandoffRequest) => string | null
+  /** Said under the review and outside the signed content: what happens next that this signature does NOT cover. */
+  unsigned?: ReactNode
   /** The signer's event is in the log. */
   onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
   onPending?: (pending: boolean) => void
@@ -370,6 +372,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {run.error?.hint && !cliOnly(run.error.hint) && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
+
+        {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
 
         {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
           <OtherWays phoneAvailable={canPhone} phonePhaseOne={!!p.phoneRequest} allowed={allowed} current={method} disabled={switching || phoneRun.busy || phoneRun.hint?.state === 'done' || !p.action} onSelect={m => void selectMethod(m)} />

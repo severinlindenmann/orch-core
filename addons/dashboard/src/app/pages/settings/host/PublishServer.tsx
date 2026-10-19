@@ -29,15 +29,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
   const [reg, setReg] = useState<Registration>({ at: 'unknown' })
   const { ask, dialog } = useSettingsHandoff(ws, () => void list.refetch())
   if (!data) return null
-  const bad = (v: string) => v !== '' && !ORIGIN.test(v)
-  const problem = bad(server)
-    ? 'The files address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
-    : bad(share)
-      ? 'The links address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
-      : server && server === share
-        ? 'The two addresses must differ: opened files get their own address.'
-        : ''
-  const ready = ORIGIN.test(server) && ORIGIN.test(share) && server !== share
+  const { ready } = publishValidation(server, share)
   const register = async () => {
     setReg({ at: 'busy' })
     try {
@@ -120,17 +112,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
               <DialogTitle>Where shared files go</DialogTitle>
               <DialogDescription>You will see both addresses again when you sign. Files you share later go to the first address, and links open at the second.</DialogDescription>
             </DialogHeader>
-            <div className="space-y-3 text-[13px]">
-              <div className="space-y-1.5">
-                <Label htmlFor="pub-server">Files are sent to</Label>
-                <input id="pub-server" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={server} onChange={(e) => setServer(e.target.value.trim())} placeholder="https://pub.example.org" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="pub-share">Links open at</Label>
-                <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
-              </div>
-              {problem && <p role="alert" className="text-danger">{problem}</p>}
-            </div>
+            <PublishForm server={server} share={share} setServer={setServer} setShare={setShare} />
             <DialogFooter>
               <Button variant="ghost" onClick={() => setEditing(false)}>
                 Cancel
@@ -150,5 +132,35 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
       )}
       {dialog}
     </Section>
+  )
+}
+
+export function publishValidation(server: string, share: string) {
+  const bad = (v: string) => v !== '' && !ORIGIN.test(v)
+  const problem = bad(server)
+    ? 'The files address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
+    : bad(share)
+      ? 'The links address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
+      : server && server === share
+        ? 'The two addresses must differ: opened files get their own address.'
+        : ''
+  const ready = ORIGIN.test(server) && ORIGIN.test(share) && server !== share
+  return { problem, ready }
+}
+
+export function PublishForm({ server, share, setServer, setShare }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void }) {
+  const { problem } = publishValidation(server, share)
+  return (
+    <div className="space-y-3 text-[13px]">
+      <div className="space-y-1.5">
+        <Label htmlFor="pub-server">Files are sent to</Label>
+        <input id="pub-server" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={server} onChange={(e) => setServer(e.target.value.trim())} placeholder="https://pub.example.org" />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="pub-share">Links open at</Label>
+        <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
+      </div>
+      {problem && <p role="alert" className="text-danger">{problem}</p>}
+    </div>
   )
 }

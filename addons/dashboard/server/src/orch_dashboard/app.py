@@ -68,6 +68,7 @@ SPA_ROUTES = (
     "drop",
     "checklist",
     "worktrees",
+    "terminals",
     "explorer",
     "shares",
     "activity",

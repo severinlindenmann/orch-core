@@ -11,9 +11,8 @@ import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type 
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
-import { Inline, Prose, Raw } from '@/components/sign/visible'
+import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -25,18 +24,15 @@ import { ResizeHandle } from '../dock/ResizeHandle'
 import { RealTerminal } from './RealTerminal'
 
 import { EXECUTION_LINE } from './executionLine'
+import { PreviewDialog } from './PreviewDialog'
+import { runName } from './runName'
 import { StartAgentDialog } from './StartAgentDialog'
 
 export { EXECUTION_LINE }
 
-/** A run's name in the dock: its label (untrusted, shown through visible.tsx), else the harness and the ticket. */
-export function runName(run: Run): string {
-  if (run.label) return run.label
-  const what = run.harness === 'shell' ? 'Shell' : run.harness === 'claude-code' ? 'Claude' : run.harness === 'codex' ? 'Codex' : 'Terminal'
-  return run.ticket ? `${run.ticket} ${what}` : what
-}
+export { runName }
 
-export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
+export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview, request, requestDone }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const ticket = useDockTicket()
@@ -65,6 +61,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const region = useRef<HTMLElement>(null)
 
   useEffect(() => { setSelected(null) }, [ws])
+  // The Terminals page asked for this run (Open): select it, then say the request is done.
+  useEffect(() => { if (request) { setSelected(request); requestDone?.() } }, [request, requestDone])
   // The write attach after Open is one-shot (review M1): once that run's terminal has mounted with it, every later mount
   // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
   useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
@@ -202,51 +200,5 @@ function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; c
         </span>
       ))}
     </div>
-  )
-}
-
-/** The host's preview, shown before anything starts: what runs, where, as whom. Every value is untrusted text. */
-function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data: TermPreview | null; error: string } | null; busy: boolean; onClose: () => void; onConfirm: () => void }) {
-  const data = preview?.data
-  return (
-    <Dialog open={!!preview} onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-w-lg gap-3 border-border bg-surface" data-term-preview>
-        <DialogHeader>
-          <DialogTitle>Open a terminal</DialogTitle>
-          <DialogDescription>{EXECUTION_LINE}</DialogDescription>
-        </DialogHeader>
-        {!data && !preview?.error && <Skeleton className="h-20" />}
-        {data && (
-          <div className="space-y-2 text-xs" data-testid="term-preview-lines">
-            <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-              <dt className="text-text-muted">In</dt>
-              <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
-              <dt className="text-text-muted">As</dt>
-              <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
-            </dl>
-            <details data-testid="term-details">
-              <summary className="cursor-pointer text-text-muted">Details</summary>
-              <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-                <dt className="text-text-muted">Runs</dt>
-                <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-                {data.login_shell && (<><dt className="text-text-muted">Started like</dt><dd>You would start it yourself in a terminal, so your own shell settings apply first and can change what runs.</dd></>)}
-                {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
-              </dl>
-            </details>
-          </div>
-        )}
-        {data?.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-warning"><Prose inline>{w}</Prose></p>)}
-        {data?.blocked && (
-          <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">
-            Cannot open: {data.blocked.message ? <Prose inline>{data.blocked.message}</Prose> : 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}
-          </p>
-        )}
-        {preview?.error && <p role="alert" className="text-xs text-danger"><Inline>{preview.error}</Inline></p>}
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" disabled={!data || !!data.blocked || busy} onClick={onConfirm}>Open terminal</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

@@ -501,4 +501,41 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
     ],
   },
+  {
+    id: 'U',
+    title: 'Terminals page',
+    where: 'Browser; as an owner or member, with Terminals switched on and dashboard execution enabled',
+    steps: [
+      {
+        id: 'U1',
+        title: 'The menu entry',
+        text: 'Open Settings, then Add-ons. Switch Terminals off, reload, then switch it on again.',
+        see: 'A "Terminals" entry appears in the left menu only while Terminals is on. While it is off the entry is gone and the address /terminals goes back to the board.',
+      },
+      {
+        id: 'U2',
+        title: 'The list',
+        text: 'Open Terminals in the left menu. Start a terminal with "New terminal", and, if you can, an agent on a ticket.',
+        see: 'Each terminal or agent is one row: its name, "Terminal" or "Agent", when it started, the ticket (a link), Live or Ended, and Read only or Controlled. "New terminal" first shows the same preview as the panel at the bottom and starts nothing until you confirm.',
+      },
+      {
+        id: 'U3',
+        title: 'Open and Stop',
+        text: 'Press Open on a live row. Then press Stop on it.',
+        see: 'The terminal panel at the bottom opens on that terminal (read only; "Take control" is there). After Stop the row says Ended and has no Stop button. The panel at the bottom keeps working as before.',
+      },
+      {
+        id: 'U4',
+        title: 'Terminal colours',
+        text: 'In a terminal run: ls --color=auto, git diff, and a command that prints red and green text.',
+        see: 'Text is no longer plain white: folders, file types, added and removed lines and errors have their own colours, readable on the dark background. The cursor is teal, selected text has a soft teal background, the text has a little room around it.',
+      },
+      {
+        id: 'U5',
+        title: 'On a phone-sized window',
+        text: 'Make the browser window narrow (about 390 px wide) and open the Terminals page.',
+        see: 'Rows wrap onto two lines, nothing scrolls sideways, and the buttons stay reachable.',
+      },
+    ],
+  },
 ]

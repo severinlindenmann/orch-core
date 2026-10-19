@@ -538,4 +538,41 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
     ],
   },
+  {
+    id: 'V',
+    title: 'Create and start an agent',
+    where: 'Browser; a workspace with the Start agents add-on on and a connected agent runner',
+    steps: [
+      {
+        id: 'V1',
+        title: 'One button creates and starts',
+        text: 'Open New ticket, type a title and the requirements. Look above the buttons, then press "Create and start agent".',
+        see: 'One line "Agent: Claude Code · Do the work · (model) · Change", and two buttons: "Create and start agent" (first) and "Only create". The review has a block "Not signed: the agent start". If you have no agent access yet, a choice of 1 day, 3 days or 7 days is above the buttons and the review also asks for agent access (the typed word GRANT); if you have one, it does not.',
+      },
+      {
+        id: 'V2',
+        title: 'It starts only what you saw',
+        text: 'Sign the review. Watch the page afterwards.',
+        see: 'The ticket opens and an agent is running on it (Agents or the terminal panel). Nothing approved the requirements or the plan: both gates are still open, the agent asks you.',
+      },
+      {
+        id: 'V3',
+        title: 'Only create, and it is remembered',
+        text: 'Press "Only create" on a new ticket and sign. Open New ticket again.',
+        see: 'The ticket is created and no agent starts. "Only create" is now the first button, "Create and open another" is back, and "Create and start agent" is the second button.',
+      },
+      {
+        id: 'V4',
+        title: 'Change the agent',
+        text: 'Press Change, choose Codex (or another mode or model), press Done, and create and start.',
+        see: 'The line shows your choice and the same choice is there the next time you open New ticket in this workspace.',
+      },
+      {
+        id: 'V5',
+        title: 'When it does not match, you are asked',
+        text: 'In Settings, change the model for "Do the work" after you press "Create and start agent" but before you sign (second window), then sign.',
+        see: 'The agent is not started. The ticket exists, a toast says "The agent was not started: ...", and the Start agent dialog opens with your choice and one Start button.',
+      },
+    ],
+  },
 ]

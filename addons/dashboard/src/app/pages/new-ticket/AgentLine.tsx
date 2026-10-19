@@ -71,7 +71,7 @@ function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void 
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'> }) {
+export function NotSignedBlock({ plan, coreSaysSo = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** The signed review already says nothing here approves the requirements or the plan (agent access is in it). */ coreSaysSo?: boolean }) {
   const { choice } = plan
   return (
     <section aria-label="Not signed: the agent start" data-testid="not-signed-start" className="space-y-1 border-t border-border pt-3 text-[13px] leading-relaxed">
@@ -79,7 +79,7 @@ export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choi
       <p className="text-text-muted">
         After the ticket exists, this page starts an agent with your agent access: {harnessName(choice.harness)}, {MODE_LABEL[choice.mode]}, model {modelText(plan)}, in the project folder.
         The start is checked again first and only goes ahead if it is what you see here; otherwise you are asked.
-        Nothing here approves the requirements or the plan: the agent will ask you to.
+        {!coreSaysSo && ' Nothing here approves the requirements or the plan: the agent will ask you to.'}
       </p>
     </section>
   )

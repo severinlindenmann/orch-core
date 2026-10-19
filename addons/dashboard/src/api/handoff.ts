@@ -139,6 +139,8 @@ export interface HandoffState {
   error?: { code: string } | null
   /** B11: a sequence (one review, N signatures) that has landed `done` of its `of` steps; absent for other requests. */
   progress?: { done: number; of: number; last?: 'grant' } | null
+  /** One click only: where the runner grant's secret went (a sequence that ends with agent access). */
+  deposit?: 'confirmed' | 'rejected' | 'unknown'
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }

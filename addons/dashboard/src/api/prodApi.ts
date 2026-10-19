@@ -8,7 +8,7 @@ import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
@@ -257,7 +257,7 @@ const click = {
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
   signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
-  stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
+  stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers

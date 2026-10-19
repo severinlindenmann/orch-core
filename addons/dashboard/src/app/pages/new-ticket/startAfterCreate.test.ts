@@ -11,7 +11,7 @@ const args: AgentArgs = { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work'
 const reviewed = (over: Partial<Reviewed> = {}): Reviewed => ({ choice: { harness: 'claude-code', mode: 'work', model: '' }, model: { model: 'opus', source: 'workspace' }, grantId: 'gr_A', ...over })
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
   spec: 's'.repeat(8), ticket: 'DEMO-1', display: 'claude x', display_hidden: false, model: 'opus', model_source: 'workspace',
-  cwd: { kind: 'repo' }, cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: GRANT, blocked: null, warnings: [], ...over,
+  cwd: { kind: 'workspace' }, cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: GRANT, blocked: null, warnings: [], ...over,
 })
 const ACK = { start_agent: true, login_shell: true }
 
@@ -44,6 +44,8 @@ describe('compareStart (fail closed)', () => {
     ['model', preview({ model: 'sonnet' })],
     ['model source', preview({ model_source: 'chosen' })],
     ['worktree', preview({ will_create_worktree: true })],
+    ['a repository\'s shared copy', preview({ cwd: { kind: 'repo' } })],
+    ['a worktree folder', preview({ cwd: { kind: 'worktree' } })],
     ['hidden folder', preview({ cwd_path: null })],
     ['hidden command', preview({ display_hidden: true })],
     ['no grant', preview({ grant: null })],

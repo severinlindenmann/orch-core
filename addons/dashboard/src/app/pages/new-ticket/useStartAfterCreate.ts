@@ -63,7 +63,7 @@ export type AfterState =
   | { kind: 'running'; key: string }
   | { kind: 'ask'; key: string; reason: string; initial: StartInitial }
   /** The ticket landed and its agent access did not: the person is told and can start from the dialog. */
-  | { kind: 'no-access'; key: string }
+  | { kind: 'no-access'; key: string; initial: StartInitial }
 
 /** The state of what happens after the ticket exists (kept in memory only: a reload never resumes a start). */
 export function useStartAfterCreate() {
@@ -76,7 +76,7 @@ export function useStartAfterCreate() {
     setState(out.kind === 'ask' ? { kind: 'ask', key: r.key, reason: out.reason, initial: out.initial } : { kind: 'idle' })
     return out
   }, [qc])
-  const noAccess = useCallback((key: string) => setState({ kind: 'no-access', key }), [])
+  const noAccess = useCallback((key: string, initial: StartInitial) => setState({ kind: 'no-access', key, initial }), [])
   const ask = useCallback((key: string, initial: StartInitial) => setState({ kind: 'ask', key, reason: '', initial }), [])
   const reset = useCallback(() => setState({ kind: 'idle' }), [])
   return { state, run, noAccess, ask, reset }

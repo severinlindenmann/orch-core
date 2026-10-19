@@ -70,6 +70,14 @@ export interface ClickViewAnswer {
 /** Where a request stands at the host (read by the server through its own link). */
 export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown'
 
+/** `click/state`: where the request stands. For a stopped sequence also the ticket that exists and how far the run got. */
+export interface ClickState {
+  id: string
+  state: ClickHostState
+  key?: string
+  progress?: { done: number; of: number; last?: 'grant' }
+}
+
 export interface ClickSigned {
   state: 'submitted'
   duplicate: boolean

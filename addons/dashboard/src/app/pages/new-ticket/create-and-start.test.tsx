@@ -51,7 +51,7 @@ const CHOICES: RoutingChoices = {
 let GRANT = { id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', until: '', scope: 'workable' as const }
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
   spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: 'opus', model_source: 'workspace',
-  cwd: { kind: 'repo', repo: 'billing' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
+  cwd: { kind: 'workspace' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
   env: ['TERM'], grant: GRANT, blocked: null, warnings: [], ...over,
 })
 const run = { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV' } as never
@@ -306,5 +306,36 @@ describe('partial failures', () => {
     expect(screen.queryByTestId('agent-no-access')).toBeNull()
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
+  })
+
+  it('Start agent after a missing access uses the choice that was reviewed, not what the form says now', async () => {
+    setup({ grant: null })
+    const { r, sheet } = await open()
+    await r.user.click(await startBtn(sheet))
+    await sent()
+    await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
+    await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
+    // the person changes the agent in the form behind the dialog
+    localStorage.setItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`, JSON.stringify({ start: true, harness: 'codex', mode: 'refine', model: '' }))
+    const info = await screen.findByTestId('agent-no-access', {}, T)
+    await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
+    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toEqual({ harness: 'claude-code', mode: 'work' })
+  })
+})
+
+describe('a grant that runs out while the form is open', () => {
+  it('is read again at submit time: under 15 minutes left at the click means the access is signed with the ticket', async () => {
+    const soon = new Date(nowMs() + 16 * 60_000).toISOString().replace(/\.\d+Z$/, 'Z')
+    setup({ grant: { ...GRANT, until: soon } })
+    const { r, sheet } = await open()
+    await startBtn(sheet)
+    expect(within(sheet).queryByTestId('agent-access')).toBeNull() // 16 minutes left when the form was drawn: usable
+    await new Promise((res) => setTimeout(res, 0))
+    const realNow = nowMs()
+    const spy = vi.spyOn(await import('@/lib/time'), 'nowMs').mockReturnValue(realNow + 5 * 60_000) // five minutes later: 11 left
+    await r.user.click(await startBtn(sheet))
+    expect((await sent()).agent).toEqual({ hours: 24 })
+    spy.mockRestore()
   })
 })

@@ -1,7 +1,7 @@
 // What "Create and start agent" will do, as the form knows it before anything is signed: whether starting is possible
 // here, the agent choice (remembered per workspace), and whether the ticket's signature also has to carry agent access.
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AGENT_MODES, HARNESSES, runnerQuery, type AgentMode, type Harness } from '@/api/agents'
 import { hasFeature, handoffMode } from '@/api/features'
 import { GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from '@/api/grants'
@@ -59,7 +59,16 @@ export function useStartPlan(workspace: Workspace, person: string) {
           : !info.connected ? 'No agent runner is connected.'
             : null
   const available = feature && !reason
-  const grant = useMemo(() => usableGrant(info, nowMs()), [info])
+  // Usable means 15 minutes left: that changes with time alone, so it is read again every 30 s and, at submit, afresh.
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!feature) return
+    const t = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [feature])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const grant = useMemo(() => usableGrant(info, nowMs()), [info, tick])
+  const grantNow = useCallback(() => usableGrant(info, nowMs()), [info])
   const needsGrant = available && !grant
 
   // Access length: the workspace maximum caps it; 1, 3 or 7 days (a workspace that allows less offers its own maximum).
@@ -74,6 +83,6 @@ export function useStartPlan(workspace: Workspace, person: string) {
   const models = choices.data?.harnesses.find((h) => h.id === pref.harness)?.models ?? []
   const shown = shownModel(choice, settings.data?.models, routing)
   const reviewed: Reviewed = { choice, model: shown, grantId: grant?.id ?? null }
-  return { feature, available, reason: reason === 'checking' ? null : reason, pending: feature && runner.isPending, grant, needsGrant, lengths, hours, setHours, cap, pref, setPref, choice, models, routing, choices: choices.data, shown, reviewed, priorGrantIds: info?.grant ? [info.grant.id] : [] }
+  return { feature, available, reason: reason === 'checking' ? null : reason, pending: feature && runner.isPending, grant, grantNow, needsGrant, lengths, hours, setHours, cap, pref, setPref, choice, models, routing, choices: choices.data, shown, reviewed, priorGrantIds: info?.grant ? [info.grant.id] : [] }
 }
 export type StartPlan = ReturnType<typeof useStartPlan>

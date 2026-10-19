@@ -25,7 +25,7 @@ import { SectionsEditor } from './SectionsEditor'
 import { AgentLine, NotSignedBlock } from './AgentLine'
 import { harnessName } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
-import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
 import { newIdem } from '@/api/runs'
 import { useStartAfterCreate } from './useStartAfterCreate'
 import { useStartPlan } from './useStartPlan'
@@ -336,12 +336,12 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
   // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
   // compared with exactly that (never with whatever the form says by then). One idem per review.
-  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'> }
+  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
   const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean; start: StartSnapshot | null } | null>(null)
   const handoffOn = handoffMode(workspace.id)
   const plan = useStartPlan(workspace, me.person)
   const after = useStartAfterCreate()
-  const partialKey = useRef<string | null>(null)
+  const partialKey = useRef<{ key: string; initial: StartInitial } | null>(null)
   const busyAfter = after.state.kind !== 'idle'
   // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
   const tooMany = useMemo(() => {
@@ -376,10 +376,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
       const startNow = wantStart && startPossible && !another
       if (startPossible) plan.setPref({ start: wantStart })
-      const made = handoffNewTicket(full, me.person, startNow && plan.needsGrant ? plan.hours : null)
+      // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
+      const fresh = plan.grantNow()
+      const withAccess = startNow && !fresh
+      const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
       const start: StartSnapshot | null = startNow
-        ? { reviewed: plan.reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice } }
+        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
         : null
       return setHandoffNew({ action: made.action, another, start })
     }
@@ -434,13 +437,16 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string) => {
     ticketExists()
     setHandoffNew(null)
+    // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
+    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') return after.noAccess(ticketKey, initialOf(start))
     // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
     if (start && ticketKey) return void beginStart(ticketKey, start)
     afterCreate(another, ticketKey)
   }
+  const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
   /** Every signature landed: preview for the ticket's own key and start only if it is what the review showed. */
   const beginStart = async (ticketKey: string, snap: StartSnapshot) => {
     const out = await after.run({ ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
@@ -621,19 +627,22 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           ws={workspace.id}
           action={handoffNew.action}
           autoStart
-          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} /> : undefined}
+          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
             const landed = partialKey.current
             partialKey.current = null
             setHandoffNew(null)
-            if (landed) { ticketExists(); after.noAccess(landed) }
+            if (landed) { ticketExists(); after.noAccess(landed.key, landed.initial) }
           }}
           onSettled={(phase, state, request) => {
             const ticketKey = ownKey(state, request)
-            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit)
             const p = state?.progress
-            if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) partialKey.current = ticketKey
+            if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
+              partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }
+              ticketExists() // the ticket is there: nothing typed is unsaved, and a second Create would make a second ticket
+            }
           }}
         />
       )}
@@ -659,7 +668,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={() => { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}>Open the ticket</Button>
-              <Button onClick={() => { if (after.state.kind === 'no-access') after.ask(after.state.key, { harness: plan.choice.harness, mode: plan.choice.mode, ...(plan.choice.model ? { model: plan.choice.model } : {}) }) }}>Start agent</Button>
+              <Button onClick={() => { if (after.state.kind === 'no-access') after.ask(after.state.key, after.state.initial) }}>Start agent</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

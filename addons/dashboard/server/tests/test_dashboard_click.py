@@ -138,6 +138,7 @@ class HostCheck:
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
+        self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
 
     def human(self, ws, op, args, **kw):
         if op == "human.prepare" and self.replay_error:
@@ -159,7 +160,12 @@ class HostCheck:
                 return {"requests": list(self.listing)}
             return {
                 "requests": [
-                    {"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound"), "seq": 7}
+                    {
+                        "id": args["request_id"],
+                        "state": self.pending.get(args["request_id"], "bound"),
+                        "seq": 7,
+                        **({"key": self.key, "created_at": "2026-10-19T08:00:00Z"} if self.key else {}),
+                    }
                 ]
             }
         raise AssertionError(op)
@@ -1876,3 +1882,28 @@ def test_publish_setup_and_share_are_never_one_click(client, token, stub, script
     assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
     assert script.prepared == 0
     assert client.app.state.handoffs.active == {}
+
+
+def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
+    client, token, stub, script, host_check, rich, monkeypatch
+):
+    """U4: the server (never error text) says the ticket landed and only the access is missing."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    seen = {}
+
+    def progress(gateway, ws, key, intent, person=None, since=None):
+        seen.update(key=key, since=since, agent=intent.get("agent"))
+        return {"done": 3, "of": 4}
+
+    monkeypatch.setattr("orch_dashboard.click.sequence_progress", progress)
+    host_check.key = "DEMO-0044"
+    got = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert got["key"] == "DEMO-0044" and got["progress"] == {"done": 3, "of": 4, "last": "grant"}
+    assert seen == {"key": "DEMO-0044", "since": "2026-10-19T08:00:00Z", "agent": {"hours": 24, "scope": "workable"}}
+    # no key on the host's row yet (nothing created): nothing to report
+    host_check.key = None
+    plain = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert "key" not in plain and "progress" not in plain

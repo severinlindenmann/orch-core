@@ -92,6 +92,10 @@ class Layout:
         p = Path(project)
         return cls(p, p / STORE_DIR, False)
 
+    def artifact_rel(self, uid: str, name: str) -> Path:
+        """Where the file of artifact ``name`` of ticket ``uid`` lies, relative to the project."""
+        return (self.store / "tickets" / uid / "artifacts" / name).relative_to(self.project)
+
 
 @dataclass(frozen=True)
 class StorePin:

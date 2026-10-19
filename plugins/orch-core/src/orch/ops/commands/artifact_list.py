@@ -11,13 +11,7 @@ from orch.ops.views import fence
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "artifact.list")
     view = c.resolve(args.get("ref"))
-    store, root = c.ws.store_dir, c.ws.root
-    base = None
-    if store is not None and root is not None:
-        try:  # relative to the project, so the same text everywhere (an agent in a worktree adds its project folder)
-            base = store.relative_to(root)
-        except ValueError:
-            base = None
+    layout = c.ws.layout
     arts = []
     lines = []
     for a in view.artifacts:
@@ -25,7 +19,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if a.ac:
             row["ac"] = a.ac
         # R3 part B: where an agent can open the file (read only: the log names its digest, a changed file is not truth)
-        path = str(base / "tickets" / view.uid / "artifacts" / a.name) if base is not None and a.digest else None
+        path = str(layout.artifact_rel(view.uid, a.name)) if layout is not None and a.digest else None
         if path:
             row["path"] = path
         arts.append(row)

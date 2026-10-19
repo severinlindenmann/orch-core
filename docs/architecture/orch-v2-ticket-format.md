@@ -1376,7 +1376,11 @@ sha256, bytes, task, ac, label, actor). There is no separate manifest file that 
 acceptance. `hash16` is the first 16 lowercase hexadecimal digits of SHA-256 over UTF-8
 `"orch.accept.v1\n" + ac_id + "\n" + criterion_text`. A feedback label starting with `accepted ` counts as
 AC evidence only if the complete label parses and both its AC id and hash match the artifact's `ac` and the
-criterion's **current** text. Malformed or stale labels silently do not count. Other evidence rules are unchanged.
+criterion's **current** text. Malformed or stale labels silently do not count. Such a feedback file also counts only
+if its person is a non-viewer member who is the ticket owner, a ticket reviewer, or a workspace owner or maintainer,
+and the ticket was open, in progress or in testing when it was written (the event is admitted, `evidence_ok` is false
+otherwise). A `task.done` of a person without a receipt is `role.denied` unless the same holds. Other evidence rules
+are unchanged.
 An agent's ordinary file with an acceptance-looking name remains asserted file evidence, never manual acceptance.
 
 The host chooses `accept-AC<n>-<k>.md`, the smallest integer `k >= 1` whose name is unused on the ticket.

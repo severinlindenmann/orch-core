@@ -90,3 +90,49 @@ def test_person_completion_ends_live_lease_without_evidence():
     w.tev(uid, "task.done", "sev", task="T1")
     assert w.view(uid).tasks[0].leased_by is None and w.view(uid).tasks[0].state == "done"
     assert not w.view(uid).acceptance[0].evidence
+
+
+def _two_members():
+    w = World().bootstrap({"mara": "member", "vera": "member", "vik": "viewer", "mia": "maintainer"})
+    uid = w.ticket()
+    w.edit(uid, "sev", {"ticket.acceptance": [{"id": "AC1", "text": "works"}]})
+    return w, uid
+
+
+def test_only_those_who_may_accept_count_as_evidence():
+    # a member who is neither the owner nor a reviewer, and a viewer: the event exists, it is never evidence
+    for who in ("mara", "vik"):
+        w, uid = _two_members()
+        res = refused(w, uid, "artifact.added", who, **artifact())
+        if res is None:
+            w.tev(uid, "artifact.added", who, **artifact())
+        assert not w.view(uid).acceptance[0].evidence, who
+        assert acceptance_state(w.state()._core.tickets[uid], "AC1") != "accepted", who
+    # the owner, a maintainer and a reviewer do count
+    for who in ("sev", "mia", "vera"):
+        w, uid = _two_members()
+        w.tev(uid, "people.changed", "sev", role="reviewers", add=[w.people["vera"]], remove=[])
+        w.tev(uid, "artifact.added", who, **artifact())
+        assert w.view(uid).acceptance[0].evidence == ("artifact:accept-AC1-1.md",), who
+
+
+def test_an_agent_never_makes_a_manual_acceptance():
+    w, uid = _two_members()
+    a = w.claim(uid, "mara")
+    assert refused(w, uid, "artifact.added", a, **artifact()) == Code.ARTIFACT_KIND
+
+
+def test_a_manual_acceptance_on_a_ticket_not_open_for_work_does_not_count():
+    w, uid = _two_members()
+    w.tev(uid, "ticket.moved", "sev", **{"from": "open", "to": "backlog"})
+    assert w.view(uid).status == "backlog"
+    w.tev(uid, "artifact.added", "sev", **artifact())
+    assert not w.view(uid).acceptance[0].evidence
+
+
+def test_a_person_marks_a_task_done_without_receipt_only_with_authority():
+    w, uid = _two_members()
+    w.edit(uid, "sev", {"ticket.tasks": [{"id": "T1", "text": "do it", "verify": None, "proves": ["AC1"]}]})
+    assert refused(w, uid, "task.done", "mara", task="T1") == Code.ROLE_DENIED
+    assert refused(w, uid, "task.done", "vik", task="T1") == Code.ROLE_DENIED
+    assert refused(w, uid, "task.done", "sev", task="T1") is None

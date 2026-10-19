@@ -23,3 +23,19 @@ def parse_label(value: str | None) -> tuple[str, str] | None:
 
 def withdraw_label(ac_id: str) -> str:
     return f"withdrawn {ac_id}"
+
+
+#: the ticket statuses in which a person's manual acceptance counts (the host handler refuses the others too)
+WORKABLE = ("open", "in_progress", "testing")
+
+
+def may_accept(ws, t, person: str) -> bool:
+    """Who may accept a criterion manually or mark a task done without a receipt (R3 owner decision): the ticket
+    owner, a ticket reviewer, a workspace owner or maintainer; never a viewer, never a non-member. The model applies
+    it to the event itself, so a signed event of anyone else never counts, whatever a host or a client allowed."""
+    from . import claims
+
+    member = ws.members.get(person)
+    if member is None or member.role == "viewer":
+        return False
+    return claims.may_manage(ws, t, person) or person in t.people["reviewers"]

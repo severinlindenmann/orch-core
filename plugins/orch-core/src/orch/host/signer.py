@@ -232,14 +232,25 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
     """``move``, ``policy.set``, ``settings.set``: each event may change only what its op names, on the log its scope
     names (a ticket for ``move`` and a ticket ``policy.set``, the workspace log otherwise)."""
     op, log, ticket = prepared["op"], prepared.get("log"), prepared["material"].get("ticket")
-    for e in prepared["events"]:
+    if "statement" in prepared["material"] and op not in ("ac.accept", "ac.unaccept"):
+        _refuse(f"{op} carries a manual acceptance statement")
+    events = prepared["events"]
+    for e in events:
+        label = e.get("label")
+        if (
+            e["type"] in ARTIFACT_TYPES
+            and isinstance(label, str)
+            and label.startswith(("accepted ", "withdrawn "))
+            and op not in ("ac.accept", "ac.unaccept")
+        ):
+            _refuse(f"{op} cannot sign a file labelled as a manual acceptance or its withdrawal")
         if op in ("ac.accept", "ac.unaccept"):
             from . import acceptance
 
             statement = prepared["material"].get("statement")
             parsed = acceptance.parse(statement)
             ok = (
-                len(prepared["events"]) == 1
+                len(events) == 1
                 and log != "workspace"
                 and ticket is not None
                 and parsed is not None
@@ -248,7 +259,7 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             )
         elif op == "task.mark_done":
             ok = (
-                len(prepared["events"]) == 1
+                len(events) == 1
                 and log != "workspace"
                 and ticket is not None
                 and e["type"] == "task.done"

@@ -190,9 +190,12 @@ def derived(event: Mapping[str, Any], material: Mapping[str, Any]) -> dict[str, 
     """The per-type ``derived`` values of §0.8.1, computed from the event and the material only."""
     typ = event.get("type")
     if typ in ("artifact.added", "artifact.replaced") and "statement" in material:
-        if not isinstance(material["statement"], str):
-            raise ReviewError("statement must be text")
-        return {"statement": material["statement"]}
+        from . import acceptance
+
+        statement = material["statement"]
+        if not isinstance(statement, str) or not acceptance.matches(dict(event), statement):
+            raise ReviewError("the statement is not the one this event signs")
+        return {"statement": statement}
     if typ in _CERTS:
         return _cert(event, _CERTS[typ])
     if typ in _DECISIONS:

@@ -439,6 +439,11 @@ class HumanOps:
             raise _store_error(e) from None
         if not capture.events:
             raise HostError("invalid.input", f"{name} has nothing to sign")
+        if name not in ("ac.accept", "ac.unaccept") and any(
+            isinstance(c.event.get("label"), str) and c.event["label"].startswith(("accepted ", "withdrawn "))
+            for c in capture.events
+        ):  # R3: only the acceptance ops write the labels that mean "accepted manually" / "withdrawn"
+            raise HostError("invalid.input", f"{name} cannot write a label that means a manual acceptance")
         logs = {c.log for c in capture.events}
         if len(logs) != 1:
             raise HostError("internal", f"{name} prepared events for more than one log")

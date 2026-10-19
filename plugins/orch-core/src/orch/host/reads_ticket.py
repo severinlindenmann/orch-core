@@ -264,13 +264,16 @@ def _receipt_counts(x: _Ticket, task_id: str) -> bool:
 
 def _manual_acceptance(x: _Ticket, ac_id: str, text: str) -> dict[str, Any]:
     from orch.host.acceptance import artifact_statement
+    from orch.host.artifacts import artifact_file
     from orch.model.accept import criterion_hash, parse_label
 
     stale = False
     for art in sorted(x.t.artifacts.values(), key=lambda a: a.event, reverse=True):
         if art.ac != ac_id or art.kind != "feedback" or parse_label(art.label) is None:
             continue
-        path = x.ctx.store.root / "tickets" / x.view.uid / "artifacts" / art.name
+        if type(art.bytes) is not int or art.bytes > 8192:  # a statement is a few lines: never read a big file
+            continue
+        path = artifact_file(x.ctx.service, x.view.uid, art.name)
         try:
             data = x.ctx.service.capabilities().files.read_bytes(path)
         except OSError:

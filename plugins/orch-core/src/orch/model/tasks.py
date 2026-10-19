@@ -12,7 +12,7 @@ from typing import Any
 from orch.canon import ARTIFACT_KINDS
 
 from . import addon_rules, claims, gates, generations, source
-from .accept import criterion_hash, parse_label
+from .accept import WORKABLE, criterion_hash, may_accept, parse_label
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -56,6 +56,11 @@ def task_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if a["kind"] == "agent" and lease is not None and lease.session != who and lease_active(ws, lease, at):
         return Refusal(Code.TASK_LEASED, f"{tid} is leased by {lease.session}")
     if typ == "task.done":
+        if a["kind"] == "person" and "receipt" not in e and not may_accept(ws, t, a["id"]):
+            return Refusal(
+                Code.ROLE_DENIED,
+                "a task is marked done without a receipt only by the ticket owner, a reviewer or a maintainer",
+            )
         if (r := _receipt(t, tid, e)) is not None:
             return r
         if "log" in e and e["log"] not in t.artifacts:
@@ -176,6 +181,13 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         if not is_file or old.digest != e["replaces"]:
             return Refusal(Code.ARTIFACT_BAD_REPLACES, "`replaces` must be the current digest of this name")
     by = a["session"] if a["kind"] == "agent" else a["id"]
+    counts = is_file and not unattended
+    if (
+        e["kind"] == "feedback"
+        and (e.get("label") or "").startswith("accepted ")
+        and not (a["kind"] == "person" and may_accept(ws, t, a["id"]) and t.status in WORKABLE)
+    ):
+        counts = False  # R3: a manual acceptance of anyone else, or on a ticket not open for work, is never evidence
     t.artifacts[name] = ArtifactCore(
         name,
         e["kind"],
@@ -188,7 +200,7 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         e.get("ref"),
         e["id"],
         by,
-        is_file and not unattended,
+        counts,
     )
     generations.mark(t, "verify")
     for g in ("requirements", "plan"):

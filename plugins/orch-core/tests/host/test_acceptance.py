@@ -130,7 +130,17 @@ def test_signer_rejects_even_when_host_recomputes_review(human, mutation):
         e["bytes"] += 1
     else:
         e["type"] = "artifact.replaced"
-    p["material"]["review"] = [review.of(e, p["material"])]
+    with pytest.raises(review.ReviewError):  # an honest host cannot even build the review of a mismatch
+        review.of(e, p["material"])
+    # a dishonest host builds it by hand: the signer still rebuilds and refuses
+    p["material"]["review"] = [
+        {
+            "event_id": e["id"],
+            "type": e["type"],
+            "payload": review.payload(e),
+            "derived": {"statement": p["material"]["statement"]},
+        }
+    ]
     p["review_digest"] = review.review_digest(p["material"])
     p["fingerprint"] = review.fingerprint(p["review_digest"], p["events"], p["op"])
     with pytest.raises(signer.SignerRefused):
@@ -285,3 +295,44 @@ def test_reader_rejects_noncanonical_or_mismatched_files():
     assert acceptance.artifact_statement(art, raw) is None
     art.label, art.kind, art.by = label("AC1", "It works"), "other", "s_agent"
     assert acceptance.artifact_statement(art, raw) is None
+
+
+def test_a_statement_is_shown_only_when_it_is_the_one_the_event_signs(human):
+    _, key = criterion(human)
+    prepared = human.prepare("ac.accept", {"ref": key, "ac": "AC1", "note": "checked"})
+    event, material = prepared["events"][0], copy.deepcopy(prepared["material"])
+    assert review.derived(event, material) == {"statement": material["statement"]}
+    material["statement"] = material["statement"].replace("checked", "changed")
+    with pytest.raises(review.ReviewError):
+        review.derived(event, material)
+    material["statement"] = 5
+    with pytest.raises(review.ReviewError):
+        review.derived(event, material)
+
+
+def test_a_statement_under_another_op_is_refused_by_the_signer(human):
+    _, key = criterion(human)
+    p = copy.deepcopy(human.prepare("ac.accept", {"ref": key, "ac": "AC1"}))
+    p["op"] = "artifact.add"
+    with pytest.raises(signer.SignerRefused):
+        signer.verify_material(p, workspace_id=p["workspace_id"])
+
+
+@pytest.mark.parametrize("lbl", ["accepted AC1 " + "0" * 16, "withdrawn AC1"])
+def test_other_ops_cannot_write_an_acceptance_label(human, lbl):
+    import base64
+
+    _, key = criterion(human)
+    args = {"ref": key, "path": "upload", "name": "x.md", "kind": "feedback", "ac": "AC1", "label": lbl}
+    files = {"path": {"b64": base64.b64encode(b"hello").decode()}}
+    assert err(human.c.req("human.prepare", {"op": "artifact.add", "args": args}, files=files)) in (
+        "invalid.input",
+        "bad_request",
+        "role.denied",
+    )
+    p = copy.deepcopy(human.prepare("ac.accept", {"ref": key, "ac": "AC1"}))
+    p["op"] = "artifact.add"
+    p["material"].pop("statement")
+    p["events"][0]["label"] = lbl
+    with pytest.raises(signer.SignerRefused):
+        signer.verify_material(p, workspace_id=p["workspace_id"])

@@ -148,7 +148,10 @@ describe('what is signed', () => {
     const action = await sent()
     expect(action.agent).toBeUndefined()
     expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not signed: the agent start')
-    expect(screen.getByTestId('not-signed-start')).toHaveTextContent('Nothing here approves the requirements or the plan')
+    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(160) // one line, not a paragraph
+    // the steps say the agent starts with the access already there, and waits for the plan approval
+    expect(await screen.findByTestId('what-next')).toHaveTextContent('An agent starts, with the access you already gave')
+    expect(screen.getByTestId('what-next')).toHaveTextContent('nothing is built until you approve the plan')
   })
 
   it('without a grant (or one with under 15 minutes left) the access is signed last in the same request, 1/3/7 days', async () => {

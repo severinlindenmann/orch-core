@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { agentsApi, LOGIN_NOTICE, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
 import { mergeRunItems, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { nowMs } from '@/lib/time'
@@ -248,10 +248,12 @@ const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
-  const sign = within(panel).getByRole('button', { name: 'Hold to sign' })
+  fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } }) // the View's word, typed
+  const sign = within(panel).getByRole('button', { name: /^Sign and allow access$/ })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
-  fireEvent.pointerDown(sign) // held until the hold completes and the panel signs with the View's word
-  await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: HOLD_MS + 2000 })
+  fireEvent.pointerDown(sign)
+  fireEvent.click(sign)
+  await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: 3000 })
 }
 
 describe('the runner grant', () => {
@@ -358,7 +360,7 @@ describe('the runner grant', () => {
     mount()
     fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
     expect(await screen.findByTestId('runner-grant-bad-view', {}, T)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Sign( |$)/ })).toBeNull()
   })
 
   it.each([
@@ -533,7 +535,7 @@ describe('review fixes', () => {
     mount()
     fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
     expect(await screen.findByTestId('runner-grant-bad-view', {}, T)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Sign( |$)/ })).toBeNull()
   })
 
   it('L1: a lost sign answer settled at the host still asks where the deposit went, by the request id', async () => {

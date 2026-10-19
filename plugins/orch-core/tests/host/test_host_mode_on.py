@@ -738,7 +738,9 @@ def test_enable_says_so_when_the_host_could_not_be_restarted(stale_env, monkeypa
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
 def test_the_manager_restart_now_commands(tmp_path, platform):
-    unit = svc.plan({"HOME": str(tmp_path / "h")}, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform=platform, uid=501)
+    unit = svc.plan(
+        {"HOME": str(tmp_path / "h")}, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform=platform, uid=501
+    )
     ran: list[list[str]] = []
     m = svc.Manager(unit, run=lambda argv: ran.append(list(argv)) or done())
     m.restart_now()

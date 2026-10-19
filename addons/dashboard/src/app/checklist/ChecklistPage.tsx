@@ -359,7 +359,7 @@ export function ChecklistPage() {
         </div>
 
         <section aria-labelledby="gaps" className="mt-3 rounded-[10px] border border-warning/50 bg-warning-soft p-3">
-          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run 2 (expected, do not report as bugs)</h2>
+          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run 3 (expected, do not report as bugs)</h2>
           <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-text">
             {RUN2_KNOWN_GAPS.map((g) => <li key={g}>{g}</li>)}
           </ul>

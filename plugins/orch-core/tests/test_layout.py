@@ -22,8 +22,11 @@ def _resolve(project: Path) -> Layout | None:
         os.close(fd)
 
 
-def test_write_new_is_off_until_the_flip() -> None:
-    assert layout.WRITE_NEW is False
+@pytest.mark.new_layout
+def test_write_new_is_the_shipped_default() -> None:
+    from tests.conftest import SHIPPED_WRITE_NEW
+
+    assert SHIPPED_WRITE_NEW is True and layout.WRITE_NEW is True
     assert layout.STORE_DIR == ".orch"
 
 

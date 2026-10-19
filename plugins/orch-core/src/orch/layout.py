@@ -28,12 +28,14 @@ __all__ = [
     "LEGACY_STORE_FOLDERS",
     "KEYS_FILE",
     "STORE_DIR",
+    "LEGACY_ALLOWED",
     "WRITE_NEW",
     "Layout",
     "LayoutError",
     "StorePin",
     "check_single_store",
     "fresh",
+    "move_in_progress",
     "open_state_fd",
     "state_marker_present",
     "open_store_dir",
@@ -51,7 +53,13 @@ _CONFIG_LIMIT = 1 << 20
 
 #: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
 #: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
-WRITE_NEW = False
+WRITE_NEW = True
+
+#: Final state of the move (design step 12): a workspace whose store is still in the project root is refused wherever
+#: a store is opened, with one plain message (delete the old files, run ``orch setup`` again; owner decision 19 Oct:
+#: no migration). There is no switch for this in production. The test suite sets this module flag on its own legacy
+#: fixtures (``tests/conftest.py``; child processes through ``tests/_legacy_shim``).
+LEGACY_ALLOWED = False
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -95,6 +103,68 @@ class StorePin:
     owned: bool = False
 
 
+_LEGACY_NAMES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "tickets", ".state", "addons")
+
+
+def _has_below(project_fd: int, name: str, leaf: str, *, one_deeper: bool) -> bool:
+    """``name/leaf`` (or ``name/<any>/leaf``) exists below the project fd, a real entry (no link followed)."""
+    try:
+        dfd = os.open(name, _DIR, dir_fd=project_fd)
+    except OSError:
+        return False
+    try:
+        subs = [None] if not one_deeper else []
+        if one_deeper:
+            try:
+                subs = [n for n in os.listdir(dfd)[:200]]
+            except OSError:
+                return False
+        for sub in subs:
+            try:
+                if sub is None:
+                    os.stat(leaf, dir_fd=dfd, follow_symlinks=False)
+                else:
+                    os.stat(os.path.join(sub, leaf), dir_fd=dfd, follow_symlinks=False)
+                return True
+            except OSError:
+                continue
+        return False
+    finally:
+        os.close(dfd)
+
+
+def legacy_refusal(project_fd: int) -> str:
+    """The one plain message for a store from an older version in the project root: orch now keeps its files in
+    ``.orch/``, and there is no migration (start fresh). Names only what is recognisably orch's below the project fd
+    (``config.json`` by its schema, which the caller found; a folder only by a file orch writes in it): a project's
+    own ``events/`` or ``tickets/`` is never listed for deletion."""
+    sure = ["config.json"]
+    unsure = []
+    for name in _LEGACY_NAMES[1:]:
+        try:
+            st = os.stat(name, dir_fd=project_fd, follow_symlinks=False)
+        except OSError:
+            continue
+        if name == "keys.jsonl" or name == "AGENTS.orch.md":
+            ours = stat.S_ISREG(st.st_mode)
+        elif name == "events":
+            ours = _has_below(project_fd, name, "workspace.jsonl", one_deeper=False)
+        elif name == "tickets":
+            ours = _has_below(project_fd, name, "events.jsonl", one_deeper=True)
+        elif name == ".state":
+            ours = _has_below(project_fd, name, "lock", one_deeper=False)
+        else:  # addons
+            ours = _has_below(project_fd, name, "orch-addon.json", one_deeper=True)
+        (sure if ours else unsure).append(name + ("" if stat.S_ISREG(st.st_mode) else "/"))
+    text = (
+        "this folder has an orch store from an older version in the project root; orch now keeps its files in .orch/. "
+        f"Delete {', '.join(sure)} and run orch setup again"
+    )
+    if unsure:
+        text += f" (check {', '.join(unsure)} before deleting: they may be your own)"
+    return text
+
+
 def is_private(st: os.stat_result) -> bool:
     """Owned by the current user and writable by no one else."""
     return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
@@ -104,9 +174,9 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
     """An orch config in the project root AND in ``.orch/`` is refused (design §5)."""
     if legacy and new:
         raise LayoutError(
-            "two orch stores in one project (config.json in the root and in .orch/); "
-            "finish `orch migrate` or remove one",
-            hint="run `orch migrate`, or remove one of the two stores",
+            "two orch stores in one project (an orch config.json in the project root and one in .orch/); "
+            "delete the one in the project root (config.json) and run orch setup again",
+            hint="delete config.json in the project root, then run orch setup again",
         )
 
 
@@ -267,3 +337,13 @@ def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
     finally:
         for item in fds:
             os.close(item)
+
+
+def move_in_progress(path: str | os.PathLike[str]) -> bool:
+    """A store move is under way next to ``path`` (the project, or its ``.orch``): ``.orch-migrating`` exists there.
+    Writers that reach store files by PATH (instruction files, add-on manifests) refuse while it does, so they never
+    re-create a name in the project root that is moving into ``.orch``. A narrow guard, not a lock: the store lock and
+    ``owner.lock`` are what the migration holds; this only closes the window for writers that take neither."""
+    p = Path(path)
+    bases = [p, p.parent] if p.name == STORE_DIR else [p]
+    return any(os.path.lexists(b / ".orch-migrating") for b in bases)

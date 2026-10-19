@@ -169,12 +169,14 @@ def _release_doc(state: Path) -> dict[str, Any] | None:
 
 def live_runs(state: Path) -> int | None:
     """How many runs (agents, terminals) the runner's persisted table holds as live (``None``: unreadable, which
-    callers treat as "some")."""
+    callers treat as "some"; also a missing table: a runner that predates it may run agents it never recorded)."""
     from orch.host.errors import HostError
 
     from .table import RunTable
 
     table = RunTable(Path(state) / "runner", os.getuid())
+    if not os.path.lexists(table.path):
+        return None  # a runner from before the run table existed (or one that never wrote it): not "no live runs"
     try:
         table.load()
     except (HostError, OSError):
@@ -196,12 +198,21 @@ def restart_if_stale(
     if manager.active() is not True:
         return None
     pid = manager.main_pid()
+    if pid is None:  # the service manager does not say which process runs: the release file proves nothing
+        return {
+            "restarted": False,
+            "message": (
+                "could not tell which process the agent runner service runs, so its release was not checked and it "
+                f"was not restarted. To restart it now (this stops its agents and terminals): "
+                f"{shlex.join(manager.restart_command())}"
+            ),
+        }
     # The file counts only when the service's own process wrote it. Another pid (a dev runner, or the process before a
     # restart) is "not known yet": wait briefly for the fresh file, and never restart on that alone.
     deadline = time.monotonic() + wait
     while True:
         doc = _release_doc(state)
-        if doc is None or pid is None or doc.get("pid") == pid:
+        if doc is None or doc.get("pid") == pid:
             break
         if time.monotonic() >= deadline:
             return None
@@ -220,7 +231,12 @@ def restart_if_stale(
                 f"Stop them, then run: {command} (or orch host enable --restart-runner to restart it now)"
             ),
         }
-    how = host_enable.restart_to_release(manager, lambda: loaded_release(state, pid=None), mine)
+
+    def running() -> str | None:  # the file counts only when written by the service's CURRENT process (the new one
+        now = manager.main_pid()  # after a restart; a dev runner's file, or the old process's, is never evidence)
+        return None if now is None else loaded_release(state, pid=now)
+
+    how = host_enable.restart_to_release(manager, running, mine)
     if how in ("drained", "forced"):
         return {
             "restarted": True,

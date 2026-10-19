@@ -159,6 +159,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
   const noGrant = data?.blocked?.code === 'launch.no_grant'
   // Review L2: nothing starts that the person could not read (a command or a folder withheld for invisible characters).
   const unreadable = !!data && (data.display_hidden || data.cwd_path_hidden || data.display === null || data.cwd_path === null)
+  const ready = !badModel && !stale && !loading && !note && !!data && !data.blocked && !!data.spec && !unreadable
   const warnings = data?.warnings ?? []
   const loginNotice = warnings.filter(isLoginNotice)
   const otherWarnings = warnings.filter((x) => !isLoginNotice(x))
@@ -185,7 +186,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
         <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
         <DialogDescription className="sr-only">Choose an agent and what it should do.</DialogDescription>
       </DialogHeader>
-      {reason && <p role="note" className="text-xs leading-5 text-warning" data-testid="agent-initial-note"><Inline>{reason}</Inline></p>}
+      {reason && !ready && <p role="note" className="text-xs leading-5 text-warning" data-testid="agent-initial-note"><Inline>{reason}</Inline></p>}
       <form className="grid grid-cols-1 items-center gap-x-3 gap-y-2 text-xs leading-5 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
         <AgentPick harness={harness} mode={mode} onHarness={(h) => { setHarness(h); setModel('') }} onMode={setMode} />
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
@@ -221,7 +222,8 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
         {badModel && <p role="alert" className="text-danger">Choose a model from the list.</p>}
         {!badModel && (loading || stale) && !error && <p role="status" className="text-text-muted" data-testid="agent-stale">Checking…</p>}
         {!badModel && !stale && !loading && note && <p role="status" className="text-warning" data-testid="agent-changed">{note}</p>}
-        {!badModel && !stale && !loading && !note && data && !data.blocked && !!data.spec && !unreadable && <p className="text-success" data-testid="agent-ready" role="status">Ready to start.</p>}
+        {/* M-1: one state line. After a Create and start the earlier "not started" sentence gives way to this one (it would contradict it). */}
+        {ready && <p className="text-success" data-testid="agent-ready" role="status">{reason ? `${ticket ?? 'The ticket'} is created. Check the details, then press Start agent.` : 'Ready to start.'}</p>}
         {!stale && !loading && data?.blocked && !noGrant && (
           <div role="alert" className="text-danger" data-testid="agent-blocked">
             <p>Cannot start: {blockedText(data.blocked) ?? 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}</p>
@@ -473,7 +475,10 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         </div>
       )}
       {extend && <p>Agents that are running now stop; new agents use the extended access.</p>}
-      {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
+      {/* M-2: while the terminal is waiting for the person (the signature, then r), the old "issue one" must not shout over it. */}
+      {blocked && (handoff || step.kind === 'polling'
+        ? <p className="text-text" data-testid="runner-grant-waiting">Waiting for your terminal: sign there, then press r to hand the access to the agent runner.</p>
+        : <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>)}
       {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
         lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>

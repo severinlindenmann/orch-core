@@ -65,9 +65,9 @@ export function SessionTabs({ windows, current, visible, onSelect, onClose }: {
           return (
             <span key={w.session.id} className={cn('flex shrink-0 items-center rounded', on ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-2 hover:text-text')}>
               <button type="button" role="tab" aria-selected={on} tabIndex={on || (!current && w === shown[0]) ? 0 : -1} onClick={() => onSelect(w.session.id)}
-                className="flex max-w-56 items-center gap-1.5 truncate px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                className="flex max-w-56 items-center gap-1.5 whitespace-nowrap px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand">
                 <span className="font-mono text-[10px] text-text-faint">{w.index}</span>
-                <span className="truncate">{w.name}</span>
+                <span className="truncate" title={w.name}>{w.name}</span>
                 <Glyph s={w.session} />
                 <span className="sr-only">, {windowState(w.session)}</span>
               </button>

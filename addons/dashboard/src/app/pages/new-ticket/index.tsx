@@ -26,6 +26,7 @@ import { AgentLine, NotSignedBlock } from './AgentLine'
 import { harnessName } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
 import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
+import { cn } from '@/lib/utils'
 import { newIdem } from '@/api/runs'
 import { useStartAfterCreate } from './useStartAfterCreate'
 import { useStartPlan } from './useStartPlan'
@@ -59,6 +60,12 @@ export function sequencePeople(p: PeopleValue, creator?: string): { owner?: stri
   if (p.assignees.length) out.assignees = [...new Set(p.assignees)].sort()
   if (p.reviewers.length) out.reviewers = [...new Set(p.reviewers)].sort()
   return Object.keys(out).length ? out : undefined
+}
+
+/** The access would be one signature too many, so the ticket alone can be signed but not with the access (only the limit causes the refusal). */
+export function accessTooMany(d: Draft, creator: string | undefined, hours: number): boolean {
+  const withAccess = handoffNewTicket(d, creator, hours)
+  return 'problem' in withAccess && !!withAccess.tooMany && !('problem' in handoffNewTicket(d, creator, null))
 }
 
 /**
@@ -346,8 +353,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
   const tooMany = useMemo(() => {
     if (!plan.available || !plan.needsGrant) return false
-    const withAccess = handoffNewTicket(draft, me.person, plan.hours)
-    return 'problem' in withAccess && !!withAccess.tooMany && !('problem' in handoffNewTicket(draft, me.person, null))
+    return accessTooMany(draft, me.person, plan.hours)
   }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
   const startPossible = plan.available && !tooMany
   const startFirst = startPossible && plan.pref.start
@@ -374,10 +380,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const startNow = wantStart && startPossible && !another
-      if (startPossible) plan.setPref({ start: wantStart })
       // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
       const fresh = plan.grantNow()
+      // F-712-B: so is the step limit (it depends on whether the access has to be signed too): recompute it with the fresh grant,
+      // so a grant that lapsed since the form was drawn falls back to "Only create" and not to a form error.
+      const startPossibleNow = plan.available && !(!fresh && accessTooMany(full, me.person, plan.hours))
+      const startNow = wantStart && startPossibleNow && !another
+      if (startPossibleNow) plan.setPref({ start: wantStart })
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
@@ -486,7 +495,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   return (
     <div
       ref={root}
-      className={overlay ? undefined : 'mx-auto max-w-[1100px]'}
+      // M-1: once the ticket exists and the Start agent dialog (or the "no access" notice) is open, the emptied form is not shown behind it.
+      className={cn(overlay ? undefined : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
+      data-ticket-created={after.state.kind === 'ask' || after.state.kind === 'no-access' ? '' : undefined}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
@@ -663,7 +674,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             <DialogHeader>
               <DialogTitle>Ticket created</DialogTitle>
               <DialogDescription>
-                {after.state.key} exists. Agent access was not given: signing stopped before the last signature, so no agent was started. Start one now to give access again, or open the ticket.
+                {after.state.key} exists. Agent access is not confirmed yet: the last signature has not arrived, so no agent was started. Start one now to give access, or open the ticket.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

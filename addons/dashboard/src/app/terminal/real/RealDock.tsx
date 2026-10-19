@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
@@ -45,7 +45,9 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
   // A start whose process never started (spawn_failed) is no terminal: the dialog already told the person why, so it gets no tab (unless its cleanup is in doubt: then the tab and the warning stay).
   const neverStarted = (r: Run) => r.state === 'exited' && r.exit?.reason === 'spawn_failed' && !cleanupDoubt(r.exit.cleanup)
-  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !neverStarted(r) && !(dismissed.has(r.run) && ended(r)))
+  // Terminals switched off for this workspace (the add-on): no shell appears here, same as on the Terminals page. Agent runs stay (they belong to Start agents).
+  const termsOn = !!ws && hasFeature('terminals_page', ws)
+  const shown = runs.filter((r) => (r.kind === 'agent' || (r.kind === 'shell' && termsOn)) && !neverStarted(r) && !(dismissed.has(r.run) && ended(r)))
   const endedShown = shown.filter(ended)
   const dismiss = (ids: string[]) => setDismissed((d) => new Set([...d, ...ids]))
   const [selected, setSelected] = useState<string | null>(null)
@@ -126,8 +128,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="New terminal" disabled={!ws}><Plus />{!right && 'New terminal'}</Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => void ask(false)}>Shell in the workspace</DropdownMenuItem>
-            {ticket && <DropdownMenuItem onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
+            <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(false)}>Shell in the workspace{!termsOn && ' — Terminals are off'}</DropdownMenuItem>
+            {ticket && <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
             {/* agent.preview needs a ticket (contract §12.3): without one the host refuses "args is not valid" */}
             <DropdownMenuItem disabled={!agents || !ticket} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents ? ' — not available on this host' : !ticket && ' — open a ticket first'}</DropdownMenuItem>
@@ -161,16 +163,18 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
-      {off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
+      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off in this workspace. Switch them on in Settings, under Add-ons.</p>}
+      {termsOn && off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
       )}
+      {current && !outputGone(current) && exitText(current) && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted" data-testid="run-exit">{exitText(current)}</p>}
       {current && (doubt[current.run] || (current.exit && cleanupDoubt(current.exit.cleanup))) && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-cleanup-doubt>Some processes may still be running.</p>
       )}
       <div className="min-h-0 min-w-0 flex-1">
         {list.isPending && ws ? <Skeleton className="m-3 h-24" />
-          : !current ? <p className="p-3 text-xs text-text-muted">No terminal is open. Start one with New terminal.</p>
+          : !current ? <p className="p-3 text-xs text-text-muted">{termsOn ? 'No terminal is open. Start one with New terminal.' : 'No terminal is open.'}</p>
           : outputGone(current) ? (
             <div className="p-3 text-xs text-text-muted" data-output-gone>
               <p className="font-medium text-text">Output no longer kept</p>
@@ -194,7 +198,7 @@ function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; c
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>
           <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' ? 'bg-success' : 'bg-text-faint')} />
           <span className="tabular-nums text-text-faint">{i + 1}</span>
-          <span className="min-w-0 truncate">{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
+          <span className="min-w-0 truncate [&>bdi]:whitespace-nowrap" title={r.label || runName(r)}>{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
           <span className="sr-only">{r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
         </button>
         {r.state !== 'running' && r.state !== 'starting' && <button type="button" aria-label={`Clear ${runName(r)}`} title="Clear this ended terminal" onClick={() => onDismiss(r.run)} className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-text-faint hover:bg-surface-3 hover:text-text"><X className="size-3" aria-hidden /></button>}

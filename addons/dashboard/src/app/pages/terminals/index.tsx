@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, newIdem, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, newIdem, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
@@ -35,6 +35,7 @@ function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: bo
           {kindText(r)} · started {fmtDateTime(r.started_at)}
           {doubt ? ' · some processes may still be running' : ''}
         </span>
+        {!live(r) && exitText(r) && <span className="block text-[12px] text-text-muted" data-testid="run-exit">{exitText(r)}</span>}
       </span>
       {r.ticket && (
         <Link to="/ticket/$key" params={{ key: r.ticket }} className="font-mono text-[12px] text-brand hover:underline">

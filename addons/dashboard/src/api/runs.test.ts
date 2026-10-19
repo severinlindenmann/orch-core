@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 import { invalidateLive } from './useLiveUpdates'
-import { cleanupDoubt, mergeRunItems, newIdem, markNoReplay, outputGone, type Run, type RunList } from './runs'
+import { cleanupDoubt, exitText, mergeRunItems, newIdem, markNoReplay, outputGone, type Run, type RunList } from './runs'
 
 const WS = 'a'.repeat(32)
 const run = (id: string, rev: number, over: Partial<Run> = {}): Run => ({
@@ -38,5 +38,20 @@ describe('runs', () => {
     expect(outputGone(run('rk', 1), now)).toBe(false) // a running run is never "gone"
     expect([cleanupDoubt('incomplete'), cleanupDoubt('unknown'), cleanupDoubt('complete'), cleanupDoubt(null)]).toEqual([true, true, false, false])
     for (let i = 0; i < 50; i++) expect(newIdem()).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
+  })
+})
+
+describe('M-5: why a run ended', () => {
+  const ended = (kind: Run['kind'], exit: Run['exit'], state: Run['state'] = 'exited') => ({ kind, state, exit })
+  const ex = (reason: NonNullable<Run['exit']>['reason'], code: number | null, signal: string | null = null) => ({ code, signal, at: '2026-10-14T10:00:00Z', reason, cleanup: 'complete' as const })
+  it('says it in plain words, nothing while it runs', () => {
+    expect(exitText({ kind: 'agent', state: 'running', exit: null })).toBeNull()
+    expect(exitText(ended('agent', ex('spawn_failed', null)))).toBe('The agent could not be started. Is its program installed on this Mac?')
+    expect(exitText(ended('agent', ex('exited', 127)))).toContain('program was not found')
+    expect(exitText(ended('agent', ex('exited', 2)))).toBe('The agent ended with an error (code 2).')
+    expect(exitText(ended('shell', ex('exited', 0)))).toBe('The terminal finished.')
+    expect(exitText(ended('shell', ex('stopped', null, 'SIGTERM')))).toBe('The terminal was stopped.')
+    expect(exitText(ended('agent', ex('runner_restarted', null)))).toContain('runner restarted')
+    expect(exitText(ended('agent', null, 'lost'))).toContain('lost')
   })
 })

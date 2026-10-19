@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -565,12 +566,21 @@ def test_an_ignored_directory_blocks_with_its_size(d):
     assert got["code"] == "worktree.dirty" and "node_modules/ (3 files, 2.9 KB)" in got["message"], got
 
 
+def _token(d):
+    """The token the refusal prints (#723): a person reads the list, then passes its token."""
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty", got
+    m = re.search(r"--discard-untracked=([0-9a-f]{12})", got["message"])
+    assert m, got
+    return m.group(1)
+
+
 def test_discard_untracked_deletes_exactly_the_listed_set_and_prints_it_first(d):
     path = doc(d.run("create", d.key))["data"]["path"]
     for name in ("a.tmp", "build/out.o"):
         os.makedirs(os.path.dirname(os.path.join(path, name)), exist_ok=True)
         open(os.path.join(path, name), "w").write("x\n")
-    r = d.run("remove", d.key, "--discard-untracked")
+    r = d.run("remove", d.key, f"--discard-untracked={_token(d)}")
     assert r.code == 0, r.out
     printed = r.err
     assert printed.startswith("discarding exactly these untracked files:"), printed
@@ -579,12 +589,37 @@ def test_discard_untracked_deletes_exactly_the_listed_set_and_prints_it_first(d)
     assert not os.path.exists(path)
 
 
+def test_discard_untracked_without_a_token_deletes_nothing(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    got = doc(d.run("remove", d.key, "--discard-untracked"))
+    assert got["code"] == "worktree.dirty" and "--discard-untracked=" in got["message"], got
+    assert os.path.exists(os.path.join(path, "a.tmp"))
+
+
+def test_discard_untracked_with_a_stale_token_refuses_and_prints_the_new_list_and_token(d):
+    """#723: a file added after the person read the refusal is not deleted unseen."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    old = _token(d)
+    open(os.path.join(path, "late.txt"), "w").write("new\n")
+    r = d.run("remove", d.key, f"--discard-untracked={old}")
+    got = doc(r)
+    new = re.search(r"--discard-untracked=([0-9a-f]{12})", got["message"]).group(1)
+    assert r.code != 0 and got["code"] == "worktree.dirty" and "late.txt" in got["message"] and new != old, got
+    assert os.path.exists(os.path.join(path, "a.tmp")) and os.path.exists(os.path.join(path, "late.txt"))
+    assert doc(d.run("remove", d.key, "--discard-untracked=nonsense"))["code"] == "worktree.dirty"
+    assert d.run("remove", d.key, f"--discard-untracked={new}").code == 0  # the new token deletes the new list
+    assert not os.path.exists(path)
+
+
 def test_discard_untracked_refuses_when_a_file_appears_between_the_listing_and_the_delete(d, monkeypatch):
     path = doc(d.run("create", d.key))["data"]["path"]
     open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    token = _token(d)
     monkeypatch.setattr(worktree_cli.Direct, "_between",
                         lambda self: open(os.path.join(path, "late.txt"), "w").write("new\n"))  # fmt: skip
-    r = d.run("remove", d.key, "--discard-untracked")
+    r = d.run("remove", d.key, f"--discard-untracked={token}")
     got = doc(r)
     assert r.code != 0 and got["code"] == "worktree.dirty" and "changed since they were listed" in got["message"]
     assert os.path.exists(os.path.join(path, "a.tmp")) and os.path.exists(os.path.join(path, "late.txt"))

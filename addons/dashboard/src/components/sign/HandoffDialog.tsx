@@ -50,7 +50,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
     case 'failed':
-      if (code === 'sequence.no_access') return { title: newTicket ? 'Ticket created; agent access was NOT given' : 'Task created; agent access was NOT given', body: error ?? '', tone: 'warn' }
+      if (code === 'sequence.no_access') return { title: newTicket ? 'Ticket created; agent access not confirmed yet' : 'Task created; agent access not confirmed yet', body: error ?? '', tone: 'warn' }
       return { title: 'The earlier attempt did not land', body: error ?? '', tone: 'warn' }
     case 'blocked':
       return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }

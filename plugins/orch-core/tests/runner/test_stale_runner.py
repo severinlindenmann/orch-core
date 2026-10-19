@@ -6,6 +6,8 @@ import pytest
 from orch.host import enable as svc
 from orch.runner import service as rs
 
+REAL_WRITE = rs.write_loaded_release  # before the autouse fixture pins the pid
+
 
 class FakeManager:
     def __init__(self, *, active=True, kick_ok=True, pid=4242):
@@ -147,3 +149,74 @@ def test_main_pid_per_platform(tmp_path):
 
         m = e.Manager(unit, run=lambda argv, out=out: subprocess.CompletedProcess(argv, 0, out, ""))
         assert m.main_pid() == want, kind
+
+
+def test_a_failed_restart_is_not_made_to_look_successful_by_another_process_file(tmp_path):
+    """F-706-1: after the restart the NEW main pid is asked for; a dev runner's file (another pid) with the new release
+    is not evidence."""
+    (tmp_path / "runner").mkdir(mode=0o700)
+    rs.write_loaded_release(tmp_path, "old")  # pid 4242, the service's process
+    m = FakeManager()
+
+    def kick():
+        m.pid = 5555  # the service came back as a new process that has not recorded itself yet
+        REAL_WRITE(tmp_path, "new", pid=999)  # a dev runner wrote the new release
+
+    m.on_kick = kick
+    got = rs.restart_if_stale(None, m, tmp_path, "new")
+    assert m.calls == ["restart_now"] and got["restarted"] is False and got["restart_needed"] is True
+
+
+def test_the_new_process_recording_itself_after_the_restart_counts(tmp_path):
+    (tmp_path / "runner").mkdir(mode=0o700)
+    rs.write_loaded_release(tmp_path, "old")
+    m = FakeManager()
+
+    def kick():
+        m.pid = 5555
+        REAL_WRITE(tmp_path, "new", pid=5555)
+
+    m.on_kick = kick
+    assert rs.restart_if_stale(None, m, tmp_path, "new")["restarted"] is True
+
+
+def test_an_unknown_main_pid_means_no_restart_and_a_clear_message(tmp_path):
+    """F-706-2: with no pid the release file cannot be checked: neither accepted as current nor a reason to restart."""
+    (tmp_path / "runner").mkdir(mode=0o700)
+    for release in ("old", "new"):
+        rs.write_loaded_release(tmp_path, release)
+        m = FakeManager(pid=None)
+        got = rs.restart_if_stale(None, m, tmp_path, "new")
+        assert m.calls == [] and got["restarted"] is False, release
+        assert "could not tell" in got["message"] and "launchctl kickstart -k" in got["message"]
+
+
+def test_the_launchd_pid_is_the_top_level_line_only(tmp_path):
+    import subprocess
+
+    from orch.host import runners
+
+    out = "io.orch.runner = {\n\tstate = running\n\tsub = {\n\t\tpid = 111\n\t}\n    pid = 222\n}\n"
+    unit = svc.plan({"HOME": str(tmp_path / "h")}, tmp_path / "s", tmp_path / "r", tmp_path / "c",
+                    platform="darwin", uid=501)  # fmt: skip
+    run = lambda argv: subprocess.CompletedProcess(argv, 0, out, "")  # noqa: E731
+    assert svc.Manager(unit, run=run).main_pid() == 222
+    assert runners.main_pid(501, run, platform="darwin") == 222
+    nested = "io.orch.runner = {\n\tsub = {\n\t\tpid = 111\n\t}\n}\n"
+    run2 = lambda argv: subprocess.CompletedProcess(argv, 0, nested, "")  # noqa: E731
+    assert svc.Manager(unit, run=run2).main_pid() is None and runners.main_pid(501, run2, platform="darwin") is None
+
+
+def test_a_runner_without_a_run_table_is_unknown_not_zero_live_runs(tmp_path, monkeypatch):
+    """F-706-3: no runs.json (a runner from before the table existed) is not "0 live runs"."""
+    monkeypatch.undo()  # the autouse fixture's live_runs = 0 and fast wait
+    (tmp_path / "runner").mkdir(mode=0o700)
+    assert rs.live_runs(tmp_path) is None
+    REAL_WRITE(tmp_path, "old", pid=4242)
+    m = FakeManager()
+    got = rs.restart_if_stale(None, m, tmp_path, "new")
+    assert m.calls == [] and got["restart_needed"] is True and "command" not in got
+    assert "launchctl kickstart -k gui/501/io.orch.runner" in got["message"]
+    (tmp_path / "runner" / "runs.json").write_text('{"v": 1, "runs": {}}')
+    (tmp_path / "runner" / "runs.json").chmod(0o600)
+    assert rs.live_runs(tmp_path) == 0

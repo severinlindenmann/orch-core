@@ -237,12 +237,20 @@ class PersonIgnore:
     when none sets it), ``excludes`` (the bytes of the file git uses as ``core.excludesFile``, ``None``: none or not
     certain)."""
 
-    __slots__ = ("known", "ignorecase", "excludes", "why")
+    __slots__ = ("known", "ignorecase", "excludes", "why", "env_config")
 
     def __init__(
-        self, known: bool, ignorecase: bool | None = None, excludes: bytes | None = None, why: str = ""
+        self,
+        known: bool,
+        ignorecase: bool | None = None,
+        excludes: bytes | None = None,
+        why: str = "",
+        env_config: bool = False,
     ) -> None:
         self.known, self.ignorecase, self.excludes, self.why = known, ignorecase, excludes, why
+        #: the environment passes configuration (``GIT_CONFIG_COUNT``/``GIT_CONFIG_PARAMETERS``): git ranks it above
+        #: the repository's config, so the repository's ``core.ignorecase`` is not final (#724)
+        self.env_config = env_config
 
 
 class IgnorePolicy:
@@ -287,7 +295,7 @@ class IgnorePolicy:
                     repo_ic = got
             elif section == "core" and sub is None and key == "excludesfile":
                 excludes = None  # git's file is then the repository's: not this reader's to guess (lowest: drop)
-        if unsure:
+        if unsure or (person is not None and person.env_config):
             folds: tuple[bool, ...] = (False, True)
         elif repo_ic is not None:
             folds = (repo_ic,)

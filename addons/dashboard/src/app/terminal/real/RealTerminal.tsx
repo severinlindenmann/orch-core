@@ -11,8 +11,7 @@ import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { BACKOFF_MS, closePolicy, endWords, termTransport, type connectTerm, type TermConnection, type TermEnd } from './termProtocol'
 import { createTermView, termOptions, type TermView } from './termView'
-
-const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
+import { termTheme, TERM_PADDING } from './termTheme'
 
 /** One attach request: the mode asked for, and whether it takes the lease (only after the person's own click). */
 export interface AttachRequest {
@@ -54,7 +53,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
     const el = host.current
     if (!el) return
     const v = createTermView(el, termOptions({
-      theme: { background: token(el, '--bg'), foreground: token(el, '--text'), cursor: token(el, '--brand'), green: token(el, '--success'), red: token(el, '--danger'), cyan: token(el, '--brand'), yellow: token(el, '--warning'), blue: token(el, '--info'), brightBlack: token(el, '--text-faint') },
+      theme: termTheme(el),
     }))
     v.term.textarea?.setAttribute('aria-label', 'Terminal input')
     view.current = v
@@ -201,7 +200,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
       {lost && <p role="alert" className="shrink-0 px-2 py-0.5 text-xs text-warning">Some input was not delivered. Check the terminal before typing again.</p>}
       {/* A read-only viewer renders at the writer's size and scrolls; the writer's terminal fits this box. */}
       <div ref={host} role="group" aria-label="Terminal" aria-readonly={writing ? undefined : true} data-terminal-session={run.run}
-        className={`min-h-0 flex-1 bg-bg p-2 ${writing ? 'overflow-hidden' : 'overflow-auto'}`} />
+        style={{ padding: TERM_PADDING }}
+        className={`min-h-0 flex-1 bg-bg ${writing ? 'overflow-hidden' : 'overflow-auto'}`} />
     </div>
   )
 }

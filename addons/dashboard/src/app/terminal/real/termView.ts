@@ -7,6 +7,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from '@xterm/xterm'
 import { disposeTerminal } from '../disposeTerminal'
 import { POINTER_EVENTS, ReplyFilter, type Ready } from './termProtocol'
+import { TERM_FONT_FAMILY, TERM_LOOK } from './termTheme'
 import '@xterm/xterm/css/xterm.css' // the real view must not rely on the mock TerminalView having loaded it
 
 /** xterm's default OSC 8 behaviour would confirm() and window.open(): links do nothing here (no links in phase 2). */
@@ -25,8 +26,13 @@ export function termOptions(extra: { fontSize?: number; theme?: ITerminalOptions
     convertEol: false,
     disableStdin: true,
     cursorBlink: false,
-    fontFamily: 'Geist Mono, ui-monospace, monospace',
-    fontSize: extra.fontSize ?? 13,
+    fontFamily: TERM_FONT_FAMILY,
+    fontSize: extra.fontSize ?? TERM_LOOK.fontSize,
+    lineHeight: TERM_LOOK.lineHeight,
+    letterSpacing: TERM_LOOK.letterSpacing,
+    cursorStyle: TERM_LOOK.cursorStyle,
+    cursorWidth: TERM_LOOK.cursorWidth,
+    cursorInactiveStyle: TERM_LOOK.cursorInactiveStyle,
     ...(extra.theme ? { theme: extra.theme } : {}),
   }
 }

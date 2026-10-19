@@ -91,6 +91,8 @@ function fake(
     click?: boolean
     relayUnavailable?: boolean
     complete?: boolean
+    defaults?: boolean
+    suggested?: Record<string, unknown>
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -107,6 +109,13 @@ function fake(
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
+        ...(options.defaults
+          ? {
+              suggested: { name: 'Demo', prefix: 'TST', agent_hours: 72, agent_grant: true },
+              addons: state.addons.map((a) => (a.id === 'worktrees' ? { ...a, default: true } : a)),
+            }
+          : {}),
+        ...(options.suggested ? { suggested: { name: 'Demo', prefix: 'TST', ...options.suggested } } : {}),
         ...(options.finish ? { current } : {}),
       }
     if (path === 'secrets/reveal')
@@ -263,7 +272,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByText('This Mac’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
-  expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
+  expect(screen.getByText(/look at your terminal: orch asks you to confirm there/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
@@ -274,7 +283,9 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeInTheDocument()
-  expect(screen.getByText(/Your terminal now asks you to confirm/)).toHaveTextContent('type yes there')
+  expect(screen.getByText('Now look at your terminal: orch asks you to confirm there.')).toBeInTheDocument()
+  expect(screen.getByText('Waiting for your confirmation…')).toBeInTheDocument()
+  expect(screen.getByText(/type yes there/)).toBeInTheDocument()
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',
@@ -433,7 +444,7 @@ test.each(['waiting for terminal', 'waiting for runner'])('shows progress waitin
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByRole('status')).toHaveTextContent(
-    waiting === 'waiting for terminal' ? 'Confirm in your terminal' : 'Waiting for the agent runner to connect…')
+    waiting === 'waiting for terminal' ? 'Now look at your terminal: orch asks you to confirm there.' : 'Waiting for the agent runner to connect…')
 })
 
 function failing(status: number, code?: string) {
@@ -889,4 +900,43 @@ test('F7: an unusual runner grant keeps its raw scope and verbs in the summary l
   expect(summarize(grant('workable', 'agent')).lines).toEqual(['This Mac’s agent runner may work on any ticket you can see, as you, for 3 days'])
   expect(summarize(grant('all', 'agent')).lines).toEqual(['This Mac’s agent runner gets agent access for 3 days (scope all, verbs agent)'])
   expect(summarize(grant('workable', 'task.done')).lines[0]).toContain('verbs task.done')
+})
+
+test('U1: a new setup starts with the main add-ons and agent access ticked, all still visible and untickable', async () => {
+  const f = fake({ defaults: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  const sw = screen.getByRole('switch', { name: /Worktrees/ })
+  expect(sw).toBeChecked()
+  expect(sw).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByLabelText(/Let this Mac’s agent runner/)).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
+    addons: expect.arrayContaining(['worktrees']),
+    agent_grant: true,
+    agent_hours: 72,
+  })
+})
+
+test.each([
+  ['hours without a grant', { agent_hours: 72, agent_grant: false }],
+  ['hours outside the offered list', { agent_hours: 48, agent_grant: true }],
+])('suggested %s: picker and profile agree on no agent access', async (_n, suggested) => {
+  const f = fake({ suggested })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })

@@ -125,7 +125,15 @@ class Ignores:
 
     def ignored(self, path: bytes, is_dir: bool) -> bool:
         """The last matching pattern decides; deeper files win over shallower ones, the person's file is lowest.
-        With more than one mode (git's ``core.ignorecase`` not known): ignored only if every mode ignores it."""
+        With more than one mode (git's ``core.ignorecase`` not known): ignored only if every mode ignores it.
+
+        **Never ignored: a path with a non-ASCII component that is not NFC** (or not UTF-8). git on macOS
+        (``core.precomposeunicode``, its ``git init`` default) matches the NFC form of an on-disk NFD name, this reader
+        matches the bytes it lists, so a pattern could match in one and not the other (Opus delta L1: ``cafe*`` against
+        an NFD ``café``). Such a path always counts as untracked: dirtier, never cleaner. Because a directory is judged
+        here too, nothing below it is pruned either."""
+        if not path.isascii() and not _nfc(path):
+            return False
         for mode, fold in enumerate(self.folds):
             if not self._ignored_in(path, is_dir, mode, fold):
                 return False
@@ -140,6 +148,15 @@ class Ignores:
                 if p.match(path, is_dir, mode, fold, budget):
                     return not p.negate
         return False
+
+
+def _nfc(path: bytes) -> bool:
+    """Whether a path with non-ASCII bytes is valid UTF-8 in NFC (a whole path is NFC iff every component is)."""
+    try:
+        text = path.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return unicodedata.normalize("NFC", text) == text
 
 
 def _trim_trailing_spaces(line: bytes) -> bytes:
@@ -308,7 +325,15 @@ class IgnorePolicy:
                 return None, False
             if st.st_size > left:
                 raise Unavailable(f"the ignore files of this working tree are larger than {BYTES_MAX >> 10} KiB")
-            data = os.read(fd, left + 1)
+            chunks: list[bytes] = []
+            got = 0
+            while got <= left:  # to EOF (a read may be short), but never past the cap
+                chunk = os.read(fd, min(65536, left + 1 - got))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                got += len(chunk)
+            data = b"".join(chunks)
         finally:
             os.close(fd)
         self._bytes += len(data)

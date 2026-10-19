@@ -315,3 +315,27 @@ def test_a_class_with_a_casefold_keeps_the_linear_compile():
     started = time.monotonic()
     assert wildmatch.compile_glob(b"[" + b"aB" * (1 << 19) + b"]", None, True) is not None
     assert time.monotonic() - started < 2
+
+
+# -- Opus delta L1: NFD names under core.precomposeunicode
+
+
+@pytest.mark.parametrize("precompose", ["true", "false"])
+@pytest.mark.parametrize(
+    "pattern,files",
+    [("cafe*\n", ["café.txt"]), ("e?*\n", ["éx"]), ("cafe*/\n", ["café/a.txt"]),
+     ("*\n!*.keep\n", ["é.keep"])],
+)  # fmt: skip
+def test_a_non_nfc_name_is_never_ignored_so_never_cleaner_than_git(make_repo, pattern, files, precompose):
+    """git on macOS composes an NFD name to NFC before matching; the reader matches the bytes it lists. A path with a
+    non-ASCII component that is not NFC is always untracked here: never cleaner than git whichever way git goes."""
+    r = _setup(make_repo, pattern, files, "false")
+    r.git("config", "core.precomposeunicode", precompose)
+    import unicodedata
+
+    def nfc(names):
+        return {unicodedata.normalize("NFC", n) for n in names}
+
+    theirs, mine = nfc(untracked_by_git(r)), nfc(_mine(r))
+    assert theirs <= mine, (sorted(theirs), sorted(mine))  # never cleaner than git
+    assert nfc(files) <= mine  # and the reader always counts them

@@ -13,11 +13,12 @@ import { nowMs } from '@/lib/time'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
 vi.mock('@/components/sign/HandoffDialog', () => ({
-  HandoffDialog: (p: { title: string; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+  HandoffDialog: (p: { title: string; startsAgent?: boolean; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     return (
       <div role="dialog" aria-label={p.title}>
         <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
+        <span data-testid="starts-agent">{String(!!p.startsAgent)}</span>
         {p.unsigned}
         <button onClick={() => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req)}>signed</button>
         <button onClick={() => p.onSettled?.('done', state({ ...req, id: 'hr_' + '0'.repeat(25) + '8' }, { state: 'submitted', key: 'DEMO-0099' }), req)}>signed-other-request</button>
@@ -149,9 +150,7 @@ describe('what is signed', () => {
     expect(action.agent).toBeUndefined()
     expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not signed: the agent start')
     expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(160) // one line, not a paragraph
-    // the steps say the agent starts with the access already there, and waits for the plan approval
-    expect(await screen.findByTestId('what-next')).toHaveTextContent('An agent starts, with the access you already gave')
-    expect(screen.getByTestId('what-next')).toHaveTextContent('nothing is built until you approve the plan')
+    expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
 
   it('without a grant (or one with under 15 minutes left) the access is signed last in the same request, 1/3/7 days', async () => {

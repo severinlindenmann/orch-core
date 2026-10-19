@@ -261,7 +261,7 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
             sequence.check_step(rig.intent, 1, bad, person=rig.person, first=None, prev_head=None)
 
 
-# --- AE3: the strongest step decides the confirmation ---------------------------------------------------------------
+# --- AE3: the strongest step decides the confirmation ---------------------------------------------
 
 
 def test_ae3_publish_is_terminal_only_and_model_routing_is_the_word(human):
@@ -314,7 +314,7 @@ PIN_QUICK = "sha256:0208dfb798c3c634f29554515242876ba17b894556cf47a37f0473482169
 PIN_EDIT = "sha256:b5af6594f9bf685844ce2aa42be98ac4cffbc80896cbad35af629547f81534e4"
 
 
-# --- AE3 on the click path -----------------------------------------------------------------------------------------
+# --- AE3 on the click path ------------------------------------------------------------------------
 
 
 def click_prepare(click_, intent):
@@ -371,7 +371,7 @@ def test_model_routing_is_one_click_plus_the_add_on_word(click, served, human):
     assert again["duplicate"] is True and click.signatures == 2
 
 
-# --- the terminal path: the word, the review, both add-ons ----------------------------------------------------------
+# --- the terminal path: the word, the review, both add-ons ----------------------------------------
 
 
 def handoff_first(rig):
@@ -461,7 +461,7 @@ def test_ae3_the_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
     )  # a plain settings.set: unchanged
 
 
-# --- AE4: never on without settings (one rule, every path) ------------------------------------------------------------
+# --- AE4: never on without settings (one rule, every path) ----------------------------------------
 
 
 def test_ae4_addon_grant_is_refused_while_the_setting_is_unset_and_allowed_once_it_is_set(human):
@@ -516,7 +516,7 @@ def test_the_setup_never_plans_these_add_ons(human):
         review.plan(profile, "/x", info, None, manifest_bytes=lambda n: b"{}")
 
 
-# --- AE5/AE7: the host's checks at step 0, before anything is signed ------------------------------------------------
+# --- AE5/AE7: the host's checks at step 0, before anything is signed ------------------------------
 
 
 def prepare_first(h, rig, **kw):
@@ -587,7 +587,7 @@ def test_the_first_step_of_the_sequence_is_the_intents_and_nothing_else(human, t
     assert err(res) == "invalid.input"
 
 
-# --- AE6: the chain -----------------------------------------------------------------------------------------------------
+# --- AE6: the chain -------------------------------------------------------------------------------
 
 
 def test_ae6_a_foreign_workspace_event_between_the_steps_is_refused_by_the_host(human, tmp_path):
@@ -638,7 +638,7 @@ def test_a_workspace_step_names_the_log_and_is_only_the_grant(human):
         sequence.check_meta(good, op="settings.set", args=args, workspace_id="a" * 32, person="p")  # not another op
 
 
-# --- partial failure and resume ---------------------------------------------------------------------------------------
+# --- partial failure and resume -------------------------------------------------------------------
 
 
 def test_signed_but_not_confirmed_resumes_with_the_same_bytes(human, tmp_path):

@@ -495,6 +495,18 @@ def _local_repo(ctx: Any, linked: list[str]) -> tuple[str | None, Path | None]:
     return named[0], path
 
 
+def _workdir_or_here(ctx: Any) -> Path:
+    """No codebase: the check runs in the ticket's work folder (``ORCH_WORKDIR``, set by the host at launch) when it is
+    a real directory, else where the shell is."""
+    import os
+
+    here = Path(ctx.caps.files.getcwd())
+    named = (ctx.env or {}).get("ORCH_WORKDIR")
+    if named and os.path.isabs(named) and os.path.isdir(named) and not os.path.islink(named):
+        return Path(named)
+    return here
+
+
 def _preflight(
     task: dict[str, Any], args: dict[str, Any], key: str, tid: str, target: Target, auth: dict[str, str] | None
 ) -> None:
@@ -563,7 +575,7 @@ def _client_receipt(
         cmd,
         repo=repo,
         path=path,
-        cwd=path if path is not None else Path(ctx.caps.files.getcwd()),
+        cwd=path if path is not None else _workdir_or_here(ctx),
         env=env,
         caps=ctx.caps,
         grant_secret=secret,

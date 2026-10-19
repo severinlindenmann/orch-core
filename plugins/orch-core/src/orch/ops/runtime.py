@@ -29,6 +29,7 @@ Errors a handler raises are :class:`OrchError`; :func:`guarded` maps what the st
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import re
@@ -1039,6 +1040,10 @@ class Call:
         except CapabilityDenied as e:
             raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e}") from None
         except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise OrchError(
+                    "invalid.input", f"{flat(path)[:80]} is a symbolic link: name the file itself"
+                ) from None
             raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e.strerror}") from None
         if size > limit:
             raise OrchError("invalid.input", f"{flat(path)[:80]} is larger than {limit} bytes")

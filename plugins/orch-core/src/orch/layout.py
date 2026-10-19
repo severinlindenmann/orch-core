@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,7 +34,12 @@ __all__ = [
     "Layout",
     "LayoutError",
     "StorePin",
+    "WORK_DIR",
     "check_single_store",
+    "delete_workdir",
+    "ensure_workdir",
+    "workdir_stat",
+    "workdir_summary",
     "fresh",
     "move_in_progress",
     "open_state_fd",
@@ -46,6 +52,9 @@ __all__ = [
 STORE_DIR = ".orch"
 #: the file of a store that holds its keys (named here so a deny list elsewhere does not spell it)
 KEYS_FILE = "keys.jsonl"
+#: per-ticket work folders of tickets without a codebase: ``<project>/.orch-work/<KEY>/`` (beside the store)
+WORK_DIR = ".orch-work"
+_WORK_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
 #: the folders of a store that, in the legacy layout, sit directly in the project folder
 LEGACY_STORE_FOLDERS = (".state", "events", "tickets", "addons", STORE_DIR)
 CONFIG_SCHEMA = "orch.workspace/2"
@@ -91,6 +100,13 @@ class Layout:
     def new_at(cls, project: str | os.PathLike[str]) -> Layout:
         p = Path(project)
         return cls(p, p / STORE_DIR, False)
+
+    def workdir(self, key: str) -> Path:
+        """``<project>/.orch-work/<KEY>``: the one constructor of a ticket's work folder. ``key`` must be a ticket key
+        (so it can never be ``..`` or hold a separator); anything else is :class:`LayoutError`."""
+        if not isinstance(key, str) or not _WORK_KEY.fullmatch(key):
+            raise LayoutError("not a ticket key")
+        return self.project / WORK_DIR / key
 
 
 @dataclass(frozen=True)
@@ -347,3 +363,173 @@ def move_in_progress(path: str | os.PathLike[str]) -> bool:
     p = Path(path)
     bases = [p, p.parent] if p.name == STORE_DIR else [p]
     return any(os.path.lexists(b / ".orch-migrating") for b in bases)
+
+
+# -- ticket work folders (tickets without a codebase; design r3 part C) -------------------------------------------
+
+
+def _walk_workdir(layout: Layout, key: str, *, create: bool) -> tuple[int, str] | None:
+    """Open ``<project>/.orch-work/<KEY>`` one component at a time below the project fd with ``O_NOFOLLOW`` (a symlinked
+    ``.orch-work`` or ``<KEY>``, or a non-directory or foreign-owned one, is :class:`LayoutError`). Returns the fd of
+    the folder, or ``None`` when it is absent and ``create`` is false. ``create``: made 0700 where missing."""
+    layout.workdir(key)  # the key check
+    try:
+        pfd = os.open(layout.project, _DIR)
+    except OSError as exc:
+        raise LayoutError(f"the project folder cannot be opened ({exc.strerror})") from None
+    fd = pfd
+    try:
+        for part in (WORK_DIR, key):
+            try:
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if not create:
+                    return None
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                except OSError as exc:
+                    raise LayoutError(f"{part} cannot be created ({exc.strerror})") from None
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except OSError as exc:
+                raise LayoutError(f"{part} cannot be examined ({exc.strerror})") from None
+            if not stat.S_ISDIR(st.st_mode):
+                raise LayoutError(f"{part} is not a real directory (a link or a file); refusing to use it")
+            try:
+                nxt = os.open(part, _DIR, dir_fd=fd)
+            except OSError as exc:
+                raise LayoutError(f"{part} cannot be opened ({exc.strerror})") from None
+            if fd != pfd:
+                os.close(fd)
+            fd = nxt
+            ost = os.fstat(fd)
+            if (ost.st_dev, ost.st_ino) != (st.st_dev, st.st_ino) or ost.st_uid != os.getuid():
+                raise LayoutError(f"{part} changed or is not yours; refusing to use it")
+        out = fd
+        fd = -1
+        return out, key
+    finally:
+        if fd not in (-1, pfd):
+            os.close(fd)
+        os.close(pfd)
+
+
+def workdir_stat(layout: Layout, key: str) -> os.stat_result | None:
+    """The stat of the ticket's work folder, or ``None`` when it does not exist yet. :class:`LayoutError` for a link, a
+    file, a foreign owner. Reads only; a plan uses it, the start creates (:func:`ensure_workdir`)."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return None
+    try:
+        return os.fstat(got[0])
+    finally:
+        os.close(got[0])
+
+
+def ensure_workdir(layout: Layout, key: str) -> os.stat_result:
+    """Create the work folder (and ``.orch-work/`` with a ``.gitignore`` of ``*`` so no repository above sees it) where
+    missing, 0700, every step without following a link, and return its stat for the cwd pin."""
+    got = _walk_workdir(layout, key, create=True)
+    assert got is not None
+    try:
+        parent = os.open("..", _DIR, dir_fd=got[0])
+        try:
+            gi = os.open(
+                ".gitignore", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+            )
+        except FileExistsError:
+            pass
+        except OSError:
+            pass  # the ignore file is a convenience; the folder is still private
+        else:
+            with os.fdopen(gi, "wb") as f:
+                f.write(b"*\n")
+        finally:
+            os.close(parent)
+        return os.fstat(got[0])
+    finally:
+        os.close(got[0])
+
+
+def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str, int] | None:
+    """``{files, bytes}`` of the work folder (links counted as nothing, not followed; at most ``limit`` entries seen,
+    then ``truncated``), or ``None`` when it does not exist. :class:`LayoutError` as :func:`workdir_stat`."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return None
+    files = size = seen = 0
+    stack = [got[0]]
+    truncated = 0
+    try:
+        while stack:
+            dfd = stack.pop()
+            try:
+                with os.scandir(dfd) as it:
+                    entries = list(it)
+            except OSError:
+                entries = []
+            for e in entries:
+                seen += 1
+                if seen > limit:
+                    truncated = 1
+                    break
+                try:
+                    st = e.stat(follow_symlinks=False)
+                    if stat.S_ISREG(st.st_mode):
+                        files += 1
+                        size += st.st_size
+                    elif stat.S_ISDIR(st.st_mode):
+                        stack.append(os.open(e.name, _DIR, dir_fd=dfd))
+                except OSError:
+                    continue
+            if dfd != got[0]:
+                os.close(dfd)
+            if truncated:
+                break
+    finally:
+        for fd in {got[0], *stack}:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    return {"files": files, "bytes": size, "truncated": truncated}
+
+
+def delete_workdir(layout: Layout, key: str) -> bool:
+    """Delete exactly the ticket's work folder (and what is in it), never following a link: every directory is opened
+    ``O_NOFOLLOW`` and emptied through its fd, a link inside is unlinked as a link. ``False``: there was none.
+    Nothing outside ``<project>/.orch-work/<KEY>`` is touched."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return False
+    try:
+        _empty(got[0])
+    finally:
+        os.close(got[0])
+    pfd = os.open(layout.project, _DIR)
+    try:
+        wfd = os.open(WORK_DIR, _DIR, dir_fd=pfd)
+        try:
+            os.rmdir(key, dir_fd=wfd)
+        finally:
+            os.close(wfd)
+    finally:
+        os.close(pfd)
+    return True
+
+
+def _empty(dfd: int) -> None:
+    with os.scandir(dfd) as it:
+        entries = list(it)
+    for e in entries:
+        st = e.stat(follow_symlinks=False)
+        if stat.S_ISDIR(st.st_mode):
+            sub = os.open(e.name, _DIR, dir_fd=dfd)
+            try:
+                _empty(sub)
+            finally:
+                os.close(sub)
+            os.rmdir(e.name, dir_fd=dfd)
+        else:
+            os.unlink(e.name, dir_fd=dfd)

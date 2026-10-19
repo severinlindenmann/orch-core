@@ -1,0 +1,112 @@
+"""Ticket work folders (design r3 part C): ``<project>/.orch-work/<KEY>/``, made and removed without following links."""
+
+from __future__ import annotations
+
+import os
+import stat
+from pathlib import Path
+
+import pytest
+
+from orch.layout import (
+    Layout,
+    LayoutError,
+    delete_workdir,
+    ensure_workdir,
+    workdir_stat,
+    workdir_summary,
+)
+
+KEY = "DEMO-0001"
+
+
+@pytest.fixture
+def lay(tmp_path: Path) -> Layout:
+    (tmp_path / "proj").mkdir()
+    return Layout.new_at(tmp_path / "proj")
+
+
+@pytest.mark.parametrize(
+    "bad", ["..", "../x", "DEMO-0001/..", "demo-1", "", "DEMO-1", "DEMO-0000", "A" * 40, "DEMO-0001\n"]
+)
+def test_a_key_that_is_not_a_ticket_key_never_builds_a_path(lay, bad):
+    with pytest.raises(LayoutError):
+        lay.workdir(bad)
+    with pytest.raises(LayoutError):
+        ensure_workdir(lay, bad)
+
+
+def test_the_folder_is_next_to_the_store_never_inside_it(lay):
+    path = lay.workdir(KEY)
+    assert path == lay.project / ".orch-work" / KEY
+    assert lay.store not in path.parents and path != lay.store
+
+
+def test_ensure_makes_it_private_with_a_gitignore_and_reports_the_stat(lay):
+    assert workdir_stat(lay, KEY) is None  # a read never creates
+    assert not (lay.project / ".orch-work").exists()
+    st = ensure_workdir(lay, KEY)
+    path = lay.workdir(KEY)
+    assert (st.st_dev, st.st_ino) == (path.stat().st_dev, path.stat().st_ino)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700 and stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert (path.parent / ".gitignore").read_text() == "*\n"  # no repository above ever sees it
+    again = ensure_workdir(lay, KEY)
+    assert again.st_ino == st.st_ino  # idempotent
+
+
+def test_a_symlinked_work_dir_or_ticket_folder_is_refused(lay, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (lay.project / ".orch-work").symlink_to(outside)
+    for fn in (workdir_stat, ensure_workdir, workdir_summary, delete_workdir):
+        with pytest.raises(LayoutError):
+            fn(lay, KEY)
+    assert list(outside.iterdir()) == []  # nothing was made through the link
+    (lay.project / ".orch-work").unlink()
+    (lay.project / ".orch-work").mkdir(mode=0o700)
+    (lay.project / ".orch-work" / KEY).symlink_to(outside)
+    for fn in (workdir_stat, ensure_workdir, workdir_summary, delete_workdir):
+        with pytest.raises(LayoutError):
+            fn(lay, KEY)
+    assert list(outside.iterdir()) == []
+
+
+def test_a_file_where_the_folder_belongs_is_refused(lay):
+    (lay.project / ".orch-work").write_text("x")
+    with pytest.raises(LayoutError):
+        ensure_workdir(lay, KEY)
+
+
+def test_delete_removes_exactly_the_ticket_folder_and_follows_no_link(lay, tmp_path):
+    ensure_workdir(lay, KEY)
+    ensure_workdir(lay, "DEMO-0002")
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep.txt").write_text("mine")
+    root = lay.workdir(KEY)
+    (root / "a" / "b").mkdir(parents=True)
+    (root / "a" / "b" / "f.txt").write_text("x" * 10)
+    (root / "link").symlink_to(victim)  # a link to a folder outside
+    (root / "a" / "filelink").symlink_to(victim / "keep.txt")
+    assert workdir_summary(lay, KEY) == {"files": 1, "bytes": 10, "truncated": 0}  # links count as nothing
+    assert delete_workdir(lay, KEY) is True
+    assert not root.exists()
+    assert (victim / "keep.txt").read_text() == "mine"  # not followed
+    assert lay.workdir("DEMO-0002").is_dir() and (lay.project / ".orch-work" / ".gitignore").exists()  # siblings stay
+    assert delete_workdir(lay, KEY) is False  # none left
+    assert workdir_summary(lay, KEY) is None
+
+
+def test_the_project_root_and_store_are_untouched_by_delete(lay):
+    (lay.project / "mine.txt").write_text("m")
+    lay.store.mkdir()
+    ensure_workdir(lay, KEY)
+    delete_workdir(lay, KEY)
+    assert (lay.project / "mine.txt").read_text() == "m" and lay.store.is_dir()
+
+
+def test_a_foreign_owner_is_refused(lay, monkeypatch):
+    ensure_workdir(lay, KEY)
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(lay.project).st_uid + 1)
+    with pytest.raises(LayoutError):
+        workdir_stat(lay, KEY)

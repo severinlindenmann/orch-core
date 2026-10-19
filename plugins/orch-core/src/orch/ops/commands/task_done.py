@@ -34,11 +34,16 @@ def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     repo, path = _repo_for(c, view)
     env = c.ctx.caps.exec.child_env(c.ctx.env)
     secret = (c.ctx.grant or "").partition(".")[2]
+    cwd = path
+    if cwd is None:  # no codebase: the check runs in the ticket's work folder, not in the project root
+        from orch.ops.workdir import workdir_of
+
+        cwd = workdir_of(c.store, view, create=True)
     return runner.run_verify(
         cmd,
         repo=repo,
         path=path,
-        cwd=path if path is not None else c.ws.require_root(),
+        cwd=cwd if cwd is not None else c.ws.require_root(),
         env=env,
         caps=c.ctx.caps,
         grant_secret=secret,

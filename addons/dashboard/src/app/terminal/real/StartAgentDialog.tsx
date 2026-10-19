@@ -73,7 +73,7 @@ function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: 
 export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, grantStep }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; /** Dev layout preview only: the grant card's starting step. */ grantStep?: GrantStep }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-h-[90vh] max-w-xl gap-3 overflow-y-auto border-border bg-surface" data-start-agent>
+      <DialogContent className="max-h-[90vh] max-w-[calc(100%-2rem)] gap-2 overflow-y-auto border-border bg-surface p-4 sm:max-w-xl sm:p-5" data-start-agent>
         {open && <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} grantStep={grantStep} />}
       </DialogContent>
     </Dialog>
@@ -181,31 +181,31 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
 
   return (
     <>
-      <DialogHeader>
+      <DialogHeader className="mb-1 text-left">
         <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
         <DialogDescription className="sr-only">Choose an agent and what it should do.</DialogDescription>
       </DialogHeader>
-      <form className="grid grid-cols-1 items-center gap-x-3 gap-y-1.5 text-xs sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
+      <form className="grid grid-cols-1 items-center gap-x-3 gap-y-2 text-xs leading-5 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
         <Label htmlFor="agent-harness" className="text-xs text-text-muted">Agent</Label>
-        <select id="agent-harness" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
+        <select id="agent-harness" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
           {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </select>
         <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
-        <select id="agent-mode" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
+        <select id="agent-mode" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
           {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
         </select>
         <span className="hidden sm:block" />
-        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 mb-1 text-text-muted sm:mb-0">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
+        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
-        <Input id="agent-label" className="h-9 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
-        <span className="mt-1 text-text-muted sm:mt-0">Project folder</span>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
+        <Input id="agent-label" className="h-9 min-w-0 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
+        <span className="text-text-muted">Project folder</span>
+        <label className="flex items-start gap-2 [&>input]:mt-1 [&>input]:shrink-0"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
         {(models.length > 0) && (
-          <details className="sm:col-span-2" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
-            <summary className="cursor-pointer text-text-muted">More choices</summary>
+          <details className="group/more sm:col-span-2" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/more:before:rotate-[135deg]">More choices</summary>
             <div className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-1.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2">
               <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
-              <select id="agent-model" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
+              <select id="agent-model" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
                 <option value="">As set for this kind of work</option>
                 {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
@@ -218,7 +218,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
               </>)}
               {harness === 'claude-code' && (<>
                 <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
-                <select id="agent-subagent" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
+                <select id="agent-subagent" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
                   <option value="">Chosen by the agent app</option>
                   {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
@@ -229,7 +229,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       </form>
 
       {/* One status line: what is happening or what blocks. Everything else is under Details. */}
-      <div className="space-y-1 text-xs" data-testid="agent-status">
+      <div className="space-y-1 text-xs leading-5" data-testid="agent-status">
         {badModel && <p role="alert" className="text-danger">Choose a model from the list.</p>}
         {!badModel && (loading || stale) && !error && <p role="status" className="text-text-muted" data-testid="agent-stale">Checking…</p>}
         {!badModel && !stale && !loading && note && <p role="status" className="text-warning" data-testid="agent-changed">{note}</p>}
@@ -253,7 +253,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       <GrantSection initial={grantStep} ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={noGrant ? data?.blocked ?? null : null}
         onChanged={() => { void runner.refetch(); void preview(shown?.args ?? form) }} />
       {error && <p role="alert" className="text-xs text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
-      <DialogFooter>
+      <DialogFooter className="mt-1 flex-row justify-end">
         <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
         <Button size="sm" disabled={!data || !data.spec || !!data.blocked || unreadable || stale || busy || loading} onClick={() => void start()} data-testid="agent-start">
           {busy ? <><Loader2 className="size-4 animate-spin" aria-hidden /> Starting…</> : 'Start agent'}
@@ -277,15 +277,15 @@ function RiskNotice({ full, loginNotice, onAcknowledge, children }: { full: bool
     </>
   )
   return (
-    <section aria-label="Runs as you" className="space-y-2 text-xs" data-testid="agent-risk">
+    <section aria-label="Runs as you" className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
       {full && (
-        <div role="note" className="space-y-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-warning" data-testid="agent-risk-full">
+        <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
           {words}
-          <Button size="xs" variant="outline" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>
+          <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>
         </div>
       )}
-      <details data-testid="agent-details">
-        <summary className="cursor-pointer text-text-muted">{full ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
+      <details className="group/risk" data-testid="agent-details">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{full ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
         <div className="mt-2 space-y-2">
           {!full && <div className="space-y-1 text-text-muted">{words}</div>}
           {children}
@@ -306,9 +306,9 @@ function GrantSection(props: { ws: string; runner: Runner | null; loading: boole
   if (props.loading && !props.initial) return <Skeleton className="h-6" />
   if (valid && grant && !open && !needed) {
     return (
-      <p className="text-xs text-text-muted" data-testid="agent-grant-line">
+      <p className="text-xs leading-5 text-text-muted" data-testid="agent-grant-line">
         Agents can work for you until <time dateTime={grant.until}>{clock(grant.until)}</time> <span aria-hidden>·</span>{' '}
-        <button type="button" className="underline" onClick={() => setOpen(true)}>Change</button>
+        <button type="button" className="underline underline-offset-4" onClick={() => setOpen(true)}>Change</button>
       </p>
     )
   }

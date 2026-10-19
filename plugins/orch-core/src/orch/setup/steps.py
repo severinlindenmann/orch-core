@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from orch.custody.base import CustodyError
+from orch.layout import STORE_DIR, WORK_DIR
 
 from . import review as review_mod
 from .protocol import SetupError
@@ -355,6 +356,7 @@ class Ports(Protocol):
     def genesis(self, *, root: Path, profile: dict[str, Any], passphrase: str, code: str) -> Genesis: ...
     def identity(self, wid: str) -> Identity: ...
     def install_addon(self, root: Path, name: str, raw: bytes) -> None: ...
+    def git_init(self, root: Path) -> None: ...
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
@@ -419,6 +421,7 @@ STEP_LABELS = {
     "keys": "Making your keys",
     "genesis": "Signing the workspace",
     "register": "Registering it with the host",
+    "git": "Making the folder a git repository",
     "runner": "Turning on dashboard execution",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
@@ -491,6 +494,7 @@ class Creator:
                 self._genesis()
                 post_genesis = True
             self._install_addons()
+            self._git()
             self._runner()
             self._stop_point()
             self._batch()
@@ -592,6 +596,21 @@ class Creator:
             self.run.set(s, "done")
         self.wid = g.wid
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
+
+    def _git(self) -> None:
+        """``git init`` of the project folder when the review said so (before the settings that declare it)."""
+        if not any(f["id"] == "git" for f in self.plan.flags):
+            return
+        self.run.set("git", "doing")
+        try:
+            self.ports.git_init(self.root)
+        except SetupError:
+            self.run.set("git", "failed")
+            raise
+        except Exception as exc:  # noqa: BLE001 - one plain refusal; nothing of git's output is shown
+            self.run.set("git", "failed")
+            raise SetupError("git.init_failed", f"git init failed ({type(exc).__name__})", 500) from None
+        self.run.set("git", "done")
 
     def _install_addons(self) -> None:
         for it in self.items:
@@ -930,6 +949,9 @@ class RealPorts:
             raise SetupError("addon.install", f"cannot write addons/{name} ({type(e).__name__})", 500) from None
 
     # -- the runner (D-P2-31)
+    def git_init(self, root: Path) -> None:
+        init_repository(root)
+
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None:
         import io
 
@@ -1021,3 +1043,55 @@ class RealPorts:
         from orch.custody import select
 
         select.undo_staged(self.state, wid, staged, None)
+
+
+IGNORE_LINES = (f"{STORE_DIR}/", f"{WORK_DIR}/")
+
+
+def init_repository(root: Path) -> None:
+    """``git init`` in the project folder under orch's isolated environment (no config of the person's or the system's,
+    no template, no hook), then ``.gitignore`` lines for orch's own folders. Never commits, never touches a file of the
+    person's except to APPEND the missing ignore lines to a ``.gitignore`` that is already there. A folder that is
+    already a repository is left alone."""
+    import os
+    import shutil
+    import stat
+    import subprocess
+    import tempfile
+
+    from orch import gitsafe
+
+    if os.path.lexists(root / ".git"):
+        return
+    env = gitsafe.isolated_env(os.environ)
+    git = shutil.which("git", path=env.get("PATH"))
+    if git is None:
+        raise SetupError("git.init_failed", "git is not installed on this computer", 500)
+    with tempfile.TemporaryDirectory(prefix="orch-git-template-") as empty:
+        res = subprocess.run(  # noqa: S603 - a fixed argv under the isolated environment; the folder is a real path
+            [git, "init", "--quiet", "--initial-branch=main", f"--template={empty}", "--", os.fspath(root)],
+            env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False,
+        )  # fmt: skip
+    if res.returncode != 0:
+        raise SetupError("git.init_failed", "git init did not succeed in this folder", 500)
+    path = os.fspath(root / ".gitignore")
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags, 0o644)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise SetupError("git.init_failed", ".gitignore is not a plain file", 500)
+        have = os.read(fd, 1 << 20).decode("utf-8", "replace").splitlines()
+        add = [x for x in IGNORE_LINES if x not in have and x.rstrip("/") not in have]
+        if add:
+            os.lseek(fd, 0, os.SEEK_END)
+            size = os.fstat(fd).st_size
+            lead = b"" if size == 0 or _ends_newline(fd, size) else b"\n"
+            os.write(fd, lead + "".join(x + "\n" for x in add).encode())
+    finally:
+        os.close(fd)
+
+
+def _ends_newline(fd: int, size: int) -> bool:
+    import os
+
+    return os.pread(fd, 1, size - 1) == b"\n"

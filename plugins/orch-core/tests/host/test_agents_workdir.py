@@ -90,3 +90,48 @@ def test_open_terminal_here_of_a_ticket_without_a_codebase_opens_in_its_work_fol
         ]["code"]
         == "not_found"
     )
+
+
+def test_workdir_get_and_delete_touch_only_the_ticket_folder(ready, tmp_path):  # noqa: F811
+    world = ready
+    c = world.conn()
+    _, key = world.ticket()
+    other = "DEMO-0002"  # another ticket's folder (any key: the host deletes by the ticket asked for)
+    root = Path(world.lab.root)
+    assert ok(c.call("workdir.get", {"ticket": key}))["data"] == {
+        "codebase": False,
+        "exists": False,
+        "folder": f".orch-work/{key}",
+    }
+    for k in (key, other):
+        (root / ".orch-work" / k).mkdir(parents=True, exist_ok=True)
+        (root / ".orch-work" / k / "a.txt").write_text("12345")
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep").write_text("mine")
+    (root / ".orch-work" / key / "link").symlink_to(victim)
+    got = ok(c.call("workdir.get", {"ticket": key}))["data"]
+    assert (got["exists"], got["files"], got["bytes"]) == (True, 1, 5) and "path" not in got
+    (root / "mine.txt").write_text("project file")
+    out = ok(c.call("workdir.delete", {"ticket": key}, idem=True))["data"]
+    assert out["deleted"] is True and not (root / ".orch-work" / key).exists()
+    assert (victim / "keep").read_text() == "mine" and (root / "mine.txt").exists()  # nothing else was touched
+    assert (root / ".orch-work" / other / "a.txt").exists()  # another ticket's folder stays
+    assert ok(c.call("workdir.delete", {"ticket": key}, idem=True))["data"]["deleted"] is False  # already gone
+
+
+def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_folder(ready):  # noqa: F811
+    from tests.host.dispatch_helpers import err
+
+    world = ready
+    c = world.conn()
+    _, key = world.ticket()
+    (Path(world.lab.root) / ".orch-work" / key).mkdir(parents=True)
+    assert err(c.call("workdir.delete", {"ticket": key})) == "idem.required"
+    assert err(c.call("workdir.get", {"ticket": "NOPE-999"})) == "not_found"
+    assert err(c.call("workdir.get", {"ticket": key, "x": 1})) == "invalid.input"
+    assert err(c.call("workdir.delete", {"ticket": key}, grant=world.grant, session="s", idem=True)) == "op.not_allowed"
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
+    assert err(c.call("workdir.delete", {"ticket": key}, idem=True)) == "worktree.in_use"
+    assert (Path(world.lab.root) / ".orch-work" / key).is_dir()

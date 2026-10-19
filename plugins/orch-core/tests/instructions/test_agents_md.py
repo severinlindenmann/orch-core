@@ -33,6 +33,7 @@ def test_at_most_40_lines_with_headings_each_short_and_stamped_under_the_title()
         "# orch in this project",
         "## First, every session",
         "## Working on a ticket",
+        "## Results",
         "## When you are unsure",
         "## Never",
         "## If orch refuses",

@@ -1064,7 +1064,9 @@ def init_repository(root: Path) -> None:
     if os.path.lexists(root / ".git"):
         return
     env = gitsafe.isolated_env(os.environ)
-    git = shutil.which("git", path=env.get("PATH"))
+    from orch.cli.dashboard import _absolute_path
+
+    git = shutil.which("git", path=_absolute_path(env.get("PATH")))
     if git is None:
         raise SetupError("git.init_failed", "git is not installed on this computer", 500)
     with tempfile.TemporaryDirectory(prefix="orch-git-template-") as empty:

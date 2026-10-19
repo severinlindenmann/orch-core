@@ -14,9 +14,11 @@ __all__ = ["has_codebase", "workdir_of"]
 
 
 def has_codebase(store: Any, view: Any) -> bool:
-    """The ticket links at least one repo that is declared in the workspace settings."""
-    paths = store.state.workspace.repos
-    return any(observe.repo_path(store.layout, paths, n) is not None for n in view.fields["links"]["repos"])
+    """THE rule (the host's launch and every op use only this): a ticket has a codebase when its PRIMARY repo (the first
+    of ``links.repos``) is declared in the workspace settings. Any other ticket has a work folder. Whether a declared
+    repo can be read is a separate question: the launch refuses (fail closed), it never falls back to a work folder."""
+    repos = view.fields["links"]["repos"]
+    return bool(repos) and observe.repo_path(store.layout, store.state.workspace.repos, repos[0]) is not None
 
 
 def workdir_of(store: Any, view: Any, *, create: bool = False) -> Path | None:

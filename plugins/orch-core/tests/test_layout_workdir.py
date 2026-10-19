@@ -110,3 +110,50 @@ def test_a_foreign_owner_is_refused(lay, monkeypatch):
     monkeypatch.setattr(os, "getuid", lambda: os.stat(lay.project).st_uid + 1)
     with pytest.raises(LayoutError):
         workdir_stat(lay, KEY)
+
+
+def test_a_very_deep_folder_is_summed_and_deleted_without_recursion(lay):
+    ensure_workdir(lay, KEY)
+    deep = lay.workdir(KEY)
+    base = os.getcwd()
+    try:
+        os.chdir(deep)
+        for _ in range(1200):  # one component at a time: the path itself would be too long
+            os.mkdir("d")
+            os.chdir("d")
+        Path("f.txt").write_text("x")
+    finally:
+        os.chdir(base)
+    assert workdir_summary(lay, KEY)["files"] == 1
+    assert delete_workdir(lay, KEY) is True and not deep.exists()
+
+
+def test_the_summary_stops_at_its_cap(lay):
+    ensure_workdir(lay, KEY)
+    for i in range(30):
+        (lay.workdir(KEY) / f"f{i}").write_text("x")
+    got = workdir_summary(lay, KEY, limit=10)
+    assert got["truncated"] == 1 and got["files"] <= 10
+
+
+def test_a_mount_point_inside_is_refused_not_entered(lay, monkeypatch):
+    ensure_workdir(lay, KEY)
+    (lay.workdir(KEY) / "sub").mkdir()
+    import orch.layout as L
+
+    root_dev = lay.workdir(KEY).stat().st_dev
+    calls = {"n": 0}
+    real_fstat = os.fstat
+
+    def fake_fstat(fd):
+        st = real_fstat(fd)
+        calls["n"] += 1
+        if calls["n"] == 1:  # the first fstat in delete is the root's: pretend another device for it
+            return os.stat_result((*tuple(st)[:2], root_dev + 1, *tuple(st)[3:]))
+        return st
+
+    monkeypatch.setattr(L.os, "fstat", fake_fstat)
+    with pytest.raises(LayoutError):
+        delete_workdir(lay, KEY)
+    monkeypatch.undo()
+    assert (lay.workdir(KEY) / "sub").is_dir()

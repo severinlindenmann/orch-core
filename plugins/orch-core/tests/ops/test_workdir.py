@@ -61,3 +61,27 @@ def test_a_ticket_holds_at_most_its_file_budget(ws, cli, tmp_path, monkeypatch):
     assert cli.j("artifact", "replace", "a.bin", str(a)).err_code == "invalid.input"  # 13 + 8 > 20
     a.write_bytes(b"z" * 12)
     assert cli("artifact", "replace", "a.bin", str(a)).code == 0  # a replaced file counts once
+
+
+def test_codebase_rule_is_the_primary_repo_and_one_helper(ws):
+    from orch.ops.workdir import has_codebase
+
+    class S:
+        pass
+
+    def store(declared):
+        s = S()
+        s.layout = ws.root and __import__("orch.layout", fromlist=["x"]).Layout.new_at(ws.root)
+        s.state = S()
+        s.state.workspace = S()
+        s.state.workspace.repos = {n: {"path": n} for n in declared}
+        return s
+
+    def view(repos):
+        v = S()
+        v.fields = {"links": {"repos": repos}}
+        return v
+
+    assert not has_codebase(store(["b"]), view([]))
+    assert not has_codebase(store(["b"]), view(["a", "b"]))  # undeclared primary: a work folder, whatever follows
+    assert has_codebase(store(["b"]), view(["b", "a"]))

@@ -232,8 +232,10 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
         return out
     if view is None:
         return at_root()
+    from orch.ops.workdir import has_codebase
+
     repos = list((view.fields.get("links") or {}).get("repos") or [])
-    if not repos:
+    if not has_codebase(store, view):  # the one rule, shared with the ops: no declared primary repo, no codebase
         return workdir(view.key)
     git = _git(call)
     if git is None:
@@ -262,8 +264,9 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
             out.update(cwd={"kind": "worktree", "repo": primary, "ticket": view.key}, path=wplan["path"], pin=None,
                        create=wplan, gen=wplan["gen"])  # fmt: skip
             return out
-    if declared(primary) is None:  # linked but not declared or not readable: no codebase
-        return workdir(view.key)
+    if declared(primary) is None:  # declared but not readable now: refuse, never a silent work folder
+        p.block("launch.cwd_changed", f"{primary}: the declared working copy cannot be read")
+        return at_root()
     p.warnings.append(SHARED_COPY)
     return out
 

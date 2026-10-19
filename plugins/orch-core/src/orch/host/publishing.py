@@ -707,6 +707,14 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if args.get("live"):
         if call.column.name != "P":
             raise HostError("op.not_allowed", "a person looks at the server's numbers")
+        if not out["configured"]:
+            # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
+            # false) instead of failing, so a page can tell the person what to do next.
+            return ok_result({**out, "live": False})
+        if not out["configured"]:
+            # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
+            # false) instead of failing, so a page can tell the person what to do next.
+            return ok_result({**out, "live": False})
         return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out}}
     return ok_result(out)
 

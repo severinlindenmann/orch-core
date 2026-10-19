@@ -914,6 +914,8 @@ it('addon enable confirms the grant name and renders the workspace review withou
   expect(workspaceConfirmWord(request, workspace)).toBe('model-routing~89abcdef')
   expect(clickEligible({ action: 'addon_enable', name: 'model-routing', models })).toBe(true)
   expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(false) // Publish: terminal only
+  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(false)
+  expect(clickEligible({ action: 'addon_grant', name: 'usage' })).toBe(true)
   render(<HandoffPanel request={request} workspace={workspace} />)
   expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
   expect(screen.getByText('Choose GPT-5.4 for work. Settings first, then turn on Model routing.')).toBeVisible()

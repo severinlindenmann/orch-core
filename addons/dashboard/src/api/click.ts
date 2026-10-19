@@ -128,7 +128,7 @@ const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
   'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable', 'addon_enable',
 ])
 // Publish decides where files go: terminal only, also when it is turned on together with its address
-export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !(a.action === 'addon_enable' && a.name === 'publish')
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant') && a.name === 'publish')
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */

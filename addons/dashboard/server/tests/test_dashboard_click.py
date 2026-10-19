@@ -1873,6 +1873,7 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
     [
         {"action": "publish_setup", "server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"},
         {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
+        {"action": "addon_grant", "name": "publish"},  # turning Publish on is terminal only, however it is asked
         {
             "action": "addon_enable",
             "name": "publish",

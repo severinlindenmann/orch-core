@@ -28,7 +28,7 @@ def test_at_most_40_lines_with_headings_each_short_and_stamped_under_the_title()
     assert text.endswith("\n") and "\r" not in text
     assert all(len(x) <= 110 for x in lines), [x for x in lines if len(x) > 110]
     assert lines[0] == "# orch in this project" and lines[1].startswith("orch v2.0 (instructions r")
-    assert stamp_rev(text) == INSTRUCTIONS_REV == 3
+    assert stamp_rev(text) == INSTRUCTIONS_REV == 4
     assert [x for x in lines if x.startswith("#")] == [
         "# orch in this project",
         "## First, every session",

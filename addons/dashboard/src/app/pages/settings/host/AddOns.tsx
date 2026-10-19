@@ -1,6 +1,7 @@
 // Settings > Add-ons (R2-2, real host): every add-on with its plain description and whether it is On. A switch is a
 // signed settings change like the others: it opens the same review and signing step (`addon.grant` to turn on,
 // `addon.disable` to turn off). Nothing is written without a signature. A switch that cannot move says why.
+import { vLabel } from '@/api/versions'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
@@ -111,7 +112,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                       ) : (
                         <span className="font-medium">{row.title}</span>
                       )}
-                      {/* TODO(r3-misc): version tag (AddOnRow.version / vLabel from api/versions.ts) goes here once it lands on develop. */}
+                      {row.version && <span data-testid={`addon-${row.id}-version`} className="font-mono text-[11px] text-text-faint">{vLabel(row.version)}</span>}
                       <span
                         data-testid={`addon-${row.id}-state`}
                         className={on ? 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-success' : 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-muted'}

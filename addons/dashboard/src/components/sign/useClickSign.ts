@@ -31,7 +31,7 @@ export interface ClickRun {
   view: ClickViewAnswer | null
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction, retryFloor?: number) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number, freshIfEnded?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
@@ -116,7 +116,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction, retryFloor = 0) => {
+    async (action: ClickAction, retryFloor = 0, freshIfEnded = false) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -127,6 +127,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
       const { retry } = attempt.current
       attempt.current.lost = false
+      let again = false
       try {
         const got = await api.prepareClick(ws, action, retry)
         if (!mounted.current || wsNow.current !== ws) {
@@ -146,11 +147,22 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
         // action is done, its attempt ended) moves on only by an explicit click, which advances the counter.
         if (attempt.current) attempt.current.lost = !(e instanceof ApiError) || e.retryable
-        fail(e)
+        // The person's own open of the dialog is a new intent: an earlier attempt that was cancelled or expired (the host
+        // says so by name) is not a reason to make them press "Start again" before seeing anything. Once, never for a
+        // signed or failed attempt.
+        if (freshIfEnded && e instanceof ApiError && e.code === 'intent.ended' && attempt.current) {
+          attempt.current.retry += 1
+          again = true
+        } else fail(e)
       } finally {
         busy.current = false
       }
+      if (again) {
+        setPhase('idle')
+        await start(action, attempt.current?.retry ?? 0)
+      }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [ws, setPhase, read, fail],
   )
 

@@ -79,6 +79,11 @@ class Plan:
     def label(self) -> str:
         return self.launchd_label if self.kind == "launchd" else self.systemd_name
 
+    @property
+    def program_name(self) -> str:
+        """The name macOS shows for the item in Login Items & Extensions (the launcher's file name)."""
+        return "orch-runner" if self.launchd_label.endswith(".runner") else "orch-host"
+
 
 def run_dir_for(state: Path, given: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
     """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``;
@@ -140,7 +145,17 @@ def _unquote_systemd(line: str) -> list[str]:
     return [re.sub(r"\\(.)", r"\1", w).replace("%%", "%").replace("$$", "$") for w in words]
 
 
-def unit_fields(kind: str, content: bytes) -> dict[str, str | None] | None:
+def _launcher_interpreter(path: str) -> str:
+    """The interpreter a launcher's shebang names (``#!<python> -I``); the launcher's own path when it cannot be read,
+    so an unreadable launcher never looks like the expected interpreter."""
+    try:
+        first = Path(path).read_text().split("\n", 1)[0]
+    except (OSError, UnicodeDecodeError):
+        return path
+    return first[2:].removesuffix(" -I") if first.startswith("#!") and first.endswith(" -I") else path
+
+
+def unit_fields(kind: str, content: bytes, release: Path | None = None) -> dict[str, str | None] | None:
     """``{python, state, run}`` of a unit file's command, or ``None`` when it cannot be read as one of ours."""
     try:
         if kind == "launchd":
@@ -154,7 +169,17 @@ def unit_fields(kind: str, content: bytes) -> dict[str, str | None] | None:
         return None
     if not args:
         return None
-    return {"python": args[0], "state": _arg_after(args, "--state"), "run": _arg_after(args, "--run")}
+    # a launchd unit that runs the release's launcher directly (macOS lists it by that name): its interpreter is the
+    # launcher's shebang. Only the expected launcher counts as one (``release`` given); any other program is its own
+    # "python", so it differs
+    python = args[0]
+    if (
+        kind == "launchd"
+        and release is not None
+        and Path(args[0]) in (release / "bin" / "orch-host", release / "bin" / "orch-runner")
+    ):
+        python = _launcher_interpreter(args[0])
+    return {"python": python, "state": _arg_after(args, "--state"), "run": _arg_after(args, "--run")}
 
 
 def differences(unit: Plan) -> list[str] | None:
@@ -166,7 +191,7 @@ def differences(unit: Plan) -> list[str] | None:
         return None
     except OSError:
         return ["python", "state", "run"]
-    old, new = unit_fields(unit.kind, have), unit_fields(unit.kind, unit.content)
+    old, new = unit_fields(unit.kind, have, unit.release), unit_fields(unit.kind, unit.content, unit.release)
     if old is None or new is None:
         return ["python", "state", "run"]
     return [k for k in ("python", "state", "run") if old[k] != new[k]]
@@ -229,6 +254,24 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
     return None
 
 
+def label_disabled(text: str, label: str) -> bool:
+    """Whether ``launchctl print-disabled`` output lists ``label`` as disabled (``"io.orch.host" => disabled``; older
+    macOS prints ``=> true``). A label that is not listed, or is enabled, is not disabled."""
+    for line in text.splitlines():
+        m = re.fullmatch(r'\s*"([^"]+)"\s*=>\s*(\w+)\s*', line)
+        if m and m.group(1) == label:
+            return m.group(2) in ("disabled", "true")
+    return False
+
+
+def background_off_message(name: str) -> str:
+    """What the person is told when macOS turned the item off (plain words, no ids)."""
+    return (
+        f"macOS has turned off orch in the background. Open System Settings → General → Login Items & Extensions "
+        f"and turn on {name}."
+    )
+
+
 class Manager:
     """Install, start and look at the unit of a :class:`Plan` through the person's own service manager."""
 
@@ -251,6 +294,20 @@ class Manager:
         if self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0:
             return True
         return self.active() is True
+
+    def disabled_in_background(self) -> bool | None:
+        """macOS only: whether the person (or macOS) turned this item off in System Settings, General, Login Items &
+        Extensions, "Allow in the Background". launchd records that as a disabled override, which
+        ``launchctl print-disabled gui/<uid>`` lists (read-only). ``None``: not macOS, or it cannot tell."""
+        if self.plan.kind != "launchd":
+            return None
+        try:
+            res = self.run(["launchctl", "print-disabled", self._domain()])
+        except OSError:
+            return None
+        if res.returncode != 0:
+            return None
+        return label_disabled(res.stdout or "", self.plan.launchd_label)
 
     def active(self) -> bool | None:
         """Whether the service manager runs the host now (``None``: it cannot tell)."""
@@ -308,6 +365,8 @@ class Manager:
             ran.append(argv)
             res = self.run(argv)
             if check and res.returncode != 0:
+                if self.plan.kind == "launchd" and argv[1:2] == ["bootstrap"] and self.disabled_in_background():
+                    raise OSError(background_off_message(self.plan.program_name))
                 raise OSError(f"{' '.join(argv)} failed ({res.returncode}): {(res.stderr or res.stdout or '').strip()}")
 
         if self.plan.kind == "launchd":
@@ -378,7 +437,7 @@ class Manager:
         fields = None
         if present:
             try:
-                fields = unit_fields(self.plan.kind, self.plan.unit_path.read_bytes())
+                fields = unit_fields(self.plan.kind, self.plan.unit_path.read_bytes(), self.plan.release)
             except OSError:
                 fields = None
         return {
@@ -388,6 +447,8 @@ class Manager:
             "unit_current": self.installed(),
             "differs": diff or [],
             "serves": fields,
+            "background_name": self.plan.program_name,
+            "disabled_in_background": self.disabled_in_background() if present else None,
             "loaded": self.loaded() if present else False,
             "running": self.active() if present else False,
         }

@@ -1931,6 +1931,9 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   **frozen, versioned constant of the format** (`orch.model.emits.EMITS_V1`, digest pinned by a test; a test also checks
   that the live registry equals it): replay never reads the registry. A change of any operation's `emits` adds
   `EMITS_V2` and bumps `CURRENT`; logs written under version 1 keep replaying under `EMITS_V1`.
+  R3: `EMITS_V3` adds the agent operation task edit (emitting a `ticket.updated`) as a **new key only**; no V1/V2 verdict changes
+  and the model keeps judging by V1, so a grant naming only that operation grants nothing (the verb task add or `agent` covers
+  every `ticket.updated`).
   **Before any `EMITS_V2` exists** (a rule of §10.1 too): the table version a grant is judged by must be readable from the
   log (a field on `grant.issued`, or the workspace format version at the time it was issued), never from the running
   release; replay that picked `CURRENT` would change the meaning of old logs.

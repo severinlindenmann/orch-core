@@ -49,7 +49,7 @@ def test_describe_without_argument_lists_the_commands_by_group(cli):
     assert lines[0] == "ok describe all" and lines[-1] == "next: orch describe CMD"
     groups = [line.split(":")[0] for line in lines[1:-1]]
     assert groups == ["Context", "Read", "Lifecycle", "Edit", "Human only", "Admin"]
-    assert "Edit: set, section set, ac add|edit, task list|next|add|start|done|skip|block|reopen" in r.out
+    assert "Edit: set, section set, ac add|edit, task list|next|add|edit|start|done|skip|block|reopen" in r.out
     names = {c["name"] for c in json.loads(cli("describe", "--json").out)["data"]["commands"]}
     assert names == set(ops.names())
 

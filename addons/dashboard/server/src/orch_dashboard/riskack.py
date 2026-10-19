@@ -20,12 +20,12 @@ from .reads import workspace
 FILE = "risk_notices.json"
 _LOCK = threading.Lock()
 # Bump a notice's version when its meaning changes: an older acknowledgement then no longer counts.
-VERSIONS = {"start_agent": 1, "login_shell": 1}
+VERSIONS = {"start_agent": 1, "login_shell": 1, "grant": 1}
 
 
 class Ack(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    notice: Literal["start_agent", "login_shell"]
+    notice: Literal["start_agent", "login_shell", "grant"]
 
 
 def _path(env=None) -> Path:

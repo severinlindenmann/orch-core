@@ -369,6 +369,13 @@
         "summary": "Grant an addon its capabilities (owner only); also enables it."
       },
       {
+        "name": "addon.preview",
+        "cli": "addon preview",
+        "group": "Admin",
+        "who": "read",
+        "summary": "Show what turning an addon on would sign, without installing or granting it."
+      },
+      {
         "name": "addon.disable",
         "cli": "addon disable",
         "group": "Admin",

@@ -1,5 +1,5 @@
 """The final state of the move: a workspace whose store is still in the project root is refused wherever a store is
-opened, with one plain message (delete the old files, run orch setup again); `orch migrate` itself, discovery and the registry read still work."""
+opened, with one plain message (delete the old files, run orch setup again)."""
 
 from __future__ import annotations
 

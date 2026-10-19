@@ -108,7 +108,7 @@ _LEGACY_FILES = ("config.json", "keys.jsonl", "AGENTS.orch.md", "events", "ticke
 
 
 def legacy_refusal(project_fd: int) -> str:
-    """The one plain message for a store from an older version that sits in the project root: orch now keeps its files in
+    """The one plain message for a store from an older version in the project root: orch now keeps its files in
     ``.orch/``, and there is no migration (start fresh). Lists the exact names found below the project fd."""
     found = []
     for name in _LEGACY_FILES:

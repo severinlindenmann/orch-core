@@ -26,7 +26,12 @@ class Bin:
         self.cwd = ws.root / "tickets"  # anywhere below the workspace
 
     def __call__(self, *argv, stdin=None, env=None):
-        e = {"PATH": "/usr/bin:/bin", "HOME": str(self.ws.tmp), "ORCH_STATE_DIR": str(self.ws.host_state)}
+        e = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(self.ws.tmp),
+            "ORCH_STATE_DIR": str(self.ws.host_state),
+            "ORCH_ALLOW_LEGACY_LAYOUT": "1",
+        }
         if self.session:
             e["ORCH_SESSION"] = self.session
         if self.grant:

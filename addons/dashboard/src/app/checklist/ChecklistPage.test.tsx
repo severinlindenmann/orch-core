@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import * as testrun from '@/api/testrun'
-import { ALL_STEPS, RUN2_SECTIONS } from './run2'
+import { ALL_STEPS, RUN2_SECTIONS, RUN_ID } from './run2'
 import { buildReport } from './report'
 
 vi.mock('@/api/testrun', async (orig) => {
@@ -236,7 +236,7 @@ describe('F8 retry rules', () => {
     await screen.findByText(/did not accept this change/, {}, T)
     await userEvent.type(screen.getByLabelText('Notes for A2'), 'n')
     await waitFor(() => expect(m.saveStep).toHaveBeenCalledTimes(2), T)
-    expect(m.saveStep).toHaveBeenLastCalledWith('run2', 'A2', { note: 'n' })
+    expect(m.saveStep).toHaveBeenLastCalledWith(RUN_ID, 'A2', { note: 'n' })
   })
   it('resends after a 503', async () => {
     m.saveStep.mockRejectedValueOnce(new testrun.TestrunError(503, 'host.unavailable'))

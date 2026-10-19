@@ -651,3 +651,103 @@ def test_enable_only_tells_about_a_foreground_host_and_never_restarts_it(stale_e
     data = json.loads(out)["result"]["data"]
     assert code == 0 and restarts == [] and data["restart_needed"] is True
     assert "not under the service manager" in data["message"]
+
+
+# --- the restart falls back to the service manager when the drain never finishes ------------------------------------
+
+
+class _FakeManager:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[str] = []
+        self.fail = fail
+
+    def active(self) -> bool:
+        return True
+
+    def start(self, *, changed: bool) -> list:
+        self.calls.append("start")
+        return []
+
+    def restart_now(self) -> list:
+        self.calls.append("restart_now")
+        if self.fail:
+            raise OSError("kickstart failed")
+        return []
+
+
+class _DrainClient:
+    def __init__(self, *a, **k) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def call(self, op):
+        assert op == "host.restart"
+        return {"ok": True}
+
+
+def _restart_world(monkeypatch, *, running_after_kick: bool):
+    """The host reports the old release until the service manager kicks it (when ``running_after_kick``)."""
+    import orch.host.control_client as cc
+
+    manager = _FakeManager()
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr("orch.host.enable.START_WAIT", 0.3)
+    monkeypatch.setattr(
+        host_cli,
+        "_host_release",
+        lambda control: "new" if running_after_kick and "restart_now" in manager.calls else "old",
+    )
+    return manager
+
+
+def test_a_drain_that_never_finishes_is_followed_by_a_forced_service_restart(monkeypatch):
+    manager = _restart_world(monkeypatch, running_after_kick=True)
+    assert host_cli._restart(manager, Path("/nope"), "new") is True
+    assert manager.calls == ["restart_now"]
+
+
+def test_a_graceful_drain_needs_no_forced_restart(monkeypatch):
+    manager = _FakeManager()
+    import orch.host.control_client as cc
+
+    monkeypatch.setattr(cc, "ControlClient", _DrainClient)
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "new")
+    assert host_cli._restart(manager, Path("/nope"), "new") is True
+    assert manager.calls == []
+
+
+def test_a_restart_that_cannot_happen_is_reported_not_hidden(monkeypatch):
+    manager = _restart_world(monkeypatch, running_after_kick=False)
+    assert host_cli._restart(manager, Path("/nope"), "new") is False
+    assert manager.calls[0] == "restart_now"
+
+
+def test_enable_says_so_when_the_host_could_not_be_restarted(stale_env, monkeypatch):
+    env, restarts = stale_env
+    monkeypatch.setattr(host_cli, "_host_release", lambda control: "old000000000")
+    monkeypatch.setattr(host_cli, "_restart", lambda manager, control, mine: False)
+    code, out = host(["enable", "--dev"], env)
+    data = json.loads(out)["result"]["data"]
+    assert code == 0 and data["restart_needed"] is True and "did not restart" in data["message"]
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_the_manager_restart_now_commands(tmp_path, platform):
+    unit = svc.plan({"HOME": str(tmp_path / "h")}, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform=platform, uid=501)
+    ran: list[list[str]] = []
+    m = svc.Manager(unit, run=lambda argv: ran.append(list(argv)) or done())
+    m.restart_now()
+    expect = (
+        ["launchctl", "kickstart", "-k", "gui/501/io.orch.host"]
+        if platform == "darwin"
+        else ["systemctl", "--user", "restart", unit.systemd_name]
+    )
+    assert ran == [expect]
+    failing = svc.Manager(unit, run=lambda argv: done(1))
+    with pytest.raises(OSError):
+        failing.restart_now()

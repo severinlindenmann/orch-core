@@ -312,6 +312,20 @@ class Manager:
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
 
+    def restart_now(self) -> list[list[str]]:
+        """Restart the loaded service without waiting for the host (``launchctl kickstart -k``, ``systemctl --user
+        restart``): the fallback when a graceful drain never finished. The host's state is crash-safe (the service
+        manager restarts a crashed host the same way); the caller says so to the person."""
+        argv = (
+            ["launchctl", "kickstart", "-k", self._target()]
+            if self.plan.kind == "launchd"
+            else ["systemctl", "--user", "restart", self.plan.systemd_name]
+        )
+        res = self.run(argv)
+        if res.returncode != 0:
+            raise OSError(_failed(argv, res))
+        return [argv]
+
     def stop(self) -> list[list[str]]:
         """Stop and unload the service, then remove the unit file (``orch host disable``). A loaded service that
         will not stop leaves the unit in place and raises. Returns the commands that ran. Never touches the state dir

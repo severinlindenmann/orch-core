@@ -483,7 +483,11 @@ def enable(
                 data["restarted"] = mine
                 data["message"] = f"restarted the host on the new release {mine}"
             else:
-                data["message"] = f"the host still runs release {theirs or 'unknown'}: run `orch host restart`"
+                data["message"] = (
+                    f"the host still runs the old release {theirs or 'unknown'} and did not restart: "
+                    f"run `orch host restart`, or `launchctl kickstart -k` / `systemctl --user restart` its service"
+                )
+                data["restart_needed"] = True
         else:  # a foreground or dev host: not ours to kill
             data["restart_needed"] = True
             data["message"] = (
@@ -508,8 +512,6 @@ def _host_release(control: Path) -> str | None:
 def _restart(manager: Any, control: Path, mine: str) -> bool:
     """Drain the host through its control socket (``orch host restart``), let the service manager bring it back
     (started again if it does not), and wait until a host reports release ``mine``."""
-    import time
-
     from .control_client import ControlClient
     from .enable import START_WAIT
 
@@ -517,8 +519,23 @@ def _restart(manager: Any, control: Path, mine: str) -> bool:
         with ControlClient(control, timeout=10) as client:
             client.call("host.restart")
     except (OSError, ConnectionError):
+        pass  # the drain did not start: the fallback below restarts it
+    else:
+        if _wait_for_release(manager, control, mine, START_WAIT):
+            return True
+    # The drain did not finish (a request in flight that never ends): do what the service manager does for a crashed
+    # host, restart it now, rather than leave the old release running.
+    try:
+        manager.restart_now()
+    except OSError:
         return False
-    deadline = time.monotonic() + START_WAIT
+    return _wait_for_release(manager, control, mine, START_WAIT)
+
+
+def _wait_for_release(manager: Any, control: Path, mine: str, wait: float) -> bool:
+    import time
+
+    deadline = time.monotonic() + wait
     started = False
     while time.monotonic() < deadline:
         if _host_release(control) == mine:

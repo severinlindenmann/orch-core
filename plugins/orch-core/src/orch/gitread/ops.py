@@ -453,8 +453,8 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
                 raise Unavailable("bad request: tree_check takes only removal (a boolean)")
             worktree = open_pin(pins.worktree)  # device and inode checked: still the pinned working copy
             try:
-                # no person configuration here: the policy applies no ignore rule (orch.gitread.ignorepolicy); a
-                # removal check never applies any (#583 round 3)
+                # no person configuration here: the policy matches the repository's own ignore files in the case modes
+                # its config allows (orch.gitread.ignorepolicy); a removal check never applies any (#583 round 3)
                 return treecheck.check(repo, worktree, removal=bool(args.get("removal")))
             finally:
                 worktree.close()

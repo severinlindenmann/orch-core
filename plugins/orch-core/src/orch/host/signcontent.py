@@ -648,8 +648,11 @@ def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
     done = {k: v for k, v in out.items() if v not in (None, [], "")}
-    if any(ev.get("type") == "ticket.created" for ev in events):
+    creates = any(ev.get("type") == "ticket.created" for ev in events)
+    if creates:
         done = _new_ticket(done)
+    if isinstance(done.get("ticket"), dict):  # from the signed events, never from the headline's words
+        done["ticket"] = {**done["ticket"], "new": creates}
     return _finish(done)
 
 
@@ -685,23 +688,20 @@ def _with_title(content: dict[str, Any]) -> dict[str, Any]:
     """U3: ``title``, the headline a person reads: no "key per host; signed id" qualifier in the words and "New ticket
     KEY: title" for a creation. Only ever a rewording of ``headline``.
 
-    ``ticket.new`` says whether this review creates the ticket (a creation signs the key and the title, so the signed
-    id is only a technical detail there). For a request on an existing ticket the qualifier is not in the title but the
-    dashboard keeps "key per host · signed id …tail" visible in the main view (``ticket.new`` false)."""
+    ``ticket.new`` (set by :func:`build` from the request's own events: any ``ticket.created``; a sequence takes it from
+    its expanded events) says whether this review creates the ticket (a creation signs the key and the title, so the
+    signed id is only a technical detail there). For a request on an existing ticket the qualifier is not in the title
+    but the dashboard keeps "key per host · signed id …tail" visible in the main view (``ticket.new`` false)."""
     head, ticket = content.get("headline"), content.get("ticket")
     if not isinstance(head, str):
         return content
     if isinstance(ticket, Mapping):
         head = head.replace(f" (key per host; signed id …{ticket.get('uid_tail')})", "")
-    new = head.startswith("Start task ")  # a quick task creates its ticket in the same review
     for pattern in _NEW_TICKET:
         m = pattern.fullmatch(head)
         if m:
             head = f"New ticket {m.group(1)}: {m.group(2)}"
-            new = True
             break
-    if isinstance(ticket, dict):
-        content["ticket"] = {**ticket, "new": new}
     if head != content["headline"]:
         content["title"] = head
     return content

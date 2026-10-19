@@ -61,6 +61,7 @@ def test_the_review_shows_the_task_the_plan_and_what_is_approved(human, tmp_path
     content = signcontent.build(first, verified=True)
     assert content["headline"].startswith("Start task DEMO-") and "Fix the typo" in content["headline"]
     assert f"(key per host; signed id …{content['ticket']['uid_tail']})" in content["headline"]
+    assert content["ticket"]["new"] is True
     assert sorted(s["id"] for s in content["sections"]) == ["plan", "requirements"]
     plan = next(s for s in content["sections"] if s["id"] == "plan")["text"]
     assert "1. The typo is gone" in plan and "Checked by: test -z" in plan

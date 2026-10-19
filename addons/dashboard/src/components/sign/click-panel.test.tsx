@@ -55,9 +55,13 @@ describe('the sign panel shows only the signer’s View', () => {
     mount(answer({ artifacts: 'unseen', checks: [{ repo: 'code', clean: true, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
     const panel = screen.getByTestId('click-panel')
     expect(screen.queryByRole('button', { name: 'One-click' })).toBeNull()
-    expect(panel.querySelectorAll('details')).toHaveLength(1) // U3: ONE Technical details
-    expect(panel.querySelector('details')).not.toHaveAttribute('open')
-    expect(screen.getByTestId('click-custody')).toHaveAttribute('title', CLICK_RISK) // the risk sentence, on the custody line
+    expect(screen.getAllByText('Technical details')).toHaveLength(1) // U3: ONE Technical details
+    expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+    // the risk sentence is reachable without a pointer: a focusable summary under the custody line
+    const more = screen.getByTestId('click-risk-more')
+    expect(more.querySelector('summary')).toHaveTextContent('What this means')
+    expect(more).toHaveTextContent(CLICK_RISK)
+    expect(panel.querySelectorAll('details')).toHaveLength(2) // Technical details + this one-line toggle
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
     expect(panel).toHaveTextContent('approve')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('id a94c935c')

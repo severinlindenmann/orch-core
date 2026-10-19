@@ -2790,13 +2790,13 @@ member, policy or addon operations.
 - **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
   shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
   prepares a separate hand-off request.
-- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (a badge with the line as its tooltip, B6); the checks with
+- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (the one-click custody line with a "What this means" toggle that holds the risk sentence); the checks with
   their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
   as "what you sign".
 - **Workspace card**: when `status` reports `custody:"convenience"`, the card shows "Convenience signing: agents running
   as you, or anything that takes over this dashboard, could sign." **Amended 16 Oct 2026 (owner decision F, "As built
   in B6"):** the line is required at enable time and in Settings, and is *not* repeated in every sign panel: a panel
-  shows a "One-click" badge whose tooltip carries the line. The View's `risk` field stays (same text, in `view_digest`);
+  shows its custody line ("One click on this computer, no fingerprint/passphrase") with a focusable "What this means" toggle that shows the line (U3, 19 Oct 2026; the earlier badge and tooltip were not reachable by touch or keyboard). The View's `risk` field stays (same text, in `view_digest`);
   the dashboard may render it as a badge with a tooltip instead of a banner.
 - **HTTP.** Bind only the intended loopback listener and validate the exact Host on every route. Require the bearer on
   every authenticated API and never accept it through cookies or URLs; keep it in tab memory or `sessionStorage`, never

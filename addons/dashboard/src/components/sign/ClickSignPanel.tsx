@@ -1,6 +1,6 @@
 import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
-// own preview, the host's fingerprint or a cached ticket. The risk notice is the custody line's tooltip. `lines` are core's terminal
+// own preview, the host's fingerprint or a cached ticket. The risk notice is one tap away under the custody line (a details toggle). `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // A word op (grant, policy, members) is confirmed by holding Sign down for HOLD_MS, not by typing the word: the word is
 // not a secret (the signer only checks it matches) and the dashboard is trusted with confirmation (section 0.8.6
@@ -129,9 +129,12 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} />}
-      <p data-testid="click-custody" role="note" title={view.auth === 'convenience' ? CLICK_RISK : undefined} className="text-[13px] text-warning">
-        {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
-      </p>
+      <div className="space-y-1">
+        <p data-testid="click-custody" role="note" className="text-[13px] text-warning">
+          {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
+        </p>
+        {view.auth === 'convenience' && <details data-testid="click-risk-more" className="text-[12px] text-text-muted"><summary className="w-fit cursor-pointer">What this means</summary><p className="mt-1 text-text">{CLICK_RISK}</p></details>}
+      </div>
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
       {!view.content && <SignDetails>{technical}</SignDetails>}

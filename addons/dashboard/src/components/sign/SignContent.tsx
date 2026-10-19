@@ -8,6 +8,8 @@ export function SignDetails({ children }: { children: ReactNode }) {
   return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
 }
 /** The first letter as a capital: a field name as a label ("type" -> "Type"). Display only; the signed text is untouched. */
+/** The ticket types as words; any other value is shown exactly as signed. */
+const TYPE_WORDS: Record<string, string> = { feature: 'Feature', bug: 'Bug', chore: 'Chore', spike: 'Spike', epic: 'Epic' }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 // Keep host-flattened ⏎ markers verbatim. Literal newlines (older hosts and block
 // text) stay inside the value, with a visible mark and indentation on each line.
@@ -100,14 +102,14 @@ export function useWorkspaceMembers(ws: string | undefined): Member[] {
 /**
  * Name and id as separate isolates, so neither can reorder or hide the other. `plain` (the main view): a name that passed
  * every rule above is shown alone; the id it stands for is one line away in the Technical details (`name (id) = full id`).
- * A person without a showable name always keeps the id and the reason. Next to a name the main view always keeps the LAST
- * hex digits of the id, muted ("Severin ·a5be"): two people may share a display name, so who is meant stays visible
- * without opening the details.
+ * A person without a showable name always keeps the id and the reason. Next to a name the main view always keeps the same
+ * 12-hex short id the details use, muted ("Severin · p_181d953f12ab…"): names can look alike, so who is meant stays
+ * visible without opening the details.
  */
 function Person({ parts, plain = false }: { parts: PersonParts; plain?: boolean }) {
   const id = <bdi dir="ltr" className="whitespace-pre-wrap break-all font-mono text-[12px] text-text [unicode-bidi:isolate]">{parts.short}</bdi>
   if (parts.name !== null) return plain
-    ? <><Inline>{parts.name}</Inline> <bdi dir="ltr" data-testid="person-tail" title="The end of this person's id" className="font-mono text-[11px] text-text-muted [unicode-bidi:isolate]">·{(parts.full ?? parts.id).slice(-4)}</bdi></>
+    ? <><Inline>{parts.name}</Inline> <bdi dir="ltr" data-testid="person-tail" title="This person's id (the same short id the Technical details use)" className="font-mono text-[11px] text-text-muted [unicode-bidi:isolate]">· {parts.short}</bdi></>
     : <><Raw>{parts.name}</Raw> ({id})</>
   return <>{id} ({parts.note})</>
 }
@@ -131,7 +133,7 @@ export function SignContent({ content, ws, technical }: { content: Content; ws?:
     {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span></li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
-    {!!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? cap(f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+    {!!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
     <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
     {(content.ticket || ids.length > 0 || technical) && <details className="space-y-3 text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details</summary>

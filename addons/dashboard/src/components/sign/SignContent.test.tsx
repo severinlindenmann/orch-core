@@ -101,9 +101,9 @@ const details = () => screen.getByText(/Technical details/).closest('details')!
 
 it('shows a known member as name WITH short id; the full id and the key line only under Technical details', () => {
   withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: B }])
-  expect(row('owner')).toHaveTextContent('Owner: — → Severin ·abcd')
+  expect(row('owner')).toHaveTextContent('Owner: — → Severin · p_181d953f12ab…')
   expect(row('owner')).not.toHaveTextContent(SEV)
-  expect(row('reviewer')).toHaveTextContent('Reviewer: Mara ·77aa → p_bbbb11112222… (unknown person)')
+  expect(row('reviewer')).toHaveTextContent('Reviewer: Mara · p_aaaa11112222… → p_bbbb11112222… (unknown person)')
   expect(details()).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
   expect(details()).toHaveTextContent('key per host, not proven')
 })
@@ -125,7 +125,7 @@ const members: M[] = [
   { person: 'p_8888111122223333444455556666777b', name: 'א\u202Eבג' }, // right-to-left name
 ]
 const table: [string, string, string][] = [
-  ['known and unique', SEV, 'Severin ·abcd'],
+  ['known and unique', SEV, 'Severin · p_181d953f12ab…'],
   ['confusable duplicate (zero-width, fullwidth, spaces)', A, 'p_aaaa11112222… (name shared by 2 members)'],
   ['the other one of the pair', B, 'p_bbbb11112222… (name shared by 2 members)'],
   ['a name with "(p_…)" in it', 'p_cccc1111222233334444555566667777', 'p_cccc11112222… (name not shown)'],
@@ -162,9 +162,9 @@ it('a member of another workspace is an unknown person here', () => {
 
 it('a right-to-left name cannot reorder the id: name and id are separate isolates and the id is left-to-right', () => {
   withMembers([{ person: SEV, name: 'אבג' }], [{ field: 'owner', before: null, after: SEV }])
-  // the row shows the name alone (in its own isolate); the id it stands for is beside it under Technical details, left-to-right
+  // the row shows the name in its own isolate and the short id in another; the details hold the full id, left-to-right
   expect(row('owner').querySelectorAll('bdi').length).toBeGreaterThanOrEqual(2)
-  expect(row('owner')).not.toHaveTextContent('p_181d953f12ab')
+  expect(within(row('owner') as HTMLElement).getByTestId('person-tail')).toHaveAttribute('dir', 'ltr') // the id sits in its own left-to-right isolate
   const id = within(details()).getByText('p_181d953f12ab…')
   expect(id).toHaveAttribute('dir', 'ltr')
   expect(id.tagName).toBe('BDI')
@@ -243,10 +243,10 @@ it('shows hidden characters in a summary line and keeps prose notes out of monos
   expect(screen.getByText('Running agents will stop.')).not.toHaveClass('font-mono')
 })
 
-it('U3: a named person keeps the last hex digits of the id in the main view; two people with different names are told apart', () => {
+it('U3: a named person keeps the 12-hex short id in the main view; two people with different names are told apart', () => {
   const X = 'p_aaaa1111222233334444555566667777', Y = 'p_bbbb1111222233334444555566667788'
   withMembers([{ person: X, name: 'Sam' }, { person: Y, name: 'Sam Two' }], [{ field: 'owner', before: X, after: Y }])
-  expect(row('owner')).toHaveTextContent('Owner: Sam ·7777 → Sam Two ·7788')
+  expect(row('owner')).toHaveTextContent('Owner: Sam · p_aaaa11112222… → Sam Two · p_bbbb11112222…')
   expect(within(row('owner') as HTMLElement).getAllByTestId('person-tail')).toHaveLength(2)
   expect(row('owner')).not.toHaveTextContent(X) // never the whole id in the row
 })
@@ -260,4 +260,10 @@ it('U3: a request on an existing ticket keeps "key per host" and the signed id i
   render(<SignContent content={{ headline: 'Create', ticket: { ...t, new: true }, notes: ['x'] }} />)
   expect(screen.queryByTestId('sign-ticket')).toBeNull()
   expect(screen.getByText('WJCC73ZJ').closest('details')).toBeInstanceOf(HTMLDetailsElement) // under Technical details
+})
+
+it('U3: the type is shown by a word map; an unmapped value stays exactly as signed', () => {
+  render(<SignContent content={{ headline: 'x', fields_changed: [{ field: 'type', before: null, after: 'feature' }, { field: 'type', before: null, after: 'weird-kind' }] }} />)
+  expect(screen.getByText('Feature')).toBeVisible()
+  expect(screen.getByText('weird-kind')).toBeVisible()
 })

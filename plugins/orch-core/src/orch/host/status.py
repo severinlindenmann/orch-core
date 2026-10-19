@@ -203,6 +203,15 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
                 "fix": fix,
             }
         )
+    if (service or {}).get("disabled_in_background"):
+        from .enable import background_off_message
+
+        problems.append(
+            {
+                "what": background_off_message(service.get("background_name") or "orch-host"),
+                "fix": "turn it on in System Settings; orch cannot do that for you",
+            }
+        )
     differs = (service or {}).get("differs") or []
     if {"state", "run"} & set(differs):
         serves = service.get("serves") or {}

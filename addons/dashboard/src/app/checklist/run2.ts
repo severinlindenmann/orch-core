@@ -1,10 +1,10 @@
-// The tester's checklist of e2e RUN 2 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
+// The tester's checklist of e2e RUN 3 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
 // Step ids match the sections and numbers of that file (A1, B1.3, C5 ...); the server accepts ids of the form
 // [A-Z]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
 
 import { ADDON_SECTIONS } from './addons'
 
-export const RUN_ID = 'run2'
+export const RUN_ID = 'run3'
 
 export interface ChecklistStep {
   id: string
@@ -34,8 +34,8 @@ export interface ChecklistSection {
   steps: ChecklistStep[]
 }
 
-export const RUN2_TITLE = 'Test checklist: end-to-end run 2'
-export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 18 Oct 2026: core A to F, add-ons H to R, the last run before yours)'
+export const RUN2_TITLE = 'Test checklist: end-to-end run 3'
+export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 19 Oct 2026: core A to F, add-ons H to R)'
 
 export const RUN2_INTRO = [
   'You test on this Mac (Battlepad, user severin) with a real install from develop, in NEW empty test folders. Never your real projects.',
@@ -73,7 +73,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'A1',
         title: 'Install with the line from the lead',
-        text: 'Use the install line the lead sent you (it names the exact version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
+        text: 'Use the install line the lead sent you (it names the exact version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s. If orch is already installed (the run 2 version), install over it, then run "orch host enable" and "orch dashboard restart" (the dashboard restart is needed once when coming from the run 2 version).',
         see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
@@ -93,13 +93,13 @@ const CORE_SECTIONS: ChecklistSection[] = [
     where: 'Terminal + browser',
     intro:
       'Make two folders first, and pick ONE existing project folder (a copy of a small repo; call it P). Setup refuses your home folder, "/", and projects that already have their own config.json or events/. Try "cd ~ && orch setup" once: the refusal must be clear and name the next step.',
-    introCommands: ['mkdir ~/orch-run2-a ~/orch-run2-b'],
+    introCommands: ['mkdir ~/orch-run3-a ~/orch-run3-b'],
     steps: [
       {
         id: 'B1.1',
         group: 'B1  Folder A, terminal approval, agents 3 days',
         title: 'Start setup in folder A',
-        commands: ['cd ~/orch-run2-a && orch setup'],
+        commands: ['cd ~/orch-run3-a && orch setup'],
         see: 'In Terminal: "orch setup: <folder> (new workspace)" and a copyable single-use link (valid 5 minutes). The browser opens by itself; if it does not, copy the link into your browser. The terminal stays running.',
       },
       {
@@ -109,7 +109,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Welcome: your folder is named; everything stays on this computer.',
           'You: name (e.g. Severin) and short name RA (the ticket prefix, e.g. RA-0001). Continue stays grey until both are filled.',
-          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Turn on all the others.',
+          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Start agents, Terminals and Worktrees are already ticked (leave them on), and agent access of 3 days is already selected; the others are your choice. Check that the review at the end lists them.',
           'How do you want to approve things: choose Terminal. Then "Let agents work for you for": choose 3 days. Runner access: on. (Warning: a "relay and phone" option should NOT appear, it is a later add-on. If you see it, tell the lead.)',
           'Secret words: the passphrase is shown once, plus 24 numbered recovery words. Write them down on paper. Tick "I saved ...". Type the 3 words asked and press Confirm. Try one wrong word first: it says how many tries are left (5 in all; do not use them all). A wrong word clears only that field. The page never asks for the passphrase itself.',
           'Review: it lists what will be created (workspace, short name, person, folder) and what you approve (add-ons, "Agents may work for 3 days", runner access). Plain sentences first, details in a fold-out.',
@@ -133,13 +133,13 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'B1.5',
         title: 'Run setup again in folder A',
-        commands: ['cd ~/orch-run2-a && orch setup'],
+        commands: ['cd ~/orch-run3-a && orch setup'],
         see: '"Setup is complete ... Nothing is missing" (or "Finish setup" with only the missing steps listed). No secret-words screen. If it offers to redo things already done: report.',
       },
       {
         id: 'B1.6',
         title: 'Refresh test in folder B',
-        commands: ['cd ~/orch-run2-b && orch setup'],
+        commands: ['cd ~/orch-run3-b && orch setup'],
         text: 'Go to the Review step, then refresh the browser page.',
         see: 'The page says the session ended, and the Terminal says the page was closed or reloaded. Press Enter in the Terminal for a fresh link. You get NEW secret words (the old ones are void). If the Terminal stays silent: report (non-blocking).',
       },
@@ -147,7 +147,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'B1.7',
         title: 'Ctrl-C test',
         text: 'In B, get to the Secret words screen, then press Ctrl-C in the Terminal.',
-        commands: ['ls -a ~/orch-run2-b'],
+        commands: ['ls -a ~/orch-run3-b'],
         see: 'The Terminal says cancelled, the browser says "Setup paused". The ls shows no orch files.',
         points: ['Then run "orch setup" again in B and finish it as in B1.2 to B1.4 (short name RB, Terminal approval, agents 1 day). You now have a second workspace.'],
       },
@@ -168,7 +168,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'One-click approval in folder C',
         optional: true,
         text: 'Skip it if you prefer not to use the macOS keychain. One-click stores its key in the macOS keychain; macOS may ask for permission.',
-        commands: ['mkdir ~/orch-run2-c && cd ~/orch-run2-c && orch setup'],
+        commands: ['mkdir ~/orch-run3-c && cd ~/orch-run3-c && orch setup'],
         points: ['Short name RC. At the approval step choose "One click on this computer". Agents 1 day, runner on.'],
         see: 'The passphrase is NOT shown on the secrets screen, only the recovery code. The review mentions one-click signing and shows a risk notice ONCE (the only full time you see it). Finish as in B1.3 and B1.4.',
         warn: 'If the page says one-click is unavailable ("dev_host"), tell the lead.',
@@ -248,7 +248,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
   {
     id: 'D',
     title: 'Core CLI',
-    where: 'Terminal, in ~/orch-run2-a; ticket prefix RA; use the passphrase from setup',
+    where: 'Terminal, in ~/orch-run3-a; ticket prefix RA; use the passphrase from setup',
     steps: [
       {
         id: 'D1',
@@ -292,8 +292,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
           'orch section set verification --ref RA-0003 -m "Run it and look at the result"',
           'orch task add "Do the thing" --proves AC1 --ref RA-0003',
           'orch task start T1',
-          'echo "it works" > ~/orch-run2-a/check.log',
-          'orch artifact add ~/orch-run2-a/check.log --kind log --ac AC1 --ref RA-0003',
+          'echo "it works" > ~/orch-run3-a/check.log',
+          'orch artifact add ~/orch-run3-a/check.log --kind log --ac AC1 --ref RA-0003',
           'orch task done T1',
           'env -u ORCH_GRANT -u ORCH_SESSION orch approve plan --ref RA-0003',
           'orch submit RA-0003',
@@ -345,7 +345,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'E1',
         title: 'Make a repo to work in',
         commands: [
-          'mkdir ~/orch-run2-repo && cd ~/orch-run2-repo && git init && git commit --allow-empty -m init',
+          'mkdir ~/orch-run3-repo && cd ~/orch-run3-repo && git init && git commit --allow-empty -m init',
           'orch show RA-0001 --full',
           `orch set RA-0001 links='{"repos":["repo"],"branches":{"repo":"feat/x"}}'`,
         ],
@@ -361,8 +361,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'E3',
         title: 'Worktree',
-        commands: ['ls ~/orch-run2-repo.worktrees'],
-        see: 'A folder ~/orch-run2-repo.worktrees/<WS8>-RA-0001 appears. Without it the dashboard says "shared working copy". Report which.',
+        commands: ['ls ~/orch-run3-repo.worktrees'],
+        see: 'A folder ~/orch-run3-repo.worktrees/<WS8>-RA-0001 appears. Without it the dashboard says "shared working copy". Report which.',
       },
       {
         id: 'E4',
@@ -433,7 +433,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'F5',
         title: 'Answer a question on the phone',
-        text: 'Window 2, cd ~/orch-run2-a, grant for one hour, export ORCH_GRANT and ORCH_SESSION (as D2).',
+        text: 'Window 2, cd ~/orch-run3-a, grant for one hour, export ORCH_GRANT and ORCH_SESSION (as D2).',
         commands: ['orch grant --hours 1 --label phone', 'orch new "Phone test ticket"', 'orch ask "Pick one" --ref RA-000N --options yes,no --rec yes', 'orch show RA-000N'],
         see: 'Phone: open the question, choose, "Sign and send"; Face ID. Mac: "orch show RA-000N" shows question.answered.',
       },

@@ -61,6 +61,12 @@ export function sequencePeople(p: PeopleValue, creator?: string): { owner?: stri
   return Object.keys(out).length ? out : undefined
 }
 
+/** The access would be one signature too many, so the ticket alone can be signed but not with the access (only the limit causes the refusal). */
+export function accessTooMany(d: Draft, creator: string | undefined, hours: number): boolean {
+  const withAccess = handoffNewTicket(d, creator, hours)
+  return 'problem' in withAccess && !!withAccess.tooMany && !('problem' in handoffNewTicket(d, creator, null))
+}
+
 /**
  * `agentHours`: the person has no usable agent access, so it is signed as the LAST step of the same confirmation (one
  * more signature against the limit). `tooMany` marks a refusal that only the limit causes, so the form can fall back to
@@ -346,8 +352,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
   const tooMany = useMemo(() => {
     if (!plan.available || !plan.needsGrant) return false
-    const withAccess = handoffNewTicket(draft, me.person, plan.hours)
-    return 'problem' in withAccess && !!withAccess.tooMany && !('problem' in handoffNewTicket(draft, me.person, null))
+    return accessTooMany(draft, me.person, plan.hours)
   }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
   const startPossible = plan.available && !tooMany
   const startFirst = startPossible && plan.pref.start
@@ -374,10 +379,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     if (handoffOn) {
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
-      const startNow = wantStart && startPossible && !another
-      if (startPossible) plan.setPref({ start: wantStart })
       // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
       const fresh = plan.grantNow()
+      // F-712-B: so is the step limit (it depends on whether the access has to be signed too): recompute it with the fresh grant,
+      // so a grant that lapsed since the form was drawn falls back to "Only create" and not to a form error.
+      const startPossibleNow = plan.available && !(!fresh && accessTooMany(full, me.person, plan.hours))
+      const startNow = wantStart && startPossibleNow && !another
+      if (startPossibleNow) plan.setPref({ start: wantStart })
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)

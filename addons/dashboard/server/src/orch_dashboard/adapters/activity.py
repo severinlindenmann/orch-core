@@ -112,20 +112,37 @@ def repo_sentence(repos) -> str | None:
     return "; ".join(parts) or None
 
 
+def manual_acceptance(item: dict) -> dict | None:
+    """`{kind: accepted|withdrawn, ac}` for an artifact event that a PERSON signed with the label of a manual acceptance
+    (or of its withdrawal), else None. The only source of that wording: an agent's file, or a file of another kind with
+    the same words in its name or summary, is never shown as one."""
+    kind, data = item.get("type"), item.get("data") or {}
+    if (
+        kind not in ("artifact.added", "artifact.replaced")
+        or data.get("kind") != "feedback"
+        or (item.get("actor") or {}).get("kind") != "person"
+    ):
+        return None
+    label = data.get("label")
+    accepted = re.fullmatch(r"accepted (AC[1-9][0-9]*) [0-9a-f]{16}", label) if isinstance(label, str) else None
+    if accepted and data.get("ac") == accepted[1]:
+        return {"kind": "accepted", "ac": accepted[1]}
+    withdrawn = re.fullmatch(r"withdrawn (AC[1-9][0-9]*)", label) if isinstance(label, str) else None
+    if kind == "artifact.replaced" and "ac" not in data and withdrawn:
+        return {"kind": "withdrawn", "ac": withdrawn[1]}
+    return None
+
+
 def sentence(item: dict, name_of) -> str:
     """What happened, in words, after the actor's name. Unknown types and unsafe fields get a general sentence."""
     kind, data = item["type"], item.get("data") or {}
-    if (
-        kind in ("artifact.added", "artifact.replaced")
-        and data.get("kind") == "feedback"
-        and item.get("actor", {}).get("kind") == "person"
-    ):
-        accepted = re.fullmatch(r"accepted (AC[1-9][0-9]*) [0-9a-f]{16}", data.get("label") or "")
-        if accepted and data.get("ac") == accepted[1]:
-            return f"accepted {accepted[1]} manually"
-        withdrawn = re.fullmatch(r"withdrawn (AC[1-9][0-9]*)", data.get("label") or "")
-        if kind == "artifact.replaced" and "ac" not in data and withdrawn:
-            return f"withdrew the manual acceptance of {withdrawn[1]}"
+    manual = manual_acceptance(item)
+    if manual is not None:
+        return (
+            f"accepted {manual['ac']} manually"
+            if manual["kind"] == "accepted"
+            else f"withdrew the manual acceptance of {manual['ac']}"
+        )
     if kind in ("status.changed", "ticket.moved"):
         before, after = label(data.get("from")), label(data.get("to"))
         return f"moved the ticket from {before} to {after}" if before and after else "moved the ticket"

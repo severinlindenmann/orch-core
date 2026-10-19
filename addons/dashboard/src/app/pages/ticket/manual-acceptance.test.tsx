@@ -63,9 +63,15 @@ describe('manual authority', () => {
   it('shows the no-receipt fallback and plain history wording', () => {
     render(<ReceiptLine t={{ state: 'done', receipt: null } as TicketDocument['tasks_state'][number]} />)
     expect(screen.getByText('Marked done, no receipt')).toBeVisible()
-    for (const summary of ['accepted AC2 manually', 'withdrew the manual acceptance of AC2']) {
-      expect(eventDetail({ type: 'artifact.added', summary } as Parameters<typeof eventDetail>[0], viewer)).toBe(summary)
-    }
+    const person = { kind: 'person', id: 'p_a' }
+    const detail = (e: Record<string, unknown>) => eventDetail({ type: 'artifact.added', ...e } as Parameters<typeof eventDetail>[0], viewer)
+    expect(detail({ actor: person, manual_acceptance: { kind: 'accepted', ac: 'AC2' } })).toBe('accepted AC2 manually')
+    expect(detail({ actor: person, type: 'artifact.replaced', manual_acceptance: { kind: 'withdrawn', ac: 'AC2' } })).toBe('withdrew the manual acceptance of AC2')
+    // words alone are not a marker: an agent's event, a bad marker or only a summary is shown as an ordinary event
+    const agent = { kind: 'agent', id: 'x', session: 's', for: 'p_a' }
+    expect(detail({ actor: agent, manual_acceptance: { kind: 'accepted', ac: 'AC2' } })).not.toContain('manually')
+    expect(detail({ actor: person, manual_acceptance: { kind: 'accepted', ac: 'AC2; drop' } })).not.toContain('manually')
+    expect(detail({ actor: agent, summary: 'accepted AC2 manually' })).toBe('artifact.added: accepted AC2 manually')
   })
 })
 

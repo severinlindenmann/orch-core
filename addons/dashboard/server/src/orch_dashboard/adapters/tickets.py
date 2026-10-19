@@ -202,12 +202,11 @@ def event(e: dict, ident: str | None = None) -> dict:
         "actor": ui_actor(e["actor"]),
         "summary": e["summary"],
     }
-    if e["type"] in ("artifact.added", "artifact.replaced"):
-        from .activity import sentence
+    from .activity import manual_acceptance
 
-        words = sentence(e, lambda _: "someone")
-        if words.startswith(("accepted ", "withdrew the manual acceptance of ")):
-            out["summary"] = words
+    out.pop("manual_acceptance", None)  # only the line below sets it, never a payload field of the same name
+    if (manual := manual_acceptance(e)) is not None:  # an explicit marker, never a guess from the summary text
+        out["manual_acceptance"] = manual
     if e["type"] == "verdict.given" and "outcome" in data:
         out["result"] = data["outcome"]  # the mock's name for it
     cut = sorted(k[: -len("_cut")] for k, v in data.items() if k.endswith("_cut") and v is True)

@@ -16,6 +16,7 @@ This process remembers nothing that the invariant depends on.
 
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -1038,6 +1039,43 @@ def host_files(action: Action) -> dict | None:
     return None
 
 
+def _acceptance_event_ok(ev: dict, person: str | None, payload: set[str]) -> bool:
+    """A prepared manual-acceptance event: only the envelope and the keys of its op, from a person (the caller when
+    known). The signer checks the same again; this refuses a host that prepared more or other than what was asked."""
+    actor = ev.get("actor")
+    return (
+        set(ev) <= set(adapters.handoff.ENVELOPE) | payload
+        and isinstance(actor, dict)
+        and actor.get("kind") == "person"
+        and (person is None or actor.get("id") == person)
+    )
+
+
+def expected_material(action: Action):
+    """What the host's prepared MATERIAL must say, for the actions whose words are not in the events: the statement
+    file of a manual acceptance (its note or reason is only there). `None` for every other action."""
+    from orch.host import acceptance
+
+    match action:
+        case AcceptCriterion() | WithdrawAcceptance():
+            withdraw = isinstance(action, WithdrawAcceptance)
+
+            def check(material: dict, events: list) -> bool:
+                statement = material.get("statement")
+                parsed = acceptance.parse(statement) if isinstance(statement, str) else None
+                return (
+                    parsed is not None
+                    and len(events) == 1
+                    and parsed["kind"] == ("withdraw" if withdraw else "accept")
+                    and parsed["ac"] == action.ac
+                    and parsed["reason" if withdraw else "note"] == (action.reason if withdraw else action.note)
+                    and acceptance.matches(events[0], statement)
+                )
+
+            return check
+    return None
+
+
 def expected(action: Action, person: str | None = None):
     """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
     anything else (another type, another person, other values) is refused before the person sees it. `person` is the
@@ -1075,14 +1113,18 @@ def expected(action: Action, person: str | None = None):
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
             return lambda ev: len(ev) == 1 and ev[0].get("type") in ("ticket.updated", "people.changed")
         case AcceptCriterion():
-            return lambda ev: one(ev, "artifact.added", kind="feedback", ac=action.ac)
+            return lambda ev: (
+                one(ev, "artifact.added", kind="feedback", ac=action.ac)
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "ac", "label"})
+                and re.fullmatch(rf"accepted {action.ac} [0-9a-f]{{16}}", str(ev[0].get("label"))) is not None
+            )
         case WithdrawAcceptance():
-            return (
-                lambda ev: one(ev, "artifact.replaced", kind="feedback", label=f"withdrawn {action.ac}")
-                and "ac" not in ev[0]
+            return lambda ev: (
+                one(ev, "artifact.replaced", kind="feedback", label=f"withdrawn {action.ac}")
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "label", "replaces"})
             )
         case MarkTaskDone():
-            return lambda ev: one(ev, "task.done", task=action.task) and "receipt" not in ev[0]
+            return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1563,6 +1605,7 @@ def register(app: FastAPI, gateway: Gateway):
                 expect_op=op,
                 expect_key=getattr(body, "key", None),
                 expect_events=expected(body, planned.person),
+                expect_material=expected_material(body),
             )
         except BaseException:
             handoffs.release(token)

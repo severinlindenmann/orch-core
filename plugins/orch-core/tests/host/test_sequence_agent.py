@@ -146,9 +146,8 @@ def test_i2_a_grant_asked_for_other_hours_than_the_reviewed_ones_is_never_signed
         return real(op, args, meta)
 
     rig.port.prepare = prepare
-    with pytest.raises(Aborted) as got:
+    with pytest.raises(Aborted):
         rig.driver().run(first)
-    print("RAISED", type(got.value), got.value)
     assert "grant.issued" not in [e["type"] for _, ev, _ in rig.submitted for e in ev]
 
 
@@ -161,8 +160,7 @@ def test_i3_the_confirmation_is_the_typed_word_grant_and_needs_dashboard_executi
     assert sequence.confirm_kind(plain) == "click" and not sequence.has_grant(plain)
     # without dashboard execution on this machine: the terminal's
     click.signer._execution = lambda entry: False
-    with pytest.raises(Exception, match="terminal|click"):
-        click_prepare(click, intent_of(agent=AGENT))
+    refused(lambda: click_prepare(click, intent_of(agent=AGENT)), "human.click_refused", "terminal_only")
     click.signer._execution = lambda entry: True
     p = click_prepare(click, intent_of(agent=AGENT))
     v = click.view(p["request_id"])
@@ -206,4 +204,3 @@ def test_i6_the_grant_is_exactly_what_start_agent_uses_today_a_workable_runner_g
     ev = next(e for _, evs, _ in rig.submitted for e in evs if e["type"] == "grant.issued")
     assert (ev["scope"], ev["verbs"], ev["label"], ev["hours"]) == ("workable", "agent", "runner", 3)
     assert out["landed"] == 5
-    del ev

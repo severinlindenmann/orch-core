@@ -1091,3 +1091,19 @@ def test_an_edit_refuses_a_bad_intent(ready, p1, change):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, _edit_body(p1, **change))
     assert res.status_code in (400, 409, 422), res.text
+
+
+def test_another_persons_burst_of_prepares_cannot_evict_my_intent():
+    """F-712-A: the sequence-intent display aid is kept per person, so a burst by someone else leaves mine alone."""
+    from orch_dashboard.handoff import INTENTS_PER_PERSON, Handoffs
+
+    h = Handoffs()
+    h.note_intent("alice", "r_mine", {"name": "mine"})
+    for i in range(INTENTS_PER_PERSON * 3):
+        h.note_intent("bob", f"r_{i}", {"n": i})
+    assert h.intent_of("alice", "r_mine") == {"name": "mine"}
+    assert h.intent_of("bob", "r_0") is None and h.intent_of("bob", f"r_{INTENTS_PER_PERSON * 3 - 1}") is not None
+    assert h.intent_of("bob", "r_mine") is None  # and a request id is never read across persons
+    for i in range(INTENTS_PER_PERSON):  # my own burst still evicts only my own oldest
+        h.note_intent("alice", f"a_{i}", {"n": i})
+    assert h.intent_of("alice", "r_mine") is None and h.intent_of("alice", "a_0") is not None

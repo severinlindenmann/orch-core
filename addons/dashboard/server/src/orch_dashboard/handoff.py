@@ -1195,6 +1195,10 @@ def read_done(human, ws: str, rid: str) -> HostError:
     return done_error(prepared, row)
 
 
+#: how many sequence intents (a display aid) are kept per person
+INTENTS_PER_PERSON = 64
+
+
 class Handoffs:
     """What this process remembers. **None of it is what holds "one intent, one request"**: the host's idem record does
     (`intent.py`). This is UI convenience and a quota:
@@ -1210,8 +1214,9 @@ class Handoffs:
 
     def __init__(self, clock=time.monotonic):
         #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
-        #: signer drives in the person's terminal). Not a guard of anything.
-        self.intents: dict[str, dict] = {}
+        #: signer drives in the person's terminal). Not a guard of anything. Kept per person (INTENTS_PER_PERSON each), so
+        #: another person's burst of prepares cannot evict mine.
+        self.intents: dict[str, dict[str, dict]] = {}
         self.clock = clock
         self.lock = threading.Lock()
         self.owned: dict[tuple[str, str], dict[str, float]] = {}  # (person, workspace) -> request id -> deadline
@@ -1223,6 +1228,18 @@ class Handoffs:
         self.unknown: set[str] = set()  # request ids with a sign outcome nobody knows yet
 
     # -- ownership: per person and workspace -----------------------------------------------------------
+    def note_intent(self, person: str, request_id: str, intent: dict) -> None:
+        with self.lock:
+            mine = self.intents.setdefault(person, {})
+            mine.pop(request_id, None)
+            mine[request_id] = intent
+            while len(mine) > INTENTS_PER_PERSON:
+                mine.pop(next(iter(mine)))
+
+    def intent_of(self, person: str, request_id: str) -> dict | None:
+        with self.lock:
+            return self.intents.get(person, {}).get(request_id)
+
     def own(self, person: str, ws: str, request_id: str, ttl: float) -> None:
         with self.lock:
             mine = self.owned.setdefault((person, ws), {})
@@ -1432,9 +1449,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise read_done(human, ws, response["id"])
         handoffs.own(planned.person, ws, response["id"], TTL)
         if planned.sequence:
-            handoffs.intents[response["id"]] = planned.sequence["intent"]
-            while len(handoffs.intents) > 64:
-                handoffs.intents.pop(next(iter(handoffs.intents)))
+            handoffs.note_intent(planned.person, response["id"], planned.sequence["intent"])
         if response["state"] in ("prepared", "bound"):
             handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
         else:
@@ -1455,7 +1470,7 @@ def register(app: FastAPI, gateway: Gateway):
         if rows[0]["state"] not in ("prepared", "bound"):
             handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
         out = adapters.handoff.state(rows[0])
-        intent = handoffs.intents.get(request_id)
+        intent = handoffs.intent_of(app.state.person_of(ws), request_id)
         if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
             out["progress"] = sequence_progress(
                 gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")

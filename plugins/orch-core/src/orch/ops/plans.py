@@ -294,6 +294,45 @@ def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     return Out({"task": tid})
 
 
+def task_edit(c: Call, p: Projection, args: dict[str, Any]) -> Out:
+    """``task.edit``: the text, the verify command and the ``proves`` list of one task. Changing the verify command or
+    the criteria of a task that is done is refused: its receipt would then stand for another command or criterion
+    (reopen the task first). The text of a done task may change."""
+    tid = args["task"].rpartition("/")[2]
+    t = _task(p, tid)
+    tasks = [dict(thaw(x)) for x in p.last_view.fields["tasks"]]
+    old = next(x for x in tasks if x["id"] == tid)
+    new = dict(old)
+    if args.get("text") is not None:
+        new["text"] = c.text(args["text"], what="task")
+    if args.get("verify") is not None:
+        cmd = c.text(args["verify"], one_line=True, what="verify command") if args["verify"] != "" else None
+        new["verify"] = {"cmd": cmd} if cmd else None
+    if args.get("proves") is not None:
+        proves = sorted(set(args["proves"]), key=lambda x: int(x[2:]))
+        known = {a["id"] for a in p.last_view.fields["acceptance"]}
+        for ac in proves:
+            if ac not in known:
+                raise OrchError("not_found", f"{p.view.key} has no criterion {ac}", hint="orch ac add TEXT")
+        new["proves"] = proves
+    if new == old:
+        raise OrchError("invalid.input", f"{tid} would not change")
+    if t.state == "done" and (new.get("verify") != old.get("verify") or new.get("proves") != old.get("proves")):
+        raise OrchError(
+            "transition.refused",
+            f"{tid} is done: its verify command and criteria cannot change, because its receipt stands for them; reopen it first",
+            hint=f"orch task reopen {tid}",
+        )
+    p.add(
+        {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.tasks": p.base("ticket.tasks")},
+            "set": {"ticket.tasks": [new if x["id"] == tid else x for x in tasks]},
+        }
+    )
+    return Out({"task": tid})
+
+
 # ----------------------------------------------------------------------------------------------------- tasks
 
 
@@ -378,6 +417,7 @@ def batch_ops() -> dict[str, tuple[str, Builder]]:
         "ac.add": ("", ac_add),
         "ac.edit": ("", ac_edit),
         "task.add": ("", task_add),
+        "task.edit": ("", task_edit),
         "task.start": ("task.started", lambda c, p, a: task_state(c, p, a, "task.started")),
         "task.skip": ("task.skipped", lambda c, p, a: task_state(c, p, a, "task.skipped")),
         "task.block": ("task.blocked", lambda c, p, a: task_state(c, p, a, "task.blocked")),

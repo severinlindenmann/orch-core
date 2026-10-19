@@ -13,7 +13,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'H1',
         title: 'Look at the list',
         text: 'Open Settings, then Add-ons.',
-        see: 'A list with Dashboard (Always on), Start agents, Terminals, Worktrees and Quick tasks (Always on), each with one plain line and On or Off.',
+        see: 'A list of 10 add-ons: Dashboard (Always on), Start agents, Terminals, Worktrees, Quick tasks (Always on), Publish, Usage, Estimate, File Explorer and Model routing, each with one plain line and On or Off.',
       },
       {
         id: 'H2',
@@ -278,7 +278,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'N3',
         title: 'Give a ticket a file',
         text: 'Add a file to the ticket RA-0001. This needs a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2).',
-        commands: ['cd ~/orch-run2-a', 'echo "A short test report" > report.md', 'orch artifact add report.md --kind report --ref RA-0001'],
+        commands: ['cd ~/orch-run3-a', 'echo "A short test report" > report.md', 'orch artifact add report.md --kind report --ref RA-0001'],
         see: 'The ticket\'s right column has a "Shares" box with "Share files".',
       },
       {
@@ -510,7 +510,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'U1',
         title: 'The menu entry',
         text: 'Open Settings, then Add-ons. Switch Terminals off, reload, then switch it on again.',
-        see: 'A "Terminals" entry appears in the left menu only while Terminals is on. While it is off the entry is gone and the address /terminals goes back to the board.',
+        see: 'A "Terminals" entry appears in the left menu only while Terminals is on. While it is off the entry is gone and the address /terminals stays on the same page and shows a "switched off" message (no redirect).',
       },
       {
         id: 'U2',

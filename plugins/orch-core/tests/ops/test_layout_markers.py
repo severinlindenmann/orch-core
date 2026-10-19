@@ -304,3 +304,21 @@ def test_read_only_opens_never_make_the_project_directory(tmp_path: Path) -> Non
     with pytest.raises(OSError):
         Store.open(missing, expected_workspace_id="w" * 32)
     assert not missing.exists()
+
+
+def test_path_writers_refuse_while_a_store_move_is_under_way(tmp_path: Path) -> None:
+    from orch.addons import builtin
+    from orch.instructions import UnsafePath
+
+    p = _proj(tmp_path)
+    (p / ".orch-migrating").mkdir()
+    assert layout.move_in_progress(p) and layout.move_in_progress(p / ".orch")
+    with pytest.raises(OSError, match="store move"):
+        builtin.write_manifest(str(p / ".orch"), "demo", b"{}")
+    with pytest.raises(UnsafePath, match="store move"):
+        write_workspace_files(p, store=p / ".orch", pointers=False)
+    assert write_workspace_files(p, store=p / ".orch", pointers=False, dry_run=True)  # a dry run writes nothing
+    assert not (p / ".orch" / "addons").exists() and not (p / "AGENTS.md").exists()
+    (p / ".orch-migrating").rmdir()
+    assert not layout.move_in_progress(p)
+    builtin.write_manifest(str(p / ".orch"), "demo", b"{}")

@@ -4538,6 +4538,10 @@ the D-P2-17 custody list) holds, per workspace:
  "repos":{"acme-energy-dbt":{"gitdir":{"path":"…","dev":1,"ino":2},"commondir":{"path":"…","dev":1,"ino":3}}}}
 ```
 
+`root` is the project directory. Once the store lives in `<project>/.orch/` the entry also has `"store":".orch"` (absent:
+the store is the project itself; any other value is refused when the registry is read). It is written by `host.bootstrap`
+and `host.register` from the store the host opened, and by `host.store_migrate` after its commit point.
+
 - The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
 - **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
 

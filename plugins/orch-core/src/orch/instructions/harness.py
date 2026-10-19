@@ -30,6 +30,7 @@ from .skills import builtin_skills
 __all__ = [
     "AGENTS_FILE",
     "AGENTS_BLOCK",
+    "AGENTS_BLOCK_STORE",
     "CLAUDE_IMPORT",
     "COPY_HEADER",
     "SKILLS_DIR",
@@ -48,6 +49,10 @@ CLAUDE_SKILLS_DIR = ".claude/skills"  # a generated copy, or the place older orc
 BEGIN = "<!-- orch:begin -->"
 END = "<!-- orch:end -->"
 AGENTS_BLOCK = f"{BEGIN}\nThis project uses orch for tickets: read AGENTS.orch.md before working on a ticket.\n{END}"
+#: the same block for a workspace whose store is ``.orch/`` (the pointer file stays at the root, where others read it)
+AGENTS_BLOCK_STORE = (
+    f"{BEGIN}\nThis project uses orch for tickets: read .orch/AGENTS.orch.md before working on a ticket.\n{END}"
+)
 LEGACY_AGENTS_POINTER = "Before working on tickets, read AGENTS.orch.md (orch)."
 CLAUDE_IMPORT = "@AGENTS.md"
 LEGACY_CLAUDE_IMPORT = "@AGENTS.orch.md"
@@ -226,13 +231,14 @@ def check_targets(root: Path, store: Path | None = None) -> list[str]:
     return problems
 
 
-def _agents_md_text(have: str, create: bool) -> str | None:
+def _agents_md_text(have: str, create: bool, moved: bool = False) -> str | None:
     """``AGENTS.md`` with the orch block: replaced in place, or the old one-line pointer turned into it, or (with
     ``create``) appended. ``None`` if nothing is to be done. Unbalanced markers: :class:`UnsafePath` (fail closed)."""
     lines = have.split("\n")
     begins = [i for i, x in enumerate(lines) if x.strip() == BEGIN]
     ends = [i for i, x in enumerate(lines) if x.strip() == END]
-    block = AGENTS_BLOCK.split("\n")
+    text_block = AGENTS_BLOCK_STORE if moved else AGENTS_BLOCK
+    block = text_block.split("\n")
     if begins or ends:
         if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
             raise UnsafePath("AGENTS.md: the orch:begin / orch:end markers are not one matching pair; fix them by hand")
@@ -242,19 +248,33 @@ def _agents_md_text(have: str, create: bool) -> str | None:
         out = [*lines[:i], *block, *(x for x in lines[i + 1 :] if x != LEGACY_AGENTS_POINTER)]
     elif create:
         if not have:
-            return AGENTS_BLOCK + "\n"
-        return have + ("" if have.endswith("\n") else "\n") + "\n" + AGENTS_BLOCK + "\n"
+            return text_block + "\n"
+        return have + ("" if have.endswith("\n") else "\n") + "\n" + text_block + "\n"
     else:
         return None
     text = "\n".join(out)
     return None if text == have else text
 
 
-def _claude_md_text(have: str, create: bool) -> str | None:
-    """``CLAUDE.md`` with both import lines, ``@AGENTS.md`` (the project rules) then ``@AGENTS.orch.md``. Missing lines
-    are added when ``create`` (``init``) or when the orch line is already there (``sync`` completing an older file:
-    ``@AGENTS.md`` goes right before it). Other lines are never touched. ``None`` if nothing is to be done."""
+def _claude_md_text(have: str, create: bool, moved: bool = False) -> str | None:
+    """``CLAUDE.md`` with the import lines. Legacy layout: ``@AGENTS.md`` (the project rules) then ``@AGENTS.orch.md``;
+    missing lines are added when ``create`` (``init``) or when the orch line is already there (``sync`` completing an
+    older file: ``@AGENTS.md`` goes right before it). ``moved`` (the store is ``.orch/``): only ``@AGENTS.md`` (whose
+    orch block points to ``.orch/AGENTS.orch.md``); orch's own old ``@AGENTS.orch.md`` line is dropped, as it would
+    import a file that is no longer there. Other lines are never touched. ``None`` if nothing is to be done."""
     lines = have.split("\n")
+    if moved:
+        if LEGACY_CLAUDE_IMPORT not in lines and not (create and CLAUDE_IMPORT not in lines):
+            return None
+        out = [x for x in lines if x != LEGACY_CLAUDE_IMPORT]
+        text = "\n".join(out)
+        if CLAUDE_IMPORT not in out:
+            if LEGACY_CLAUDE_IMPORT in lines:
+                i = lines.index(LEGACY_CLAUDE_IMPORT)
+                text = "\n".join([*lines[:i], CLAUDE_IMPORT, *[x for x in lines[i + 1 :] if x != LEGACY_CLAUDE_IMPORT]])
+            else:
+                text += ("" if not text or text.endswith("\n") else "\n") + CLAUDE_IMPORT + "\n"
+        return None if text == have else text
     if not create and LEGACY_CLAUDE_IMPORT not in lines:
         return None
     text = have
@@ -299,20 +319,29 @@ def write_workspace_files(
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
     hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
     directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``."""
+    from orch.layout import move_in_progress
+
+    if not dry_run and move_in_progress(store if store is not None else root):
+        raise UnsafePath(
+            "an unfinished store move is in this folder (.orch-migrating); "
+            "delete the old store files and .orch-migrating, then run orch setup again"
+        )
     changed: list[str] = []
     kept: list[str] = []
     skip_dirs: set[str] = set()
     checked: set[str] = set()
     files = dict(owned) if owned is not None else workspace_files()
+    moved = store is not None and store != root  # the store is <root>/.orch: the pointers and the ignore line follow it
     # the pointer files first: any problem is found before anything is written
     agents_have = _read_pointer_file(root, "AGENTS.md")
     if _claude_is_agents_link(root):
         claude_new = None
         kept.append("kept CLAUDE.md (a link to AGENTS.md; the orch block there covers it)")
     else:
-        claude_new = _claude_md_text(_read_pointer_file(root, "CLAUDE.md"), pointers)
-    agents_new = _agents_md_text(agents_have, pointers or claude_new is not None)
+        claude_new = _claude_md_text(_read_pointer_file(root, "CLAUDE.md"), pointers, moved)
+    agents_new = _agents_md_text(agents_have, pointers or claude_new is not None, moved)
     gitignore_have = _read_pointer_file(root, ".gitignore") if pointers else ""
+    ignore_line = ".orch/" if moved else ".state/"
     for rel, text in files.items():
         skill_dir = _skill_dir(rel)
         if skill_dir is not None:
@@ -336,8 +365,8 @@ def write_workspace_files(
             _check_chain(root, rel)
             if dry_run or _write(root, rel, new):
                 changed.append(rel)
-    if pointers and ".state/" not in gitignore_have.split("\n"):
-        if dry_run or _ensure_line(root, ".gitignore", ".state/"):
+    if pointers and ignore_line not in gitignore_have.split("\n"):
+        if dry_run or _ensure_line(root, ".gitignore", ignore_line):
             changed.append(".gitignore")
     return changed, kept
 

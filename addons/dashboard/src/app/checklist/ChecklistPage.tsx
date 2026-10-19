@@ -252,9 +252,14 @@ export function ChecklistPage() {
       } catch (e) {
         // A failed save is never dropped: the fields stay unsaved and go again (a stale keep-alive connection, a
         // restarting server). Only an ended session waits for the person.
-        const again = dirty.current.get(id) ?? new Set<'status' | 'note'>()
-        for (const k of fields) again.add(k)
-        dirty.current.set(id, again)
+        // A refusal that sending again cannot change (400, 403, 404, 422) is not kept: it would go out again with
+        // every later edit of the step. An ended session (401) is kept for after the person signs in again.
+        const refused = e instanceof TestrunError && !retryable(e) && e.status !== 401
+        if (!refused) {
+          const again = dirty.current.get(id) ?? new Set<'status' | 'note'>()
+          for (const k of fields) again.add(k)
+          dirty.current.set(id, again)
+        }
         setProblem(problemText(e))
         mark(id, 'error')
         const tries = attempts.current.get(id) ?? 0
@@ -359,7 +364,7 @@ export function ChecklistPage() {
         </div>
 
         <section aria-labelledby="gaps" className="mt-3 rounded-[10px] border border-warning/50 bg-warning-soft p-3">
-          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run 2 (expected, do not report as bugs)</h2>
+          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run 3 (expected, do not report as bugs)</h2>
           <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-text">
             {RUN2_KNOWN_GAPS.map((g) => <li key={g}>{g}</li>)}
           </ul>

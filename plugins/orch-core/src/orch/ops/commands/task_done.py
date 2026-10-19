@@ -15,7 +15,9 @@ from orch.store import observe
 def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     """The linked repository a verify command belongs to: the one the working directory is in, else the only linked
     one; ``(None, None)`` when the ticket links none."""
-    linked = list(view.fields["links"]["repos"])
+    from orch.ops.workdir import has_codebase
+
+    linked = list(view.fields["links"]["repos"]) if has_codebase(c.store, view) else []
     paths = c.store.state.workspace.repos
     c.ws.require_root()
     layout = c.store.layout
@@ -73,7 +75,9 @@ def _client_receipt(
     if rc["exit"] != 0:
         raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
     repo, commit = rc.get("repo"), rc.get("commit")
-    linked = list(view.fields["links"]["repos"])
+    from orch.ops.workdir import has_codebase
+
+    linked = list(view.fields["links"]["repos"]) if has_codebase(c.store, view) else []
     if linked:  # F1 section 6: evidence follows the source sha, so the receipt names a linked repo and its commit
         if repo is None or repo not in linked:
             raise OrchError("invalid.input", f"receipt.repo must be one of the repos this ticket links: {linked}")

@@ -505,11 +505,12 @@ def _workdir_or_here(ctx: Any, key: str | None = None) -> Path:
     expect = None
     root = (ctx.env or {}).get("ORCH_WORKSPACE")
     if key is not None and root and os.path.isabs(root):
-        from orch.layout import Layout, LayoutError
+        from orch.layout import Layout, LayoutError, workdir_stat
 
         try:  # the only place a work folder can be: <project>/.orch-work/<KEY>; the variable is a hint, not a path
-            expect = os.fspath(Layout.new_at(root).workdir(key))
-        except LayoutError:
+            lay = Layout.new_at(root)
+            expect = os.fspath(lay.workdir(key)) if workdir_stat(lay, key) is not None else None
+        except (LayoutError, OSError):
             expect = None
     if named and expect is not None and named == expect and os.path.isdir(named) and not os.path.islink(named):
         return Path(named)

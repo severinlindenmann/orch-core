@@ -15,6 +15,7 @@ layouts. The flip PR sets it ``True``.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -452,102 +453,133 @@ def ensure_workdir(layout: Layout, key: str) -> os.stat_result:
         os.close(got[0])
 
 
-def _open_rel(root_fd: int, parts: tuple[str, ...]) -> int:
-    """The fd of the directory ``parts`` below ``root_fd``, every step ``O_NOFOLLOW`` (one fd open at a time)."""
-    fd = os.dup(root_fd)
-    try:
-        for part in parts:
-            nxt = os.open(part, _DIR, dir_fd=fd)
-            os.close(fd)
-            fd = nxt
-    except BaseException:
+#: how deep a work folder is looked into or deleted (one descriptor per level), and entries a delete takes
+WORKDIR_DEPTH = 64
+WORKDIR_DELETE_ENTRIES = 200_000
+
+
+def _child(dfd: int, name: str, listed: os.stat_result) -> int:
+    """The directory ``name`` below ``dfd`` (``O_NOFOLLOW``), which must still be the one that was listed."""
+    fd = os.open(name, _DIR, dir_fd=dfd)
+    st = os.fstat(fd)
+    if (st.st_dev, st.st_ino) != (listed.st_dev, listed.st_ino):
         os.close(fd)
-        raise
+        raise OSError(errno.ESTALE, "changed while it was read")
     return fd
 
 
+def _same_disk(root: int) -> int:
+    """The device of the work folder, which must be that of ``.orch-work`` too (no mount at ``.orch-work/<KEY>``)."""
+    dev = os.fstat(root).st_dev
+    if os.stat("..", dir_fd=root).st_dev != dev:
+        raise LayoutError("the work folder is another disk or mount; refusing to use it")
+    return dev
+
+
 def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str, int] | None:
-    """``{files, bytes, truncated}`` of the work folder (links counted as nothing, not followed; at most ``limit``
-    entries are looked at, then ``truncated``), or ``None`` when it does not exist. Directories are visited one at a
-    time without a recursion (names are kept, not descriptors), so depth costs neither stack nor open files, and a
-    folder on another device is not entered. :class:`LayoutError` as :func:`workdir_stat`."""
+    """``{files, bytes, truncated}`` of the work folder (links counted as nothing, not followed). ``truncated``: more
+    than ``limit`` entries, deeper than :data:`WORKDIR_DEPTH`, another disk, or a folder that could not be read. Each
+    directory is opened relative to its parent's descriptor (linear cost). :class:`LayoutError`: as workdir_stat."""
     got = _walk_workdir(layout, key, create=False)
     if got is None:
         return None
     root = got[0]
-    files = size = seen = 0
-    truncated = 0
-    todo: list[tuple[str, ...]] = [()]
+    tot = {"files": 0, "bytes": 0, "seen": 0, "truncated": 0}
     try:
-        root_dev = os.fstat(root).st_dev
-        while todo and not truncated:
-            parts = todo.pop()
-            try:
-                dfd = _open_rel(root, parts)
-            except OSError:
-                continue
+        dev = _same_disk(root)
+
+        def walk(dfd: int, depth: int) -> None:
             try:
                 with os.scandir(dfd) as it:
                     for e in it:
-                        seen += 1
-                        if seen > limit:
-                            truncated = 1
-                            break
+                        tot["seen"] += 1
+                        if tot["seen"] > limit:
+                            tot["truncated"] = 1
+                            return
                         try:
                             st = e.stat(follow_symlinks=False)
                         except OSError:
+                            tot["truncated"] = 1
                             continue
                         if stat.S_ISREG(st.st_mode):
-                            files += 1
-                            size += st.st_size
-                        elif stat.S_ISDIR(st.st_mode) and st.st_dev == root_dev:
-                            todo.append((*parts, e.name))
+                            tot["files"] += 1
+                            tot["bytes"] += st.st_size
+                        elif stat.S_ISDIR(st.st_mode):
+                            if st.st_dev != dev or depth >= WORKDIR_DEPTH:
+                                tot["truncated"] = 1
+                                continue
+                            try:
+                                sub = _child(dfd, e.name, st)
+                            except OSError:
+                                tot["truncated"] = 1
+                                continue
+                            try:
+                                walk(sub, depth + 1)
+                            finally:
+                                os.close(sub)
+                            if tot["truncated"] and tot["seen"] > limit:
+                                return
             except OSError:
-                pass
-            finally:
-                os.close(dfd)
+                tot["truncated"] = 1
+
+        walk(root, 0)
     finally:
         os.close(root)
-    return {"files": files, "bytes": size, "truncated": truncated}
+    return {"files": tot["files"], "bytes": tot["bytes"], "truncated": tot["truncated"]}
 
 
 def delete_workdir(layout: Layout, key: str) -> bool:
-    """Delete exactly the ticket's work folder (and what is in it), never following a link: every directory is opened
-    ``O_NOFOLLOW`` and emptied through its fd, a link inside is unlinked as a link. ``False``: there was none.
-    Nothing outside ``<project>/.orch-work/<KEY>`` is touched. A directory on another device (a mount point) is
-    refused, not entered. No recursion and one open directory at a time: any failure is a plain :class:`LayoutError`."""
+    """Delete exactly the ticket's work folder (and what is in it), never following a link. ``False``: there was none.
+    Nothing outside ``<project>/.orch-work/<KEY>`` is touched. A first pass only looks (another disk or mount, deeper
+    than :data:`WORKDIR_DEPTH`, more than :data:`WORKDIR_DELETE_ENTRIES` entries: :class:`LayoutError`, nothing
+    deleted); the second deletes, each directory opened relative to its parent and re-checked against what was listed.
+    Any failure is a plain :class:`LayoutError`."""
     got = _walk_workdir(layout, key, create=False)
     if got is None:
         return False
     root = got[0]
     try:
         try:
-            root_dev = os.fstat(root).st_dev
-            order: list[tuple[str, ...]] = []
-            todo: list[tuple[str, ...]] = [()]
-            while todo:
-                parts = todo.pop()
-                order.append(parts)
-                dfd = _open_rel(root, parts)
-                try:
-                    with os.scandir(dfd) as it:
-                        entries = list(it)
-                    for e in entries:
-                        st = e.stat(follow_symlinks=False)
-                        if stat.S_ISDIR(st.st_mode):
-                            if st.st_dev != root_dev:
-                                raise LayoutError(f"{e.name} is another disk or mount inside the folder; not deleted")
-                            todo.append((*parts, e.name))
-                        else:
-                            os.unlink(e.name, dir_fd=dfd)
-                finally:
-                    os.close(dfd)
-            for parts in reversed(order[1:]):  # deepest first
-                parent = _open_rel(root, parts[:-1])
-                try:
-                    os.rmdir(parts[-1], dir_fd=parent)
-                finally:
-                    os.close(parent)
+            dev = _same_disk(root)
+            count = [0]
+
+            def look(dfd: int, depth: int) -> None:
+                with os.scandir(dfd) as it:
+                    entries = list(it)
+                count[0] += len(entries)
+                if count[0] > WORKDIR_DELETE_ENTRIES:
+                    raise LayoutError("the work folder holds too many files to delete here; delete it in Finder")
+                for e in entries:
+                    st = e.stat(follow_symlinks=False)
+                    if not stat.S_ISDIR(st.st_mode):
+                        continue
+                    if st.st_dev != dev:
+                        raise LayoutError(f"{e.name} is another disk or mount inside the folder; nothing deleted")
+                    if depth >= WORKDIR_DEPTH:
+                        raise LayoutError("the work folder is nested too deeply to delete here; delete it in Finder")
+                    sub = _child(dfd, e.name, st)
+                    try:
+                        look(sub, depth + 1)
+                    finally:
+                        os.close(sub)
+
+            def remove(dfd: int) -> None:
+                with os.scandir(dfd) as it:
+                    entries = list(it)
+                for e in entries:
+                    st = e.stat(follow_symlinks=False)
+                    if stat.S_ISDIR(st.st_mode):
+                        sub = _child(dfd, e.name, st)
+                        try:
+                            remove(sub)
+                        finally:
+                            os.close(sub)
+                        os.rmdir(e.name, dir_fd=dfd)
+                    else:
+                        os.unlink(e.name, dir_fd=dfd)
+
+            look(root, 0)
+            remove(root)
         except LayoutError:
             raise
         except OSError as exc:

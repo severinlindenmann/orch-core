@@ -112,13 +112,13 @@ def test_a_foreign_owner_is_refused(lay, monkeypatch):
         workdir_stat(lay, KEY)
 
 
-def test_a_very_deep_folder_is_summed_and_deleted_without_recursion(lay):
+def test_a_deep_folder_within_the_cap_is_summed_and_deleted(lay):
     ensure_workdir(lay, KEY)
     deep = lay.workdir(KEY)
     base = os.getcwd()
     try:
         os.chdir(deep)
-        for _ in range(1200):  # one component at a time: the path itself would be too long
+        for _ in range(60):  # one component at a time
             os.mkdir("d")
             os.chdir("d")
         Path("f.txt").write_text("x")
@@ -157,3 +157,37 @@ def test_a_mount_point_inside_is_refused_not_entered(lay, monkeypatch):
         delete_workdir(lay, KEY)
     monkeypatch.undo()
     assert (lay.workdir(KEY) / "sub").is_dir()
+
+
+def test_cost_is_linear_and_depth_is_capped(lay, monkeypatch):
+    import orch.layout as L
+
+    ensure_workdir(lay, KEY)
+    base = os.getcwd()
+    try:
+        os.chdir(lay.workdir(KEY))
+        for _ in range(40):
+            os.mkdir("d")
+            os.chdir("d")
+        Path("f").write_text("x")
+    finally:
+        os.chdir(base)
+    opens = []
+    real = os.open
+    monkeypatch.setattr(L.os, "open", lambda *a, **k: (opens.append(1), real(*a, **k))[1])
+    assert workdir_summary(lay, KEY)["files"] == 1
+    assert len(opens) < 40 * 3  # ~one open per level plus the walk to the folder, not d squared
+    monkeypatch.undo()
+    delete_workdir(lay, KEY)
+    ensure_workdir(lay, KEY)
+    try:
+        os.chdir(lay.workdir(KEY))
+        for _ in range(L.WORKDIR_DEPTH + 5):
+            os.mkdir("d")
+            os.chdir("d")
+    finally:
+        os.chdir(base)
+    assert workdir_summary(lay, KEY)["truncated"] == 1
+    with pytest.raises(LayoutError):
+        delete_workdir(lay, KEY)
+    assert lay.workdir(KEY).is_dir()  # the refusal came before anything was deleted

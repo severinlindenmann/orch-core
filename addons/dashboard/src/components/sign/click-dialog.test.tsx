@@ -169,6 +169,17 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.cancel.mock.calls).toEqual([])
   })
 
+  it('a confirmed signature drops its item from Today at once and refreshes the queries', async () => {
+    const { ws, ticket, dialog, client } = await toPanel()
+    const item = { kind: 'approval', ticket: ticket.key, title: 't', text: 'x', since: '2026-10-19T10:00:00Z', ref: 'plan' }
+    client.setQueryData(['today', ws], { now: '', workspace: ws, needs_you: [item], read_only_open: [] })
+    client.setQueryData(['ticket', ws, ticket.key], ticket)
+    press(await armed(dialog))
+    await within(dialog).findByText('Signed', {}, T)
+    expect((client.getQueryData(['today', ws]) as { needs_you: unknown[] }).needs_you).toEqual([])
+    expect(client.getQueryState(['ticket', ws, ticket.key])?.isInvalidated).toBe(true)
+  })
+
   it('Cancel cancels the request; closing it by Escape does too', async () => {
     const { ws, dialog, onClose } = await toPanel()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))

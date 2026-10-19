@@ -67,6 +67,16 @@ describe('text artifact preview', () => {
     show(art({ name: 'x.png', kind: 'other' }))
     expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
   })
+  it('a file whose digest differs from the listed one is not previewed', async () => {
+    show(art(), content({ digest: 'sha256:' + 'b'.repeat(64) }))
+    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Text of T1.receipt.log')).toBeNull()
+  })
+  it('a file read only in part (unverified) is too large to preview', async () => {
+    show(art(), content({ truncated: true, verified: false, text: 'partial' }))
+    expect(await screen.findByText(/too large to preview/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Text of T1.receipt.log')).toBeNull()
+  })
   it('without the ticket there is nothing to read, so no preview', () => {
     show(art(), content(), null)
     expect(screen.getByText(/No inline preview/)).toBeInTheDocument()

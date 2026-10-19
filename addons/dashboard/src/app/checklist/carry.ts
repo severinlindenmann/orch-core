@@ -43,7 +43,8 @@ export function carryFor(step: ChecklistStep, mine: StepNotes | undefined, previ
   const touched = !!mine && (mine.status !== 'todo' || mine.note.trim() !== '' || mine.images.length > 0)
   if (row.status === 'pass') {
     if (touched || mine?.retest) return null
-    if (row.hash === stepHash(step)) return { kind: 'done', run, date: row.passed_at ?? row.updated }
+    // A pass saved before fingerprints existed cannot be compared: it carries over. Only a stored, different one is a change.
+    if (!row.hash || row.hash === stepHash(step)) return { kind: 'done', run, date: row.passed_at ?? row.updated }
     return { kind: 'changed', run }
   }
   if (mine && mine.status !== 'todo') return null

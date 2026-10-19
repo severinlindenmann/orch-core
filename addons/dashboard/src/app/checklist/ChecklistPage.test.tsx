@@ -278,7 +278,7 @@ describe('carry-over from an earlier run', () => {
     const same = prev(old('A1', 'pass', { hash: stepHash(A1) }))
     expect(carryFor(A1, undefined, same)).toMatchObject({ kind: 'done', run: 'run2' })
     expect(carryFor(A1, undefined, prev(old('A1', 'pass', { hash: '0000000000000000' })))).toEqual({ kind: 'changed', run: 'run2' })
-    expect(carryFor(A1, undefined, prev(old('A1', 'pass')))).toMatchObject({ kind: 'changed' })
+    expect(carryFor(A1, undefined, prev(old('A1', 'pass')))).toMatchObject({ kind: 'done', run: 'run2' })
     expect(carryFor({ ...A1, text: 'different' }, undefined, same)).toMatchObject({ kind: 'changed' })
     expect(carryFor(A1, { status: 'todo', note: '', images: [], retest: true }, same)).toBeNull()
     expect(carryFor(A1, { status: 'fail_blocking', note: '', images: [] }, same)).toBeNull()

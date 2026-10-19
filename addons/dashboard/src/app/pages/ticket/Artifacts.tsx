@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
-import { artifactTextQuery, capText, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
+import { artifactTextQuery, sameDigest, capText, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
 import { prose } from '@/components/sign/visible'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
@@ -219,12 +219,15 @@ function RemoteText({ a, ticket }: { a: Artifact; ticket: string }) {
   if (!home && !workspaces.isPending) return NO_PREVIEW
   if (q.isPending) return <Skeleton className="h-40 w-full" aria-label="Loading the file" />
   if (q.isError || !q.data || q.data.binary || q.data.text == null || looksBinary(q.data.text)) return NO_PREVIEW
+  // Only the file the ticket lists: the digest the host read must be the one on the ticket.
+  if (!sameDigest(q.data.digest, a.sha256)) return NO_PREVIEW
+  // A file read only in part cannot be checked against its digest: not shown.
+  if (q.data.truncated || !q.data.verified) return <p className="text-[13px] text-text-muted">This file is too large to preview. The sha256 above is what an approval binds.</p>
   const { shown, cut, bytes } = capText(q.data.text.replace(/\r\n/g, '\n'))
   return (
     <div className="space-y-2">
       <p className="text-[12px] text-text-muted">
         {cut ? `Showing the first ${TEXT_PREVIEW_BYTES / 1024} KiB of ${fmtBytes(Math.max(bytes, q.data.size))}. ` : ''}
-        {q.data.truncated ? 'This file is very large and was only read in part, so it could not be checked against its sha256. ' : ''}
         Shown as plain text; hidden characters appear as {'\\u{...}'}.
       </p>
       <TextViewer text={prose(shown)} label={`Text of ${a.name}`} />

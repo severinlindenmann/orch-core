@@ -1935,4 +1935,4 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 
 **Revert:** Remove the dashboard `addon_enable` action and setup dialog together; restore the previous switching flow only with a compatible core settings policy.
 
-**Integration note:** This branch's core `workspace.settings` exposes top-level `models`, but currently omits `settings.publish`. The dashboard reads the requested nested Publish field; core must expose it for existing Publish setup to be recognized. Core was not changed here.
+**Integration note:** needs core #737: the host read `addon.preview` and the top-level `publish` of `workspace.settings` (the Publish addresses, for a person only).

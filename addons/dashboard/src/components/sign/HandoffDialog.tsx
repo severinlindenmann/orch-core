@@ -34,7 +34,7 @@ interface Words {
 }
 
 /** What each end state says, in core's words. */
-function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false, code?: string): Words | null {
+function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false, code?: string, newTicket = false): Words | null {
   switch (phase) {
     case 'done':
       return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
@@ -50,7 +50,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
     case 'failed':
-      if (code === 'sequence.no_access') return { title: 'Task created; agent access was NOT given', body: error ?? '', tone: 'warn' }
+      if (code === 'sequence.no_access') return { title: newTicket ? 'Ticket created; agent access was NOT given' : 'Task created; agent access was NOT given', body: error ?? '', tone: 'warn' }
       return { title: 'The earlier attempt did not land', body: error ?? '', tone: 'warn' }
     case 'blocked':
       return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }
@@ -89,6 +89,8 @@ export interface HandoffDialogProps {
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
   warning?: (request: HandoffRequest) => string | null
+  /** Said under the review and outside the signed content: what happens next that this signature does NOT cover. */
+  unsigned?: ReactNode
   /** The signer's event is in the log. */
   onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
   onPending?: (pending: boolean) => void
@@ -158,6 +160,20 @@ export function HandoffDialog(p: HandoffDialogProps) {
   useEffect(() => {
     if (!switching && (click.phase === 'cancelled' || (click.phase === 'failed' && click.problem?.next !== 'check'))) p.onInterrupted?.()
   }, [click.phase, click.problem, switching, p.onInterrupted])
+  // A one-click sequence that stopped part way: ask the server which ticket exists and how far the run got, once, and
+  // tell the caller (a form that must not offer a second ticket for the same typed text). Never read from the error text.
+  const reportedStop = useRef<string | null>(null)
+  useEffect(() => {
+    const prepared = click.prepared
+    if (click.phase !== 'failed' || click.problem?.next !== 'open' || !prepared || !p.ws || reportedStop.current === prepared.request_id) return
+    reportedStop.current = prepared.request_id
+    void api.stateClick(p.ws, prepared.request_id).then((got) => {
+      if (!got.key || !got.progress) return
+      const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: got.key, expires_at: prepared.expires_at, event_ids: [], seq: null, progress: got.progress }
+      const request = { id: prepared.request_id, code: null, expires_at: prepared.expires_at, state: 'submitted', op: prepared.op, key: got.key } as unknown as HandoffRequest
+      p.onSettled?.('failed', state, request)
+    }, () => {})
+  }, [click.phase, click.problem, click.prepared, p.ws, p.onSettled])
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -230,7 +246,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   // B11 (#14): an incomplete gate is said in words ("Add Context and Out of scope first."), never as the raw code
   const lacking = run.error?.code === 'gate.incomplete' ? missingOf(run.error.message) : null
   const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
-  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code)
+  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code, (run.request?.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket')
   // a CLI pointer ("orch describe approve") means nothing on this page
   const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)
 
@@ -370,6 +386,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {run.error?.hint && !cliOnly(run.error.hint) && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
+
+        {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
 
         {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
           <OtherWays phoneAvailable={canPhone} phonePhaseOne={!!p.phoneRequest} allowed={allowed} current={method} disabled={switching || phoneRun.busy || phoneRun.hint?.state === 'done' || !p.action} onSelect={m => void selectMethod(m)} />

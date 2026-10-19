@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  AGENT_MODES, agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, HARNESSES, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
+  agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
   TERMINAL_ONLY, UPDATE_ORCH, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
@@ -31,24 +31,9 @@ import { modelLabel, routingQueries, STRONG_MODELS } from '@/api/modelRouting'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
 import { fmtDateTime, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
+import { AgentPick, ModelPick } from '@/components/agents/AgentChoice'
 
-/** One plain line per mode, shown under the choice. */
-export const MODE_HELP: Record<AgentMode, string> = {
-  refine: 'Helps you write the requirements and the plan. It changes no code.',
-  work: 'Works through the ticket: writes the code and submits it for review.',
-  fix: 'Fixes what a reviewer or a check sent back.',
-  continue: 'Picks up where an earlier agent stopped.',
-  context: 'Reads the ticket and the code, so you can ask questions. It changes nothing.',
-}
-
-/** What each mode is called on screen; the developer word stays in the option's Details line. */
-export const MODE_LABEL: Record<AgentMode, string> = {
-  refine: 'Write requirements and plan',
-  work: 'Do the work',
-  fix: 'Fix what was sent back',
-  continue: 'Continue earlier work',
-  context: 'Read and answer questions',
-}
+export { MODE_HELP, MODE_LABEL } from '@/components/agents/AgentChoice'
 
 const DEPOSIT_POLLS = 5
 const DEPOSIT_POLL_MS = 2000
@@ -70,32 +55,43 @@ function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: 
   }
 }
 
-export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, grantStep }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; /** Dev layout preview only: the grant card's starting step. */ grantStep?: GrantStep }) {
+/** What a caller prefilled (the New ticket form after "Create and start agent"): the choice and one plain sentence saying why the person is asked. */
+export interface StartInitial {
+  harness?: Harness
+  mode?: AgentMode
+  model?: string
+  note?: string
+  /** The idem of an earlier Start whose answer was lost: a retry then returns that run, never a second one. */
+  idem?: string
+}
+
+export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, grantStep, initial }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; /** Dev layout preview only: the grant card's starting step. */ grantStep?: GrantStep; initial?: StartInitial }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent className="max-h-[90vh] max-w-[calc(100%-2rem)] gap-2 overflow-y-auto border-border bg-surface p-4 sm:max-w-xl sm:p-5" data-start-agent>
-        {open && <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} grantStep={grantStep} />}
+        {open && <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} grantStep={grantStep} initial={initial} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; grantStep?: GrantStep }) {
+function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; grantStep?: GrantStep; initial?: StartInitial }) {
   const qc = useQueryClient()
   // One idem per dialog opening, kept for every retry of Start (the run id is `r_` + its ULID).
-  const [idem] = useState(newIdem)
-  const [harness, setHarness] = useState<Harness>('claude-code')
-  const [mode, setMode] = useState<AgentMode>('work')
-  const [model, setModel] = useState('')
+  const [idem] = useState(() => initial?.idem ?? newIdem())
+  const [harness, setHarness] = useState<Harness>(initial?.harness ?? 'claude-code')
+  const [mode, setMode] = useState<AgentMode>(initial?.mode ?? 'work')
+  const [model, setModel] = useState(initial?.model ?? '')
   const [subagent, setSubagent] = useState('')
   const [label, setLabel] = useState('')
   const [worktree, setWorktree] = useState(true)
-  const [moreOpen, setMoreOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(!!initial?.model)
   const form = argsOf({ ticket, harness, mode, model, subagent, label, worktree })
   const [shown, setShown] = useState<{ args: AgentArgs; data: AgentPreview } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
+  const reason = initial?.note ?? ''
   const [busy, setBusy] = useState(false)
   const asked = useRef(0)
   const runner = useQuery({ ...runnerQuery(ws) })
@@ -189,17 +185,9 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
         <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
         <DialogDescription className="sr-only">Choose an agent and what it should do.</DialogDescription>
       </DialogHeader>
+      {reason && <p role="note" className="text-xs leading-5 text-warning" data-testid="agent-initial-note"><Inline>{reason}</Inline></p>}
       <form className="grid grid-cols-1 items-center gap-x-3 gap-y-2 text-xs leading-5 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
-        <Label htmlFor="agent-harness" className="text-xs text-text-muted">Agent</Label>
-        <select id="agent-harness" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={harness} onChange={(e) => { setHarness(e.target.value as Harness); setModel('') }}>
-          {HARNESSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-        </select>
-        <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
-        <select id="agent-mode" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)} aria-describedby="agent-mode-help">
-          {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
-        </select>
-        <span className="hidden sm:block" />
-        <div id="agent-mode-help" data-testid="agent-mode-help" className="-mt-1 text-text-muted">{MODE_HELP[mode]} <details className="inline"><summary className="inline cursor-pointer">Details</summary> Mode name for developers: <code>{mode}</code></details></div>
+        <AgentPick harness={harness} mode={mode} onHarness={(h) => { setHarness(h); setModel('') }} onMode={setMode} />
         <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
         <Input id="agent-label" className="h-9 min-w-0 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
         <span className="text-text-muted">Project folder</span>
@@ -208,11 +196,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
           <details className="group/more sm:col-span-2" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
             <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/more:before:rotate-[135deg]">More choices</summary>
             <div className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-1.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2">
-              <Label htmlFor="agent-model" className="text-xs text-text-muted">Model</Label>
-              <select id="agent-model" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={model} onChange={(e) => setModel(e.target.value)}>
-                <option value="">As set for this kind of work</option>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
+              <ModelPick models={models} model={model} onModel={setModel} />
               {strong && checkFailing && model !== strong && (<>
                 <span className="hidden sm:block" />
                 <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">

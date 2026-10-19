@@ -82,3 +82,13 @@ it('the Start agent scenarios draw core\'s dialog from fixtures and undo their s
   resetLayoutPreview()
   expect({ ...agentsApi }).toEqual(agents)
 })
+
+it('the New ticket start scenarios draw the real form with and without an agent access', async () => {
+  renderApp('/__layout/new-sequence-start')
+  expect(await screen.findByRole('button', { name: 'Create and start agent' })).toBeInTheDocument()
+  expect(screen.queryByTestId('agent-access')).toBeNull()
+  cleanup()
+  resetLayoutPreview()
+  renderApp('/__layout/new-sequence-start-nogrant')
+  expect(await screen.findByTestId('agent-access')).toHaveTextContent('Agent access')
+})

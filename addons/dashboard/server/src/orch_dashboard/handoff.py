@@ -212,6 +212,11 @@ def _new_people(people: "NewPeople | None") -> dict:
     return out
 
 
+class QuickAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hours: Annotated[int, Field(ge=1, le=168)]
+
+
 class NewTicketSequence(Action):
     """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
@@ -228,6 +233,9 @@ class NewTicketSequence(Action):
     #: B12D: acceptance criteria and people in the same review (N3)
     acceptance: list[Criterion] = Field(default_factory=list, max_length=8)
     people: NewPeople | None = None
+    #: U4: "Create and start agent" without a usable runner grant: the agent access, signed LAST in the same review
+    #: (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
+    agent: QuickAgent | None = None
 
     def intent(self) -> dict:
         """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
@@ -260,6 +268,8 @@ class NewTicketSequence(Action):
             people = _new_people(self.people)
             if people:
                 intent["people"] = people
+            if self.agent is not None:
+                intent["agent"] = {"hours": self.agent.hours, "scope": "workable"}
             return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid) as exc:
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
@@ -379,11 +389,6 @@ class QuickCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     text: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     cmd: Annotated[str, StringConstraints(min_length=1, max_length=300)] | None = None
-
-
-class QuickAgent(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    hours: Annotated[int, Field(ge=1, le=168)]
 
 
 class QuickStart(Action):

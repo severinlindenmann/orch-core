@@ -113,6 +113,9 @@ export const LAYOUT_SCENARIOS = [
   'drop-phone',
   // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
   'new-sequence',
+  // U4: the same form on a host that can start agents: with a usable agent access, and without one.
+  'new-sequence-start',
+  'new-sequence-start-nogrant',
   // B12D (N3): the ticket page's edit of text, criteria and people, and its ONE review.
   'edit-ticket',
 ] as const
@@ -744,7 +747,7 @@ function install() {
   ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('routing.choices', routingApi.choices)
   ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' || current === 'new-sequence-start' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })
@@ -790,14 +793,14 @@ function install() {
   }))
   set('getHostSettings', async () => ({
     available: true,
-    grant_hours: 8,
+    grant_hours: current.startsWith('new-sequence-start') ? 168 : 8,
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
     gates: {},
     repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
-    models: current === 'addons-model-routing' ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
+    models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current === 'addons-model-routing' ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))
@@ -837,6 +840,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario === 'new-sequence') return <NewSequencePreview />
+  if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
@@ -937,9 +941,9 @@ function EditTicketPreview() {
 }
 
 /** The real New ticket form in hand-off mode (a real host): Create opens the one review with fixture answers. */
-function NewSequencePreview() {
+function NewSequencePreview({ start = false }: { start?: boolean }) {
   useEffect(() => {
-    setFeatures({ features: ['actions'] })
+    setFeatures({ features: start ? ['actions', 'agent_start', 'model_routing'] : ['actions'] })
     return () => setFeatures(null)
   }, [])
   const ready = useRef(false)

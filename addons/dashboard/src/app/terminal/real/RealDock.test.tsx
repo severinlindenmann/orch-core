@@ -158,7 +158,7 @@ describe('the real dock', () => {
   })
 
   it('Start agent is not available when the host does not serve agent_start', async () => {
-    setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
+    setFeatures({ features: ['terminals', 'terminals_page'], workspaces: { [WS]: ['terminals', 'terminals_page'] } })
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
@@ -166,7 +166,7 @@ describe('the real dock', () => {
   })
 
   it('Start agent needs a ticket: outside a ticket page it is disabled and says so', async () => {
-    setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
+    setFeatures({ features: ['terminals', 'terminals_page', 'agent_start'], workspaces: { [WS]: ['terminals', 'terminals_page', 'agent_start'] } })
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
@@ -178,7 +178,7 @@ describe('the real dock', () => {
   it('Start agent opens core\'s dialog on a ticket page when the host serves agent_start', async () => {
     dock.ticket = 'DEMO-1'
     const { agentsApi } = await import('@/api/agents')
-    setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
+    setFeatures({ features: ['terminals', 'terminals_page', 'agent_start'], workspaces: { [WS]: ['terminals', 'terminals_page', 'agent_start'] } })
     const pre = vi.spyOn(agentsApi, 'preview').mockResolvedValue({ spec: 'f'.repeat(64), ticket: null, display: 'codex', display_hidden: false, cwd: { kind: 'workspace' },
       cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: null, blocked: null, warnings: [] })
     vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: true, grant: null } })
@@ -190,6 +190,26 @@ describe('the real dock', () => {
     fireEvent.click(item)
     expect(await screen.findByTestId('agent-preview')).toBeInTheDocument()
     expect(pre).toHaveBeenCalledWith(WS, expect.objectContaining({ ticket: 'DEMO-1' }))
+  })
+
+  it('M-6: with the Terminals add-on off the dock lists no shells and does not offer a new one', async () => {
+    setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
+    list = { ...list, runs: [run('SH', { state: 'exited', exit: { code: 0, reason: 'exited', cleanup: 'complete' } as never })] }
+    mount()
+    expect(await screen.findByText(/Terminals are switched off in this workspace/)).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    expect(await screen.findByRole('menuitem', { name: /Shell in the workspace/ })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('a very long tab name stays on one line, with the full name as its tooltip', async () => {
+    const long = 'a-very-long-terminal-name '.repeat(8).trim()
+    list = { ...list, runs: [run('LN', { label: long })] }
+    mount()
+    const tab = await screen.findByRole('tab')
+    const name = tab.querySelector('span.truncate') as HTMLElement
+    expect(name.title).toBe(long)
+    expect(name.className).toContain('[&>bdi]:whitespace-nowrap')
   })
 
   it('an agent whose runner grant ended says so and keeps Stop', async () => {

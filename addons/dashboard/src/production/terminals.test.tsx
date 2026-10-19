@@ -21,6 +21,7 @@ const RUNS = {
     run('A1', { kind: 'agent', harness: 'claude-code', ticket: 'DEMO-0001' }),
     run('B2', { label: 'Build the docs', writer: true }),
     run('C3', { state: 'exited', exit: { code: 0, signal: null, at: '2026-10-18T09:30:00Z', reason: 'exited', cleanup: 'complete' } }),
+    run('D4', { kind: 'agent', harness: 'codex', state: 'exited', exit: { code: 127, signal: null, at: '2026-10-18T09:31:00Z', reason: 'exited', cleanup: 'complete' } }),
   ],
   runner: { connected: true, enabled: true, terminals: true },
   truncated: false,
@@ -40,7 +41,7 @@ it('lists terminals and agents with their state and who controls them, and the m
   show('/w/DEMO/terminals')
   const list = await screen.findByRole('list', { name: 'Terminals' }, T)
   const rows = within(list).getAllByRole('listitem')
-  expect(rows).toHaveLength(3)
+  expect(rows).toHaveLength(4)
   expect(rows[0]).toHaveTextContent('DEMO-0001 Claude')
   expect(rows[0]).toHaveTextContent('Agent')
   expect(rows[0]).toHaveTextContent('Live')
@@ -50,6 +51,9 @@ it('lists terminals and agents with their state and who controls them, and the m
   expect(rows[2]).toHaveTextContent('Ended')
   expect(rows[2]).not.toHaveTextContent(/Read only|Controlled/)
   expect(within(rows[2]).queryByRole('button', { name: /^Stop/ })).toBeNull()
+  // M-5: an ended row says why it ended (an agent whose program is missing is not a silent "Ended").
+  expect(rows[3]).toHaveTextContent('Ended')
+  expect(within(rows[3]).getByTestId('run-exit')).toHaveTextContent('its program was not found on this Mac (code 127)')
   expect(screen.getAllByRole('link', { name: 'Terminals' }).length).toBeGreaterThan(0)
 })
 

@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
+import { agentsApi } from '@/api/agents'
 import { DO, GRANT_A, GRANT_B, MARA, OWNER, READS, TOM, grant, policy, settingsOf, useFakeHost, workspace, show } from '@/test/hostHarness'
 
 // Every page of the app reads through the production api, as the build wires it (vite.config.ts alias).
@@ -372,6 +373,20 @@ it('Grants: the runner grant is marked from grant.list label (H11c-2); another l
   const other = screen.getByText(GRANT_B).closest('tr')!
   expect(within(other).queryByTestId('runner-grant-tag')).not.toBeInTheDocument()
   expect(other).toHaveTextContent('label tests')
+})
+
+it('UP-2: an active runner grant the runner no longer holds says so; one it holds stays Active', async () => {
+  state.host.workspaces[0].features = [...state.host.workspaces[0].features, 'agent_start']
+  state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { label: 'runner' }), grant(GRANT_B, OWNER, { label: 'runner' })]
+  vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: { id: GRANT_B, scope: 'workable', until: '2099-01-01T00:00:00Z' } } })
+  show('/w/DEMO/settings/grants')
+  const lost = (await screen.findByText(GRANT_A, {}, T)).closest('tr')!
+  await waitFor(() => expect(within(lost).getByTestId('grant-not-held')).toBeInTheDocument(), T)
+  expect(lost).toHaveTextContent('Not in use')
+  expect(lost).not.toHaveTextContent('Active')
+  const held = screen.getByText(GRANT_B).closest('tr')!
+  expect(within(held).queryByTestId('grant-not-held')).not.toBeInTheDocument()
+  expect(held).toHaveTextContent('active')
 })
 
 it('host strings with bidi characters are shown escaped, not applied', async () => {

@@ -1,4 +1,6 @@
-import { ChevronDown, ChevronRight, FileText, ListChecks } from 'lucide-react'
+import { useTicketEdit } from './EditTicket'
+import { Button } from '@/components/ui/button'
+import { ChevronDown, ChevronRight, FileText, ListChecks, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
@@ -106,6 +108,7 @@ export function HowVerified({ t }: { t: TaskStatus }) {
 /** One line per criterion: glyph, text, an Evidence link. The detail (what proves it) opens on demand. */
 function Criterion({ ac, ticket, jump }: { ac: AcceptanceStatus; ticket: TicketDocument; jump: (j: Jump) => void }) {
   const [open, setOpen] = useState(false)
+  const edit = useTicketEdit()
   const proof = proofOf(ticket, ac)
   const ui = PROOF_UI[proof]
   const first = ac.evidence[0]
@@ -120,6 +123,7 @@ function Criterion({ ac, ticket, jump }: { ac: AcceptanceStatus; ticket: TicketD
         <p className="min-w-0 flex-1 text-[13px] leading-relaxed">
           <Inline text={ac.text} />
         </p>
+        {edit && <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${ac.id}`} onClick={() => edit({ kind: 'ac', id: ac.id })}><Pencil className="size-3.5" /></Button>}
         {first ? (
           <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="shrink-0 text-[12px] text-brand underline-offset-2 hover:underline">
             Evidence
@@ -157,6 +161,7 @@ function leaseText(t: TaskStatus): string {
 }
 
 export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
+  const edit = useTicketEdit()
   return (
     <div className="space-y-5">
       {ticket.status === 'testing' && (
@@ -205,6 +210,7 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
                   </TableCell>
                   <TableCell className="whitespace-normal text-[13px]">
                     <Inline text={t.text} />
+                    {edit && <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${t.id}`} onClick={() => edit({ kind: 'task', id: t.id })}><Pencil className="size-3.5" /></Button>}
                     <HowVerified t={t} />
                   </TableCell>
                   <TableCell>

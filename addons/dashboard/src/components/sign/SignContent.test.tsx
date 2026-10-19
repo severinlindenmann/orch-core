@@ -267,3 +267,21 @@ it('U3: the type is shown by a word map; an unmapped value stays exactly as sign
   expect(screen.getByText('Feature')).toBeVisible()
   expect(screen.getByText('weird-kind')).toBeVisible()
 })
+
+it('names the cancelled approvals and marks incomplete host context', () => {
+  const client = new QueryClient()
+  client.setQueryData(['workspaces'], [{ id: 'w_1', members: [{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Anna' }] }])
+  render(<QueryClientProvider client={client}><SignContent ws="w_1" content={{ headline: 'Review', cancels: [{ gate: 'plan', people: [SEV, MARA], complete: false }, { gate: 'requirements', people: [SEV], complete: true }], notes: ['Existing note'] }} /></QueryClientProvider>)
+  const block = screen.getByRole('region', { name: 'Signing cancels' })
+  expect(block).toHaveTextContent('Plan approval (Severin, Anna) · not yet complete')
+  expect(block).toHaveTextContent('Requirements approval (Severin)')
+  expect(block).toHaveTextContent('(per host, not signed)')
+  expect(within(block).getAllByText(/not yet complete/)).toHaveLength(1)
+  expect(screen.getByText('Existing note')).toBeVisible()
+})
+
+it.each([undefined, [], null, 'bad', {}, [null], [{ gate: 'unknown', people: [SEV], complete: false }], [{ gate: 'plan', people: 'bad', complete: false }], [{ gate: 'plan', people: [SEV], complete: 'yes' }]])('ignores absent or malformed cancellation context: %j', cancels => {
+  render(<SignContent content={{ headline: 'Review', cancels: cancels as never, notes: ['Existing note'] }} />)
+  expect(screen.queryByText('Signing cancels:')).not.toBeInTheDocument()
+  expect(screen.getByText('Existing note')).toBeVisible()
+})

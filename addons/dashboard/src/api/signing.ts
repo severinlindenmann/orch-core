@@ -15,6 +15,7 @@ export interface SignContent {
   fields_title?: string
   fields_changed?: { field: string; before: string | null; after: string | null; before_note?: string }[]
   note?: string | string[]
+  cancels?: { gate: string; people: string[]; complete: boolean }[]
   notes?: string[]
 }
 export const methodLabel: Record<SignMethod, string> = { terminal: 'Sign in Terminal', click: 'One click', phone: 'Approve on your phone' }

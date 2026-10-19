@@ -283,6 +283,38 @@ class EditAcceptance(BaseModel):
     add: list[Criterion] = Field(default_factory=list, max_length=8)
 
 
+TaskId = Annotated[str, StringConstraints(pattern=r"^T[1-9][0-9]*$")]
+AcId = Annotated[str, StringConstraints(pattern=r"^AC[1-9][0-9]*$")]
+TaskText = Annotated[str, StringConstraints(max_length=500)]
+TaskCommand = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
+class TaskEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText = ""
+    verify: TaskCommand | None = None
+    proves: list[AcId] = Field(default_factory=list, max_length=64)
+
+
+class TaskAdd(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText
+    verify: TaskCommand = ""
+    proves: list[AcId] = Field(max_length=64)
+
+
+class EditTasks(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    edit: dict[TaskId, TaskEdit] = Field(default_factory=dict, max_length=32)
+    add: list[TaskAdd] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def limit_changes(self):
+        if len(self.edit) + len(self.add) > 32:
+            raise ValueError("At most 32 tasks can be changed or added together.")
+        return self
+
+
 class PeopleChange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     add: list[PersonId] = Field(default_factory=list, max_length=16)
@@ -313,6 +345,7 @@ class EditTicket(Action):
     head_seq: Annotated[int, Field(ge=1)]
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
     acceptance: EditAcceptance | None = None
+    tasks: EditTasks | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
     links: EditLinks | None = None
 
@@ -360,6 +393,55 @@ class EditTicket(Action):
                 }
                 if not intent["acceptance"]["edit"] and not intent["acceptance"]["add"]:
                     del intent["acceptance"]
+            if self.tasks is not None:
+                rows = doc.get("tasks") or []
+                was = [{k: row[k] for k in ("id", "text", "verify", "proves", "assignee") if k in row} for row in rows]
+                known = {row["id"]: row for row in was}
+                states = {row["id"]: row.get("state") for row in rows}
+                edits = {}
+                for tid, change in self.tasks.edit.items():
+                    if tid not in known:
+                        raise sequence.SequenceInvalid("it names a task the ticket does not have")
+                    previous = {**known[tid], "verify": known[tid]["verify"]["cmd"] if known[tid]["verify"] else None}
+                    fields = {}
+                    for name in change.model_fields_set:
+                        value = getattr(change, name)
+                        if isinstance(value, str):
+                            value = normalize_text(value, one_line=True)
+                        if name == "proves":  # the canonical form core requires: sorted, unique
+                            value = sorted(set(value), key=lambda a: int(a[2:]))
+                        if name == "text" and not value.strip():
+                            raise sequence.SequenceInvalid("Task text cannot be empty.")
+                        if value != previous[name]:
+                            fields[name] = value
+                    if states[tid] == "done" and ({"verify", "proves"} & fields.keys()):
+                        raise sequence.SequenceInvalid(
+                            "This task is done: reopen it before changing its check or criteria."
+                        )
+                    if fields:
+                        edits[tid] = fields
+                adds = []
+                for task in self.tasks.add:
+                    if not task.text.strip():
+                        continue
+                    item = {
+                        "text": normalize_text(task.text, one_line=True),
+                        "proves": sorted(set(task.proves), key=lambda a: int(a[2:])),
+                    }
+                    if "verify" in task.model_fields_set:
+                        item["verify"] = normalize_text(task.verify, one_line=True)
+                    adds.append(item)
+                if edits or adds:
+                    intent["tasks"] = {"was": was, "edit": edits, "add": adds}
+                    # Core resolves proves from this snapshot, even with no criterion changes.
+                    intent.setdefault(
+                        "acceptance",
+                        {
+                            "was": [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []],
+                            "edit": {},
+                            "add": [],
+                        },
+                    )
             if self.links is not None:
                 now = doc.get("links") or {"repos": [], "branches": {}, "prs": [], "external": []}
                 was = {

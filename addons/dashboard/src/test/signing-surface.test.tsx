@@ -891,3 +891,28 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
   await waitFor(() => expect(posted).toEqual([{review_id:'demo-review',digest:'demo-bound-digest'}]))
 })
+
+it('reviews the exact task edit and relays that action through the existing handoff', async () => {
+  const { fakeRequest, state } = await import('./handoffHarness')
+  const ws = 'a'.repeat(32)
+  const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
+  const action = { action: 'edit_sequence' as const, key: 'DEMO-0043', head_seq: 7, tasks: { edit: { T3: { text: 'Check every header', verify: null } }, add: [] } }
+  const payload = { base_rev: { 'ticket.tasks': 'sha256:' + '0'.repeat(64) }, set: { 'ticket.tasks': [{ id: 'T3', text: 'Check every header', verify: null, proves: [] }] } }
+  const event = { id: 'event-task', type: 'ticket.updated', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, ...payload }
+  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload, derived: {} }] }
+  const request = { ...fakeRequest(), op: 'task.edit', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Edit task', fields_changed: [{ field: 'text', before: 'Check header', after: 'Check every header' }, { field: 'check', before: 'check-header', after: null }] } }
+  request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
+  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Edit task" action={action} onClose={() => {}} /></QueryClientProvider>)
+  const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+  await waitFor(() => expect(button).toBeEnabled())
+  button.click()
+  await waitFor(() => expect(prepare).toHaveBeenCalled())
+  expect(await screen.findByText('Check every header')).toBeVisible()
+  expect(screen.getByText('(not set)')).toBeVisible()
+  expect(prepare).toHaveBeenCalledWith(ws, action, 0)
+})

@@ -1926,3 +1926,11 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 **Why:** The dated B9-C launch note supersedes the URL fragment contract. Core owns single use and run-aware idle expiry; real-core transport tests now cover the boundary.
 
 **Revert:** Revert these dashboard changes only together with a replacement core launch/auth contract.
+
+## 2026-10-19 — Edit tasks and preview cancelled approvals
+
+**Decision:** Share one ticket edit dialog between the overview and row pencils. Task drafts carry only changed fields; done tasks retain their checks and criteria. Offer existing criteria only in task chips. Project the host's task snapshot before constructing the sequence, and include the acceptance snapshot whenever task changes remain. Show valid cancellation context with resolved names and an explicit “per host, not signed” note.
+
+**Why:** Core validates task proofs against the acceptance snapshot; an unchanged acceptance block is accepted and produces no steps. A done task's receipt stands for its check and criteria. Cancellation context explains the consequences without changing signed material.
+
+**Revert:** Remove task editing, row shortcuts and the cancellation context block together with their dashboard-only types and tests; retain the existing edit and signing checks.

@@ -418,8 +418,13 @@ ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
     "keys": "Making your keys",
     "genesis": "Signing the workspace",
-    "register": "Registering it with the host",
-    "runner": "Turning on dashboard execution",
+    "register": (
+        "Registering it with the host. A Mac may now show \u201cBackground Items Added\u201d for orch-host. "
+        "That is expected, leave it on"
+    ),
+    "runner": (
+        "Turning on dashboard execution. A Mac may show \u201cBackground Items Added\u201d for orch-runner. Leave it on"
+    ),
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
     "runner_grant": "Giving this machine's runner agent access",

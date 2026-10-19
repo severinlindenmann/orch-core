@@ -7,6 +7,9 @@ A read only. Turning an add-on on or off is a signed hand-off like every other s
 
 from __future__ import annotations
 
+import re
+from importlib import metadata
+
 from fastapi import Depends, FastAPI
 
 from . import reads
@@ -22,6 +25,33 @@ LOCKED = {
     "quick": "Always available. There is nothing to switch.",
 }
 RUNNER_ENABLE = "orch runner enable"
+_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
+_RELEASE = re.compile(r"^[0-9a-f]{12}$")
+
+
+def clean_version(value: object) -> str | None:
+    """A version string as a manifest or package writes it, or ``None``: anything odd is dropped, never shown."""
+    return value if isinstance(value, str) and _VERSION.fullmatch(value) else None
+
+
+def package_version(name: str) -> str | None:
+    try:
+        return clean_version(metadata.version(name))
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def versions_of(link) -> dict:
+    """What this install runs, read only: the orch-core package, the host's release digest (from its welcome; ``None``
+    when an older host does not say) and this dashboard's own package. No host op, nothing signed."""
+    release = link.welcome.get("release")
+    return {
+        "core": {
+            "version": package_version("orch-core"),
+            "release": release if isinstance(release, str) and _RELEASE.fullmatch(release) else None,
+        },
+        "dashboard": {"version": package_version("orch-dashboard")},
+    }
 
 
 def live_runs(gateway: Gateway, ws: str) -> list[dict] | None:
@@ -77,6 +107,10 @@ def needs(name: str, runner: dict | None) -> str | None:
 def register(app: FastAPI, gateway: Gateway) -> None:
     from orch.setup import facts
 
+    @app.get("/api/w/{ws}/versions")
+    def versions(ws: str = Depends(reads.workspace)):
+        return versions_of(gateway.enabled(ws))
+
     @app.get("/api/w/{ws}/add-ons")
     def add_ons(ws: str = Depends(reads.workspace)):
         link = gateway.enabled(ws)
@@ -85,6 +119,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         served = link.welcome.get("ops", {})
         can_sign = served.get("addon.grant") == 1 and served.get("addon.disable") == 1
         runs = live_runs(gateway, ws)
+        own = versions_of(link)
         rows = []
         for info in facts.catalog(optional=True):
             if info.id in LOCKED:
@@ -96,6 +131,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                         "state": "on",
                         "locked": LOCKED[info.id],
                         "blocked": None,
+                        # always-on parts ship with the install: the dashboard's own package, quick tasks are core
+                        "version": own["dashboard"]["version"] if info.id == "dashboard" else own["core"]["version"],
                     }
                 )
                 continue
@@ -117,6 +154,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "state": state,
                     "locked": None,
                     "blocked": blocked,
+                    "version": clean_version(got.get("version")) if got else None,
                 }
             )
         return {"available": True, "add_ons": rows}

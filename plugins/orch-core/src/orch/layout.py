@@ -575,7 +575,7 @@ def delete_workdir(layout: Layout, key: str) -> bool:
                         os.close(sub)
 
             def remove(dfd: int, depth: int, where: tuple[str, ...]) -> None:
-                """Deletes only what ``look`` recorded, unchanged: anything added, swapped or on another disk refuses."""
+                """Deletes only what ``look`` recorded, unchanged: anything else refuses."""
                 known = seen.get(where)
                 if known is None or depth > WORKDIR_DEPTH:
                     raise LayoutError("the work folder changed while it was being deleted; nothing more was deleted")

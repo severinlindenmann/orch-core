@@ -269,7 +269,9 @@ class Manager:
         """The PID of the process the service manager runs now (``None``: it cannot tell, or nothing runs)."""
         if self.plan.kind == "launchd":
             res = self.run(["launchctl", "print", self._target()])
-            found = re.search(r"^\s*pid = (\d+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            found = (
+                re.search(r"^(?:\t| {4})pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            )
         else:
             res = self.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", self.plan.systemd_name])
             found = re.fullmatch(r"\s*([1-9]\d*)\s*", res.stdout or "")

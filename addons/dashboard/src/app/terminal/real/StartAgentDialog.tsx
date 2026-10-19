@@ -358,6 +358,12 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
   const maxHours = grantDefaultHours({ grant_hours: hostSettings.data?.grant_hours ?? workspace?.grant_hours })
   const maxKnown = !workspaces.isPending && !hostSettings.isPending // until both answered, the maximum is a guess: show nothing about it
+  const riskText = maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')
+  // Shown in full until acknowledged once (kept per person and workspace); an unreadable answer counts as not acknowledged.
+  const qcRisk = useQueryClient()
+  const ackQ = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false, enabled: !!sheet })
+  const grantFull = ackQ.data?.acknowledged.grant !== true
+  const ackGrant = async () => { try { qcRisk.setQueryData(['risk-notices', ws], await agentsApi.acknowledge(ws, 'grant')) } catch { /* shown in full again next time */ } }
   const lengths = runnerLengths(maxHours, extend ? Date.parse(extend.until) - nowMs() : 0)
   const [selectedHours, setHours] = useState(8)
   const hours = lengths.some(([h]) => h === selectedHours) ? selectedHours : (lengths[0]?.[0] ?? 0)
@@ -459,7 +465,15 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
       {!sheet && <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Allow agents to work for you</p>}
-      <p role="note" data-testid="runner-grant-risk" className="text-warning">{maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')}</p>
+      {sheet ? (
+        <div data-testid="runner-grant-risk" className="space-y-1">
+          {grantFull ? (
+            <div role="note" className="space-y-2 rounded-md border border-border bg-surface px-3 py-2"><p>{riskText}</p><Button size="xs" variant="outline" data-testid="grant-risk-ack" onClick={() => void ackGrant()}>I understand</Button></div>
+          ) : (
+            <details data-testid="grant-risk-details"><summary className="cursor-pointer text-text-muted">Runs as you on this Mac <span aria-hidden>·</span> Details</summary><p className="mt-1 text-text-muted">{riskText}</p></details>
+          )}
+        </div>
+      ) : <p role="note" data-testid="runner-grant-risk" className="text-warning">{riskText}</p>}
       {loading && <Skeleton className="h-6" />}
       {grant && !extend && step.kind !== 'polling' && (
         <div className="flex flex-wrap items-center gap-2" data-testid="runner-grant-current">

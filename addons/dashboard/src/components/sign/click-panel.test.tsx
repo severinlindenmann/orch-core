@@ -51,13 +51,17 @@ afterEach(() => {
 })
 
 describe('the sign panel shows only the signer’s View', () => {
-  it('shows a One-click badge and keeps technical fields in collapsed Details', () => {
+  it('names the one-click custody once (no duplicate chip) and keeps technical fields in collapsed Details', () => {
     mount(answer({ artifacts: 'unseen', checks: [{ repo: 'code', clean: true, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
     const panel = screen.getByTestId('click-panel')
-    expect(screen.getByRole('button', { name: 'One-click' })).toBeInTheDocument()
-    expect(panel.querySelector('details')).not.toHaveAttribute('open')
-    fireEvent.focus(screen.getByRole('button', { name: 'One-click' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent(CLICK_RISK)
+    expect(screen.queryByRole('button', { name: 'One-click' })).toBeNull()
+    expect(screen.getAllByText('Technical details')).toHaveLength(1) // U3: ONE Technical details
+    expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+    // the risk sentence is reachable without a pointer: a focusable summary under the custody line
+    const more = screen.getByTestId('click-risk-more')
+    expect(more.querySelector('summary')).toHaveTextContent('What this means')
+    expect(more).toHaveTextContent(CLICK_RISK)
+    expect(panel.querySelectorAll('details')).toHaveLength(2) // Technical details + this one-line toggle
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
     expect(panel).toHaveTextContent('approve')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('id a94c935c')
@@ -351,27 +355,22 @@ it('shows the full terminal lines when structured content is absent', () => {
   expect(screen.getByText('Fallback second line')).toBeVisible()
 })
 
-it('makes the badge risk text available inline on small touch screens', () => {
-  mount()
-  expect(screen.getByText(CLICK_RISK)).toHaveClass('sm:hidden')
-})
-
 it('K6: a removed person reads "remove: Severin", never "remove: — → Severin"', () => {
   const ID = 'p_181d953f12ab34cd56ef78901234abcd'
   const client = new QueryClient()
   client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }])
   render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content: { headline: 'x', fields_changed: [{ field: 'assignees: remove', before: null, after: ID }] } })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={WS} /></QueryClientProvider>)
-  const row = screen.getByText('assignees: remove').parentElement!
-  expect(row).toHaveTextContent(/^assignees: remove: Severin/)
+  const row = screen.getByText('Assignees: remove:').closest('dl > div')!
+  expect(row).toHaveTextContent(/^Assignees: remove: Severin/)
   expect(row).not.toHaveTextContent('—')
 })
 
 it('E-4: a field that stays as it is shows its value once, without an arrow', () => {
   render(<QueryClientProvider client={new QueryClient()}><ClickSignPanel answer={answer({ content: { headline: 'x', fields_changed: [{ field: 'repository api: folder (unchanged, per host)', before: null, after: '/work/api' }, { field: 'repository api: main branch', before: 'main', after: 'dev' }] } })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={WS} /></QueryClientProvider>)
-  const row = screen.getByText('repository api: folder (unchanged, per host)').parentElement!
-  expect(row).toHaveTextContent('repository api: folder (unchanged, per host): /work/api')
+  const row = screen.getByText('Repository api: folder (unchanged, per host):').closest('dl > div')!
+  expect(row).toHaveTextContent('Repository api: folder (unchanged, per host): /work/api')
   expect(row).not.toHaveTextContent('→')
-  expect(screen.getByText('repository api: main branch').parentElement).toHaveTextContent('main → dev')
+  expect(screen.getByText('Repository api: main branch:').closest('dl > div')).toHaveTextContent('main → dev')
 })
 
 describe('people in the content are named from the View\'s own workspace', () => {
@@ -381,11 +380,11 @@ describe('people in the content are named from the View\'s own workspace', () =>
     const client = new QueryClient()
     client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }, { id: 'w_other', members: [{ person: ID, name: 'Impostor' }] }])
     render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={dialogWs} /></QueryClientProvider>)
-    return screen.getByText('owner').parentElement!
+    return screen.getByText('Owner:').closest('dl > div')!
   }
   it('uses view.workspace, not the dialog\'s workspace', () => {
     const row = named('w_other')
-    expect(row).toHaveTextContent('owner: — → Severin (p_181d953f12ab…)')
+    expect(row).toHaveTextContent('Owner: — → Severin')
     expect(row).not.toHaveTextContent('Impostor')
   })
 })

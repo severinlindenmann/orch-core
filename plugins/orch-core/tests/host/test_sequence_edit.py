@@ -47,7 +47,7 @@ def test_the_review_shows_criteria_and_people_and_needs_the_typed_word(human, la
     content = signcontent.build(first, verified=True)
     assert [a["text"] for a in content["acceptance"]] == ["It opens"]
     assert any(f["field"] == "assignees: add" and f["after"] == quinn.ref for f in content["fields_changed"])
-    assert content["subline"] == "and its text (2 sections), 1 acceptance check, its people"
+    assert content["subline"] == "Includes its text (2 sections), 1 acceptance check, its people"
     assert sequence.confirm_kind(rig.intent) == "word"  # people.set decides who may act: the strongest step
     assert "It opens" in signer.render(first, lambda w: ("ws", "ORCH"))
 

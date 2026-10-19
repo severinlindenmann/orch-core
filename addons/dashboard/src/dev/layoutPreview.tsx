@@ -264,18 +264,20 @@ function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
     gate_hash: null,
     headline,
     content: {
-      headline,
-      subline,
-      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      headline: `Create ${key} (key per host; signed id …${uid.slice(-8)}): ${String(action.title)}`,
+      title: headline.replace('Create ', 'New ticket '),
+      subline: subline?.replace(/^and /, 'Includes '),
+      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(criteria.length ? { acceptance: criteria.map((text, i) => ({ id: `AC${i + 1}`, text, checked: false })) } : {}),
+      fields_title: 'Details',
       fields_changed: [
         { field: 'type', before: null, after: String(action.type) },
         { field: 'owner', before: null, after: 'you' },
         ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
         ...peopleRows,
       ],
-      notes: [`One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was created stays a draft.`],
+      notes: [`One confirmation signs all ${of} steps. If the ticket changes meanwhile, signing stops and what is already signed stays.`],
     },
     material,
     events,
@@ -321,7 +323,7 @@ function quickRequest(action: Record<string, unknown>): HandoffRequest {
     content: {
       headline,
       subline: 'creates the task and approves its requirements and plan',
-      ticket: { key, title, uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      ticket: { key, title, uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: [
         { id: 'requirements', title: 'Requirements', text: description },
         { id: 'plan', title: 'Plan', text: plan },
@@ -387,7 +389,7 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
     content: {
       headline,
       subline: 'its text, acceptance checks, repositories and people, as shown below',
-      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
       fields_changed: [...linkRows, ...peopleRows],

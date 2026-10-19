@@ -210,31 +210,10 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
   const runnerGrant = request.events.some(e => e.type === 'grant.issued' && e.label === 'runner')
   const extending = runnerGrant && request.events.some(e => e.type === 'grant.revoked' && e.reason === 'extended')
   const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
-  return (
-    <div data-handoff-panel className="space-y-3">
-      {request.content && <SignContent content={request.content} ws={workspace?.id} />}
-      <p className="text-[13px] text-text">
-        Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
-      </p>
-      {runnerGrant && (
-        <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
-          {extending && <p className="font-medium">Running agents will stop.</p>}
-          <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in Terminal to give the new access to this Mac’s agent runner.</p>
-          <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this Mac that starts agents for you.</p>
-        </div>
-      )}
-      {request.code ? <>
-        <p className="text-[13px] font-medium text-text">Copy this command into Terminal</p>
-        <CommandLine code={request.code} />
-      </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
-      <p className="text-[12px] text-text-muted">
-        Verification fingerprint: <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code>.
-        {' '}Check that this matches the fingerprint in your terminal.
-      </p>
-      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
-      {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
-      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
-      <SignDetails>
+  const preview = <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />
+  // ONE "Technical details" expander: with core's review it is the content's own (ids), plus these facts and the preview.
+  const technical = (
+    <>
       <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
       <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[13px]">
@@ -272,9 +251,35 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
           </span>
         </dd>
       </dl>
-      {request.content && <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />}
-      </SignDetails>
-      {!request.content && <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />}
+      {request.content && preview}
+    </>
+  )
+  return (
+    <div data-handoff-panel className="space-y-3">
+      {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
+      <p className="text-[13px] text-text">
+        Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
+      </p>
+      {runnerGrant && (
+        <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
+          {extending && <p className="font-medium">Running agents will stop.</p>}
+          <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in Terminal to give the new access to this Mac’s agent runner.</p>
+          <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this Mac that starts agents for you.</p>
+        </div>
+      )}
+      {request.code ? <>
+        <p className="text-[13px] font-medium text-text">Copy this command into Terminal</p>
+        <CommandLine code={request.code} />
+      </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
+      <p className="text-[12px] text-text-muted">
+        Verification fingerprint: <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code>.
+        {' '}Check that this matches the fingerprint in your terminal.
+      </p>
+      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
+      {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
+      {!request.content && <SignDetails>{technical}</SignDetails>}
+      {!request.content && preview}
       <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
     </div>
   )

@@ -3,7 +3,7 @@ for a workspace no host serves.
 
     orch worktree list   [TICKET] [--check] [--json]
     orch worktree create TICKET [--repo NAME] [--json]
-    orch worktree remove TICKET [--repo NAME] [--discard-untracked | --force] [--json]
+    orch worktree remove TICKET [--repo NAME] [--discard-untracked=TOKEN | --force] [--json]
 
 The same safety contract as the host: one worktree per (ticket, linked repo) at ``<repo path>.worktrees/<WS8>-<KEY>`` on
 the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one). git runs only through the runner's
@@ -18,8 +18,10 @@ The new worktree is pinned in process
 generation in ``<state>/hosts/<ws>/git-pins.json``, the file a host reads when the workspace is registered later.
 **Removal never depends on ignore rules** (#583 round 3): every file that is not tracked-and-unchanged blocks
 ``remove``, ignored or not (``node_modules``, ``.venv``, build output), listed with paths and, for untracked
-directories, their file count and size. ``--discard-untracked`` deletes exactly that untracked set: it prints the set
-first, checks the worktree again right before deleting and refuses when anything changed in between; modified tracked
+directories, their file count and size. ``--discard-untracked=TOKEN`` deletes exactly that untracked set: the refusal prints the
+set with a token (a fingerprint of the set); the command deletes only when the set it finds now has that token, else it
+refuses and prints the new set with the new token (#723: what is deleted is what the person saw). It prints the set,
+checks the worktree again right before deleting and refuses when anything changed in between; modified tracked
 files still block it. ``--force`` skips the check (in direct mode the person is at the terminal and could ``rm -rf``
 it anyway); the branch is never deleted.
 
@@ -54,7 +56,7 @@ __all__ = ["main"]
 LOCK_WAIT = 10.0
 _USAGE = (
     "usage: orch worktree {list [TICKET] [--check] | create TICKET [--repo NAME] | remove TICKET [--repo NAME] "
-    "[--discard-untracked | --force]} [--json]"
+    "[--discard-untracked=TOKEN | --force]} [--json]"
 )
 
 
@@ -72,7 +74,7 @@ def _parse(argv: Sequence[str]) -> tuple[str, dict[str, Any]]:
     if not argv or argv[0] not in ("list", "create", "remove"):
         raise WtError("invalid.input", _USAGE, 2)
     cmd, rest = argv[0], list(argv[1:])
-    a: dict[str, Any] = {"json": False, "check": False, "force": False, "discard": False, "repo": None, "ticket": None}
+    a: dict[str, Any] = {"json": False, "check": False, "force": False, "discard": None, "repo": None, "ticket": None}
     it = iter(rest)
     for tok in it:
         if tok == "--json":
@@ -81,8 +83,8 @@ def _parse(argv: Sequence[str]) -> tuple[str, dict[str, Any]]:
             a["check"] = True
         elif tok == "--force" and cmd == "remove":
             a["force"] = True
-        elif tok == "--discard-untracked" and cmd == "remove":
-            a["discard"] = True
+        elif (tok == "--discard-untracked" or tok.startswith("--discard-untracked=")) and cmd == "remove":
+            a["discard"] = tok.partition("=")[2]  # "": asked without a token (refused with the list and its token)
         elif tok == "--repo" and cmd != "list":
             a["repo"] = next(it, None)
             if not a["repo"]:
@@ -407,7 +409,7 @@ class Direct:
         return self.row(view, repo, pins.worktree(view.uid, repo))
 
     def remove(
-        self, ref: str, repo_arg: str | None, force: bool, discard: bool = False, say: Any = None
+        self, ref: str, repo_arg: str | None, force: bool, discard: str | None = None, say: Any = None
     ) -> dict[str, Any]:
         self._gate()
         view = self._ticket(ref)
@@ -446,10 +448,18 @@ class Direct:
 
         return render({"changed": entries, "more": len(entries) > limit}, limit).splitlines()
 
+    def _token(self, raw: dict[str, Any]) -> str:
+        """The token of an untracked set (#723): a fingerprint of what the listing shows (paths, kinds, sizes) and of the
+        reader's fingerprint of the whole set; a person who passes it has read this set."""
+        import hashlib
+
+        doc = json.dumps([self._entries(raw), raw.get("fingerprint"), raw["changed"]], sort_keys=True)
+        return hashlib.sha256(doc.encode()).hexdigest()[:12]
+
     def _between(self) -> None:
         """Between the listing a discard prints and the re-check right before it deletes (a test hook)."""
 
-    def _remove(self, view: Any, repo: str, force: bool, discard: bool, say: Any) -> dict[str, Any]:
+    def _remove(self, view: Any, repo: str, force: bool, discard: str | None, say: Any) -> dict[str, Any]:
         pins = self.pins()
         slot = pins.worktree(view.uid, repo)
         reg = slot["reg"]
@@ -464,14 +474,20 @@ class Direct:
             entries = self._entries(first)
             tracked = [e for e in entries if e["why"] != "untracked"]
             untracked = [e for e in entries if e["why"] == "untracked"]
+            token = self._token(first) if untracked else ""
+            if untracked and discard and not tracked and not first["more"] and discard != token:
+                raise WtError("worktree.dirty", ("the untracked files are not the ones that token was made for; "
+                              "nothing was deleted. They are now: " + "; ".join(self._lines(untracked, 20))
+                              + f". To delete exactly these, run `orch worktree remove {view.key} "
+                              f"--discard-untracked={token}`")[:2000])  # fmt: skip
             if tracked or first["more"] or (untracked and not discard):
                 hint = "commit them" if tracked else "commit or delete them"
                 if untracked and not tracked and not first["more"]:
-                    hint += f", or `orch worktree remove {view.key} --discard-untracked` (deletes exactly these)"
+                    hint += f", or `orch worktree remove {view.key} --discard-untracked={token}` (deletes exactly these)"
                 raise WtError("worktree.dirty", ("the worktree has files that are not committed (ignored files count "
                               "too: a removal never depends on ignore rules): " + "; ".join(self._lines(entries, 20))
                               + f". {hint[0].upper()}{hint[1:]}, or remove with --force")[:2000])  # fmt: skip
-            if untracked:  # --discard-untracked: print exactly the set, re-check right before deleting
+            if untracked:  # --discard-untracked=TOKEN: print exactly the set, re-check right before deleting
                 discarded = [ln for ln in self._lines(untracked, len(untracked))]
                 say("discarding exactly these untracked files:\n" + "\n".join(f"  {ln}" for ln in discarded) + "\n")
                 self._between()

@@ -13,6 +13,7 @@ A v1 workspace (an `orchestrator/` folder with a `tickets/` directory and `confi
 `orch worktree remove TICKET` (and the host's `worktree.remove`) never depends on ignore rules: every file in the
 worktree that is not tracked and unchanged blocks the removal, **ignored files too** (`node_modules`, `.venv`, build
 output). The refusal lists the files, and for an untracked directory its file count and size. Commit what you want to
-keep, then either delete the rest yourself or run `orch worktree remove TICKET --discard-untracked`: it prints exactly
+keep, then either delete the rest yourself or run `orch worktree remove TICKET --discard-untracked=TOKEN` (the refusal prints the
+list and its token; a different set means a refusal with the new list and token): it prints exactly
 the untracked set it will delete, checks the worktree again right before deleting, and refuses if anything changed in
 between. Modified tracked files still block it. `--force` (a person only) removes the worktree whatever it holds.

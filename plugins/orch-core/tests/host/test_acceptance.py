@@ -336,3 +336,16 @@ def test_other_ops_cannot_write_an_acceptance_label(human, lbl):
     p["events"][0]["label"] = lbl
     with pytest.raises(signer.SignerRefused):
         signer.verify_material(p, workspace_id=p["workspace_id"])
+
+
+def test_a_label_on_a_later_event_is_refused_too(human):
+    _, key = criterion(human)
+    p = copy.deepcopy(human.prepare("ac.accept", {"ref": key, "ac": "AC1"}))
+    first = copy.deepcopy(p["events"][0])
+    first["label"] = "plain note"
+    second = copy.deepcopy(p["events"][0])
+    p["events"] = [first, second]
+    p["op"] = "artifact.add"
+    p["material"].pop("statement")
+    with pytest.raises(signer.SignerRefused):
+        signer._person_op(p)

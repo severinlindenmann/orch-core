@@ -136,3 +136,13 @@ def test_a_person_marks_a_task_done_without_receipt_only_with_authority():
     assert refused(w, uid, "task.done", "mara", task="T1") == Code.ROLE_DENIED
     assert refused(w, uid, "task.done", "vik", task="T1") == Code.ROLE_DENIED
     assert refused(w, uid, "task.done", "sev", task="T1") is None
+
+
+def test_a_person_never_carries_a_receipt_and_never_makes_evidence_with_one():
+    w, uid = _two_members()
+    w.edit(uid, "sev", {"ticket.tasks": [{"id": "T1", "text": "do", "verify": {"cmd": "make"}, "proves": ["AC1"]}]})
+    receipt = {"cmd": "make", "exit": 0, "ms": 1, "repo": None, "commit": None}
+    for who in ("mara", "sev", "mia"):  # not even a person who may mark a task done carries a receipt
+        assert refused(w, uid, "task.done", who, task="T1", receipt=receipt) == Code.TASK_BAD_RECEIPT, who
+    assert refused(w, uid, "task.done", "vik", task="T1", receipt=receipt) == Code.ROLE_DENIED
+    assert not w.view(uid).acceptance[0].evidence

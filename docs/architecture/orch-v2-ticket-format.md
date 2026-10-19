@@ -1379,7 +1379,8 @@ AC evidence only if the complete label parses and both its AC id and hash match 
 criterion's **current** text. Malformed or stale labels silently do not count. Such a feedback file also counts only
 if its person is a non-viewer member who is the ticket owner, a ticket reviewer, or a workspace owner or maintainer,
 and the ticket was open, in progress or in testing when it was written (the event is admitted, `evidence_ok` is false
-otherwise). A `task.done` of a person without a receipt is `role.denied` unless the same holds. Other evidence rules
+otherwise). A `task.done` of a person never carries a receipt (`task.bad_receipt`: receipts are recorded by an agent
+or the host) and is `role.denied` unless the same holds. Other evidence rules
 are unchanged.
 An agent's ordinary file with an acceptance-looking name remains asserted file evidence, never manual acceptance.
 

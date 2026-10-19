@@ -56,11 +56,14 @@ def task_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if a["kind"] == "agent" and lease is not None and lease.session != who and lease_active(ws, lease, at):
         return Refusal(Code.TASK_LEASED, f"{tid} is leased by {lease.session}")
     if typ == "task.done":
-        if a["kind"] == "person" and "receipt" not in e and not may_accept(ws, t, a["id"]):
-            return Refusal(
-                Code.ROLE_DENIED,
-                "a task is marked done without a receipt only by the ticket owner, a reviewer or a maintainer",
-            )
+        if a["kind"] == "person":  # R3: a receipt is a command's result that an agent or the host recorded
+            if "receipt" in e:
+                return Refusal(Code.TASK_BAD_RECEIPT, "a person's task.done carries no receipt")
+            if not may_accept(ws, t, a["id"]):
+                return Refusal(
+                    Code.ROLE_DENIED,
+                    "a task is marked done by a person only if they are the ticket owner, a reviewer or a maintainer",
+                )
         if (r := _receipt(t, tid, e)) is not None:
             return r
         if "log" in e and e["log"] not in t.artifacts:

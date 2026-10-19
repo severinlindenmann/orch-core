@@ -235,7 +235,7 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
     if "statement" in prepared["material"] and op not in ("ac.accept", "ac.unaccept"):
         _refuse(f"{op} carries a manual acceptance statement")
     events = prepared["events"]
-    for e in events:
+    for e in events:  # every event, before the op-specific dispatch below (which returns at its first unknown op)
         label = e.get("label")
         if (
             e["type"] in ARTIFACT_TYPES
@@ -244,6 +244,7 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             and op not in ("ac.accept", "ac.unaccept")
         ):
             _refuse(f"{op} cannot sign a file labelled as a manual acceptance or its withdrawal")
+    for e in events:
         if op in ("ac.accept", "ac.unaccept"):
             from . import acceptance
 

@@ -448,8 +448,10 @@ def _registry(state, root_of):
 
 
 def _tree(path, wid):
-    path.mkdir(parents=True)
-    (path / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": wid, "name": "n"}}))
+    (path / ".orch").mkdir(parents=True)
+    (path / ".orch" / "config.json").write_text(
+        json.dumps({"schema": "orch.workspace/2", "workspace": {"id": wid, "name": "n"}})
+    )
     return path
 
 
@@ -467,7 +469,7 @@ def test_a_config_json_naming_another_registered_workspace_is_not_routed_to_it(t
         return hostclient.locate(env, Workspace(env | {"ORCH_WORKSPACE": str(root)}, files=_files()), state=state)
 
     assert locate(a).workspace_id == a_id and locate(b).workspace_id == b_id
-    (a / "config.json").write_text(
+    (a / ".orch" / "config.json").write_text(
         json.dumps({"schema": "orch.workspace/2", "workspace": {"id": b_id, "name": "n"}})
     )  # A's config now carries B's id
     with pytest.raises(hostclient.HostFailure) as caught:
@@ -475,7 +477,7 @@ def test_a_config_json_naming_another_registered_workspace_is_not_routed_to_it(t
     assert (caught.value.code, caught.value.wire_exit) == ("host.unavailable", 9)
     assert str(b) in caught.value.message
     # an id that is not 32 hex characters never reaches a socket path
-    (a / "config.json").write_text(
+    (a / ".orch" / "config.json").write_text(
         json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "/tmp/x", "name": "n"}})
     )
     assert locate(a) is None

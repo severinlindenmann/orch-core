@@ -319,6 +319,15 @@ def write_workspace_files(
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
     hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
     directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``."""
+    if not dry_run and store is not None and store != root:  # the store folder is never made here
+        try:
+            mode = os.lstat(store).st_mode
+        except OSError:
+            raise UnsafePath(f"there is no store folder at {store}; nothing was written") from None
+        if stat.S_ISLNK(mode):
+            raise UnsafePath(f"{store} is a symbolic link; nothing was written")
+        if not stat.S_ISDIR(mode):
+            raise UnsafePath(f"{store} is not a store folder; nothing was written")
     changed: list[str] = []
     kept: list[str] = []
     skip_dirs: set[str] = set()

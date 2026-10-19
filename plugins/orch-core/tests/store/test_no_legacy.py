@@ -113,3 +113,22 @@ def test_a_legacy_config_next_to_a_new_store_is_the_double_store(tmp_path: Path)
     (root / ".orch" / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": WS}}))
     with pytest.raises(StoreError, match="two orch stores"):
         Store.open(root, expected_workspace_id=WS, load="lazy")
+
+
+def test_instructions_sync_in_an_old_root_store_is_refused_and_creates_nothing(tmp_path: Path) -> None:
+    root = _world(tmp_path)
+    before = sorted(p.name for p in root.iterdir())
+    e = {"ORCH_WORKSPACE": str(root), "ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path)}
+    for argv in (["instructions", "sync"], ["instructions", "sync", "--dry-run"], ["check"]):
+        out, err = io.StringIO(), io.StringIO()
+        code = main(argv, env=e, stdout=out, stderr=err)
+        assert code != 0 and "Delete config.json" in out.getvalue() + err.getvalue(), argv
+    assert sorted(p.name for p in root.iterdir()) == before and not (root / ".orch").exists()
+
+
+def test_the_instruction_writer_never_makes_the_store_folder(tmp_path: Path) -> None:
+    from orch.instructions import UnsafePath, write_workspace_files
+
+    with pytest.raises(UnsafePath, match="no store folder"):
+        write_workspace_files(tmp_path, store=tmp_path / ".orch")
+    assert not (tmp_path / ".orch").exists() and sorted(p.name for p in tmp_path.iterdir()) == []

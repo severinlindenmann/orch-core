@@ -45,7 +45,7 @@ from dataclasses import dataclass
 
 from orch import gitsafe
 from orch.gitsafe import Unsafe
-from orch.layout import KEYS_FILE, STORE_DIR
+from orch.layout import KEYS_FILE, STATE_DIR, STORE_DIR
 
 __all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
 
@@ -57,7 +57,7 @@ _SLOT = re.compile(r"<(commit|file|num|pattern)>")
 #: cannot come out of git. Git internals, orch's store, key material and ``.env`` files.
 DENIED_NAMES = frozenset({
     ".git", STORE_DIR, ".ssh", ".gnupg", ".netrc", KEYS_FILE, ".env", ".git-credentials", ".npmrc", ".pypirc", ".aws",
-    ".docker", ".kube",
+    ".docker", ".kube", STATE_DIR,
 })  # fmt: skip
 DENIED_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".worktrees")

@@ -870,23 +870,15 @@ class ControlOps:
 
     @staticmethod
     def _fingerprint(root: str, made: tuple[int, int] | None = None) -> dict[str, list[int]]:
-        """``name -> [dev, inode]`` of what this bootstrap made in ``root`` right now: every store name (directories,
-        not links) in the legacy layout; in the new layout only the ``.orch`` directory this bootstrap's own open
-        made (``made``, from ``Store.created_store``), never one that was already there."""
+        """``name -> [dev, inode]`` of what this bootstrap made in ``root`` right now: only the ``.orch`` directory this
+        bootstrap's own open made (``made``, from ``Store.created_store``), never one that was already there."""
         out: dict[str, list[int]] = {}
         try:
             store = _store_dir(root)
         except LayoutError:
             return out
-        if store != Path(root):
-            if made is not None:
-                out[STORE_DIR] = [made[0], made[1]]
-            return out
-        for name in _ROOT_FILES:
-            with contextlib.suppress(OSError):
-                st = os.lstat(os.path.join(root, name))
-                if stat.S_ISDIR(st.st_mode):
-                    out[name] = [st.st_dev, st.st_ino]
+        if store != Path(root) and made is not None:
+            out[STORE_DIR] = [made[0], made[1]]
         return out
 
     @staticmethod

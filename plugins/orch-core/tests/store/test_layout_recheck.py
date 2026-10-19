@@ -102,3 +102,25 @@ def test_a_stale_opener_never_recreates_state_in_a_replaced_store(tmp_path: Path
             pass
     assert not (env.root / ".orch").exists() and not (env.root / ".state").exists()  # nothing re-created
     s.close()
+
+
+def test_a_dot_orch_swapped_between_the_resolve_and_the_open_fails_closed_and_makes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from orch.store import store as store_mod
+
+    env = Env(tmp_path)
+    env.bootstrap().close()
+    real = store_mod.open_store_fs
+
+    def swapped_after_resolve(*a, **k):
+        out = real(*a, **k)
+        (env.root / ".orch").rename(tmp_path / "moved-away")  # another inode takes the name in the window
+        (env.root / ".orch").mkdir(mode=0o700)
+        return out
+
+    monkeypatch.setattr(store_mod, "open_store_fs", swapped_after_resolve)
+    with pytest.raises(StoreError) as caught:
+        env.open()
+    assert caught.value.code == "validation.path"
+    assert sorted(p.name for p in (env.root / ".orch").iterdir()) == []  # events/tickets/.state were not made

@@ -36,11 +36,15 @@ __all__ = [
     "open_store_dir",
     "store_of",
     "resolve",
+    "legacy_refusal_at",
+    "STATE_DIR",
 ]
 
 STORE_DIR = ".orch"
 #: the file of a store that holds its keys (named here so a deny list elsewhere does not spell it)
 KEYS_FILE = "keys.jsonl"
+#: orch's local state folder (never committed, never shown): ``<store>/.state``
+STATE_DIR = ".state"
 CONFIG_SCHEMA = "orch.workspace/2"
 _CONFIG_LIMIT = 1 << 20
 
@@ -145,6 +149,15 @@ def legacy_refusal(project_fd: int) -> str:
     if unsure:
         text += f" (check {', '.join(unsure)} before deleting: they may be your own)"
     return text
+
+
+def legacy_refusal_at(project: str | os.PathLike[str]) -> str:
+    """:func:`legacy_refusal` for the project folder at ``project`` (opened here, ``O_NOFOLLOW`` on the last part)."""
+    fd = os.open(project, _DIR)
+    try:
+        return legacy_refusal(fd)
+    finally:
+        os.close(fd)
 
 
 def is_private(st: os.stat_result) -> bool:

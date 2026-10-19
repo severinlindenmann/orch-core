@@ -121,7 +121,9 @@ def _hosted_layout(path: Path, files: Files) -> tuple[Layout, dict[str, Any]] | 
                 f"{layout_mod.STORE_DIR} is not a real directory (a link or a file); refusing to use this project",
                 hint=f"rename or remove {layout_mod.STORE_DIR}: orch keeps its store in a real directory",
             ) from None
-    old, new = read(path / "config.json"), read(orch_dir / "config.json")
+    # a config in a folder named .orch is that project's store, never an old root store (as in direct discovery)
+    old = None if path.name == layout_mod.STORE_DIR else read(path / "config.json")
+    new = read(orch_dir / "config.json")
     layout_mod.check_single_store(legacy=old is not None, new=new is not None)
     if new is not None:
         return Layout.new_at(path), new
@@ -133,7 +135,9 @@ def _hosted_layout(path: Path, files: Files) -> tuple[Layout, dict[str, Any]] | 
     return None
 
 
-def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:
+def discover(
+    env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files, *, allow_old_store: bool = False
+) -> discovery.Found | None:
     """The nearest workspace as :class:`orch.discovery.Found`: its path, v1 or not, the ``config.json`` read once and
     the root's identity. The invariant and the rules are :mod:`orch.discovery`'s: the start (``ORCH_WORKSPACE``, else
     ``cwd``) is resolved and trusted; with ``ORCH_WORKSPACE`` only that path is a v2 workspace (no fallback), a v1 one
@@ -141,7 +145,11 @@ def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: 
     so a v1 workspace nested under a v2 one is never opened as the v2 ancestor. Host mode (files with roots) never
     detects v1 and reads only through the host ``Files`` (no identity: those reads are confined by the host)."""
     try:
-        return _discover(env, cwd, files)
+        found = _discover(env, cwd, files)
+        if found is not None and not found.v1 and found.layout is None and not allow_old_store:
+            # discovery finds a store from an older version in the root (so it can be named); nothing may use it
+            raise layout_mod.LegacyStoreError(layout_mod.legacy_refusal_at(found.path))
+        return found
     except LayoutError as exc:
         raise OrchError("invalid.input", str(exc), hint=exc.hint or "a project holds one orch store") from None
 

@@ -436,7 +436,8 @@ def test_the_nearest_workspace_wins_v1_under_v2_refuses_and_v2_under_v1_opens(ws
     parent = _v1_copy(tmp_path / "v1parent")
     inner = parent / "orchestrator" / "tickets" / "inner"
     inner.mkdir()
-    (inner / "config.json").write_text((ws.store_dir / "config.json").read_text())
+    (inner / ".orch").mkdir()
+    (inner / ".orch" / "config.json").write_text((ws.store_dir / "config.json").read_text())
     assert runtime.locate_workspace({}, str(inner), files) == (inner, False)
 
 

@@ -400,3 +400,9 @@ def test_blob_type_and_the_file_name_checks(world):
         "dir/ünï code.txt"
     ]
     assert gitbrowse.parse_names(world.run("range_file_names", world.c1, world.c3, "a.txt").out) == [("M", "a.txt")]
+
+
+def test_orch_local_state_is_on_the_deny_list_in_any_folder():
+    assert gitbrowse.denied_name(".STATE") and gitbrowse.denied_name(".state")
+    assert ":(exclude,glob,icase)**/.state" in gitbrowse.DENY_SPECS
+    assert ":(exclude,glob,icase)**/.state/**" in gitbrowse.DENY_SPECS

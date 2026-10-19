@@ -324,3 +324,25 @@ def test_records_and_stale_findings_use_the_store_dir(ws, tmp_path: Path) -> Non
     (project / "AGENTS.orch.md").write_text("x")  # ...a copy in the project root is not it
     assert {"where": "AGENTS.orch.md", "what": "missing"} in stale_findings(project, project / ".orch")
     assert any(f["where"].startswith(".agents/skills") for f in findings)  # skills stay under the project
+
+
+def test_hosted_discovery_does_not_read_a_config_in_a_dot_orch_folder_as_an_old_root_store(tmp_path: Path) -> None:
+    project = tmp_path / "p"
+    _store(project / ".orch")
+    (project / ".orch" / "tickets").mkdir()
+    files = Files.host((str(project),))
+    try:
+        found = runtime.discover({}, project / ".orch" / "tickets", files)
+        assert found is not None and found.path == project and found.layout == Layout.new_at(project)
+        found = runtime.discover({"ORCH_WORKSPACE": str(project / ".orch")}, None, files)
+        assert found is not None and found.path == project
+    finally:
+        files.close()
+
+
+def test_direct_discovery_refuses_an_old_root_store_unless_the_caller_only_names_it(tmp_path: Path) -> None:
+    project = _store(tmp_path / "p")
+    with pytest.raises(OrchError, match="older version"):
+        runtime.discover({"ORCH_WORKSPACE": str(project)}, None, FILES)
+    found = runtime.discover({"ORCH_WORKSPACE": str(project)}, None, FILES, allow_old_store=True)
+    assert found is not None and found.layout is None

@@ -126,7 +126,7 @@ def sign_sequence(
     box: dict[str, Any] = {}
     fields = (
         ("signatures", str(driver.total)),
-        ("ticket title", sequence.label_of(intent)),
+        ("add-on" if intent["kind"] == sequence.ADDON else "ticket title", sequence.label_of(intent)),
         ("workspace", workspace_id),
     )
     with unlocked_backend(

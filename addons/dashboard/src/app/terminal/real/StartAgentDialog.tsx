@@ -29,7 +29,7 @@ import { queries } from '@/api/queries'
 import { hasFeature } from '@/api/features'
 import { modelLabel, routingQueries, STRONG_MODELS } from '@/api/modelRouting'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
-import { fmtDateTime, nowMs } from '@/lib/time'
+import { fmtDateTime, fmtExact, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
 import { AgentPick, ModelPick } from '@/components/agents/AgentChoice'
 
@@ -350,7 +350,7 @@ export type GrantStep =
  * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
-export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome, onConfirmed }: { onConfirmed?: () => void; extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
+export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome, onConfirmed, sheet }: { /** The short sheet layout (header pill): length chips, the exact end, what agents may do. */ sheet?: boolean; onConfirmed?: () => void; extend?: { id: string; scope: 'all' | 'workable'; until: string }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
   const workspaces = useQuery(queries.workspaces())
   const workspace = workspaces.data?.find(w => w.id === ws)
   // 8 h / 1 / 3 / 7 days, never above the workspace maximum; an Extend never offers less than the access it replaces.
@@ -458,7 +458,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const viewOk = view ? depositViewOk(view.view, ws) : false
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
-      <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Allow agents to work for you</p>
+      {!sheet && <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Allow agents to work for you</p>}
       <p role="note" data-testid="runner-grant-risk" className="text-warning">{maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')}</p>
       {loading && <Skeleton className="h-6" />}
       {grant && !extend && step.kind !== 'polling' && (
@@ -474,13 +474,22 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           )}
         </div>
       )}
-      {extend && <p>Agents that are running now stop; new agents use the extended access.</p>}
+      {extend && !sheet && <p>Agents that are running now stop; new agents use the extended access.</p>}
       {/* M-2: while the terminal is waiting for the person (the signature, then r), the old "issue one" must not shout over it. */}
       {blocked && (handoff || step.kind === 'polling'
         ? <p className="text-text" data-testid="runner-grant-waiting">Waiting for your terminal: sign there, then press r to hand the access to the agent runner.</p>
         : <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>)}
       {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
-        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : <div className="flex flex-wrap items-center gap-2">
+        lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : sheet ? <div className="space-y-3" data-testid="access-sheet">
+          <div role="radiogroup" aria-label="Allow access for" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {lengths.map(([h, label]) => <button key={h} type="button" role="radio" aria-checked={h === hours} onClick={() => setHours(h)} className={`min-h-11 rounded-md border px-2 text-sm font-medium ${h === hours ? 'border-warning bg-warning/10 text-warning' : 'border-border bg-bg text-text'}`}>{label}</button>)}
+          </div>
+          <p data-testid="access-until">Until <time dateTime={new Date(nowMs() + hours * 3_600_000).toISOString()}>{fmtExact(new Date(nowMs() + hours * 3_600_000).toISOString())}</time> (your time), counted from now.{extend && <> Replaces your current access, which ends <time dateTime={extend.until}>{fmtExact(extend.until)}</time>.</>}</p>
+          <p data-testid="access-may-do"><span className="font-medium text-text">What agents may do. </span>Agents (Claude Code) may read and change files in the project folder and run its commands, on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'}.</p>
+          <p className="text-text-muted">This workspace allows access for up to {hoursText(maxHours)}.{extend ? ' Agents that are running now stop; new agents use the extended access.' : ''}</p>
+          <Button disabled={!enabled || methods.loading} className="min-h-11 w-full" onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Allow agent access'}</Button>
+          {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
+        </div> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
             {lengths.map(([h, label]) => <option key={h} value={h}>{label}</option>)}

@@ -115,3 +115,23 @@ def test_a_bomb_header_is_refused_without_decoding():
     vp8x = bytes([0]) + b"\x00\x00\x00" + (20000 - 1).to_bytes(3, "little") + (0).to_bytes(3, "little")
     with pytest.raises(ImageRefused, match="16384"):
         imagecheck.check(webp((b"VP8X", vp8x), (b"VP8 ", b"\x00" * 10)))
+
+
+def test_a_truncated_webp_chunk_is_a_refusal_not_a_crash():
+    for kind in (b"VP8L", b"VP8 ", b"VP8X"):
+        body = kind + struct.pack("<I", 5) + b""  # claims 5 bytes, has none
+        data = b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+        with pytest.raises(ImageRefused):
+            imagecheck.check(data)
+    with pytest.raises(ImageRefused):
+        imagecheck.check(b"RIFF\x04\x00\x00\x00WEBP")
+
+
+def test_total_pixels_are_capped():
+    ihdr = struct.pack(">IIBBBBB", 16000, 16000, 8, 2, 0, 0, 0)
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", b"x") + chunk(b"IEND")
+    with pytest.raises(ImageRefused, match="40 million"):
+        imagecheck.check(data)
+    vp8x = bytes([0]) + b"\x00\x00\x00" + (15999).to_bytes(3, "little") + (15999).to_bytes(3, "little")
+    with pytest.raises(ImageRefused, match="40 million"):
+        imagecheck.check(webp((b"VP8X", vp8x), (b"VP8 ", b"\x00" * 10)))

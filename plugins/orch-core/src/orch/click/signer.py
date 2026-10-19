@@ -466,6 +466,7 @@ class ClickSigner:
         if len(chunk) > CHUNK_MAX:
             raise ClickError("invalid.input", "a chunk is at most 768 KiB")
         now = self.mono()
+        self._sweep()  # an expired approval no longer holds pictures: the stash is the one place their bytes count
         pinned = self._pinned()
         for k, v in list(self.stash_.items()):
             if k in pinned:

@@ -4,9 +4,8 @@ import { api } from '@/api/client'
 import { verifiedUrl } from '@/api/pasteImage'
 
 const PASTE = /^paste-\d{8}-\d{6}-[0-9a-f]{8}\.(png|webp)$/
-const PERSON = /^p_[0-9a-f]{32}$/
 /** Only a picture a PERSON signed in as a pasted screenshot is drawn; an agent's image stays a placeholder with a link. */
-export const isPersonPaste = (a: { name: string; kind?: string; added_by?: string }): boolean => a.kind === 'screenshot' && PASTE.test(a.name) && PERSON.test(a.added_by ?? '')
+export const isPersonPaste = (a: { name: string; kind?: string; added_by_kind?: string | null }): boolean => a.kind === 'screenshot' && PASTE.test(a.name) && a.added_by_kind === 'person'
 
 const REF = /\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)/g
 
@@ -18,7 +17,7 @@ const REF = /\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)/g
 export function useTicketPictures(
   ws: string | undefined,
   ticketKey: string,
-  artifacts: readonly { name: string; kind?: string; added_by?: string; sha256: string; bytes: number | null; url?: string; addon?: string }[],
+  artifacts: readonly { name: string; kind?: string; added_by_kind?: string | null; sha256: string; bytes: number | null; url?: string; addon?: string }[],
   texts: readonly string[],
 ): Record<string, string> {
   const wanted = useMemo(() => {

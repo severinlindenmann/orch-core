@@ -269,3 +269,30 @@ def test_a_diff_git_cannot_produce_reaches_the_page_as_diff_unavailable(client, 
     res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))
     assert res.status_code == 409 and res.json()["error"]["code"] == "observe.unavailable"
     assert "diff unavailable" in res.json()["error"]["message"]
+
+
+def test_the_person_check_is_bound_to_the_digest_the_ticket_names(client, token, stub, rich, monkeypatch):
+    """R3 part B: a verified file whose digest is not the one the signed artifact names is never offered as an image."""
+    from orch_dashboard import reads
+
+    env, ids = rich
+    data = _png()
+    name = "paste-20261019-101503-dddddddd.png"
+    env.tick()
+    env.store.append(
+        env.person_event(
+            env.owner,
+            ids["First"],
+            "artifact.added",
+            name=name,
+            kind="screenshot",
+            sha256="sha256:" + hashlib.sha256(data).hexdigest(),
+            bytes=len(data),
+        ),
+        log=ids["First"],
+        artifacts={name: data},
+    )
+    assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is not None
+    real = reads.pasted_by_person
+    monkeypatch.setattr(reads, "pasted_by_person", lambda g, w, k, n, d: real(g, w, k, n, "sha256:" + "0" * 64))
+    assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None

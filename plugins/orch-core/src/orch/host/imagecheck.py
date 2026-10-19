@@ -51,7 +51,16 @@ def media_type(data: bytes) -> str | None:
 
 
 def check(data: bytes) -> str:
-    """The media type of an acceptable picture, or :class:`ImageRefused`."""
+    """The media type of an acceptable picture, or :class:`ImageRefused` (any parse error is a refusal)."""
+    try:
+        return _check(data)
+    except ImageRefused:
+        raise
+    except (IndexError, struct.error, ValueError, OverflowError):
+        raise ImageRefused("the picture is damaged") from None
+
+
+def _check(data: bytes) -> str:
     if not isinstance(data, bytes | bytearray):
         raise ImageRefused("the picture is not bytes")
     data = bytes(data)
@@ -98,8 +107,7 @@ def _png(data: bytes) -> None:
             if length != 13 or pos + 8 + 8 > n:
                 raise ImageRefused("the PNG header chunk is not 13 bytes")
             w, h = struct.unpack(">II", data[pos + 8 : pos + 16])
-            if not (1 <= w <= SIDE_MAX and 1 <= h <= SIDE_MAX):
-                raise ImageRefused("the picture is larger than 16384 pixels on a side")
+            _side(w, h)
         end = pos + 8 + length + 4  # header, data, CRC
         if end > n:
             raise ImageRefused("a PNG chunk runs past the end of the file")
@@ -112,9 +120,15 @@ def _png(data: bytes) -> None:
             return
 
 
+#: and at most this many pixels in all (a 16384 x 16384 header would still ask a browser for a gigabyte of memory)
+PIXELS_MAX = 40_000_000
+
+
 def _side(w: int, h: int) -> None:
     if not (1 <= w <= SIDE_MAX and 1 <= h <= SIDE_MAX):
         raise ImageRefused("the picture is larger than 16384 pixels on a side")
+    if w * h > PIXELS_MAX:
+        raise ImageRefused("the picture has more than 40 million pixels")
 
 
 def _webp(data: bytes) -> None:
@@ -134,6 +148,8 @@ def _webp(data: bytes) -> None:
         if ctype not in _WEBP_ALLOWED:
             raise ImageRefused("the WebP carries metadata or is animated; take a plain screenshot")
         body = pos + 8
+        if body + length > n:  # before any byte of the chunk is read
+            raise ImageRefused("a WebP chunk runs past the end of the file")
         if ctype == b"VP8X":
             if length != 10 or body + 10 > n or data[body] & _WEBP_METADATA_FLAGS:
                 raise ImageRefused("the WebP says it carries metadata or is animated")

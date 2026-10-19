@@ -368,3 +368,26 @@ def test_a_first_step_that_names_no_held_screenshot_is_a_clear_refusal(click, se
     _, op, args, m = seq_args(click, edit)
     with pytest.raises(ClickError, match="does not carry"):
         click.prepare(op, {**args, "name": "paste-20261019-101500-00000000.png"}, sequence=m)
+
+
+def test_upload_prepare_expire_cycles_stay_within_the_stash_cap(click, served, human):
+    data, intent = with_image()
+    stash(click, data)
+    _, op, args, meta = seq_args(click, intent)
+    click.prepare(op, args, sequence=meta)
+    click.mono.t += 700  # the review has expired but nobody swept it: a new upload sweeps first
+    click.signer.STASH_LIFETIME = 100.0
+    click.signer.stash(
+        {
+            "workspace_id": served.wid,
+            "sha256": "sha256:" + "3" * 64,
+            "size": 1,
+            "offset": 0,
+            "b64": "AA==",
+            "last": False,
+        }
+    )
+    assert click.signer.approvals == {}  # swept
+    assert (served.wid, canon.artifact_digest(data)) not in click.signer.stash_  # and its bytes are gone once
+    held = sum(v["size"] for v in click.signer.stash_.values())
+    assert held <= click.signer.STASH_BYTES and len(click.signer.stash_) <= click.signer.STASH_FILES

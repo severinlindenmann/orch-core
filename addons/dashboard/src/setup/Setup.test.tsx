@@ -92,6 +92,7 @@ function fake(
     relayUnavailable?: boolean
     complete?: boolean
     defaults?: boolean
+    suggested?: Record<string, unknown>
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -114,6 +115,7 @@ function fake(
               addons: state.addons.map((a) => (a.id === 'worktrees' ? { ...a, default: true } : a)),
             }
           : {}),
+        ...(options.suggested ? { suggested: { name: 'Demo', prefix: 'TST', ...options.suggested } } : {}),
         ...(options.finish ? { current } : {}),
       }
     if (path === 'secrets/reveal')
@@ -920,4 +922,21 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
     agent_grant: true,
     agent_hours: 72,
   })
+})
+
+test.each([
+  ['hours without a grant', { agent_hours: 72, agent_grant: false }],
+  ['hours outside the offered list', { agent_hours: 48, agent_grant: true }],
+])('suggested %s: picker and profile agree on no agent access', async (_n, suggested) => {
+  const f = fake({ suggested })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })

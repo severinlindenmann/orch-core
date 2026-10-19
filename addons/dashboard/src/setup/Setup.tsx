@@ -397,9 +397,14 @@ export function Setup({ api }: { api: SetupAPI }) {
             }))
           } else {
             const addons = s.addons.filter((a) => a.required || a.default).map((a) => a.id)
-            setProfile((p) => ({ ...p, ...s.suggested, addons }))
+            // agent_hours/agent_grant are seeded only together with the access picker, so the two never disagree
+            const { agent_hours: sugHours, agent_grant: sugGrant, ...rest } = s.suggested
+            setProfile((p) => ({ ...p, ...rest, addons }))
             // U1: "let agents work for you" starts ticked (3 days); the person can still pick "No agent access"
-            if (s.suggested.agent_grant && typeof s.suggested.agent_hours === 'number') setAccess(s.suggested.agent_hours)
+            if (sugGrant && typeof sugHours === 'number' && s.agent_hours.includes(sugHours)) {
+              chooseAccess(sugHours)
+              setProfile((p) => ({ ...p, agent_grant: true }))
+            }
           }
           if (s.error || s.phase !== 'profile') {
             setEnded(true)

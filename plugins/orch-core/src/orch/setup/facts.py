@@ -55,13 +55,13 @@ class AddonInfo:
         }
 
 
-#: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
-#: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
 #: add-ons ticked at the start of a NEW setup (U1): the person still sees each as a switch, can untick it, and every one
 #: of them is signed (``addon.granted``) in the same review; nothing is enabled without that signature
 DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
 #: the agent-access choice a NEW setup starts on (3 days, ticked); the person can pick "No agent access" or 1/7 days
 DEFAULT_AGENT_HOURS = 72
+#: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
+#: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
 OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing"})
 
 

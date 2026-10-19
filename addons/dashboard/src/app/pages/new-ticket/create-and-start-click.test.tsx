@@ -58,7 +58,6 @@ async function signed() {
   await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start agent' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
   await within(dialog).findByTestId('click-panel', {}, T)
   const hold = within(dialog).getByRole('button', { name: 'Hold to sign' })
   await waitFor(() => expect(hold).toBeEnabled(), { timeout: ARM_MS + 3000 })

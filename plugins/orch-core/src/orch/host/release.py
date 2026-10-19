@@ -100,7 +100,8 @@ def default_version(source: Path | None = None) -> str:
         base = version("orch-core")
     except PackageNotFoundError:
         base = "0"
-    tree = json.dumps(_manifest(source or _package_dir()), sort_keys=True).encode()
+    tree = json.dumps({"files": _manifest(source or _package_dir()), "python": sys.executable}, sort_keys=True).encode()
+    # the interpreter is part of the identity: the launchers' shebang names it
     return f"{base}+{hashlib.sha256(tree).hexdigest()[:12]}"
 
 
@@ -115,6 +116,8 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
     version = version or default_version(source)
     if not version or "/" in version or version.startswith("."):
         raise ReleaseError(f"invalid version {version!r}")
+    if any(ch.isspace() for ch in sys.executable) or "\x00" in sys.executable:
+        raise ReleaseError(f"the interpreter path {sys.executable!r} has whitespace: a launcher cannot name it")
     releases = target or releases_dir()
     final = releases / version
     manifest = _manifest(source)
@@ -126,6 +129,15 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
             raise ReleaseError(f"{final} exists but has no readable manifest") from exc
         if have.get("files") != manifest or on_disk != manifest:
             raise ReleaseError(f"release {version} is already installed with other content; use a new version")
+        for name in ("orch-host", "orch-runner"):  # the service runs under the launcher's interpreter: it must be ours
+            try:
+                first = (final / "bin" / name).read_text().split("\n", 1)[0]
+            except OSError as exc:
+                raise ReleaseError(f"release {version} has no readable launcher {name}") from exc
+            if first != f"#!{sys.executable} -I":
+                raise ReleaseError(
+                    f"release {version} was installed for another interpreter ({first[2:]!r}); use a new version"
+                )
         _point_current(releases, version)
         return final
     releases.mkdir(parents=True, exist_ok=True, mode=0o755)

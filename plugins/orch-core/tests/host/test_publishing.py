@@ -759,6 +759,16 @@ def test_list_live_adds_the_servers_numbers_and_survives_a_dead_server(w):
     assert err(res) == "op.not_allowed"
 
 
+def test_list_live_without_a_server_setting_answers_not_configured_not_an_error(bare):
+    """The dashboard's Shares page always asks for the live list. Publish on but no server set up is a normal state
+    (run 3 finding): the answer says `configured` false, it does not fail."""
+    bare.addon()
+    for args in ({"live": True}, {}):
+        got = ok(bare.req("publish.list", args))["data"]
+        assert got["configured"] is False and not got.get("live") and got["server"] is None
+        assert got["shares"] == [] and got["staged"] == []
+
+
 def test_an_agent_lists_only_its_own_ticket(w):
     key, data = shared(w, "report.md")
     uid2, key2 = w.ticket_with(**{"b.md": b"b"})

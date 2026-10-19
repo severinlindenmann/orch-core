@@ -207,7 +207,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   const sign = (ticket: string, action: HumanAction) => setSigning({ ticket, action })
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
-  const keys = [...new Set([...entries.flatMap((e) => (e.group === 'addons' ? (e.decision.ticket ? [e.decision.ticket] : []) : [e.item.ticket])), ...claimTickets])]
+  const keys = [...new Set([...entries.flatMap((e) => (e.group === 'addons' ? (e.decision.ticket ? [e.decision.ticket] : []) : [e.item.ticket])), ...claimTickets, ...(signing ? [signing.ticket] : [])])] // the ticket being signed stays read while its item leaves the list, so the dialog can say Signed
   const ticketQs = useQueries({ queries: keys.map((k) => queries.ticket(ws!, k)) })
   const byKey: Record<string, TicketDocument | undefined> = {}
   keys.forEach((k, i) => (byKey[k] = ticketQs[i]?.data))

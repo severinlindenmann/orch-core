@@ -225,6 +225,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
@@ -12491,6 +12492,12 @@ Worktree = {ticket:Key, repo:RepoName, branch:str, path:str, generation:int, cre
 worktree.list   {ticket?:Ref, check?:bool = false} → {worktrees:[Worktree]{0..200}}
 worktree.create {ticket:Ref, repo?:RepoName, base?:"default"|"current" = "default"} + opts.idem? → {worktree}
 worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:true}
+workdir.get     {ticket:Ref} → {codebase:true, exists:false} | {codebase:false, exists:bool, folder?:".orch-work/<KEY>", files?:int, bytes?:int, truncated?:bool}
+                // column P; the folder is named below the project, never by its full path
+workdir.delete  {ticket:Ref} + opts.idem → {deleted:bool, folder}
+                // column P (a person-class owner or maintainer, the ticket's owner, an assignee); no log event; deletes exactly
+                // <project>/.orch-work/<KEY> through descriptors without following a link; a live run in it: worktree.in_use;
+                // a ticket with a codebase: invalid.input; gone already: deleted:false
 ```
 
 - `repo` defaults to the only linked repo (required with several). The branch is the current `links.branches.<repo>`

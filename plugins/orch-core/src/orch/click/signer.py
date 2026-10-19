@@ -679,6 +679,10 @@ class ClickSigner:
                     )
             if exc.resumable:
                 unfinished = where.replace(" stays a draft", " is not finished")
+                if intent["kind"] == sequence.ADDON:  # the last answer was lost: whether it is on is not known
+                    unfinished = (
+                        f" {exc.landed} of {exc.total} signatures landed; whether the add-on is on is not known yet."
+                    )
                 page = "" if intent["kind"] == sequence.ADDON else " or on the ticket page"
                 raise refused(
                     "resumable",

@@ -272,7 +272,7 @@ def test_ae3_publish_is_terminal_only_and_model_routing_is_the_word(human):
     assert not sequence.has_grant(pub) and not sequence.has_grant(models)  # a runner grant only
     # the early check by args, as the click signer asks it before prepare
     assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "terminal"
-    assert protocol_class("addon.grant", {"name": "publish"}) == "word"
+    assert protocol_class("addon.grant", {"name": "publish"}) == "terminal"  # also alone, not in a sequence
 
 
 def protocol_class(op, args):
@@ -743,3 +743,28 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
         "resumable",
     )
     assert "ticket" not in str(e).lower() and "terminal" in str(e)
+
+
+# --- review round 2 --------------------------------------------------------------------------------
+
+
+def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served, human):
+    from orch.click import protocol
+
+    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
+    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
+    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "word"
+    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "word"
+    # at prepare: the plain grant of Publish is refused before the host is asked
+    human.run("settings.set", {"set": {"publish": PUBLISH}})
+    refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")
+    assert click.signatures == 0 and not on(human, "publish")
+    # at sign, check_prepared classes the request by its signed events with the same function (asserted above)
+
+
+def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant(human, served):
+    value = {"server": "https://files.example.com", "share": "https://share.example.com"}
+    human.run("settings.set", {"set": {"publish": value}})
+    assert ok(human.c.req("workspace.settings"))["data"]["publish"] == value
+    agent = ok(human.c.req("workspace.settings", grant=served.grant, session=human_helpers.SESSION))["data"]
+    assert "publish" not in agent  # column G

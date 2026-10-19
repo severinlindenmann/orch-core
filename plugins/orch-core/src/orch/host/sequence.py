@@ -81,6 +81,8 @@ MAX_STEPS = 16
 MAX_SECTION_BYTES = 65536
 TTL = 600.0  # a session lives as long as a request does (§0.8.1): 10 minutes
 CHANGED = "the ticket changed while signing, review again"
+#: the same for the add-on sequence, which has no ticket
+CHANGED_WS = "the workspace changed while signing, review again"
 
 _TYPES = ("feature", "bug", "chore", "spike", "epic")
 _PRIORITIES = ("low", "medium", "high", "urgent")
@@ -694,7 +696,7 @@ def check_step(
     the requirements approval it signed itself). Returns ``{"key", "uid"}`` of the ticket."""
 
     def stop() -> Aborted:
-        return Aborted(CHANGED)
+        return Aborted(CHANGED_WS if intent["kind"] == ADDON else CHANGED)
 
     if intent["kind"] == ADDON:  # a workspace sequence: no ticket (the result is None)
         from . import seqaddon

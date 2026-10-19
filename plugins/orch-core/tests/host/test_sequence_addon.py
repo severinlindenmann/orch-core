@@ -682,3 +682,64 @@ def test_a_click_refuses_to_start_what_a_live_session_holds(click, served, human
         "human.click_refused",
         "resumable",
     )
+
+
+# --- review round (Opus LOW-1, LOW-3) --------------------------------------------------------------------------------
+
+
+def test_low1_two_requests_prepared_apart_cannot_land_on_not_set_up(human, tmp_path):
+    """AE4 is re-checked under the submit lock: a grant prepared while the setting was unset ..."""
+    # (a) a plain grant prepared when nothing needs checking is impossible (prepare refuses), so prepare the grant
+    # of an add-on whose setting is set, then clear the setting before the grant is submitted: the clearing is allowed
+    # (the add-on is off), the grant must then be refused at submit.
+    human.run("settings.set", {"set": {"publish": PUBLISH}})
+    grant = human.prepare("addon.grant", {"name": "publish"})
+    human.run("settings.set", {"set": {"publish": None}})
+    res = human.submit_res(grant["request"]["id"], human.sign(grant).events)
+    assert err(res) == "invalid.input" and "needs its settings first" in res["error"]["message"]
+    assert not on(human, "publish")
+    # (b) a clearing prepared while the add-on was off, submitted after it was turned on
+    human.run("settings.set", {"set": {"publish": PUBLISH}})
+    clear = human.prepare("settings.set", {"set": {"publish": None}})
+    human.run("addon.grant", {"name": "publish"})
+    res = human.submit_res(clear["request"]["id"], human.sign(clear).events)
+    assert err(res) == "invalid.input" and "turn it off first" in res["error"]["message"]
+    assert on(human, "publish") and settings_of(human)["publish"] == PUBLISH
+
+
+def test_low3_the_add_on_sequence_never_says_ticket(human, tmp_path):
+    assert "ticket" not in sequence.CHANGED_WS
+    rig = Rig(human, tmp_path, enable(human))
+    first = rig.first()
+    rig.driver().run(first)
+    human.run("settings.set", {"set": {"grant_hours": 9}})  # a foreign event after the settings step
+    stale = {"step": 1, "of": 2, "digest": rig.meta0()["digest"], "prev": "0" * 26, "log": "workspace"}
+    res = human.c.req(
+        "human.prepare",
+        {"op": "addon.grant", "args": {"name": "model-routing"}, "signer": human.signer, "sequence": stale},
+    )
+    assert err(res) == "human.request_mismatch"
+    assert "ticket" not in res["error"]["message"] and "workspace changed" in res["error"]["message"]
+    bad = copy.deepcopy(first)
+    bad["events"][0]["set"] = {"models": {"claude-code": {"work": "haiku"}}}
+    with pytest.raises(Aborted) as info:
+        sequence.check_step(rig.intent, 0, bad, person=rig.person, first=None, prev_head=None)
+    assert "ticket" not in info.value.reason
+
+
+def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, human, tmp_path):
+    rig = Rig(human, tmp_path, enable(human))
+    rig.sessions = click.signer.sessions
+    first = rig.first()
+    rig.hooks[1] = lambda rid, events, idem: (_ for _ in ()).throw(RuntimeError("lost"))
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    p = click_prepare(click, enable(human))
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    e = refused(
+        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        "human.click_refused",
+        "resumable",
+    )
+    assert "ticket" not in str(e).lower() and "terminal" in str(e)

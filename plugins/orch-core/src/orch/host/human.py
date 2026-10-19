@@ -512,6 +512,21 @@ class HumanOps:
         return view
 
     @staticmethod
+    def _recheck_needs(store: Any, record: dict[str, Any], events: list[dict[str, Any]]) -> None:
+        """AE4 again under the submit lock, on the re-read state: two requests prepared apart (a grant while the
+        setting was unset, a clearing while the add-on was off) must not land as "on, not set up"."""
+        from orch.addons import settings_needs
+
+        op = record["op"]
+        ws = store.state.workspace
+        if op == "addon.grant":
+            if (why := settings_needs.grant_refusal(ws.settings, str(events[0].get("name")))) is not None:
+                raise HostError("invalid.input", why)
+        elif op == "settings.set":
+            if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
+                raise HostError("invalid.input", why)
+
+    @staticmethod
     def _sequence(
         call: Call, name: str, inner: dict[str, Any], args: dict[str, Any], person: str, store: Any, dry_run: bool
     ) -> dict[str, Any] | None:
@@ -544,7 +559,7 @@ class HumanOps:
         if checked["step"] > 0 and checked.get("log") == "workspace":
             # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
             if not dry_run and _tail_id(store, "workspace") != checked["prev"]:
-                raise HostError("human.request_mismatch", sequence.CHANGED)
+                raise HostError("human.request_mismatch", sequence.CHANGED_WS)
             return checked
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and checked["intent"].get("people"):
             from orch.model import claims
@@ -994,6 +1009,7 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+            self._recheck_needs(store, record, events)
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

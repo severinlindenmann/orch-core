@@ -79,13 +79,12 @@ class Unusable(GuardError):
 
 def deny(parts: tuple[str, ...]) -> str | None:
     """Why this relative path is locked (a short plain phrase), or None. The empty path (the root itself) is never
-    locked. The names are
-    :data:`orch.gitbrowse.DENIED_NAMES` and friends: the same list git excludes with pathspecs."""
+    locked. The names are :data:`orch.gitbrowse.DENIED_NAMES` and friends: the same list git excludes with pathspecs."""
     for index, part in enumerate(parts):
         low = part.casefold()
         if low == ".git":
             return "Git internals"
-        if low == ".orch":
+        if low in (".orch", ".state"):  # the store, and orch's local state wherever a folder of that name is
             return "orch's own files"
         if low == ".env" or low.startswith(".env."):
             return "Secrets (.env)"
@@ -386,4 +385,5 @@ def exclude_globs() -> list[str]:
     """The deny list as ripgrep ``--glob`` exclusions (keeps a search from READING locked files; every hit is also
     re-checked with :func:`deny`, so a glob that misses something cannot leak it)."""
     out = [f"!{g}" for g in gitbrowse.DENY_GLOBS] + [f"!{g}/**" for g in gitbrowse.DENY_GLOBS]
+    out += ["!.state", "!.state/**"]
     return out

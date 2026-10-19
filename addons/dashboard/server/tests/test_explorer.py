@@ -460,7 +460,7 @@ def test_ripgrep_is_started_with_no_config_no_follow_and_the_deny_globs(world, m
         ".",
     ]  # the text is the value of -e, after it comes only "."
     globs = [argv[i + 1] for i, a in enumerate(argv) if a == "--glob"]
-    for need in ("!.git", "!.orch", "!.env", "!.env.*", "!*.pem", "!id_rsa*"):
+    for need in ("!.git", "!.orch", "!.env", "!.env.*", "!*.pem", "!.state", "!id_rsa*"):
         assert need in globs, need
     assert (
         set(seen["env"]) == {"PATH", "LC_ALL", "HOME"}
@@ -624,7 +624,8 @@ def test_the_commit_a_branch_was_cut_from_is_not_work_of_an_open_ticket(get, wor
     "parts,why",
     [
         ((".git",), "Git internals"), (("a", ".GIT", "x"), "Git internals"),
-        ((".orch",), "orch's own files"), ((".ORCH", "tickets"), "orch's own files"), (("tickets", "T-1"), None),
+        ((".orch",), "orch's own files"), ((".ORCH", "tickets"), "orch's own files"),
+        ((".state",), "orch's own files"), (("a", ".STATE", "x"), "orch's own files"), (("tickets", "T-1"), None),
         (("a", "tickets"), None), (("tickets",), None),
         ((".env",), "Secrets (.env)"), ((".env.local",), "Secrets (.env)"),
         (("env.txt",), None), (("x.pem",), "Keys"), (("a", "id_rsa"), "Keys"),

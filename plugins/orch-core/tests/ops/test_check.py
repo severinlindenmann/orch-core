@@ -197,6 +197,26 @@ def test_another_spelling_of_the_store_folder_is_refused_not_skipped(ws, cli, mo
     _staged_stub(ws, monkeypatch, status, rel.format(uid=ws.uid("1")))
 
 
+@pytest.mark.parametrize("status", ["A", "D"])
+@pytest.mark.parametrize(
+    "rel",
+    [".state/x", ".STATE/k\u00e9ys/x", "sub/.state/x", "sub/.STATE/x", ".orch/.state/x", "a/b/.State/c/d", ".state"],
+)
+def test_local_state_is_refused_in_any_folder_and_spelling(ws, cli, monkeypatch, status, rel):
+    from orch.ops import health
+
+    cli("new", "one")
+    raw = f":100644 100644 {'0' * 40} {'1' * 40} {status}\0{rel}\0".encode()
+    monkeypatch.setattr(health, "_git", lambda root, op, **kw: raw if op == "staged_raw" else b"innocent")
+    monkeypatch.setattr(health, "_gate", lambda root, caps: None)
+    store = ws.other()
+    try:
+        findings = health.check_staged(store, ws.root, Capabilities.direct())
+        assert [f.code for f in findings] == ["commit.state"]
+    finally:
+        store.close()
+
+
 def _staged_stub(ws, monkeypatch, status, rel):
     from orch.ops import health
 

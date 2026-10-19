@@ -601,6 +601,9 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
         # in the repository) names the file in findings and for git. The project's other files are the project's:
         # only the secret checks below apply to them.
         folded_full = full.casefold()
+        if ".state" in folded_full.split("/"):  # local state, in any folder and spelling: never committed (as before)
+            out.append(Finding("error", full, "commit.state", ".state is local: never commit it"))
+            continue
         rel: str | None = None
         if folded_full == STORE_DIR.casefold() or folded_full.startswith(store.casefold()):
             if not full.startswith(store):  # another spelling of the store folder (the same folder on a
@@ -609,9 +612,6 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
             rel = full[len(store) :]
         if rel is not None:
             folded = rel.casefold()
-            if folded == ".state" or folded.startswith(".state/"):
-                out.append(Finding("error", full, "commit.state", ".state is local: never commit it"))
-                continue
             protected = folded.startswith(("tickets/", "events/")) or folded in (
                 "tickets",
                 "events",

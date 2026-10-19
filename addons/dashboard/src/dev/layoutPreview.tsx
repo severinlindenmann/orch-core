@@ -24,6 +24,7 @@ import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
+import { TerminalsPage } from '@/app/pages/terminals'
 import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
@@ -56,6 +57,9 @@ export const LAYOUT_SCENARIOS = [
   'runner-off',
   // M7a: the real-host terminal dock (RealDock with fixture runs and a fixture socket).
   'terminal-dock',
+  'terminal-colours',
+  'terminals-page',
+  'terminals-page-empty',
   'terminal-preview',
   'terminal-readonly',
   'terminal-take',
@@ -63,6 +67,7 @@ export const LAYOUT_SCENARIOS = [
   'terminal-stop',
   // M7b: core's Start agent dialog with fixture answers (preview, blocked reasons, the runner grant card, outcomes).
   'agent-dialog',
+  'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
@@ -450,6 +455,7 @@ const runList = (scenario: LayoutScenario): RunList => {
   const runner = { connected: true, enabled: true, terminals: true }
   if (scenario === 'terminal-exited')
     return { runner, truncated: false, runs: [fixtureRun('EX', { state: 'exited', replay_until: '2026-01-01T00:00:00Z', exit: ENDED, label: `Build ${LONG_WORD}` })] }
+  if (scenario === 'terminals-page-empty') return { runner, truncated: false, runs: [] }
   if (scenario === 'terminal-stop')
     return { runner, truncated: false, runs: [fixtureRun('ST', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: { ...ENDED, cleanup: 'incomplete' } })] }
   return {
@@ -479,7 +485,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
     spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
     cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-0043' }, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing.worktrees/0a1b2c3d-DEMO-0043`, cwd_path_hidden: false,
     will_create_worktree: true, login_shell: true, env: ['TERM', 'COLORTERM', 'ORCH_GRANT', 'ORCH_SESSION', 'ORCH_TICKET', 'ORCH_HARNESS', 'CLAUDE_CODE_SUBAGENT_MODEL'],
-    grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
+    grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
   if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
@@ -487,11 +493,34 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
+/** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
+const ESC = '\x1b['
+const COLOUR_SAMPLE = [
+  `${ESC}32msev${ESC}0m@${ESC}36mdemo${ESC}0m ${ESC}1;34m~/code/billing${ESC}0m ${ESC}35m(feat/DEMO-0043)${ESC}0m $ ls --color`,
+  `${ESC}1;34msrc${ESC}0m  ${ESC}1;34mtests${ESC}0m  README.md  ${ESC}1;32mrun.sh${ESC}0m  ${ESC}1;36mlatest -> v2${ESC}0m  ${ESC}31mbroken.tar.gz${ESC}0m`,
+  `$ git status -sb`,
+  `## feat/DEMO-0043...origin/feat/DEMO-0043 [ahead 2]`,
+  ` ${ESC}31mM${ESC}0m src/tariffs.py`,
+  `${ESC}32mA${ESC}0m  tests/test_tariffs.py`,
+  `${ESC}31m??${ESC}0m notes.txt`,
+  `$ git diff src/tariffs.py`,
+  `${ESC}1mdiff --git a/src/tariffs.py b/src/tariffs.py${ESC}0m`,
+  `${ESC}36m@@ -12,3 +12,4 @@ def load(path):${ESC}0m`,
+  `${ESC}31m-    rows = read(path)${ESC}0m`,
+  `${ESC}32m+    rows = read(path, strict=True)${ESC}0m`,
+  `$ pytest -q`,
+  `${ESC}32m..........${ESC}0m${ESC}31mF${ESC}0m${ESC}32m..${ESC}0m`,
+  `${ESC}1;31mFAILED${ESC}0m tests/test_tariffs.py::test_strict - ${ESC}33mAssertionError${ESC}0m: expected 3, got 4`,
+  `${ESC}2m(dim: 1 failed, 12 passed)${ESC}0m  ${ESC}4munderlined${ESC}0m  ${ESC}7minverse${ESC}0m`,
+  Array.from({ length: 8 }, (_, i) => `${ESC}${30 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  Array.from({ length: 8 }, (_, i) => `${ESC}${90 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  '',
+].join('\r\n')
 /** A fixture socket: `ready` at once (never the lease), then a screenful of output. Nothing leaves this page. */
 function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
   const timer = setTimeout(() => {
     h.ready({ start: 0, offset: 0, cols: 100, rows: 30, writer: false, state: current === 'terminal-stop' ? 'exited' : 'running' })
-    const text = Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
+    const text = current === 'terminal-colours' ? COLOUR_SAMPLE : Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
     h.output(0, new TextEncoder().encode(text))
     if (current === 'terminal-stop') h.exit(1, null)
   }, 50)
@@ -709,11 +738,13 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
+  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
+  ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('routing.choices', routingApi.choices)
   ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })
@@ -803,6 +834,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
+  if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'edit-ticket') return <EditTicketPreview />

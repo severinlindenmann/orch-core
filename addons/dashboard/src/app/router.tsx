@@ -29,6 +29,7 @@ const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
+const TerminalsPage = lazyPage(() => import('./pages/terminals'), 'TerminalsPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
@@ -158,6 +159,17 @@ const worktreesRoute = createRoute({
   },
   loader: pageLoader(() => [], [WorktreesPage.preload]),
   component: WorktreesPage,
+})
+/** Terminals of a real host (add-on): listed only while the add-on is ON (the server adds `terminals_page` then). */
+const terminalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'terminals',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('terminals_page')()
+  },
+  loader: pageLoader(() => [], [TerminalsPage.preload]),
+  component: TerminalsPage,
 })
 /** File Explorer of a real host (add-on, owners only): listed only while the add-on is ON; the server refuses anyone else. */
 const explorerRoute = createRoute({
@@ -290,7 +302,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, terminalsRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

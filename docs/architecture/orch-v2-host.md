@@ -466,6 +466,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e; H12d-3: the pair gate of 11A.15.6 step 4, `reader.declare` in column R, a `pk_pin` pair declaration whose pin does not name the certificate's person key, reason `who`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2); a column-R refusal carries it as `reason` (H12d-3) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
+| `runner.stale` | 3 | no | stays | the connected runner runs another orch release than the host (its `runner.hello.release` differs or is missing); every start is refused until `orch host enable` restarts it | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
 | `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
 | `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
@@ -1819,7 +1820,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
    starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
    (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
-   changed) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   changed; a running host of another release is drained with `host.restart`, and if it has not come back on the new release after 2 x START_WAIT (40 s) `enable` forces the restart with `kickstart -k` / `systemctl --user restart`: crash-equivalent, a request in flight may be interrupted and is recovered at start; result `forced: true`) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
    `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
    CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is

@@ -25,10 +25,14 @@ __all__ = [
     "KIND",
     "MAX_CHECKS",
     "gate_expect",
+    "grant_line",
+    "grant_payload",
+    "grant_step",
     "payloads",
     "plan_text",
     "steps",
     "validate",
+    "validate_agent",
 ]
 
 #: a gate input field name (the addons' field values), not the store's addons directory the layout lint looks for
@@ -50,9 +54,61 @@ def plan_text(checks: list[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def validate_agent(agent: Any, bad: type[Exception]) -> dict[str, Any]:
+    """The runner grant a sequence may end with: ``{hours, scope}``, 1 to 168 hours, scope workable only. Shared by the
+    quick task and the new ticket (one rule, one place)."""
+    from orch.model.types import GRANT_MAX_HOURS
+
+    if (
+        not isinstance(agent, Mapping)
+        or set(agent) != {"hours", "scope"}
+        or type(agent["hours"]) is not int
+        or not 1 <= agent["hours"] <= GRANT_MAX_HOURS
+        or agent["scope"] not in _AGENT_SCOPE
+    ):
+        raise bad("agent access is {hours, scope} with 1 to 168 hours and the scope workable")
+    return {"hours": agent["hours"], "scope": agent["scope"]}
+
+
+def grant_step(agent: Mapping[str, Any]) -> dict[str, Any]:
+    """The grant step (always the LAST step of a sequence): the runner grant, which names no ticket."""
+    return {
+        "op": "grant",
+        "args": {"hours": agent["hours"], "scope": agent["scope"], "runner": True},
+        "kind": "grant",
+        "ref": False,
+    }
+
+
+def grant_payload(agent: Mapping[str, Any]) -> dict[str, Any]:
+    """The payload of the grant step's event (the grant id and its times are the host's, checked by the signer)."""
+    return {
+        "type": "grant.issued",
+        "scope": agent["scope"],
+        "verbs": "agent",
+        "label": "runner",
+        "hours": agent["hours"],
+        "secret_hash": None,
+    }
+
+
+def grant_line(agent: Mapping[str, Any], now: float | None = None) -> str:
+    """The review sentence for the grant, honestly about its reach (Opus change 5)."""
+    import time
+
+    from .signcontent import span
+
+    t = time.time() if now is None else now
+    until = time.strftime("%a %d %b %H:%M %Z", time.localtime(t + agent["hours"] * 3600))  # this computer's time
+    return (
+        f"Agents may work on any ticket they are allowed to work on, not only this one, until about {until} "
+        f"({span(agent['hours'])}). Typed word: GRANT. The grant is signed last; its secret goes to your orch "
+        "runner or your own terminal, never to the dashboard."
+    )
+
+
 def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:
     from orch.canon.text import TextError, normalize_text
-    from orch.model.types import GRANT_MAX_HOURS
 
     if not isinstance(intent, Mapping) or set(intent) != {"v", "kind", "title", "description", "checks", "agent"}:
         raise bad("a quick task has exactly v, kind, title, description, checks and agent")
@@ -93,17 +149,7 @@ def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:
         out_checks.append(
             {"text": line(c["text"], "a check", 200), "cmd": None if cmd is None else line(cmd, "a command", 300)}
         )
-    agent = intent["agent"]
-    if agent is not None:
-        if (
-            not isinstance(agent, Mapping)
-            or set(agent) != {"hours", "scope"}
-            or type(agent["hours"]) is not int
-            or not 1 <= agent["hours"] <= GRANT_MAX_HOURS
-            or agent["scope"] not in _AGENT_SCOPE
-        ):
-            raise bad("agent access is {hours, scope} with 1 to 168 hours and the scope workable")
-        agent = {"hours": agent["hours"], "scope": agent["scope"]}
+    agent = validate_agent(intent["agent"], bad) if intent["agent"] is not None else None
     return {"v": 1, "kind": KIND, "title": title, "description": text, "checks": out_checks, "agent": agent}
 
 
@@ -137,15 +183,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
         out.append({"op": "task.add", "args": args, "kind": "task", "ref": True})
     out.append({"op": "approve", "args": {"gate": "plan"}, "kind": "approve", "ref": True})
     if intent["agent"] is not None:
-        a = intent["agent"]
-        out.append(
-            {
-                "op": "grant",
-                "args": {"hours": a["hours"], "scope": a["scope"], "runner": True},
-                "kind": "grant",
-                "ref": False,
-            }
-        )
+        out.append(grant_step(intent["agent"]))
     return out
 
 
@@ -208,17 +246,7 @@ def payloads(intent: Mapping[str, Any], person: str) -> list[dict[str, Any]]:
         elif kind == "approve":
             out.append({"type": "gate.approved", "gate": step["args"]["gate"]})
         else:
-            a = intent["agent"]
-            out.append(
-                {
-                    "type": "grant.issued",
-                    "scope": a["scope"],
-                    "verbs": "agent",
-                    "label": "runner",
-                    "hours": a["hours"],
-                    "secret_hash": None,
-                }
-            )
+            out.append(grant_payload(intent["agent"]))
     return out
 
 

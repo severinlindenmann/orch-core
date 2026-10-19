@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { plainReason, Setup, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
@@ -85,6 +85,7 @@ function fake(
     typed?: boolean
     agents?: boolean
     waiting?: string
+    running?: boolean
     stateError?: boolean
     failure?: boolean
     done?: boolean
@@ -157,7 +158,7 @@ function fake(
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
-        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : 'todo' }],
+        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' }],
         done: !!options.done,
         waiting: options.waiting,
         error: options.failure
@@ -282,10 +283,12 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
-  expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeInTheDocument()
-  expect(screen.getByText('Now look at your terminal: orch asks you to confirm there.')).toBeInTheDocument()
-  expect(screen.getByText('Waiting for your confirmation…')).toBeInTheDocument()
-  expect(screen.getByText(/type yes there/)).toBeInTheDocument()
+  // three large tiles, in order; the browser draws no imitation of the terminal
+  expect(within(screen.getByRole('list', { name: 'Your three words' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['demo', 'not', 'real'])
+  expect(screen.getByText(/Continue in the setup window on this computer/)).toBeInTheDocument()
+  expect(screen.getByText(/type yes in that window and press Enter/)).toBeInTheDocument()
+  expect(screen.getByText('Waiting for you in the setup window…')).toBeInTheDocument()
+  expect(screen.getByText('The words don’t match').closest('details')).not.toHaveAttribute('open')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',
@@ -939,4 +942,20 @@ test.each([
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
+})
+
+test('after the terminal confirms, the words are replaced by a matched notice', async () => {
+  const f = fake({ typed: true, running: true })
+  render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  fireEvent.click(screen.getByLabelText(/Let this Mac’s agent runner/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  expect(await screen.findByText('The three words matched. Your choices are confirmed.')).toBeInTheDocument()
+  expect(screen.queryByRole('list', { name: 'Your three words' })).toBeNull()
 })

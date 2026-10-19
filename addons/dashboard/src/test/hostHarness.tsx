@@ -55,6 +55,8 @@ export interface FakeWs {
   records?: unknown
   /** What `GET /add-ons` answers (R2-2). */
   addOns?: import('@/api/addOnSwitches').AddOnsData
+  /** What `GET /versions` answers (R3-A1); absent: the route is not served. */
+  versions?: unknown
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -265,6 +267,7 @@ export class FakeHost {
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
+    if (rest === 'versions') return ws.versions === undefined ? missing() : json(ws.versions)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
     if (rest === 'repos/check' && method === 'POST') {

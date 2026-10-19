@@ -28,7 +28,7 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
         if gate:
             # B11: a gate that still lacks its section (a quick task without a plan) is filled first; asking for its
             # approval would only be refused gate.incomplete
-            hint = views.fill_hint(p.last_view, gate) or f'orch ask "approve the {gate} gate?"'
+            hint = views.fill_hint(p.last_view, gate) or "orch wait"  # the person approves it in Approvals; no question
         elif section:
             hint = f"orch section set {section} -m TEXT"
         raise OrchError(code, f"submit: {flat(e.detail)[:180]}", hint=hint) from None

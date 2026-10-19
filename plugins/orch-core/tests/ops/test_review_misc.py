@@ -29,7 +29,7 @@ def test_the_next_hint_of_each_operation(ws, cli):
     for sec in ("context", "requirements", "out_of_scope"):
         assert last(cli("show")) == f"next: orch section set {sec} -m TEXT"
         cli("section", "set", sec, "-m", "text")
-    assert last(cli("show")) == 'next: orch ask "approve the requirements gate?"'  # complete: asking works now
+    assert last(cli("show")) == "next: orch wait"  # complete: the person approves in Approvals, the agent never asks
     r = cli.j("task", "add", "x", "--proves", "AC9")
     assert r.err_code == "not_found" and r.doc["error"]["hint"] == "orch ac add TEXT"
     assert last(cli("next")) == "next: orch show DEMO-0001"  # a ticket I hold
@@ -57,9 +57,7 @@ def test_a_hint_never_names_a_command_that_cannot_succeed(ws, cli):
     assert last(cli("show")) == "next: orch show"  # requirements wait for a person: nothing to type
     assert last(cli("task", "add", "t")) == "next: orch task start T1"
     assert last(cli("task", "start", "T1")) == "next: orch task done T1"
-    assert (
-        last(cli("task", "done", "T1")) == 'next: orch ask "approve the requirements gate?"'
-    )  # complete: asking works
+    assert last(cli("task", "done", "T1")) == "next: orch wait"  # complete: asking works
 
 
 def test_task_done_without_run_says_the_criterion_still_has_no_evidence(ws, cli):
@@ -253,4 +251,4 @@ def test_a_refused_submit_of_a_quick_task_without_a_plan_says_to_write_the_plan(
     assert r.doc["error"]["hint"] == "orch section set plan -m TEXT"
     cli("section", "set", "plan", "-m", "do the task")
     r = cli.j("submit")
-    assert r.doc["error"]["hint"] == 'orch ask "approve the plan gate?"'  # complete now: asking works
+    assert r.doc["error"]["hint"] == "orch wait"  # complete now: waits for the approval, never asks for it

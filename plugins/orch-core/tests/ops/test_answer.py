@@ -70,3 +70,20 @@ def test_a_text_with_a_hidden_control_character_is_refused(hws, agent, me):
     ask(agent)
     r = me("answer", "Q1", "-m", "fine‮text", "--ref", key, "--json")
     assert r.code == 6 and r.err_code == "parse.text"
+
+
+def test_answering_a_question_with_approve_never_approves_a_gate(hws, agent, me):
+    """R3-C4d: an agent once asked "please review the requirements gate (approve / changes)". Answering that is only
+    an answer: the gate stays open until the person signs ``orch approve``."""
+    key = make_ticket(agent)
+    r = agent(
+        "ask",
+        "Please review the requirements gate (orch approve or orch request-changes)",
+        "--options",
+        "approve,changes",
+    )
+    assert r.code == 0, r.err
+    r = me("answer", "Q1", "--option", "approve", "--ref", key)
+    assert r.code == 0, r.err
+    assert [e["type"] for e in hws.events("1") if e["type"].startswith("gate.")] == []
+    assert not hws.view("1").gates["requirements"].approved

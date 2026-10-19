@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from orch.host import enable as host_enable
-from orch.host.units import systemd_quote
+from orch.host.units import launcher_arguments, systemd_quote
 
 __all__ = [
     "LAUNCHD_LABEL",
@@ -61,7 +61,8 @@ def launchd_plist(
     log = str(Path(state_dir) / "runner" / "runner.out")
     doc: dict[str, object] = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": program_arguments(python, release, state_dir, run_dir, extra_args),
+        # the launcher is the program, so macOS lists the item as "orch-runner" (see units.launcher_arguments)
+        "ProgramArguments": launcher_arguments(release, state_dir, run_dir, extra_args, name="orch-runner"),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Interactive",  # it parents the person's agents and shells: never throttled as background

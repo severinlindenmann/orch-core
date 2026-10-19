@@ -12,7 +12,8 @@ import { RealDock } from './RealDock'
 
 const WS = 'a'.repeat(32)
 vi.mock('../../workspace', () => ({ useWorkspace: () => ({ workspace: { id: WS } }) }))
-vi.mock('../dock/context', async (orig) => ({ ...(await orig<typeof import('../dock/context')>()), useDockTicket: () => undefined }))
+const dock = vi.hoisted(() => ({ ticket: undefined as string | undefined }))
+vi.mock('../dock/context', async (orig) => ({ ...(await orig<typeof import('../dock/context')>()), useDockTicket: () => dock.ticket }))
 // The terminal itself is covered in RealTerminal.test.tsx: here only which run it is mounted for, and how.
 // Like the real one, it reads `initial` once, when it mounts.
 vi.mock('./RealTerminal', async () => {
@@ -45,7 +46,7 @@ beforeEach(() => {
   list = { runs: [], runner: { connected: true, enabled: true, terminals: true }, truncated: false }
   vi.spyOn(runsApi, 'list').mockImplementation(async () => list)
 })
-afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null) })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null); dock.ticket = undefined })
 
 describe('the real dock', () => {
   it('New terminal shows the host preview as untrusted text, then opens with one idem and attaches with the lease', async () => {
@@ -164,7 +165,18 @@ describe('the real dock', () => {
     expect(await screen.findByRole('menuitem', { name: /Start agent/ })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('Start agent opens core\'s dialog when the host serves agent_start', async () => {
+  it('Start agent needs a ticket: outside a ticket page it is disabled and says so', async () => {
+    setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
+    mount()
+    await screen.findByText(/No terminal is open/)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    const item = await screen.findByRole('menuitem', { name: /Start agent/ })
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent('open a ticket first')
+  })
+
+  it('Start agent opens core\'s dialog on a ticket page when the host serves agent_start', async () => {
+    dock.ticket = 'DEMO-1'
     const { agentsApi } = await import('@/api/agents')
     setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
     const pre = vi.spyOn(agentsApi, 'preview').mockResolvedValue({ spec: 'f'.repeat(64), ticket: null, display: 'codex', display_hidden: false, cwd: { kind: 'workspace' },
@@ -173,11 +185,11 @@ describe('the real dock', () => {
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
-    const item = await screen.findByRole('menuitem', { name: 'Start agent' })
+    const item = await screen.findByRole('menuitem', { name: 'Start agent on DEMO-1' })
     expect(item).not.toHaveAttribute('aria-disabled')
     fireEvent.click(item)
     expect(await screen.findByTestId('agent-preview')).toBeInTheDocument()
-    expect(pre).toHaveBeenCalled()
+    expect(pre).toHaveBeenCalledWith(WS, expect.objectContaining({ ticket: 'DEMO-1' }))
   })
 
   it('an agent whose runner grant ended says so and keeps Stop', async () => {

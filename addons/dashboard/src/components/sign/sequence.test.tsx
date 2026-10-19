@@ -162,7 +162,7 @@ describe('a quick task with agent access (terminal)', () => {
     expect(dialog).toHaveTextContent('you type DEMO-0044/0000000A to continue')
   })
 
-  it('says in words that the TICKET exists (nothing was approved) and the agent access was NOT given when the last signature never follows', async () => {
+  it('says in words that the TICKET exists (nothing was approved) and the agent access is not confirmed when the last signature never follows', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const request = withAgent()
     s.prepare.mockResolvedValue(request)
@@ -172,13 +172,37 @@ describe('a quick task with agent access (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
     await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 2)))
-    expect(await within(dialog).findByText(/Ticket created; agent access was NOT given/, {}, T)).toBeInTheDocument()
-    expect(dialog).toHaveTextContent('DEMO-0044 was created. Agent access was NOT given: signing stopped at the last signature')
+    expect(await within(dialog).findByText(/Ticket created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('DEMO-0044 was created. Agent access is not confirmed yet: the last signature has not arrived')
     expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
     expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
   })
 
-  it('for a quick task: says the task exists and is approved, and the agent access was NOT given when the last signature never follows', async () => {
+  it('F-712-4: asks once more before saying the last signature has not arrived, and does not fail when it lands meanwhile', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const request = withAgent()
+    s.prepare.mockResolvedValue(request)
+    const stalled = state(request, { state: 'submitted', seq: 1, event_ids: ['x'], progress: { done: 3, of: 4, last: 'grant' } })
+    const landed = state(request, { state: 'submitted', seq: 2, event_ids: ['x', 'y'] })
+    let last = 0
+    s.get.mockImplementation(async () => {
+      const now = Date.now()
+      const back = now - last < 1000 && last !== 0 // two reads in the same poll: the stall check and its one re-check
+      const stallTime = now > t0 + GRANT_STALL_MS
+      last = now
+      return back && stallTime ? landed : stalled
+    })
+    const t0 = Date.now()
+    const { onSettled } = mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
+    await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 6)))
+    expect(dialog).not.toHaveTextContent(/not confirmed yet/)
+    expect(onSettled).not.toHaveBeenCalledWith('failed', expect.anything(), expect.anything())
+  })
+
+  it('for a quick task: says the task exists and is approved, and the agent access is not confirmed when the last signature never follows', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const request = withAgent('quick_task')
     s.prepare.mockResolvedValue(request)
@@ -188,8 +212,8 @@ describe('a quick task with agent access (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
     await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 2)))
-    expect(await within(dialog).findByText(/Task created; agent access was NOT given/, {}, T)).toBeInTheDocument()
-    expect(dialog).toHaveTextContent('agent access was NOT given: signing stopped at the last signature')
+    expect(await within(dialog).findByText(/Task created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('agent access is not confirmed yet: the last signature has not arrived')
     expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
     expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
   })

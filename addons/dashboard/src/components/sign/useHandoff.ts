@@ -227,12 +227,21 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
             // Only the agent access is missing: the task is made and approved, and agents were NOT given access.
             const grantOnly = got.progress.last === 'grant' && got.progress.done === got.progress.of - 1
             if (Date.now() - progressed.at > (grantOnly ? GRANT_STALL_MS : SEQUENCE_STALL_MS)) {
+              // F-712-4: the last signature may be landing right now: ask once more before saying it has not arrived.
+              if (grantOnly) {
+                const last = await api.getHandoff(ws, request.id).catch(() => null)
+                if (stopped) return
+                if (last && last.id === request.id && (last.progress?.done !== got.progress.done || last.state !== 'submitted')) {
+                  progressed = { done: -1, at: Date.now() } // it moved (or finished): the next poll handles it from the top
+                  return
+                }
+              }
               stopped = true
               const newTicket = (request.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket'
               const message = grantOnly && newTicket
-                ? `${got.key ?? 'The ticket'} was created. Agent access was NOT given: signing stopped at the last signature (your terminal says why). No agent was started; start one from the ticket to give access again.`
+                ? `${got.key ?? 'The ticket'} was created. Agent access is not confirmed yet: the last signature has not arrived (your terminal may still be waiting for you, or it says why it stopped). No agent was started; if access does not appear, start one from the ticket to give it again.`
                 : grantOnly
-                ? `${got.key ?? 'The task'} was created and approved; agent access was NOT given: signing stopped at the last signature (your terminal says why). Agents cannot work until you give them access from the agent access control.`
+                ? `${got.key ?? 'The task'} was created and approved; agent access is not confirmed yet: the last signature has not arrived (your terminal may still be waiting for you, or it says why it stopped). Agents cannot work until access is given from the agent access control.`
                 : `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`
               setError(new ApiError(409, { code: grantOnly ? 'sequence.no_access' : 'intent.failed', message, retryable: false }))
               finish('failed', got)

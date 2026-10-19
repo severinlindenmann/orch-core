@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { runnerQuery } from '@/api/agents'
 import { canRevokeHostGrant, type HostGrant } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
@@ -50,6 +51,9 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
   const role = useViewerRole(workspace)
   const viewer = useViewerPerson()
   const [revoking, setRevoking] = useState<HostGrant | null>(null)
+  // UP-2: the runner on this machine is authoritative for the viewer's own runner access (the pill reads it too).
+  const runner = useQuery({ ...runnerQuery(workspace.id), enabled: hasFeature('agent_start', workspace.id), retry: false })
+  const heldId = runner.isSuccess ? (runner.data?.runner?.grant?.id ?? null) : undefined
   if (grants.isError) return <LoadFailed what="grants" onRetry={() => void grants.refetch()} />
   const name = (id: string) => roster.data?.find((m) => m.person === id)?.name ?? workspace.members.find((m) => m.person === id)?.name ?? id
   const served = hasFeature('do:grant.revoke', workspace.id)
@@ -88,6 +92,8 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
             <TableBody>
               {grants.data.map((g) => {
                 const s = state(g, now)
+                // Active on paper, but the agent runner on this Mac does not hold it (an update restarts the runner and it loses the secret): agents cannot use it.
+                const orphan = s === 'active' && g.label === 'runner' && g.person === viewer && heldId !== undefined && heldId !== g.id
                 return (
                   <TableRow key={g.id}>
                     <TableCell>
@@ -122,9 +128,10 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                       {g.sessions}
                     </TableCell>
                     <TableCell>
-                      <Pill tone={TONE[s]} className="capitalize">
-                        {s}
+                      <Pill tone={orphan ? 'neutral' : TONE[s]} className="capitalize">
+                        {orphan ? 'Not in use' : s}
                       </Pill>
+                      {orphan && <span data-testid="grant-not-held" className="mt-1 block text-[11px] text-text-faint">The agent runner on this Mac no longer holds this access (an update resets it), so agents cannot use it. Give access again from the pill at the top; you can revoke this one.</span>}
                     </TableCell>
                     <TableCell className="text-right">
                       {s === 'active' && canRevokeHostGrant(role, g.person, viewer) && (

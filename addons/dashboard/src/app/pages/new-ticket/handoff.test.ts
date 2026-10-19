@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { EMPTY, handoffNewTicket } from './index'
+import { SECTIONS_BY_TYPE, type SectionName } from '@/api/sections'
+import { accessTooMany, EMPTY, handoffNewTicket } from './index'
 
 describe('a new ticket through the hand-off', () => {
   it('is one intent: title, type, fields and written text', () => {
@@ -34,5 +35,19 @@ describe('a new ticket through the hand-off', () => {
     const many = { ...EMPTY, title: 'T', acceptance: Array.from({ length: 8 }, (_, i) => `c${i}`), sections: { summary: 'a', context: 'b', requirements: 'c', out_of_scope: 'd', plan: 'e', decisions: 'f', verification: 'g', current_state: 'h' } }
     expect(handoffNewTicket(many as never)).toHaveProperty('problem')
     expect(handoffNewTicket({ ...EMPTY, title: 'T', acceptance: Array.from({ length: 9 }, (_, i) => `c${i}`) })).toHaveProperty('problem')
+  })
+})
+
+describe('F-712-B: the step limit with and without the agent access', () => {
+  it('a draft that fits alone but not with the access is "too many"; fewer or no access is not', () => {
+    const crit = (n: number) => Array.from({ length: n }, (_, i) => `c${i}`)
+    const names = (Object.keys(SECTIONS_BY_TYPE.feature) as SectionName[]).filter((n) => SECTIONS_BY_TYPE.feature[n] !== 'absent')
+    const draft = (sections: number, criteria: number) => ({ ...EMPTY, title: 'T', priority: 'high' as const, sections: Object.fromEntries(names.slice(0, sections).map((n) => [n, 'x'])), acceptance: crit(criteria) })
+    // Steps: ticket + fields + sections + criteria. Find the draft of exactly 16 (fits alone; the access makes it 17).
+    const sections = 6
+    const edge = draft(sections, 14 - sections)
+    expect('problem' in handoffNewTicket(edge, 'p', null)).toBe(false)
+    expect(accessTooMany(edge, 'p', 24)).toBe(true)
+    expect(accessTooMany(draft(sections, 14 - sections - 1), 'p', 24)).toBe(false)
   })
 })

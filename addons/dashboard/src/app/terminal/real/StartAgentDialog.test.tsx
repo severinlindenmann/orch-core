@@ -263,6 +263,21 @@ describe('the runner grant', () => {
     expect(screen.getByTestId('runner-grant-issue')).toBeDisabled()
   })
 
+  it('M-2: while the terminal waits for the signature and r, the card says so instead of "issue one"', async () => {
+    vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'stop here', retryable: false }))
+    vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+    s.preview.mockResolvedValue(noGrant())
+    mount()
+    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
+    expect(screen.getByTestId('runner-grant-needed')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('runner-grant-issue'))
+    fireEvent.click(await screen.findByRole('button', { name: /Terminal/ }, T))
+    expect(await screen.findByTestId('runner-grant-waiting', {}, T)).toHaveTextContent('press r')
+    expect(screen.queryByTestId('runner-grant-needed')).toBeNull()
+  })
+
   it.each([
     ['expiring', 'less than 15 minutes'],
     ['scope', 'workable tickets'],
@@ -660,6 +675,17 @@ describe('prefilled by the New ticket form (initial)', () => {
     expect(await screen.findByTestId('agent-initial-note', {}, T)).toHaveTextContent('The agent was not started: the model differs.')
     await waitFor(() => expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'codex', mode: 'refine', model: 'o3', worktree: true }), T)
     expect(s.start).not.toHaveBeenCalled() // one explicit Start
+  })
+  it('M-1: one state line. Once the preview is ready the "not started" note gives way to it', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}><TooltipProvider>
+        <StartAgentDialog ws={WS} ticket="DEMO-1" open onClose={vi.fn()} initial={{ note: 'Created DEMO-1. The agent was not started: the notice has not been read yet.' }} />
+      </TooltipProvider></QueryClientProvider>,
+    )
+    expect(await screen.findByTestId('agent-ready', {}, T)).toHaveTextContent('DEMO-1 is created. Check the details, then press Start agent.')
+    expect(screen.queryByTestId('agent-initial-note')).toBeNull()
+    expect(screen.queryByText(/Ready to start/)).toBeNull()
   })
   it('reuses the idem of a start whose answer was lost', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

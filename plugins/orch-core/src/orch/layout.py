@@ -2,15 +2,13 @@
 
 A workspace has a **project** (the root: registry ``root``, the agents' and terminals' working directory, the base of
 relative ``settings.repos`` paths) and a **store** (the directory holding ``config.json``, ``keys.jsonl``,
-``AGENTS.orch.md``, ``events/``, ``tickets/``, ``addons/`` and ``.state/``). In the legacy layout they are the same
-directory; in the new layout the store is ``<project>/.orch``.
+``AGENTS.orch.md``, ``events/``, ``tickets/``, ``addons/`` and ``.state/``): ``<project>/.orch``. A store from an older
+version sits directly in the project root; it is detected (:func:`resolve` raises :class:`LegacyStoreError`) and
+refused with a message that says to delete it: there is no migration and no support for it.
 
 Nobody joins ``".orch"`` or a store name by hand: code that needs the store asks the :class:`Layout`. A CI test
 (``tests/test_layout_lint.py``) greps for such joins outside this module and ``orch/store/``; the files that still do
 are listed with exact counts in ``tests/layout_lint_allowlist.txt`` and the list only shrinks.
-
-``WRITE_NEW`` is the flip switch: while it is ``False`` nothing creates a ``.orch`` store; readers understand both
-layouts. The flip PR sets it ``True``.
 """
 
 from __future__ import annotations
@@ -25,41 +23,30 @@ from typing import Any
 
 __all__ = [
     "CONFIG_SCHEMA",
-    "LEGACY_STORE_FOLDERS",
     "KEYS_FILE",
     "STORE_DIR",
-    "LEGACY_ALLOWED",
-    "WRITE_NEW",
+    "LegacyStoreError",
     "Layout",
     "LayoutError",
     "StorePin",
     "check_single_store",
     "fresh",
-    "move_in_progress",
     "open_state_fd",
     "state_marker_present",
     "open_store_dir",
     "store_of",
     "resolve",
+    "legacy_refusal_at",
+    "STATE_DIR",
 ]
 
 STORE_DIR = ".orch"
 #: the file of a store that holds its keys (named here so a deny list elsewhere does not spell it)
 KEYS_FILE = "keys.jsonl"
-#: the folders of a store that, in the legacy layout, sit directly in the project folder
-LEGACY_STORE_FOLDERS = (".state", "events", "tickets", "addons", STORE_DIR)
+#: orch's local state folder (never committed, never shown): ``<store>/.state``
+STATE_DIR = ".state"
 CONFIG_SCHEMA = "orch.workspace/2"
 _CONFIG_LIMIT = 1 << 20
-
-#: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
-#: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
-WRITE_NEW = True
-
-#: Final state of the move (design step 12): a workspace whose store is still in the project root is refused wherever
-#: a store is opened, with one plain message (delete the old files, run ``orch setup`` again; owner decision 19 Oct:
-#: no migration). There is no switch for this in production. The test suite sets this module flag on its own legacy
-#: fixtures (``tests/conftest.py``; child processes through ``tests/_legacy_shim``).
-LEGACY_ALLOWED = False
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -74,32 +61,31 @@ class LayoutError(Exception):
         self.hint = hint
 
 
+class LegacyStoreError(LayoutError):
+    """The project holds a store from an older version in its root (not in ``.orch/``): refused, with the message that
+    says to delete it. ``str(exc)`` is :func:`legacy_refusal`."""
+
+
 @dataclass(frozen=True)
 class Layout:
-    """``project`` (the root) and ``store`` (where the store files are); ``legacy``: the store is the project itself."""
+    """``project`` (the root) and ``store`` (where the store files are: ``<project>/.orch``)."""
 
     project: Path
     store: Path
-    legacy: bool
-
-    @classmethod
-    def legacy_at(cls, project: str | os.PathLike[str]) -> Layout:
-        p = Path(project)
-        return cls(p, p, True)
 
     @classmethod
     def new_at(cls, project: str | os.PathLike[str]) -> Layout:
         p = Path(project)
-        return cls(p, p / STORE_DIR, False)
+        return cls(p, p / STORE_DIR)
 
 
 @dataclass(frozen=True)
 class StorePin:
-    """What discovery saw of the store, for the open that follows: ``ident`` the ``(st_dev, st_ino)`` of ``.orch``
-    (``None``: the legacy layout, the store is the project), ``owned``: the walk was implicit, so the opened store
+    """What discovery saw of the store, for the open that follows: ``ident`` the ``(st_dev, st_ino)`` of ``.orch``,
+    ``owned``: the walk was implicit, so the opened store
     directory must again be the current user's and not group/other-writable (checked on the opened fd)."""
 
-    ident: tuple[int, int] | None
+    ident: tuple[int, int]
     owned: bool = False
 
 
@@ -165,6 +151,15 @@ def legacy_refusal(project_fd: int) -> str:
     return text
 
 
+def legacy_refusal_at(project: str | os.PathLike[str]) -> str:
+    """:func:`legacy_refusal` for the project folder at ``project`` (opened here, ``O_NOFOLLOW`` on the last part)."""
+    fd = os.open(project, _DIR)
+    try:
+        return legacy_refusal(fd)
+    finally:
+        os.close(fd)
+
+
 def is_private(st: os.stat_result) -> bool:
     """Owned by the current user and writable by no one else."""
     return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
@@ -181,8 +176,8 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
 
 
 def fresh(project: str | os.PathLike[str]) -> Layout:
-    """The layout of a project that holds no store yet (a workspace being created): the switch decides."""
-    return Layout.new_at(project) if WRITE_NEW else Layout.legacy_at(project)
+    """The layout of a project that holds no store yet (a workspace being created)."""
+    return Layout.new_at(project)
 
 
 def _orch_config(fd: int) -> bool:
@@ -208,7 +203,8 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     """The layout of the project open at ``project_fd``, or ``None`` when it holds no orch store.
 
     Everything is looked at below the fd with ``O_NOFOLLOW`` (a symlinked ``.orch`` is not a store: ``None``). Both an
-    orch config in the root and one in ``.orch/`` is :class:`LayoutError` (:func:`check_single_store`)."""
+    orch config in the root and one in ``.orch/`` is :class:`LayoutError` (:func:`check_single_store`); one in the root
+    alone is :class:`LegacyStoreError` (a store from an older version: refused, never read)."""
     legacy = _orch_config(project_fd)
     new = False
     sfd = open_store_dir(project_fd)
@@ -220,7 +216,9 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     check_single_store(legacy=legacy, new=new)
     if new:
         return Layout.new_at(project)
-    return Layout.legacy_at(project) if legacy else None
+    if legacy:
+        raise LegacyStoreError(legacy_refusal(project_fd))
+    return None
 
 
 def open_store_dir(
@@ -253,9 +251,9 @@ def open_store_dir(
 
 
 def open_state_fd(project: str | os.PathLike[str]) -> int | None:
-    """The fd of ``<store>/.state`` of the project, every step ``O_NOFOLLOW`` from the project fd (the store is the
-    project itself in the legacy layout, ``.orch`` in the new one); ``None`` when there is no store or no ``.state``.
-    :class:`LayoutError` when the layout is unusable (two stores, a linked ``.orch``)."""
+    """The fd of ``<store>/.state`` of the project, every step ``O_NOFOLLOW`` from the project fd;
+    ``None`` when there is no store or no ``.state``. :class:`LayoutError` when the layout is unusable (two stores, a
+    linked ``.orch``, a store from an older version)."""
     try:
         pfd = os.open(project, _DIR)
     except OSError:
@@ -264,7 +262,7 @@ def open_state_fd(project: str | os.PathLike[str]) -> int | None:
         found = resolve(pfd, project)
         if found is None:
             return None
-        sfd = pfd if found.legacy else open_store_dir(pfd)
+        sfd = open_store_dir(pfd)
         if sfd is None:
             return None
         try:
@@ -272,16 +270,15 @@ def open_state_fd(project: str | os.PathLike[str]) -> int | None:
         except OSError:
             return None
         finally:
-            if sfd != pfd:
-                os.close(sfd)
+            os.close(sfd)
     finally:
         os.close(pfd)
 
 
 def store_of(project: str | os.PathLike[str]) -> Path:
-    """The store directory of the project as it is on disk now (``.orch``, or the project itself: legacy, or no store
-    yet). Unusable layout: :class:`LayoutError`. A path, for reading names that carry no authority; anything that
-    must be pinned goes through an fd (:func:`open_state_fd`, ``Store.open``)."""
+    """The store directory of the project as it is on disk now (``.orch``, also when there is no store yet).
+    Unusable layout: :class:`LayoutError`. A path, for reading names that carry no authority; anything that must be
+    pinned goes through an fd (:func:`open_state_fd`, ``Store.open``)."""
     try:
         pfd = os.open(project, _DIR)
     except OSError:
@@ -337,13 +334,3 @@ def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
     finally:
         for item in fds:
             os.close(item)
-
-
-def move_in_progress(path: str | os.PathLike[str]) -> bool:
-    """A store move is under way next to ``path`` (the project, or its ``.orch``): ``.orch-migrating`` exists there.
-    Writers that reach store files by PATH (instruction files, add-on manifests) refuse while it does, so they never
-    re-create a name in the project root that is moving into ``.orch``. A narrow guard, not a lock: the store lock and
-    ``owner.lock`` are what the migration holds; this only closes the window for writers that take neither."""
-    p = Path(path)
-    bases = [p, p.parent] if p.name == STORE_DIR else [p]
-    return any(os.path.lexists(b / ".orch-migrating") for b in bases)

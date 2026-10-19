@@ -100,7 +100,7 @@ def test_evidence_per_criterion_and_content(client, token, stub, rich):
     assert content["text"] == data.decode() and content["verified"] is True and content["truncated"] is False
     assert client.get(url(stub, "DEMO-0001/artifacts/missing.log"), headers=headers(token)).status_code == 404
     # A file that changed on disk after its digest was recorded is refused, never shown as evidence.
-    (env.root / "tickets" / ids["First"] / "artifacts" / "out.log").write_bytes(b"tampered")
+    (env.store_dir / "tickets" / ids["First"] / "artifacts" / "out.log").write_bytes(b"tampered")
     bad = client.get(url(stub, "DEMO-0001/artifacts/out.log"), headers=headers(token))
     assert bad.status_code == 409 and bad.json()["error"]["code"] == "artifact.mismatch"
 

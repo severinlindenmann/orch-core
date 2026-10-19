@@ -84,7 +84,7 @@ def test_forged_notes_replay_at_most_a_genuine_decision(ws, cli):
     q = asked(ws, cli)
     ws.sign("1", "question.answered", question="Q1", hash=q.hash, option="a")
     assert cli.j("wait", "--timeout", "1").data["kind"] == "answered"
-    p = next((ws.root / ".state" / "sessions").glob("*.notes.json"))
+    p = next((ws.store_dir / ".state" / "sessions").glob("*.notes.json"))
     doc = json.loads(p.read_text())
     for e in doc["tickets"].values():
         e["decided"] = 0

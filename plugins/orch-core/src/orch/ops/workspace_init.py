@@ -57,7 +57,7 @@ from orch.instructions import UnsafePath, check_targets, write_workspace_files
 from orch.ops.base import Context, Result
 from orch.ops.caps import Files
 from orch.ops.errors import OrchError
-from orch.ops.runtime import find_workspace, state_dir
+from orch.ops.runtime import discover, state_dir
 
 __all__ = [
     "DEVICE_KEY",
@@ -233,7 +233,10 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
 def _no_workspace(ctx: Context, root: Path) -> None:
     """A workspace found here (or above) by orch's own marker is "already exists"; a project file under a name the
     store writes is a collision named in words (:mod:`orch.rootclaim`), never "a workspace"."""
-    if find_workspace(ctx.env, root, ctx.caps.files) is not None:
+    found = discover(ctx.env, root, ctx.caps.files, allow_old_store=True)
+    # a store from an older version in this very folder is not "a workspace": _empty_root names it and says to delete it
+    old_here = found is not None and not found.v1 and found.layout is None and found.path == root.resolve()
+    if found is not None and not old_here:
         raise _refuse("invalid.input", "a workspace already exists here", "orch status")
     _empty_root(root)
 

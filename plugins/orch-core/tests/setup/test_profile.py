@@ -162,28 +162,31 @@ def test_symlinked_and_relative_paths_refused(tmp):
     assert refused(tmp, tmp.root / "missing").code == "setup.dir_refused"
 
 
-@pytest.mark.parametrize("name", ["config.json", "keys.jsonl", "events", "tickets", ".state", "addons"])
-def test_a_project_file_under_a_store_name_is_a_named_collision_not_orch(tmp, name):
-    # finding B11-2: a generic name never reads as "orch files"; it is refused only because orch would write there
-    (tmp.work / name).write_text("x")
-    e = refused(tmp, tmp.work)
-    assert e.code == "setup.dir_refused" and "orch files" not in e.message and "orch workspace" not in e.message
-    assert "already has its own " + (name if name.endswith(("json", "jsonl")) else name + "/") in e.message
-    assert "never overwrites" in e.message
-    assert (tmp.work / name).read_text() == "x"  # nothing written
-
-
-def test_js_project_with_config_json_and_events_dir_names_both_and_is_left_alone(tmp):
+def test_js_project_with_config_json_and_events_dir_is_no_collision_and_is_left_alone(tmp):
     (tmp.work / "config.json").write_text('{"name": "my-app", "port": 3000}')
     (tmp.work / "events").mkdir()
     (tmp.work / "events" / "click.js").write_text("export {}")
     (tmp.work / "package.json").write_text("{}")
-    e = refused(tmp, tmp.work)
-    assert "already has its own config.json, events/" in e.message and "orch workspace" not in e.message
+    assert check_dir(str(tmp.work), home=tmp.home, state_dir=tmp.state)[1] == "new"  # the store is .orch/ only
     assert sorted(os.listdir(tmp.work)) == ["config.json", "events", "package.json"]
 
 
-@pytest.mark.parametrize("name", ["src", "node_modules", "config", "event", "ticket", "AGENTS.md", ".gitignore"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "src",
+        "node_modules",
+        "config",
+        "event",
+        "ticket",
+        "AGENTS.md",
+        ".gitignore",
+        "keys.jsonl",
+        "tickets",
+        ".state",
+        "addons",
+    ],
+)
 def test_names_orch_does_not_write_never_refuse(tmp, name):
     (tmp.work / name).write_text("x")
     assert check_dir(str(tmp.work), home=tmp.home, state_dir=tmp.state)[1] == "new"
@@ -191,16 +194,30 @@ def test_names_orch_does_not_write_never_refuse(tmp, name):
 
 def test_an_unregistered_orch_store_is_detected_by_its_config_schema(tmp):
     cfg = {"schema": "orch.workspace/2", "workspace": {"id": "ab" * 16, "prefix": "DEMO", "name": "d"}}
-    (tmp.work / "config.json").write_text(json.dumps(cfg))
+    (tmp.work / ".orch").mkdir()
+    (tmp.work / ".orch" / "config.json").write_text(json.dumps(cfg))
     e = refused(tmp, tmp.work)
     assert "already an orch workspace" in e.message
 
 
-@pytest.mark.parametrize("name", [".orch", ".orch-init.lock"])
-def test_orch_own_markers_refuse_as_orch(tmp, name):
-    (tmp.work / name).mkdir()
+def test_a_store_from_an_older_version_in_the_root_says_to_delete_it(tmp):
+    cfg = {"schema": "orch.workspace/2", "workspace": {"id": "ab" * 16, "prefix": "DEMO", "name": "d"}}
+    (tmp.work / "config.json").write_text(json.dumps(cfg))
     e = refused(tmp, tmp.work)
-    assert f"orch's own {name}" in e.message
+    assert "Delete config.json" in e.message and "run orch setup again" in e.message
+    assert "already an orch workspace" not in e.message
+
+
+def test_a_projects_own_dot_orch_is_a_named_collision(tmp):
+    (tmp.work / ".orch").mkdir()
+    e = refused(tmp, tmp.work)
+    assert "already has its own .orch/" in e.message and "never writes into a project's folder" in e.message
+
+
+def test_orch_own_init_lock_refuses_as_orch(tmp):
+    (tmp.work / ".orch-init.lock").mkdir()
+    e = refused(tmp, tmp.work)
+    assert "orch's own .orch-init.lock" in e.message
 
 
 def test_existing_project_dir_is_fine(tmp):

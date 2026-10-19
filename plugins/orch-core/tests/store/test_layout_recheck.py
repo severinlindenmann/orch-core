@@ -1,47 +1,21 @@
-"""Step 7 (L): every store transaction re-checks the layout under the guard and the lock, so a stale opener fails closed
-after a migrate (design B11-P2 §3) and the host guard still holds the ownership lock around it."""
+"""Every store transaction re-checks the layout under the guard and the lock, so a stale opener fails closed when its
+``.orch`` is swapped or gone, and the host guard still holds the ownership lock around it."""
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
-from orch import layout
 from orch.host.ownership import DirectGuard, OwnershipLock
 from orch.store import StoreError
 from tests.store.helpers import WS, Env
 
 
-def _move_into_dot_orch(root: Path) -> None:
-    items = list(root.iterdir())
-    (root / ".orch").mkdir(mode=0o700)
-    for item in items:
-        shutil.move(str(item), str(root / ".orch" / item.name))
-
-
-def test_a_legacy_opener_fails_closed_after_the_store_moved(tmp_path: Path) -> None:
+def test_a_dot_orch_opener_fails_closed_when_the_store_directory_is_replaced(tmp_path: Path) -> None:
     env = Env(tmp_path)
-    s = env.bootstrap()
-    s.state  # noqa: B018  (a read before the move works)
-    s.close()
     s = env.open()
-    _move_into_dot_orch(env.root)
-    with pytest.raises(StoreError, match=r"layout changed|\.state is gone"):
-        with s.locked():
-            pass
-    with pytest.raises(StoreError, match=r"layout changed|\.state is gone"):
-        s.append(env.person_event(env.owner, "workspace", "settings.changed", set={"x": 1}), log="workspace")
-    s.close()
-
-
-def test_a_dot_orch_opener_fails_closed_when_the_store_directory_is_replaced(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
-    env = Env(tmp_path)
-    env.root.mkdir(exist_ok=True)
-    s = env.open(create=True)
-    assert not s.layout.legacy
+    assert s.layout.store == env.root / ".orch"
     with s.locked():
         pass  # unchanged: fine
     (env.root / ".orch").rename(tmp_path / "moved-away")
@@ -52,23 +26,34 @@ def test_a_dot_orch_opener_fails_closed_when_the_store_directory_is_replaced(tmp
     s.close()
 
 
-def test_a_dot_orch_opener_fails_closed_when_the_store_directory_is_gone(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(layout, "WRITE_NEW", True)
+def test_a_dot_orch_opener_fails_closed_when_the_store_directory_is_gone(tmp_path: Path) -> None:
     env = Env(tmp_path)
-    s = env.open(create=True)
+    s = env.open()
     (env.root / ".orch").rename(tmp_path / "moved-away")
-    with pytest.raises(StoreError):
+    with pytest.raises(StoreError, match="run the command again"):
         with s.locked():
             pass
     s.close()
 
 
-def test_the_guard_runs_before_the_layout_check_and_waits_for_a_migrate(tmp_path: Path) -> None:
+def test_a_running_host_is_told_to_restart_not_to_run_the_command_again(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    s = env.open()
+    s.before_append = lambda: None  # what the host sets on the store it serves
+    (env.root / ".orch").rename(tmp_path / "moved-away")
+    with pytest.raises(StoreError, match="restart the host: orch host restart") as caught:
+        with s.locked():
+            pass
+    assert "run the command again" not in str(caught.value.detail)
+    s.close()
+
+
+def test_the_guard_runs_before_the_layout_check_and_waits_for_the_ownership_lock(tmp_path: Path) -> None:
     env = Env(tmp_path)
     env.bootstrap().close()
     guard = DirectGuard(env.host_state, WS, timeout=0.2)
     s = env.open(guard=guard)
-    with OwnershipLock(env.host_state, WS).exclusive(1):  # what a migrate holds from planning until done
+    with OwnershipLock(env.host_state, WS).exclusive(1):  # what a host holds while it takes the workspace over
         with pytest.raises(StoreError) as caught:
             with s.locked():
                 pass
@@ -86,10 +71,10 @@ def test_a_new_workspace_without_a_config_yet_keeps_its_opened_layout(tmp_path: 
     s.close()
 
 
-def test_a_legacy_opener_with_a_genesis_refuses_when_config_json_is_deleted_or_invalid(tmp_path: Path) -> None:
+def test_an_opener_with_a_genesis_refuses_when_config_json_is_deleted_or_invalid(tmp_path: Path) -> None:
     env = Env(tmp_path)
     env.bootstrap().close()
-    cfg = env.root / "config.json"
+    cfg = env.store_dir / "config.json"
     good = cfg.read_bytes()
     for mutate in (
         lambda: cfg.unlink(),
@@ -107,19 +92,19 @@ def test_a_legacy_opener_with_a_genesis_refuses_when_config_json_is_deleted_or_i
     cfg.write_bytes(good)
 
 
-def test_a_stale_legacy_opener_never_recreates_state_in_the_root(tmp_path: Path) -> None:
+def test_a_stale_opener_never_recreates_state_in_a_replaced_store(tmp_path: Path) -> None:
     env = Env(tmp_path)
     env.bootstrap().close()
     s = env.open()
-    _move_into_dot_orch(env.root)
+    (env.root / ".orch").rename(tmp_path / "moved-away")
     with pytest.raises(StoreError):
         with s.locked():
             pass
-    assert sorted(p.name for p in env.root.iterdir()) == [".orch"]  # no .state, no events, nothing re-created
+    assert not (env.root / ".orch").exists() and not (env.root / ".state").exists()  # nothing re-created
     s.close()
 
 
-def test_a_store_moved_between_the_resolve_and_the_open_fails_closed_and_makes_nothing(
+def test_a_dot_orch_swapped_between_the_resolve_and_the_open_fails_closed_and_makes_nothing(
     tmp_path: Path, monkeypatch
 ) -> None:
     from orch.store import store as store_mod
@@ -128,12 +113,14 @@ def test_a_store_moved_between_the_resolve_and_the_open_fails_closed_and_makes_n
     env.bootstrap().close()
     real = store_mod.open_store_fs
 
-    def moved_after_resolve(*a, **k):
+    def swapped_after_resolve(*a, **k):
         out = real(*a, **k)
-        _move_into_dot_orch(env.root)  # a migrate lands in the window
+        (env.root / ".orch").rename(tmp_path / "moved-away")  # another inode takes the name in the window
+        (env.root / ".orch").mkdir(mode=0o700)
         return out
 
-    monkeypatch.setattr(store_mod, "open_store_fs", moved_after_resolve)
-    with pytest.raises(StoreError):
+    monkeypatch.setattr(store_mod, "open_store_fs", swapped_after_resolve)
+    with pytest.raises(StoreError) as caught:
         env.open()
-    assert sorted(p.name for p in env.root.iterdir()) == [".orch"]  # events/tickets/.state were not re-made
+    assert caught.value.code == "validation.path"
+    assert sorted(p.name for p in (env.root / ".orch").iterdir()) == []  # events/tickets/.state were not made

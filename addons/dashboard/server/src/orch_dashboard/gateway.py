@@ -157,15 +157,15 @@ class Gateway:
             raise fail("host.unavailable", "Host registry unavailable") from None
 
     def workspace_folder(self, ws):
-        """``(project folder, store folder or None)`` of workspace ``ws`` from the trusted host registry (None store:
-        the legacy layout, where the store is the project folder itself). The File Explorer's root; browser input never
-        names it."""
+        """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the
+        project's ``.orch``). The File Explorer's root; browser input never names it."""
         row = self._pins().get(ws)
         if row is None or not isinstance(row.get("root"), str) or not row["root"].startswith("/"):
             raise fail("not_found", exit=2)
-        store = row.get("store")
         project = Path(row["root"])
-        return project, (project / store if isinstance(store, str) and store else None)
+        from orch.layout import STORE_DIR
+
+        return project, project / STORE_DIR
 
     def check_repo_path(self, ws, path):
         """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
@@ -177,9 +177,7 @@ class Gateway:
         row = self._pins().get(ws)
         if row is None or not isinstance(row.get("root"), str):
             return  # not known here: the host's own check still runs
-        store = row.get("store")
-        project = Path(row["root"])
-        layout = Layout(project, project / store, False) if isinstance(store, str) else Layout.legacy_at(project)
+        layout = Layout.new_at(row["root"])
         try:
             repopaths.check_declared(layout, path)
         except repopaths.RepoPathError as exc:
@@ -400,7 +398,15 @@ class Gateway:
                 )
             except HostError as exc:
                 # No untrusted title or principal is fabricated when the host is unavailable.
-                result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
+                result.append(
+                    adapters.Workspace(
+                        id=ws,
+                        prefix=adapters.pinned_prefix(pins[ws]),
+                        name=ws,
+                        host_state=exc.error["code"],
+                        host_message=adapters.unavailable_reason(exc.error),
+                    )
+                )
         return result
 
     def host_info(self):

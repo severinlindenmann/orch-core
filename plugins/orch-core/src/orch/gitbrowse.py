@@ -45,7 +45,7 @@ from dataclasses import dataclass
 
 from orch import gitsafe
 from orch.gitsafe import Unsafe
-from orch.layout import KEYS_FILE, STORE_DIR
+from orch.layout import KEYS_FILE, STATE_DIR, STORE_DIR
 
 __all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
 
@@ -57,7 +57,7 @@ _SLOT = re.compile(r"<(commit|file|num|pattern)>")
 #: cannot come out of git. Git internals, orch's store, key material and ``.env`` files.
 DENIED_NAMES = frozenset({
     ".git", STORE_DIR, ".ssh", ".gnupg", ".netrc", KEYS_FILE, ".env", ".git-credentials", ".npmrc", ".pypirc", ".aws",
-    ".docker", ".kube",
+    ".docker", ".kube", STATE_DIR,
 })  # fmt: skip
 DENIED_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 DENIED_SUFFIXES = (".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".worktrees")
@@ -200,9 +200,10 @@ def command(
 
     **Race note (#565).** The gate checks the repository's config and the caller spawns git afterwards. Harmless here:
     every operation of :data:`OPS` is a history read (``log``, ``show`` and ``diff`` between commits, ``cat-file``,
-    ``rev-parse``). None touches the work tree or refreshes the index, so no clean/smudge filter or ``fsmonitor`` can
-    run; ``gitsafe._argv`` adds ``--no-ext-diff --no-textconv --no-pager`` and the diff pins, and git runs no hook for
-    a read. A key a concurrent writer adds in the window therefore names no program these commands run."""
+    ``rev-parse``) or ``grep --cached``, which only reads the index: it opens no work-tree file, does not refresh the
+    index and applies no filters. None touches the work tree, so no clean/smudge filter or ``fsmonitor`` can run;
+    ``gitsafe._argv`` adds ``--no-ext-diff --no-textconv --no-pager`` and the diff pins, and git runs no hook for a
+    read. A key a concurrent writer adds in the window therefore names no program these commands run."""
     spec = OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")

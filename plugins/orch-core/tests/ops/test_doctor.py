@@ -21,7 +21,7 @@ def two(ws, cli):
     assert cli("release").code == 0
     from orch.instructions import write_workspace_files
 
-    write_workspace_files(ws.root)
+    write_workspace_files(ws.root, store=ws.store_dir)
     ws.store.checkpoint()
     return ws
 
@@ -35,7 +35,7 @@ def codes(r):
 
 
 def log_path(ws, ref):
-    return ws.root / "tickets" / ws.uid(ref) / "events.jsonl"
+    return ws.store_dir / "tickets" / ws.uid(ref) / "events.jsonl"
 
 
 def test_a_healthy_workspace_is_clean_and_doctor_changes_nothing(two):
@@ -109,7 +109,7 @@ def test_a_forged_host_sig_is_reported(two):
 
 def test_a_bad_checkpoint_is_reported(two):
     ws = two
-    cp = next((ws.root / ".state" / "checkpoints").glob("ticket-*.json"))
+    cp = next((ws.store_dir / ".state" / "checkpoints").glob("ticket-*.json"))
     doc = json.loads(cp.read_text())
     doc["sig"] = ("A" if doc["sig"][0] != "A" else "B") + doc["sig"][1:]
     cp.write_text(json.dumps(doc))
@@ -133,7 +133,7 @@ def test_a_missing_pin_is_a_warning_and_a_wrong_pin_an_error(two):
 
 def test_a_hand_edited_ticket_file_is_found_and_repaired_through_the_store(two):
     ws = two
-    p = ws.root / "tickets" / ws.uid("DEMO-0001") / "ticket.json"
+    p = ws.store_dir / "tickets" / ws.uid("DEMO-0001") / "ticket.json"
     p.write_text(p.read_text().replace('"priority": "medium"', '"priority": "urgent"'))
     r = doctor(ws)
     assert r.code == 5 and "projection.ticket" in codes(r)
@@ -147,7 +147,7 @@ def test_a_hand_edited_ticket_file_is_found_and_repaired_through_the_store(two):
 
 def test_an_edited_body_section_is_found(two):
     ws = two
-    p = ws.root / "tickets" / ws.uid("DEMO-0001") / "body.md"
+    p = ws.store_dir / "tickets" / ws.uid("DEMO-0001") / "body.md"
     p.write_text(p.read_text() + "\n## Context\n\nsneaked in\n")
     r = doctor(ws)
     assert r.code == 5 and "projection.body" in codes(r)
@@ -159,7 +159,7 @@ def test_a_replaced_artifact_is_found(two, tmp_path):
     f.write_text("evidence\n")
     assert cli("artifact", "add", str(f), "--ref", "DEMO-0001").code == 0
     ws.store.checkpoint()
-    (ws.root / "tickets" / ws.uid("DEMO-0001") / "artifacts" / "e.log").write_text("swapped\n")
+    (ws.store_dir / "tickets" / ws.uid("DEMO-0001") / "artifacts" / "e.log").write_text("swapped\n")
     r = doctor(ws)
     assert "artifact.mismatch" in codes(r)
 
@@ -167,7 +167,7 @@ def test_a_replaced_artifact_is_found(two, tmp_path):
 def test_a_stale_index_is_rebuilt_by_repair_only(two):
     ws = two
     ws.store.rebuild_index()
-    idx = ws.root / ".state" / "index.sqlite"
+    idx = ws.store_dir / ".state" / "index.sqlite"
     idx.write_bytes(b"not a database")
     r = doctor(ws)
     assert "index.stale" in codes(r) and r.code == 0
@@ -217,7 +217,7 @@ def test_deleted_checkpoints_cannot_hide_a_rollback_where_the_host_key_is(two):
     p = log_path(ws, "DEMO-0001")
     lines = p.read_bytes().splitlines(keepends=True)
     p.write_bytes(b"".join(lines[:-1]))
-    shutil.rmtree(ws.root / ".state" / "checkpoints")
+    shutil.rmtree(ws.store_dir / ".state" / "checkpoints")
     r = doctor(ws)
     assert r.code == 5 and "checkpoint.missing" in codes(r)
     assert Cli(ws, grant=False, session=None).j("check").code == 5  # the fast check says so too
@@ -228,7 +228,7 @@ def test_doctor_names_the_missing_workspace_checkpoint_repair(two, evidence):
     """With checkpoint evidence in the host state P1 has no in-place repair (backup or the P3 baseline, never delete the
     host state dir); without it the next append rebaselines."""
     ws = two
-    shutil.rmtree(ws.root / ".state" / "checkpoints")  # .state is git-ignored: a clone has none
+    shutil.rmtree(ws.store_dir / ".state" / "checkpoints")  # .state is git-ignored: a clone has none
     pins = ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c"
     (pins / "checkpoint.json").unlink()
     if not evidence:
@@ -247,7 +247,7 @@ def test_doctor_names_the_missing_workspace_checkpoint_repair(two, evidence):
 
 def test_missing_checkpoints_are_only_a_warning_without_the_host_key(two):
     ws = two
-    shutil.rmtree(ws.root / ".state" / "checkpoints")
+    shutil.rmtree(ws.store_dir / ".state" / "checkpoints")
     shutil.rmtree(ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c" / "keys")  # a clone: no workspace key
     r = doctor(ws)
     assert r.code == 0 and "checkpoint.missing" in codes(r)
@@ -256,10 +256,10 @@ def test_missing_checkpoints_are_only_a_warning_without_the_host_key(two):
 def test_a_ticket_folder_without_a_log_and_an_unlisted_artifact_are_reported(two):
     ws = two
     uid = ws.uid("DEMO-0001")
-    shutil.copytree(ws.root / "tickets" / uid, ws.root / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D")
-    (ws.root / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D" / "events.jsonl").unlink()
-    (ws.root / "tickets" / uid / "artifacts").mkdir(exist_ok=True)
-    (ws.root / "tickets" / uid / "artifacts" / "stray.txt").write_text("x")
+    shutil.copytree(ws.store_dir / "tickets" / uid, ws.store_dir / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D")
+    (ws.store_dir / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D" / "events.jsonl").unlink()
+    (ws.store_dir / "tickets" / uid / "artifacts").mkdir(exist_ok=True)
+    (ws.store_dir / "tickets" / uid / "artifacts" / "stray.txt").write_text("x")
     r = doctor(ws)
     assert r.code == 5 and "ticket.nolog" in codes(r) and "artifact.unlisted" in codes(r)
 
@@ -276,12 +276,12 @@ def test_no_workspace_and_a_corrupt_config_are_a_declared_not_found(two, tmp_pat
             out, err = io.StringIO(), io.StringIO()
             code = main([cmd, "--json"], env=env, stdout=out, stderr=err, now=lambda: two.clock[0])
             assert code == 2 and json.loads(out.getvalue())["error"]["code"] == "not_found"
-    (two.root / "config.json").write_text("{not json")
+    (two.store_dir / "config.json").write_text("{not json")
     assert doctor(two).code == 2 and doctor(two).err_code == "not_found"
 
 
 def test_a_failing_doctor_does_not_start_with_ok(two):
-    p = two.root / "tickets" / two.uid("DEMO-0001") / "ticket.json"
+    p = two.store_dir / "tickets" / two.uid("DEMO-0001") / "ticket.json"
     p.write_text(p.read_text().replace('"medium"', '"urgent"'))
     r = Cli(two, grant=False, session=None)("doctor")
     assert r.code == 5 and r.first.startswith("doctor: 1 errors") and not r.out.startswith("ok")
@@ -289,7 +289,7 @@ def test_a_failing_doctor_does_not_start_with_ok(two):
 
 def test_a_deleted_ticket_checkpoint_is_an_error_where_the_host_key_is(two):
     ws = two
-    cp = ws.root / ".state" / "checkpoints" / f"ticket-{ws.uid('DEMO-0002')}.json"
+    cp = ws.store_dir / ".state" / "checkpoints" / f"ticket-{ws.uid('DEMO-0002')}.json"
     assert cp.is_file()
     cp.unlink()
     r = doctor(ws)
@@ -311,7 +311,7 @@ def test_a_host_key_that_cannot_be_looked_up_is_judged_strictly(two, monkeypatch
 def test_doctor_repairs_a_missing_ticket_checkpoint_after_append(two):
     ws = two
     uid = ws.uid("1")
-    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path = ws.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     path.unlink()
     r = doctor(ws)
     assert "checkpoint.missing" in codes(r)
@@ -325,9 +325,9 @@ def test_missing_checkpoint_only_repairs_the_recorded_head(ws, cli, rollback):
     assert cli("new", "one").code == 0
     assert cli("claim", "1").code == 0
     assert cli("log", "-m", "third event").code == 0
-    uid = next((ws.root / "tickets").iterdir()).name
-    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
-    log = ws.root / "tickets" / uid / "events.jsonl"
+    uid = next((ws.store_dir / "tickets").iterdir()).name
+    path = ws.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    log = ws.store_dir / "tickets" / uid / "events.jsonl"
     lines = log.read_bytes().splitlines(keepends=True)
     assert len(lines) == 3
     if rollback:
@@ -354,8 +354,8 @@ def test_doctor_finishes_checkpoint_write_interrupted_after_append(ws, cli, monk
     with monkeypatch.context() as m:
         m.setattr(Store, "_write_checkpoints", lambda *args: None)
         assert cli("new", "interrupted checkpoint").code == 0
-    uid = next((ws.root / "tickets").iterdir()).name
-    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    uid = next((ws.store_dir / "tickets").iterdir()).name
+    path = ws.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     assert not path.exists()
     r = doctor(ws, "--repair")
     assert r.code == 0, r.out
@@ -365,7 +365,7 @@ def test_doctor_finishes_checkpoint_write_interrupted_after_append(ws, cli, monk
 def test_doctor_leaves_missing_checkpoint_of_an_earlier_append(ws, cli):
     assert cli("new", "earlier").code == 0
     assert cli("new", "last").code == 0
-    path = ws.root / ".state" / "checkpoints" / f"ticket-{ws.uid('1')}.json"
+    path = ws.store_dir / ".state" / "checkpoints" / f"ticket-{ws.uid('1')}.json"
     path.unlink()
     r = doctor(ws, "--repair")
     assert r.code == 5 and not path.exists()

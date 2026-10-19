@@ -41,7 +41,7 @@ def grant_dashboard(w):
     from orch.addons.package import read_package
 
     manifest = Path(__file__).parents[2] / "orch-addon.json"
-    directory = package_dir(Path(w.lab.ws.root), "dashboard")
+    directory = package_dir(Path(w.lab.ws.store_dir), "dashboard")
     directory.mkdir(parents=True)
     (directory / "orch-addon.json").write_bytes(manifest.read_bytes())
     event = grant_event(load_manifest(manifest.read_bytes()), read_package(directory))

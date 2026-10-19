@@ -19,12 +19,12 @@ def test_the_workspace_is_found_from_the_environment_or_by_walking_up(ws, tmp_pa
     assert (
         runtime.find_workspace({"ORCH_WORKSPACE": str(tmp_path)}, None, Files.direct()) is None
     )  # not a workspace: no fallback
-    deep = ws.root / "tickets" / "x" / "y"
+    deep = ws.store_dir / "tickets" / "x" / "y"
     deep.mkdir(parents=True)
     assert runtime.find_workspace({}, deep, Files.direct()) == ws.root
     parent = tmp_path / "repo"
     (parent / ".orch").mkdir(parents=True)
-    (parent / ".orch" / "config.json").write_text((ws.root / "config.json").read_text())
+    (parent / ".orch" / "config.json").write_text((ws.store_dir / "config.json").read_text())
     assert runtime.find_workspace({}, parent, Files.direct()) == parent  # the project; the store is its .orch
     assert runtime.find_workspace({}, tmp_path / "nowhere", Files.direct()) is None
     (tmp_path / "bad").mkdir()
@@ -56,13 +56,13 @@ def test_a_refused_call_keeps_its_attempt_id_and_the_retry_appends_once(ws, cli)
     cli("claim", "1")
     other = Cli(ws, session=OTHER)
     assert other.j("claim", "1").err_code == "claim.held"
-    notes = json.loads(next((ws.root / ".state" / "sessions").glob(f"{OTHER}.json")).read_text())
+    notes = json.loads(next((ws.store_dir / ".state" / "sessions").glob(f"{OTHER}.json")).read_text())
     assert len(notes["attempts"]) == 1  # left behind by the refusal
     cli("release")
     n = len(ws.events("1"))
     assert other.j("claim", "1").code == 0  # same call, same attempt id
     assert len(ws.events("1")) == n + 1 and ws.events("1")[-1]["actor"]["session"] == OTHER
-    notes = json.loads(next((ws.root / ".state" / "sessions").glob(f"{OTHER}.json")).read_text())
+    notes = json.loads(next((ws.store_dir / ".state" / "sessions").glob(f"{OTHER}.json")).read_text())
     assert notes["attempts"] == {}  # cleared by the success
 
 
@@ -81,7 +81,7 @@ def test_notes_survive_a_corrupt_file_by_asking_for_a_read(ws, cli):
     cli("new", "A")
     cli("claim", "1")
     cli("section", "set", "plan", "-m", "v1")
-    p = next((ws.root / ".state" / "sessions").glob(f"{SESSION}.notes.json"))
+    p = next((ws.store_dir / ".state" / "sessions").glob(f"{SESSION}.notes.json"))
     p.write_text("{not json")
     assert cli.j("section", "set", "plan", "-m", "v2").err_code == "ambiguous_ref"  # the claims are unknown too
     r = cli.j("section", "set", "plan", "-m", "v2", "--ref", "1")
@@ -171,7 +171,7 @@ def test_verification_cache_keys_include_mtime_and_ctime(ws, cli):
 
     cli("new", "A")
     uid = ws.uid("1")
-    p = ws.root / "tickets" / uid / "events.jsonl"
+    p = ws.store_dir / "tickets" / uid / "events.jsonl"
     before = stat_sig(p)
     assert len(before) == 4 and before[2] and before[3]
     import os
@@ -280,7 +280,7 @@ class _Sentinel:
 
 def _v2_copy(ws, dest):
     dest.mkdir(parents=True)
-    (dest / "config.json").write_text((ws.root / "config.json").read_text())
+    (dest / "config.json").write_text((ws.store_dir / "config.json").read_text())
     return dest
 
 
@@ -436,7 +436,8 @@ def test_the_nearest_workspace_wins_v1_under_v2_refuses_and_v2_under_v1_opens(ws
     parent = _v1_copy(tmp_path / "v1parent")
     inner = parent / "orchestrator" / "tickets" / "inner"
     inner.mkdir()
-    (inner / "config.json").write_text((ws.root / "config.json").read_text())
+    (inner / ".orch").mkdir()
+    (inner / ".orch" / "config.json").write_text((ws.store_dir / "config.json").read_text())
     assert runtime.locate_workspace({}, str(inner), files) == (inner, False)
 
 

@@ -139,3 +139,18 @@ def test_a_class_heavy_gitignore_under_the_cap_compiles_in_linear_time(make_repo
     started = time.monotonic()
     READER.tree_check(r.path, r.env)
     assert time.monotonic() - started < 3
+
+
+def test_environment_passed_config_makes_the_repository_ignorecase_not_final(make_repo):
+    """#724: GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS outrank the repository's config in git, so the repository's
+    ``core.ignorecase = false`` is not final: both modes run and x.log (re-included by ``!X.LOG`` when folding) shows."""
+    r = make_repo()
+    r.write(".gitignore", "*.log\n!X.LOG\n")
+    r.commit()
+    r.git("config", "core.ignorecase", "false")
+    r.write("x.log", "x\n")
+    assert "x.log" not in _paths(READER.tree_check(r.path, r.env))  # known person config: the repo's value is final
+    for extra in ({"GIT_CONFIG_COUNT": "0"}, {"GIT_CONFIG_PARAMETERS": "'core.ignorecase'='true'"}):
+        assert person_ignore({"HOME": r.env["HOME"], **extra}).env_config is True
+        assert "x.log" in _paths(READER.tree_check(r.path, {**r.env, **extra}))
+    assert person_ignore({"HOME": r.env["HOME"], "GIT_CONFIG_SYSTEM": "/x"}).env_config is False

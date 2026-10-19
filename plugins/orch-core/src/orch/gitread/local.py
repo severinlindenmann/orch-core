@@ -164,7 +164,11 @@ def person_ignore(env: Mapping[str, str]) -> PersonIgnore:
         return PersonIgnore(False, why="HOME is not an absolute path")
     for k in env:
         if k.startswith("GIT_CONFIG") and k not in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"):
-            return PersonIgnore(False, why=f"{k} is set: git's configuration comes from the environment")
+            return PersonIgnore(
+                False,
+                why=f"{k} is set: git's configuration comes from the environment",
+                env_config=any(e in env for e in ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")),
+            )
     nosystem = env.get("GIT_CONFIG_NOSYSTEM")
     if nosystem is not None and nosystem != "1":
         return PersonIgnore(False, why="GIT_CONFIG_NOSYSTEM is set to a value other than 1")

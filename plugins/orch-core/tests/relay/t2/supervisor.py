@@ -33,7 +33,9 @@ def _ignore(signum: int, frame: object) -> None:
 
 def _watch(pg: int, ending: threading.Event) -> None:
     try:
-        while sys.stdin.buffer.read(1):
+        # raw fd read, not sys.stdin.buffer: a daemon thread blocked inside the buffered reader holds its lock, and
+        # interpreter shutdown then aborts ("could not acquire lock for <stdin> at interpreter shutdown")
+        while os.read(0, 1):
             pass
     except OSError:
         pass

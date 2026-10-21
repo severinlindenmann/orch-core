@@ -268,6 +268,10 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["github"]:  # person-side credential custody, independent of the host service
+        from orch.cli.github import main as github_main
+
+        return github_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

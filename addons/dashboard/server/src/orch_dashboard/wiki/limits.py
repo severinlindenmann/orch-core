@@ -1,0 +1,17 @@
+"""Bounds shared by all wiki reads."""
+
+PAGE_MAX_BYTES = 200 * 1024
+LIST_MAX = 500
+TITLE_MAX = 120
+SLUG_MAX = 64
+SEARCH_SCAN_BYTES = 20 * 1024 * 1024
+SEARCH_SECONDS = 2.0
+SEARCH_HITS = 50
+LINK_SLUGS = 20
+LOG_COMMITS = 300
+LIST_SECONDS = 2.0
+MAX_QUERY = 200
+MAX_TICKETS = 400
+PER_REFRESH = 120
+REFRESH_SECONDS = 3.0
+FRESH = 5.0  # a person who lost sight of a ticket stops seeing its links within this many seconds

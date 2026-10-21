@@ -651,3 +651,11 @@ Review Welcome → You → Agents may → Approval → Secret words → Review, 
 ### B9 core-aligned setup (2026-10-16)
 
 From a supported installed checkout, run `orch setup` in a new project folder. The browser opens plain `/setup`; the server consumes the private setup.code file and claims its listening port. A second tab cannot claim again. Review GRANT for runner access or AGENTS for extended access, terminal confirmation, and waiting/failure text. Finish navigates to `/` as core currently specifies; a normal dashboard session is not created by setup. Automated coverage includes the real core socket boundary and the UI contract.
+
+### Wiki read server (#603)
+
+With Wiki enabled, use a workspace repository containing committed `wiki/hello.md`. Read the Wiki list, page,
+search and backlinks endpoints as a viewer. Stage a different page body and confirm the committed body still
+appears. Turn Wiki off and confirm all four endpoints refuse. Compare backlinks as two people with different
+restricted-ticket visibility. The mock UI remains unchanged; frontend integration is a separate task.
+Server regression coverage is in `server/tests/test_wiki.py`; the driver runs it outside the restricted HOME.

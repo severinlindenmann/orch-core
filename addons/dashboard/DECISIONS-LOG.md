@@ -1926,3 +1926,11 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 **Why:** The dated B9-C launch note supersedes the URL fragment contract. Core owns single use and run-aware idle expiry; real-core transport tests now cover the boundary.
 
 **Revert:** Revert these dashboard changes only together with a replacement core launch/auth contract.
+
+### 2026-10-21 — Wiki read API (#603)
+
+Decision: serve flat `wiki/<slug>.md` pages from the workspace folder's own Git HEAD through four GET routes.
+All workspace member roles may read while dashboard and Wiki are enabled. Ticket backlinks use the host's visible
+query results and a cache keyed by workspace and person. There is no dashboard write route.
+Why: keep repository content independent of staged edits and avoid sharing restricted ticket data between viewers.
+Revert: remove Wiki route registration and feature advertisement; repository pages remain ordinary files.

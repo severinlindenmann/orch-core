@@ -80,9 +80,16 @@ def test_missing(state):
 
 def test_single_reader():
     source = Path(__file__).resolve().parents[2] / "src" / "orch"
-    pattern = re.compile(r'\bgithub_dir\b|\bTOKEN_FILE\b|/\s*["\']github["\']\s*/')
-    found = {p.relative_to(source).as_posix() for p in source.rglob("*.py") if pattern.search(p.read_text())}
-    assert found <= {"github/token.py", "host/custody.py"}
+
+    def references(pattern):
+        return {p.relative_to(source).as_posix() for p in source.rglob("*.py") if re.search(pattern, p.read_text())}
+
+    assert references(r"\bTOKEN_FILE\b") <= {"github/token.py"}
+    assert references(r'\bgithub_dir\b|/\s*["\']github["\']\s*/') <= {
+        "github/token.py",
+        "host/custody.py",
+        "github/cache.py",
+    }
 
 
 def test_foreign_file_owner(state, monkeypatch):

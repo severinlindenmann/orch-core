@@ -118,6 +118,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"ref": ref, "timeout": 1}
     if op in DASHBOARD_READS:  # H6b: not registry ops, so no registry schema to read the arguments from
         return DASHBOARD_READS[op](ref)
+    if op == "addon.preview":  # names an add-on, never a ticket (a built-in one, so that every call answers)
+        return {"name": "usage"}
     if op == "diff":  # through Viewer.ticket, then Viewer.linked_repo
         return {"ref": ref}
     if op == "artifact.get":  # H4a2: through Viewer.ticket, then Viewer.artifact

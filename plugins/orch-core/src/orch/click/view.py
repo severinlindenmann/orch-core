@@ -40,6 +40,15 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     if op == "grant":  # v1.6: only a deposit grant gets this far (check_prepared)
         return f"{tag}/GRANT"
     ticket = prepared["material"].get("ticket")
+    seq = (prepared.get("material") or {}).get("sequence")
+    if (
+        isinstance(seq, Mapping)
+        and isinstance(seq.get("intent"), Mapping)
+        and seq["intent"].get("kind") == "addon_enable"
+    ):
+        return signer.confirm_word(
+            prepared
+        )  # the add-on's word (<name>~<WS8>), not the SETTINGS word of its first step
     if _sequence_grant(prepared):  # a sequence that gives agents access: the strongest step's word
         return f"{tag}/GRANT"
     if op in ("policy.set", "settings.set") and ticket is None:

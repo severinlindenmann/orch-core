@@ -94,6 +94,8 @@ def sign_sequence(
             before()
         signer.check(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
         intent = sequence.validate_intent(prepared["material"]["sequence"]["intent"])
+        if intent.get("images"):  # the signer holds the pasted files; a terminal has none to upload (R3 part B)
+            signer._refuse("pasted screenshots are signed with a click in the dashboard, not in the terminal")
         driver = sequence.Driver(
             _port(call, backend, key_id, workspace_id, person, device, auth, workspace, new_idem, {}),
             sessions,

@@ -1945,9 +1945,9 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 
 ## 2026-10-21 Model routing: no tiers, no Today escalation, only a Start agent hint
 
-- **Decision:** The real Settings > ModelRouting page lists models per agent (Claude / Codex) and per mode (driver, researcher, supporter, debugger, prompt) from a closed list or "Agent default". No Light/Standard/Strong tier names, no free-text model entry. The 15 Oct escalation decision on Today ("Next start on Strong / Not now") is gone; a hint line in StartAgentDialog says "Use <strong model>" for suggestion only. Subagent model is now a Start agent dialog field ("Model for helper agents"), not a Settings entry. The page change is signed and uses a review dialog.
+- **Decision:** The real Settings > ModelRouting page lists models per agent (Claude / Codex) and per mode (driver, researcher, supporter, debugger, prompt) from a closed list or "Agent default". No Light/Standard/Strong tier names, no free-text model entry. The escalation decision on Today ("Next start on Strong / Not now") is gone; a hint line in StartAgentDialog says "Use <strong model>" for suggestion only. Subagent model is now a Start agent dialog field ("Model for helper agents"), not a Settings entry. The page change is signed and uses a review dialog.
 - **What the mockup had:** Light/Standard/Strong tier names with per-mode selection; free-text model names. Today escalation decision after two failed sessions. Subagent model in Settings. Unsigned settings change.
-- **Why:** No automatic tiering or free text into argv (#693). Nothing automatic; closed list, fail-closed. The Settings entry moves into an accordion in #735/#741.
+- **Why:** No automatic tiering or free text into argv (#693). Nothing automatic; closed list, fail-closed. The escalation decision on Today was never recorded in DECISIONS-LOG. The Settings entry moves into an accordion in #735/#741.
 - **Owner review:** pending (run 4).
 - **Revert:** Restore tiers, free-text entry, the Today decision and unsigned settings when the owner decides on model hierarchy.
 
@@ -1955,22 +1955,23 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 
 - **Decision:** Real Repos is a "Repositories" section inside Settings > General, not a nav page. It lists repository status (present / missing / not_git / unreadable) and default branch only, no ahead/behind/dirty, no size or worktree count. Clone and fetch are gone (the host has no network-capable op, #671). Add/change/remove are signed with the host's folder check. No Today "ready" glance or ticket Repos panel.
 - **What the mockup had:** Repos add-on page with folder tree, per-repo status (ahead/behind/dirty/size/worktrees), clone, clone all, fetch, add/adopt/remove with check-now, ticket panel, settings (interval/fetch/connection), Today "ready" glance.
-- **Why:** Design decision #671 leaves clone missing; the host cannot perform network operations. M6 decision: "Record Owner request 2026-10-11 Repos addon (U3)".
-- **Owner review:** Repos = a settings list per design; no page. Confirmed on 11 Oct.
+- **Why:** Design decision #671 leaves clone missing; the host cannot perform network operations. Recorded in DECISIONS-LOG "Owner request 2026-10-10 Repos addon (U3)".
+- **Owner review:** pending (run 4).
 - **Revert:** Restore the Repos page and clone/fetch ops when the host gains network capability.
 
 ## 2026-10-21 Publish: shares only, apps and extend out (later)
 
 - **Decision:** Real Publish is shares only. Users create a signed share, see the link once, revoke it (Stop sharing). No live apps start/stop/logs/redeploy, no Extend/Copy link on rows, no Today card, no settings for link expiry/include artifacts/namespace. The page explains a missing server (#732). New in real: signed share with exact staged files, "Waiting for your signature" step, limited-view links.
 - **What the mockup had:** "Apps & shares" page with live app controls, Extend 7 days, Copy link, show-once link, Today card, expiry/artifacts/namespace settings.
-- **Why:** design-publish-addon.md marks "Out (later): apps, any folder from disk, Mission Control pages" (#685, #687, #698). Codex review approved. OK as is; apps will join later.
+- **Why:** design-publish-addon.md marks "Out (later): apps, any folder from disk, Mission Control pages" (#685, #687, #698). OK as is; apps will join later.
+- **Owner review:** pending (run 4).
 - **Revert:** Restore app and extend controls when the host ops land and the owner decides on their scope.
 
 ## 2026-10-21 Start agent: dialog only, page and Running/Ended lists removed
 
-- **Decision:** Real Start agent is a core dialog (ticket, mode, harness, where, preview) plus a Header item and RealDock menu, new-ticket "Create and start", and server agent handlers. No standalone nav page, no Running/Ended lists page, no "Where: Background" or default-harness/default-place settings, no Label/Model-for-helpers until the dialog itself grew them. Running agents live in the dock, Terminals page, and Agents page.
+- **Decision:** Real Start agent is a core dialog (ticket, mode, harness, where, preview) plus a Header item and RealDock menu, new-ticket "Create and start", and server agent handlers. No standalone nav page, no Running/Ended lists page. Running agents live in the dock, Terminals page, and Agents page. The dialog includes Label and Model-for-helpers fields (new real-only features).
 - **What the mockup had:** Start agent add-on page with ticket, mode, harness, where (Terminals/Background), preview, Running and Ended lists; settings for default harness and default place.
-- **Why:** M7b decision 2026-10-15: "Start agent is core's own dialog, never an addon frame" (DECISIONS-LOG "M7b Start agent"). (2) not recorded: removal of the Where setting and start-agent page are OK as is per M7b.
-- **Owner review:** pending (run 4) for confirmation on removal of page (confirmed by M7b, but owner to see in run).
+- **Why:** M7b decision 2026-10-15: "Start agent is core's own dialog, never an addon frame" (DECISIONS-LOG "M7b Start agent") covers the page removal and new grant step. The removal of "Where: Background" and default-harness/default-place settings was not recorded and is partly accidental per the audit.
+- **Owner review:** pending (run 4).
 - **Revert:** Restore the start-agent add-on page and Running/Ended lists when the owner requests a dedicated page view.
 

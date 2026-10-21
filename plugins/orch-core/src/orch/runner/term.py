@@ -74,7 +74,6 @@ import errno
 import hashlib
 import logging
 import os
-import select
 import socket
 import stat
 import threading
@@ -85,6 +84,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from orch import fdwait
 from orch.host import frames
 from orch.host._socket import peer_credentials
 
@@ -703,7 +703,7 @@ class TermListener:
             left = SEND_TIMEOUT - (time.monotonic() - idle_since)
             if left <= 0:
                 raise TimeoutError("the viewer does not read")
-            select.select([], [conn], [], min(left, WAKE))
+            fdwait.writable(conn, min(left, WAKE))
         return True
 
     def _step(self, att: Attachment) -> bool:
@@ -792,8 +792,7 @@ class TermListener:
             return True  # backpressure: the frames already read are handled first
         conn = att.conn
         try:
-            readable, _, _ = select.select([conn], [], [], wait)
-            if not readable:
+            if not fdwait.readable(conn, wait):
                 return True
             data = conn.recv(READ_BYTES)
         except (BlockingIOError, InterruptedError):

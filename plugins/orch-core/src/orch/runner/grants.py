@@ -25,13 +25,17 @@ from typing import Any
 
 __all__ = ["GrantError", "GrantStore", "RedactFilter"]
 
-GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
+GRANT_SHAPE = re.compile(r"f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")  # person (gr_) and follow-up (fgr_)
 _GRANT_ID = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_FGRANT_ID = re.compile(r"fgr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_RUN = re.compile(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _WS = re.compile(r"[0-9a-f]{32}")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
 MAX_HELD = 64
+MAX_RUN_SLOTS = 64
+MAX_SPENT = 1024  # consumed run ids (and their secrets, for log redaction only) remembered, oldest forgotten first
 
 
 class GrantError(Exception):
@@ -56,10 +60,25 @@ class _Held:
         return f"_Held({self.grant}, until={self.until})"
 
 
+@dataclass(frozen=True)
+class _RunSlot:
+    workspace_id: str
+    person: str
+    grant: str
+    secret: str
+    until: str
+    until_s: float
+
+    def __repr__(self) -> str:  # never the secret, whatever prints this
+        return f"_RunSlot({self.grant}, until={self.until})"
+
+
 class GrantStore:
     def __init__(self, *, clock: Any = time.time) -> None:
         self._lock = threading.Lock()
         self._held: dict[tuple[str, str], _Held] = {}
+        self._run_slots: dict[str, _RunSlot] = {}  # one-shot follow-up grants (FU9), keyed by run id
+        self._spent: dict[str, str] = {}  # run id -> secret of a consumed slot: no re-deposit, still redacted in logs
         self.clock = clock
 
     def put(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -92,17 +111,85 @@ class GrantStore:
             "replaced": old.grant if old is not None and old.grant != grant else None,
         }
 
+    def put_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        """``grant.put_run {run, workspace_id, person, grant, secret, until}``: a one-shot follow-up grant (``fgr_``)
+        for exactly one spawn of ``run``. It lives in its own table: it never replaces, shadows or reads the person's
+        slot. A run id that already holds a slot is refused (never overwritten). Answers ``{run, grant, until}``."""
+        run, wid, person = args.get("run"), args.get("workspace_id"), args.get("person")
+        grant, secret, until = args.get("grant"), args.get("secret"), args.get("until")
+        if not (isinstance(run, str) and _RUN.fullmatch(run)):
+            raise GrantError("invalid.input", "grant.put_run: invalid run")
+        if not (isinstance(wid, str) and _WS.fullmatch(wid) and isinstance(person, str) and _PERSON.fullmatch(person)):
+            raise GrantError("invalid.input", "grant.put_run: invalid workspace or person")
+        if not (isinstance(grant, str) and _FGRANT_ID.fullmatch(grant)):
+            raise GrantError("invalid.input", "grant.put_run: invalid grant id")
+        if not (isinstance(secret, str) and GRANT_SHAPE.fullmatch(secret) and secret.startswith(grant + ".")):
+            raise GrantError("invalid.input", "grant.put_run: the secret is not this grant's")
+        if not (isinstance(until, str) and _TIME.fullmatch(until)):
+            raise GrantError("invalid.input", "grant.put_run: invalid until")
+        until_s = _epoch(until)
+        now = self.clock()
+        if until_s <= now:
+            raise GrantError("launch.no_grant", "grant.put_run: the grant has expired")
+        with self._lock:
+            self._prune_runs(now)
+            if run in self._run_slots or run in self._spent:
+                raise GrantError("invalid.input", "grant.put_run: this run already holds or has used a slot")
+            if len(self._run_slots) >= MAX_RUN_SLOTS:
+                raise GrantError("invalid.input", f"grant.put_run: at most {MAX_RUN_SLOTS} run slots are held")
+            self._run_slots[run] = _RunSlot(wid, person, grant, secret, until, until_s)
+        return {"run": run, "grant": grant, "until": until}
+
+    def _prune_runs(self, now: float) -> None:  # caller holds the lock
+        for run, slot in list(self._run_slots.items()):
+            if slot.until_s <= now:
+                del self._run_slots[run]
+
+    def consume_run(self, run: Any, workspace_id: str, person: str, grant: Any) -> str:
+        """The secret of ``run``'s one-shot slot, removing it (exactly once). Anything but an unexpired slot of this
+        very run whose workspace, person and grant all match is ``launch.no_grant``; a mismatch leaves the slot."""
+        with self._lock:
+            slot = self._run_slots.get(run) if isinstance(run, str) else None
+            try:
+                if slot is not None and slot.until_s <= self.clock():
+                    del self._run_slots[run]
+                    slot = None
+            except Exception:  # noqa: BLE001 - unreadable expiry: treat as unusable and remove
+                self._run_slots.pop(run, None)
+                slot = None
+            try:  # corrupt slot state (wrong type, missing field) fails closed, and the broken slot is removed
+                ok = slot is not None and (slot.workspace_id, slot.person, slot.grant) == (workspace_id, person, grant)
+                secret = slot.secret if ok and slot is not None and isinstance(slot.secret, str) else None
+            except Exception:  # noqa: BLE001
+                ok, secret = False, None
+                self._run_slots.pop(run, None)
+            if not ok or secret is None:
+                raise GrantError("launch.no_grant", "the runner holds no such one-shot grant for this run")
+            del self._run_slots[run]
+            self._spent[run] = secret
+            while len(self._spent) > MAX_SPENT:
+                del self._spent[next(iter(self._spent))]
+            return secret
+
     def drop(self, grant: Any) -> bool:
         with self._lock:
+            dropped = False
+            for run, slot in list(self._run_slots.items()):
+                if slot.grant == grant:
+                    del self._run_slots[run]
+                    dropped = True
             for key, held in list(self._held.items()):
                 if held.grant == grant:
                     del self._held[key]
                     return True
-        return False
+        return dropped
 
-    def secret_for(self, workspace_id: str, person: str, grant: Any) -> str:
+    def secret_for(self, workspace_id: str, person: str, grant: Any, run: Any = None) -> str:
         """The secret of ``grant`` if it is this (workspace, person)'s current, unexpired grant; else
-        ``launch.no_grant``."""
+        ``launch.no_grant``. A follow-up grant (``fgr_``) comes only from ``run``'s one-shot slot (consumed); the
+        person slot is never consulted for it, and a person grant never touches a run slot."""
+        if isinstance(grant, str) and grant.startswith("fgr_"):
+            return self.consume_run(run, workspace_id, person, grant)
         with self._lock:
             held = self._held.get((workspace_id, person))
             if held is not None and held.until_s <= self.clock():
@@ -124,7 +211,11 @@ class GrantStore:
 
     def secrets(self) -> list[str]:
         with self._lock:
-            return [h.secret for h in self._held.values()]
+            return (
+                [h.secret for h in self._held.values()]
+                + [v for v in (getattr(s, "secret", None) for s in self._run_slots.values()) if isinstance(v, str)]
+                + list(self._spent.values())
+            )
 
 
 class RedactFilter(logging.Filter):

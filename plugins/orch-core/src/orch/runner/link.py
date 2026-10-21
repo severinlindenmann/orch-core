@@ -177,7 +177,7 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         if grant is None:
             raise SpawnError("launch.no_grant", "spawn: an agent needs its person's runner grant")
         try:
-            env["ORCH_GRANT"] = grants.secret_for(wid, person, grant)
+            env["ORCH_GRANT"] = grants.secret_for(wid, person, grant, run=args.get("run"))
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
         env["ORCH_SESSION"] = session
@@ -434,7 +434,7 @@ class HostLink:
         """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
         lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
         5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
-        if item.get("op") in ("attach.end", "grant.put", "grant.drop"):
+        if item.get("op") in ("attach.end", "grant.put", "grant.put_run", "grant.drop"):
             # grant.put and grant.drop run inline too, in arrival order (#466 review round 2): the host sends a forget's
             # drop after the put it follows, so the drop can never overtake that put in the pool (a client that went
             # away or a host timeout releases the host's per-person lock while the put is still in flight)
@@ -492,6 +492,11 @@ class HostLink:
         if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
             try:
                 return self.grants.put(args)
+            except GrantError as exc:
+                raise SpawnError(exc.code, exc.message) from None
+        if cmd == "grant.put_run":  # FU9: a one-shot follow-up grant for one run id; answered without the secret
+            try:
+                return self.grants.put_run(args)
             except GrantError as exc:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":

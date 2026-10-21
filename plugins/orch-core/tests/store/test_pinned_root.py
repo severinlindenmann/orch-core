@@ -39,7 +39,7 @@ def test_a_swapped_checkpoint_directory_is_never_written(env, race, outside, tmp
     env.new_ticket()
     (outside / "keep.txt").write_bytes(b"precious")
     before = snapshot(outside)
-    swap(env.root / ".state" / "checkpoints", outside, tmp_path / "cp-moved")
+    swap(env.store_dir / ".state" / "checkpoints", outside, tmp_path / "cp-moved")
     with watch(outside) as seen:
         with pytest.raises(StoreError) as e:
             env.new_ticket()
@@ -52,9 +52,9 @@ def test_a_swapped_checkpoint_directory_is_never_written(env, race, outside, tmp
 def test_a_swapped_ticket_directory_is_never_read(env, race, outside, tmp_path):
     s = env.bootstrap()
     uid = env.new_ticket()
-    shutil.copytree(env.root / "tickets" / uid, outside / uid)
+    shutil.copytree(env.store_dir / "tickets" / uid, outside / uid)
     (outside / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
-    swap(env.root / "tickets" / uid, outside / uid, tmp_path / "t-moved")
+    swap(env.store_dir / "tickets" / uid, outside / uid, tmp_path / "t-moved")
     with watch(outside) as seen:
         with pytest.raises(StoreError) as e:
             s.ticket_json(uid)
@@ -67,9 +67,9 @@ def test_a_swapped_ticket_directory_is_never_read(env, race, outside, tmp_path):
 
 def test_a_swapped_events_directory_is_never_appended_to(env, race, outside, tmp_path):
     s = env.bootstrap()
-    shutil.copytree(env.root / "events", outside / "events")
+    shutil.copytree(env.store_dir / "events", outside / "events")
     before = snapshot(outside)
-    swap(env.root / "events", outside / "events", tmp_path / "ev-moved")
+    swap(env.store_dir / "events", outside / "events", tmp_path / "ev-moved")
     with watch(outside) as seen, pytest.raises(StoreError):
         env.new_ticket()
     assert seen == []
@@ -86,7 +86,7 @@ def test_recovery_never_follows_a_swapped_pending_directory(env, race, outside, 
     (fake / "manifest.json").write_text(json.dumps({"not": "a manifest"}))
     (fake / "0").write_bytes(b"data")
     before = snapshot(outside)
-    swap(env.root / ".state" / "pending", outside, tmp_path / "pending-moved")
+    swap(env.store_dir / ".state" / "pending", outside, tmp_path / "pending-moved")
     with watch(outside) as seen:
         try:
             env.open().close()
@@ -101,8 +101,8 @@ def test_abandoned_checkpoints_are_never_listed_through_a_symlink(env, race, out
     s = env.bootstrap()
     env.new_ticket()
     (outside / "workspace-999.json").write_bytes(b"{}\n")
-    (env.root / ".state" / "checkpoints" / "abandoned").mkdir()
-    swap(env.root / ".state" / "checkpoints" / "abandoned", outside, tmp_path / "ab-moved")
+    (env.store_dir / ".state" / "checkpoints" / "abandoned").mkdir()
+    swap(env.store_dir / ".state" / "checkpoints" / "abandoned", outside, tmp_path / "ab-moved")
     with watch(outside) as seen:
         try:
             s._checkpoints.highest_n()
@@ -115,15 +115,17 @@ def test_the_root_stays_the_directory_that_was_opened(env, outside, tmp_path):
     s = env.bootstrap()
     uid = env.new_ticket()
     shutil.copytree(env.root, outside / "ws")
-    (outside / "ws" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
+    (outside / "ws" / ".orch" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
     before = snapshot(outside)
     moved = tmp_path / "ws-moved"
     env.root.rename(moved)
     os.symlink(outside / "ws", env.root)
     with watch(outside) as seen:
-        assert s.ticket_json(uid) == (moved / "tickets" / uid / "ticket.json").read_bytes()
-        env.log(uid)
-    assert seen == []
+        assert s.ticket_json(uid) == (moved / ".orch" / "tickets" / uid / "ticket.json").read_bytes()
+        with pytest.raises(StoreError) as e:  # the project path now names another directory: a write fails closed
+            env.log(uid)
+        assert e.value.code == "validation.path"
+    assert all(x.endswith("/outside/ws") for x in seen)  # only the refused no-follow open of the project path itself
     assert snapshot(outside) == before
     s.close()
 
@@ -192,19 +194,19 @@ def test_a_fifo_in_place_of_store_files_never_hangs_the_store(env, deadline):
     s.close()
     env.store = None
     for p in (
-        env.root / ".state" / "applied",
-        env.root / "keys.jsonl",
-        env.root / "tickets" / uid / "ticket.json",
-        env.root / "tickets" / uid / "body.md",
-        env.root / ".state" / "checkpoints" / "workspace.json",
+        env.store_dir / ".state" / "applied",
+        env.store_dir / "keys.jsonl",
+        env.store_dir / "tickets" / uid / "ticket.json",
+        env.store_dir / "tickets" / uid / "body.md",
+        env.store_dir / ".state" / "checkpoints" / "workspace.json",
     ):
         _fifo(p)
     s = env.open()  # opens (and heals: load="all") without reading any FIFO
     s.scan()  # external edits answered: the FIFOs are replaced by the projections, never read
-    assert (env.root / "tickets" / uid / "ticket.json").is_file()
+    assert (env.store_dir / "tickets" / uid / "ticket.json").is_file()
     s.close()
     env.store = None
-    _fifo(env.root / "tickets" / uid / "events.jsonl")
+    _fifo(env.store_dir / "tickets" / uid / "events.jsonl")
     s = env.open()
     assert uid in s.diverged or uid not in s.state.tickets or any(log == uid for log, *_ in s.chain_errors())
     s.close()

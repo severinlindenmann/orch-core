@@ -24,7 +24,7 @@ def edit(v1, status_dir, key, fn):
 
 
 def body(ws, key):
-    return (ws.root / "tickets" / ws.uid(key) / "body.md").read_text()
+    return (ws.store_dir / "tickets" / ws.uid(key) / "body.md").read_text()
 
 
 # -- what the person reads ---------------------------------------------------------------------------------------
@@ -169,7 +169,7 @@ def test_grant_shaped_secrets_are_redacted_in_the_history(hws, me, v1):  # noqa:
         v1, "backlog", "DEMO-0001", lambda t: t.replace("Ingest the readings nightly.", f"run with ORCH_GRANT={secret}")
     )
     assert me("import", "v1", str(v1)).code == 0
-    raw = (hws.root / "tickets" / hws.uid("DEMO-0001") / "artifacts" / "v1-import.json").read_text()
+    raw = (hws.store_dir / "tickets" / hws.uid("DEMO-0001") / "artifacts" / "v1-import.json").read_text()
     assert secret not in raw and "ORCH_GRANT=[redacted]" in raw
     assert secret not in body(hws, "DEMO-0001")
 

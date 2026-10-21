@@ -49,7 +49,7 @@ def wrong_secret(grant: str) -> str:
 
 
 def tickets_on_disk(served: Served) -> list[str]:
-    path = os.path.join(served.lab.root, "tickets")
+    path = os.path.join(served.lab.root, ".orch", "tickets")
     return sorted(os.listdir(path)) if os.path.isdir(path) else []
 
 

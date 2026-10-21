@@ -36,6 +36,7 @@ interface ServerWorkspace {
   members: Member[]
   needs_you: number | null
   host_state: string
+  host_message?: string | null
   features: string[]
   click?: Workspace['click']
   runner?: Workspace['runner']
@@ -61,9 +62,9 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
-async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
+async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const token = getToken()
-  const result = await createFetchTransport('', () => token).request(method, path, body)
+  const result = await createFetchTransport('', () => token).request(method, path, body, signal)
   if (result.status === 401) {
     clearSession(true, token)
     throw new ApiError(401, { code: 'session.required', message: 'Run orch dashboard in your terminal', retryable: false })
@@ -142,6 +143,7 @@ function workspace(s: ServerWorkspace): Workspace {
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
+    ...(s.host_state !== 'ok' && s.host_message ? { host_message: s.host_message } : {}),
     // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
     ...(s.runner !== undefined ? { runner: s.runner } : {}),
     ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),
@@ -157,7 +159,18 @@ export async function logout() {
   clearSession()
 }
 
-export const session = () => call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session')
+/** The first read of every page load. It ends by itself after `SESSION_READ_MS` (an error the person can retry), and when the
+ * query is cancelled (Try again): a request that can wait for good is how a reload ended on the boot skeleton. */
+export const SESSION_READ_MS = 20_000
+export const session = async (cancel?: AbortSignal) => {
+  const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
+  try {
+    return await call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session', 'GET', undefined, stop)
+  } catch (e) {
+    if (e instanceof ApiError || cancel?.aborted) throw e
+    throw new ApiError(0, { code: 'host.unavailable', message: 'It did not answer in time. Try again.', retryable: true })
+  }
+}
 
 const reads = {
   /** One person has a different id in each workspace: with `ws` this is that workspace's own entry (person, name, role). */

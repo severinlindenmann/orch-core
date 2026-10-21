@@ -274,6 +274,29 @@ function TerminalNotice({ children }: { children?: React.ReactNode }) {
     </div>
   )
 }
+/** The final check: three large tiles to compare with the setup window. The browser never imitates that window. */
+export function ConfirmWords({ words }: { words: string[] | null }) {
+  return (
+    <section className="confirm-words" role="status" aria-label="Final check">
+      <p>
+        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, type yes in that window
+        and press Enter.
+      </p>
+      <ol className="words word-tiles" aria-label="Your three words">
+        {(words ?? []).map((w, i) => (
+          <li key={i}>
+            <Raw>{w}</Raw>
+          </li>
+        ))}
+      </ol>
+      <small className="words-wait">Waiting for you in the setup window…</small>
+      <details>
+        <summary>The words don’t match</summary>
+        <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
+      </details>
+    </section>
+  )
+}
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -1106,12 +1129,13 @@ export function Setup({ api }: { api: SetupAPI }) {
           {review?.tty_confirm &&
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
-              <TerminalNotice>
-                <span>
-                  If it shows <Words words={review.fingerprint} />, type yes there.
-                </span>
-              </TerminalNotice>
+              <ConfirmWords words={review.fingerprint} />
             )}
+          {review?.tty_confirm && !progress?.done && progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
+            <p role="status" className="words-confirmed">
+              The three words matched. Your choices are confirmed.
+            </p>
+          )}
           {progress?.waiting && title !== 'Confirm in your terminal' && (
             progress.waiting === 'waiting for terminal' ? (
               <TerminalNotice />

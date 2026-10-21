@@ -131,7 +131,7 @@ def test_task_done_run_stores_a_receipt_and_the_run_log(ws, cli):
     assert isinstance(rec["ms"], int) and done["log"] == "T1-receipt.log"
     art = ev[-2]
     assert (art["type"], art["name"], art["kind"], art["task"]) == ("artifact.added", "T1-receipt.log", "receipt", "T1")
-    stored = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
+    stored = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
     assert b"built" in stored and b"to-stderr" in stored and art["sha256"] == canon.artifact_digest(stored)
     assert ws.view("1").acceptance[0].evidence == ("task:T1",)  # a done task with an exit-0 receipt proves its AC
 
@@ -165,7 +165,7 @@ def test_task_done_run_needs_a_verify_command_and_never_gets_the_grant(ws, cli, 
         ),
     )
     assert cli("task", "done", "T2", "--run").code == 0
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T2-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T2-receipt.log").read_text()
     assert "grant=[] token=[]" in log and ws.grant.partition(".")[2] not in log
 
 
@@ -189,7 +189,7 @@ def test_task_done_run_records_the_repo_and_commit_of_the_linked_repository(ws, 
     assert cli("task", "done", "T1", "--run").code == 0
     done = ws.events("1")[-1]
     assert done["receipt"]["repo"] == "proj" and done["receipt"]["commit"] == head
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip()
     assert os.path.realpath(log) == os.path.realpath(repo)  # the command ran inside the repository
     assert ws.view("1").acceptance == () or ws.view("1").acceptance[0].evidence == ()  # no source sha observed yet
 
@@ -295,7 +295,7 @@ def test_a_verify_command_with_shell_metacharacters_runs_them_as_arguments(ws, c
     r = cli("task", "done", "T1", "--run")
     assert r.code == 0, r.err
     assert not victim.exists()
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
     assert "';'" in log and "'touch'" in log and "'$(id)'" in log  # every piece arrived as a plain argument
 
 
@@ -326,7 +326,7 @@ def test_a_child_that_prints_a_lot_costs_a_bounded_buffer(ws, cli, td, monkeypat
     assert r.code == 0, r.err
     art = ws.events("1")[-2]
     assert art["bytes"] <= 100_000 + len(td.TRUNCATED)
-    stored = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
+    stored = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_bytes()
     assert stored.endswith(td.TRUNCATED) and art["sha256"] == canon.artifact_digest(stored)
 
 
@@ -382,3 +382,62 @@ def test_a_commit_that_changes_during_the_run_records_nothing(ws, cli, tmp_path)
     r = cli.j("task", "done", "T1", "--run")
     assert (r.code, r.err_code) == (5, "verify.failed") and "commit changed" in r.doc["error"]["message"]
     assert len(ws.events("1")) == n
+
+
+# --- R3: task edit -----------------------------------------------------------------------------------------------
+
+
+def test_task_edit_changes_text_verify_and_proves_and_keeps_the_rest(ws, cli):
+    claimed(cli)
+    cli("ac", "add", "a")
+    cli("ac", "add", "b")
+    cli("task", "add", "write it", "--verify", "true", "--proves", "AC1")
+    r = cli.j("task", "edit", "T1", "--text", "write it well", "--verify", "false", "--proves", "AC2,AC1")
+    assert r.code == 0 and r.data == {"task": "T1"}
+    (t,) = ws.ticket_json("1")["tasks"]
+    assert t == {"id": "T1", "text": "write it well", "verify": {"cmd": "false"}, "proves": ["AC1", "AC2"]}
+    cli.j("task", "edit", "T1", "--text", "only the text")  # what is not given stays
+    (t,) = ws.ticket_json("1")["tasks"]
+    assert t["text"] == "only the text" and t["verify"] == {"cmd": "false"} and t["proves"] == ["AC1", "AC2"]
+    cli.j("task", "edit", "T1", "--verify", "")  # an empty value removes the command
+    (t,) = ws.ticket_json("1")["tasks"]
+    assert t["verify"] is None and t["proves"] == ["AC1", "AC2"]
+
+
+def test_task_edit_refuses_what_is_not_there_and_what_changes_nothing(ws, cli):
+    claimed(cli)
+    cli("task", "add", "write it")
+    assert cli.j("task", "edit", "T9", "--text", "x").err_code == "not_found"
+    assert cli.j("task", "edit", "T1", "--proves", "AC7").err_code == "not_found"
+    assert cli.j("task", "edit", "T1", "--text", "write it").err_code == "invalid.input"  # same text: nothing to edit
+    assert cli.j("task", "edit", "T1").err_code == "invalid.input"
+
+
+def test_task_edit_of_a_done_task_never_moves_its_receipt_to_another_command_or_criterion(ws, cli):
+    claimed(cli)
+    cli("ac", "add", "a")
+    cli("ac", "add", "b")
+    cli("task", "add", "run it", "--verify", py("print(1)"), "--proves", "AC1")
+    assert cli("task", "done", "T1", "--run").code == 0
+    before = ws.ticket_json("1")["tasks"]
+    for flags in (["--verify", "true"], ["--verify", ""], ["--proves", "AC2"]):
+        r = cli.j("task", "edit", "T1", *flags)
+        assert (r.code, r.err_code) == (3, "transition.refused"), flags
+    assert ws.ticket_json("1")["tasks"] == before  # nothing was appended
+    # the same values as now are no change of the command or criteria: a text edit passes
+    assert cli.j("task", "edit", "T1", "--text", "run it twice", "--proves", "AC1").code == 0
+    assert ws.ticket_json("1")["tasks"][0]["text"] == "run it twice"
+    assert ws.view("1").acceptance[0].evidence == ("task:T1",)
+    # reopened, the command and the criteria may change
+    cli("task", "reopen", "T1", "--reason", "redo")
+    assert cli.j("task", "edit", "T1", "--proves", "AC2").code == 0
+
+
+def test_task_edit_voids_the_plan_and_the_gates_after_it(ws, cli):
+    claimed(cli)
+    cli("task", "add", "write it", "--verify", "true")
+    gens = {g: ws.view("1").gates[g].gen for g in ("requirements", "plan", "verify", "code")}
+    cli("task", "edit", "T1", "--text", "write it better")
+    now = {g: ws.view("1").gates[g].gen for g in gens}
+    assert now["requirements"] == gens["requirements"]
+    assert all(now[g] == gens[g] + 1 for g in ("plan", "verify"))  # the code gate does not apply by default

@@ -14,11 +14,11 @@ from tests.store.helpers import WS
 
 
 def cp_files(env):
-    return sorted(p.name for p in (env.root / ".state" / "checkpoints").glob("*.json"))
+    return sorted(p.name for p in (env.store_dir / ".state" / "checkpoints").glob("*.json"))
 
 
 def load(env, name):
-    return json.loads((env.root / ".state" / "checkpoints" / name).read_bytes())
+    return json.loads((env.store_dir / ".state" / "checkpoints" / name).read_bytes())
 
 
 def test_checkpoints_have_the_protocol_shape_and_a_valid_wsk_signature(env):
@@ -91,7 +91,7 @@ def test_a_missing_ticket_log_is_divergence(env):
     s = env.bootstrap()
     uid = env.new_ticket()
     s.close()
-    shutil.rmtree(env.root / "tickets" / uid)
+    shutil.rmtree(env.store_dir / "tickets" / uid)
     assert "missing" in env.open().diverged[uid].detail
 
 
@@ -120,7 +120,7 @@ def test_the_checkpoint_writer_never_moves_a_checkpoint_to_another_head_or_backw
     s = env.bootstrap()
     uid = env.new_ticket()
     env.log(uid)
-    cps = checkpoints.Checkpoints(env.root / ".state" / "checkpoints", WS)
+    cps = checkpoints.Checkpoints(env.store_dir / ".state" / "checkpoints", WS)
     assert (
         cps.write_ticket(env.signer.sign, uid, 2, "sha256:" + "0" * 64, "2026-10-10T10:00:00Z", "sha256:" + "0" * 64)
         == "diverged"
@@ -136,7 +136,7 @@ def test_a_checkpoint_not_signed_by_the_host_key_is_a_problem_of_its_log(env):
     s = env.bootstrap()
     uid = env.new_ticket()
     s.close()
-    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     cp = json.loads(path.read_bytes())
     cp["o"]["at"] = "2020-01-01T00:00:00Z"
     path.write_bytes(canon.cj_checked(cp) + b"\n")
@@ -146,7 +146,7 @@ def test_a_checkpoint_not_signed_by_the_host_key_is_a_problem_of_its_log(env):
 def test_a_checkpoint_for_another_genesis_is_refused_outright(env):
     s = env.bootstrap()
     s.close()
-    path = env.root / ".state" / "checkpoints" / "workspace.json"
+    path = env.store_dir / ".state" / "checkpoints" / "workspace.json"
     cp = json.loads(path.read_bytes())
     cp["o"]["genesis"] = "sha256:" + "5" * 64
     cp["sig"] = crypto.b64u(env.signer.sign(checkpoints.LABEL + canon.cj_checked(cp["o"])))
@@ -159,9 +159,9 @@ def test_a_checkpoint_for_another_genesis_is_refused_outright(env):
 def rollback(env, backup):
     """Put the backed-up logs and projections back, keep ``.state`` (git ignores it; a force-push restores the rest)."""
     for name in ("events", "tickets", "config.json", "keys.jsonl"):
-        target = env.root / name
+        target = env.store_dir / name
         shutil.rmtree(target) if target.is_dir() else target.unlink(missing_ok=True)
-        src = backup / name
+        src = backup / ".orch" / name
         shutil.copytree(src, target) if src.is_dir() else shutil.copy(src, target)
 
 
@@ -193,7 +193,7 @@ def test_restore_after_a_rollback_abandons_the_checkpoint_and_new_chain_continue
     r = s.append(ok, log=uid)
     assert r.event["seq"] == 3 and r.event["prev"] == facts["head"]
     assert s.diverged == {}
-    assert (env.root / ".state" / "checkpoints" / "abandoned").is_dir()
+    assert (env.store_dir / ".state" / "checkpoints" / "abandoned").is_dir()
     env.log(uid, "after")
     s.close()
     again = env.open()  # and a fresh open agrees: no divergence, the new chain is the checkpointed one
@@ -221,7 +221,7 @@ def test_restore_of_a_forked_tail_uses_abandon_tail_and_keeps_the_cut_lines(env)
     s = env.open()
     assert uid in s.diverged
     assert s.abandon_tail(uid, 2) == 1
-    assert any((env.root / ".state" / "abandoned").glob(f"{uid}-3.jsonl"))
+    assert any((env.store_dir / ".state" / "abandoned").glob(f"{uid}-3.jsonl"))
     facts = s.restore_facts(uid)
     assert facts["from_seq"] == 2 and facts["abandoned"] == {
         "seq": 3,
@@ -280,7 +280,7 @@ def test_missing_checkpoint_repair_requires_the_host_and_a_verified_log(env, hos
     uid = env.new_ticket()
     env.log(uid, "original")
     store.close()
-    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     path.unlink()
     if host:
         log = env.path(uid, "events.jsonl")
@@ -299,7 +299,7 @@ def test_checkpoint_only_finishes_the_recorded_append(env, load, rollback):
     uid = env.new_ticket()
     env.log(uid, "last append")
     store.close()
-    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     path.unlink()
     if rollback:
         log = env.path(uid, "events.jsonl")
@@ -324,7 +324,7 @@ def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, loa
     if applied_elsewhere:
         env.new_ticket()
     store.close()
-    checkpoint = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    checkpoint = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     checkpoint.unlink()
     log = env.path(uid, "events.jsonl")
     rolled_back = b"".join(log.read_bytes().splitlines(keepends=True)[:-1])
@@ -333,7 +333,7 @@ def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, loa
     store.ticket(uid)
     assert not store.repairable_checkpoint(uid)
     store.checkpoint()
-    assert uid not in json.loads((env.root / ".state/checkpoints/workspace.json").read_bytes())["o"]["tickets"]
+    assert uid not in json.loads((env.store_dir / ".state/checkpoints/workspace.json").read_bytes())["o"]["tickets"]
     with pytest.raises(StoreError) as exc:
         env.log(uid, "must not hide the rollback")
     assert exc.value.code == "checkpoint.missing"

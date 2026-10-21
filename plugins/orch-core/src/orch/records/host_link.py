@@ -33,8 +33,8 @@ class Resolved:
     state: Path
     mode: str  # "host" | "direct"
     close: Callable[[], None] = lambda: None
-    #: the store directory (``<root>/.orch``, or the root itself in the legacy layout): where the record files and the
-    #: records repo live. ``root`` stays the project (the registry root, the auto entry's root). ``None``: the root.
+    #: the store directory (``<root>/.orch``): where the record files and the records repo live. ``root`` stays the
+    #: project (the registry root, the auto entry's root). ``None``: the root.
     store: Path | None = None
 
     @property
@@ -140,18 +140,15 @@ def resolve(
     base = Path(str(entry.get("root")))
     from orch.layout import STORE_DIR
 
-    store = base / STORE_DIR if entry.get("store") == STORE_DIR else base
+    store = base / STORE_DIR
     from orch import layout as layout_mod
 
     try:
         on_disk = layout_mod.store_of(base)
     except layout_mod.LayoutError as exc:
         raise RecordsError("records.unsupported", str(exc), exit_=3) from None
-    if on_disk != store:  # never fall back to the other layout: a half-done or stale registry is refused
+    if on_disk != store:
         raise RecordsError(
-            "records.unsupported",
-            "the store on disk is not where the host registry says it is",
-            exit_=3,
-            hint="orch migrate finishes or undoes an unfinished store move",
+            "records.unsupported", "the store on disk is not where the host registry says it is", exit_=3
         )
     return Resolved(wid, base, link, tips, state, "host", store=store)

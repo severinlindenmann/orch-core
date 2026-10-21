@@ -16,18 +16,26 @@ export const agentPrefKey = (person: string, ws: string) => `orch.dashboard.new-
 export interface AgentPref extends AgentChoiceValue {
   /** The default button: true = "Create and start agent", false = "Only create". */
   start: boolean
+  /** The person picked the kind of work themselves: only then is it remembered over the default. */
+  modeChosen?: boolean
 }
+
+/** A new ticket starts with writing the requirements and the plan; "Do the work" comes after they are approved. */
+export const NEW_TICKET_MODE: AgentMode = 'refine'
 
 /** The remembered choice; anything malformed is the default (never an error). */
 export function readPref(key: string): AgentPref {
-  const base: AgentPref = { ...DEFAULT_CHOICE, start: true }
+  const base: AgentPref = { ...DEFAULT_CHOICE, mode: NEW_TICKET_MODE, start: true }
   try {
     const raw = JSON.parse(localStorage.getItem(key) ?? 'null') as Record<string, unknown> | null
     if (!raw || typeof raw !== 'object') return base
     return {
       start: raw.start !== false,
       harness: HARNESSES.some((h) => h.id === raw.harness) ? (raw.harness as Harness) : base.harness,
-      mode: AGENT_MODES.includes(raw.mode as AgentMode) ? (raw.mode as AgentMode) : base.mode,
+      // A remembered kind of work counts only when the person chose it (an older save without the flag counts when it is
+      // not the former default, which nobody could tell from a choice).
+      mode: AGENT_MODES.includes(raw.mode as AgentMode) && (raw.modeChosen === true || (raw.modeChosen === undefined && raw.mode !== DEFAULT_CHOICE.mode)) ? (raw.mode as AgentMode) : base.mode,
+      modeChosen: raw.modeChosen === true || (raw.modeChosen === undefined && AGENT_MODES.includes(raw.mode as AgentMode) && raw.mode !== DEFAULT_CHOICE.mode),
       model: typeof raw.model === 'string' && raw.model.length <= 100 ? raw.model : '',
     }
   } catch {
@@ -49,7 +57,7 @@ export function useStartPlan(workspace: Workspace, person: string) {
   const settings = useQuery({ ...queries.hostSettings(ws), enabled: feature, retry: false })
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: feature && routing })
   const [pref, setPrefState] = useState<AgentPref>(() => readPref(prefKey))
-  const setPref = useCallback((p: Partial<AgentPref>) => setPrefState((old) => { const next = { ...old, ...p }; writePref(prefKey, next); return next }), [prefKey])
+  const setPref = useCallback((p: Partial<AgentPref>) => setPrefState((old) => { const next = { ...old, ...p, ...(p.mode !== undefined ? { modeChosen: true } : {}) }; writePref(prefKey, next); return next }), [prefKey])
 
   const info = runner.data?.runner ?? null
   const reason = !feature ? null

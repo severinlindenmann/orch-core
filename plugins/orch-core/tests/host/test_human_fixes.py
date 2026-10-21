@@ -225,13 +225,13 @@ def _view(branch="feat/x"):
 
 
 def _copies(tmp_path):
-    return [FakeGit().ticket_copy(Layout.legacy_at(tmp_path), {}, "u1", "proj").binding("u1", "proj")]
+    return [FakeGit().ticket_copy(Layout.new_at(tmp_path), {}, "u1", "proj").binding("u1", "proj")]
 
 
 def _store(tmp_path):
     return SimpleNamespace(
         root=tmp_path,
-        layout=Layout.legacy_at(tmp_path),
+        layout=Layout.new_at(tmp_path),
         state=SimpleNamespace(workspace=SimpleNamespace(repos={"proj": {}})),
     )
 

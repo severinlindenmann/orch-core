@@ -216,3 +216,13 @@ it('a workspace with an unsafe name says so, not "Host not running"', async () =
   expect(row).toHaveAttribute('data-ws-stopped', C)
   expect(screen.queryByText('Host not running')).not.toBeInTheDocument()
 })
+
+it('an address for a workspace the host cannot serve shows the host\'s reason, not "No workspace"', async () => {
+  const note = 'this folder has an orch store from an older version in the project root; orch now keeps its files in .orch/. Delete config.json and run orch setup again'
+  state.host.workspaces.push(workspace({ id: C, prefix: 'OLD', host_state: 'workspace.unavailable', host_message: note }))
+  show('/w/OLD/tickets')
+  expect(await screen.findByRole('heading', { name: "This workspace can't be opened" }, T)).toBeInTheDocument()
+  expect(screen.getByText(note)).toBeInTheDocument()
+  expect(screen.queryByText(/No workspace/)).not.toBeInTheDocument()
+  expect(gets(C)).toEqual([])
+})

@@ -22,24 +22,22 @@ def _resolve(project: Path) -> Layout | None:
         os.close(fd)
 
 
-@pytest.mark.new_layout
-def test_write_new_is_the_shipped_default() -> None:
-    from tests.conftest import SHIPPED_WRITE_NEW
-
-    assert SHIPPED_WRITE_NEW is True and layout.WRITE_NEW is True
+def test_the_store_dir_is_dot_orch() -> None:
     assert layout.STORE_DIR == ".orch"
+    assert not hasattr(layout, "WRITE_NEW") and not hasattr(layout, "LEGACY_ALLOWED")
 
 
 def test_layout_values(tmp_path: Path) -> None:
-    old, new = Layout.legacy_at(tmp_path), Layout.new_at(tmp_path)
-    assert (old.project, old.store, old.legacy) == (tmp_path, tmp_path, True)
-    assert (new.project, new.store, new.legacy) == (tmp_path, tmp_path / ".orch", False)
+    new = Layout.new_at(tmp_path)
+    assert (new.project, new.store) == (tmp_path, tmp_path / ".orch")
+    assert layout.fresh(tmp_path) == new
 
 
-def test_resolve_legacy_new_none(tmp_path: Path) -> None:
+def test_resolve_new_none_and_the_old_store(tmp_path: Path) -> None:
     assert _resolve(tmp_path) is None
     (tmp_path / "config.json").write_text(CFG)
-    assert _resolve(tmp_path) == Layout.legacy_at(tmp_path)
+    with pytest.raises(layout.LegacyStoreError, match="older version"):
+        _resolve(tmp_path)  # a root store is named and refused, never read
     (tmp_path / "config.json").unlink()
     (tmp_path / ".orch").mkdir()
     assert _resolve(tmp_path) is None  # the project's own .orch is not a store

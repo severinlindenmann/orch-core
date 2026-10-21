@@ -313,7 +313,7 @@ def test_the_builtin_manifest_is_installed_and_granted_like_the_other_addons(bar
     assert any(r["field"] == "it says it will" and "internet" in r["after"] for r in content["fields_changed"])
     signed = human.sign(prepared)
     ok(human.submit_res(prepared["request"]["id"], signed.events))
-    assert (Path(bare.ws.root) / "addons" / "publish" / "orch-addon.json").read_bytes() == builtin.manifest_bytes(
+    assert (Path(bare.ws.store_dir) / "addons" / "publish" / "orch-addon.json").read_bytes() == builtin.manifest_bytes(
         "publish"
     )
     assert ok(bare.req("publish.list", {}))["data"]["configured"] is True  # the gate is open
@@ -365,7 +365,7 @@ def test_prepare_refuses_what_the_ticket_does_not_have_or_the_server_would_not_t
 
 def test_prepare_refuses_a_file_that_changed_behind_the_log(w):
     uid, key = w.ticket_with(**{"report.md": REPORT})
-    path = Path(w.served.lab.ws.root) / "tickets" / uid / "artifacts" / "report.md"
+    path = Path(w.served.lab.ws.store_dir) / "tickets" / uid / "artifacts" / "report.md"
     path.write_bytes(b"tampered")
     assert err(w.req("publish.prepare", {"ref": key, "artifacts": ["report.md"]})) == "not_found"
     assert not (w.base() / "stage").exists() or not list((w.base() / "stage").iterdir())
@@ -757,6 +757,16 @@ def test_list_live_adds_the_servers_numbers_and_survives_a_dead_server(w):
     agent = w.served.client()
     res = agent.req("publish.list", {"live": True}, grant=w.served.grant, session=SESSION)
     assert err(res) == "op.not_allowed"
+
+
+def test_list_live_without_a_server_setting_answers_not_configured_not_an_error(bare):
+    """The dashboard's Shares page always asks for the live list. Publish on but no server set up is a normal state
+    (run 3 finding): the answer says `configured` false, it does not fail."""
+    bare.addon()
+    for args in ({"live": True}, {}):
+        got = ok(bare.req("publish.list", args))["data"]
+        assert got["configured"] is False and not got.get("live") and got["server"] is None
+        assert got["shares"] == [] and got["staged"] == []
 
 
 def test_an_agent_lists_only_its_own_ticket(w):

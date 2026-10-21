@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "transition.refused",
+    "message": "T1 is done: its verify command and criteria cannot change, because its receipt stands for them; reopen it first",
+    "hint": "orch task reopen T1",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 3

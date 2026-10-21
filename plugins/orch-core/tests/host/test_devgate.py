@@ -268,7 +268,7 @@ def test_normal_host_refuses_sbx_on_every_admit_path(sbx, path):
     from types import SimpleNamespace
 
     if path in ("restore", "adopt"):
-        (Path(sbx.root) / ".state" / devsandbox.WS_MARKER).unlink()
+        (Path(sbx.root) / ".orch" / ".state" / devsandbox.WS_MARKER).unlink()
     with sbx.host() as h:
         if path in ("register", "restore", "adopt"):
             res = sbx.register(h.client())
@@ -290,7 +290,7 @@ def test_normal_host_refuses_sbx_on_every_admit_path(sbx, path):
 
 def test_sbx_genesis_without_marker_refused_on_normal_host(sbx):
     """A records rebuild or a relay restore carries the signed genesis but not .state/: the genesis alone refuses."""
-    (Path(sbx.root) / ".state" / devsandbox.WS_MARKER).unlink()
+    (Path(sbx.root) / ".orch" / ".state" / devsandbox.WS_MARKER).unlink()
     with sbx.host() as h:
         res = sbx.register(h.client())
         assert res["error"]["code"] == "host.dev_refused" and res["error"]["detail"]["reason"] == "sandbox_workspace"
@@ -304,7 +304,7 @@ def test_sandbox_workspace_on_normal_host_refuses_convenience(tmp_path):
         with lab.host() as h:
             res = lab.register(h.client())
             assert res["error"]["detail"]["reason"] == "sandbox_workspace"
-        (Path(lab.root) / ".state" / devsandbox.WS_MARKER).unlink()
+        (Path(lab.root) / ".orch" / ".state" / devsandbox.WS_MARKER).unlink()
         served = Served(lab)
         try:
             assert devmode.dev_gate(served.service) is None and devmode.gated(served.service) is False
@@ -436,7 +436,7 @@ def test_s4_a_second_member(sbx):
 
 def test_s5_missing_or_mismatched_marker(sbx):
     dev = sbx.dev()
-    marker = Path(sbx.root) / ".state" / devsandbox.WS_MARKER
+    marker = Path(sbx.root) / ".orch" / ".state" / devsandbox.WS_MARKER
     marker.unlink()
     assert devmode.sandbox_reason(dev, WS, sbx.root, _view(sbx)).startswith("S5")
     devsandbox.write_marker(sbx.root, "0" * 32, WS)

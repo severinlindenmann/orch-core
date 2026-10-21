@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -432,7 +433,7 @@ def test_profile_text_is_deny_by_default() -> None:
     assert not any(ln.startswith("(allow default") or "(allow network" in ln or "mach-lookup" in ln for ln in lines)
     assert lines[-1].startswith("(deny file*") and '"/h/.ssh"' in lines[-1] and '"/s/land"' in lines[-1]
     assert 'file-write* (subpath "/w/o") (subpath "/w/t")' in p  # writes: out and tmp only
-    assert not any("file-write*" in ln and '"/w/e"' in ln for ln in lines)  # export is read-only
+    assert not any(ln.startswith("(allow file-write*") and '"/w/e"' in ln for ln in lines)  # export is read-only
 
 
 def test_bwrap_command_line_shape(lay: Layout) -> None:
@@ -500,6 +501,79 @@ def test_check_cannot_link_a_secret_into_out_or_tmp(lay: Layout, backend: str, w
     assert "LEAKED" not in got.values() and got["read_via_hardlink"] == "DENIED", got
     assert os.stat(lay.land_key).st_nlink == 1 and os.stat(lay.ssh_key).st_nlink == 1
     assert not (lay.out / "x").exists() and not (lay.tmp / "x").exists()
+
+
+def test_hard_link_to_a_readable_file_cannot_write_through(lay: Layout, backend: str) -> None:
+    """Review 21 Oct (HIGH): link a file the check may only READ (export, toolchain) into out/tmp, then write through
+    it. The link itself must fail (EPERM; bwrap: EXDEV/EROFS as export, out and tmp are separate mounts) and the source
+    stays unchanged."""
+    tool = lay.root / "tool"
+    tool.mkdir()
+    (tool / "lib.txt").write_text("TOOL")
+    code = (
+        "import os,sys,json\n"
+        "r={}\n"
+        "for name,src,dst in (('export',sys.argv[1],sys.argv[3]+'/a'),('toolchain',sys.argv[2],sys.argv[4]+'/b')):\n"
+        "    try:\n"
+        "        os.link(src,dst); r[name]='LINKED'\n"
+        "        open(dst,'a').write('PWNED')\n"
+        "    except OSError: r.setdefault(name,'DENIED')\n"
+        "print('RESULT '+json.dumps(r))\n"
+    )
+    if backend == "bwrap":
+        a1, a2, o, t = "/work/hello.txt", str(tool / "lib.txt"), "/out", "/tmp"
+    else:
+        a1, a2, o, t = str(lay.export / "hello.txt"), str(tool / "lib.txt"), str(lay.out), str(lay.tmp)
+    spec = sbx.Spec(
+        argv=[os.path.realpath(sys.executable), "-I", "-c", code, a1, a2, o, t], export_dir=lay.export,
+        out_dir=lay.out, tmp_dir=lay.tmp, toolchain_ro=[*_toolchain(), tool], timeout=30,
+    )  # fmt: skip
+    res = sbx.run_check(spec, backend=backend)
+    got = json.loads(next(ln for ln in res.output.decode().splitlines() if ln.startswith("RESULT "))[7:])
+    assert got == {"export": "DENIED", "toolchain": "DENIED"}, got
+    assert (lay.export / "hello.txt").read_text() == "hello" and (tool / "lib.txt").read_text() == "TOOL"
+    assert not res.tampered and res.passed
+
+
+def test_planted_link_during_the_check_is_reported_as_tampering(lay: Layout, backend: str) -> None:
+    """Defence in depth: if a link ever appears in out/tmp (here made by the test through a hostile 'check' that the
+    sandbox cannot stop because the test creates it from outside), the result is flagged and the host reads nothing."""
+    victim = lay.root / "victim"
+    victim.write_text("v")
+    # the host plants the link while the check sleeps (the pre-launch scan has already passed)
+    spec = sbx.Spec(argv=["/bin/sh", "-c", "sleep 0.5"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp)
+    done = threading.Event()
+
+    def plant() -> None:
+        time.sleep(0.2)
+        os.link(victim, lay.out / "planted")
+        done.set()
+
+    t = threading.Thread(target=plant)
+    t.start()
+    res = sbx.run_check(spec, backend=backend)
+    t.join()
+    assert done.is_set() and res.tampered and not res.passed
+    with pytest.raises(sbx.SandboxError):
+        sbx.read_out_file(lay.out, "planted")
+
+
+def test_bwrap_mount_layout_is_ro_export_and_separate_out_tmp(lay: Layout) -> None:
+    spec = sbx.Spec(argv=["/usr/bin/true"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp)
+    argv, _ = sbx.bwrap_argv("/usr/bin/bwrap", spec)
+    i = argv.index("/work")
+    assert argv[i - 2 : i + 1] == ["--ro-bind", str(lay.export), "/work"]
+    assert argv[argv.index("/out") - 2 :][:3] == ["--bind", str(lay.out), "/out"]
+    assert argv[argv.index("/tmp", argv.index("/out")) - 2 :][:3] == ["--bind", str(lay.tmp), "/tmp"]  # own mount each
+
+
+def test_profile_denies_links_and_export_writes() -> None:
+    p = sbx.seatbelt_profile(Path("/w/e"), Path("/w/o"), Path("/w/t"), [Path("/opt/tc")], [Path("/s")])
+    lines = p.splitlines()
+    assert "(deny file-link)" in lines and not any(ln.startswith("(allow file-link") for ln in lines)
+    deny = next(ln for ln in lines if ln.startswith("(deny file-write*"))
+    assert '"/w/e"' in deny and '"/opt/tc"' in deny
+    assert lines.index("(deny file-link)") > max(i for i, ln in enumerate(lines) if ln.startswith("(allow file-write*"))
 
 
 def test_forbidden_paths_are_not_mounted_in_bwrap(lay: Layout) -> None:

@@ -106,6 +106,11 @@ class Result:
     truncated: bool
     backend: str
     seconds: float
+    tampered: bool = False  # out/tmp held a hard-linked or special file afterwards: the check failed, read nothing
+
+    @property
+    def passed(self) -> bool:
+        return self.returncode == 0 and not self.timed_out and not self.tampered
 
 
 def _real(path: Path | str) -> Path:
@@ -207,6 +212,16 @@ def _validated(spec: Spec) -> tuple[Path, Path, Path, list[Path], list[Path]]:
     return export, out, tmp, tool, forb
 
 
+def _tampered(*roots: Path) -> bool:
+    """True if any file under the roots is not a plain single-link regular file (or a dir/symlink)."""
+    try:
+        for root in roots:
+            _scan_aliases(root, "tree")
+    except (SandboxError, OSError):
+        return True
+    return False
+
+
 def read_out_file(out_dir: Path | str, rel: str, *, limit: int = 1024 * 1024) -> bytes:
     """Read one file the check left in ``out_dir``, for the host. The check controls this tree, so: every component is
     opened with ``O_NOFOLLOW`` relative to its parent fd, the final one must be a regular file with a single link, and
@@ -291,9 +306,6 @@ def seatbelt_profile(export: Path, out: Path, tmp: Path, tool: Sequence[Path], f
         "(allow file-read-metadata " + " ".join(f"(literal {_sb(a)})" for a in ["/", *_ancestors(read)]) + ")",
         "(allow file-write* " + " ".join(f"(subpath {_sb(p)})" for p in (out, tmp)) + ")",
         '(allow file-write* (literal "/dev/null") (literal "/dev/dtracehelper"))',
-        # hard links: file-link is a write operation, so it is allowed only under out/tmp, and creating one needs the
-        # source readable too, which the forbidden paths and everything outside the lists above are not (probed 21 Oct)
-        "(allow file-link " + " ".join(f"(subpath {_sb(p)})" for p in (out, tmp)) + ")",
         "(allow file-map-executable "
         + " ".join(f"(subpath {_sb(p)})" for p in (*tool, *map(Path, _MAC_SYSTEM_READ[:5])))
         + ")",
@@ -302,6 +314,10 @@ def seatbelt_profile(export: Path, out: Path, tmp: Path, tool: Sequence[Path], f
         + ")",
         "(deny process-exec " + " ".join(f"(literal {_sb(p)})" for p in _MAC_DENY_EXEC) + ")",
         "(deny network* (remote unix-socket) (local unix-socket))",
+        # No hard links at all: a link into out/tmp to a file the check may only read (export, toolchain) would let it
+        # write through the link into the other inode. Explicit, after the allows (last match wins).
+        "(deny file-link)",
+        "(deny file-write* " + " ".join(f"(subpath {_sb(p)})" for p in (export, *tool)) + ")",
     ]
     if forb:
         lines.append("(deny file* " + " ".join(f"(subpath {_sb(p)})" for p in forb) + ")")
@@ -487,6 +503,7 @@ def _execute(backend: str, spec: Spec) -> Result:
     return Result(
         returncode=proc.returncode, timed_out=timed_out, output=b"".join(chunks), truncated=truncated,
         backend=backend, seconds=time.monotonic() - started,
+        tampered=_tampered(_real(spec.out_dir), _real(spec.tmp_dir)),
     )  # fmt: skip
 
 

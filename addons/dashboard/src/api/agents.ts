@@ -45,7 +45,7 @@ export interface AgentPreview {
   model?: string | null
   model_source?: 'chosen' | 'workspace' | 'default' | null
   display_hidden: boolean
-  cwd: { kind: 'workspace' | 'repo' | 'worktree' | null; repo?: string; ticket?: string }
+  cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null
   cwd_path_hidden: boolean
   will_create_worktree: boolean
@@ -134,6 +134,7 @@ export function cwdText(p: AgentPreview): string {
   const { kind, repo, ticket } = p.cwd
   if (kind === 'worktree') return p.will_create_worktree ? 'a new worktree' : `the worktree for ${ticket ?? p.ticket ?? 'the ticket'} in ${repo ?? 'its repository'}`
   if (kind === 'repo') return SHARED_COPY
+  if (kind === 'workdir') return `the work folder of ${ticket ?? p.ticket ?? 'the ticket'}`
   if (kind === 'workspace') return 'the workspace root'
   return 'not shown'
 }

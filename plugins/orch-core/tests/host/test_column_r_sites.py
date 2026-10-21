@@ -64,6 +64,10 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
         2,
         "unreachable (phone.request and phone.cancel are not R ops): refused unless column P",
     ),
+    ("workdirs.py", "serve"): (
+        2,
+        "unreachable (workdir.get and workdir.delete are not R ops): refused unless column P",
+    ),
     ("reads_phone.py", "_person"): (
         4,
         "R as P for phone.requests only (the viewer's own open hints); phone.status is column P only",

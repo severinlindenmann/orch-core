@@ -34,6 +34,8 @@ AGENT_HOURS = (8, 24, 72, 168)
 _PREFIX = re.compile(r"[A-Z][A-Z0-9]{1,7}")
 _ADDON_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
 _PROFILE_KEYS = frozenset({"name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay"})
+#: keys a page may leave out (their value then is the default)
+_OPTIONAL_KEYS = frozenset({"git_init"})
 
 
 class SetupError(Exception):
@@ -62,7 +64,7 @@ def validate_profile(
     the normalised profile. R5 (click + relay) is the caller's: it needs the click availability."""
     if not isinstance(body, dict):
         raise SetupError("invalid.input", "the profile is an object", field="profile")
-    extra = set(body) - _PROFILE_KEYS
+    extra = set(body) - _PROFILE_KEYS - _OPTIONAL_KEYS
     if extra:
         raise SetupError("invalid.input", f"unknown field {sorted(extra)[0][:40]!r}", field="profile")
     missing = _PROFILE_KEYS - set(body)
@@ -96,6 +98,9 @@ def validate_profile(
         raise SetupError("invalid.input", "agent_grant is true or false", field="agent_grant")
     if type(body["relay"]) is not bool:
         raise SetupError("invalid.input", "relay is true or false", field="relay")
+    git_init = body.get("git_init", False)
+    if type(git_init) is not bool:
+        raise SetupError("invalid.input", "git_init is true or false", field="git_init")
     return {
         "name": name,
         "prefix": prefix,
@@ -104,4 +109,5 @@ def validate_profile(
         "agent_hours": hours,
         "agent_grant": body["agent_grant"],
         "relay": body["relay"],
+        "git_init": git_init,
     }

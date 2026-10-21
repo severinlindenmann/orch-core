@@ -213,8 +213,8 @@ def _probe(lay: Layout, backend: str, **kw) -> tuple[sbx.Result, dict]:
 
 @pytest.mark.parametrize("with_forbidden", [True, False], ids=["forbidden-listed", "default-deny-only"])
 def test_probes_all_fail(lay: Layout, backend: str, with_forbidden: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The invariant is "a check reaches nothing outside itself". Network: on macOS Seatbelt denies every socket call, so
-    each network probe fails inside the check. On Linux the boundary is bwrap's private network namespace
+    """The invariant is "a check reaches nothing outside itself". Network: on macOS Seatbelt denies every socket call,
+    so each network probe fails inside the check. On Linux the boundary is bwrap's private network namespace
     (``--unshare-all``): it holds only its own loopback and no route. A UDP ``sendto(127.0.0.1)`` there succeeds (a
     datagram needs no peer) but lands in the check's own namespace, which no host process listens in; that is not
     network access, so on bwrap the in-namespace ``udp`` result is not asserted. What IS asserted on both backends:

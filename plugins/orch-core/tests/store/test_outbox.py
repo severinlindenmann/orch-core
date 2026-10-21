@@ -44,7 +44,7 @@ def entry_files(env: Env) -> list[str]:
 
 
 def workspace_cp(env: Env) -> dict:
-    return json.loads((env.root / ".state" / "checkpoints" / "workspace.json").read_bytes())
+    return json.loads((env.store_dir / ".state" / "checkpoints" / "workspace.json").read_bytes())
 
 
 @pytest.fixture
@@ -244,10 +244,10 @@ def _seen_ns(env: Env) -> set[int]:
     for p in outbox_dir(env).glob("*.json") if outbox_dir(env).is_dir() else []:
         if p.name[0].isdigit():
             ns.add(json.loads(p.read_bytes())["n"])
-    for p in (env.root / ".state" / "pending").glob("*/outbox"):
+    for p in (env.store_dir / ".state" / "pending").glob("*/outbox"):
         ns.add(json.loads(p.read_bytes())["n"])
     for p in (
-        env.root / ".state" / "checkpoints" / "workspace.json",
+        env.store_dir / ".state" / "checkpoints" / "workspace.json",
         env.host_state / "hosts" / WS / "checkpoint.json",
     ):
         if p.exists():
@@ -493,7 +493,7 @@ def test_f4_catchup_refuses_a_ticket_without_its_checkpoint(linked):
     env.log(a, "x")
     b = env.new_ticket()
     env.log(b, "y")  # the last append: only b's checkpoint would be repairable
-    (env.root / ".state" / "checkpoints" / f"ticket-{a}.json").unlink()
+    (env.store_dir / ".state" / "checkpoints" / f"ticket-{a}.json").unlink()
     from tests.store.test_catchup import measure
 
     env.store.close()
@@ -523,7 +523,7 @@ def test_f5_planning_refuses_over_a_conflicting_ticket_checkpoint(linked):
     uid = env.new_ticket()
     from orch.store.checkpoints import sign_object
 
-    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     o = json.loads(path.read_bytes())["o"]
     o["seq"] = 5  # a ticket checkpoint ahead of the append: the post-commit write would call it diverged
     path.write_bytes(canon.cj_checked(sign_object(env.signer.sign, o)) + b"\n")
@@ -551,7 +551,7 @@ def test_f6_the_doctor_names_a_pending_linked_append(linked, monkeypatch):
     with pytest.raises(StoreError) as exc:  # a store without host state names it too, and keeps it for the host
         store_mod.Store.open(env.root, expected_workspace_id=WS, load="lazy")
     assert exc.value.code == "validation.host_state" and uid in exc.value.detail
-    assert list((env.root / ".state" / "pending").glob("*/outbox"))
+    assert list((env.store_dir / ".state" / "pending").glob("*/outbox"))
 
 
 # --- review round 1: relay_link and relay_mark_linked (the link reservation under the store lock) -----------------

@@ -1,12 +1,14 @@
 // Settings > Add-ons (R2-2, real host): every add-on with its plain description and whether it is On. A switch is a
 // signed settings change like the others: it opens the same review and signing step (`addon.grant` to turn on,
 // `addon.disable` to turn off). Nothing is written without a signature. A switch that cannot move says why.
-import { useState } from 'react'
 import { Inline, plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { vLabel } from '@/api/versions'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useState } from 'react'
+import { shareQueries } from '@/api/shares'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
@@ -22,13 +24,33 @@ import { useViewerRole } from './useViewerRole'
 
 const STATE_WORD = { on: 'On', off: 'Off', attention: 'Needs approval again' } as const
 type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing'
+/** Add-ons with settings of their own: they open in place, under their row. */
+const WITH_SETTINGS: readonly string[] = ['publish', 'model-routing']
 const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'model-routing']
+
+/** One plain line: what this add-on needs before it works. Publish reads the saved addresses only while it is on. */
+function NeedsLine({ id, on, ws }: { id: string; on: boolean; ws: string }) {
+  const list = useQuery({ ...shareQueries.list(ws), enabled: id === 'publish' && on })
+  let text: string
+  if (id === 'publish') {
+    if (!on) text = 'Needs a publish server address before it can share. You set it up right after turning it on.'
+    else if (!list.data) text = 'Checking what it needs…'
+    else if (!list.data.available) text = 'The host does not say whether a server is set up.'
+    else if (!list.data.configured) text = 'Needs a publish server address. No server is set up yet, so nothing can be shared.'
+    else if (!list.data.live) text = 'Server set up, but it is not answering right now.'
+    else text = 'Ready: a server is set up and answering.'
+  } else {
+    text = 'Needs nothing: every agent uses its own default model until you customize them.'
+  }
+  return <p data-testid={`addon-${id}-needs`} className="text-[12px] text-text-muted">{text}</p>
+}
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const [setup, setSetup] = useState<{ name: 'publish' | 'model-routing'; enabling: boolean } | null>(null)
   const data = useQuery(queries.addOns(workspace.id))
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   const { ask, dialog } = useSettingsHandoff(workspace.id, () => {
     void qc.invalidateQueries({ queryKey: ['add-ons', workspace.id] })
     void qc.invalidateQueries({ queryKey: ['workspaces'] })
@@ -79,10 +101,26 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
               const disabled = fixed || !owner || row.blocked !== null
               const on = row.state === 'on'
               return (
-                <li key={row.id} data-testid={`addon-${row.id}`} className="flex items-start gap-3 py-3 text-[13px]">
+                <li key={row.id} data-testid={`addon-${row.id}`} className="py-3 text-[13px]">
+                  <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium"><Inline>{row.title}</Inline></span>
+                      {on && WITH_SETTINGS.includes(row.id) ? (
+                        <button
+                          type="button"
+                          aria-expanded={!!open[row.id]}
+                          aria-controls={`addon-${row.id}-panel`}
+                          aria-label={`${row.title} settings`}
+                          data-testid={`addon-${row.id}-expand`}
+                          className="-ml-1 inline-flex items-center gap-1 rounded px-1 font-medium hover:bg-surface-2 focus-visible:outline focus-visible:outline-2"
+                          onClick={() => setOpen((o) => ({ ...o, [row.id]: !o[row.id] }))}
+                        >
+                          {open[row.id] ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
+                          <Inline>{row.title}</Inline>
+                        </button>
+                      ) : (
+                        <span className="font-medium"><Inline>{row.title}</Inline></span>
+                      )}
                       {row.version && <span data-testid={`addon-${row.id}-version`} className="font-mono text-[11px] text-text-faint">{vLabel(row.version)}</span>}
                       <span
                         data-testid={`addon-${row.id}-state`}
@@ -93,6 +131,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                     </div>
                     <p className="text-text-muted"><Inline>{row.desc}</Inline></p>
                     {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
+                    {WITH_SETTINGS.includes(row.id) && !fixed && <NeedsLine id={row.id} on={on} ws={workspace.id} />}
                     {row.state === 'attention' && !why && (
                       <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                     )}
@@ -109,14 +148,19 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                       onCheckedChange={() => flip(row)}
                     />
                   )}
+                  </div>
+                  {on && open[row.id] && (
+                    <div id={`addon-${row.id}-panel`}>
+                      {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
+                      {row.id === 'model-routing' && <ModelRouting workspace={workspace} owner={owner} embedded />}
+                    </div>
+                  )}
                 </li>
               )
             })}
           </ul>
         )}
       </Section>
-      {data.data?.add_ons.some((r) => r.id === 'publish' && r.state === 'on' && r.set_up !== false) && <PublishServer workspace={workspace} owner={owner} />}
-      {data.data?.add_ons.some((r) => r.id === 'model-routing' && r.state === 'on' && r.set_up !== false) && <ModelRouting workspace={workspace} owner={owner} />}
       {setup && <AddonSetup ws={workspace.id} name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
       {dialog}
     </div>

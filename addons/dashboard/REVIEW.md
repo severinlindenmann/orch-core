@@ -419,8 +419,8 @@ chmod 700 "$ORCH_STATE_DIR"
 touch "$ORCH_STATE_DIR/.orch-dev" "$ORCH_WORKSPACE/.orch-dev"
 
 # From the checkout root, install/grant the dashboard package in the disposable workspace.
-mkdir -p "$ORCH_WORKSPACE/addons/dashboard"
-cp addons/dashboard/orch-addon.json "$ORCH_WORKSPACE/addons/dashboard/orch-addon.json"
+mkdir -p "$ORCH_WORKSPACE/.orch/addons/dashboard"
+cp addons/dashboard/orch-addon.json "$ORCH_WORKSPACE/.orch/addons/dashboard/orch-addon.json"
 cd addons/dashboard/server
 uv sync --locked
 uv run orch addon grant dashboard

@@ -128,7 +128,6 @@ The old code is reference only:
 | ID | Feature |
 |---|---|
 | C03s | Sprints |
-| C33 | `orch migrate` |
 | D18 | Design gallery |
 | B07 | Switch-only addons (they become plain settings) |
 | B03 | databricks addon |

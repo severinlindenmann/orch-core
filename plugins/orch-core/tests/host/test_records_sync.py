@@ -74,6 +74,7 @@ class Env:
     def __init__(self, w, tmp_path: Path, home: Path) -> None:
         self.w = w
         self.root = Path(w.lab.root)
+        self.store = self.root / ".orch"  # the records repository is the store
         self.home = home
         self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "XDG_CONFIG_HOME": str(self.home / ".config")}
         self.tips = rtool.ValidatedTips(tmp_path / "state" / "records.json")
@@ -94,10 +95,10 @@ class Env:
         return f"file://{path}"
 
     def repo(self, remote: str | None = "origin"):
-        return open_repo(self.root, env=self.env, protocols=WS_FILES, remote=remote)
+        return open_repo(self.store, env=self.env, protocols=WS_FILES, remote=remote)
 
     def init(self) -> None:
-        rtool.init_repo(self.root, env=self.env)
+        rtool.init_repo(self.store, env=self.env)
 
     def commit(self, **kw):
         return rtool.commit(self.repo(), self.link, self.w.wid, **kw)
@@ -142,43 +143,43 @@ def test_commit_is_exactly_the_manifest_unsigned_with_the_trailer(r):
     r.init()
     res = r.commit()
     assert res["changed"] and res["index"] == "refreshed"
-    paths = tree_paths(r.root, "HEAD")
+    paths = tree_paths(r.store, "HEAD")
     snap = r.link("records.snapshot", {})
     assert sorted(paths) == sorted(f["path"] for f in snap["files"])
     assert not any(p.startswith(".state") for p in paths)
-    body = git(r.root, "cat-file", "commit", "HEAD")
+    body = git(r.store, "cat-file", "commit", "HEAD")
     assert f"Orch-Records: {r.w.wid}" in body and f"Orch-Manifest: {res['manifest']}" in body
     assert "gpgsig" not in body and "author orch records <records@orch.invalid>" in body
-    assert git(r.root, "status", "--porcelain") == ""  # the index was HEAD's: refreshed, nothing staged or untracked
+    assert git(r.store, "status", "--porcelain") == ""  # the index was HEAD's: refreshed, nothing staged or untracked
     again = r.commit()
     assert again["changed"] is False and again["commit"] == res["commit"]
     r.w.ticket("two")
     second = r.commit()
-    assert second["changed"] and git(r.root, "rev-parse", "HEAD^") == res["commit"]
+    assert second["changed"] and git(r.store, "rev-parse", "HEAD^") == res["commit"]
 
 
 def test_the_real_index_is_untouched_when_it_differs(r):
     r.init()
     r.commit()
     staged = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"staged by the person\n", capture_output=True,
+        ["git", "hash-object", "-w", "--stdin"], cwd=r.store, input=b"staged by the person\n", capture_output=True,
         env=pinned_env(), check=True,
     ).stdout.decode().strip()  # fmt: skip
-    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
-    index = r.root / ".git" / "index"
+    git(r.store, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
+    index = r.store / ".git" / "index"
     before = index.read_bytes()
     r.w.ticket("one")
     res = r.commit()
     assert res["changed"] and res["index"] == "differs"
     assert index.read_bytes() == before  # never written, not even a cache-tree
-    assert "notes.txt" not in tree_paths(r.root, "HEAD")
+    assert "notes.txt" not in tree_paths(r.store, "HEAD")
 
 
 def test_a_tree_with_an_extra_file_is_refused(r):
     r.init()
     repo = r.repo(None)
     manifest = rtool.fetch_manifest(r.link, r.w.wid)
-    blobs = rtool.read_manifest_bytes(r.root, manifest)
+    blobs = rtool.read_manifest_bytes(r.store, manifest)
     ids = rtool._store_blobs(repo, blobs)
     tree = rtool.build_tree(repo, manifest, ids)
     with rtool._temp_index() as index:  # the same entries plus one more
@@ -193,12 +194,12 @@ def test_a_tree_with_an_extra_file_is_refused(r):
 
 def test_commit_never_carries_an_old_non_record_file_forward(r):
     r.init()
-    (r.root / ".state" / "secret").write_text("private\n")
-    git(r.root, "add", "-f", ".state/secret", "config.json")
-    git(r.root, "commit", "-qm", "by hand")
+    (r.store / ".state" / "secret").write_text("private\n")
+    git(r.store, "add", "-f", ".state/secret", "config.json")
+    git(r.store, "commit", "-qm", "by hand")
     res = r.commit()
     assert res["changed"]
-    assert ".state/secret" not in tree_paths(r.root, "HEAD")  # the index was built from empty
+    assert ".state/secret" not in tree_paths(r.store, "HEAD")  # the index was built from empty
 
 
 def test_a_changed_snapshot_is_retried_once_then_refused(r, monkeypatch):
@@ -212,8 +213,8 @@ def test_a_changed_snapshot_is_retried_once_then_refused(r, monkeypatch):
 
 def test_a_replaced_file_is_detected_by_its_hash(r):
     manifest = rtool.fetch_manifest(r.link, r.w.wid)
-    (r.root / "config.json").write_bytes(b"x" * (r.root / "config.json").stat().st_size)
-    assert rtool.read_manifest_bytes(r.root, manifest) is None
+    (r.store / "config.json").write_bytes(b"x" * (r.store / "config.json").stat().st_size)
+    assert rtool.read_manifest_bytes(r.store, manifest) is None
 
 
 def test_mixed_pages_or_a_foreign_manifest_are_refused(r):
@@ -232,19 +233,19 @@ def test_mixed_pages_or_a_foreign_manifest_are_refused(r):
 
 def test_not_a_dedicated_repo_is_refused(r, tmp_path):
     with pytest.raises(RecordsError) as e:
-        open_repo(r.root, env=r.env)
+        open_repo(r.store, env=r.env)
     assert e.value.code == "records.not_dedicated"
 
 
 def test_merge_in_progress_and_detached_head_are_refused(r):
     r.init()
     r.commit()
-    (r.root / ".git" / "MERGE_HEAD").write_text(git(r.root, "rev-parse", "HEAD") + "\n")
+    (r.store / ".git" / "MERGE_HEAD").write_text(git(r.store, "rev-parse", "HEAD") + "\n")
     with pytest.raises(RecordsError) as e:
         r.commit()
     assert e.value.code == "records.git_state"
-    os.unlink(r.root / ".git" / "MERGE_HEAD")
-    git(r.root, "checkout", "-q", "--detach")
+    os.unlink(r.store / ".git" / "MERGE_HEAD")
+    git(r.store, "checkout", "-q", "--detach")
     with pytest.raises(RecordsError) as e:
         r.commit()
     assert e.value.code == "records.git_state"
@@ -265,8 +266,8 @@ def test_merge_in_progress_and_detached_head_are_refused(r):
 )
 def test_unsafe_local_config_is_refused_and_named(r, key, value):
     r.init()
-    git(r.root, "remote", "add", "origin", r.bare())
-    git(r.root, "config", "--local", key, value)
+    git(r.store, "remote", "add", "origin", r.bare())
+    git(r.store, "config", "--local", key, value)
     with pytest.raises(RecordsError) as e:
         r.repo()
     assert e.value.code == "records.unsafe_config" and key.split(".")[0].lower() in e.value.message.lower()
@@ -275,20 +276,20 @@ def test_unsafe_local_config_is_refused_and_named(r, key, value):
 def test_two_push_urls_and_disallowed_transports_are_refused(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
-    git(r.root, "remote", "set-url", "--add", "--push", "origin", r.bare("a"))
-    git(r.root, "remote", "set-url", "--add", "--push", "origin", r.bare("b"))
+    git(r.store, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "set-url", "--add", "--push", "origin", r.bare("a"))
+    git(r.store, "remote", "set-url", "--add", "--push", "origin", r.bare("b"))
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.remote_invalid"
-    git(r.root, "remote", "remove", "origin")
-    git(r.root, "remote", "add", "origin", "ext::sh -c touch% /tmp/pwned")
+    git(r.store, "remote", "remove", "origin")
+    git(r.store, "remote", "add", "origin", "ext::sh -c touch% /tmp/pwned")
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.remote_invalid"
-    git(r.root, "remote", "set-url", "origin", r.bare("c"))  # file:// is not allowed outside tests
+    git(r.store, "remote", "set-url", "origin", r.bare("c"))  # file:// is not allowed outside tests
     with pytest.raises(RecordsError) as e:
-        rtool.push(open_repo(r.root, env=r.env, remote="origin"), r.link, r.w.wid, r.tips, initial=True)
+        rtool.push(open_repo(r.store, env=r.env, remote="origin"), r.link, r.w.wid, r.tips, initial=True)
     assert e.value.code == "records.remote_invalid"
 
 
@@ -297,21 +298,21 @@ def test_two_push_urls_and_disallowed_transports_are_refused(r):
 
 def test_a_historical_state_file_blocks_the_push_and_a_fresh_history_unblocks(r):
     r.init()
-    (r.root / ".state" / "secret").write_text("private\n")
-    git(r.root, "add", "-f", ".state/secret")
-    git(r.root, "commit", "-qm", records_message(r.w.wid))  # even with the exact records message
-    git(r.root, "rm", "-q", "--cached", ".state/secret")
-    git(r.root, "commit", "-qm", records_message(r.w.wid, 2))
+    (r.store / ".state" / "secret").write_text("private\n")
+    git(r.store, "add", "-f", ".state/secret")
+    git(r.store, "commit", "-qm", records_message(r.w.wid))  # even with the exact records message
+    git(r.store, "rm", "-q", "--cached", ".state/secret")
+    git(r.store, "commit", "-qm", records_message(r.w.wid, 2))
     r.commit()  # HEAD's tree is clean, the history is not
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.history_invalid" and ".state/secret" in e.value.message
     assert not any(op == "records.export_check" for op, _ in r.calls)
     assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""  # nothing pushed
     res = r.commit(fresh=True)
-    assert res["changed"] and git(r.root, "rev-list", "--count", "HEAD") == "1"
+    assert res["changed"] and git(r.store, "rev-list", "--count", "HEAD") == "1"
     pushed = r.push(initial=True)
     assert pushed["pushed"] and pushed["checked"] == 1
 
@@ -319,8 +320,8 @@ def test_a_historical_state_file_blocks_the_push_and_a_fresh_history_unblocks(r)
 def test_a_foreign_commit_in_history_blocks_the_push(r):
     r.init()
     r.commit()
-    git(r.root, "commit", "-q", "--allow-empty", "-m", "a note by hand")
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "commit", "-q", "--allow-empty", "-m", "a note by hand")
+    git(r.store, "remote", "add", "origin", r.bare())
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.not_records_only"
@@ -329,8 +330,8 @@ def test_a_foreign_commit_in_history_blocks_the_push(r):
 def test_grafts_and_shallow_are_refused(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
-    (r.root / ".git" / "shallow").write_text(git(r.root, "rev-parse", "HEAD") + "\n")
+    git(r.store, "remote", "add", "origin", r.bare())
+    (r.store / ".git" / "shallow").write_text(git(r.store, "rev-parse", "HEAD") + "\n")
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.history_invalid"
@@ -344,7 +345,7 @@ def test_push_initial_then_fast_forward_and_the_export_check_binds_s_url_ref(r):
     r.init()
     first = r.commit()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     with pytest.raises(RecordsError) as e:
         r.push()
     assert e.value.code == "records.push_rejected" and "--initial" in (e.value.hint or "")
@@ -370,7 +371,7 @@ def test_a_non_fast_forward_is_never_pushed(r):
     r.commit()
     url = r.bare()
     bare = url[len("file://") :]
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     r.push(initial=True)
     other = r.tmp / "other"
     git(r.tmp, "clone", "-q", url, str(other))
@@ -391,7 +392,7 @@ def test_the_lease_guards_the_race_without_authorizing_a_rewind(r, monkeypatch):
     first = r.commit()
     url = r.bare()
     bare = url[len("file://") :]
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     r.push(initial=True)
     r.w.ticket("one")
     second = r.commit()
@@ -408,11 +409,11 @@ def test_the_lease_guards_the_race_without_authorizing_a_rewind(r, monkeypatch):
 def test_a_local_config_change_during_the_run_is_refused(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
 
     def link(op, args):
         if op == "records.export_check":
-            git(r.root, "config", "--local", "remote.origin.prune", "true")
+            git(r.store, "config", "--local", "remote.origin.prune", "true")
         return r.link(op, args)
 
     with pytest.raises(RecordsError) as e:
@@ -432,7 +433,7 @@ def test_push_with_convenience_needs_the_mark_for_the_exact_url(r):
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     _convenience(r)
     code, out = r.cli("push", "--initial")
     assert code == 3, out
@@ -443,7 +444,7 @@ def test_push_with_convenience_needs_the_mark_for_the_exact_url(r):
     code, out = r.cli("push", "--initial")
     assert code == 0 and out["pushed"] and out["detail"]["policy"] == "private_remote"
     # the destination changes: the remote URL
-    git(r.root, "remote", "set-url", "origin", url_b)
+    git(r.store, "remote", "set-url", "origin", url_b)
     code, out = r.cli("push", "--initial")
     assert code == 3 and out["code"] == "sign.convenience_readers"
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
@@ -454,17 +455,17 @@ def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     _convenience(r)
     assert r.cli("remote-private", "--yes")[0] == 0
     assert r.cli("push", "--initial")[1]["pushed"]
     r.w.ticket("one")
     r.commit()
     # a pushurl now sends the push elsewhere
-    git(r.root, "config", "--local", "remote.origin.pushurl", url_b)
+    git(r.store, "config", "--local", "remote.origin.pushurl", url_b)
     code, out = r.cli("push", "--initial")
     assert out["code"] == "sign.convenience_readers"
-    git(r.root, "config", "--local", "--unset", "remote.origin.pushurl")
+    git(r.store, "config", "--local", "--unset", "remote.origin.pushurl")
     # a global insteadOf rewrite (the person's own config) redirects the marked URL
     with open(r.home / ".gitconfig", "a") as fh:
         fh.write(f'[url "{url_b}"]\n\tpushInsteadOf = {url_a}\n')
@@ -484,15 +485,15 @@ def _forge_convenience_commit(
     """A records commit whose ``path`` carries ``line`` beyond what the store has (for an event log: a log file outside
     the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
     env = {**pinned_env(), "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}
-    have = b"" if replace else git(r.root, "show", f"HEAD:{path}", check=False).encode()
+    have = b"" if replace else git(r.store, "show", f"HEAD:{path}", check=False).encode()
     data = (have + b"\n" if have else b"") + line.encode() + b"\n"
-    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.store, input=data, capture_output=True,
                           env=env, check=True).stdout.decode().strip()  # fmt: skip
-    git(r.root, "read-tree", "HEAD", env=env)
-    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=env)
-    tree = git(r.root, "write-tree", env=env)
-    forged = git(r.root, "commit-tree", tree, "-p", "HEAD", "-m", records_message(r.w.wid, 9))
-    git(r.root, "update-ref", "refs/heads/main", forged)
+    git(r.store, "read-tree", "HEAD", env=env)
+    git(r.store, "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=env)
+    tree = git(r.store, "write-tree", env=env)
+    forged = git(r.store, "commit-tree", tree, "-p", "HEAD", "-m", records_message(r.w.wid, 9))
+    git(r.store, "update-ref", "refs/heads/main", forged)
     return forged
 
 
@@ -506,7 +507,7 @@ def test_a_convenience_event_in_a_pushed_log_outside_the_merged_view_is_refused(
     res = r.commit()  # the store's real files on top: HEAD's tree is clean, the history is not
     assert res["changed"]
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
 
     def no_network(*_a, **_k):
         raise AssertionError("a network call before the export check")
@@ -532,7 +533,7 @@ def test_restore_then_push_is_refused(r):
 
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     ensure_convenience_mark(r.w.lab.state, r.w.wid, os.getuid())
     code, out = r.cli("push", "--initial")
     assert code == 3 and out["code"] == "sign.convenience_readers"
@@ -542,7 +543,7 @@ def test_a_scan_that_fails_pushes_nothing(r, monkeypatch):
     r.init()
     r.commit()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
 
     def broken(*_a, **_k):
         raise RecordsError("records.git_failed", "git cat-file failed")
@@ -558,7 +559,7 @@ def test_a_scan_that_fails_pushes_nothing(r, monkeypatch):
 def test_a_clean_tip_is_remembered_and_the_next_scan_covers_only_new_objects(r, monkeypatch):
     r.init()
     first = r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     assert r.push(initial=True)["pushed"]
     assert r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION) == first["commit"]
     assert r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION + 1) is None  # other rules: a full rescan
@@ -600,7 +601,7 @@ def test_an_agents_body_or_artifact_quoting_a_convenience_line_is_never_counted(
     _forge_convenience_commit(r, path.format(uid=uid), '  "auth": "convenience",')
     _forge_convenience_commit(r, path.format(uid=uid), _CONV_LINE)
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     res = r.push(initial=True)
     assert res["pushed"] and res["policy"] == "none"
     assert [a["history_convenience"] for op, a in r.calls if op == "records.export_check"] == [False]
@@ -614,7 +615,7 @@ def test_an_escaped_convenience_event_in_a_pushed_log_is_refused(r, line):
     r.commit()
     _forge_convenience_commit(r, "events/workspace.jsonl", line)
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "sign.convenience_readers"
@@ -627,7 +628,7 @@ def test_a_convenience_event_in_a_tickets_own_log_is_refused(r):
     r.commit()
     _forge_convenience_commit(r, f"tickets/{uid}/events.jsonl")
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "sign.convenience_readers"
@@ -641,7 +642,7 @@ def test_an_old_blob_readded_at_an_event_log_path_after_a_clean_tip_is_refused(r
     r.init()
     r.commit()
     _forge_convenience_commit(r, f"tickets/{uid}/body.md", _CONV_LINE, replace=True)
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     clean = r.push(initial=True)
     assert clean["pushed"] and r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION) == clean["commit"]
     _forge_convenience_commit(r, "events/workspace.jsonl", _CONV_LINE, replace=True)  # the same blob, moved
@@ -656,8 +657,8 @@ def test_an_old_blob_readded_at_an_event_log_path_after_a_clean_tip_is_refused(r
 def test_a_partial_clone_records_repo_is_refused(r, key):
     """Opus #454 I5: a backstop for git older than 2.45, where GIT_NO_LAZY_FETCH is ignored."""
     r.init()
-    git(r.root, "remote", "add", "origin", r.bare())
-    git(r.root, "config", "--local", key, "true" if "promisor" in key or "partial" in key.lower() else "x")
+    git(r.store, "remote", "add", "origin", r.bare())
+    git(r.store, "config", "--local", key, "true" if "promisor" in key or "partial" in key.lower() else "x")
     with pytest.raises(RecordsError) as e:
         r.repo()
     assert e.value.code == "records.unsafe_config" and key.split(".")[-1].lower() in e.value.message.lower()
@@ -671,7 +672,7 @@ def test_the_records_git_never_lazy_fetches(r):
 def test_without_convenience_push_needs_no_mark(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     code, out = r.cli("push", "--initial")
     assert code == 0 and out["pushed"] and out["detail"]["policy"] == "none"
 
@@ -725,7 +726,7 @@ def test_finding1_caller_git_config_env_never_reaches_git(r):
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     evil = {
         **r.env,
         "GIT_CONFIG_COUNT": "1",
@@ -735,7 +736,7 @@ def test_finding1_caller_git_config_env_never_reaches_git(r):
         "GIT_SSH_COMMAND": "touch /nonexistent/pwned",
         "GIT_DIR": str(r.tmp / "elsewhere"),
     }
-    repo = open_repo(r.root, env=evil, protocols=WS_FILES, remote="origin")
+    repo = open_repo(r.store, env=evil, protocols=WS_FILES, remote="origin")
     res = rtool.push(repo, r.link, r.w.wid, r.tips, initial=True)
     assert res["url"] == url_a
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
@@ -747,7 +748,7 @@ def test_finding1_global_config_is_frozen_between_check_and_push(r):
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     repo = r.repo()
 
     def link(op, args):
@@ -807,7 +808,7 @@ def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
     config, a call in the transport repo only the authentication and transport subset, nothing else (keys that name
     a program or change a read included, whether or not the tool's operations would run them today)."""
     r.init()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     _hostile_gitconfig(r)
     with open(r.home / ".gitconfig", "a") as fh:
         fh.write(
@@ -850,12 +851,12 @@ def test_541_the_repos_own_commit_encoding_never_changes_a_records_commit(r):
     r.init()
     first = r.commit()["commit"]
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
-    git(r.root, "config", "--local", "i18n.commitEncoding", "ISO-8859-1")
+    git(r.store, "remote", "add", "origin", url)
+    git(r.store, "config", "--local", "i18n.commitEncoding", "ISO-8859-1")
     r.push(initial=True)
     r.w.ticket("one")
     second = r.commit()["commit"]
-    assert "encoding " not in git(r.root, "cat-file", "commit", second)
+    assert "encoding " not in git(r.store, "cat-file", "commit", second)
     assert r.push()["from"] == first
 
 
@@ -863,8 +864,8 @@ def test_541_init_copies_no_template_at_all(r):
     """``records init`` runs ``git init --template=`` like the transport repo: no sample hooks, nothing of a template
     directory; the tool writes ``info/exclude`` itself."""
     r.init()
-    assert not (r.root / ".git" / "hooks").exists()
-    assert (r.root / ".git" / "info" / "exclude").read_text().startswith("# orch records")
+    assert not (r.store / ".git" / "hooks").exists()
+    assert (r.store / ".git" / "info" / "exclude").read_text().startswith("# orch records")
 
 
 def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit_nor_the_ff_check(r):
@@ -872,7 +873,7 @@ def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit
     first = r.commit()["commit"]  # R
     url = r.bare()
     bare = url[len("file://") :]
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     r.push(initial=True)
     marker = _hostile_gitconfig(r)
     # positive control: plain git under the same HOME runs every vector for the records tool's own operations
@@ -892,14 +893,14 @@ def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit
     # the records tool under that config: nothing runs, its commits and the fast-forward check are unchanged
     r.w.ticket("one")
     t = r.commit()["commit"]  # T, child of R
-    assert "encoding " not in git(r.root, "cat-file", "commit", t, env=_QUIET)
+    assert "encoding " not in git(r.store, "cat-file", "commit", t, env=_QUIET)
     assert r.push()["from"] == first  # a fast-forward is still one
     assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
-    git(r.root, "update-ref", "refs/heads/main", first, t, env=_QUIET)  # back to R, then a sibling S of T
-    git(r.root, "read-tree", first, env=_QUIET)
+    git(r.store, "update-ref", "refs/heads/main", first, t, env=_QUIET)  # back to R, then a sibling S of T
+    git(r.store, "read-tree", first, env=_QUIET)
     r.w.ticket("two")
     s = r.commit()["commit"]
-    assert git(r.root, "rev-parse", f"{s}^", env=_QUIET) == first
+    assert git(r.store, "rev-parse", f"{s}^", env=_QUIET) == first
     with pytest.raises(RecordsError) as e:
         r.push()
     assert e.value.code == "records.push_rejected" and "never a non-fast-forward" in e.value.message
@@ -919,15 +920,15 @@ def test_541_init_reads_no_template_or_other_config_of_the_person(r):
     with open(r.home / ".gitconfig", "a") as fh:
         fh.write(f"[init]\n\ttemplateDir = {tpl}\n")
     r.init()
-    assert not (r.root / ".git" / "f541-from-template").exists()
-    assert "f541" not in (r.root / ".git" / "config").read_text()
+    assert not (r.store / ".git" / "f541-from-template").exists()
+    assert "f541" not in (r.store / ".git" / "config").read_text()
     r.commit()
 
 
 def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", "https://me:s3cret-token@example.org/r.git")
+    git(r.store, "remote", "add", "origin", "https://me:s3cret-token@example.org/r.git")
     code, out = r.cli("push", "--initial")
     assert out["code"] == "records.remote_invalid"
     assert "s3cret" not in json.dumps(out)
@@ -946,7 +947,7 @@ def test_finding2_git_errors_are_redacted():
 def test_finding3_a_symlinked_record_root_path_is_refused(r, tmp_path):
     r.init()
     link_path = tmp_path / "ws-link"
-    os.symlink(r.root, link_path)
+    os.symlink(r.store, link_path)
     with pytest.raises(RecordsError) as e:
         open_repo(link_path, env=r.env)
     assert e.value.code == "records.unsafe_tree"
@@ -957,7 +958,7 @@ def test_finding3_the_real_index_is_never_written_through_a_symlink(r, tmp_path)
     r.commit()
     target = tmp_path / "victim"
     target.write_bytes(b"do not touch\n")
-    index = r.root / ".git" / "index"
+    index = r.store / ".git" / "index"
     os.unlink(index)
     os.symlink(target, index)
     r.w.ticket("one")
@@ -972,19 +973,19 @@ def test_finding3_a_planted_index_lock_symlink_is_never_followed(r, tmp_path):
     r.commit()
     target = tmp_path / "victim"
     target.write_bytes(b"do not touch\n")
-    os.symlink(target, r.root / ".git" / "index.lock")
+    os.symlink(target, r.store / ".git" / "index.lock")
     r.w.ticket("one")
     res = r.commit()
     assert res["changed"] and res["index"] == "differs"
     assert target.read_bytes() == b"do not touch\n"
-    assert os.path.islink(r.root / ".git" / "index.lock")
+    assert os.path.islink(r.store / ".git" / "index.lock")
 
 
 def test_finding3_init_never_writes_exclude_through_a_symlink(r, tmp_path):
     r.init()
     target = tmp_path / "victim"
     target.write_bytes(b"do not touch\n")
-    exclude = r.root / ".git" / "info" / "exclude"
+    exclude = r.store / ".git" / "info" / "exclude"
     os.unlink(exclude)
     os.symlink(target, exclude)
     with pytest.raises(RecordsError):
@@ -1016,7 +1017,7 @@ def test_finding4_file_count_and_gitfile_reads_are_bounded(r, w, monkeypatch, tm
 def test_finding5_a_token_bearing_url_appears_nowhere(r, url):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     _convenience(r)
     outputs = [r.cli("push", "--initial")[1], r.cli("remote-private", "--yes")[1]]
     for out in outputs:
@@ -1036,7 +1037,7 @@ def test_finding5_a_token_bearing_url_appears_nowhere(r, url):
             for name in files:
                 with contextlib.suppress(OSError):
                     blob += open(os.path.join(dirpath, name), "rb").read().decode(errors="replace")
-    blob += git(r.root, "log", "--all", "--format=%B")
+    blob += git(r.store, "log", "--all", "--format=%B")
     assert "TOKEN1234567890" not in blob
 
 
@@ -1056,10 +1057,10 @@ def test_opus1_a_remote_named_after_the_marked_url_never_redirects_the_push(r):
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     _convenience(r)
     assert r.cli("remote-private", "--yes")[0] == 0
-    git(r.root, "config", "--local", f"remote.{url_a}.pushurl", url_b)
+    git(r.store, "config", "--local", f"remote.{url_a}.pushurl", url_b)
     code, out = r.cli("push", "--initial")
     assert code == 3 and out["code"] == "records.unsafe_config"
     for url in (url_a, url_b):
@@ -1072,7 +1073,7 @@ def test_opus1_a_global_remote_entry_for_the_url_never_reaches_the_network_calls
     r.init()
     r.commit()
     url_a, url_b = r.bare("a"), r.bare("b")
-    git(r.root, "remote", "add", "origin", url_a)
+    git(r.store, "remote", "add", "origin", url_a)
     _convenience(r)
     assert r.cli("remote-private", "--yes")[0] == 0
     with open(r.home / ".gitconfig", "a") as fh:
@@ -1085,8 +1086,8 @@ def test_opus1_a_global_remote_entry_for_the_url_never_reaches_the_network_calls
 
 def test_opus1_any_other_remote_section_in_the_repo_config_is_refused(r):
     r.init()
-    git(r.root, "remote", "add", "origin", r.bare())
-    git(r.root, "remote", "add", "backup", r.bare("backup"))
+    git(r.store, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "backup", r.bare("backup"))
     with pytest.raises(RecordsError) as e:
         r.repo("origin")
     assert e.value.code == "records.unsafe_config" and "remote.backup" in e.value.message
@@ -1127,20 +1128,20 @@ def test_opus2_a_forged_commit_graph_never_lets_a_non_fast_forward_through(r):
     root_commit = r.commit()["commit"]  # R
     url = r.bare()
     bare = url[len("file://") :]
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     r.push(initial=True)
     r.w.ticket("one")
     t = r.commit()["commit"]  # T, child of R
     r.push()
-    git(r.root, "update-ref", "refs/heads/main", root_commit, t)  # back to R, then a sibling S of T
-    git(r.root, "read-tree", root_commit)
+    git(r.store, "update-ref", "refs/heads/main", root_commit, t)  # back to R, then a sibling S of T
+    git(r.store, "read-tree", root_commit)
     r.w.ticket("two")
     s = r.commit()["commit"]
-    assert git(r.root, "rev-parse", f"{s}^") == root_commit
-    _forge_commit_graph(r.root, s, t)
+    assert git(r.store, "rev-parse", f"{s}^") == root_commit
+    _forge_commit_graph(r.store, s, t)
     # the forgery works on plain git: with the graph, T looks like an ancestor of S
     plain = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", t, s], cwd=r.root, capture_output=True, check=False,
+        ["git", "merge-base", "--is-ancestor", t, s], cwd=r.store, capture_output=True, check=False,
         env=pinned_env(),
     )  # fmt: skip
     assert plain.returncode == 0
@@ -1153,14 +1154,14 @@ def test_opus2_a_forged_commit_graph_never_lets_a_non_fast_forward_through(r):
 def test_opus5_extra_headers_or_another_message_are_not_records_commits(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", r.bare())
-    git(r.root, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty", "-m",
+    git(r.store, "remote", "add", "origin", r.bare())
+    git(r.store, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty", "-m",
         records_message(r.w.wid, 5))  # fmt: skip
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.not_records_only" and "headers" in e.value.message
-    git(r.root, "reset", "-q", "--soft", "HEAD^")
-    git(r.root, "commit", "-q", "--allow-empty", "-m", records_message(r.w.wid, 5) + "\n\nexported note")
+    git(r.store, "reset", "-q", "--soft", "HEAD^")
+    git(r.store, "commit", "-q", "--allow-empty", "-m", records_message(r.w.wid, 5) + "\n\nexported note")
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "records.not_records_only"
@@ -1169,7 +1170,7 @@ def test_opus5_extra_headers_or_another_message_are_not_records_commits(r):
 def test_opus6_a_push_url_with_a_query_or_fragment_is_refused(r):
     r.init()
     r.commit()
-    git(r.root, "remote", "add", "origin", "https://example.org/r.git?token=SECRET123")
+    git(r.store, "remote", "add", "origin", "https://example.org/r.git?token=SECRET123")
     code, out = r.cli("push", "--initial")
     assert out["code"] == "records.remote_invalid" and "SECRET123" not in json.dumps(out)
 

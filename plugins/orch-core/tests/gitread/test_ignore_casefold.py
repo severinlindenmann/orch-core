@@ -309,12 +309,14 @@ def test_the_matcher_agrees_with_git_check_ignore_on_random_patterns(tmp_path, i
 
 
 def test_a_class_with_a_casefold_keeps_the_linear_compile():
-    """M2 stays linear with folding: 1 MiB of class members compile in well under a second."""
-    import time
+    """M2 stays linear with folding: the CPU time of the compile grows in step with the class (measured in CPU time,
+    as a ratio over 1x/2x/4x, so machine load does not matter and a quadratic compile still fails)."""
+    from .conftest import assert_linear
 
-    started = time.monotonic()
-    assert wildmatch.compile_glob(b"[" + b"aB" * (1 << 19) + b"]", None, True) is not None
-    assert time.monotonic() - started < 2
+    def compile_class(n):
+        assert wildmatch.compile_glob(b"[" + b"aB" * (n << 17) + b"]", None, True) is not None
+
+    assert_linear(compile_class, sizes=(1, 2, 4))
 
 
 # -- Opus delta L1: NFD names under core.precomposeunicode

@@ -54,13 +54,13 @@ def test_a_200_mb_line_without_a_newline_and_a_huge_pending_manifest(pair):
     with open(p, "ab") as f:
         for _ in range(200):
             f.write(b"y" * (1 << 20))
-    pend = env.root / ".state" / "pending" / "X"
+    pend = env.store_dir / ".state" / "pending" / "X"
     pend.mkdir(parents=True)
     with open(pend / "manifest.json", "wb") as f:
         for _ in range(50):
             f.write(b"z" * (1 << 20))
     for name in ("applied",):
-        with open(env.root / ".state" / name, "wb") as f:
+        with open(env.store_dir / ".state" / name, "wb") as f:
             f.write(b"[" * 3_000_000)
     s = env.open(load="all")
     assert not pend.exists()
@@ -97,15 +97,15 @@ def test_nested_json_in_state_files_is_just_unreadable(pair):
     env, a, b = pair
     deep = b"[" * 100_000
     for name in ("applied",):
-        (env.root / ".state" / name).write_bytes(deep)
-    (env.root / "config.json").write_bytes(deep)
-    (env.root / "keys.jsonl").write_bytes(deep + b"\n")
-    d = env.root / ".state" / "intents"
+        (env.store_dir / ".state" / name).write_bytes(deep)
+    (env.store_dir / "config.json").write_bytes(deep)
+    (env.store_dir / "keys.jsonl").write_bytes(deep + b"\n")
+    d = env.store_dir / ".state" / "intents"
     d.mkdir(exist_ok=True)
     s = env.open(load="all")
     assert s.append({"type": "log.added", "actor": env.agent, "text": "x"}, log=a, idem="k")
     s.scan()
-    assert json.loads((env.root / "config.json").read_bytes())["workspace"]["id"]  # repaired from the events
+    assert json.loads((env.store_dir / "config.json").read_bytes())["workspace"]["id"]  # repaired from the events
 
 
 def test_a_forged_index_and_keys_jsonl_do_not_decide_what_a_ref_names(pair):
@@ -113,13 +113,13 @@ def test_a_forged_index_and_keys_jsonl_do_not_decide_what_a_ref_names(pair):
     s = env.open(load="all")
     s.index.dump()
     s.close()
-    db = sqlite3.connect(env.root / ".state" / "index.sqlite")
+    db = sqlite3.connect(env.store_dir / ".state" / "index.sqlite")
     db.execute("UPDATE tickets SET key = 'tmp' WHERE uid = ?", (a,))
     db.execute("UPDATE tickets SET key = 'DEMO-0001' WHERE uid = ?", (b,))
     db.execute("UPDATE tickets SET key = 'DEMO-0002' WHERE uid = ?", (a,))
     db.commit()
     db.close()
-    (env.root / "keys.jsonl").write_bytes(
+    (env.store_dir / "keys.jsonl").write_bytes(
         canon.cj_checked({"key": "DEMO-0001", "uid": b, "at": "2026-01-01T00:00:00Z"}) + b"\n"
     )
     s = env.open(load="lazy")
@@ -169,8 +169,8 @@ def test_a_forged_keys_jsonl_hint_or_index_cannot_free_a_taken_key(pair):
     s.index.dump()
     s.close()
     # the index and keys.jsonl say nothing is taken; a's first line is unreadable to the hint reader (hidden key)
-    (env.root / "keys.jsonl").write_bytes(b"")
-    db = sqlite3.connect(env.root / ".state" / "index.sqlite")
+    (env.store_dir / "keys.jsonl").write_bytes(b"")
+    db = sqlite3.connect(env.store_dir / ".state" / "index.sqlite")
     db.execute("DELETE FROM tickets")
     db.commit()
     db.close()

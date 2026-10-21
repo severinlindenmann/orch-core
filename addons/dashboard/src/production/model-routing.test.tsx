@@ -29,13 +29,20 @@ const route = (models: unknown = null, on = true) => {
   ws.settings = settingsOf({ models } as never)
   state.host.override = (path, method) => (path.endsWith('/model-routing') && method === 'GET' ? Response.json(CHOICES) : undefined)
 }
+/** Settings opens in place under its row; the eight choices sit behind Customize models. */
+async function openBox(custom = true) {
+  const u = userEvent.setup()
+  await u.click(await screen.findByTestId('addon-model-routing-expand', {}, T))
+  if (custom) await u.click(await screen.findByRole('button', { name: 'Customize models' }, T))
+  return await screen.findByTestId('model-routing', {}, T)
+}
 const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 const posted = () => calls('/handoff').filter((c) => c.method === 'POST')
 
 it('shows a row per kind of work and agent, all on the agent default, only while the add-on is on', async () => {
   route()
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('model-routing', {}, T)
+  const box = await openBox()
   expect(box).toHaveTextContent('Do the work')
   expect(box).toHaveTextContent('Write requirements and plan')
   expect(box).toHaveTextContent('Read and answer')
@@ -43,18 +50,29 @@ it('shows a row per kind of work and agent, all on the agent default, only while
   expect(within(box).getByRole('button', { name: 'Review and sign' })).toBeDisabled() // nothing changed
 })
 
+it('defaults stay behind Customize models and the summary names the available agents', async () => {
+  route()
+  show('/w/DEMO/settings/addons')
+  const box = await openBox(false)
+  expect(within(box).queryByRole('combobox')).toBeNull()
+  expect(within(box).getByTestId('routing-summary')).toHaveTextContent('Every agent uses its own default model. Available: Claude, Codex.')
+  expect(screen.getByTestId('addon-model-routing-needs')).toHaveTextContent('Needs nothing')
+})
+
 it('is not drawn while the add-on is off', async () => {
   route(null, false)
   show('/w/DEMO/settings/addons')
   await screen.findByRole('list', { name: 'Add-ons' }, T)
   expect(screen.queryByTestId('model-routing')).toBeNull()
+  expect(screen.getByTestId('addon-model-routing-needs')).toBeInTheDocument()
+  expect(screen.queryByTestId('addon-model-routing-expand')).toBeNull()
 })
 
 it('Review and sign sends exactly the chosen table, from the closed list, as one signed change', async () => {
   route()
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('model-routing', {}, T)
+  const box = await openBox()
   const claude = within(within(box).getByTestId('routing-claude-code'))
   expect(claude.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)).toEqual(['', 'opus', 'sonnet', 'haiku', '', 'opus', 'sonnet', 'haiku', '', 'opus', 'sonnet', 'haiku'])
   await user.selectOptions(within(box).getByLabelText('Do the work', { selector: '#route-claude-code-work' }), 'sonnet')
@@ -68,7 +86,7 @@ it('choosing the agent default for every row turns Model routing off', async () 
   route({ 'claude-code': { work: 'sonnet' } })
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('model-routing', {}, T)
+  const box = await openBox()
   const pick = within(box).getByLabelText('Do the work', { selector: '#route-claude-code-work' })
   await waitFor(() => expect(pick).toHaveValue('sonnet'), T)
   await user.selectOptions(pick, '')
@@ -82,7 +100,7 @@ it('a member can read it but not change it', async () => {
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('model-routing', {}, T)
+  const box = await openBox()
   for (const sel of within(box).getAllByRole('combobox')) expect(sel).toBeDisabled()
   expect(within(box).queryByRole('button', { name: 'Review and sign' })).toBeNull()
   expect(box).toHaveTextContent('Only an owner can change this')
@@ -94,9 +112,11 @@ it('MR1: a failed choices read shows Retry instead of nothing, and editing waits
   state.host.override = (path, method) => (path.endsWith('/model-routing') && method === 'GET' ? (fail ? Response.json({ ok: false, error: { code: 'x', message: 'x', retryable: false } }, { status: 500 }) : Response.json(CHOICES)) : undefined)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByTestId('addon-model-routing-expand', {}, T))
   await user.click(await screen.findByRole('button', { name: 'Retry' }, T))
   fail = false
   await user.click(await screen.findByRole('button', { name: 'Retry' }, T))
+  await user.click(await screen.findByRole('button', { name: 'Customize models' }, T))
   const box = await screen.findByTestId('model-routing', {}, T)
   for (const sel of within(box).getAllByRole('combobox')) expect(sel).toBeEnabled()
 })
@@ -104,9 +124,8 @@ it('MR1: a failed choices read shows Retry instead of nothing, and editing waits
 it('MR2/MR5/MR6: explains Agent default, shows the resolved name, one collapsible section per agent, and says when there is nothing to save', async () => {
   route({ 'claude-code': { work: 'sonnet' } })
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('model-routing', {}, T)
-  expect(screen.getByRole('heading', { name: 'Default models' })).toBeInTheDocument()
-  expect(within(box).getByTestId('agent-default-help')).toHaveTextContent('orch does not choose one')
+  const box = await openBox()
+    expect(within(box).getByTestId('agent-default-help')).toHaveTextContent('orch does not choose one')
   expect(within(box).getAllByText('Chosen by the agent app').length).toBeGreaterThan(0)
   expect(within(box).getByText('Claude').tagName).toBe('SUMMARY')
   expect(within(box).getByText('Codex').tagName).toBe('SUMMARY')

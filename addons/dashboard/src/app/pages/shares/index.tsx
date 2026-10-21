@@ -5,7 +5,7 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { effectiveState, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
+import { effectiveState, isLoopback, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -80,7 +80,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
       </div>
     )
   }
-  if (list.isError) return <LoadFailed what="shares" onRetry={() => void list.refetch()} />
+  if (list.isError) return <LoadFailed what="shares" detail={shareError(list.error)} onRetry={() => void list.refetch()} />
   const data = list.data && list.data.available ? list.data : null
   const mayChange = atLeast(role, 'member')
   const shares = data?.shares ?? []
@@ -92,13 +92,20 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
         A share is a link to files of a ticket. To make one, open a ticket (see <Link to="/tickets" className="text-brand hover:underline">Tickets</Link>) and choose Share files; you approve what will be sent and see the link once. This page lists your shares and lets you stop one: its link then stops working at once.
       </p>
       {data && !data.configured && (
-        <p data-testid="shares-not-configured" className="rounded-lg border border-warning/40 px-3 py-2 text-[13px]">
-          No publish server is set up yet. <Link to="/settings/$tab" params={{ tab: 'addons' }} className="text-brand hover:underline">Set one up in Settings, Add-ons</Link>.
+        <p data-testid="shares-not-configured" role="status" className="rounded-lg border border-warning/40 px-3 py-2 text-[13px]">
+          Publish needs a publish server. <Link to="/settings/$tab" params={{ tab: 'addons' }} className="text-brand hover:underline">Set it in Settings, Add-ons, Publish</Link>.
         </p>
       )}
       {data && data.configured && !data.live && (
-        <p role="status" className="text-[12px] text-text-muted">
-          The server could not be reached, so views and states are the ones this computer last knew.
+        <p role="status" data-testid="shares-unreachable" className="rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
+          The publish server is not running or cannot be reached, so views and states are the ones this computer last knew.{' '}
+          {isLoopback(data.server) ? (
+            <>
+              It runs on this computer: start it in a Terminal with <code className="font-mono">orch-publish dev</code>.
+            </>
+          ) : (
+            <>Check that the server is up and that its address is right in Settings, Add-ons, Publish.</>
+          )}
         </p>
       )}
       {list.isPending ? (
@@ -117,7 +124,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
               </ul>
             </section>
           )}
-          {shares.length === 0 ? (
+          {shares.length === 0 && data && !data.configured ? null : shares.length === 0 ? (
             <p data-testid="shares-empty" className="text-[13px] text-text-muted">
               Nothing is shared yet. Open a ticket from <Link to="/tickets" className="text-brand hover:underline">Tickets</Link> and choose Share files.
             </p>

@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orch import canon, crypto
+from orch import canon, crypto, fdwait
 from orch import layout as layout_mod
 from orch.custody import Backend, CustodyError, FileBackend, NoPrompt, get_backend
 from orch.custody.strength import check_strength, generate_passphrase
@@ -57,7 +57,7 @@ from orch.instructions import UnsafePath, check_targets, write_workspace_files
 from orch.ops.base import Context, Result
 from orch.ops.caps import Files
 from orch.ops.errors import OrchError
-from orch.ops.runtime import find_workspace, state_dir
+from orch.ops.runtime import discover, state_dir
 
 __all__ = [
     "DEVICE_KEY",
@@ -159,7 +159,6 @@ class Terminal:
         """K2: wait up to ``timeout`` seconds for the person to press Enter on their own terminal; ``True`` once a line
         was read. ``flush`` first drops anything typed before (type-ahead is never an answer). Echo stays as the
         terminal has it; a terminal that cannot be opened or read is simply "not pressed"."""
-        import select
         import termios
 
         try:
@@ -171,7 +170,7 @@ class Terminal:
             if flush:
                 with contextlib.suppress(termios.error):
                     termios.tcflush(fd, termios.TCIFLUSH)
-            if not select.select([fd], [], [], timeout)[0]:
+            if not fdwait.readable(fd, timeout):
                 return False
             return bool(os.read(fd, 4096))
         except OSError:
@@ -233,7 +232,10 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
 def _no_workspace(ctx: Context, root: Path) -> None:
     """A workspace found here (or above) by orch's own marker is "already exists"; a project file under a name the
     store writes is a collision named in words (:mod:`orch.rootclaim`), never "a workspace"."""
-    if find_workspace(ctx.env, root, ctx.caps.files) is not None:
+    found = discover(ctx.env, root, ctx.caps.files, allow_old_store=True)
+    # a store from an older version in this very folder is not "a workspace": _empty_root names it and says to delete it
+    old_here = found is not None and not found.v1 and found.layout is None and found.path == root.resolve()
+    if found is not None and not old_here:
         raise _refuse("invalid.input", "a workspace already exists here", "orch status")
     _empty_root(root)
 

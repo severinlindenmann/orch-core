@@ -637,7 +637,7 @@ def test_a_ticket_a_foreign_writer_created_is_in_the_rebuilt_journal(w):
     before = w.service.journal.head
     w.lab.ws.tick()
     w.append(lambda store: w.lab.ws.new_ticket("foreign one"))  # a new tickets/<uid>/ the host never saw
-    uid = next(u for u in os.listdir(w.lab.ws.root / "tickets") if u not in w.service.journal.sigs)
+    uid = next(u for u in os.listdir(w.lab.ws.store_dir / "tickets") if u not in w.service.journal.sigs)
     w.check_journals()
     assert c.evt(sub["sub"])["end"] == "reset"
     journal = w.service.journal

@@ -40,6 +40,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from orch import layout as layout_mod
+from orch.layout import LayoutError
+
 from . import frames
 from .auth import AuthView, Verified, build_auth, secret_in_request
 from .blobs import BlobStore
@@ -203,7 +206,11 @@ class WorkspaceService:
             if os.path.realpath(self.entry.root) != self.entry.root:
                 raise HostError("custody.unsafe_mode", f"{self.entry.root} now resolves elsewhere")
             check_tree(Path(self.entry.root), self.host_uid)
-            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid, store=self.entry.store)
+            try:  # before the custody list: a store from an older version in the root is named, not "no .orch"
+                layout_mod.store_of(self.entry.root)
+            except LayoutError as exc:
+                raise StoreError("validation.path", str(exc)) from None
+            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid)
             pin = HostPins(self.state_dir, wid).genesis()
             if pin is None:
                 raise HostError("trust.genesis_mismatch", "no genesis pin for this workspace")
@@ -219,9 +226,6 @@ class WorkspaceService:
                 clock=self.clock,
                 load="lazy",
             )
-            if store.layout.legacy != (self.entry.store is None):  # version skew or a half-done migrate: refuse
-                store.close()
-                raise HostError("custody.unsafe_mode", "the store layout differs from the registry entry")
         except (HostError, StoreError, OSError, ValueError, KeyError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
             return

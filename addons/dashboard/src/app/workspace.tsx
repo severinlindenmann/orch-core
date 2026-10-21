@@ -116,8 +116,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const addressed = scoped ? urlPrefix : ownsUrl && urlPrefix !== undefined && (sharedKey || urlHint) ? ticketPrefix : undefined
   const named = addressed !== undefined ? workspaceByAddress(data, addressed, urlHint) : undefined
   const fromUrl = named && 'found' in named ? named.found : undefined
-  // An address that names (by `?ws=`) a workspace whose host is not running says so; nothing else is shown instead.
-  const stopped = !fromUrl && addressed !== undefined && urlHint ? unavailable.find((w) => uuid8(w.id) === urlHint.toLowerCase()) : undefined
+  // An address that names a workspace whose host cannot serve it (by `?ws=`, or by its prefix when no running workspace has
+  // it) says so, with the host's reason; nothing else is shown instead.
+  const stopped =
+    !fromUrl && addressed !== undefined
+      ? urlHint
+        ? unavailable.find((w) => uuid8(w.id) === urlHint.toLowerCase())
+        : named && 'missing' in named
+          ? unavailable.find((w) => !!w.prefix && w.prefix.toUpperCase() === addressed.toUpperCase())
+          : undefined
+      : undefined
   const ambiguous = named && 'ambiguous' in named && !stopped ? named.ambiguous : undefined
   const missingPrefix = addressed !== undefined && isSuccess && named && 'missing' in named && !stopped ? addressed : undefined
   /** A `/w/<PREFIX>` address whose workspace is not known yet: the page waits instead of showing another workspace. */

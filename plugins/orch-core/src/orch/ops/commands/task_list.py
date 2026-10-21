@@ -8,6 +8,13 @@ from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, flat
 
 
+def _codebase_repos(c: Call, view: Any) -> list[str]:
+    """The repos a verify command runs in: the linked ones if the ticket has a codebase (shared rule), else none."""
+    from orch.ops.workdir import has_codebase
+
+    return list(view.fields["links"]["repos"]) if has_codebase(c.store, view) else []
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "task.list")
     view = c.resolve(args.get("ref"))
@@ -29,7 +36,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     rows = [{**t, **verify_of(t["id"])} if t["id"] in cmds else t for t in tasks]
     return c.result(
         view,
-        {"count": len(rows), "tasks": rows, "repos": list(view.fields["links"]["repos"])},
+        {"count": len(rows), "tasks": rows, "repos": _codebase_repos(c, view)},
         hints=[views.next_hint(view, ctx.session)],
         lines=views.fenced_tasks(view, f"tasks of {view.key}", 100) if tasks else ["no tasks"],
     )

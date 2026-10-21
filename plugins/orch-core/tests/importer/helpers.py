@@ -17,7 +17,7 @@ def tree(path: Path) -> dict[str, bytes]:
 def marker(ws: Any, ref: str) -> dict[str, Any]:
     """The parsed ``v1-import.json`` of an imported ticket, read from the artifact file."""
     uid = ws.uid(ref)
-    return json.loads((ws.root / "tickets" / uid / "artifacts" / "v1-import.json").read_bytes())
+    return json.loads((ws.store_dir / "tickets" / uid / "artifacts" / "v1-import.json").read_bytes())
 
 
 def types(ws: Any, ref: str) -> list[str]:

@@ -14,7 +14,6 @@ import time
 
 import pytest
 
-from tests._legacy_env import ENV as LEGACY_ENV
 from tests.ops.helpers import OTHER, Ws
 from tests.ops.test_task_ac import py
 
@@ -24,14 +23,13 @@ pytestmark = pytest.mark.slow
 class Bin:
     def __init__(self, ws, session=None, grant=True):
         self.ws, self.session, self.grant = ws, session or "s_01J9ZP0000000000000000000S", grant
-        self.cwd = ws.root / "tickets"  # anywhere below the workspace
+        self.cwd = ws.store_dir / "tickets"  # anywhere below the workspace
 
     def __call__(self, *argv, stdin=None, env=None):
         e = {
             "PATH": "/usr/bin:/bin",
             "HOME": str(self.ws.tmp),
             "ORCH_STATE_DIR": str(self.ws.host_state),
-            **LEGACY_ENV,
         }
         if self.session:
             e["ORCH_SESSION"] = self.session
@@ -130,7 +128,7 @@ def test_a_retry_is_answered_not_repeated_and_the_stop_rule_is_in_effect(ws, orc
     assert orch("approve", "requirements").stderr.startswith("err stop")  # human_only counts by operation
     assert orch("log", "a successful write resets it").returncode == 0
     assert orch("approve", "plan").stderr.startswith("err human_only")
-    sessions = list((ws.root / ".state" / "sessions").glob("*.json"))
+    sessions = list((ws.store_dir / ".state" / "sessions").glob("*.json"))
     assert sessions and not any(ws.grant.partition(".")[2] in p.read_text() for p in sessions)
 
 

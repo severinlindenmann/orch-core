@@ -90,6 +90,7 @@ it('on and set up keeps the section and turns off with the switch', async () => 
   setup('model-routing', true, true)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByTestId('addon-model-routing-expand', {}, T))
   expect(await screen.findByTestId('model-routing', {}, T)).toBeInTheDocument()
   expect(screen.getByTestId('addon-model-routing-state')).toHaveTextContent(/^On$/)
   await user.click(screen.getByRole('switch', { name: 'Model routing' }))

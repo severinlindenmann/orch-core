@@ -21,7 +21,7 @@ import os
 import stat
 from typing import Any
 
-from orch.layout import LEGACY_STORE_FOLDERS, Layout
+from orch.layout import Layout
 
 _MAX_HEAD = 512
 
@@ -62,11 +62,7 @@ def _config_dirs() -> list[str]:
 
 def _not_orch_data(layout: Layout, real: str) -> None:
     """Refuse a (resolved) path that is, or is below, orch's own data: the store, and the user's orch config/state."""
-    if layout.legacy:  # the store IS the project folder, whose repos live below it: refuse only its own folders
-        project = os.path.realpath(layout.project)
-        places = [os.path.join(project, n) for n in LEGACY_STORE_FOLDERS]
-    else:
-        places = [os.path.realpath(layout.store)]
+    places = [os.path.realpath(layout.store)]
     if any(_inside(real, p) for p in [*places, *_config_dirs()]):
         raise RepoPathError("A repository cannot be inside orch's own data folder.")
 

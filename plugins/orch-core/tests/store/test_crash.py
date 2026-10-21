@@ -29,7 +29,11 @@ def consistent(env: Env, uid: str):
     s = env.open()
     assert s.chain_errors() == [] and s.diverged == {}
     assert s.scan() == []  # files agree with the log: nothing is an external edit
-    assert not list((env.root / ".state" / "pending").glob("*")) if (env.root / ".state" / "pending").exists() else True
+    assert (
+        not list((env.store_dir / ".state" / "pending").glob("*"))
+        if (env.store_dir / ".state" / "pending").exists()
+        else True
+    )
     fresh = replayed(env)
     assert fresh.tickets[uid].fields == s.state.tickets[uid].fields
     return s
@@ -46,7 +50,7 @@ def ws(env):
 def test_crash_after_the_pending_files_before_the_append_loses_the_event_cleanly(ws):
     env, uid = ws
     assert crash(env, uid, "after_pending") == 7
-    assert (env.root / ".state" / "pending").exists() and list((env.root / ".state" / "pending").iterdir())
+    assert (env.store_dir / ".state" / "pending").exists() and list((env.store_dir / ".state" / "pending").iterdir())
     s = consistent(env, uid)
     assert len(env.read_events(uid)) == 2 and s.reports == []
     env.log(uid, "life goes on")
@@ -59,7 +63,7 @@ def test_crash_after_the_append_before_the_rename_finishes_the_install(ws):
     assert evs[-1]["text"] == "dying"
     s = consistent(env, uid)
     assert s.state.tickets[uid] and len(env.read_events(uid)) == 3 and s.reports == []
-    assert (env.root / ".state" / "applied").read_bytes()
+    assert (env.store_dir / ".state" / "applied").read_bytes()
     env.log(uid, "after")
 
 
@@ -69,7 +73,7 @@ def test_missing_checkpoint_is_finished_before_another_log_is_appended(env, seco
     env.bootstrap()
     other = env.new_ticket()
     uid = new_ulid()
-    checkpoint = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    checkpoint = env.store_dir / ".state" / "checkpoints" / f"ticket-{uid}.json"
     if not reopen:
         reader = env.other(load="lazy")
     assert crash(env, uid, "before_checkpoint") == 7
@@ -106,7 +110,7 @@ def test_crash_in_the_middle_of_the_install_is_finished_from_the_pending_files(e
     s = consistent(env, uid)
     assert s.state.tickets[uid].title == "crashed title" and s.reports == []
     assert s.body_sections(uid) == {"context": "crashed body"}
-    assert (env.root / ".state" / "body" / f"{uid}.md").read_text() == "## Context\n\ncrashed body\n"
+    assert (env.store_dir / ".state" / "body" / f"{uid}.md").read_text() == "## Context\n\ncrashed body\n"
 
 
 def test_a_torn_line_is_cut_off_and_the_event_is_lost_not_the_log(ws):
@@ -121,7 +125,7 @@ def test_a_torn_line_is_cut_off_and_the_event_is_lost_not_the_log(ws):
 
 def test_a_pending_dir_without_manifest_is_deleted(ws):
     env, uid = ws
-    d = env.root / ".state" / "pending" / "01J9ZP0000000000000000ZZZZ"
+    d = env.store_dir / ".state" / "pending" / "01J9ZP0000000000000000ZZZZ"
     d.mkdir(parents=True)
     (d / "0").write_bytes(b"half written")
     env.store.close()
@@ -142,7 +146,7 @@ def test_files_that_do_not_survive_are_reported_and_answered_as_external_edits(e
     p.start()
     p.join(60)
     assert p.exitcode == 7
-    pend = next((env.root / ".state" / "pending").iterdir())
+    pend = next((env.store_dir / ".state" / "pending").iterdir())
     for f in pend.iterdir():
         if f.name != "manifest.json":
             f.write_bytes(b"garbage")  # the fsync lied

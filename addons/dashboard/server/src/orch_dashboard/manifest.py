@@ -13,6 +13,8 @@ def manifest_bytes():
 
 
 def write_manifest(workspace, data, force=False):
+    """Write the manifest into the add-on folder of the workspace's store: ``<project>/.orch/addons/dashboard``. The
+    store must exist (an old-version store in the project root is not one); nothing is created above ``addons``."""
     # Walk each component with pinned directory descriptors, including workspace ancestors.
     path = Path(os.path.abspath(workspace))
     with ExitStack() as stack:
@@ -25,6 +27,10 @@ def write_manifest(workspace, data, force=False):
         fd = directory(path.anchor)
         for part in path.parts[1:]:
             fd = directory(part, fd)
+        try:
+            fd = directory(".orch", fd)
+        except FileNotFoundError:
+            raise ValueError("no orch store here (.orch is missing); run orch setup first") from None
         for part in ("addons", "dashboard"):
             try:
                 os.mkdir(part, mode=0o755, dir_fd=fd)
@@ -41,7 +47,7 @@ def write_manifest(workspace, data, force=False):
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                     raise ValueError("manifest must be a regular file")
                 if stream.read() == data:
-                    return path / "addons/dashboard" / name
+                    return path / ".orch/addons/dashboard" / name
             if not force:
                 raise ValueError("manifest differs; use --force to replace it")
         # A new inode avoids modifying hard-linked files; link() makes no-force creation exclusive.
@@ -69,7 +75,7 @@ def write_manifest(workspace, data, force=False):
                 os.unlink(temporary, dir_fd=fd)
             except FileNotFoundError:
                 pass
-    return path / "addons/dashboard" / name
+    return path / ".orch/addons/dashboard" / name
 
 
 def main(argv):

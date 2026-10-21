@@ -45,7 +45,7 @@ ops/commands/apply.py 2
 ops/commands/import_v1.py 1
 ops/commands/list.py 3
 ops/commands/show.py 2
-ops/health.py 27
+ops/health.py 24
 ops/human.py 1
 ops/import_run.py 1
 ops/runtime.py 13
@@ -54,7 +54,7 @@ records/__init__.py 15
 records/tool.py 3
 relay/publish.py 1
 relay/submit.py 3
-rootclaim.py 10
+rootclaim.py 1
 setup/facts.py 2
 setup/flow.py 4
 setup/protocol.py 6

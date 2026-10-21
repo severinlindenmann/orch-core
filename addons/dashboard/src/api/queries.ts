@@ -2,6 +2,7 @@
 // (adding `enabled` and their own options), and the route loaders (app/routeData.ts) warm the very same entries with
 // ensureQueryData, so a page and its loader can never drift apart. Keys are unchanged from before.
 
+import { withoutSigned } from './signedDrop'
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import type { ActivityParams } from './activity'
 import { api, type ListTicketsParams } from '@/api/client'
@@ -26,7 +27,7 @@ export const queries = {
   hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false, refetchInterval: (q) => (q.state.status === 'error' ? 15_000 : false) }),
   addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
   devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
-  today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
+  today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: async () => withoutSigned(ws, await api.getToday(ws)) }),
   agents: (ws: string) => queryOptions({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws) }),
   addonDecisions: (ws: string) => queryOptions({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws) }),
   grants: (ws: string) => queryOptions({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws) }),

@@ -1,4 +1,4 @@
-"""Registry ``store`` key (exact key set, read side) and the host's store/project split (design B11-P2 step 3)."""
+"""Registry entries: the store is always ``<root>/.orch``; an earlier host's ``store`` key is tolerated on read."""
 
 from __future__ import annotations
 
@@ -22,16 +22,16 @@ DOC = {
 }
 
 
-def test_an_entry_without_store_is_legacy_and_round_trips_without_the_key() -> None:
+def test_an_entry_has_its_store_in_dot_orch_and_never_writes_the_key() -> None:
     e = Entry.from_doc(dict(DOC))
-    assert e.store is None and e.store_dir == Path("/tmp/proj")
+    assert e.store_dir == Path("/tmp/proj/.orch")
     assert "store" not in e.to_doc()
 
 
-def test_store_dot_orch_is_read_and_written_back() -> None:
+def test_an_earlier_hosts_store_key_is_tolerated_and_dropped_on_write() -> None:
     e = Entry.from_doc({**DOC, "store": ".orch"})
-    assert e.store == ".orch" and e.store_dir == Path("/tmp/proj/.orch")
-    assert e.to_doc()["store"] == ".orch"
+    assert e.store_dir == Path("/tmp/proj/.orch")
+    assert "store" not in e.to_doc()
 
 
 @pytest.mark.parametrize("bad", ["", "orch", ".orch/", "../x", None, 1, [".orch"], "/tmp/proj"])

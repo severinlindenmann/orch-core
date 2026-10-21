@@ -23,7 +23,7 @@ def test_section_set_replaces_one_section(ws, cli):
     claimed(cli)
     r = cli("section", "set", "plan", "-m", "step one\r\nstep two")
     assert r.first == "ok DEMO-0001 ticket.updated plan seq=3" and r.out.splitlines()[-1].startswith("next:")
-    body = (ws.root / "tickets" / ws.uid("1") / "body.md").read_text()
+    body = (ws.store_dir / "tickets" / ws.uid("1") / "body.md").read_text()
     assert "## Plan\n\nstep one\nstep two\n" in body
     assert cli.j("section", "set", "plan", "--file", "-", stdin="from stdin\n\n").code == 0
     assert "from stdin" in cli("show", "1", "--section", "plan").out

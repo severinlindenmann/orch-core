@@ -524,6 +524,7 @@
     {
      "ac": null,
      "added_by": "orch-cli",
+     "added_by_kind": "agent",
      "at": "2026-01-01T09:01:31Z",
      "bytes": 7,
      "kind": "receipt",
@@ -535,6 +536,7 @@
     {
      "ac": "AC1",
      "added_by": "orch-cli",
+     "added_by_kind": "agent",
      "at": "2026-01-01T09:01:31Z",
      "bytes": 22,
      "kind": "log",
@@ -991,6 +993,7 @@
     {
      "ac": null,
      "added_by": "orch-cli",
+     "added_by_kind": "agent",
      "at": "2026-01-01T09:00:35Z",
      "bytes": 9,
      "kind": "receipt",
@@ -1002,6 +1005,7 @@
     {
      "ac": "AC1",
      "added_by": "orch-cli",
+     "added_by_kind": "agent",
      "at": "2026-01-01T09:00:35Z",
      "bytes": 22,
      "kind": "log",

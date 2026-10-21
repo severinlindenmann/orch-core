@@ -109,6 +109,7 @@ class ArtifactView:
     task: str | None
     evidence: bool
     by: str
+    bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -297,7 +298,7 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
             for _, q in sorted(t.questions.items(), key=lambda kv: int(kv[0][1:]))
         ),
         tuple(
-            ArtifactView(a.name, a.kind, a.digest, a.ac, a.task, a.evidence_ok, a.by)
+            ArtifactView(a.name, a.kind, a.digest, a.ac, a.task, a.evidence_ok, a.by, a.bytes)
             for _, a in sorted(t.artifacts.items())
         ),
         tuple(freeze(x) for x in source.source_list(t)),

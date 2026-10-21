@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
 __all__ = ["GrantError", "GrantStore", "RedactFilter"]
 
 GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
@@ -134,17 +136,35 @@ class RedactFilter(logging.Filter):
         super().__init__()
         self.store = store
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            text = record.getMessage()
-        except Exception:  # noqa: BLE001 - a broken record is passed on unchanged
-            return True
+    def _clean(self, text: str) -> str:
         clean = GRANT_SHAPE.sub("[redacted]", text)
+        clean = GITHUB_TOKEN_SHAPE.sub("[redacted]", clean)
         for secret in self.store.secrets():
             clean = clean.replace(secret, "[redacted]")
             tail = secret.partition(".")[2]
             if tail:
                 clean = clean.replace(tail, "[redacted]")
+        return clean
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            text = record.getMessage()
+        except Exception:  # noqa: BLE001 - a record that cannot be formatted may carry a secret in its args
+            record.msg, record.args = "[log message withheld: format error]", ()
+            text = record.msg
+        clean = self._clean(text)
         if clean != text:
             record.msg, record.args = clean, None
+        # Exception text is formatted later by the handler from exc_info (and cached in exc_text): format it here,
+        # redact it, and drop exc_info so the handler prints only the redacted text.
+        try:
+            if record.exc_info and not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = self._clean(record.exc_text)
+                record.exc_info = None
+            if record.stack_info:
+                record.stack_info = self._clean(record.stack_info)
+        except Exception:  # noqa: BLE001 - never let a formatting failure leak the raw traceback
+            record.exc_info, record.exc_text, record.stack_info = None, "[exception text withheld]", None
         return True

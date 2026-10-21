@@ -104,6 +104,7 @@ def test_a_controlling_tty_can_be_waited_on():
         except BaseException:
             code = 93
         os._exit(code)
+    reaped = False
     try:
         deadline = time.monotonic() + 10
         buf = b""
@@ -128,10 +129,60 @@ def test_a_controlling_tty_can_be_waited_on():
                     os.read(master, 1024)
                 except OSError:
                     pass
+        reaped = status is not None
         if status is None:
-            os.kill(pid, 9)
-            os.waitpid(pid, 0)
             pytest.fail("the child did not finish")
         assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"child exit status {status}"
     finally:
+        if not reaped:  # the parent raised before waitpid: do not leave the child behind
+            with contextlib.suppress(OSError):
+                os.kill(pid, 9)
+                os.waitpid(pid, 0)
+        os.close(master)
+
+
+def test_a_tty_above_fd_setsize_is_never_reported_ready_at_once():
+    """macOS ``poll()`` answers POLLNVAL for /dev/tty at once; that must not count as readable."""
+    pid, master = pty.fork()
+    if pid == 0:
+        code = 90
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            if hard != resource.RLIM_INFINITY and hard < HIGH + 64:
+                os._exit(77)  # cannot get an fd this high
+            if soft < HIGH + 64:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (HIGH + 64, hard))
+            tty = os.open("/dev/tty", os.O_RDONLY)
+            fd = os.dup2(tty, HIGH + 1)
+            try:
+                code = 91 if fdwait.readable(fd, 0.2) else 0  # True here is the bug
+            except OSError:
+                code = 0  # refusing is fine, claiming ready is not
+        except BaseException:
+            code = 93
+        os._exit(code)
+    reaped = False
+    try:
+        deadline = time.monotonic() + 15
+        status = None
+        while time.monotonic() < deadline:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status, reaped = st, True
+                break
+            if fdwait.readable(master, 0.05):
+                try:
+                    os.read(master, 1024)
+                except OSError:
+                    pass
+        assert status is not None, "the child did not finish"
+        assert os.WIFEXITED(status)
+        if os.WEXITSTATUS(status) == 77:
+            pytest.skip("the fd limit is too low for an fd above 1024")
+        assert os.WEXITSTATUS(status) == 0, f"child exit status {status}"
+    finally:
+        if not reaped:
+            with contextlib.suppress(OSError):
+                os.kill(pid, 9)
+                os.waitpid(pid, 0)
         os.close(master)

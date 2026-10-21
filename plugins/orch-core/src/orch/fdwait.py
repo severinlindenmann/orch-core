@@ -7,8 +7,8 @@ no such limit. Production code waits through here; ``tests/test_fdwait.py`` keep
 everywhere except this module.
 
 kqueue (macOS) cannot watch some fds, notably ``/dev/tty`` (``OSError`` EINVAL on register, or EPERM). For those the
-wait falls back to ``select.select`` when the fd is below ``FD_SETSIZE``, else to ``select.poll`` where it exists;
-any other error is raised.
+wait falls back to ``select.select`` when the fd is below ``FD_SETSIZE``, else to ``select.poll`` where it exists
+(``POLLNVAL``, an fd poll cannot watch either, raises ``OSError`` EINVAL); any other error is raised.
 """
 
 from __future__ import annotations
@@ -40,7 +40,11 @@ def _fallback(targets: list[FileLike], events: int, timeout: float | None) -> li
         mask = select.POLLIN if events == selectors.EVENT_READ else select.POLLOUT
         for fd in fds:
             poller.register(fd, mask)
-        hit = {fd for fd, _ in poller.poll(None if timeout is None else timeout * 1000)}
+        hit = set()
+        for fd, ev in poller.poll(None if timeout is None else timeout * 1000):
+            if ev & select.POLLNVAL:  # poll cannot watch it either (macOS /dev/tty): not "ready"
+                raise OSError(errno.EINVAL, f"cannot wait on fd {fd}")
+            hit.add(fd)
     else:  # pragma: no cover - every supported platform has poll
         raise OSError(errno.EINVAL, "no way to wait on an fd above FD_SETSIZE")
     return [t for t, fd in zip(targets, fds, strict=True) if fd in hit]

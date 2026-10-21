@@ -200,6 +200,9 @@ def test_a_hostile_global_config_starts_no_program(world):
         w.run("blob", w.c2, "a.txt"),
         w.run("grep", "two"),
         w.run("commit_names", w.c2),
+        w.run("tree", "HEAD", "dir"),
+        w.run("dir_log", "5", "HEAD", "dir"),
+        w.run("tree_grep", "alpha", "HEAD", files=("dir/ünï code.txt",)),
     ]
     assert all(r.code == 0 for r in ran), [r.code for r in ran]
     assert "+two" in ran[1].out.decode() and "+two" in ran[2].out.decode()
@@ -489,7 +492,7 @@ def test_parse_tree_drops_malformed_records():
     assert gitbrowse.parse_tree(b"garbage\0100644 blob xyz 1\tb\0") == []
 
 
-def test_tree_grep_searches_the_committed_files_below_the_folder_only(world):
+def test_tree_grep_reads_exactly_the_named_files_as_committed(world):
     _wiki(world)
     (world.repo / "wiki" / "beta.md").write_text("# Beta\nstaged-only NEEDLE\n")
     world.git(world.repo, "add", "wiki/beta.md")  # in the index, not committed
@@ -497,11 +500,58 @@ def test_tree_grep_searches_the_committed_files_below_the_folder_only(world):
     (world.repo / "a.txt").write_text("outside NEEDLE\n")
     world.git(world.repo, "commit", "-q", "-m", "outside", "a.txt", n=7)
     (world.repo / "wiki" / "sub" / "deep.md").write_text("deep NEEDLE\n")
-    rows = gitbrowse.parse_grep(world.run("tree_grep", "more", "HEAD", "wiki").out)
+    both = ("wiki/alpha.md", "wiki/beta.md")
+    rows = gitbrowse.parse_grep(world.run("tree_grep", "more", "HEAD", files=both).out)
     assert [(p.partition(":")[2], n, t) for p, n, t in rows] == [("wiki/alpha.md", 2, "more")]
-    assert gitbrowse.parse_grep(world.run("tree_grep", "needle", "HEAD", "wiki").out) == []
-    hit = gitbrowse.parse_grep(world.run("tree_grep", "ALPHA", "HEAD", "wiki").out)
-    assert {p.partition(":")[2] for p, _n, _t in hit} == {"wiki/alpha.md"}  # case-insensitive, never below `.env`
-    assert not any("link.md" in p or ".env" in p for p, _n, _t in hit)
+    assert gitbrowse.parse_grep(world.run("tree_grep", "needle", "HEAD", files=both).out) == []
+    hit = gitbrowse.parse_grep(world.run("tree_grep", "ALPHA", "HEAD", files=both).out)
+    assert {p.partition(":")[2] for p, _n, _t in hit} == {"wiki/alpha.md"}  # case-insensitive
+    # only the named files are read: a file of the same folder that is not named is not searched, a glob or a pathspec
+    # magic names nothing (each is a literal pathspec), and the deny list is excluded on top. (A FOLDER name still
+    # matches the files below it, as in every git pathspec: callers pass names of blobs they listed.)
+    only = gitbrowse.parse_grep(world.run("tree_grep", "Beta", "HEAD", files=("wiki/alpha.md",)).out)
+    assert only == []
+    for pattern in (
+        "wiki/*.md",
+        "wiki/a*",
+        "wiki/alph?.md",
+        ":(top)wiki/alpha.md",
+        ":/wiki/alpha.md",
+        ".env",
+        "wiki/.env",
+    ):
+        assert gitbrowse.parse_grep(world.run("tree_grep", "alpha", "HEAD", files=(pattern,)).out) == [], pattern
+    assert gitbrowse.parse_grep(world.run("tree_grep", "SECRET", "HEAD", files=("wiki/.env",)).out) == []
+    assert gitbrowse.parse_grep(world.run("tree_grep", "x", "HEAD", files=("wiki/link.md",)).out) == []
+
+
+@pytest.mark.parametrize(
+    "files", [(), ("",), ("/etc/passwd",), ("../x",), ("a/../b",), ("a\nb",), ("a",) * (gitbrowse.MAX_FILES + 1)]
+)
+def test_tree_grep_refuses_no_files_and_bad_files(world, files):
     with pytest.raises(gitsafe.Unsafe):
-        gitbrowse.command(str(world.repo), "tree_grep", os.environ, operand=("a\nb", "HEAD", "wiki"))
+        gitbrowse.command(str(world.repo), "tree_grep", os.environ, operand=("x", "HEAD"), files=files)
+
+
+def test_files_are_for_the_operations_that_take_them(world):
+    with pytest.raises(gitsafe.Unsafe):
+        gitbrowse.command(str(world.repo), "tree", os.environ, operand=("HEAD", "dir"), files=("a",))
+    with pytest.raises(gitsafe.Unsafe):
+        gitbrowse.command(str(world.repo), "tree_grep", os.environ, operand=("a\nb", "HEAD"), files=("wiki/a.md",))
+
+
+def test_dir_log_names_the_author_without_the_work_trees_mailmap(world):
+    _wiki(world)
+    (world.repo / ".mailmap").write_text("Someone Else <ann@example.invalid>\n")  # uncommitted, in the work tree
+    rows = gitbrowse.parse_dir_log(world.run("dir_log", "5", "HEAD", "wiki").out)
+    assert {r[1] for r in rows} == {"Ann Author"}
+
+
+def test_cut_off_output_never_yields_a_half_name():
+    sha = "a" * 40
+    whole = f"\x00{sha}\x00Ann\x00d\x00subj\x00\nwiki/x.md-extra\x00".encode()
+    assert gitbrowse.parse_dir_log(whole)[0][4] == ["wiki/x.md-extra"]
+    assert gitbrowse.parse_dir_log(whole[:-7])[0][4] == []  # cut inside the name: that name is dropped
+    oid = "b" * 40
+    tree = f"100644 blob {oid} 5\tx.md-extra\x00".encode()
+    assert len(gitbrowse.parse_tree(tree)) == 1 and gitbrowse.parse_tree(tree[:-7]) == []

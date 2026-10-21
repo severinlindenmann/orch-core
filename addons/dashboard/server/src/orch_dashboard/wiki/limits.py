@@ -14,4 +14,3 @@ MAX_QUERY = 200
 MAX_TICKETS = 400
 PER_REFRESH = 120
 REFRESH_SECONDS = 3.0
-FRESH = 5.0  # a person who lost sight of a ticket stops seeing its links within this many seconds

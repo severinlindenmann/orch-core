@@ -108,6 +108,11 @@ _EXTRA = (
 #: subject (and for ``show``: NUL, body, NUL). A commit message cannot hold a NUL, so a message can never end a field.
 _COMMIT = "%x00%H%x00%aN%x00%aI%x00%s"
 _BODY = _COMMIT + "%x00%b%x00"
+#: ``dir_log`` names the author with ``%an``, not ``%aN``: ``%aN`` applies the repository's ``.mailmap`` FROM THE WORK
+#: TREE (and ``mailmap.file``), so an uncommitted edit would change who a committed page is attributed to
+_COMMIT_RAW = "%x00%H%x00%an%x00%aI%x00%s"
+#: most files one operation takes in its ``<files>`` slot
+MAX_FILES = 1000
 
 
 @dataclass(frozen=True)
@@ -158,10 +163,12 @@ OPS: dict[str, Op] = {
     # symlink there is never followed), no submodule: `path NUL line NUL text LF`
     "grep": Op(("grep", "--cached", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>",
                 "--", ":(top)")),
-    # a literal, case-insensitive search of the files below ONE folder AS COMMITTED at a commit (not the index, not the
-    # work tree): `<commit>^{commit}:path NUL line NUL text LF`; the caller strips the `<commit>^{commit}:` prefix
+    # a literal, case-insensitive search of EXACTLY the named files AS COMMITTED at a commit (not the index, not the
+    # work tree): `<commit>^{commit}:path NUL line NUL text LF`; the caller strips the `<commit>^{commit}:` prefix. The
+    # files are the caller's `files=` (each checked like <file> and given to git as a literal pathspec; none is
+    # refused), so the caller bounds what is read by the list it passes (a folder name would match what is below it)
     "tree_grep": Op(("grep", "--no-color", "-I", "-n", "-z", "-i", "-F", "--no-recurse-submodules", "-e", "<pattern>",
-                     "--end-of-options", "<commit>", "--", ":(literal)<file>")),
+                     "--end-of-options", "<commit>", "--", "<files>")),
     # the direct entries of ONE folder at a commit, nothing below it and no content: `<mode> SP <type> SP <id> SP
     # <size> TAB <name> NUL` per entry. A folder that is a link, a submodule or a file is not a tree: git refuses it.
     # Reads the object database only (the Wiki add-on lists its pages with the modes git recorded)
@@ -169,7 +176,7 @@ OPS: dict[str, Op] = {
     # the commits that touched anything below ONE folder, newest first, each followed by the paths it changed there:
     # `NUL id NUL author NUL date NUL subject NUL LF path NUL path NUL ...` (see :func:`parse_dir_log`). A merge shows
     # no paths of its own (its parents' commits do)
-    "dir_log": Op(("log", "--no-color", "--no-renames", f"--format={_COMMIT}", "--name-only", "-z",
+    "dir_log": Op(("log", "--no-color", "--no-renames", f"--format={_COMMIT_RAW}", "--name-only", "-z",
                    "--max-count=<num>", "--end-of-options", "<commit>", "--", ":(literal)<file>")),
 }  # fmt: skip
 _NUM = re.compile(r"[0-9]{1,6}")
@@ -203,11 +210,20 @@ def _check(kind: str, value: object) -> str:
     return value
 
 
-def _fill(spec: Op, operand: tuple[str, ...]) -> list[str]:
+def _fill(spec: Op, operand: tuple[str, ...], files: tuple[str, ...] = ()) -> list[str]:
     if len(operand) != len(spec.operands):
         raise Unsafe("wrong number of git operands")
+    takes_files = "<files>" in spec.args
+    if takes_files != bool(files) or len(files) > MAX_FILES:
+        raise Unsafe("wrong number of files")
     it = iter(operand)
-    return [_SLOT.sub(lambda m: _check(m.group(1), next(it)), a) for a in spec.args]
+    out: list[str] = []
+    for a in spec.args:
+        if a == "<files>":
+            out += [":(literal)" + _check("file", f) for f in files]
+        else:
+            out.append(_SLOT.sub(lambda m: _check(m.group(1), next(it)), a))
+    return out
 
 
 def command(
@@ -216,6 +232,7 @@ def command(
     own: Mapping[str, str],
     *,
     operand: tuple[str, ...] = (),
+    files: tuple[str, ...] = (),
     exclude_top: tuple[str, ...] = (),
     timeout: float = gitsafe.GATE_SECONDS,
 ) -> tuple[list[str], dict[str, str]]:
@@ -232,7 +249,7 @@ def command(
     spec = OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")
-    args = _fill(spec, operand)
+    args = _fill(spec, operand, files)
     if "--" in args:  # the deny list as pathspecs, and the caller's store names directly in the repository's top
         if any(not _TOP_NAME.fullmatch(n) for n in exclude_top):
             raise Unsafe("invalid exclusion")
@@ -274,13 +291,14 @@ def run(
     own: Mapping[str, str],
     *,
     operand: tuple[str, ...] = (),
+    files: tuple[str, ...] = (),
     exclude_top: tuple[str, ...] = (),
     max_bytes: int = 1 << 20,
     timeout: float = 15.0,
 ) -> Result:
     """Run one operation: at most ``max_bytes`` of output, at most ``timeout`` seconds (the whole gate included in the
     caller's budget is not counted: the gate has its own limit). The process group is killed when either is reached."""
-    argv, env = command(repo, op, own, operand=operand, exclude_top=exclude_top)
+    argv, env = command(repo, op, own, operand=operand, files=files, exclude_top=exclude_top)
     return spawn(argv, env, max_bytes=max_bytes, timeout=timeout)
 
 
@@ -365,7 +383,9 @@ def parse_tree(out: bytes) -> list[tuple[str, str, str, int | None, str]]:
     """``(mode, type, object id, size, name)`` per entry of ``tree`` (``ls-tree -z -l``); ``size`` is None for a tree or
     a submodule. A malformed record is dropped. ``name`` is one path component (a folder lists nothing deeper)."""
     rows = []
-    for chunk in out.split(b"\0"):
+    chunks = out.split(b"\0")
+    chunks.pop()  # after the last NUL: empty for a complete output, a cut-off record otherwise (never used)
+    for chunk in chunks:
         m = _TREE_ROW.fullmatch(_text(chunk))
         if m:
             rows.append((m[1], m[2], m[3], None if m[4] == "-" else int(m[4]), m[5]))
@@ -375,8 +395,9 @@ def parse_tree(out: bytes) -> list[tuple[str, str, str, int | None, str]]:
 def parse_dir_log(out: bytes) -> list[tuple[str, str, str, str, list[str]]]:
     """``(sha, author, date, subject, [paths])`` per commit of ``dir_log``, newest first. Every path starts with the
     folder asked for, so a token that is exactly a commit id (after the empty token that starts a record) is a record
-    start and never a path. A truncated last record is dropped."""
+    start and never a path. A cut-off last name or header is dropped."""
     tokens = out.split(b"\0")
+    tokens.pop()  # after the last NUL: empty for a complete output, a cut-off name otherwise (never used)
     rows: list[tuple[str, str, str, str, list[str]]] = []
     i, n = 0, len(tokens)
     while i < n:

@@ -1,9 +1,6 @@
 """Title-first search, then one bounded search of committed blobs."""
 
-import os
 import unicodedata
-
-from orch import gitbrowse, gitsafe
 
 from ..errors import fail
 from . import limits, reader
@@ -25,25 +22,12 @@ def search(scope, q: str) -> dict:
         for r in pages
         if q.casefold() in r["title"].casefold() or q.casefold() in r["slug"].casefold()
     }
-    eligible = {"wiki/" + r["slug"] + ".md": r for r in pages if not r["too_large"]}
-    cut = listed["cut"]
-    if sum(listed["sizes"][r["slug"]] for r in eligible.values()) > limits.SEARCH_SCAN_BYTES:
-        cut = True
-    else:
-        try:
-            result = gitbrowse.run(
-                scope.repo.folder,
-                "tree_grep",
-                os.environ,
-                operand=(q, "HEAD", "wiki"),
-                timeout=limits.SEARCH_SECONDS,
-                max_bytes=1_000_000,
-            )
-        except gitsafe.Unsafe:
-            raise fail("invalid.input", "Use plain search text.", exit=5) from None
-        cut = cut or result.cut or result.timed_out or result.code not in (0, 1)
-        for path, _line, text in gitbrowse.parse_grep(result.out):
-            row = eligible.get(path.partition(":")[2])
-            if row:
-                hits.setdefault(row["slug"], {**row, "snippet": reader.clean(text, 160)})
+    by_slug = {r["slug"]: r for r in pages}
+    # the content search reads exactly the pages that may be served, within the scan cap (see reader.scan_set)
+    files, left_out = reader.scan_set(listed["sizes"], [r["slug"] for r in pages])
+    found, searched_cut = reader.grep(scope.repo, q, files, limits.SEARCH_SECONDS)
+    cut = listed["cut"] or left_out or searched_cut
+    for slug, text in found:
+        if slug in by_slug:
+            hits.setdefault(slug, {**by_slug[slug], "snippet": reader.clean(text, 160)})
     return {"pages": list(hits.values())[: limits.SEARCH_HITS], "cut": cut or len(hits) > limits.SEARCH_HITS}

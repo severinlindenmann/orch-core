@@ -6,7 +6,7 @@ import pytest
 from conftest import ORIGIN
 from test_explorer import git
 
-from orch_dashboard.errors import HostError
+from orch_dashboard.errors import HostError, fail
 from orch_dashboard.explorer import git as browse
 from orch_dashboard.wiki import index, limits, reader, scope
 
@@ -21,6 +21,7 @@ class Link:
         self.on = True
         self.dashboard = True
         self.tickets = {}
+        self.fail_query = False
         self.calls = []
 
     @property
@@ -42,6 +43,8 @@ class Link:
                 if self.member
                 else []
             }
+        if op == "ticket.query" and self.fail_query:
+            raise fail("role.denied", exit=3)
         visible = {k: v for k, v in self.tickets.items() if self.person in v.get("people", ["a", "b"])}
         if op == "ticket.query":
             rows = [
@@ -310,7 +313,6 @@ def test_refresh_budget_and_changes(world, monkeypatch):
         assert len(index.links_by_slug(world.link, world.ws, "a")["hello"]) == expected
     reads = [args for op, args in world.link.calls if op == "ticket.get"]
     assert len(reads) == 3
-    monkeypatch.setattr(limits, "FRESH", 0)
     world.link.tickets["DEMO-0"].update(pages="future", stamp="2", title="hidden\u202e")
     del world.link.tickets["DEMO-1"]
     result = index.links_by_slug(world.link, world.ws, "a")
@@ -410,3 +412,112 @@ def test_titles_come_from_committed_text_only(world, get):
     (world.folder / "wiki/hello.md").write_text("# Edited in the work tree\n")
     git(world.folder, "add", "wiki/hello.md")  # staged, not committed
     assert [r["title"] for r in get().json()["pages"]] == ["Hello world"]
+
+
+def _spy(world, monkeypatch):
+    """Every ``orch.gitbrowse.run`` of the wiki code: ``(op, operand, files)``."""
+    from orch import gitbrowse
+
+    seen = []
+    real = gitbrowse.run
+
+    def run(repo, op, own, **kw):
+        seen.append((op, kw.get("operand", ()), kw.get("files", ())))
+        return real(repo, op, own, **kw)
+
+    monkeypatch.setattr(reader.gitbrowse, "run", run)
+    monkeypatch.setattr(browse.gitbrowse, "run", run)
+    return seen
+
+
+def test_content_reads_name_exactly_the_files_the_scan_cap_counted(world, get, monkeypatch):
+    """Regression (review): a big blob, a subfolder file, a link and a non-page name under wiki/ are never read."""
+    wiki = world.folder / "wiki"
+    (wiki / "big.md").write_text("# Big\n" + "needle\n" * (limits.PAGE_MAX_BYTES // 7 + 10))  # over the page cap
+    (wiki / "sub").mkdir()
+    (wiki / "sub/deep.md").write_text("# Deep\nneedle\n")
+    (wiki / "Upper.md").write_text("# Upper\nneedle\n")
+    (wiki / "link.md").symlink_to("hello.md")
+    (wiki / "note.txt").write_text("needle\n")
+    commit(world)
+    seen = _spy(world, monkeypatch)
+    pages = get("/search", q="needle").json()
+    assert [p["slug"] for p in pages["pages"]] == ["hello"]
+    greps = [files for op, _operand, files in seen if op == "tree_grep"]
+    assert greps and all(files == ("wiki/hello.md",) for files in greps)
+    listing = get().json()["pages"]
+    assert {p["slug"]: p["too_large"] for p in listing} == {"big": True, "hello": False}
+
+
+def test_the_scan_cap_leaves_pages_out_and_says_cut(world, get, monkeypatch):
+    (world.folder / "wiki/second.md").write_text("# Second\nneedle\n")
+    commit(world)
+    seen = _spy(world, monkeypatch)
+    monkeypatch.setattr(limits, "SEARCH_SCAN_BYTES", 60)  # room for the first page only
+    out = get("/search", q="needle").json()
+    assert out["cut"] is True
+    assert [f for op, _o, f in seen if op == "tree_grep"][-1] == ("wiki/hello.md",)
+
+
+def test_a_hostile_file_name_cannot_forge_a_search_record(world, get):
+    wiki = world.folder / "wiki"
+    evil = wiki / "zz\nHEAD^{commit}:wiki" / "hello.md"  # a folder whose name ends the record and starts a fake one
+    evil.parent.mkdir()
+    evil.write_text("# Forged title\nneedle\n")
+    commit(world)
+    assert [p["title"] for p in get().json()["pages"]] == ["Hello world"]
+    assert get("/search", q="Forged").json()["pages"] == []
+
+
+def test_the_table_of_contents_is_not_a_regex_bomb():
+    import time
+
+    t = time.monotonic()
+    out = reader.toc("## a" + " " * 60000 + "x\n" + "## ok\n")
+    assert time.monotonic() - t < 1 and out == [{"level": 2, "text": "ok"}]
+    assert len(reader.toc("## h\n" * 5000)) == reader.TOC_MAX
+    assert reader.toc("#### four\n##nospace\n## Real ##\n### `Code` _it_\n") == [
+        {"level": 2, "text": "Real"},
+        {"level": 3, "text": "Code it"},
+    ]
+
+
+def test_a_commit_date_beyond_the_year_9999_does_not_break_the_list(world, get, monkeypatch):
+    far = ("a" * 40, "Ann", "9999-12-31T19:00:00-05:00", "s", ["wiki/hello.md"])
+    monkeypatch.setattr(reader.gitbrowse, "parse_dir_log", lambda out: [far])
+    page = get().json()["pages"][0]
+    assert page["slug"] == "hello" and page["updated"] is None
+
+
+def test_a_listing_stopped_by_a_cap_is_cut_not_empty(world, get, monkeypatch):
+    from orch import gitbrowse
+
+    real = browse._run
+    oid = "b" * 40
+
+    def run(repo, op, *operand, **kw):
+        if op == "tree":
+            return gitbrowse.Result(-9, f"100644 blob {oid} 5\tx.md\x00100644 blob {oid} 5\ty.md-ext".encode(), True)
+        return real(repo, op, *operand, **kw)
+
+    monkeypatch.setattr(browse, "_run", run)
+    out = get().json()
+    assert out["state"] == "ok" and out["cut"] is True and [p["slug"] for p in out["pages"]] == ["x"]
+
+
+def test_the_author_is_not_rewritten_by_an_uncommitted_mailmap(world, get):
+    (world.folder / ".mailmap").write_text("Mallory <a@example.invalid>\n")
+    assert get().json()["pages"][0]["by"] == "Ann"
+
+
+def test_a_ticket_that_left_the_persons_list_leaves_the_answer_at_once(world, get):
+    world.link.tickets = {"DEMO-1": {"title": "Was visible", "pages": "hello"}}
+    assert get("/backlinks", slug="hello").json()["tickets"][0]["ticket"] == "DEMO-1"
+    world.link.tickets["DEMO-1"]["people"] = ["b"]  # access taken away
+    out = get("/backlinks", slug="hello")
+    assert out.json()["tickets"] == [] and "Was visible" not in out.text
+
+
+def test_pages_stay_readable_when_the_host_cannot_list_tickets(world, get):
+    world.link.fail_query = True
+    assert get().status_code == 200 and get("/page", slug="hello").json()["tickets"] == []

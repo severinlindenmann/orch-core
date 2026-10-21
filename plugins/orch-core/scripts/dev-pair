@@ -1453,7 +1453,7 @@ def find_answer(
 
 
 def store_dir(ws: Path) -> Path:
-    """The workspace's orch store: ``<ws>/.orch`` (since the move into ``.orch/``), else the workspace root (old layout)."""
+    """The orch store of a workspace: ``<ws>/.orch``, or ``<ws>`` itself in the old layout."""
     return ws / ".orch" if (ws / ".orch" / "events").is_dir() else ws
 
 

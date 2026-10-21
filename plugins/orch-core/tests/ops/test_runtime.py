@@ -491,3 +491,19 @@ def test_reading_a_found_roots_config_opens_nothing_outside_the_root(ws, monkeyp
             real_os_close(outside)
     finally:
         os.close(d)
+
+
+@pytest.mark.parametrize("prefix", ["github_pat_"] + ["gh" + kind + "_" for kind in "pousr"])
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_check_secret_refuses_github_tokens(prefix, as_bytes):
+    from orch.ops.base import Context
+    from orch.ops.errors import OrchError
+
+    call = runtime.Call(Context(env={}), "new")
+    text = "before " + prefix + "b" * 36 + " after"
+    with pytest.raises(OrchError) as exc:
+        call.check_secret(text.encode() if as_bytes else text)
+    assert exc.value.code == "grant.secret_in_args"
+    assert exc.value.message == "the text contains a secret (a grant or a GitHub token); it was not stored"
+    ordinary = prefix + "b" * 19
+    call.check_secret(ordinary.encode() if as_bytes else ordinary)

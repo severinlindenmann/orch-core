@@ -646,11 +646,12 @@ def test_land_ops_are_a_closed_set_and_leave_ops_alone():
     assert set(gitsafe.OPS) == {"staged_raw", "staged_blob"}
     assert set(gitsafe.LAND_OPS) == {
         "land_has", "land_commit", "land_merge_base", "land_is_ancestor", "land_count", "land_merge_tree",
-        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_index_pack",
+        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_index_pack", "land_repack",
     }  # fmt: skip
     # no operation can reach the network, a work tree, a free argument or the person's configuration
     assert {op.args[0] for op in gitsafe.LAND_OPS.values()} <= {
         "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref", "index-pack",
+        "repack",
     }  # fmt: skip
     for op in gitsafe.LAND_OPS.values():
         assert not {"-c", "-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack"} & set(
@@ -935,3 +936,66 @@ def test_every_fsck_message_id_is_known_to_this_git(i):
     done = subprocess.run([GIT, "index-pack", "--stdin", f"--strict={i}=error"], input=b"", capture_output=True,
                           env={"PATH": os.environ["PATH"], "GIT_DIR": "/nonexistent"}, check=False)  # fmt: skip
     assert b"Unhandled message id" not in done.stderr
+
+
+# -- pack count and promotion races (Opus delta on 3911b904) --------------------------------------------------------
+
+
+def _pack_names(w) -> list[str]:
+    return sorted(p.name for p in (Path(w.host_path) / "objects" / "pack").iterdir())
+
+
+def test_many_imports_stay_below_the_readers_pack_limit(w, monkeypatch):
+    from orch.gitread import limits
+    from orch.gitread.fs import open_walk
+    from orch.gitread.objects import ObjectStore
+
+    monkeypatch.setattr(limits, "PACKS_MAX", 40)  # the reader's own cap, lowered so 45 imports would break it
+    t0 = w.fetch()
+    tips = []
+    for i in range(45):
+        tips.append(w.ticket(f"f{i}.txt", f"{i}\n"))
+        assert w.importing(tips[-1]).commits == 1
+    assert sum(n.endswith(".idx") for n in _pack_names(w)) <= lg.REPACK_PACKS + 1
+    d, _ = open_walk(os.path.join(w.host_path, "objects"))
+    try:
+        store = ObjectStore(d, "sha1")
+        for t in [t0, *tips]:
+            assert store.read(t, "commit")
+        store.close()
+    finally:
+        d.close()
+    assert w.hgit("fsck", "--no-dangling", "--connectivity-only") == ""
+    assert w.importing(w.src.sha("HEAD")).objects == 0 and _no_quarantine(w)
+
+
+def test_promotion_skips_an_identical_pack_and_never_undoes_a_pre_existing_one(w, monkeypatch, tmp_path):
+    w.fetch()
+    w.ticket("a.txt", "a\n")
+    w.importing()
+    dest = Path(w.host_path) / "objects" / "pack"
+    existing = [p.name for p in dest.iterdir() if p.suffix in (".pack", ".idx")]
+    assert len(existing) == 2
+    snap = {n: (dest / n).read_bytes() for n in existing}
+    q = tmp_path / "q" / "pack"
+    q.mkdir(parents=True)
+    for n in existing:  # the same import again, concurrently: same pack names in the quarantine
+        (q / n).write_bytes(snap[n])
+    LandRepo._promote(str(q.parent), str(dest))
+    assert {n: (dest / n).read_bytes() for n in existing} == snap
+    # now a new pack next to the duplicate, with the move of the new index failing: the old files must survive
+    new = "pack-" + "1" * 40
+    for ext in ("pack", "idx"):
+        (q / f"{new}.{ext}").write_bytes(b"x")
+    real = os.replace
+
+    def flaky(src, dst, **kw):
+        if src.endswith(".idx"):
+            raise OSError("boom")
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(LandGitError):
+        LandRepo._promote(str(q.parent), str(dest))
+    assert {n: (dest / n).read_bytes() for n in existing} == snap
+    assert not (dest / f"{new}.pack").exists()

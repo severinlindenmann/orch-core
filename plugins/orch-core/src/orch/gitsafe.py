@@ -540,6 +540,13 @@ LAND_OPS: dict[str, Op] = {
         ("index-pack", "--stdin", "--strict=" + ",".join(f"{i}=error" for i in FSCK_ERRORS)),
         env=frozenset({"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}),
     ),
+    # fold the packs the importer added into one (``-a -d``); ``-k`` keeps objects no ref reaches (imported source
+    # commits are not refs): only ever objects git already accepted, nothing is dropped. No bitmap, no size split.
+    "land_repack": Op(
+        ("repack", "-a", "-d", "-k", "-q", "--no-write-bitmap-index"),
+        pins=("-c", "pack.packSizeLimit=0", "-c", "gc.auto=0", "-c", "repack.useDeltaIslands=false",
+              "-c", "repack.packKeptObjects=false", "-c", "pack.threads=1"),
+    ),  # fmt: skip
     "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
 }  # fmt: skip
 

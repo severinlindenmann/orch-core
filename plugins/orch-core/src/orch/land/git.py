@@ -29,6 +29,7 @@ This module is the only code that decides **which commit a landing would push**.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import os
 import re
@@ -65,6 +66,8 @@ RUN_SECONDS = 60.0
 OUT_MAX = 16 * limits.MiB
 MESSAGE_MAX = 4096
 _OID = re.compile(r"[0-9a-f]{40}")
+#: more packs than this in the host repository and the next import folds them into one (gitread refuses 256)
+REPACK_PACKS = 32
 _WHEN_MIN, _WHEN_MAX = 946_684_800, 4_102_444_800  # 2000-01-01 .. 2100-01-01
 _GITLINK = 0o160000
 _SYMLINK = 0o120000
@@ -326,9 +329,37 @@ class LandRepo:
         if not isinstance(source_path, str) or not source_path.startswith("/"):
             raise LandGitError("land.bad_input", "the source path is not absolute")
         try:
-            return self._import(os.path.realpath(source_path), tip, max_commits)
+            with self._lock():
+                stats = self._import(os.path.realpath(source_path), tip, max_commits)
+                self._maybe_repack()
+                return stats
         except Unavailable as e:
             raise LandGitError("land.unavailable", e.reason) from None
+
+    @contextlib.contextmanager
+    def _lock(self):  # noqa: ANN202
+        """One import (and the repack after it) at a time per host repository: ``flock`` on a file inside it, opened
+        ``O_NOFOLLOW`` (kernel-released, so no stale lock)."""
+        try:
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            fd = os.open(os.path.join(self.path, "land-import.lock"), flags, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            raise LandGitError("land.unavailable", "the landing repository cannot be locked") from None
+        try:
+            yield
+        finally:
+            os.close(fd)
+
+    def _maybe_repack(self) -> None:
+        """Every import adds a pack; past :data:`REPACK_PACKS` fold them (objects git already accepted) into one, so the
+        reader's pack limit is never reached."""
+        try:
+            packs = sum(1 for n in os.listdir(os.path.join(self.path, "objects", "pack")) if n.endswith(".idx"))
+        except OSError:
+            return
+        if packs > REPACK_PACKS:
+            self._run("land_repack", ok=(0,))
 
     def _import(self, real: str, tip: str, max_commits: int) -> ImportStats:
         host_dir, _ = open_walk(os.path.join(self.path, "objects"))
@@ -462,6 +493,11 @@ class LandRepo:
             sfd = os.open(src, os.O_RDONLY | flags)
             dfd = os.open(dest, os.O_RDONLY | flags)
             for n in names:
+                try:
+                    os.stat(n, dir_fd=dfd, follow_symlinks=False)
+                    continue  # an identical import already put this pack there: keep it, never replace or undo it
+                except FileNotFoundError:
+                    pass
                 os.replace(n, n, src_dir_fd=sfd, dst_dir_fd=dfd)
                 moved.append(n)
             os.fsync(dfd)

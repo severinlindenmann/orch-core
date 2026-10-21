@@ -16,6 +16,20 @@ from orch_dashboard.hostlink import check_uid, encode, receive
 REAL = cli.code_digest()
 
 
+def _tree():
+    import hashlib
+
+    root = Path(cli.__file__).resolve().parent
+    return {
+        str(f.relative_to(root)): hashlib.sha256(f.read_bytes()).hexdigest()[:8]
+        for f in sorted(root.rglob("*"))
+        if f.is_file() and "__pycache__" not in f.parts
+    }
+
+
+SNAP = _tree()
+
+
 @pytest.fixture
 def state(monkeypatch):
     cache = Path.home() / ".cache"
@@ -108,7 +122,10 @@ def test_same_release_is_reused(state, started):
     server = server_at(state, REAL)
     with pytest.raises(Exception) as exc:  # past the launch, the probe fails: we only care that nothing restarted
         cli.open_dashboard("/setup")
-    assert "stop" not in server.seen and not calls
+    live = cli.code_digest()
+    now = _tree()
+    detail = f"REAL={REAL} live={live} file={cli.__file__} changed={ {k for k in set(now) | set(SNAP) if now.get(k) != SNAP.get(k)} }"
+    assert "stop" not in server.seen and not calls, detail
     assert "launch" in server.seen
     server.stopped = True
     del exc

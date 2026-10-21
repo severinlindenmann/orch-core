@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ARM_MS, CLICK_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ClickSignPanel } from './ClickSignPanel'
 
@@ -32,7 +32,6 @@ function mount(a = answer(), props: Partial<React.ComponentProps<typeof ClickSig
 }
 
 const sign = () => screen.getByRole('button', { name: 'Sign' })
-const holdSign = () => screen.getByRole('button', { name: 'Hold to sign' })
 const wait = (ms: number) => act(() => void vi.advanceTimersByTime(ms))
 const arm = () => act(() => void vi.advanceTimersByTime(ARM_MS + 10))
 /** A press that begins armed: pointer down, then click (what a person's click is). */
@@ -51,17 +50,17 @@ afterEach(() => {
 })
 
 describe('the sign panel shows only the signer’s View', () => {
-  it('names the one-click custody once (no duplicate chip) and keeps technical fields in collapsed Details', () => {
+  it('keeps the custody and technical fields in the one collapsed Details', () => {
     mount(answer({ artifacts: 'unseen', checks: [{ repo: 'code', clean: true, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
     const panel = screen.getByTestId('click-panel')
     expect(screen.queryByRole('button', { name: 'One-click' })).toBeNull()
     expect(screen.getAllByText('Technical details')).toHaveLength(1) // U3: ONE Technical details
     expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
-    // the risk sentence is reachable without a pointer: a focusable summary under the custody line
-    const more = screen.getByTestId('click-risk-more')
-    expect(more.querySelector('summary')).toHaveTextContent('What this means')
-    expect(more).toHaveTextContent(CLICK_RISK)
-    expect(panel.querySelectorAll('details')).toHaveLength(2) // Technical details + this one-line toggle
+    // the custody is a technical fact now (no orange line in the main view); the risk notice lives in Settings
+    expect(screen.queryByTestId('click-risk-more')).toBeNull()
+    expect(panel.querySelectorAll('details')).toHaveLength(1)
+    expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+    expect(screen.getByTestId('click-custody')).not.toBeVisible()
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
     expect(panel).toHaveTextContent('approve')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('id a94c935c')
@@ -176,17 +175,17 @@ describe('Sign is armed by presentation', () => {
     expect(onSign).toHaveBeenCalledTimes(2)
   })
 
-  it('a new View resets the confirmation: disabled again, a half-done hold gone', () => {
+  it('a new View resets the confirmation: disabled again, the typed word gone', () => {
     const word = { kind: 'word', word: 'p_abc' } as const
     const { onSign, again } = mount(answer({ confirm: word }))
     arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 200)
-    expect(screen.getByRole('progressbar')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'p_abc' } })
+    expect(sign()).toBeEnabled()
     again(answer({ confirm: word, lines: ['changed'] }, 'sha256:' + 'b'.repeat(64)))
-    expect(holdSign()).toBeDisabled()
-    expect(screen.queryByRole('progressbar')).toBeNull()
-    wait(HOLD_MS * 2) // the old hold's remaining time passes (and the new View arms): nothing signs
+    expect(sign()).toBeDisabled()
+    expect(screen.getByRole('textbox')).toHaveValue('')
+    wait(ARM_MS * 2)
+    expect(sign()).toBeDisabled() // armed again, but the word is not typed
     expect(onSign).not.toHaveBeenCalled()
   })
 
@@ -203,118 +202,78 @@ describe('Sign is armed by presentation', () => {
 
 describe('a word op', () => {
   const WORD = 'DEMO~a94c935c/POLICY'
-  const mountWord = () => mount(answer({ confirm: { kind: 'word', word: WORD } }))
+  const mountWord = (props: Partial<React.ComponentProps<typeof ClickSignPanel>> = {}) => mount(answer({ confirm: { kind: 'word', word: WORD } }), props)
+  const type = (v: string) => fireEvent.change(screen.getByRole('textbox'), { target: { value: v } })
 
-  it('shows the word in a hint the button points at, and has no field to type in', () => {
+  it('asks for the word in a field next to Sign, which stays off, and says why', () => {
     mountWord()
-    const hint = screen.getByTestId('click-hold-hint')
-    expect(hint).toHaveTextContent(`Hold Sign to confirm ${WORD}`)
-    expect(holdSign()).toHaveAttribute('aria-describedby', hint.id)
-    expect(screen.queryByRole('textbox')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(screen.getByLabelText(new RegExp(`Type ${WORD.replace(/[~/]/g, '.')} to confirm`))).toBe(screen.getByRole('textbox'))
+    expect(screen.queryByRole('button', { name: /Hold to sign/ })).toBeNull()
+    arm()
+    expect(sign()).toBeDisabled()
+    expect(screen.getByTestId('word-hint')).toHaveTextContent(`Type ${WORD} above to continue.`)
   })
 
-  it('a short press does not sign, and neither does a click', () => {
+  it('a wrong or partly typed word keeps Sign off; the exact word turns it on', () => {
     const { onSign } = mountWord()
     arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 100)
-    fireEvent.pointerUp(holdSign())
-    fireEvent.click(holdSign())
-    wait(HOLD_MS * 2)
+    type(WORD.slice(0, -1))
+    expect(sign()).toBeDisabled()
+    type(WORD.toLowerCase())
+    expect(sign()).toBeDisabled()
+    type(WORD + ' ')
+    expect(sign()).toBeDisabled()
+    press(sign())
     expect(onSign).not.toHaveBeenCalled()
-    expect(screen.queryByRole('progressbar')).toBeNull()
+    type(WORD)
+    expect(sign()).toBeEnabled()
   })
 
-  it('a full hold signs exactly once, with the View’s word, and shows its progress meanwhile', () => {
+  it('signs exactly once, with the View’s word, only after arming and the typed word', () => {
     const { onSign } = mountWord()
+    type(WORD)
+    expect(sign()).toBeDisabled() // the word alone does not arm it
     arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS / 2)
-    const bar = screen.getByRole('progressbar')
-    expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(40)
-    expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100)
-    wait(HOLD_MS / 2)
+    press(sign())
     expect(onSign).toHaveBeenCalledTimes(1)
     expect(onSign).toHaveBeenCalledWith(WORD)
-    wait(HOLD_MS * 2) // still held down: no second signature
-    fireEvent.pointerUp(holdSign())
-    fireEvent.click(holdSign())
+    fireEvent.click(sign())
     expect(onSign).toHaveBeenCalledTimes(1)
   })
 
-  it('releasing early, then holding again, signs (the new hold starts from zero)', () => {
+  it('a press that began before the word was typed does not sign', () => {
     const { onSign } = mountWord()
     arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 300)
-    fireEvent.pointerLeave(holdSign())
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 100)
-    expect(onSign).not.toHaveBeenCalled() // not the sum of both holds
-    wait(100)
-    expect(onSign).toHaveBeenCalledTimes(1)
-    expect(onSign).toHaveBeenCalledWith(WORD)
-  })
-
-  it('pointer cancel, blur and a secondary button do not sign', () => {
-    const { onSign } = mountWord()
-    arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 100)
-    fireEvent.pointerCancel(holdSign())
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 100)
-    fireEvent.blur(holdSign())
-    fireEvent.pointerDown(holdSign(), { button: 2 })
-    wait(HOLD_MS * 2)
+    fireEvent.pointerDown(sign()) // disabled: dropped
+    type(WORD)
+    fireEvent.click(sign())
     expect(onSign).not.toHaveBeenCalled()
   })
 
-  it('holds by keyboard: Space down starts it, auto-repeats neither restart nor finish it early, key up cancels', () => {
-    const { onSign } = mountWord()
-    arm()
-    fireEvent.keyDown(holdSign(), { key: ' ' })
-    for (let i = 0; i < 10; i++) {
-      wait(100)
-      fireEvent.keyDown(holdSign(), { key: ' ', repeat: true })
-    }
-    fireEvent.keyUp(holdSign(), { key: ' ' }) // released at 1000 ms
-    wait(HOLD_MS)
-    expect(onSign).not.toHaveBeenCalled()
-    fireEvent.keyDown(holdSign(), { key: ' ' })
-    wait(HOLD_MS - 500)
-    fireEvent.keyDown(holdSign(), { key: ' ', repeat: true }) // a repeat does not restart the clock
-    wait(500)
-    expect(onSign).toHaveBeenCalledTimes(1)
-    expect(onSign).toHaveBeenCalledWith(WORD)
-    fireEvent.keyUp(holdSign(), { key: ' ' })
-    fireEvent.keyDown(holdSign(), { key: 'Enter', repeat: true }) // a held key since the last hold starts nothing
-    wait(HOLD_MS * 2)
-    expect(onSign).toHaveBeenCalledTimes(1)
+  it('names the agent access, its length and what agents may do, when the story gives access', () => {
+    mountWord({ story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
+    expect(screen.getByTestId('access-length')).toHaveTextContent('Let agents work for you for 7 days.')
+    expect(screen.getByTestId('typed-word')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
+    expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeDisabled()
+  })
+})
+
+describe('the story around the review', () => {
+  it('shows What happens next, the button label from the story and no phone link without a paired phone', () => {
+    mount(answer(), { story: { signLabel: 'Sign requirements', steps: ['You sign.', 'The requirements are locked as shown.'] } })
+    expect(screen.getByTestId('what-next')).toHaveTextContent('The requirements are locked as shown.')
+    expect(screen.getByRole('button', { name: 'Sign requirements' })).toBeInTheDocument()
+    expect(screen.getByTestId('sign-method')).toHaveTextContent('Sign on this computer')
+    expect(screen.queryByTestId('use-phone')).toBeNull()
+    expect(screen.queryByText('Other ways')).toBeNull()
+    expect(screen.queryByTestId('click-risk')).toBeNull()
   })
 
-  it('a hold that began before arming does not sign, even held well past it', () => {
-    const { onSign } = mountWord()
-    fireEvent.pointerDown(holdSign()) // disabled: React drops it
-    fireEvent.keyDown(holdSign(), { key: ' ' })
-    wait(ARM_MS + HOLD_MS * 2)
-    expect(holdSign()).toBeEnabled()
-    expect(onSign).not.toHaveBeenCalled()
-    fireEvent.keyDown(holdSign(), { key: ' ', repeat: true }) // the key held since before arming
-    wait(HOLD_MS * 2)
-    expect(onSign).not.toHaveBeenCalled()
-  })
-
-  it('a hold is dropped when the window loses focus mid-hold', () => {
-    const { onSign } = mountWord()
-    arm()
-    fireEvent.pointerDown(holdSign())
-    wait(HOLD_MS - 100)
-    act(() => void window.dispatchEvent(new Event('blur')))
-    act(() => void window.dispatchEvent(new Event('focus')))
-    wait(ARM_MS + HOLD_MS)
-    expect(onSign).not.toHaveBeenCalled()
+  it('offers the quiet phone link only when asked to', () => {
+    const onPhone = vi.fn()
+    mount(answer(), { onPhone })
+    fireEvent.click(screen.getByRole('button', { name: 'Use my phone instead' }))
+    expect(onPhone).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -337,11 +296,11 @@ it('renders structured content while retaining the full lines in Details', () =>
   expect(screen.getByTestId('click-lines').closest('details')).not.toHaveAttribute('open')
 })
 
-it('keeps custody and warnings visible with structured content and technical details collapsed', () => {
+it('keeps warnings visible with structured content and technical details collapsed', () => {
   mount(answer({ content: { headline: 'Approve', notes: ['Review this'] }, artifacts: 'unseen',
     checks: [{ repo: 'dirty-repo', clean: false, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
   expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
-  expect(screen.getByTestId('click-custody')).toBeVisible()
+  expect(screen.getByTestId('click-custody')).not.toBeVisible() // a technical fact now, under the one collapsed Technical details
   expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
   expect(screen.getByText('dirty-repo', { selector: 'p *' }).closest('p')).toBeVisible()
   expect(screen.getByTestId('click-artifacts')).toBeVisible()

@@ -189,7 +189,7 @@ it('adding where click-to-sign is on goes through the click routes, not a hand-o
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Remove the dead import')
   await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
-  await within(first).findByRole('button', { name: 'Sign' }, T)
+  await within(first).findByRole('button', { name: /^Sign( |$)/ }, T)
   expect(state.host.posts()).toEqual([]) // no terminal hand-off was prepared
   expect(within(first).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
 })

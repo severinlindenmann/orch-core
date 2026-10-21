@@ -778,8 +778,9 @@ describe('start agent', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
-    expect(within(panel).getByTestId('click-hold-hint').textContent).toBe('Hold Sign to confirm DEMO~bbbbbbbb/GRANT')
-    expect(within(panel).getByRole('button', { name: 'Hold to sign' })).toBeInTheDocument()
+    expect(within(panel).getByTestId('typed-word')).toHaveTextContent('Type DEMO~bbbbbbbb/GRANT to confirm')
+    expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
+    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and allow access' })).toBeDisabled() // until the word is typed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })

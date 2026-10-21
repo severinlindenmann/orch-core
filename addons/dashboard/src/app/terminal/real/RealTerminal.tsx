@@ -11,6 +11,7 @@ import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { BACKOFF_MS, closePolicy, endWords, termTransport, type connectTerm, type TermConnection, type TermEnd } from './termProtocol'
 import { createTermView, termOptions, type TermView } from './termView'
+import { TermTools } from './TermTools'
 import { termTheme, TERM_PADDING } from './termTheme'
 
 /** One attach request: the mode asked for, and whether it takes the lease (only after the person's own click). */
@@ -33,6 +34,8 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
 }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<TermView | null>(null)
+  const [toolsView, setToolsView] = useState<TermView | null>(null)
+  const [finding, setFinding] = useState(false)
   const conn = useRef<TermConnection | null>(null)
   const [req, setReq] = useState<AttachRequest>({ mode: initial, take: initial === 'write', n: 0 })
   const [lease, setLease] = useState<LeaseState>('reading')
@@ -57,6 +60,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
     }))
     v.term.textarea?.setAttribute('aria-label', 'Terminal input')
     view.current = v
+    setToolsView(v)
     const ro = new ResizeObserver(() => {
       const size = view.current?.fit()
       if (size) conn.current?.resize(size.cols, size.rows)
@@ -171,7 +175,13 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const busy = lease === 'busy' || (lease === 'reading' && run.writer && run.state === 'running')
   const running = run.state === 'running' && !(status?.final)
   return (
-    <div className="flex h-full min-h-0 flex-col" data-real-terminal={run.run}>
+    <div className="flex h-full min-h-0 flex-col" data-real-terminal={run.run} onKeyDownCapture={(e) => {
+      if (e.metaKey && e.key.toLowerCase() === 'f' && view.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        setFinding(true)
+      }
+    }}>
       {running && !writing && (
         <div role="status" className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1 text-xs text-text-muted" data-lease={lease === 'lost' ? 'lost' : busy ? 'busy' : 'reading'}>
           <span className="min-w-0 truncate">
@@ -198,6 +208,7 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
       )}
       {paused && <p role="status" className="shrink-0 px-2 py-0.5 text-xs text-warning">Input paused</p>}
       {lost && <p role="alert" className="shrink-0 px-2 py-0.5 text-xs text-warning">Some input was not delivered. Check the terminal before typing again.</p>}
+      <TermTools view={toolsView} run={run} finding={finding} onFinding={setFinding} />
       {/* A read-only viewer renders at the writer's size and scrolls; the writer's terminal fits this box. */}
       <div ref={host} role="group" aria-label="Terminal" aria-readonly={writing ? undefined : true} data-terminal-session={run.run}
         style={{ padding: TERM_PADDING }}

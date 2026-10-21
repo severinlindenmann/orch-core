@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import os
 import re
-import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,7 @@ from orch.gitread.errors import Unavailable
 from orch.gitread.ignorepolicy import BYTES_MAX
 from orch.gitread.local import READER, person_ignore
 
-from .conftest import case_sensitive
+from .conftest import case_sensitive, cpu_budget
 
 SRC = Path(ignorepolicy.__file__).parents[1]
 USES = re.compile(r"\bcompile_glob\b|\bparse_ignore\b|ignorepolicy\._parse|\bIgnores\(|[\"']info/exclude[\"']")
@@ -123,10 +122,8 @@ def test_hard_linked_large_gitignores_end_quickly_as_unknown(make_repo):
     for i in range(1, 8):
         (r.path / f"d{i}").mkdir()
         os.link(first, r.path / f"d{i}" / ".gitignore")
-    started = time.monotonic()
-    with pytest.raises(Unavailable, match="larger than"):
+    with cpu_budget(5), pytest.raises(Unavailable, match="larger than"):
         READER.tree_check(r.path, r.env)
-    assert time.monotonic() - started < 2
 
 
 def test_a_class_heavy_gitignore_under_the_cap_compiles_in_linear_time(make_repo):
@@ -136,9 +133,8 @@ def test_a_class_heavy_gitignore_under_the_cap_compiles_in_linear_time(make_repo
     r.commit()
     lines = b"".join(b"[" + b"ab" * 1500 + b"]x\n" for _ in range(BYTES_MAX // 3100))
     r.write(".gitignore", lines)
-    started = time.monotonic()
-    READER.tree_check(r.path, r.env)
-    assert time.monotonic() - started < 3
+    with cpu_budget(6):  # quadratic compile of this input cost minutes
+        READER.tree_check(r.path, r.env)
 
 
 def test_environment_passed_config_makes_the_repository_ignorecase_not_final(make_repo):

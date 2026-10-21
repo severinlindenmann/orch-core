@@ -12,7 +12,6 @@ import json
 import os
 import pty
 import re
-import select
 import subprocess
 import sys
 import termios
@@ -20,7 +19,7 @@ import time
 
 import pytest
 
-from orch import canon, crypto
+from orch import canon, crypto, fdwait
 from tests.ops.humans import PASSPHRASE
 from tests.ops.test_task_ac import py
 from tests.store.helpers import WS
@@ -83,8 +82,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
     confirmed = False
     deadline = time.time() + 60
     while time.time() < deadline:  # until the terminal closes (the command ended) or the time is up
-        ready, _, _ = select.select([tty], [], [], 0.2)
-        if ready:
+        if fdwait.readable(tty, 0.2):
             try:
                 chunk = os.read(tty, 65536)
             except OSError:  # EIO: the other side of the terminal is gone

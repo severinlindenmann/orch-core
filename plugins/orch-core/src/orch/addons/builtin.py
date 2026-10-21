@@ -1,6 +1,7 @@
 """Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish, usage,
-explorer, estimate, model-routing, wiki), so they install without a clone: ``orch addon manifest <name> --write .`` puts
-``addons/<name>/orch-addon.json`` into a workspace, then ``orch addon grant <name>`` (B5b).
+explorer, estimate, model-routing, github, wiki), so they install without a clone:
+``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a workspace,
+then ``orch addon grant <name>`` (B5b).
 The package copies in ``manifests/`` equal ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ NAMES = (
     "estimate",
     "explorer",
     "model-routing",
+    "github",
     "wiki",
 )
 

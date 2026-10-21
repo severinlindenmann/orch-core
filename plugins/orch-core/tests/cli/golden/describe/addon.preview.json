@@ -1,0 +1,84 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "addon.preview",
+    "name": "addon.preview",
+    "cli": "orch addon preview",
+    "summary": "Show what turning an addon on would sign, without installing or granting it.",
+    "who": "read",
+    "usage": "orch addon preview NAME",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Show what turning an addon on would sign, without installing or granting it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "addon name",
+          "x-metavar": "NAME"
+        }
+      },
+      "x-positional": [
+        "name"
+      ],
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok addon.preview {name}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "grant": {
+            "type": "object"
+          },
+          "needs": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "set_up": {
+            "type": "boolean"
+          },
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "grant",
+          "needs",
+          "set_up",
+          "on"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -2,6 +2,7 @@
 // knows this workspace. Changing the addresses is a signed settings change (terminal only); registering is a plain
 // request. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
@@ -16,9 +17,10 @@ import { useSettingsHandoff } from './useSettingsHandoff'
 
 const ORIGIN = /^(?:https:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?|http:\/\/(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)$/
 
+type Connection = 'idle' | 'busy' | 'ok' | 'fail'
 type Registration = { at: 'unknown' } | { at: 'busy' } | { at: 'ok'; result: string } | { at: 'refused'; text: string; admin: boolean }
 
-export function PublishServer({ workspace, owner }: { workspace: Workspace; owner: boolean }) {
+export function PublishServer({ workspace, owner, embedded = false }: { workspace: Workspace; owner: boolean; embedded?: boolean }) {
   const ws = workspace.id
   const list = useQuery(shareQueries.list(ws))
   const data = list.data && list.data.available ? list.data : null
@@ -26,6 +28,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
   const [server, setServer] = useState('')
   const [share, setShare] = useState('')
   const [copyNote, setCopyNote] = useState('')
+  const [conn, setConn] = useState<Connection>('idle')
   const [reg, setReg] = useState<Registration>({ at: 'unknown' })
   const { ask, dialog } = useSettingsHandoff(ws, () => void list.refetch())
   if (list.isError)
@@ -49,6 +52,12 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
         ? 'The two addresses must differ: opened files get their own address.'
         : ''
   const ready = ORIGIN.test(server) && ORIGIN.test(share) && server !== share
+  // Read-only probe: ask the host for the shares list again; it says whether the server answered. Nothing is written.
+  const check = async () => {
+    setConn('busy')
+    const got = await list.refetch()
+    setConn(got.data && got.data.available && got.data.live ? 'ok' : 'fail')
+  }
   const register = async () => {
     setReg({ at: 'busy' })
     try {
@@ -59,7 +68,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
     }
   }
   return (
-    <Section title="Publish: where files go">
+    <Wrap embedded={embedded}>
       <div className="space-y-2 text-[13px]" data-testid="publish-server">
         <p className="text-text-muted">
           When you share files, they are sent to a publish server you choose, and the link opens on a second address. Only a person changes these addresses, and you sign the change in your terminal.
@@ -81,10 +90,29 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
         )}
         {owner ? (
           <Button size="sm" variant="secondary" onClick={() => { setServer(data.server ?? ''); setShare(data.share ?? ''); setEditing(true) }}>
-            {data.configured ? 'Change addresses' : 'Set up'}
+            {data.configured ? 'Edit server' : 'Set up'}
           </Button>
         ) : (
           <OwnerNote>Only owners can change this.</OwnerNote>
+        )}
+        {data.configured && (
+          <div className="space-y-1 border-t border-border pt-2" data-testid="publish-connection">
+            <p className="font-medium">Is the server reachable?</p>
+            <p role="status" className="text-text-muted">
+              {conn === 'idle' && 'Not checked.'}
+              {conn === 'busy' && 'Checking…'}
+              {conn === 'ok' && 'Connected. The server answered.'}
+              {conn === 'fail' && 'Could not connect. The server is not running or cannot be reached from this computer. Check the address, or ask your workspace administrator.'}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" disabled={conn === 'busy'} onClick={() => void check()}>
+                Check connection
+              </Button>
+              <Button size="sm" variant="ghost" asChild>
+                <Link to="/shares">Open Shares</Link>
+              </Button>
+            </div>
+          </div>
         )}
         {data.configured && (
           <div className="space-y-1 border-t border-border pt-2" data-testid="publish-registration">
@@ -129,7 +157,7 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
           <DialogContent className="max-w-md gap-3 border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Where shared files go</DialogTitle>
-              <DialogDescription>You will see both addresses again when you sign. Files you share later go to the first address, and links open at the second.</DialogDescription>
+              <DialogDescription>Ask your workspace administrator for the publish server address. You will see both addresses again when you sign. Files you share later go to the first address, and links open at the second.</DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-[13px]">
               <div className="space-y-1.5">
@@ -160,6 +188,10 @@ export function PublishServer({ workspace, owner }: { workspace: Workspace; owne
         </Dialog>
       )}
       {dialog}
-    </Section>
+    </Wrap>
   )
+}
+
+function Wrap({ embedded, children }: { embedded: boolean; children: React.ReactNode }) {
+  return embedded ? <div className="mt-2 rounded-md border border-border bg-bg/40 p-3">{children}</div> : <Section title="Publish: where files go">{children}</Section>
 }

@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -102,3 +104,35 @@ def untracked_by_git(r) -> set[str]:
                           "--untracked-files=all"], capture_output=True, env=r.env, check=True,
                          stdin=subprocess.DEVNULL).stdout  # fmt: skip
     return {e[3:].decode() for e in out.split(b"\0") if e}
+
+
+# -- Timing helpers: CPU time, never wall clock. A loaded machine stretches wall time but not the CPU a process uses,
+# so these stay steady where `time.monotonic() - t < 2` flaked (load average ~286).
+
+
+@contextmanager
+def cpu_budget(seconds: float):
+    """Fail if the block uses more than ``seconds`` of this process's CPU time (fixed-size inputs, where the old bug
+    cost many times the budget)."""
+    started = time.process_time()
+    yield
+    used = time.process_time() - started
+    assert used < seconds, f"used {used:.2f} s of CPU, budget {seconds} s"
+
+
+def assert_linear(run, sizes=(1, 2, 4), factor=2.5, repeats=3):
+    """Assert ``run(n)`` takes about linear CPU time in n. Takes the best of ``repeats`` per size and requires
+    time(largest) / time(smallest) < factor * (largest / smallest). With sizes 1x..4x a linear cost gives a ratio of
+    about 4 (limit 10), a quadratic one 16, an exponential one far more: noise fits, a regression does not."""
+
+    def best(n):
+        runs = []
+        for _ in range(repeats):
+            started = time.process_time()
+            run(n)
+            runs.append(time.process_time() - started)
+        return max(min(runs), 1e-4)  # the clock's resolution floor, so a tiny first run cannot inflate the ratio
+
+    first, last = best(sizes[0]), best(sizes[-1])
+    grown = sizes[-1] / sizes[0]
+    assert last / first < factor * grown, f"x{grown:g} the input took x{last / first:.1f} the CPU time (not linear)"

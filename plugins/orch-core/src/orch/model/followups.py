@@ -14,12 +14,12 @@ from orch.canon.text import is_clean_text
 
 FU_MAX_DAYS = 14  # FU5 scheduling horizon.
 FU_CHAIN_MAX = 5  # FU7 follow-ups without progress.
-FU_CHAIN_CEILING_DAYS = 30  # pending owner Q1/Q5
-FU_CHAIN_CEILING_COUNT = 10  # pending owner Q1/Q5
-FU_PENDING_MAX = 20  # pending owner Q1/Q5
-FU_RUNS_PER_DAY = 24  # pending owner Q1/Q5
-FU_CONCURRENT_RUNS = 2  # pending owner Q1/Q5
-FU_RUN_HOURS = 8  # pending owner Q2
+FU_CHAIN_CEILING_DAYS = 30  # owner decision 2026-10-21 (Q1/Q5)
+FU_CHAIN_CEILING_COUNT = 10  # owner decision 2026-10-21 (Q1/Q5)
+FU_PENDING_MAX = 20  # owner decision 2026-10-21 (Q1/Q5)
+FU_RUNS_PER_DAY = 24  # owner decision 2026-10-21 (Q1/Q5)
+FU_CONCURRENT_RUNS = 2  # owner decision 2026-10-21 (Q1/Q5)
+FU_RUN_HOURS = 8  # owner decision 2026-10-21 (Q2)
 FU_MIN_LEAD_S = 3600  # FU5 minimum scheduling lead.
 FU_TIME_EARLY_S = 300  # FU8 early firing tolerance.
 FU_LATE_S = 86400  # FU8 late firing tolerance.

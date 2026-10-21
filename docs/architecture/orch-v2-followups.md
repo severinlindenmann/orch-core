@@ -2,8 +2,8 @@
 
 Status: **draft, 21 Oct 2026** (orch-core #714, #715-#720; orch-relay #81). Written from the Opus design check of
 21 Oct 2026 and the owner decisions of 19 Oct 2026. The pure rules (§3) are built in `orch/model/followups.py`; the
-engine, host, runner and relay parts are not wired yet. Numbers marked *pending owner* wait for the owner's answer to
-Q1, Q2 or Q5 (§9) and are named constants in the code.
+engine, host, runner and relay parts are not wired yet. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
+in the code.
 
 ## 1. What it is
 
@@ -39,7 +39,7 @@ only**. No new person-signed grant exists; the follow-up grant is derived by the
 | **FU4 Revocation follows the chain; expiry does not** | G', and the firing of a pending follow-up, need every ancestor up to the root grant unrevoked and the root person still a non-viewer member. `grant.revoked` of any ancestor (or of G' itself) cancels the pending descendants. When the parent grant expires, nothing ends (owner, 19 Oct). | `model/followups.chain_valid`, `ancestors` |
 | **FU5 Who may set one** | The actor of `followup.set` is an agent with a grant (never `unattended`), holds the live claim on the ticket (in family), works on an `in_progress` ticket, and acts while `schedules` is enabled with follow-ups. The setting has due >= at + 1 h, due <= deadline <= at + `max_days`, a deadline always for event triggers, and a brief of at most 4 KiB that passes the text rules (NFC, no control or bidi characters). A new set replaces the pending one, and `followup.set` releases the setter's claim in the same event. | `model/followups.check_set` |
 | **FU6 Caps come from the signed enable** | `max_days`, `chain_max`, `pending_max` and `runs_per_day` are workspace settings written in the owner-signed `addon_enable` review (#737). The code ceilings are 14 days / 5 without progress / 20 pending / 24 runs a day; a setting can lower a cap, never raise it past the ceiling. | `model/followups.effective_caps` |
-| **FU7 Chain cap** | A chain counts follow-ups since the last person event. The count resets on `task.done` only for a task that existed at the chain's first `followup.set` (an agent cannot add a task and finish it to reset). At the cap the set is accepted with state `needs_person`: the host never fires it, and Today shows Run now / Reschedule / Dismiss. Absolute ceiling (*pending owner Q1*): 30 days or 10 follow-ups since the last person action, never reset by progress. | `model/followups.chain_state`, `set_state` |
+| **FU7 Chain cap** | A chain counts follow-ups since the last person event. The count resets on `task.done` only for a task that existed at the chain's first `followup.set` (an agent cannot add a task and finish it to reset). At the cap the set is accepted with state `needs_person`: the host never fires it, and Today shows Run now / Reschedule / Dismiss. Absolute ceiling (owner decision 21 Oct, Q1): 30 days or 10 follow-ups since the last person action, never reset by progress. | `model/followups.chain_state`, `set_state` |
 | **FU8 Only the workspace's host fires, inside the window** | `followup.fired` is H (`host_sig`) and names a pending follow-up. Time trigger: fired.at in [due - 300 s, deadline + 24 h]. Event, add-on or webhook trigger: fired.at in [set.at, deadline + 24 h]. `trigger` is one of `time`, `orch`, `addon`, `webhook`, `deadline`. For `deadline`, fired.at in [deadline - 300 s, deadline + 24 h] and a `fallback` reason from the closed list of §6. | `model/followups.check_fired` |
 | **FU9 Secret custody** | The G' secret is drawn at fire time in host memory; its hash goes into `followup.fired`. It is sent once as `grant.put_run {run, grant, secret, until}` to a runner slot keyed by run id, and the `spawn` of that run consumes it. It is never on disk, never in `followup.set`, a run record, a report or a log line (existing `Redactor` / `RedactFilter`). Fire order: (1) the run intent is persisted, (2) `followup.fired` is appended, (3) `put_run` and `spawn` are sent. A crash between 2 and 3 gives `did_not_run: host_restarted`, and the follow-up is never fired again. | `host/followups.fire` (host), `runner/grants.put_run` (runner) |
 | **FU10 Closed launch, no outside text in a prompt** | The session starts in a new closed mode `followup` in `host/launch.py`. The prompt is a fixed template with the ticket key and the follow-up id; the brief is read from the ledger under G' and is never in argv. A fallback reason is a closed code rendered by core. Nothing from a webhook or an add-on reaches a prompt. Harness and model are re-validated at fire time against the closed registry. | `host/launch.py` |
@@ -77,7 +77,7 @@ A model-derived cancel writes no event; the engine derives it on replay with `de
 * `without_progress` is the number of sets after the last progress; every set counts, including a replacing one.
 * The chain is `needs_person` (`chain_cap`) when `without_progress >= chain_max`, or the total reaches the ceiling
   count, or more than the ceiling days passed since the chain start (below). The ceilings are never reset by progress
-  (*pending owner Q1*: 30 days, 10 follow-ups).
+  (owner decision 21 Oct, Q1: 30 days, 10 follow-ups).
 * The ceilings count from the last person event on the ticket (`since`, the chain start); without it, from the first set.
 * A new set is `pending` unless the chain before it is already `needs_person`, or its times lie beyond the ceiling.
 
@@ -128,17 +128,17 @@ cancels its follow-ups."
 "Run now" by a person cancels the follow-up and starts the agent the normal way with the person's own runner grant
 (`agent.start`, mode `followup`); G' is not used.
 
-## 9. Open owner questions
+## 9. Owner questions (Q1, Q2, Q5, Q7 decided on 21 Oct 2026)
 
-| Q | Question | Recommended (in code as named constants) |
+| Q | Question | Answer (decided ones in bold; constants in code) |
 |---|---|---|
-| Q1 | Chain ceiling | progress counts only tasks that existed at chain start; a chain also ends after 30 days or 10 follow-ups (`FU_CHAIN_CEILING_DAYS`, `FU_CHAIN_CEILING_COUNT`) |
-| Q2 | How long a follow-up session may run | the parent grant's length, at most 8 h (`FU_RUN_HOURS`) |
+| Q1 | Chain ceiling | **decided:** progress counts only tasks that existed at chain start; a chain also ends after 30 days or 10 follow-ups (`FU_CHAIN_CEILING_DAYS`, `FU_CHAIN_CEILING_COUNT`) |
+| Q2 | How long a follow-up session may run | **decided:** the parent grant's length, at most 8 h (`FU_RUN_HOURS`) |
 | Q3 | Webhooks on a VPS | relay inbox in v1; direct receive later |
 | Q4 | Optional HMAC | drop in v1 (the relay drops the body) |
-| Q5 | Budgets | 20 pending per workspace, 24 runs a day, 2 at once (`FU_PENDING_MAX`, `FU_RUNS_PER_DAY`, `FU_CONCURRENT_RUNS`) |
+| Q5 | Budgets | **decided:** 20 pending per workspace, 24 runs a day, 2 at once (`FU_PENDING_MAX`, `FU_RUNS_PER_DAY`, `FU_CONCURRENT_RUNS`) |
 | Q6 | Cancel and Reschedule by a person are signed events | yes |
-| Q7 | Another session claims the waiting ticket | cancel ("someone picked the ticket up") |
+| Q7 | Another session claims the waiting ticket | **decided:** cancel ("someone picked the ticket up") |
 | Q8 | First add-on events | Databricks run finished, GitHub checks finished, after C9 |
 
 ## 10. Threat answers

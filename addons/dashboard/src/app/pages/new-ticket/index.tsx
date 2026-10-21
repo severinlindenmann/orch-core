@@ -645,6 +645,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           ws={workspace.id}
           action={handoffNew.action}
           autoStart
+          startsAgent={!!handoffNew.start}
           unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).

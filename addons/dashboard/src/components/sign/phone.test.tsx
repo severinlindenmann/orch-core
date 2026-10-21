@@ -42,10 +42,14 @@ it('cancels and shows the outcome if a decision won the race', async () => {
   await screen.findByText('Changes requested.')
   expect(api.phoneCancel).toHaveBeenCalledWith('ws', hint.id)
 })
-it('does not offer an enabled phone button without a paired phone', async () => {
+it('offers no phone link (and no "pair a phone first" button) without a paired phone', async () => {
   vi.mocked(api.phoneAvailable).mockResolvedValue({ phones: 0 })
+  vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal', is_default: false, allowed: ['terminal', 'phone'] })
   mount()
-  await waitFor(() => expect(screen.getByRole('button', { name: /pair a phone first/ })).toBeDisabled())
+  await screen.findByRole('dialog')
+  await waitFor(() => expect(api.phoneAvailable).toHaveBeenCalled())
+  expect(screen.queryByRole('button', { name: /phone/i })).toBeNull()
+  expect(screen.queryByText('Other ways')).toBeNull()
   expect(api.phoneRequest).not.toHaveBeenCalled()
 })
 it.each(['stale', 'expired', 'cancelled', 'done'] as const)('explains %s without an auth label', state => {
@@ -68,13 +72,12 @@ it('does not offer a phone that is not paired and not requested', async () => {
   expect(screen.queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
   expect(api.phoneRequest).not.toHaveBeenCalled()
 })
-it('puts phone under Other ways when terminal is the default', async () => {
+it('offers the phone as one quiet link when terminal is the default and a phone is paired', async () => {
   vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal', is_default: false, allowed: ['terminal', 'phone'] })
   const user = mount()
-  await user.click(await screen.findByText('Other ways'))
-  const button = screen.getByRole('button', { name: 'Approve on your phone' })
-  expect(button.closest('details')).not.toBeNull()
-  await user.click(button)
+  const link = await screen.findByRole('button', { name: 'Use my phone instead' })
+  expect(screen.queryByText('Other ways')).toBeNull()
+  await user.click(link)
   await screen.findByText('Waiting for your phone…')
 })
 

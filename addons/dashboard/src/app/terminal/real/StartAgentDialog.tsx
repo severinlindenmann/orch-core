@@ -16,6 +16,7 @@ import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api
 import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
+import { storyOf } from '@/components/sign/story'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { useClickSign } from '@/components/sign/useClickSign'
@@ -529,7 +530,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         }} onClose={() => setHandoff(false)} />}
       {(click.phase === 'preparing' || click.phase === 'viewing') && <Skeleton className="h-16" />}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
-        <ClickSignPanel ws={ws} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+        <ClickSignPanel ws={ws} story={storyOf(action)} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
       ) : (
         <p role="alert" className="text-danger" data-testid="runner-grant-bad-view">The review does not say where the grant goes. Nothing was signed. <Button size="xs" variant="ghost" onClick={() => void click.cancel().then(() => click.reset(true))}>Cancel</Button></p>
       ))}

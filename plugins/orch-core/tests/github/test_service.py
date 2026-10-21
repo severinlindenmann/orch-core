@@ -215,7 +215,7 @@ def test_core_dumps_are_disabled_before_the_token_is_loaded(monkeypatch, tmp_pat
     monkeypatch.setattr(service_module.token, "load", lambda *a: order.append("load") or token.Token(SECRET))
     service = GitHubService(tmp_path, "ws")
     try:
-        service.poller._token_source()
+        service.poller.token_source()
     finally:
         service.close()
     assert order == ["core", "load"]

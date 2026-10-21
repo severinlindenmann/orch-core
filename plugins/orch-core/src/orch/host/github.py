@@ -32,7 +32,9 @@ def _disable_core():
             try:
                 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
             except (OSError, ValueError) as exc:
-                log.warning("could not disable core dumps before loading the GitHub credential (%s)", type(exc).__name__)
+                log.warning(
+                    "could not disable core dumps before loading the GitHub credential (%s)", type(exc).__name__
+                )
 
 
 @dataclass(frozen=True)

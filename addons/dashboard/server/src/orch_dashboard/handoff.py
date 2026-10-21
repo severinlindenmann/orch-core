@@ -16,6 +16,7 @@ This process remembers nothing that the invariant depends on.
 
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -308,6 +309,38 @@ class EditAcceptance(BaseModel):
     add: list[Criterion] = Field(default_factory=list, max_length=8)
 
 
+TaskId = Annotated[str, StringConstraints(pattern=r"^T[1-9][0-9]*$")]
+AcId = Annotated[str, StringConstraints(pattern=r"^AC[1-9][0-9]*$")]
+TaskText = Annotated[str, StringConstraints(max_length=500)]
+TaskCommand = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
+class TaskEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText = ""
+    verify: TaskCommand | None = None
+    proves: list[AcId] = Field(default_factory=list, max_length=64)
+
+
+class TaskAdd(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText
+    verify: TaskCommand = ""
+    proves: list[AcId] = Field(max_length=64)
+
+
+class EditTasks(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    edit: dict[TaskId, TaskEdit] = Field(default_factory=dict, max_length=32)
+    add: list[TaskAdd] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def limit_changes(self):
+        if len(self.edit) + len(self.add) > 32:
+            raise ValueError("At most 32 tasks can be changed or added together.")
+        return self
+
+
 class PeopleChange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     add: list[PersonId] = Field(default_factory=list, max_length=16)
@@ -338,6 +371,7 @@ class EditTicket(Action):
     head_seq: Annotated[int, Field(ge=1)]
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
     acceptance: EditAcceptance | None = None
+    tasks: EditTasks | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
     links: EditLinks | None = None
     images: list[PastedImage] = Field(default_factory=list, max_length=6)  # R3 part B, as in a new ticket
@@ -386,6 +420,55 @@ class EditTicket(Action):
                 }
                 if not intent["acceptance"]["edit"] and not intent["acceptance"]["add"]:
                     del intent["acceptance"]
+            if self.tasks is not None:
+                rows = doc.get("tasks") or []
+                was = [{k: row[k] for k in ("id", "text", "verify", "proves", "assignee") if k in row} for row in rows]
+                known = {row["id"]: row for row in was}
+                states = {row["id"]: row.get("state") for row in rows}
+                edits = {}
+                for tid, change in self.tasks.edit.items():
+                    if tid not in known:
+                        raise sequence.SequenceInvalid("it names a task the ticket does not have")
+                    previous = {**known[tid], "verify": known[tid]["verify"]["cmd"] if known[tid]["verify"] else None}
+                    fields = {}
+                    for name in change.model_fields_set:
+                        value = getattr(change, name)
+                        if isinstance(value, str):
+                            value = normalize_text(value, one_line=True)
+                        if name == "proves":  # the canonical form core requires: sorted, unique
+                            value = sorted(set(value), key=lambda a: int(a[2:]))
+                        if name == "text" and not value.strip():
+                            raise sequence.SequenceInvalid("Task text cannot be empty.")
+                        if value != previous[name]:
+                            fields[name] = value
+                    if states[tid] == "done" and ({"verify", "proves"} & fields.keys()):
+                        raise sequence.SequenceInvalid(
+                            "This task is done: reopen it before changing its check or criteria."
+                        )
+                    if fields:
+                        edits[tid] = fields
+                adds = []
+                for task in self.tasks.add:
+                    if not task.text.strip():
+                        continue
+                    item = {
+                        "text": normalize_text(task.text, one_line=True),
+                        "proves": sorted(set(task.proves), key=lambda a: int(a[2:])),
+                    }
+                    if "verify" in task.model_fields_set:
+                        item["verify"] = normalize_text(task.verify, one_line=True)
+                    adds.append(item)
+                if edits or adds:
+                    intent["tasks"] = {"was": was, "edit": edits, "add": adds}
+                    # Core resolves proves from this snapshot, even with no criterion changes.
+                    intent.setdefault(
+                        "acceptance",
+                        {
+                            "was": [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []],
+                            "edit": {},
+                            "add": [],
+                        },
+                    )
             if self.links is not None:
                 now = doc.get("links") or {"repos": [], "branches": {}, "prs": [], "external": []}
                 was = {
@@ -765,6 +848,29 @@ class Move(Action):
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
+AcceptanceText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000), OneLine]
+
+
+class AcceptCriterion(Action):
+    action: Literal["accept_criterion"]
+    key: Key
+    ac: AcId
+    note: AcceptanceText | None = None
+
+
+class WithdrawAcceptance(Action):
+    action: Literal["withdraw_acceptance"]
+    key: Key
+    ac: AcId
+    reason: AcceptanceText
+
+
+class MarkTaskDone(Action):
+    action: Literal["mark_task_done"]
+    key: Key
+    task: TaskId
+
+
 class RunnerGrant(Action):
     """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
     server, never by the browser. The click path maps to the
@@ -788,6 +894,9 @@ PrepareBody = Annotated[
     | Close
     | Reopen
     | Move
+    | AcceptCriterion
+    | WithdrawAcceptance
+    | MarkTaskDone
     | NewTicket
     | NewTicketSequence
     | EditTicket
@@ -919,6 +1028,12 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "close", args | ({"message": action.message} if action.message else {})
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
+        case AcceptCriterion():
+            return "ac.accept", {"ref": action.key, "ac": action.ac} | ({"note": action.note} if action.note else {})
+        case WithdrawAcceptance():
+            return "ac.unaccept", {"ref": action.key, "ac": action.ac, "reason": action.reason}
+        case MarkTaskDone():
+            return "task.mark_done", {"ref": action.key, "task": action.task}
         case Move():
             return "move", {"ref": action.key, "to": action.to} | ({"reason": action.reason} if action.reason else {})
         case NewTicket():
@@ -999,6 +1114,43 @@ def host_files(action: Action) -> dict | None:
     return None
 
 
+def _acceptance_event_ok(ev: dict, person: str | None, payload: set[str]) -> bool:
+    """A prepared manual-acceptance event: only the envelope and the keys of its op, from a person (the caller when
+    known). The signer checks the same again; this refuses a host that prepared more or other than what was asked."""
+    actor = ev.get("actor")
+    return (
+        set(ev) <= set(adapters.handoff.ENVELOPE) | payload
+        and isinstance(actor, dict)
+        and actor.get("kind") == "person"
+        and (person is None or actor.get("id") == person)
+    )
+
+
+def expected_material(action: Action):
+    """What the host's prepared MATERIAL must say, for the actions whose words are not in the events: the statement
+    file of a manual acceptance (its note or reason is only there). `None` for every other action."""
+    from orch.host import acceptance
+
+    match action:
+        case AcceptCriterion() | WithdrawAcceptance():
+            withdraw = isinstance(action, WithdrawAcceptance)
+
+            def check(material: dict, events: list) -> bool:
+                statement = material.get("statement")
+                parsed = acceptance.parse(statement) if isinstance(statement, str) else None
+                return (
+                    parsed is not None
+                    and len(events) == 1
+                    and parsed["kind"] == ("withdraw" if withdraw else "accept")
+                    and parsed["ac"] == action.ac
+                    and parsed["reason" if withdraw else "note"] == (action.reason if withdraw else action.note)
+                    and acceptance.matches(events[0], statement)
+                )
+
+            return check
+    return None
+
+
 def expected(action: Action, person: str | None = None):
     """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
     anything else (another type, another person, other values) is refused before the person sees it. `person` is the
@@ -1035,6 +1187,19 @@ def expected(action: Action, person: str | None = None):
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
             return lambda ev: len(ev) == 1 and ev[0].get("type") in ("ticket.updated", "people.changed")
+        case AcceptCriterion():
+            return lambda ev: (
+                one(ev, "artifact.added", kind="feedback", ac=action.ac)
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "ac", "label"})
+                and re.fullmatch(rf"accepted {action.ac} [0-9a-f]{{16}}", str(ev[0].get("label"))) is not None
+            )
+        case WithdrawAcceptance():
+            return lambda ev: (
+                one(ev, "artifact.replaced", kind="feedback", label=f"withdrawn {action.ac}")
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "label", "replaces"})
+            )
+        case MarkTaskDone():
+            return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1534,6 +1699,7 @@ def register(app: FastAPI, gateway: Gateway):
                 expect_op=op,
                 expect_key=getattr(body, "key", None),
                 expect_events=expected(body, planned.person),
+                expect_material=expected_material(body),
             )
         except BaseException:
             handoffs.release(token)

@@ -235,6 +235,9 @@ export interface TaskStatus extends TaskDef {
 }
 
 export interface AcceptanceStatus extends AcceptanceDef {
+  proof?: 'proven' | 'asserted' | 'pending' | 'accepted'
+  accepted?: { by: string; at: string; note?: string | null; auth?: string }
+  accepted_stale?: boolean
   state: 'unproven' | 'proven'
   evidence: { kind: 'artifact' | 'task'; ref: string }[]
 }

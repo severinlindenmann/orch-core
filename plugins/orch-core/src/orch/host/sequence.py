@@ -92,6 +92,8 @@ _KEY = re.compile(r"^[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})$")
 _ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PERSON = re.compile(r"^p_[0-9a-f]{32}$")
+_TASK_ID = re.compile(r"^T[0-9]+$")
+MAX_TASKS = 32
 _AC_ID = re.compile(r"^AC[1-9][0-9]*$")
 MAX_AC = 8  # acceptance criteria one sequence adds or edits
 #: R3 part B: pasted screenshots one sequence adds (one signed ``artifact.add`` each, before the section showing it)
@@ -240,9 +242,10 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "people", "links", "images"}:
+    if not base <= set(intent) <= base | {"acceptance", "tasks", "people", "links", "images"}:
         raise SequenceInvalid(
-            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, links, images and people"
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, tasks, links, images "
+            "and people"
         )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
@@ -291,6 +294,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     }
     if "acceptance" in intent:
         out["acceptance"] = _edit_acceptance(intent["acceptance"])
+    if "tasks" in intent:
+        out["tasks"] = _edit_tasks(intent["tasks"], out.get("acceptance", {}))
     if "links" in intent:
         out["links"] = _edit_links(intent["links"])
     if "people" in intent:
@@ -332,6 +337,86 @@ def _edit_acceptance(value: Any) -> dict[str, Any]:
         out_edit[aid] = text
     out_add = [_one_line(t, "a criterion", 200) for t in add]
     return {"was": out_was, "edit": out_edit, "add": out_add}
+
+
+def _task_proves(value: Any, known: set[str] | None = None) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(a, str) or not _AC_ID.fullmatch(a) for a in value)
+        or value != sorted(set(value), key=lambda a: int(a[2:]))
+        or (known is not None and not set(value) <= known)
+    ):
+        raise SequenceInvalid("task proves: sorted unique known criterion ids")
+    return list(value)
+
+
+def _task_verify(value: Any) -> str:
+    cmd = _one_line(value, "verify command", 4096)
+    if len(cmd.encode("utf-8")) > 4096:  # Call.text's byte limit
+        raise SequenceInvalid("verify command is longer than 4096 bytes")
+    return cmd
+
+
+def _edit_tasks(value: Any, acceptance: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"was", "edit", "add"}:
+        raise SequenceInvalid("tasks is {was, edit, add}")
+    was, edit, add = value["was"], value["edit"], value["add"]
+    if not isinstance(was, list) or len(was) > 64:
+        raise SequenceInvalid("tasks.was is up to 64 reviewed tasks")
+    known: dict[str, Any] = {}
+    for item in was:
+        required = {"id", "text", "verify", "proves"}
+        if not isinstance(item, Mapping) or not required <= set(item) <= required | {"assignee"}:
+            raise SequenceInvalid("tasks.was: {id, text, verify, proves, assignee?}")
+        tid = item["id"]
+        if not isinstance(tid, str) or not _TASK_ID.fullmatch(tid) or tid in known:
+            raise SequenceInvalid("tasks.was: unique task ids")
+        if not isinstance(item["text"], str):
+            raise SequenceInvalid("tasks.was: task text")
+        verify = item["verify"]
+        if verify is not None and (
+            not isinstance(verify, Mapping) or set(verify) != {"cmd"} or not isinstance(verify["cmd"], str)
+        ):
+            raise SequenceInvalid("tasks.was: verify is {cmd} or null")
+        _task_proves(item["proves"])
+        if "assignee" in item and (not isinstance(item["assignee"], str) or not _PERSON.fullmatch(item["assignee"])):
+            raise SequenceInvalid("tasks.was: assignee is a person id")
+        known[tid] = copy.deepcopy(dict(item))
+    if not isinstance(edit, Mapping) or not isinstance(add, list) or len(edit) + len(add) > MAX_TASKS:
+        raise SequenceInvalid(f"tasks: at most {MAX_TASKS} changes")
+    ac_ids = {a["id"] for a in acceptance.get("was", [])}
+    last = max((int(a[2:]) for a in ac_ids), default=0)
+    ac_ids.update(f"AC{last + i}" for i in range(1, len(acceptance.get("add", [])) + 1))
+
+    def fields(item: Any, *, adding: bool) -> dict[str, Any]:
+        if (
+            not isinstance(item, Mapping)
+            or not item
+            or not set(item) <= {"text", "verify", "proves"}
+            or (adding and not {"text", "proves"} <= set(item))
+        ):
+            raise SequenceInvalid("a task change has text, verify and/or proves")
+        out: dict[str, Any] = {}
+        if "text" in item:
+            out["text"] = _one_line(item["text"], "task text", 500)
+        if "verify" in item:
+            out["verify"] = None if item["verify"] is None and not adding else _task_verify(item["verify"])
+        if "proves" in item:
+            out["proves"] = _task_proves(item["proves"], ac_ids)
+        return out
+
+    out_edit = {}
+    for tid in edit:
+        if not isinstance(tid, str) or tid not in known:
+            raise SequenceInvalid("tasks.edit: unknown task")
+    for tid in sorted(edit, key=lambda t: (int(t[1:]), t)):
+        change = fields(edit[tid], adding=False)
+        old = known[tid]
+        previous = {**old, "verify": old["verify"]["cmd"] if old["verify"] else None}
+        if any(v == previous[key] for key, v in change.items()):
+            raise SequenceInvalid("tasks.edit: each supplied field must change")
+        out_edit[tid] = change
+    return {"was": list(known.values()), "edit": out_edit, "add": [fields(a, adding=True) for a in add]}
 
 
 _LINK_KEYS = ("repos", "branches", "prs", "external")
@@ -584,7 +669,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
 
             out.append(seqquick.grant_step(intent["agent"]))
         return out
-    # EDIT: the existing ticket's sections, then its acceptance criteria, then its people (owner last)
+    # EDIT: pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
     out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
@@ -601,6 +686,14 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
             out.append({"op": "ac.edit", "args": {"ac": aid, "text": text}, "kind": "ac", "ref": True})
         for text in ac["add"]:
             out.append({"op": "ac.add", "args": {"text": text}, "kind": "ac", "ref": True})
+    tasks = intent.get("tasks")
+    if tasks:
+        for tid in sorted(tasks["edit"], key=lambda t: (int(t[1:]), t)):
+            change = tasks["edit"][tid]
+            args = {"task": tid, **{key: "" if v is None else v for key, v in change.items()}}
+            out.append({"op": "task.edit", "args": args, "kind": "task", "ref": True})
+        for task in tasks["add"]:
+            out.append({"op": "task.add", "args": copy.deepcopy(task), "kind": "task", "ref": True})
     if "links" in intent:
         lk = intent["links"]
         pair = "links=" + canon.dumps({"repos": lk["repos"], "branches": lk["branches"]}).decode()
@@ -720,6 +813,13 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
             "base_rev": {"ticket.acceptance": canon.value_hash(before)},
             "set": {"ticket.acceptance": after},
         }
+    if step["kind"] == "task":
+        before, after = _tasks_around(intent, plan, k)
+        return {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.tasks": canon.value_hash(before)},
+            "set": {"ticket.tasks": after},
+        }
     sid = step["args"]["section"]
     was = canon.section_hash("") if intent["kind"] == KIND else intent["sections"][sid]["was"]
     return {
@@ -748,6 +848,41 @@ def _acceptance_around(
         if i == k:
             return before, [dict(a) for a in items]
     raise SequenceInvalid("not an acceptance step")
+
+
+def _tasks_around(
+    intent: Mapping[str, Any], plan: list[dict[str, Any]], k: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Replay the reviewed tasks and earlier task steps, without trusting host state."""
+    items = copy.deepcopy(intent["tasks"]["was"])
+    for i in range(k + 1):
+        step = plan[i]
+        if step["kind"] != "task":
+            continue
+        before = copy.deepcopy(items)
+        args = step["args"]
+        if step["op"] == "task.add":
+            n = max((int(t["id"][1:]) for t in items), default=0) + 1
+            items.append(
+                {
+                    "id": f"T{n}",
+                    "text": args["text"],
+                    "verify": {"cmd": args["verify"]} if args.get("verify") else None,
+                    "proves": list(args["proves"]),
+                }
+            )
+        elif step["op"] == "task.edit":
+            task = next(t for t in items if t["id"] == args["task"])
+            for key in ("text", "verify", "proves"):
+                if key in args:
+                    task[key] = (
+                        ({"cmd": args[key]} if args[key] else None) if key == "verify" else copy.deepcopy(args[key])
+                    )
+        else:
+            raise SequenceInvalid("unknown task step")
+        if i == k:
+            return before, copy.deepcopy(items)
+    raise SequenceInvalid("not a task step")
 
 
 _ENVELOPE = frozenset({"v", "id", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"})
@@ -979,6 +1114,7 @@ def check_meta(meta: Any, *, op: str, args: Mapping[str, Any], workspace_id: str
         "ac.add",
         "ac.edit",
         "task.add",
+        "task.edit",
         "people.set",
         "approve",
         "grant",
@@ -1060,7 +1196,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {key}"
-        content["subline"] = "its text, acceptance checks, repositories and people, as shown below"
+        content["subline"] = "its text, acceptance checks, tasks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
@@ -1068,6 +1204,8 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         for aid, text in intent.get("acceptance", {}).get("edit", {}).items():
             was = next((a["text"] for a in intent["acceptance"]["was"] if a["id"] == aid), "")
             notes.append(f"{signcontent.one(aid)}: {signcontent.one(was)} -> {signcontent.one(text)}")
+        for line in _task_lines(intent, signcontent.one, notes=True):
+            notes.append(line)
         if "links" in intent:
             notes.append("Repositories: the links shown below replace the repositories and branches now on the ticket.")
         if "owner" in intent.get("people", {}):
@@ -1188,6 +1326,43 @@ def _link_changes(lk: Mapping[str, Any]) -> list[str]:
     return out
 
 
+def _task_lines(intent: Mapping[str, Any], clean: Callable[[Any], str], *, notes: bool = False) -> list[str]:
+    from orch.host.signcontent import one
+
+    tasks = intent.get("tasks", {})
+    old = {t["id"]: t for t in tasks.get("was", [])}
+
+    def show(value: Any) -> str:
+        return clean(one(value))
+
+    def word(key: str, value: Any) -> str:
+        if key == "proves":
+            return ", ".join(value) if value else "none"
+        return value if value is not None else "none"
+
+    lines = []
+    for tid, change in tasks.get("edit", {}).items():
+        previous = old.get(tid, {})
+        for key, value in change.items():
+            before = previous.get(key)
+            if key == "verify":
+                before = before.get("cmd") if isinstance(before, Mapping) else None
+            prefix = f"Task {show(tid)}" if notes else f"task {show(tid)} {key}"
+            if notes and key == "verify":
+                lines.append(f"{prefix} now verifies with: {show(word(key, value))}")
+            else:
+                if notes and key == "proves":
+                    prefix += " proves"
+                lines.append(f"{prefix}: {show(word(key, before))} -> {show(word(key, value))}")
+    for task in tasks.get("add", []):
+        prefix = "Task added" if notes else "task added"
+        lines.append(
+            f"{prefix}: {show(task['text'])} (verify: {show(word('verify', task.get('verify')))}; "
+            f"proves: {show(word('proves', task['proves']))})"
+        )
+    return lines
+
+
 def _image_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list[str]:
     from orch.host.signcontent import one
 
@@ -1225,6 +1400,7 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
                 f"acceptance {clean(a)}: {clean(one(old.get(a, '')))} -> {clean(one(t))}" for a, t in ac["edit"].items()
             ]
             lines += [f"acceptance added: {clean(one(t))}" for t in ac["add"]]
+        lines += _task_lines(intent, clean)
         lk = intent.get("links")
         if lk:
             lines += [f"repository: {clean(one(x))}" for x in _link_changes(lk)]

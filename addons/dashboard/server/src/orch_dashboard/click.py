@@ -40,6 +40,7 @@ from .handoff import (
     RunnerGrant,
     done_error,
     expected,
+    expected_material,
     plan,
     read_done,
     send_prepare,
@@ -441,6 +442,7 @@ def register(app: FastAPI, gateway: Gateway):
                 expect_op=op,
                 expect_key=getattr(wanted, "key", None),
                 expect_events=expected(wanted, app.state.person_of(ws)) if wanted is not None else None,
+                expect_material=expected_material(wanted) if wanted is not None else None,
             )
         except HostError as exc:
             if exc.error.get("code") != "internal":

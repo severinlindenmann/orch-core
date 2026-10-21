@@ -96,6 +96,7 @@ def request(
     expect_op: str | None = None,
     expect_key: str | None = None,
     expect_events=None,
+    expect_material=None,
 ) -> dict:
     """A `Prepared` as the dashboard's `HandoffRequest`. Raises `internal` if the host's answer is not the request that
     was asked for, or its hashes or its review do not recompute (fail closed)."""
@@ -114,6 +115,7 @@ def request(
             or not material_keys_ok(material)
             or not review_matches(material, events)
             or (expect_events is not None and not expect_events(events))
+            or (expect_material is not None and not expect_material(material, events))
         ):
             raise inconsistent()
         if (

@@ -187,7 +187,10 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/tickets/{key}/events")
     def ticket_events(key: Key, query: Annotated[EventsQuery, Query()], ws: str = Depends(workspace)):
         data = gateway.call(ws, "ticket.get", {"ref": key, "log_since": query.since, "log_limit": query.limit})
-        return adapters.events(data)
+        from .adapters.activity import acceptance_authority
+
+        roster = gateway.call(ws, "member.list")
+        return adapters.events(data, acceptance_authority(roster, data["doc"]))
 
     @app.get("/api/w/{ws}/tickets/{key}/changes")
     def ticket_changes(key: Key, query: Annotated[ChangesQuery, Query()], ws: str = Depends(workspace)):

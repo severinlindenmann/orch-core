@@ -17,8 +17,9 @@ Rules that keep it complete:
   and the actor's person and device.
 * A ticket-format §5.4 diffstat is not part of any signed payload, so it cannot be shown from the signed bytes; the
   source list (every repo, ref and sha) and the gate hash that bind the decision are.
-* Event types only an agent or the host appends (``task.*``, ``claim.*``, ``edit.external`` ...) are never signed by
-  a person and refuse here, as does any unknown type, label or shape. The A types a person may sign through
+* Event types only an agent or the host appends (``task.*`` except ``task.done``, ``claim.*``, ``edit.external``
+  ...) are never signed by a person and refuse here (``task.done`` only through ``task.mark_done``, whose signer
+  allows nothing but ``task``), as does any unknown type, label or shape. The A types a person may sign through
   ``human.prepare`` (the person versions of ``set``, ``section.set``, ``ac.*``, ``log``, ``ask``, ``artifact.*``,
   ``new``: H5a, §0.8) have their tables like every person type.
 """
@@ -54,6 +55,8 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "ticket.created": ("key", "ticket_type", "title", "owner"),
     "ticket.updated": ("base_rev", "set", "sections"),
     "log.added": ("text",),
+    # R3: a person marks a task done without a receipt (task.mark_done); the signer allows only {task}
+    "task.done": ("task", "receipt", "log", "text"),
     "question.asked": ("question", "qid", "hash"),
     "artifact.added": ("name", "kind", "sha256", "bytes", "ac", "task", "label", "addon", "ref"),
     "artifact.replaced": ("name", "kind", "sha256", "bytes", "ac", "task", "label", "replaces"),

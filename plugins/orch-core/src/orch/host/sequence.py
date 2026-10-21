@@ -41,6 +41,7 @@ from typing import Any
 from orch import canon
 
 __all__ = [
+    "ADDON",
     "EDIT",
     "KIND",
     "MAX_STEPS",
@@ -73,11 +74,15 @@ KIND = "new_ticket"
 QUICK = "quick_task"
 #: B12D: the same engine over an EXISTING ticket: edited sections, acceptance criteria and people, ONE review
 EDIT = "edit_ticket"
+#: turning on an add-on that needs settings: ``settings.set`` then ``addon.grant``, on the workspace log (seqaddon.py)
+ADDON = "addon_enable"
 VERSION = 1
 MAX_STEPS = 16
 MAX_SECTION_BYTES = 65536
 TTL = 600.0  # a session lives as long as a request does (§0.8.1): 10 minutes
 CHANGED = "the ticket changed while signing, review again"
+#: the same for the add-on sequence, which has no ticket
+CHANGED_WS = "the workspace changed while signing, review again"
 
 _TYPES = ("feature", "bug", "chore", "spike", "epic")
 _PRIORITIES = ("low", "medium", "high", "urgent")
@@ -131,6 +136,10 @@ def validate_intent(intent: Any) -> dict[str, Any]:
         from . import seqquick
 
         return seqquick.validate(intent, SequenceInvalid)
+    if isinstance(intent, Mapping) and intent.get("kind") == ADDON:
+        from . import seqaddon
+
+        return seqaddon.validate(intent, SequenceInvalid)
     if isinstance(intent, Mapping) and intent.get("kind") == EDIT:
         return _validate_edit(intent)
     return _validate_new_ticket(intent)
@@ -464,6 +473,8 @@ def label_of(intent: Mapping[str, Any]) -> str:
     no title: it changes a ticket that already exists)."""
     if intent["kind"] == EDIT:
         return f"edit {intent['ticket']['key']}"
+    if intent["kind"] == ADDON:
+        return f"turn on {intent['name']}"
     return str(intent["title"])
 
 
@@ -480,6 +491,10 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
         from . import seqquick
 
         return seqquick.steps(intent)
+    if intent["kind"] == ADDON:
+        from . import seqaddon
+
+        return seqaddon.steps(intent)
     out: list[dict[str, Any]] = []
     if intent["kind"] == KIND:
         out.append(
@@ -570,7 +585,11 @@ def confirm_kind(intent: Mapping[str, Any]) -> str:
     from orch.click.protocol import op_class
 
     rank = {"click": 0, "word": 1, "terminal": 2}
-    return max(("word" if s["kind"] == "grant" else op_class(s["op"]) for s in steps(intent)), key=lambda c: rank[c])
+    # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
+    return max(
+        ("word" if s["kind"] == "grant" else op_class(s["op"], args=s["args"]) for s in steps(intent)),
+        key=lambda c: rank[c],
+    )
 
 
 def has_grant(intent: Mapping[str, Any]) -> bool:
@@ -586,6 +605,10 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
         from . import seqquick
 
         return seqquick.payloads(intent, person)[k]
+    if intent["kind"] == ADDON:
+        from . import seqaddon
+
+        return seqaddon.payload(intent, k)
     plan = steps(intent)
     if plan[k]["kind"] == "grant":
         from . import seqquick
@@ -666,15 +689,20 @@ def check_step(
     prev_head: str | None,
     done: Mapping[int, str] | None = None,
     now: float | None = None,
-) -> dict[str, str]:
+) -> dict[str, str] | None:
     """Refuse (:class:`Aborted`) unless the request the host prepared for step ``k`` is, byte for byte, the event the
     reviewed intent says, on the ticket this sequence created, chained to the event this signer signed before it.
     ``done`` maps a step number to the id of the event this signer signed there (a gate approval's ``prior`` must name
     the requirements approval it signed itself). Returns ``{"key", "uid"}`` of the ticket."""
 
     def stop() -> Aborted:
-        return Aborted(CHANGED)
+        return Aborted(CHANGED_WS if intent["kind"] == ADDON else CHANGED)
 
+    if intent["kind"] == ADDON:  # a workspace sequence: no ticket (the result is None)
+        from . import seqaddon
+
+        seqaddon.check_step(intent, k, prepared, stop)
+        return None
     plan = steps(intent)
     events = prepared.get(_EVENTS)
     if (
@@ -852,6 +880,19 @@ def check_meta(meta: Any, *, op: str, args: Mapping[str, Any], workspace_id: str
         if (op, dict(args)) != step_args(intent, 0, None):
             raise SequenceInvalid("the first op is not the intent's")
         return dict(meta)
+    if "log" in meta:  # a step on the workspace log (the add-on sequence): it names the log, not a ticket
+        if (
+            set(meta) != {"step", "of", "digest", "prev", "log"}
+            or meta["log"] != "workspace"
+            or not 1 <= step < total <= MAX_STEPS
+            or op != "addon.grant"
+        ):
+            raise SequenceInvalid(
+                "a workspace step names its number, the digest, the workspace log and the event before"
+            )
+        if not isinstance(meta["prev"], str) or not _ULID.fullmatch(meta["prev"]):
+            raise SequenceInvalid("prev is an event id")
+        return dict(meta)
     if set(meta) != {"step", "of", "digest", "prev", "ticket"} or not 1 <= step < total <= MAX_STEPS:
         raise SequenceInvalid("a later step names its number, the digest, the ticket and the event before it")
     if not isinstance(meta["prev"], str) or not _ULID.fullmatch(meta["prev"]):
@@ -878,7 +919,8 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     intent = validate_intent(meta["intent"])
     plan = steps(intent)
     events = [copy.deepcopy(first)]
-    texts: dict[str, str] = dict(material.get("texts") or {})  # an edit's first step may already be a section
+    texts: dict[str, str]
+    texts = dict(material.get("texts") or {})  # an edit's first step may already be a section
     for k in range(1, len(plan)):
         if plan[k]["kind"] in ("approve", "grant"):  # told in words (extra_lines); not an event of this review
             continue
@@ -899,6 +941,8 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     new_material: dict[str, Any] = {"kind": "payload", "ticket": material.get("ticket"), "review": []}
     if texts:
         new_material["texts"] = texts
+    if intent["kind"] == ADDON and material.get("before"):
+        new_material["before"] = copy.deepcopy(material["before"])  # the host's current settings (unsigned, labelled)
     if intent["kind"] == EDIT and "links" in intent:
         # the links the person reviewed: bound by the base_rev of the links event (the hash of exactly this value)
         new_material["before"] = {"ticket.links": copy.deepcopy(intent["links"]["was"])}
@@ -921,6 +965,8 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
+    if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
+        return _addon_content(content, intent, n)
     key = prepared["material"]["ticket"]["key"]
     # the key is the host's word: said so right next to it (invariant 1), with the end of the signed id
     key = f"{signcontent.one(key)} (key per host; signed id …{content['ticket']['uid_tail']})"
@@ -968,6 +1014,25 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             )
     content.setdefault("notes", []).append(
         f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
+        "signing stops and what is already signed stays."
+    )
+    return content
+
+
+def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
+    """The review of turning on an add-on that needs settings: the settings in words, then the grant (both are rows of
+    the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
+    from orch.addons.settings_needs import TITLES
+
+    content["headline"] = f"Turn on {TITLES[intent['name']]}"
+    content["subline"] = "its settings are signed first, then the add-on is turned on"
+    notes = content.setdefault("notes", [])
+    notes.append(
+        "Settings are signed first, then the add-on is turned on. If signing stops in between, "
+        "the settings stay and the add-on stays off."
+    )
+    notes.append(
+        f"One confirmation signs all {n} steps. If the workspace changes meanwhile, "
         "signing stops and what is already signed stays."
     )
     return content
@@ -1033,6 +1098,10 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
     """The intent in plain words, for a terminal prompt that has no SignContent."""
     from orch.host.signcontent import one
 
+    if intent["kind"] == ADDON:
+        from . import seqaddon
+
+        return seqaddon.lines(intent, clean)
     if intent["kind"] == QUICK:
         lines = [f"title: {clean(one(intent['title']))}", "description:"]
         lines += ["| " + clean(x) for x in intent["description"].split("\n")]
@@ -1339,6 +1408,7 @@ class Driver:
         prev_id: str | None = None
         prev_head: str | None = None
         who: dict[str, str] | None = rec["ticket"]
+        workspace = self.intent["kind"] == ADDON  # a sequence on the workspace log: no ticket, no head read
         self.port.budget(max(self.total - self._landed(rec), 0))
         for k in range(self.total):
             s = rec["steps"][k] if k < len(rec["steps"]) else None
@@ -1386,8 +1456,13 @@ class Driver:
             prev_id, prev_head = events[-1]["id"], self._land(rec, k, res)
             if self.on_step:
                 self.on_step(k + 1, self.total)
-        assert who is not None
         requests = [st["request_id"] for st in rec["steps"]]
+        if workspace:
+            return {
+                "key": None, "uid": None, "log": "workspace", "results": results, "landed": self.total,
+                "requests": requests,
+            }  # fmt: skip
+        assert who is not None
         return {"key": who["key"], "uid": who["uid"], "results": results, "landed": self.total, "requests": requests}
 
     def _land(self, rec: dict[str, Any], k: int, res: Mapping[str, Any]) -> str | None:
@@ -1395,7 +1470,7 @@ class Driver:
         signed (its ``seq`` is the submit's), so the next step chains to it. A foreign event already on top aborts."""
         head: str | None = None
         rec["steps"][k].update(state="landed", head=None)  # it landed: counted, whatever the head read says
-        if k < self.total - 1:
+        if k < self.total - 1 and self.intent["kind"] != ADDON:  # the workspace chain is the host's check (AE6)
             try:
                 got = self.port.head(rec["ticket"]["key"])
             except Exception as exc:  # noqa: BLE001
@@ -1437,6 +1512,11 @@ class Driver:
                 if first is None:
                     raise Aborted("the first step is missing, review again")
                 prepared = dict(first)
+            elif self.intent["kind"] == ADDON:
+                op, args = step_args(self.intent, k, None)
+                meta = {"step": k, "of": self.total, "digest": self.digest, "prev": prev_id, "log": "workspace"}
+                prepared = self.port.prepare(op, args, meta)
+                self.port.check(prepared)
             else:
                 assert who is not None
                 op, args = step_args(self.intent, k, who["key"])

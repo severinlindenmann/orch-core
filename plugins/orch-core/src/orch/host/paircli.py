@@ -158,7 +158,7 @@ def _tty_ask(prompt: str, timeout: float | None = None) -> str | None:
     """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed). With ``timeout``
     (seconds) ``None`` when nothing was typed in time (L1: the read ends with the request, the caller then closes the
     person-key source)."""
-    import select
+    from orch import fdwait
 
     try:
         # two handles, not "r+": a terminal is not seekable, so a read-write text file on it raises
@@ -166,7 +166,7 @@ def _tty_ask(prompt: str, timeout: float | None = None) -> str | None:
         with open("/dev/tty", "w", encoding="utf-8") as out, open("/dev/tty", encoding="utf-8") as tty:
             out.write(prompt)
             out.flush()
-            if timeout is not None and not select.select([tty], [], [], max(0.0, timeout))[0]:
+            if timeout is not None and not fdwait.readable(tty, timeout):
                 out.write("\n")
                 out.flush()
                 return None

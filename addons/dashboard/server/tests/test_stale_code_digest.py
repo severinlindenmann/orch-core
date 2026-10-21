@@ -12,6 +12,15 @@ import pytest
 import orch_dashboard.__main__ as launcher
 
 
+@pytest.fixture(autouse=True)
+def fresh_digest():
+    """`code_digest` is cached per process. Autouse fixtures are set up first and torn down last, so the cache is
+    emptied again only after `monkeypatch` has restored `__file__`: no digest of a patched tree outlives the test."""
+    launcher.code_digest.cache_clear()
+    yield
+    launcher.code_digest.cache_clear()
+
+
 @pytest.fixture
 def server(monkeypatch):
     state = Path(tempfile.mkdtemp(prefix="dsh", dir="/tmp"))  # short: a unix socket path has a small limit

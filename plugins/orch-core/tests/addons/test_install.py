@@ -370,3 +370,45 @@ def test_a_failed_builtin_install_removes_the_empty_directory_and_says_why(hws, 
     r = me("addon", "grant", "terminals", "--json")
     assert r.code != 0 and r.err_code == "invalid.input"
     assert not (hws.store_dir / "addons" / "terminals").exists()
+
+
+def test_a_builtin_that_needs_settings_is_not_granted_until_they_are_set(hws, me):
+    """AE4 in direct mode too: the CLI reads the same rule as the host (addons/settings_needs.py)."""
+    r = me("addon", "grant", "publish")
+    assert r.code != 0 and "needs its settings first" in r.err + r.out
+    assert not (hws.store_dir / "addons" / "publish").exists() and not ws_events(hws, "addon.granted")
+    store = hws.other()
+    hws.store = store
+    try:
+        store.append(
+            hws.person_event(
+                hws.owner,
+                "workspace",
+                "settings.changed",
+                set={"publish": {"server": "https://files.example.com", "share": "https://share.example.com"}},
+            ),
+            log="workspace",
+        )
+    finally:
+        store.close()
+        hws.store = None
+    r = me("addon", "grant", "publish")
+    assert r.code == 0, r.err
+    assert ws_events(hws, "addon.granted")[-1]["name"] == "publish"
+    assert me("addon", "preview", "publish", "--json").doc["data"]["on"] is True
+
+
+def test_preview_is_read_only_and_equals_the_grant_that_follows(hws, me):
+    d = make_package(hws.store_dir)
+    before = me("addon", "preview", "echo", "--json")
+    assert before.code == 0 and before.doc["data"]["on"] is False and before.doc["data"]["needs"] is None
+    assert not ws_events(hws, "addon.granted")
+    assert me("addon", "grant", "echo").code == 0
+    e = ws_events(hws, "addon.granted")[-1]
+    assert before.doc["data"]["grant"] == {k: v for k, v in e.items() if k in before.doc["data"]["grant"]}
+    assert set(before.doc["data"]["grant"]) == {
+        "name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds",
+    }  # fmt: skip
+    assert read_package(d).digest == before.doc["data"]["grant"]["package_sha256"]
+    missing = me("addon", "preview", "nope", "--json")
+    assert missing.code != 0 and missing.doc["error"]["code"] == "not_found"

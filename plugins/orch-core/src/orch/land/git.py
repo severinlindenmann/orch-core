@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import signal
+import stat
 import subprocess
 import zlib
 from collections.abc import Mapping, Sequence
@@ -41,7 +42,7 @@ from dataclasses import dataclass
 from orch import gitsafe
 from orch.gitread import limits
 from orch.gitread.errors import Unavailable
-from orch.gitread.fs import open_walk
+from orch.gitread.fs import Dir, open_walk
 from orch.gitread.objects import ObjectStore
 from orch.gitread.pinning import pin_repo
 from orch.gitread.refs import branch_ok
@@ -125,13 +126,18 @@ def _hostile_name(name: bytes, mode: int) -> bool:
     return n == b".gitmodules" and mode == _SYMLINK
 
 
-def _have(host: ObjectStore, oid: str) -> bool:
+def _have(host_dir: Dir, host: ObjectStore, oid: str) -> bool:
     """Whether the host repository has ``oid`` (loose, or packed by a fetch). A fan-out directory that does not exist
-    yet is "no", not an error."""
-    try:
-        return host.exists(oid)
-    except Unavailable:
-        return False
+    yet is "no"; one that is a symlink or a file is a refusal, never "no" (Codex #5 on #761)."""
+    fan = host_dir.kind(oid[:2])
+    if fan is None:  # no loose fan-out directory: it can only be in a pack
+        try:
+            return host.exists(oid)
+        except Unavailable:
+            return False
+    if fan != "dir":
+        raise LandGitError("land.unsafe", "the landing object store is not what git wrote")
+    return host.exists(oid)
 
 
 def _topo(new: Mapping[str, Sequence[str]]) -> list[str]:
@@ -171,10 +177,15 @@ class LandRepo:
     def create(cls, path: str, own: Mapping[str, str] | None = None) -> LandRepo:
         """Create (or reopen) the bare repository at ``path``; its parent directory must exist and be the person's."""
         env_own = dict(os.environ if own is None else own)
+        if not path.startswith("/") or "\0" in path:
+            raise LandGitError("land.bad_input", "the landing repository path is not absolute")
+        if os.path.lexists(path):
+            return cls(path, env_own)  # reopening never runs ``git init`` there; the first operation gates it
         try:
+            parent = os.lstat(os.path.dirname(path))
+            if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+                raise LandGitError("land.unsafe", "the landing directory is not private to this user")
             os.mkdir(path, 0o700)
-        except FileExistsError:
-            pass
         except OSError:
             raise LandGitError("land.unavailable", "the landing repository cannot be created") from None
         try:
@@ -252,25 +263,38 @@ class LandRepo:
         self._run("land_update_ref", (f"refs/land/{_oid(oid, 'object')}", oid))
 
     # -- F5: object import through gitread
-    def _write_loose(self, oid: str, kind: str, data: bytes) -> bool:
-        """Write one hash-checked object as a loose file (atomic: temp file, then rename). ``True`` if it is new."""
-        d = os.path.join(self.path, "objects", oid[:2])
-        final = os.path.join(d, oid[2:])
-        os.makedirs(d, mode=0o755, exist_ok=True)
-        if os.path.lexists(final):
-            return False
-        tmp = os.path.join(d, f"tmp_obj_{secrets.token_hex(8)}")
-        raw = zlib.compress(f"{kind} {len(data)}\0".encode() + data, 1)
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o444)
+    def _write_loose(self, objects: Dir, oid: str, kind: str, data: bytes) -> bool:
+        """Write one hash-checked object as a loose file, relative to the no-follow descriptor of ``objects``: the
+        fan-out directory is opened ``O_NOFOLLOW``, the data is flushed to disk, then the file is renamed into place
+        (atomic), so a crash leaves no half object and, children being written first, no object without its closure.
+        ``True`` if it is new."""
+        flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(raw)
-            os.replace(tmp, final)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
-        return True
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(oid[:2], 0o755, dir_fd=objects.fd)
+            dfd = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=objects.fd)
+        except OSError:
+            raise LandGitError("land.unsafe", "the landing object store is not what git wrote") from None
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.stat(oid[2:], dir_fd=dfd, follow_symlinks=False)
+                return False
+            tmp = f"tmp_obj_{secrets.token_hex(8)}"
+            raw = zlib.compress(f"{kind} {len(data)}\0".encode() + data, 1)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o444, dir_fd=dfd)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(raw)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, oid[2:], src_dir_fd=dfd, dst_dir_fd=dfd)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp, dir_fd=dfd)
+                raise
+            return True
+        finally:
+            os.close(dfd)
 
     def import_commits(self, source_path: str, tip: str, *, max_commits: int = MAX_COMMITS) -> ImportStats:
         """Bring commit ``tip`` of the repository at ``source_path`` (a real path of a working copy) and everything it
@@ -290,14 +314,16 @@ class LandRepo:
         host_dir, _ = open_walk(os.path.join(self.path, "objects"))
         host = ObjectStore(host_dir, "sha1")
         counts = {"objects": 0, "bytes": 0}
+        fresh: list[str] = []  # objects this import wrote (removed again if git's fsck refuses the range)
 
         def put(src: Repo, oid: str, kind: str) -> None:
             _, data = src.objects.read(oid, kind)
             counts["bytes"] += len(data)
             if counts["bytes"] > MAX_BYTES or counts["objects"] >= MAX_OBJECTS:
                 raise LandGitError("land.too_big", "the change is too large to land")
-            if self._write_loose(oid, kind, data):
+            if self._write_loose(host_dir, oid, kind, data):
                 counts["objects"] += 1
+                fresh.append(oid)
 
         try:
             with Repo(pin_repo(real, None)) as src:
@@ -319,7 +345,7 @@ class LandRepo:
                     if oid in seen:
                         continue
                     seen.add(oid)
-                    if _have(host, oid):
+                    if _have(host_dir, host, oid):
                         continue
                     c = src.commit(oid)
                     new[oid] = list(c.parents)
@@ -327,14 +353,19 @@ class LandRepo:
                         raise LandGitError("land.too_big", "the change has too many commits to land")
                     todo.extend(c.parents)
                 for oid in _topo(new):
-                    self._import_tree(src, host, src.commit(oid).tree, put)
+                    self._import_tree(src, host, host_dir, src.commit(oid).tree, put)
                     put(src, oid, "commit")
+            try:
+                self._fsck(tip)
+            except LandGitError:
+                self._forget(host_dir, fresh)
+                raise
         finally:
             host.close()
             host_dir.close()
         return ImportStats(len(new), counts["objects"], counts["bytes"])
 
-    def _import_tree(self, src: Repo, host: ObjectStore, root: str, put) -> None:  # noqa: ANN001
+    def _import_tree(self, src: Repo, host: ObjectStore, host_dir: Dir, root: str, put) -> None:  # noqa: ANN001
         """Write ``root`` and everything below it that is missing, children before parents. A gitlink is skipped (it
         names a commit of another repository; any change of one is refused later)."""
         written: set[str] = set()
@@ -346,7 +377,7 @@ class LandRepo:
                     put(src, oid, "tree")
                     written.add(oid)
                 continue
-            if oid in written or _have(host, oid):
+            if oid in written or _have(host_dir, host, oid):
                 continue
             stack.append((oid, True))
             for e in src.tree(oid):
@@ -356,9 +387,34 @@ class LandRepo:
                     continue
                 if e.is_tree:
                     stack.append((e.oid, False))
-                elif e.oid not in written and not _have(host, e.oid):
+                elif e.oid not in written and not _have(host_dir, host, e.oid):
                     put(src, e.oid, "blob")
                     written.add(e.oid)
+
+    def _fsck(self, tip: str) -> None:
+        """git's own strict check of everything reachable from ``tip`` (the structural answer to "which tree entries
+        may land": git's ``verify_path`` and fsck rules, not a spelling list of ours). ``land.hostile_path`` on any
+        error. Runs in the host repository only."""
+        try:
+            code, _ = self._run("land_fsck", tip, ok=(0, 1, 2, 4, 8, 16))
+        except LandGitError as e:
+            if e.code == "land.unsafe":
+                raise
+            code = 1
+        if code != 0:
+            raise LandGitError("land.hostile_path", "git's own object check refuses the change")
+
+    @staticmethod
+    def _forget(objects: Dir, oids: list[str]) -> None:
+        """Remove objects an import wrote and git then refused, so that "the object exists" still means "git accepted
+        it" for the next import."""
+        for oid in oids:
+            with contextlib.suppress(OSError):
+                dfd = os.open(oid[:2], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=objects.fd)
+                try:
+                    os.unlink(oid[2:], dir_fd=dfd)
+                finally:
+                    os.close(dfd)
 
     # -- submodules
     def _refuse_gitlinks(self, base: str | None, head: str) -> None:

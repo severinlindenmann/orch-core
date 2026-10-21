@@ -617,13 +617,140 @@ def test_land_ops_are_a_closed_set_and_leave_ops_alone():
     assert set(gitsafe.OPS) == {"staged_raw", "staged_blob"}
     assert set(gitsafe.LAND_OPS) == {
         "land_has", "land_commit", "land_merge_base", "land_is_ancestor", "land_count", "land_merge_tree",
-        "land_commit_tree", "land_diff_raw", "land_update_ref",
+        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_fsck",
     }  # fmt: skip
     # no operation can reach the network, a work tree, a free argument or the person's configuration
     assert {op.args[0] for op in gitsafe.LAND_OPS.values()} <= {
-        "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref",
+        "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref", "fsck",
     }  # fmt: skip
     for op in gitsafe.LAND_OPS.values():
         assert not {"-c", "-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack"} & set(
             op.args
         )
+
+
+# -- Codex challenge on #761 -----------------------------------------------------------------------------------
+
+
+def test_create_never_runs_git_init_in_an_existing_directory(w, tmp_path):
+    """An existing path (an agent's repository, a symlink) is only opened: the first operation gates it and refuses."""
+    victim = w.target.path
+    before = (victim / ".git" / "config").read_text()
+    repo = LandRepo.create(str(victim), w.own)
+    assert (victim / ".git" / "config").read_text() == before and not (victim / "HEAD").exists()
+    with pytest.raises(LandGitError) as e:
+        repo.has("a" * 40)
+    assert e.value.code == "land.unsafe"
+    link = tmp_path / "linkrepo.git"
+    link.symlink_to(w.host_path)
+    with pytest.raises(LandGitError):
+        LandRepo.create(str(link), w.own).has("a" * 40)
+
+
+def test_create_needs_a_private_parent_directory(w, tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with pytest.raises(LandGitError) as e:
+        LandRepo.create(str(shared / "r.git"), w.own)
+    assert e.value.code == "land.unsafe"
+
+
+def test_contradictory_bare_values_are_refused(w):
+    cfg = Path(w.host_path) / "config"
+    cfg.write_text(cfg.read_text() + "[core]\n\tbare = false\n")
+    with pytest.raises(LandGitError) as e:
+        w.host.has("a" * 40)
+    assert e.value.code == "land.unsafe"
+
+
+def test_a_symlinked_fan_out_directory_is_refused_not_followed(w, tmp_path):
+    w.fetch()
+    s = w.ticket("x.txt", "x\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    blob = w.src.sha("HEAD:x.txt")
+    (Path(w.host_path) / "objects" / blob[:2]).symlink_to(outside)
+    with pytest.raises(LandGitError) as e:
+        w.importing(s)
+    assert e.value.code == "land.unsafe"
+    assert list(outside.iterdir()) == []
+
+
+def test_host_merge_config_cannot_change_the_candidate(w, tmp_path):
+    """The merge of a rename on one side and an edit of the old name on the other is clean only with rename detection;
+    a host config turning it off (or renormalizing) must not change the tree or the sha."""
+    w.target.write("src/old.txt", "line1\nline2\nline3\nline4\nline5\n")
+    t0_ = w.target.commit("add old")
+    w.target.git("push", "-q", "origin", "main")
+    t0 = w.fetch()
+    assert t0 == t0_
+    w.sync_source()
+    s = w.ticket("src/old.txt", "line1\nline2\nLINE3\nline4\nline5\n")
+    w.importing()
+    w.target.git("mv", "src/old.txt", "src/new.txt")
+    t1 = w.target.commit("rename")
+    w.target.git("push", "-q", "origin", "main")
+    w.fetch()
+    first = w.cand(target=t1, source=s, head=t0)
+    assert isinstance(first, Candidate)
+    assert w.hgit("cat-file", "-p", f"{first.sha}:src/new.txt").splitlines()[2] == "LINE3"
+    cfg = Path(w.host_path) / "config"
+    cfg.write_text(cfg.read_text() + "[merge]\n\trenames = false\n\trenormalize = true\n\tdirectoryRenames = true\n"
+                   "[diff]\n\trenames = false\n[core]\n\tautocrlf = true\n")  # fmt: skip
+    assert w.cand(target=t1, source=s, head=t0) == first
+
+
+# -- git's own object check (structural answer to hostile tree entries) -------------------------------------------
+
+
+def _raw_tree_commit(w, entries: list[tuple[str, bytes, str]]) -> str:
+    """A commit whose root tree holds exactly ``entries`` ``(mode, name bytes, blob text)``, built byte by byte with
+    hash-object --literally (no name is verified or sorted for us)."""
+    body = b""
+    for mode, name, text in sorted(entries, key=lambda e: e[1]):
+        blob = sh("hash-object", "-w", "--stdin", env=w.src.env, cwd=w.src.path, stdin=text.encode())
+        body += mode.encode() + b" " + name + b"\0" + bytes.fromhex(blob)
+    tree = sh("hash-object", "-w", "-t", "tree", "--literally", "--stdin", env=w.src.env, cwd=w.src.path, stdin=body)
+    return sh("commit-tree", tree, "-p", w.src.sha("HEAD"), "-m", "raw", env=w.src.env, cwd=w.src.path)
+
+
+HOSTILE_ENTRIES = [
+    ("100644", b".git"), ("100644", b".GIT"), ("100644", b".git "), ("100644", b".git."), ("100644", b"git~1"),
+    ("100644", ".g\u200cit".encode()), ("100644", ".git\u200c".encode()), ("100644", "\u200e.git".encode()),
+    ("100644", b".git::$INDEX_ALLOCATION"), ("100644", b".git:stream"), ("100644", b".GIT::$DATA"),
+    ("120000", b".gitmodules"), ("120000", b".GITMODULES"), ("120000", b"gitmod~1"),
+    ("120000", b".gitmodules::$DATA"), ("120000", ".gitmod\u200cules".encode()),
+    ("120000", b".gitattributes"), ("120000", b".gitignore"), ("120000", b".mailmap"),
+    ("100644", b""), ("100644", b"."), ("100644", b".."), ("100644", b"a/b"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("mode", "name"), HOSTILE_ENTRIES)
+def test_hostile_tree_entries_are_refused_by_git_itself(w, monkeypatch, mode, name):
+    """With our own name check switched off, git's strict fsck still refuses each class, and what the import wrote is
+    removed again (an existing object must keep meaning "git accepted it")."""
+    w.fetch()
+    tip = _raw_tree_commit(w, [("100644", b"ok.txt", "ok\n"), (mode, name, "target\n")])
+    monkeypatch.setattr(lg, "_hostile_name", lambda *_: False)
+    with pytest.raises(LandGitError) as e:
+        w.importing(tip)
+    assert e.value.code in ("land.hostile_path", "land.unavailable")
+    assert not w.host.has(tip)
+    assert w.hgit("count-objects", "-v").splitlines()[0] == "count: 0" or w.hgit("fsck", "--connectivity-only") == ""
+
+
+@pytest.mark.parametrize("name", [b".gitignore", b".gitattributes", b".mailmap", b".gitmodules", b".github", b"gitx"])
+def test_ordinary_dotfiles_still_land(w, name):
+    w.fetch()
+    tip = _raw_tree_commit(w, [("100644", name, "[submodule]\n" if name == b".gitmodules" else "x\n")])
+    assert w.importing(tip).commits == 1
+
+
+def test_a_refused_import_leaves_nothing_behind_for_the_next_one(w, monkeypatch):
+    w.fetch()
+    tip = _raw_tree_commit(w, [("120000", b".gitattributes", "evil\n")])
+    monkeypatch.setattr(lg, "_hostile_name", lambda *_: False)
+    for _ in range(2):  # the second import must not skip the bad tree as "already there"
+        with pytest.raises(LandGitError):
+            w.importing(tip)

@@ -462,6 +462,37 @@ OPS: dict[str, Op] = {
     "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
 }  # fmt: skip
 
+#: git's own object checks that must be errors for a landing, set explicitly (``--strict`` and the version's defaults
+#: leave some at info/warn): path names git cannot or must not check out (``.git``, empty, ``.``, ``..``, ``/``,
+#: HFS-ignorable and NTFS spellings are inside ``hasDotgit``/``gitmodulesName``), symlinked ``.gitmodules``,
+#: ``.gitattributes``, ``.gitignore``, ``.mailmap``, a malformed or unsafe ``.gitmodules``, unsorted or duplicate
+#: entries.
+FSCK_ERRORS = (
+    "hasDot",
+    "hasDotdot",
+    "hasDotgit",
+    "emptyName",
+    "fullPathname",
+    "nullSha1",
+    "zeroPaddedFilemode",
+    "duplicateEntries",
+    "treeNotSorted",
+    "gitmodulesSymlink",
+    "gitattributesSymlink",
+    "gitignoreSymlink",
+    "mailmapSymlink",
+    "gitmodulesMissing",
+    "gitmodulesBlob",
+    "gitmodulesLarge",
+    "gitmodulesName",
+    "gitmodulesParse",
+    "gitmodulesPath",
+    "gitmodulesUrl",
+    "gitmodulesUpdate",
+    "badFilemode",
+    "badName",
+)
+
 #: Landing's operations (#596), a second CLOSED set beside :data:`OPS` (kept apart so :data:`OPS`, which the isolation
 #: tests walk against ordinary work-tree repositories, stays what it was). ``land_*`` runs ONLY in the host-owned bare
 #: repository of :mod:`orch.land.git` (:func:`land_check` on top of the gate, in :func:`command`); agent repositories
@@ -474,7 +505,17 @@ LAND_OPS: dict[str, Op] = {
     "land_is_ancestor": Op(("merge-base", "--is-ancestor", "<oid>", "<oid>")),
     "land_count": Op(("rev-list", "--count", "<oid>..<oid>")),
     # a merge computed from objects only (no index, no work tree); exit 1 = conflicts (paths listed)
-    "land_merge_tree": Op(("merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "<oid>", "<oid>")),
+    # Every merge knob the allow-list tolerates in a repository's config is pinned (Codex #4 on #761), so the tree is a
+    # function of the two commits only (I4), whatever the host repository's own config says.
+    "land_merge_tree": Op(
+        ("merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "<oid>", "<oid>"),
+        pins=(
+            "-c", "merge.renormalize=false", "-c", "merge.renames=true", "-c", "merge.renameLimit=1000",
+            "-c", "merge.directoryRenames=conflict", "-c", "merge.conflictStyle=merge", "-c", "diff.renames=true",
+            "-c", "diff.renameLimit=1000", "-c", "diff.algorithm=default", "-c", "core.autocrlf=false",
+            "-c", "core.eol=lf", "-c", "core.safecrlf=false",
+        ),
+    ),  # fmt: skip
     # message on stdin; identity and dates only from the caller's GIT_AUTHOR_* / GIT_COMMITTER_* (I4: deterministic)
     "land_commit_tree": Op(
         ("commit-tree", "--no-gpg-sign", "-p", "<oid>", "-p", "<oid>", "-F", "-", "<oid>"),
@@ -484,6 +525,12 @@ LAND_OPS: dict[str, Op] = {
     ),  # fmt: skip
     "land_diff_raw": Op(("diff-tree", "-r", "--raw", "-z", "--no-renames", "--ignore-submodules=none", "--no-color",
                          "<oid>", "<oid>")),  # fmt: skip
+    # git's own fsck of everything reachable from one commit: the check that decides which tree entries are acceptable
+    # (the importer's own name check is only an early refusal); every relevant message id is an error
+    "land_fsck": Op(
+        ("fsck", "--strict", "--no-dangling", "--no-reflogs", "--no-progress", "--no-name", "<oid>"),
+        pins=tuple(x for i in FSCK_ERRORS for x in ("-c", f"fsck.{i}=error")),
+    ),
     "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
 }  # fmt: skip
 
@@ -561,7 +608,8 @@ def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:
     :class:`Unsafe`. (Config keys are already the gate's allow-list: no hook, include, filter or merge driver.)"""
     if os.path.realpath(repo) != repo:
         raise Unsafe("the landing repository path is not a real path")
-    if not any(k.lower() == "core.bare" and v.strip().lower() in ("true", "yes", "on", "1") for _s, k, v in local):
+    bare = [v.strip().lower() for _s, k, v in local if k.lower() == "core.bare"]
+    if not bare or bare[-1] not in ("true", "yes", "on", "1"):  # git's last value wins
         raise Unsafe("the landing repository is not bare")
     for rel in ("objects", "refs", "HEAD"):
         _check_path(os.path.join(repo, rel), f"landing {rel}", must_exist=True)

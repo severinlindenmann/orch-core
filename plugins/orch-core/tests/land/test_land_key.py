@@ -722,6 +722,6 @@ def test_a_write_acl_on_an_executable_makes_it_untrusted(tmp_path):
     exe = tmp_path / "x"
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
-    assert lk._acl_ok(exe, {0}, empty=False) is True  # (user-owned: untrusted for the owner reason, not this one)
+    assert lk._acl_ok(exe, {0}, empty=False) is True
     subprocess.run(["/bin/chmod", "+a", "everyone allow write", str(exe)], check=True)
     assert lk._acl_ok(exe, {0}, empty=False) is False

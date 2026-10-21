@@ -198,3 +198,25 @@ def test_repr_never_shows_the_secret():
     s = GrantStore()
     put_run(s)
     assert "Q" * 43 not in repr(s._run_slots) and FSECRET not in repr(s._run_slots)
+
+
+def test_a_consumed_run_cannot_be_deposited_again():  # Codex challenge: replay of the deposit re-armed the run
+    s = GrantStore()
+    put_run(s)
+    assert s.secret_for(WS, ME, FGID, run=RUN) == FSECRET
+    with pytest.raises(GrantError):
+        put_run(s)
+    with pytest.raises(GrantError):
+        s.secret_for(WS, ME, FGID, run=RUN)
+
+
+def test_a_consumed_secret_is_still_redacted_in_logs(caplog):  # Codex challenge: tail redaction vanished on consume
+    s = GrantStore()
+    put_run(s)
+    s.secret_for(WS, ME, FGID, run=RUN)
+    log, f = _logger(s, caplog)
+    try:
+        log.info("leaked tail " + "Q" * 43)
+    finally:
+        caplog.handler.removeFilter(f)
+    assert "Q" * 43 not in caplog.text

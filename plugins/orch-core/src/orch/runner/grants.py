@@ -35,6 +35,7 @@ _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
 MAX_HELD = 64
 MAX_RUN_SLOTS = 64
+MAX_SPENT = 1024  # consumed run ids (and their secrets, for log redaction only) remembered, oldest forgotten first
 
 
 class GrantError(Exception):
@@ -77,6 +78,7 @@ class GrantStore:
         self._lock = threading.Lock()
         self._held: dict[tuple[str, str], _Held] = {}
         self._run_slots: dict[str, _RunSlot] = {}  # one-shot follow-up grants (FU9), keyed by run id
+        self._spent: dict[str, str] = {}  # run id -> secret of a consumed slot: no re-deposit, still redacted in logs
         self.clock = clock
 
     def put(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -131,8 +133,8 @@ class GrantStore:
             raise GrantError("launch.no_grant", "grant.put_run: the grant has expired")
         with self._lock:
             self._prune_runs(now)
-            if run in self._run_slots:
-                raise GrantError("invalid.input", "grant.put_run: this run already holds a slot")
+            if run in self._run_slots or run in self._spent:
+                raise GrantError("invalid.input", "grant.put_run: this run already holds or has used a slot")
             if len(self._run_slots) >= MAX_RUN_SLOTS:
                 raise GrantError("invalid.input", f"grant.put_run: at most {MAX_RUN_SLOTS} run slots are held")
             self._run_slots[run] = _RunSlot(wid, person, grant, secret, until, until_s)
@@ -164,6 +166,9 @@ class GrantStore:
             if not ok or secret is None:
                 raise GrantError("launch.no_grant", "the runner holds no such one-shot grant for this run")
             del self._run_slots[run]
+            self._spent[run] = secret
+            while len(self._spent) > MAX_SPENT:
+                del self._spent[next(iter(self._spent))]
             return secret
 
     def drop(self, grant: Any) -> bool:
@@ -206,9 +211,11 @@ class GrantStore:
 
     def secrets(self) -> list[str]:
         with self._lock:
-            return [h.secret for h in self._held.values()] + [
-                v for v in (getattr(s, "secret", None) for s in self._run_slots.values()) if isinstance(v, str)
-            ]
+            return (
+                [h.secret for h in self._held.values()]
+                + [v for v in (getattr(s, "secret", None) for s in self._run_slots.values()) if isinstance(v, str)]
+                + list(self._spent.values())
+            )
 
 
 class RedactFilter(logging.Filter):

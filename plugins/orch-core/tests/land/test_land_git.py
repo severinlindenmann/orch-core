@@ -754,3 +754,83 @@ def test_a_refused_import_leaves_nothing_behind_for_the_next_one(w, monkeypatch)
     for _ in range(2):  # the second import must not skip the bad tree as "already there"
         with pytest.raises(LandGitError):
             w.importing(tip)
+
+
+# -- quarantine (lead's finding on #761) ------------------------------------------------------------------------
+
+
+def _objects_snapshot(w) -> set[str]:
+    base = Path(w.host_path)
+    return {str(p.relative_to(base)) for p in (base / "objects").rglob("*") if p.is_file()}
+
+
+def _no_quarantine(w) -> bool:
+    return not [p for p in Path(w.host_path).iterdir() if p.name.startswith("incoming-")]
+
+
+@pytest.mark.parametrize("exc", [OSError("disk"), KeyboardInterrupt(), LandGitError("land.too_big", "x")])
+@pytest.mark.parametrize("after", [0, 2, 5])
+def test_any_failure_mid_import_leaves_objects_unchanged_and_the_next_import_works(w, monkeypatch, exc, after):
+    w.fetch()
+    w.ticket("a/b.txt", "b\n")
+    w.ticket("c.txt", "c\n")
+    tip = w.src.sha("HEAD")
+    before = _objects_snapshot(w)
+    real = LandRepo._write_loose
+    calls = {"n": 0}
+
+    def flaky(self, objects, oid, kind, data):
+        if calls["n"] >= after:
+            raise exc
+        calls["n"] += 1
+        return real(self, objects, oid, kind, data)
+
+    monkeypatch.setattr(LandRepo, "_write_loose", flaky)
+    with pytest.raises(type(exc)):
+        w.importing(tip)
+    assert _objects_snapshot(w) == before and _no_quarantine(w)
+    assert not w.host.has(tip)
+    monkeypatch.setattr(LandRepo, "_write_loose", real)
+    assert w.importing(tip).commits == 2
+    assert w.host.has(tip) and _no_quarantine(w)
+    assert w.hgit("fsck", "--no-dangling", "--connectivity-only") == ""
+
+
+def test_a_failure_while_promoting_leaves_only_whole_objects(w, monkeypatch):
+    w.fetch()
+    w.ticket("a/b.txt", "b\n")
+    tip = w.src.sha("HEAD")
+    real = os.replace
+    n = {"i": 0}
+
+    def flaky(src, dst, **kw):
+        if kw.get("src_dir_fd") is not None and src == dst:  # promotion renames only
+            n["i"] += 1
+            if n["i"] == 3:
+                raise OSError("boom")
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(LandGitError):
+        w.importing(tip)
+    monkeypatch.setattr(os, "replace", real)
+    assert _no_quarantine(w)
+    # what was promoted is children first: a later import completes, and the repository is connected
+    assert w.importing(tip).commits == 1
+    assert w.hgit("fsck", "--no-dangling", "--connectivity-only") == ""
+
+
+def test_the_fsck_environment_is_confined_to_the_quarantine_and_the_hosts_objects(w):
+    ok = "a" * 40
+    q = f"{w.host_path}/incoming-{'0' * 16}"
+    good = {"GIT_OBJECT_DIRECTORY": q, "GIT_ALTERNATE_OBJECT_DIRECTORIES": f"{w.host_path}/objects"}
+    gitsafe.command(w.host_path, "land_fsck", w.own, operand=ok, env_extra=good)
+    for extra in (
+        {"GIT_OBJECT_DIRECTORY": "/tmp/x"}, {"GIT_OBJECT_DIRECTORY": w.host_path + "/objects"},
+        {"GIT_OBJECT_DIRECTORY": q + "/../.."}, {"GIT_ALTERNATE_OBJECT_DIRECTORIES": "/etc"},
+        {"GIT_ALTERNATE_OBJECT_DIRECTORIES": f"{w.host_path}/objects:/etc"},
+    ):  # fmt: skip
+        with pytest.raises(gitsafe.Unsafe):
+            gitsafe.command(w.host_path, "land_fsck", w.own, operand=ok, env_extra=extra)
+    with pytest.raises(gitsafe.Unsafe):  # other operations never get them
+        gitsafe.command(w.host_path, "land_has", w.own, operand=ok, env_extra={"GIT_OBJECT_DIRECTORY": q})

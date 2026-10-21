@@ -32,6 +32,7 @@ import contextlib
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -314,18 +315,25 @@ class LandRepo:
         host_dir, _ = open_walk(os.path.join(self.path, "objects"))
         host = ObjectStore(host_dir, "sha1")
         counts = {"objects": 0, "bytes": 0}
-        fresh: list[str] = []  # objects this import wrote (removed again if git's fsck refuses the range)
+        fresh: list[str] = []  # objects written to the quarantine, children before parents (the promotion order)
+        quarantine = os.path.join(self.path, f"incoming-{secrets.token_hex(8)}")
+        q_dir: Dir | None = None
 
         def put(src: Repo, oid: str, kind: str) -> None:
             _, data = src.objects.read(oid, kind)
             counts["bytes"] += len(data)
             if counts["bytes"] > MAX_BYTES or counts["objects"] >= MAX_OBJECTS:
                 raise LandGitError("land.too_big", "the change is too large to land")
-            if self._write_loose(host_dir, oid, kind, data):
+            if self._write_loose(q_dir, oid, kind, data):  # type: ignore[arg-type]
                 counts["objects"] += 1
                 fresh.append(oid)
 
         try:
+            try:
+                os.mkdir(quarantine, 0o700)
+            except OSError:
+                raise LandGitError("land.unavailable", "the import area cannot be created") from None
+            q_dir, _ = open_walk(quarantine)
             with Repo(pin_repo(real, None)) as src:
                 if src.algo != "sha1":
                     raise LandGitError("land.unavailable", "only SHA-1 repositories can land")
@@ -355,12 +363,14 @@ class LandRepo:
                 for oid in _topo(new):
                     self._import_tree(src, host, host_dir, src.commit(oid).tree, put)
                     put(src, oid, "commit")
-            try:
-                self._fsck(tip)
-            except LandGitError:
-                self._forget(host_dir, fresh)
-                raise
+            self._fsck(tip, quarantine)  # git's check, over the quarantine plus what the host already has
+            self._promote(q_dir, host_dir, fresh)
         finally:
+            # whatever happened (BaseException included) the quarantine goes, by its exact path: an object in objects/
+            # is only ever one git accepted, with its whole closure
+            if q_dir is not None:
+                q_dir.close()
+            shutil.rmtree(quarantine, ignore_errors=True)
             host.close()
             host_dir.close()
         return ImportStats(len(new), counts["objects"], counts["bytes"])
@@ -391,12 +401,17 @@ class LandRepo:
                     put(src, e.oid, "blob")
                     written.add(e.oid)
 
-    def _fsck(self, tip: str) -> None:
+    def _fsck(self, tip: str, quarantine: str) -> None:
         """git's own strict check of everything reachable from ``tip`` (the structural answer to "which tree entries
-        may land": git's ``verify_path`` and fsck rules, not a spelling list of ours). ``land.hostile_path`` on any
-        error. Runs in the host repository only."""
+        may land": git's ``verify_path`` and fsck rules, not a spelling list of ours), reading the quarantine as its
+        object directory and the host's own objects as its alternate, like git's receive quarantine.
+        ``land.hostile_path`` on any error."""
+        env = {
+            "GIT_OBJECT_DIRECTORY": quarantine,
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.path.join(self.path, "objects"),
+        }
         try:
-            code, _ = self._run("land_fsck", tip, ok=(0, 1, 2, 4, 8, 16))
+            code, _ = self._run("land_fsck", tip, env_extra=env, ok=(0, 1, 2, 4, 8, 16))
         except LandGitError as e:
             if e.code == "land.unsafe":
                 raise
@@ -405,16 +420,26 @@ class LandRepo:
             raise LandGitError("land.hostile_path", "git's own object check refuses the change")
 
     @staticmethod
-    def _forget(objects: Dir, oids: list[str]) -> None:
-        """Remove objects an import wrote and git then refused, so that "the object exists" still means "git accepted
-        it" for the next import."""
+    def _promote(q: Dir, objects: Dir, oids: list[str]) -> None:
+        """Move the checked objects into ``objects/``, one rename each (atomic), in write order (children first),
+        through no-follow directory descriptors; an interruption leaves only complete objects with their closure."""
+        flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
         for oid in oids:
-            with contextlib.suppress(OSError):
-                dfd = os.open(oid[:2], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=objects.fd)
+            try:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(oid[:2], 0o755, dir_fd=objects.fd)
+                dst = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=objects.fd)
                 try:
-                    os.unlink(oid[2:], dir_fd=dfd)
+                    src = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=q.fd)
+                    try:
+                        os.replace(oid[2:], oid[2:], src_dir_fd=src, dst_dir_fd=dst)
+                        os.fsync(dst)
+                    finally:
+                        os.close(src)
                 finally:
-                    os.close(dfd)
+                    os.close(dst)
+            except OSError:
+                raise LandGitError("land.unsafe", "the landing object store is not what git wrote") from None
 
     # -- submodules
     def _refuse_gitlinks(self, base: str | None, head: str) -> None:

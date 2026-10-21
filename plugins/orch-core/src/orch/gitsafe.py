@@ -529,6 +529,7 @@ LAND_OPS: dict[str, Op] = {
     # (the importer's own name check is only an early refusal); every relevant message id is an error
     "land_fsck": Op(
         ("fsck", "--strict", "--no-dangling", "--no-reflogs", "--no-progress", "--no-name", "<oid>"),
+        env=frozenset({"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}),
         pins=tuple(x for i in FSCK_ERRORS for x in ("-c", f"fsck.{i}=error")),
     ),
     "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
@@ -597,6 +598,7 @@ def command(
     local = gate(repo, own, timeout=timeout)
     if op.startswith("land_"):
         land_check(repo, local)
+        _land_env_ok(repo, extra)
     entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
     return _argv(repo, args, spec.pins), {**isolated_env(own, entries), **extra}
 
@@ -616,6 +618,20 @@ def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:
     for rel in ("objects/info/alternates", "objects/info/http-alternates", "shallow", "info/grafts", "info/attributes"):
         if os.path.lexists(os.path.join(repo, rel)):
             raise Unsafe(f"the landing repository has {rel}")
+
+
+def _land_env_ok(repo: str, extra: Mapping[str, str]) -> None:
+    """The object-directory variables an operation may carry (the import quarantine, like git's receive quarantine):
+    the directory must be ``<repo>/incoming-<hex>`` and the alternate exactly ``<repo>/objects``; nothing else."""
+    for key, value in extra.items():
+        if key == "GIT_OBJECT_DIRECTORY":
+            ok = re.fullmatch(re.escape(repo) + r"/incoming-[0-9a-f]{16}", value) is not None
+        elif key == "GIT_ALTERNATE_OBJECT_DIRECTORIES":
+            ok = value == f"{repo}/objects"
+        else:
+            ok = True  # the identity variables of land_commit_tree: free text, never a path git reads
+        if not ok:
+            raise Unsafe("invalid git environment")
 
 
 def land_init(path: str, own: Mapping[str, str]) -> tuple[list[str], dict[str, str]]:

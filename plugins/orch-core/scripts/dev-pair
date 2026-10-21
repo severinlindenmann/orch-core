@@ -1452,9 +1452,14 @@ def find_answer(
     return None
 
 
+def store_dir(ws: Path) -> Path:
+    """The workspace's orch store: ``<ws>/.orch`` (since the move into ``.orch/``), else the workspace root (old layout)."""
+    return ws / ".orch" if (ws / ".orch" / "events").is_dir() else ws
+
+
 def genesis_device(ws: Path) -> str:
     """The owner's genesis device (the ``workspace.created`` actor), or ``""`` when the log cannot be read."""
-    wsev = read_jsonl(ws / "events" / "workspace.jsonl")
+    wsev = read_jsonl(store_dir(ws) / "events" / "workspace.jsonl")
     created = next((e for e in wsev if e.get("type") == "workspace.created"), {})
     return str((created.get("actor") or {}).get("device") or "")
 
@@ -1463,7 +1468,7 @@ def scan_answer(ws: Path, nonce: str, phone: str) -> dict[str, Any] | None:
     """One pass over the workspace logs: the answer to the question carrying the nonce, signed by ``phone`` (the one
     device paired for this sandbox's offer), or ``None``."""
     try:
-        dirs = sorted(d for d in (ws / "tickets").iterdir() if d.is_dir() and not d.is_symlink())
+        dirs = sorted(d for d in (store_dir(ws) / "tickets").iterdir() if d.is_dir() and not d.is_symlink())
     except OSError:
         return None
     for d in dirs:
@@ -1496,7 +1501,9 @@ def pinned_phone(root: Path) -> str:
         raise Refused("pair.json names no device paired for this sandbox's offer (did `up` finish?): refusing")
     if phone in (primary, genesis):
         raise Refused("the paired device is the primary or the genesis device: refusing")
-    if phone not in paired_devices(read_jsonl(root / "ws" / "events" / "workspace.jsonl"), [primary, genesis]):
+    if phone not in paired_devices(
+        read_jsonl(store_dir(root / "ws") / "events" / "workspace.jsonl"), [primary, genesis]
+    ):
         raise Refused("the paired device has no device.added in the workspace log: refusing")
     return phone
 

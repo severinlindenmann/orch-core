@@ -610,3 +610,11 @@ def test_review_prompts_are_answered(dp, prompt, typed):
     ctx = SimpleNamespace(passphrase="pw")
     typed_back = [r.fn(m) for r in dp.passphrase_responders(ctx) if (m := r.pattern.search(prompt))]
     assert typed_back == [typed]
+
+
+def test_store_dir_follows_the_orch_subfolder(dp, scratch):
+    old, new = scratch / "old", scratch / "new"
+    (old / "events").mkdir(parents=True)
+    (new / ".orch" / "events").mkdir(parents=True)
+    assert dp.store_dir(old) == old
+    assert dp.store_dir(new) == new / ".orch"

@@ -135,7 +135,17 @@ class Layout:
         self.udp_srv.bind(("127.0.0.1", 0))
         self.udp_srv.settimeout(0.3)
 
-    def targets(self) -> dict:
+    def targets(self, backend: str = "sandbox-exec") -> dict:
+        t = self._targets()
+        if backend == "bwrap":  # inside bwrap the three working dirs live at fixed paths
+            for group in ("read", "write"):
+                for k, v in t[group].items():
+                    for host, inner in ((self.export, "/work"), (self.out, "/out"), (self.tmp, "/tmp")):
+                        if v.startswith(str(host) + "/"):
+                            t[group][k] = inner + v[len(str(host)) :]
+        return t
+
+    def _targets(self) -> dict:
         real_ssh = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".ssh"  # the account home, whatever $HOME says
         return {
             "read": {"ssh_key": str(self.ssh_key), "land_key": str(self.land_key), "state_file": str(self.state_file),
@@ -168,7 +178,7 @@ def _toolchain() -> list[Path]:
 
 def _probe(lay: Layout, backend: str, **kw) -> tuple[sbx.Result, dict]:
     spec = sbx.Spec(
-        argv=[os.path.realpath(sys.executable), "-I", "-c", PROBE, json.dumps(lay.targets())],
+        argv=[os.path.realpath(sys.executable), "-I", "-c", PROBE, json.dumps(lay.targets(backend))],
         export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp, toolchain_ro=_toolchain(), timeout=60, **kw,
     )  # fmt: skip
     res = sbx.run_check(spec, backend=backend)
@@ -446,3 +456,195 @@ def test_bwrap_command_line_shape(lay: Layout) -> None:
     assert argv[-3:] == ["--", "/usr/bin/make", "test"] or argv[-2:] == ["/usr/bin/make", "test"]
     # the only ro-bind of a writable target would be a bug: out and tmp are rw binds, export is ro
     assert "--bind /usr" not in flat and "--bind / " not in flat
+
+
+# ------------------------------------------------------------------------------------------------ links (review 21 Oct)
+
+LINK_PROBE = r"""
+import os, sys, json
+res = {}
+src_a, src_b, out, tmp = sys.argv[1:5]
+def attempt(name, fn):
+    try:
+        fn(); res[name] = "CREATED"
+    except OSError:
+        res[name] = "DENIED"
+attempt("hardlink_land_key_to_out", lambda: os.link(src_a, out + "/x"))
+attempt("hardlink_ssh_key_to_tmp", lambda: os.link(src_b, tmp + "/x"))
+attempt("symlink_land_key_to_out", lambda: os.symlink(src_a, out + "/s"))
+attempt("symlink_ssh_key_to_tmp", lambda: os.symlink(src_b, tmp + "/s"))
+for name, path in (("read_via_hardlink", out + "/x"), ("read_via_symlink", out + "/s"),
+                   ("read_via_symlink_tmp", tmp + "/s")):
+    try:
+        res[name] = "LEAKED" if open(path).read(4) else "EMPTY"
+    except OSError:
+        res[name] = "DENIED"
+print("RESULT " + json.dumps(res))
+"""
+
+
+@pytest.mark.parametrize("with_forbidden", [True, False], ids=["forbidden-listed", "default-deny-only"])
+def test_check_cannot_link_a_secret_into_out_or_tmp(lay: Layout, backend: str, with_forbidden: bool) -> None:
+    """Hard links share the inode, so a link to the land key / an ssh key placed in out/tmp would be readable by path.
+    Creating it must fail, a symlink must be unreadable, and the key's link count must stay 1. (bwrap: the forbidden
+    paths are not mounted at all, so there is no source to link; the same probe shows it.)"""
+    out, tmp = ("/out", "/tmp") if backend == "bwrap" else (str(lay.out), str(lay.tmp))
+    kw = {"forbidden": lay.forbidden} if with_forbidden else {}
+    spec = sbx.Spec(
+        argv=[os.path.realpath(sys.executable), "-I", "-c", LINK_PROBE, str(lay.land_key), str(lay.ssh_key), out, tmp],
+        export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp, toolchain_ro=_toolchain(), timeout=60, **kw,
+    )  # fmt: skip
+    res = sbx.run_check(spec, backend=backend)
+    got = json.loads(next(ln for ln in res.output.decode().splitlines() if ln.startswith("RESULT "))[7:])
+    assert got["hardlink_land_key_to_out"] == "DENIED" and got["hardlink_ssh_key_to_tmp"] == "DENIED", got
+    assert "LEAKED" not in got.values() and got["read_via_hardlink"] == "DENIED", got
+    assert os.stat(lay.land_key).st_nlink == 1 and os.stat(lay.ssh_key).st_nlink == 1
+    assert not (lay.out / "x").exists() and not (lay.tmp / "x").exists()
+
+
+def test_forbidden_paths_are_not_mounted_in_bwrap(lay: Layout) -> None:
+    spec = sbx.Spec(
+        argv=["/usr/bin/true"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp, forbidden=lay.forbidden
+    )
+    argv, _ = sbx.bwrap_argv("/usr/bin/bwrap", spec)
+    flat = " ".join(argv)
+    assert str(lay.land_key) not in flat and str(lay.ssh_key) not in flat and str(lay.state) not in flat
+
+
+def test_system_system_volumes_alias_is_not_readable(lay: Layout) -> None:
+    """``/System/Volumes/Data/<path>`` is the same file as ``<path>`` on macOS; the profile must not open it."""
+    if sys.platform != "darwin":
+        pytest.skip("macOS firmlink only")
+    reason = _usable("sandbox-exec")
+    if reason:
+        pytest.skip(reason)
+    alias = "/System/Volumes/Data" + str(lay.ssh_key)
+    if not os.path.exists(alias):
+        pytest.skip("this macOS has no /System/Volumes/Data firmlink alias for the test path")
+    code = f"print(open({alias!r}).read())"
+    spec = sbx.Spec(
+        argv=[os.path.realpath(sys.executable), "-I", "-c", code], export_dir=lay.export, out_dir=lay.out,
+        tmp_dir=lay.tmp, toolchain_ro=_toolchain(), timeout=30,
+    )  # fmt: skip
+    res = sbx.run_check(spec, backend="sandbox-exec")
+    assert b"PRIVATE" not in res.output.replace(alias.encode(), b"") and res.returncode != 0
+
+
+# ------------------------------------------------------------------------------------------------ host-side reading
+
+
+def test_read_out_file_accepts_a_plain_file(lay: Layout) -> None:
+    (lay.out / "d").mkdir()
+    (lay.out / "d" / "report.txt").write_bytes(b"ok")
+    assert sbx.read_out_file(lay.out, "d/report.txt") == b"ok"
+
+
+def test_read_out_file_refuses_everything_else(lay: Layout) -> None:
+    (lay.out / "plain").write_text("data")
+    os.link(lay.out / "plain", lay.out / "plain2")  # nlink 2: a planted alias
+    os.link(lay.land_key, lay.out / "alias_of_key")  # the host-side planting case (what a hostile check would try)
+    os.symlink(lay.land_key, lay.out / "sym")
+    os.symlink(lay.state, lay.out / "dirsym")
+    os.mkfifo(lay.out / "fifo")
+    (lay.out / "dir").mkdir()
+    for rel in (
+        "plain",
+        "plain2",
+        "alias_of_key",
+        "sym",
+        "dirsym/events.jsonl",
+        "fifo",
+        "dir",
+        "missing",
+        "../x",
+        "",
+        "a/../b",
+    ):
+        with pytest.raises(sbx.SandboxError):
+            sbx.read_out_file(lay.out, rel)
+    assert os.stat(lay.land_key).st_nlink == 2  # the test's own link; the reader never followed or read it
+
+
+def test_start_refuses_a_tree_with_aliases(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a, **k):
+        raise AssertionError("spawned")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    os.link(lay.land_key, lay.out / "planted")  # a pre-planted hard link to the key
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(**base))
+    (lay.out / "planted").unlink()
+    os.link(lay.export / "hello.txt", lay.tmp / "alias")  # export file reachable through the writable tmp
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(**base))
+    (lay.tmp / "alias").unlink()
+    os.mkfifo(lay.tmp / "f")
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(**base))
+    (lay.tmp / "f").unlink()
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(os.path.join(lay.short, "x"))
+    os.symlink("/", lay.tmp / "link-to-root")  # a plain symlink is fine (resolved inside the sandbox, not by us)
+    sbx._validated(sbx.Spec(**base))
+    srv.close()
+
+
+# ------------------------------------------------------------------------------------------------ validation extras
+
+
+def test_writable_dirs_must_be_ours_private_and_not_symlinks(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    link = lay.root / "linked-out"
+    link.symlink_to(lay.out)
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "tmp_dir": lay.tmp}
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(out_dir=link, **base))
+    os.chmod(lay.out, 0o777)
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(out_dir=lay.out, **base))
+
+
+def test_account_secret_dirs_are_always_forbidden(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sbx, "_account_home", lambda: lay.home)
+    (lay.home / ".aws").mkdir()
+    for d in (".ssh", ".aws"):
+        with pytest.raises(sbx.SandboxError):
+            sbx._validated(
+                sbx.Spec(
+                    argv=["/bin/echo"],
+                    export_dir=lay.export,
+                    out_dir=lay.out,
+                    tmp_dir=lay.tmp,
+                    toolchain_ro=[lay.home / d],
+                )
+            )
+
+
+def test_forbidden_path_inside_a_mounted_system_location_is_refused(lay: Layout) -> None:
+    for bad in ("/usr/local/orch-state", "/etc/orch", "/bin/x"):
+        spec = sbx.Spec(
+            argv=["/bin/echo"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp, forbidden=[Path(bad)]
+        )
+        with pytest.raises(sbx.SandboxError):
+            sbx._validated(spec)
+
+
+def test_selftest_rejects_a_wrapper_that_confines_nothing(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fake backend that just runs the command (exit 0) passes ``true`` but fails to block the outside canary."""
+    monkeypatch.setattr(sbx, "_trusted_exe", lambda p: True)
+    fake = lay.root / "fake"
+    fake.write_text('#!/bin/sh\nwhile [ "$1" != "" ]; do case "$1" in /*) exec "$@";; esac; shift; done\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(sbx, "SANDBOX_EXEC", str(fake))
+    monkeypatch.setattr(sbx, "BWRAP_CANDIDATES", (str(fake),))
+    name = "sandbox-exec" if sys.platform == "darwin" else "bwrap"
+    assert sbx._selftest(name) is False
+
+
+def test_untrusted_backend_binary_is_not_used(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = lay.root / "bwrap"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)  # owned by this user, not root: replaceable
+    monkeypatch.setattr(sbx, "BWRAP_CANDIDATES", (str(fake),))
+    assert sbx._bwrap_path() is None
+    assert not sbx._trusted_exe(str(fake))

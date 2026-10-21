@@ -21,7 +21,10 @@ The child gets: an environment built from scratch (an allowlist, see :data:`ENV_
 process exits, before the result is returned. Output is merged, capped at ``max_output`` bytes, and is data (the caller
 redacts it before it reaches a log).
 
-Known limit (macOS): ``sandbox-exec`` has no pid namespace, so a descendant that calls ``setsid`` leaves the process
+Known limits. macOS: Seatbelt cannot stop a same-UID process from reading other processes' arguments and environment
+(``sysctl KERN_PROCARGS2``; probed 21 Oct: allowed even under ``(deny sysctl*)``). So the process that calls
+:func:`run_check` must hold no secret in its argv or environment (the landing key is only ever a file path handed to
+the separate push process). macOS also has no pid namespace: a descendant that calls ``setsid`` leaves the process
 group and can outlive the check. It stays inside the sandbox (no network, no secrets); the Linux backend has none of it.
 """
 
@@ -29,8 +32,10 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pwd
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -57,7 +62,7 @@ _SYSTEM_BIN = ("/usr/bin", "/bin")
 
 # Fixed, read-only system locations a toolchain needs (macOS). Not /Users, /Library/Keychains, /private/var/root ...
 _MAC_SYSTEM_READ = (
-    "/usr", "/bin", "/sbin", "/System", "/Library/Apple", "/Library/Preferences/Logging",
+    "/usr", "/bin", "/sbin", "/System/Library", "/System/Cryptexes", "/Library/Apple", "/Library/Preferences/Logging",
     "/private/var/select", "/private/var/db/timezone", "/private/var/db/dyld",
     "/private/etc/ssl", "/private/etc/localtime",
     "/private/etc/passwd", "/private/etc/group", "/private/etc/resolv.conf", "/private/etc/hosts",
@@ -111,6 +116,60 @@ def _overlaps(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
+def _account_home() -> Path:
+    """The account's home directory from the user database, whatever ``$HOME`` says."""
+    return _real(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+_ACCOUNT_SECRETS = (".ssh", ".gnupg", ".aws", ".config", ".netrc", ".kube", ".docker", "Library/Keychains")
+# what the backends mount from the host besides the caller's paths (a forbidden path inside one would be exposed)
+_SYSTEM_ROOTS = (
+    "/usr", "/bin", "/sbin", "/lib", "/lib64", "/System/Library", "/System/Cryptexes", "/Library/Apple", "/etc",
+    "/private/etc", "/private/var/select", "/private/var/db", "/dev", "/proc",
+)  # fmt: skip
+
+
+def _secret_paths() -> list[Path]:
+    """Paths that are always forbidden: the account's credential directories (and ``$HOME``'s, if it differs)."""
+    homes = {_account_home(), _real(Path.home())}
+    return [h / n for h in homes for n in _ACCOUNT_SECRETS]
+
+
+def _private_dir(raw: Path | str, what: str) -> Path:
+    """A writable directory must be one the caller made: not a symlink, ours, not writable by group or others."""
+    try:
+        st = os.lstat(raw)
+    except OSError as e:
+        raise SandboxError(f"{what} is not a directory") from e
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise SandboxError(f"{what} must be a real directory, not a symlink")
+    if st.st_uid != os.getuid() or st.st_mode & 0o022:
+        raise SandboxError(f"{what} must be owned by this user and not writable by group or others")
+    return _real(raw)
+
+
+_SCAN_LIMIT = 500_000
+
+
+def _scan_aliases(root: Path, what: str) -> None:
+    """Refuse a tree holding a socket, device, FIFO or a file with more than one link. A hard link would let one inode
+    be reached under two names (a secret planted into out/tmp, or an export file rewritten through out/tmp), and a
+    pathname socket stays connectable inside a network namespace."""
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for name in [*dirnames, *filenames]:
+            seen += 1
+            if seen > _SCAN_LIMIT:
+                raise SandboxError(f"{what} holds too many entries")
+            st = os.lstat(os.path.join(dirpath, name))
+            if stat.S_ISLNK(st.st_mode) or stat.S_ISDIR(st.st_mode):
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                raise SandboxError(f"{what} holds a special file (socket, device or fifo)")
+            if st.st_nlink > 1:
+                raise SandboxError(f"{what} holds a hard-linked file")
+
+
 def _validated(spec: Spec) -> tuple[Path, Path, Path, list[Path], list[Path]]:
     """Resolve and check every path. Refuse an allowed path that equals, contains or lies inside a forbidden one."""
     if not spec.argv or not all(isinstance(a, str) and "\x00" not in a for a in spec.argv):
@@ -119,15 +178,16 @@ def _validated(spec: Spec) -> tuple[Path, Path, Path, list[Path], list[Path]]:
         raise SandboxError("argv[0] must be an absolute path")
     if not (0 < spec.timeout <= 6 * 3600) or not (0 < spec.max_output <= 16 * 1024 * 1024):
         raise SandboxError("timeout or max_output out of range")
-    export, out, tmp = (_real(p) for p in (spec.export_dir, spec.out_dir, spec.tmp_dir))
+    export = _real(spec.export_dir)
+    out = _private_dir(spec.out_dir, "out_dir")
+    tmp = _private_dir(spec.tmp_dir, "tmp_dir")
     tool = [_real(p) for p in spec.toolchain_ro]
-    forb = [_real(p) for p in spec.forbidden]
+    forb = [*(_real(p) for p in spec.forbidden), *_secret_paths()]
     for p in (export, out, tmp, *tool, *forb):
-        if not _SAFE_PATH.match(str(p)):
+        if not _SAFE_PATH.fullmatch(str(p)):
             raise SandboxError("path contains characters the sandbox profile cannot carry")
-    for p in (export, out, tmp):
-        if not p.is_dir():
-            raise SandboxError(f"not a directory: {p.name}")
+    if not export.is_dir():
+        raise SandboxError("export_dir is not a directory")
     for i, a in enumerate((export, out, tmp)):
         for b in (export, out, tmp)[i + 1 :]:
             if _overlaps(a, b):
@@ -135,11 +195,47 @@ def _validated(spec: Spec) -> tuple[Path, Path, Path, list[Path], list[Path]]:
     for p in (export, out, tmp, *tool):
         if p == Path("/") or any(_overlaps(p, f) for f in forb):
             raise SandboxError("an allowed path overlaps a forbidden one")
-    home = _real(Path.home())
+    for f in forb:  # a forbidden path the backend mounts anyway (a key under /usr) would be exposed
+        if any(f == r or r in f.parents for r in map(Path, _SYSTEM_ROOTS)):
+            raise SandboxError("a forbidden path lies inside a system location the sandbox exposes")
+    home = _account_home()
     for p in (out, tmp, *tool):  # nothing writable (or toolchain) may be the user's home or a parent of it
         if p == home or p in home.parents:
             raise SandboxError("an allowed path contains the home directory")
+    for p, what in ((export, "export_dir"), (out, "out_dir"), (tmp, "tmp_dir")):
+        _scan_aliases(p, what)
     return export, out, tmp, tool, forb
+
+
+def read_out_file(out_dir: Path | str, rel: str, *, limit: int = 1024 * 1024) -> bytes:
+    """Read one file the check left in ``out_dir``, for the host. The check controls this tree, so: every component is
+    opened with ``O_NOFOLLOW`` relative to its parent fd, the final one must be a regular file with a single link, and
+    at most ``limit`` bytes are read. Anything else raises :class:`SandboxError`."""
+    parts = [x for x in rel.split("/") if x]
+    if not parts or any(x in (".", "..") for x in parts) or "\x00" in rel:
+        raise SandboxError("bad output path")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(out_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for name in parts[:-1]:
+            nxt = os.open(name, flags | os.O_DIRECTORY, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        try:
+            leaf = os.open(parts[-1], flags | os.O_NONBLOCK, dir_fd=fd)  # NONBLOCK: a fifo must not hang the host
+        except OSError as e:
+            raise SandboxError("output file cannot be opened (missing or a symlink)") from e
+        try:
+            st = os.fstat(leaf)
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+                raise SandboxError("output file is not a plain single-link regular file")
+            return os.read(leaf, limit) if limit else b""
+        finally:
+            os.close(leaf)
+    except OSError as e:
+        raise SandboxError("output path cannot be opened") from e
+    finally:
+        os.close(fd)
 
 
 def build_env(spec: Spec, *, home: str, out: str, export: str, tool: Iterable[Path]) -> dict[str, str]:
@@ -147,7 +243,7 @@ def build_env(spec: Spec, *, home: str, out: str, export: str, tool: Iterable[Pa
     for name, value in spec.env.items():
         if name not in ENV_ALLOWED:
             raise SandboxError(f"environment name not allowed: {name}")
-        if not isinstance(value, str) or not _SAFE_VALUE.match(value):
+        if not isinstance(value, str) or not _SAFE_VALUE.fullmatch(value):
             raise SandboxError(f"environment value not allowed for {name}")
     bins = [str(p / "bin") for p in tool if (p / "bin").is_dir()] + [str(p) for p in tool if p.is_dir()]
     env = {
@@ -195,6 +291,9 @@ def seatbelt_profile(export: Path, out: Path, tmp: Path, tool: Sequence[Path], f
         "(allow file-read-metadata " + " ".join(f"(literal {_sb(a)})" for a in ["/", *_ancestors(read)]) + ")",
         "(allow file-write* " + " ".join(f"(subpath {_sb(p)})" for p in (out, tmp)) + ")",
         '(allow file-write* (literal "/dev/null") (literal "/dev/dtracehelper"))',
+        # hard links: file-link is a write operation, so it is allowed only under out/tmp, and creating one needs the
+        # source readable too, which the forbidden paths and everything outside the lists above are not (probed 21 Oct)
+        "(allow file-link " + " ".join(f"(subpath {_sb(p)})" for p in (out, tmp)) + ")",
         "(allow file-map-executable "
         + " ".join(f"(subpath {_sb(p)})" for p in (*tool, *map(Path, _MAC_SYSTEM_READ[:5])))
         + ")",
@@ -245,9 +344,25 @@ def bwrap_argv(bwrap: str, spec: Spec) -> tuple[list[str], Path]:
 # ----------------------------------------------------------------------------------------------- backend choice
 
 
+def _trusted_exe(path: str) -> bool:
+    """A backend binary must be root-owned with no group/other write bit, and so must every directory above it: a
+    user-writable ``bwrap`` (Homebrew) could be swapped for a wrapper that confines nothing."""
+    try:
+        real = Path(os.path.realpath(path))
+        if not real.is_file() or not os.access(real, os.X_OK):
+            return False
+        for p in (real, *real.parents):
+            st = os.stat(p)
+            if st.st_uid != 0 or st.st_mode & 0o022:
+                return False
+    except OSError:
+        return False
+    return True
+
+
 def _bwrap_path() -> str | None:
     for cand in BWRAP_CANDIDATES:
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+        if os.path.isfile(cand) and _trusted_exe(cand):
             return cand
     return None
 
@@ -260,18 +375,24 @@ def _true_binary() -> str | None:
 
 
 def _selftest(backend: str) -> bool:
-    """Run ``true`` under the backend with a throwaway layout. A backend that cannot start is not available."""
-    true = _true_binary()
-    if true is None:
+    """The backend must start AND confine: ``true`` has to succeed, and ``cat`` of a canary file that lies outside every
+    allowed path has to fail without printing it. A wrapper that merely exits 0 is not a sandbox."""
+    true, cat = _true_binary(), next((c for c in ("/bin/cat", "/usr/bin/cat") if os.path.exists(c)), None)
+    if true is None or cat is None:
         return False
     try:
         with tempfile.TemporaryDirectory(prefix="orch-sbx-") as d:
             root = _real(d)
-            for n in ("export", "out", "tmp"):
-                (root / n).mkdir()
-            spec = Spec(argv=[true], export_dir=root / "export", out_dir=root / "out", tmp_dir=root / "tmp", timeout=20)
-            res = _execute(backend, spec)
-            return res.returncode == 0 and not res.timed_out
+            for n in ("export", "out", "tmp", "outside"):
+                (root / n).mkdir(mode=0o700)
+            (root / "outside" / "canary").write_text("orch-sandbox-canary")
+            base = {"export_dir": root / "export", "out_dir": root / "out", "tmp_dir": root / "tmp", "timeout": 20}
+            ok = _execute(backend, Spec(argv=[true], **base))
+            bad = _execute(backend, Spec(argv=[cat, str(root / "outside" / "canary")], **base))
+            return (
+                ok.returncode == 0 and not ok.timed_out
+                and bad.returncode != 0 and b"orch-sandbox-canary" not in bad.output
+            )  # fmt: skip
     except (OSError, SandboxError):
         return False
 
@@ -298,6 +419,8 @@ def _killpg(pgid: int) -> None:
 
 def _spawn_argv(backend: str, spec: Spec) -> tuple[list[str], dict[str, str], Path]:
     if backend == "sandbox-exec":
+        if not _trusted_exe(SANDBOX_EXEC):
+            raise NoSandbox("sandbox-exec is missing or not root-owned")
         return _seatbelt_argv(spec)
     if backend == "bwrap":
         bwrap = _bwrap_path()

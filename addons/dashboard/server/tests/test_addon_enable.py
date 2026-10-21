@@ -126,3 +126,16 @@ def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, 
     assert rows["quick"]["needs"] is None and rows["quick"]["set_up"] is True
     assert rows["usage"]["needs"] is None and rows["usage"]["set_up"] is True
     assert reads == ["workspace.settings"]
+
+
+@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH}), ("model-routing", {"models": MODELS})])
+def test_plan_reads_the_preview_over_the_real_host_link(gateway, stub, p1, name, fields):
+    """e2e run 4: the grant body is read over the real `HostLink` (no stubbed `gateway.call`), answered by core's own
+    `addon.preview` handler. `addon.preview` must be a read there: a call it treats as a write needs an idem, and the
+    prepare answered 500."""
+    body = parse(name=name, **fields)
+    planned = plan(gateway, stub.ws, body)
+    grant = preview_grant(p1.store_dir, name)
+    assert planned.sequence["intent"] == body.intent(grant)
+    assert planned.sequence["intent"]["grant"]["name"] == name
+    assert planned.base["addon"] == {"addon": name, "head": None}

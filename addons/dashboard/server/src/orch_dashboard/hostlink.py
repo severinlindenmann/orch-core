@@ -50,6 +50,8 @@ OPS = {
         "member.list",
         "workspace.settings",
         "addon.list",
+        # what turning an add-on with settings on would sign (read only): the grant body of the `addon_enable` intent
+        "addon.preview",
         "needs",
         "activity.list",
         "quick.list",

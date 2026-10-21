@@ -74,7 +74,7 @@ def queued(e: QueuedEntry | None = None) -> QueueState:
     return enqueue(QueueState(), e or entry(), settings=SETTINGS, consumed_ids=())
 
 
-LIVE = Live(True, {"verify": "source", "code": "source"}, 1)
+LIVE = Live(True, {"verify": "source", "code": "source"}, 1, ())
 
 
 REASON = {"merged": None, "failed": "red_checks", "requeued": "target_moved"}
@@ -224,7 +224,7 @@ def test_checks_bound_to_candidate_and_unambiguous() -> None:
     with pytest.raises(QueueError, match="land.bad_transition"):
         record_checks(state, a.n, checks(sha="other"))
     with pytest.raises(QueueError, match="land.not_approved"):
-        push(state, a.n, checks(), live=Live(False, {"verify": "source"}, 1))
+        push(state, a.n, checks(), live=Live(False, {"verify": "source"}, 1, ()))
     recorded = record_checks(state, a.n, checks("running"))
     assert recorded.attempts[-1].checks[0].result == "running"
     assert state.attempts[-1].checks == ()
@@ -476,9 +476,9 @@ def test_json_round_trip_and_mock_fixture() -> None:
     assert (
         resume_decision(
             parsed,
-            entry(),
+            entry(source_sha=parsed.source_sha, remote=parsed.remote, target=parsed.target),
             settings=SETTINGS,
-            live=LIVE,
+            live=Live(True, {"verify": parsed.source_sha}, 1, ()),
             remote_target_sha=parsed.target_sha,
             candidate_reached=False,
             required_checks=("T2 integration checks",),
@@ -582,20 +582,20 @@ def test_begin_and_push_rederive_owner_and_liveness() -> None:
             descends=True,
         )
     with pytest.raises(QueueError, match="land.stale"):
-        begin(live=Live(True, {"verify": "source"}, 2))
+        begin(live=Live(True, {"verify": "source"}, 2, ()))
     with pytest.raises(QueueError, match="land.not_approved"):
-        begin(live=Live(True, {"verify": "changed"}, 1))
+        begin(live=Live(True, {"verify": "changed"}, 1, ()))
     with pytest.raises(QueueError, match="land.stale"):
         begin(live=Live(True, {"verify": "source"}, 1, (Later("dequeued", "e1"),)))
     state, a = begin()
-    for stale in (Live(True, {"verify": "other"}, 1), Live(True, {"verify": "source"}, 3)):
+    for stale in (Live(True, {"verify": "other"}, 1, ()), Live(True, {"verify": "source"}, 3, ())):
         with pytest.raises(QueueError):
             push(state, a.n, checks(), live=stale)
     pushed = push(state, a.n, checks())
     args = dict(remote_target_sha="target", candidate_reached=False, required_checks=("t2", "ci"), settings=SETTINGS)
     at = pushed.attempts[-1]
     assert resume_decision(at, entry(), live=LIVE, **args) == "retry_push"
-    assert resume_decision(at, entry(), live=Live(True, {"verify": "x"}, 1), **args) == "stale"
+    assert resume_decision(at, entry(), live=Live(True, {"verify": "x"}, 1, ()), **args) == "stale"
     assert resume_decision(at, None, live=LIVE, **args) == "stale"
 
 
@@ -629,3 +629,18 @@ def test_strict_types_reason_timeout_and_cap_skip() -> None:
         state = tidy(record_outcome(state, a.n, "requeued", now=NOW, reason="target_moved"), a.n)
     sel = next_entry(state, targets=["develop"], is_live=lambda _: True, blocked_fn=lambda _: None)
     assert sel.entry is None and sel.capped == (e,)
+
+
+def test_live_later_required_and_resume_binding() -> None:
+    with pytest.raises(TypeError):
+        Live(True, {"verify": "source"}, 1)  # type: ignore[call-arg]
+    state, a = begin()
+    at = push(state, a.n, checks()).attempts[-1]
+    args = dict(remote_target_sha="target", candidate_reached=False, required_checks=("t2", "ci"), live=LIVE)
+    settings = {"targets": ["develop", "main"]}
+    for other in (entry(source_sha="x"), entry(remote="ssh://elsewhere/r")):
+        assert resume_decision(at, other, settings=settings, **args) == "stale"
+    # entry says develop but the attempt pushes to main: the flag is checked on attempt.target
+    assert resume_decision(replace(at, target="main"), entry(), settings=settings, **args) == "stale"
+    with pytest.raises(QueueError, match="land.bad_transition"):
+        record_outcome(state, a.n, "failed", now=NOW, reason="made_up")  # type: ignore[arg-type]

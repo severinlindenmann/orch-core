@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from hashlib import sha256
-from typing import Any, Literal, overload
+from typing import Any, Literal, get_args, overload
 
 from .policy import QueueError, check_owner_flag, is_owner_target, norm_target
 
@@ -80,7 +80,7 @@ class Live:
     ticket_done: bool
     gates: Mapping[str, str | None]
     settings_gen: int
-    later: tuple[Later, ...] = ()
+    later: tuple[Later, ...]
 
 
 def live_entry(
@@ -478,6 +478,8 @@ def record_outcome(
     file: str | None = None,
 ) -> QueueState:
     a = _active(state, n, ("begin", "pushing"))
+    if reason is not None and reason not in get_args(Reason):
+        raise QueueError("land.bad_transition", "unknown reason")
     if (
         (outcome == "merged" and reason is not None)
         or (outcome == "requeued" and reason != "target_moved")
@@ -526,10 +528,16 @@ def resume_decision(
         return "rerun"
     if candidate_reached:
         return "merged"
-    if entry is None or entry.id != attempt.queued:
+    if entry is None or (entry.id, entry.source_sha, entry.remote, entry.target) != (
+        attempt.queued,
+        attempt.source_sha,
+        attempt.remote,
+        attempt.target,
+    ):
         return "stale"
     try:
-        check_owner_flag(settings, entry.target, entry.owner_target)
+        # the push goes to attempt.target: classify that one
+        check_owner_flag(settings, attempt.target, entry.owner_target)
         require_live(entry, live)
     except QueueError:
         return "stale"

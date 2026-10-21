@@ -5,7 +5,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/agents'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { routingApi } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
@@ -59,10 +59,12 @@ async function signed() {
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   await within(dialog).findByTestId('click-panel', {}, T)
-  const hold = within(dialog).getByRole('button', { name: 'Hold to sign' })
-  await waitFor(() => expect(hold).toBeEnabled(), { timeout: ARM_MS + 3000 })
-  fireEvent.pointerDown(hold)
-  await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: HOLD_MS + 3000 })
+  fireEvent.change(within(dialog).getByLabelText(/Type GRANT to confirm/), { target: { value: 'GRANT' } })
+  const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
+  await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  fireEvent.pointerDown(go)
+  fireEvent.click(go)
+  await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: 3000 })
   return { r, sheet, dialog }
 }
 

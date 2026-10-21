@@ -277,6 +277,8 @@ export interface Artifact {
   ac?: string
   label?: string
   added_by: string
+  /** The structured author kind from the signed event (not a display string). */
+  added_by_kind?: 'person' | 'agent' | 'host' | null
   at: string
   /** Inline content for logs, receipts, reports and datasets (mock only; the real host serves the file). */
   preview?: string

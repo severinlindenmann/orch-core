@@ -5,6 +5,8 @@ import { addonActive } from '@/api/addons'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { BodySections, TicketDocument, TicketType } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
+import { ArtifactImagesContext } from '@/addon-ui/artifactImagesContext'
+import { useTicketPictures } from '@/addon-ui/artifactImages'
 import { BlockProblem, ErrorBoundary } from '@/components/ErrorBoundary'
 import { cn } from '@/lib/utils'
 import { ago, Pill, type TabProps } from './shared'
@@ -125,7 +127,10 @@ export function Overview({ ticket, jump, viewer }: TabProps) {
   const shown = SHOW_ORDER.filter(written)
   const missing = SHOW_ORDER.filter((k) => !written(k) && needs[k] === 'yes')
   const handoffAt = ticket.section_history?.current_state?.at(-1)?.at
+  // R3 part B: pictures the text shows, as bytes hashed here against the digest the ticket names
+  const pictures = useTicketPictures(workspaceOfTicket(ticket.key, workspaces.data ?? [])?.id, ticket.key, ticket.artifacts ?? [], Object.values(ticket.body).filter((t): t is string => !!t))
   return (
+    <ArtifactImagesContext.Provider value={pictures}>
     <div className="space-y-5">
       <div className="flex justify-end">
         <EditTicket ticket={ticket} viewer={viewer} />
@@ -160,5 +165,6 @@ export function Overview({ ticket, jump, viewer }: TabProps) {
       })}
       {missing.length > 0 && <p className="text-[13px] text-text-faint">Not written yet: {missing.map((k) => sectionTitle(k, ticket.type)).join(', ')}</p>}
     </div>
+    </ArtifactImagesContext.Provider>
   )
 }

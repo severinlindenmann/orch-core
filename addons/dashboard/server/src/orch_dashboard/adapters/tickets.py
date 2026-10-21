@@ -352,6 +352,9 @@ def _artifact(a: dict) -> dict:
         "task": a.get("task") or None,
         "label": a.get("label") or None,
         "added_by": _actor_name(a.get("by")),
+        "added_by_kind": (a.get("by") or {}).get("kind")
+        if (a.get("by") or {}).get("kind") in ("person", "agent", "host")
+        else None,
         "at": a.get("at") or "",
         **({"addon": a["addon"], "ref": a["ref"]} if a.get("addon") else {}),
     }

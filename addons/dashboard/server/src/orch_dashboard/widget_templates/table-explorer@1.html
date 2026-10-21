@@ -1,0 +1,42 @@
+<style>
+.bar{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:GrayText}
+.bar input{flex:1;font:inherit;color:CanvasText;background:Canvas;border:1px solid GrayText;border-radius:4px;padding:3px 6px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border-bottom:1px solid GrayText;padding:3px 8px;text-align:left}
+th button{font:inherit;font-weight:600;color:CanvasText;background:none;border:0;padding:0;cursor:pointer}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+<div class="bar"><input id="q" type="search" placeholder="Filter rows" aria-label="Filter rows"><span id="n" aria-live="polite"></span></div>
+<table><thead><tr id="h"></tr></thead><tbody id="b"></tbody></table>
+<script>
+(function () {
+  var d = orch.data, cols = d.columns || [], rows = d.rows || []
+  var sortCol = -1, dir = 1, q = document.getElementById('q'), head = document.getElementById('h'), body = document.getElementById('b'), count = document.getElementById('n')
+  function text(c) { return c === null || c === undefined ? '' : typeof c === 'boolean' ? (c ? 'Yes' : 'No') : String(c) }
+  function cmp(a, b) { if (typeof a === 'number' && typeof b === 'number') return a - b; return text(a).localeCompare(text(b)) }
+  function draw() {
+    head.textContent = ''
+    cols.forEach(function (c, i) {
+      var th = document.createElement('th'), b = document.createElement('button')
+      th.setAttribute('aria-sort', sortCol === i ? (dir > 0 ? 'ascending' : 'descending') : 'none')
+      b.type = 'button'
+      b.textContent = c + (sortCol === i ? (dir > 0 ? ' \u25B2' : ' \u25BC') : '')
+      b.addEventListener('click', function () { if (sortCol === i) dir = -dir; else { sortCol = i; dir = 1 } draw() })
+      th.appendChild(b)
+      head.appendChild(th)
+    })
+    var f = q.value.toLowerCase()
+    var shown = rows.filter(function (r) { return !f || r.some(function (c) { return text(c).toLowerCase().indexOf(f) >= 0 }) })
+    if (sortCol >= 0) shown = shown.slice().sort(function (a, b) { return cmp(a[sortCol], b[sortCol]) * dir })
+    body.textContent = ''
+    shown.forEach(function (r) {
+      var tr = document.createElement('tr')
+      r.forEach(function (c) { var td = document.createElement('td'); if (typeof c === 'number') td.className = 'num'; td.textContent = text(c); tr.appendChild(td) })
+      body.appendChild(tr)
+    })
+    count.textContent = shown.length + ' of ' + rows.length + ' rows'
+  }
+  q.addEventListener('input', draw)
+  draw()
+})()
+</script>

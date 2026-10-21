@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { TicketFiles } from '../explorer/TicketFiles'
 import { TicketUsage } from '../usage/TicketUsage'
 import { TicketWorktree } from '../worktrees/TicketWorktree'
+import { WorkFolder } from './WorkFolder'
 import { TicketShares } from '../shares/TicketShares'
 import { TicketEstimate } from '../estimate/TicketEstimate'
 import { estimateOn, pointsOf, pointsText } from '@/api/estimate'
@@ -228,6 +229,7 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
       <TicketEstimate ticket={ticket} />
       <TicketWorktree ticket={ticket} />
+      <WorkFolder ticket={ticket} />
       <TicketFiles ticket={ticket} />
       <TicketUsage ticket={ticket} />
       <TicketShares ticket={ticket} />

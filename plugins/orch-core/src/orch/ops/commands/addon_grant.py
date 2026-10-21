@@ -42,6 +42,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     h.who()
     name = args["name"]
     h.call.ws.require_root()
+    from orch.addons import settings_needs
+
+    refusal = settings_needs.grant_refusal(h.store.state.workspace.settings, name)  # AE4: never on without settings
+    if refusal is not None:
+        raise OrchError("invalid.input", refusal, hint="set it up in Settings, Add-ons, then turn it on")
     root = h.store.layout.store  # addons/ lives in the store
     try:
         directory = install.package_dir(root, name)

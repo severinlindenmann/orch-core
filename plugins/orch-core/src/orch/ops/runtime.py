@@ -29,6 +29,7 @@ Errors a handler raises are :class:`OrchError`; :func:`guarded` maps what the st
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import re
@@ -45,6 +46,7 @@ from orch.layout import Layout, LayoutError, StorePin
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
+from orch.tokenshape import GITHUB_TOKEN_SHAPE
 
 __all__ = [
     "Call",
@@ -260,6 +262,19 @@ class Workspace:
         ws = cls(env, now, files=files)
         ws._root, ws._looked, ws._store, ws.hosted = Path(root), True, store, True
         return ws
+
+    def close(self) -> None:
+        """Release every fd of the store this call opened (its databases, cached directory fds and root fd), now
+        rather than when the cyclic GC gets to it. The host's injected store (:meth:`hosted`) is the host's and stays
+        open. A later :attr:`store` opens a fresh one."""
+        store, self._store = self._store, None
+        if store is None or self.hosted:
+            self._store = store
+            return
+        try:
+            store.close()
+        finally:
+            store.fs.close()
 
     @property
     def state_dir(self) -> Path:
@@ -947,8 +962,10 @@ class Call:
     def check_secret(self, data: str | bytes) -> None:
         text = data if isinstance(data, str) else data.decode("latin-1")
         secret = (self.ctx.grant or "").partition(".")[2]
-        if GRANT_SHAPE.search(text) or (len(secret) >= 8 and secret in text):
-            raise OrchError("grant.secret_in_args", "the text contains a grant secret; it was not stored")
+        if GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text) or (len(secret) >= 8 and secret in text):
+            raise OrchError(
+                "grant.secret_in_args", "the text contains a secret (a grant or a GitHub token); it was not stored"
+            )
 
     def read_text_source(
         self, args: Mapping[str, Any], names: tuple[str, ...] = ("text", "message", "file")
@@ -1011,6 +1028,10 @@ class Call:
         except CapabilityDenied as e:
             raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e}") from None
         except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise OrchError(
+                    "invalid.input", f"{flat(path)[:80]} is a symbolic link: name the file itself"
+                ) from None
             raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e.strerror}") from None
         if size > limit:
             raise OrchError("invalid.input", f"{flat(path)[:80]} is larger than {limit} bytes")

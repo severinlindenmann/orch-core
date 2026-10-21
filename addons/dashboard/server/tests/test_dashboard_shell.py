@@ -84,6 +84,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/terminals/preview",
         "/api/w/{ws}/terminals/open",
         "/api/w/{ws}/runs/{run}/stop",
+        "/api/w/{ws}/tickets/{key}/workdir",
+        "/api/w/{ws}/workdir/delete",
         "/api/w/{ws}/runs/{run}/attach",
         "/term",
         "/api/w/{ws}/agents/preview",

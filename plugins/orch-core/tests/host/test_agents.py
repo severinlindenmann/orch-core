@@ -126,11 +126,14 @@ def test_preview_blocks_in_order_and_has_no_side_effects(w, tmp_path, monkeypatc
         ok(deposit(c, value))
         pre = preview(c, **args)
         assert pre["blocked"] is None and pre["ticket"] == key and pre["will_create_worktree"] is False
-        assert pre["argv"] == ["$SHELL", "-l", "-c", LOGIN_EXEC, "codex",
-                               f"Run orch status, then work on ticket {key}. Follow AGENTS.orch.md."]  # fmt: skip
+        # a ticket without a codebase works in its own folder, so the prompt names the instructions by full path
+        assert pre["cwd"] == {"kind": "workdir", "ticket": key}
+        assert pre["argv"][:5] == ["$SHELL", "-l", "-c", LOGIN_EXEC, "codex"]
+        assert pre["argv"][5].startswith(f"Run orch status, then work on ticket {key}. Follow /")
+        assert pre["argv"][5].endswith("AGENTS.orch.md.")
         assert pre["login_shell"] is True and pre["program"] is None and LOGIN_NOTICE in pre["warnings"]
         assert {"ORCH_GRANT", "ORCH_SESSION", "ORCH_TICKET", "ORCH_HARNESS", "TERM"} <= set(pre["env"])
-        assert pre["cwd"] == {"kind": "workspace"} and pre["grant"]["scope"] == "workable"
+        assert pre["cwd_path"].endswith(f"/.orch-work/{key}") and pre["grant"]["scope"] == "workable"
         assert preview(c, **args)["spec"] == pre["spec"]
         assert ok(c.call("run.list", {"state": "all"}))["data"]["runs"] == []  # nothing was started or recorded
         assert err(c.call("agent.preview", args, grant=value)) == "op.not_allowed"  # P only

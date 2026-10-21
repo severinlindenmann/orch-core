@@ -646,12 +646,14 @@ def test_land_ops_are_a_closed_set_and_leave_ops_alone():
     assert set(gitsafe.OPS) == {"staged_raw", "staged_blob"}
     assert set(gitsafe.LAND_OPS) == {
         "land_has", "land_commit", "land_merge_base", "land_is_ancestor", "land_count", "land_merge_tree",
-        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_index_pack", "land_repack",
+        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_index_pack", "land_repack", "land_ref",
+        "land_fetch", "land_push",
     }  # fmt: skip
-    # no operation can reach the network, a work tree, a free argument or the person's configuration
+    # only land_fetch and land_push (task 4, tests/land/test_land_key.py) reach the network; none a work tree, a
+    # free argument or the person's configuration
     assert {op.args[0] for op in gitsafe.LAND_OPS.values()} <= {
         "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref", "index-pack",
-        "repack",
+        "repack", "rev-parse", "fetch", "push",
     }  # fmt: skip
     for op in gitsafe.LAND_OPS.values():
         assert not {"-c", "-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack"} & set(

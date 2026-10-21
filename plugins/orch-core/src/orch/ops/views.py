@@ -111,7 +111,8 @@ def next_hint(view: Any, session: str | None = None) -> str:
         g = open_gate(view)
         if g is None:
             return "orch submit"
-        return fill_hint(view, g) or f'orch ask "approve the {g} gate?"'  # an incomplete gate cannot be approved yet
+        # an incomplete gate cannot be approved yet; a complete one is approved by the person in Approvals: no question
+        return fill_hint(view, g) or "orch wait"
     g = open_gate(view)
     if (
         g is not None

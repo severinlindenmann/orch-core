@@ -166,6 +166,11 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str
     from the signed events when there are any (**the class at sign time, which wins**), else from the request's
     ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
     gives can only be raised by the sign-time check, never lowered."""
+    if op == "addon.grant":
+        # Publish decides where files go: turning it on is terminal only, however it is asked (args at prepare, the
+        # signed event at sign time, which wins)
+        names = [ev.get("name") for ev in events] if events is not None else [(args or {}).get("name")]
+        return "terminal" if "publish" in names else "word"
     if op in WORD_OPS:
         return "word"
     if op == "settings.set" and (events is not None or args is not None):

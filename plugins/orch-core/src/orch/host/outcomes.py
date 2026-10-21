@@ -79,14 +79,16 @@ MAX_RECORDS = 100_000
 #: workspace has one worker thread, so a wait that long was never going to be woken by that thread anyway.
 WAIT_SECONDS = 5.0
 LOG = logging.getLogger(__name__)
-CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap", "host.store_migrate"})
+CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"})
 #: ops that are log writes though no registry operation carries them
 _HUMAN_WRITES = frozenset({"human.submit"})
 #: device-signed person events through the relay entry (column R, §11A.4): a log write with an idem, no dry run
 _RELAY_WRITES = frozenset({"relay.submit"})
 #: host-side writes with an idem and an outcome record but no log event (H11e: the private-remote mark); a record
 #: with nothing planned is removed by reconciliation, and the op is idempotent, so a retry after a crash runs again
-HOST_WRITES = frozenset({"records.remote_private", "records.note", "reader.declare", "phone.request", "phone.cancel"})
+HOST_WRITES = frozenset(
+    {"records.remote_private", "records.note", "reader.declare", "phone.request", "phone.cancel", "workdir.delete"}
+)
 #: every other host op (§0.7 table): reads and side-effect-free ops, whose ``opts.idem`` is ignored
 _READS = frozenset(
     {
@@ -98,7 +100,7 @@ _READS = frozenset(
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status", "reader.list",
-        "phone.requests", "phone.status", "gate.input",
+        "phone.requests", "phone.status", "gate.input", "workdir.get",
         "run.list", "run.sub",
         "host.relay_stop", "host.relay_start", "host.relay_unlink", "host.relay_link", "host.relay_status",
         # R6c-2: relay pairing (no idem, no outcome record: the offer's link is only in its direct answer)

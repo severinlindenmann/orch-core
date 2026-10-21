@@ -20,7 +20,7 @@ PERSON = "p_" + "a" * 32
 
 
 def granted(hws, me):
-    make_package(hws.root)
+    make_package(hws.store_dir)
     assert me("addon", "grant", "echo").code == 0
     return hws.new_ticket("t")
 
@@ -149,7 +149,7 @@ def test_undeclared_sections_are_refused(hws, me):
 
 
 def test_no_cli_operation_can_name_an_addon_path(hws, me, agent):
-    make_package(hws.root)
+    make_package(hws.store_dir)
     me("addon", "grant", "echo")
     key = make_ticket(agent)
     for argv in (("set", key, "addons.echo.points=3"), ("set", key, "ticket.addons.echo.points=3")):

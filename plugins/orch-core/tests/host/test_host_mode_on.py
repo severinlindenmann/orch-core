@@ -129,8 +129,13 @@ def test_the_unit_per_platform_runs_the_release_on_the_tier_a_run_directory(tmp_
     assert mac.kind == "launchd" and mac.unit_path == tmp_path / "home/Library/LaunchAgents/io.orch.host.plist"
     doc = plistlib.loads(mac.content)
     assert doc["ProgramArguments"] == [
-        "/py", "-I", str(release / "bin" / "orch-host"), "run", "--state", str(state), "--run", str(run)
-    ]  # fmt: skip
+        str(release / "bin" / "orch-host"),
+        "run",
+        "--state",
+        str(state),
+        "--run",
+        str(run),
+    ]
     assert doc["RunAtLoad"] is True and doc["KeepAlive"] is True and doc["Umask"] == 0o077
     assert doc["StandardErrorPath"] == str(state / "host" / "host.log")
     # the user manager searches ~/.config/systemd/user: the CLI's XDG_CONFIG_HOME is not where it looks

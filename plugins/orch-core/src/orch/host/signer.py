@@ -589,6 +589,9 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
     seq = prepared["material"].get("sequence")
+    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("kind") == "addon_enable":
+        # turning on an add-on that needs settings: the add-on's word, as for addon.grant (not the SETTINGS word)
+        return f"{_clean(seq['intent'].get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
     if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("agent") is not None:
         return "GRANT"  # a sequence that gives agents access is confirmed with the grant's word (its strongest step)
     if op in ("policy.set", "settings.set") and ticket is None:

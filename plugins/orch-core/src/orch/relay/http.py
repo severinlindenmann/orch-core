@@ -16,7 +16,8 @@
   (round 6, orch-52 #3).
 * The body is read in bounded pieces against ``cap`` whatever ``Content-Length`` or chunked framing says; over the cap
   the connection is closed and the call fails as transient ``too_large``.
-* No redirect is followed: any 3xx is :class:`RedirectRefused` (permanent; alarm ``relay_redirect``).
+* No redirect is followed: any 3xx except 304 is :class:`RedirectRefused` (permanent; alarm ``relay_redirect``).
+  A 304 is a cache validation result, not a redirect, and is returned to the caller.
 * Connections are kept alive and reopened after any error. :meth:`RelayConn.shutdown` may be called from another
   thread (11A.7 shutdown: ``socket.shutdown(SHUT_RDWR)`` ends a blocked ``recv``).
 * Redaction (11A.9): logs carry the route template, status, sizes and timings; errors carry the route and a kind.
@@ -414,7 +415,7 @@ class RelayConn:
             for k, v in resp.getheaders():
                 k = k.lower()
                 hdrs[k] = f"{hdrs[k]}, {v}" if k in hdrs else v
-            if 300 <= status < 400:
+            if 300 <= status < 400 and status != 304:
                 self.close()
                 raise RedirectRefused(route)
             declared = hdrs.get("content-length")

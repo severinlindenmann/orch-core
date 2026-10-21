@@ -83,7 +83,7 @@ def test_a_name_is_resolved_through_the_manifest_never_joined_to_a_path(served):
         res = get(c, key, name)
         assert res == {**missing, "id": res["id"]}, name
     # a file in artifacts/ the log does not name is not served either
-    (served.lab.ws.root / "tickets" / uid / "artifacts" / "planted.log").write_bytes(b"planted")
+    (served.lab.ws.store_dir / "tickets" / uid / "artifacts" / "planted.log").write_bytes(b"planted")
     assert err(get(c, key, "planted.log")) == "not_found"
 
 
@@ -91,7 +91,7 @@ def test_a_file_changed_or_swapped_behind_the_log_is_not_served(served):
     uid, key = stored(served, b"original bytes\n", name="e.log")
     c = served.client()
     assert ok(get(c, key, "e.log"))
-    path = served.lab.ws.root / "tickets" / uid / "artifacts" / "e.log"
+    path = served.lab.ws.store_dir / "tickets" / uid / "artifacts" / "e.log"
     path.write_bytes(b"tampered bytes\n")
     assert err(get(c, key, "e.log")) == "not_found"
     audit = served.lab.state / "host" / "audit-security.jsonl"  # a tamper signal is recorded (§0.11)

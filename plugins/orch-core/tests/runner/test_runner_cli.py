@@ -193,7 +193,14 @@ def test_runner_units(tmp_path):
     rel, st, run = Path("/rel/v"), Path("/s"), Path("/r")
     doc = plistlib.loads(service.launchd_plist(Path("/py"), rel, st, run))
     assert doc["Label"] == "io.orch.runner"
-    assert doc["ProgramArguments"] == ["/py", "-I", "/rel/v/bin/orch-runner", "run", "--state", "/s", "--run", "/r"]
+    assert doc["ProgramArguments"] == [
+        "/rel/v/bin/orch-runner",
+        "run",
+        "--state",
+        "/s",
+        "--run",
+        "/r",
+    ]  # listed as orch-runner
     unit = service.systemd_unit(Path("/py"), rel, st, run)
     assert 'ExecStart="/py" "-I" "/rel/v/bin/orch-runner" "run" "--state" "/s" "--run" "/r"' in unit
     assert "Delegate=yes" in unit and "UMask" not in unit and "Umask" not in doc

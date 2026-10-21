@@ -3,3 +3,5 @@
 .prod-login h1 { font-size: 24px; font-weight: 600; }
 .prod-login p { color: var(--text-muted); }
 .prod-skeleton { height: 8rem; background: var(--surface-2); border-radius: 6px; margin: 32px; }
+.prod-retry { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+.prod-retry:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

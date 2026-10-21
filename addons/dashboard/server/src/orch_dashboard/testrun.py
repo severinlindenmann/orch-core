@@ -10,6 +10,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import secrets
 import stat
 import tempfile
@@ -25,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .errors import fail
 
 RUN = r"^run[0-9]{1,3}$"
+HASH = r"^[0-9a-f]{16}$"
+PREVIOUS_RUNS_MAX = 20
 STEP = r"^[A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?$"
 IMAGE = r"^[A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?-[0-9a-f]{12}\.(?:png|jpg|webp)$"
 STATUSES = ("todo", "pass", "fail_blocking", "fail_non_blocking", "skipped")
@@ -56,6 +59,10 @@ class StepBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     status: Literal["todo", "pass", "fail_blocking", "fail_non_blocking", "skipped"] | None = None
     note: str | None = Field(default=None, max_length=NOTE_MAX)
+    #: fingerprint of the step text the person saw when marking it (so a later run can tell if the step changed)
+    hash: str | None = Field(default=None, pattern=HASH)
+    #: true = the person reopened a step carried over from an earlier run ("Test again")
+    retest: bool | None = None
 
 
 class ImageBody(BaseModel):
@@ -148,6 +155,41 @@ class Store:
                     pass
         return total
 
+    def previous(self, run: str) -> list[dict]:
+        """Earlier runs' notes, read only (nothing is created or changed). Only directories named run<n> with a
+        smaller n, never a symlink; unreadable ones are skipped. Pictures are counted, never served from here."""
+        number = int(run[3:])
+        if any(p.is_symlink() for p in (self.root.parent, self.root)):
+            raise fail("invalid.input", exit=5)
+        try:
+            names = [n.name for n in self.root.iterdir()]
+        except OSError:
+            return []
+        found = sorted((int(n[3:]), n) for n in names if re.fullmatch(RUN, n) and int(n[3:]) < number)
+        out = []
+        for _, name in found[-PREVIOUS_RUNS_MAX:]:
+            try:
+                doc = self.load(name)
+            except Exception:  # noqa: BLE001 - an unreadable earlier run is only skipped
+                continue
+            steps = {}
+            for sid, row in doc["steps"].items():
+                if not isinstance(row, dict) or not re.fullmatch(STEP, str(sid)) or row.get("status") not in STATUSES:
+                    continue
+                note = row.get("note")
+                images = row.get("images")
+                digest = row.get("hash")
+                steps[sid] = {
+                    "status": row["status"],
+                    "note": note if isinstance(note, str) else "",
+                    "images": len(images) if isinstance(images, list) else 0,
+                    "updated": row.get("updated") if isinstance(row.get("updated"), str) else None,
+                    "passed_at": row.get("passed_at") if isinstance(row.get("passed_at"), str) else None,
+                    "hash": digest if isinstance(digest, str) and re.fullmatch(HASH, digest) else None,
+                }
+            out.append({"run": name, "steps": steps})
+        return out
+
     def view(self, run: str, doc: dict) -> dict:
         directory = self.run_dir(run)
         return {"path": str(directory), "images_path": str(directory / "images"), "notes": doc["steps"]}
@@ -164,15 +206,31 @@ def register(app, gateway):
         with store.lock:
             return store.view(run, store.load(run))
 
+    @app.get("/api/testrun/{run}/previous")
+    def read_previous(run: run_type):
+        with store.lock:
+            return {"runs": store.previous(run)}
+
     @app.put("/api/testrun/{run}/steps/{step}")
     def put_step(run: run_type, step: step_type, body: StepBody):
         with store.lock:
             doc = store.load(run)
+            before = dict(doc["steps"].get(step) or {})
             row = store.step(doc, step)
-            if body.status is None and body.note is None:
+            if body.status is None and body.note is None and body.hash is None and body.retest is None:
                 raise fail("invalid.input", exit=5)
             if body.status is not None:
                 row["status"] = body.status
+            if body.hash is not None:
+                row["hash"] = body.hash
+            if body.retest is not None:
+                row["retest"] = body.retest
+            if row["status"] == "pass" and not row.get("passed_at"):
+                # The day it was passed: an older pass without a date keeps the time of its last save.
+                kept = before.get("updated") if before.get("status") == "pass" else None
+                row["passed_at"] = kept or row["updated"]
+            elif row["status"] != "pass":
+                row.pop("passed_at", None)
             if body.note is not None:
                 row["note"] = body.note
             store.save(run, doc)

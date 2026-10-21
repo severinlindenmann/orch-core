@@ -25,7 +25,6 @@ class Repo:
     folder: str  # absolute
     prefix: tuple[str, ...]  # parts of the repository folder below the root
     file: str  # the path inside the repository
-    exclude_top: tuple[str, ...]
 
 
 #: repositories whose layout git confirmed, by folder: for this many seconds
@@ -64,22 +63,21 @@ def confirmed(folder: str) -> bool:
 
 def locate(root: guard.Root, parts: tuple[str, ...]) -> Repo | None:
     """The repository that holds ``parts`` (a file or a folder), or None. `Denied` for a locked path."""
-    if reason := guard.deny(parts, store_names=root.store):
+    if reason := guard.deny(parts):
         raise guard.Denied(reason)
     for n in range(len(parts) - 1, -1, -1):
         if root.has_git(parts[:n]):
             folder = root.abs(parts[:n])
             if not confirmed(folder):
                 return None
-            top = tuple(sorted(x for x in root.store if n == 0)) if root.kind == "workspace" else ()
-            return Repo(folder, parts[:n], "/".join(parts[n:]), top)
+            return Repo(folder, parts[:n], "/".join(parts[n:]))
     return None
 
 
 def _run(repo: Repo, op: str, *operand: str, max_bytes: int = PATCH_MAX, timeout: float = 15.0):
     try:
         return gitbrowse.run(
-            repo.folder, op, os.environ, operand=operand, exclude_top=repo.exclude_top, max_bytes=max_bytes,
+            repo.folder, op, os.environ, operand=operand, max_bytes=max_bytes,
             timeout=timeout,
         )  # fmt: skip
     except gitsafe.Unsafe as exc:
@@ -202,7 +200,7 @@ def on_head(repo: Repo, sha: str) -> bool:
             parts = guard.split(rel)
         except guard.GuardError:
             continue
-        if guard.deny(parts, store_names=frozenset(repo.exclude_top)):
+        if guard.deny(parts):
             continue
         res = _run(repo, "file_log", "500", "0", "HEAD", "/".join(parts), max_bytes=2_000_000)
         if res.code != 0:

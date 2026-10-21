@@ -274,6 +274,29 @@ function TerminalNotice({ children }: { children?: React.ReactNode }) {
     </div>
   )
 }
+/** The final check: three large tiles to compare with the setup window. The browser never imitates that window. */
+export function ConfirmWords({ words }: { words: string[] | null }) {
+  return (
+    <section className="confirm-words" role="status" aria-label="Final check">
+      <p>
+        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, type yes in that window
+        and press Enter.
+      </p>
+      <ol className="words word-tiles" aria-label="Your three words">
+        {(words ?? []).map((w, i) => (
+          <li key={i}>
+            <Raw>{w}</Raw>
+          </li>
+        ))}
+      </ol>
+      <small className="words-wait">Waiting for you in the setup window…</small>
+      <details>
+        <summary>The words don’t match</summary>
+        <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
+      </details>
+    </section>
+  )
+}
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -502,6 +525,8 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
+  // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
@@ -512,7 +537,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', profile)
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -739,15 +764,58 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
+                          // ticking Worktrees again asks the git question again
+                          ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
                     />
                   </label>
                   ),
                 )}
+              {offersGit && (
+                <div className="note" role="group" aria-label="Git repository">
+                  <p>
+                    <strong>This folder is not a git repository.</strong> Worktrees need one.
+                  </p>
+                  <label className="toggle">
+                    <span>
+                      <strong>Make it a git repository</strong>
+                      <small>
+                        Runs git init and keeps orch’s own folders out of git. None of your files is committed.
+                      </small>
+                    </span>
+                    <input
+                      type="radio"
+                      name="git"
+                      checked={profile.git_init === true}
+                      onChange={() => update({ git_init: true })}
+                    />
+                  </label>
+                  <label className="toggle">
+                    <span>
+                      <strong>Continue without worktrees</strong>
+                      <small>Each ticket gets its own work folder instead.</small>
+                    </span>
+                    <input
+                      type="radio"
+                      name="git"
+                      checked={profile.git_init === false}
+                      onChange={() =>
+                        update({ git_init: false, addons: profile.addons.filter((id) => id !== 'worktrees') })
+                      }
+                    />
+                  </label>
+                </div>
+              )}
               <footer>
                 <button onClick={() => setStep(1)}>Back</button>
-                {next(3)}
+                {offersGit && profile.git_init === undefined ? (
+                  <button className="primary" disabled>
+                    Choose above to continue →
+                  </button>
+                ) : (
+                  next(3)
+                )}
               </footer>
             </>
           )}
@@ -1061,12 +1129,13 @@ export function Setup({ api }: { api: SetupAPI }) {
           {review?.tty_confirm &&
             !progress?.done &&
             !progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
-              <TerminalNotice>
-                <span>
-                  If it shows <Words words={review.fingerprint} />, type yes there.
-                </span>
-              </TerminalNotice>
+              <ConfirmWords words={review.fingerprint} />
             )}
+          {review?.tty_confirm && !progress?.done && progress?.steps.some((s) => s.status === 'doing' || s.status === 'done') && (
+            <p role="status" className="words-confirmed">
+              The three words matched. Your choices are confirmed.
+            </p>
+          )}
           {progress?.waiting && title !== 'Confirm in your terminal' && (
             progress.waiting === 'waiting for terminal' ? (
               <TerminalNotice />

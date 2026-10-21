@@ -205,7 +205,7 @@ class Workspace:
 
     @property
     def config(self) -> dict:
-        return json.loads((self.root / "config.json").read_text())
+        return json.loads((self.root / ".orch" / "config.json").read_text())
 
     @property
     def ws_id(self) -> str:
@@ -222,7 +222,7 @@ class Workspace:
 
     def install_dashboard(self) -> None:
         """The addon package and its signed `serve_http` grant: the dashboard server refuses an ungranted package."""
-        target = self.root / "addons" / "dashboard"
+        target = self.root / ".orch" / "addons" / "dashboard"
         target.mkdir(parents=True, exist_ok=True)
         shutil.copy(ADDON / "orch-addon.json", target / "orch-addon.json")
         self.human("addon", "grant", "dashboard")

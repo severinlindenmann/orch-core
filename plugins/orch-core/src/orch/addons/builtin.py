@@ -1,6 +1,7 @@
 """Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish, usage,
-explorer, estimate, model-routing), so they install without a clone: ``orch addon manifest <name> --write .`` puts
-``addons/<name>/orch-addon.json`` into a workspace, then ``orch addon grant <name>`` (B5b).
+explorer, estimate, model-routing, github), so they install without a clone:
+``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a workspace,
+then ``orch addon grant <name>`` (B5b).
 The package copies in ``manifests/`` equal ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ NAMES = (
     "estimate",
     "explorer",
     "model-routing",
+    "github",
 )
 
 
@@ -37,13 +39,6 @@ def manifest_bytes(name: str) -> bytes:
 
 def write_manifest(workspace: str, name: str, data: bytes, force: bool = False) -> Path:
     """Write ``<workspace>/addons/<name>/orch-addon.json`` walking every component with ``O_NOFOLLOW``."""
-    from orch.layout import move_in_progress
-
-    if move_in_progress(workspace):
-        raise OSError(
-            "an unfinished store move is in this folder (.orch-migrating); "
-            "delete the old store files and .orch-migrating, then run orch setup again"
-        )
     path = Path(os.path.abspath(workspace))
     with ExitStack() as stack:
 

@@ -1,0 +1,4 @@
+Show what turning an addon on would sign, without installing or granting it.
+usage: orch addon preview NAME
+  NAME  addon name
+more: orch describe addon.preview

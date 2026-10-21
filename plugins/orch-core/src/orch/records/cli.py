@@ -495,24 +495,15 @@ def main(
 
 
 def _no_store_move(r: Any) -> None:
-    """``init`` creates a repository: never while a store move is under way or when the record root is not the store of
-    the project as it is on disk now (re-resolved here, so a move that landed after the workspace was found cannot send
-    the new repository into the wrong directory)."""
+    """``init`` creates a repository: never when the record root is not the store of the project as it is on disk now
+    (re-resolved here, so a change after the workspace was found cannot send the new repository into the wrong
+    directory)."""
     from orch import layout as layout_mod
-    from orch.store import migrate as mg
 
-    root = Path(r.root)
-    if os.path.lexists(root / mg.TMP_DIR):
-        raise RecordsError(
-            "records.unsupported", "a store move is under way (.orch-migrating); run orch migrate", exit_=3
-        )
     try:
-        step = mg.journal_step(Path(r.state), r.workspace_id, root)
-        now = layout_mod.store_of(root)
-    except (mg.MigrateError, layout_mod.LayoutError) as exc:
-        raise RecordsError("records.unsupported", f"the store move state cannot be read ({exc})", exit_=3) from None
-    if step not in (None, "done", "rolled_back"):
-        raise RecordsError("records.unsupported", "a store move is unfinished; run orch migrate", exit_=3)
+        now = layout_mod.store_of(Path(r.root))
+    except layout_mod.LayoutError as exc:
+        raise RecordsError("records.unsupported", f"the store cannot be placed ({exc})", exit_=3) from None
     if now != Path(r.record_root):
         raise RecordsError("records.unsupported", "the store changed place; run the command again", exit_=3)
 

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import os
-import select
 import signal
 
 import pytest
 
+from orch import fdwait
 from orch.relay.state import FileSignLedger, PersistedOnce, StateDir, StateError
 
 
@@ -233,7 +233,7 @@ def _fork_and_hold(fn):
         os._exit(0)
     os.close(w1)
     os.close(r2)
-    ready, _, _ = select.select([r1], [], [], 20)
+    ready = fdwait.readable(r1, 20)
     code = os.read(r1, 1)[0] if ready else 255  # 255: the child hung (deadlock)
     os.close(r1)
 

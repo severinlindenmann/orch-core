@@ -26,6 +26,7 @@ from orch.canon.text import (  # noqa: F401  (clean, clean_line re-exported)
 )
 from orch.ops import Operation, Result
 from orch.ops.errors import ERRORS, OrchError
+from orch.tokenshape import GITHUB_TOKEN_SHAPE
 
 __all__ = [
     "CLI_VERSION",
@@ -265,4 +266,4 @@ def redact(text: str, secrets: Iterable[str]) -> str:
     for s in secrets:
         if s and len(s) >= 8:
             text = text.replace(s, "[redacted]")
-    return GRANT_SHAPE.sub("[redacted]", text)
+    return GITHUB_TOKEN_SHAPE.sub("[redacted]", GRANT_SHAPE.sub("[redacted]", text))

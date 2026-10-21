@@ -4,6 +4,8 @@ import { ManualAcceptanceReview } from './ManualAcceptance'
 // host's material, never this page's cached ticket. The old Touch ID simulation stays in SignDialog.tsx for the mock.
 import { useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { signedNow } from '@/api/signedDrop'
 import type { HandoffAction, HandoffRequest } from '@/api/handoff'
 import type { GateName, TicketDocument } from '@/api/types'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
@@ -53,6 +55,7 @@ export function HandoffSignDialog({
 }) {
   const viewer = useViewer(ticket.key)
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
   const radio = useRef<HTMLInputElement>(null)
@@ -117,6 +120,10 @@ export function HandoffSignDialog({
       hint={hint}
       warning={warning}
       onPending={onPending}
+      onSettled={(phase) => {
+        // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
+        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
+      }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}
       key={`${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}`}

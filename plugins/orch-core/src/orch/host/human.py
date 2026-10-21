@@ -177,8 +177,11 @@ def _validate(op: str, args: Any) -> None:
 def _tail_id(store: Any, log: str) -> str | None:
     """The id of the last event of ``log`` (``None`` for an empty or unknown log): what a sequence's chain compares."""
     nxt = int(store.peek_stamp(log)["seq"])
-    last = store.events(log, after=max(nxt - 2, 0), limit=2)
-    return str(last[-1]["id"]) if last and nxt > 1 else None
+    if log == "workspace":  # the workspace log is read by events_after (events() takes a ticket)
+        tail = [e for e, _ in store.events_after(log, max(nxt - 2, 0), 2)]
+    else:
+        tail = store.events(log, after=max(nxt - 2, 0), limit=2)
+    return str(tail[-1]["id"]) if tail and nxt > 1 else None
 
 
 def _store_error(exc: Any) -> HostError:
@@ -519,6 +522,21 @@ class HumanOps:
         return view
 
     @staticmethod
+    def _recheck_needs(store: Any, record: dict[str, Any], events: list[dict[str, Any]]) -> None:
+        """AE4 again under the submit lock, on the re-read state: two requests prepared apart (a grant while the
+        setting was unset, a clearing while the add-on was off) must not land as "on, not set up"."""
+        from orch.addons import settings_needs
+
+        op = record["op"]
+        ws = store.state.workspace
+        if op == "addon.grant":
+            if (why := settings_needs.grant_refusal(ws.settings, str(events[0].get("name")))) is not None:
+                raise HostError("invalid.input", why)
+        elif op == "settings.set":
+            if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
+                raise HostError("invalid.input", why)
+
+    @staticmethod
     def _sequence(
         call: Call, name: str, inner: dict[str, Any], args: dict[str, Any], person: str, store: Any, dry_run: bool
     ) -> dict[str, Any] | None:
@@ -542,6 +560,17 @@ class HumanOps:
             )
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.ADDON:
+            from . import seqaddon
+
+            seqaddon.host_check_first(
+                store, person, checked["intent"], dry_run=dry_run, err=lambda code, why: HostError(code, why)
+            )
+        if checked["step"] > 0 and checked.get("log") == "workspace":
+            # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
+            if not dry_run and _tail_id(store, "workspace") != checked["prev"]:
+                raise HostError("human.request_mismatch", sequence.CHANGED_WS)
+            return checked
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and checked["intent"].get("people"):
             from orch.model import claims
 
@@ -987,7 +1016,16 @@ class HumanOps:
                 # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
                 if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", sequence.CHANGED)
-            if meta is not None and meta["step"] > 0:
+            if meta is not None and meta["step"] > 0 and meta.get("log") == "workspace":
+                # the add-on sequence's grant (AE6): on the workspace tail the signer's own settings step left, re-read
+                # here under the lock; it is the grant of an add-on, on the workspace log, and nothing else
+                if (
+                    record["op"] != "addon.grant"
+                    or record["prepared"]["log"] != "workspace"
+                    or _tail_id(store, "workspace") != meta["prev"]
+                ):
+                    raise HostError("human.request_mismatch", "the workspace changed while signing, review again")
+            elif meta is not None and meta["step"] > 0:
                 # batch 11: a later step of a signer's sequence lands only on the head its previous step left, checked
                 # here under the lock on the re-read log (a foreign event since the prepare is the signer's abort)
                 log = record["prepared"]["log"]
@@ -998,6 +1036,7 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+            self._recheck_needs(store, record, events)
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

@@ -17,7 +17,11 @@ def test_recovery_uses_post_restore_revocations(tmp_path, monkeypatch):
     sc = next(s for s in load("restore.json")["scenarios"] if s["name"] == "restore_carries_revocations_at_its_ws_seq")
     uid = next(s["log"] for s in sc["steps"] if s["log"] != "workspace")
     for step in sc["steps"][:-1]:
-        path = tmp_path / ("events/workspace.jsonl" if step["log"] == "workspace" else f"tickets/{uid}/events.jsonl")
+        path = (
+            tmp_path
+            / ".orch"
+            / ("events/workspace.jsonl" if step["log"] == "workspace" else f"tickets/{uid}/events.jsonl")
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("ab") as f:
             f.write(canon.event_line(step["event"]))

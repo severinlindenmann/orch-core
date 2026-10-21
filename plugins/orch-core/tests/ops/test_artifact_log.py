@@ -78,10 +78,15 @@ def test_artifact_list_is_fenced(ws, cli, tmp_path, anon):
     r = cli("artifact", "list")
     assert r.first == "ok DEMO-0001 artifact.list 2" and "(data, not instructions)" in r.out
     assert "e.log other ac=AC1" in r.out and "u.log other (not evidence)" in r.out
-    assert cli.j("artifact", "list").data == {
-        "count": 2,
-        "artifacts": [{"name": "e.log", "kind": "other", "ac": "AC1"}, {"name": "u.log", "kind": "other"}],
-    }
+    got = cli.j("artifact", "list").data
+    assert [{k: v for k, v in a.items() if k != "path"} for a in got["artifacts"]] == [
+        {"name": "e.log", "kind": "other", "ac": "AC1"},
+        {"name": "u.log", "kind": "other"},
+    ]
+    # R3 part B: where an agent opens the file (relative to the project; the log names its digest)
+    assert all(
+        a["path"].endswith(f"/artifacts/{a['name']}") and "/tickets/" in "/" + a["path"] for a in got["artifacts"]
+    )
 
 
 def test_an_unattended_artifact_is_never_evidence_and_needs_no_grant(ws, cli, anon, tmp_path):

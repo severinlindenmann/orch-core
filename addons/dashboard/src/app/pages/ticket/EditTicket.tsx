@@ -8,6 +8,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { handoffMode } from '@/api/features'
+import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { can } from '@/api/permissions'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction } from '@/api/handoff'
 import { SECTIONS_BY_TYPE, SECTION_ORDER, sectionLabel, type SectionName } from '@/api/sections'
@@ -28,7 +29,7 @@ type Edit = NonNullable<Extract<HandoffAction, { action: 'edit_sequence' }>>
 
 /** What the person changed, as the typed action; or what is wrong with it. Pure: tested without the dialog. */
 export function buildEdit(
-  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { links?: Pick<TicketLinks, 'repos' | 'branches'> },
+  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'> },
   want: { sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
   mayEditPeople: boolean,
 ): { action: Edit; steps: number } | { problem: string } | { nothing: true } {
@@ -79,7 +80,12 @@ export function buildEdit(
       if (added.length || removed.length) people[role] = { add: added, remove: removed }
     }
   }
-  const steps = Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
+  // R3 part B: pictures pasted into the changed sections are signed first (a file the ticket already has needs no signature)
+  const texts = Object.values(sections)
+  if (missingPasted(texts).some((n) => !(ticket.artifacts ?? []).some((a) => a.name === n))) return { problem: 'A pasted picture is no longer here (the page was reloaded). Paste it again, or take its line out of the text.' }
+  const images = pastedIn(texts).filter((i) => !(ticket.artifacts ?? []).some((a) => a.name === i.name))
+  if (images.length > MAX_IMAGES) return { problem: `At most ${MAX_IMAGES} pictures fit in one signing run.` }
+  const steps = images.length + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
   if (steps === 0) return { nothing: true }
   if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Sign some now and the rest after.` }
   return {
@@ -92,6 +98,7 @@ export function buildEdit(
       ...(Object.keys(edit).length || add.length ? { acceptance: { edit, add } } : {}),
       ...(links ? { links } : {}),
       ...(Object.keys(people).length ? { people } : {}),
+      ...(images.length ? { images } : {}),
     } as Edit,
   }
 }

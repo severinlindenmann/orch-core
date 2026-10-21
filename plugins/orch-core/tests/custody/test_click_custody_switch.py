@@ -90,7 +90,7 @@ def test_the_signer_advertises_the_switch():
 def test_status_lists_the_feature(switch):
     signer, *_ = switch
     out = signer.status({})
-    assert out["features"] == ["custody", "sequence"]
+    assert out["features"] == ["custody", "sequence", "images"]
     (row,) = out["workspaces"]
     assert row["custody"] == "passphrase" and row["enabled"] is False and row["problem"] == "not_convenience"
 

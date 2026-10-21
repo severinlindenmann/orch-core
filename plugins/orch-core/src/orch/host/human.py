@@ -425,6 +425,8 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        if args.get("sequence") is not None and name == "artifact.add":
+            self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
         capture.sequence = meta
         if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
@@ -515,6 +517,20 @@ class HumanOps:
         if intent is not None:
             service.outcomes.commit(intent, view)
         return view
+
+    @staticmethod
+    def _check_pasted_image(inner: dict[str, Any], files: dict[str, bytes]) -> None:
+        """R3 part B: a file added inside a sequence is a pasted screenshot (the dashboard's paste path, never the CLI).
+        The host reads headers only (:mod:`orch.host.imagecheck`); it never decodes. The signer checks the same."""
+        from . import imagecheck
+
+        data = files.get(str(inner.get("path")))
+        if inner.get("kind") != "screenshot" or inner.get("ac") or inner.get("task") or data is None:
+            raise HostError("invalid.input", "a file in a sequence is a screenshot without a criterion or task")
+        try:
+            imagecheck.check(data)
+        except imagecheck.ImageRefused as exc:
+            raise HostError("invalid.input", f"screenshot refused: {exc}") from None
 
     @staticmethod
     def _recheck_needs(store: Any, record: dict[str, Any], events: list[dict[str, Any]]) -> None:

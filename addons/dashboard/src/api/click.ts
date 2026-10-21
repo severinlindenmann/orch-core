@@ -12,9 +12,6 @@ export const CLICK_RISK = 'Convenience signing: agents running as you, or anythi
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
 export const ARM_MS = 1000
 
-/** A word op (grant, policy, members) signs once the person has held Sign down this long, instead of typing the word. */
-export const HOLD_MS = 1500
-
 /** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
 export interface ClickCard {
   risk_ack?: string | null
@@ -125,9 +122,10 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable',
+  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable', 'addon_enable',
 ])
-export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
+// Publish decides where files go: terminal only, also when it is turned on together with its address
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant') && a.name === 'publish')
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */

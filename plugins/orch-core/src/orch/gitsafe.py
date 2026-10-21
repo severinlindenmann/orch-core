@@ -41,7 +41,8 @@ person's half is ONE mechanism here, used by every remaining read-only caller (t
 * :func:`config_env`: configuration passed explicitly as command-scope entries (``GIT_CONFIG_COUNT``), never by
   reading the person's files; no operation of :data:`OPS` keeps any of the person's configuration; the records tool
   keeps its own lists in :func:`orch.records.git.person_config`;
-* :func:`command`: **a closed set of operations** (:data:`OPS`, Codex P1 on #561), never free argv: since #565 only
+* :func:`command`: **a closed set of operations** (:data:`OPS`, plus Landing's :data:`LAND_OPS`, which run only in the
+  host-owned bare repository of :mod:`orch.land.git`; Codex P1 on #561), never free argv: since #565 only
   ``check --staged``'s ``staged_raw`` and ``staged_blob``. It runs :func:`gate` before every operation and builds the
   argv: :data:`HARDEN` (:data:`NEUTRAL` plus :data:`PINNED`), ``--no-pager``, ``--no-optional-locks``, ``-C <repo>``,
   and ``--no-ext-diff --no-textconv`` on ``diff``.
@@ -118,8 +119,9 @@ from dataclasses import dataclass
 from orch.gitread.refs import branch_ok as _branch_ok  # #561's validator, moved to gitread by #565
 
 __all__ = [
-    "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "NEUTRAL", "OPS", "PINNED",
-    "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env", "local_config",
+    "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
+    "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env", "land_check",
+    "land_init", "local_config",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -153,7 +155,7 @@ HARDEN = (
     "-c", "advice.graftFileDeprecated=false",  # GIT_GRAFT_FILE=/dev/null makes git print a hint otherwise (R7 I3)
 )  # fmt: skip
 #: subcommands that take ``--no-ext-diff --no-textconv`` (no diff program, no textconv program)
-_NO_PROGRAMS = frozenset({"diff", "show", "log"})
+_NO_PROGRAMS = frozenset({"diff", "diff-tree", "show", "log"})
 #: the only variables of the caller an isolated command sees
 _KEEP = ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "XDG_CONFIG_HOME")
 
@@ -368,7 +370,7 @@ def config_env(entries: Sequence[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
-def _argv(repo: str, args: Sequence[str]) -> list[str]:
+def _argv(repo: str, args: Sequence[str], op_pins: Sequence[str] = ()) -> list[str]:
     """The argv of one isolated git command against ``repo`` (absolute): :data:`HARDEN`, no pager, no optional locks,
     and ``--no-ext-diff --no-textconv`` right after ``diff``, ``show`` or ``log``. Private: ``args`` are only ever the
     gate's own fixed reads or an operation of :data:`OPS` (:func:`command`)."""
@@ -377,7 +379,7 @@ def _argv(repo: str, args: Sequence[str]) -> list[str]:
     if rest and rest[0] in _NO_PROGRAMS:
         rest[1:1] = ["--no-ext-diff", "--no-textconv"]
         pins = _DIFF_PINS
-    return ["git", *HARDEN, *pins, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
+    return ["git", *HARDEN, *pins, *op_pins, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
 
 
 @dataclass(frozen=True)
@@ -386,6 +388,10 @@ class Op:
     in the index, relative to ``-C <repo>``)."""
 
     args: tuple[str, ...]
+    #: extra command-scope ``-c`` pairs of this operation only (after :data:`HARDEN`)
+    pins: tuple[str, ...] = ()
+    #: the caller's variables this operation may be given on top of :func:`isolated_env` (never anything else)
+    env: frozenset[str] = frozenset()
 
     @property
     def operands(self) -> tuple[str, ...]:
@@ -393,7 +399,7 @@ class Op:
         return tuple(m for a in self.args for m in _SLOT.findall(a))
 
 
-_SLOT = re.compile(r"<(rev|path|context)>")
+_SLOT = re.compile(r"<(rev|path|context|oid|lref)>")
 
 #: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
 #: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
@@ -456,6 +462,94 @@ OPS: dict[str, Op] = {
     "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
 }  # fmt: skip
 
+#: git's own object checks that must be errors for a landing, set explicitly (``--strict`` and the version's defaults
+#: leave some at info/warn): path names git cannot or must not check out (``.git``, empty, ``.``, ``..``, ``/``,
+#: HFS-ignorable and NTFS spellings are inside ``hasDotgit``/``gitmodulesName``), symlinked ``.gitmodules``,
+#: ``.gitattributes``, ``.gitignore``, ``.mailmap``, a malformed or unsafe ``.gitmodules``, unsorted or duplicate
+#: entries.
+FSCK_ERRORS = (
+    "hasDot",
+    "hasDotdot",
+    "hasDotgit",
+    "emptyName",
+    "fullPathname",
+    "nullSha1",
+    "zeroPaddedFilemode",
+    "duplicateEntries",
+    "treeNotSorted",
+    "gitmodulesSymlink",
+    "gitattributesSymlink",
+    "gitignoreSymlink",
+    "mailmapSymlink",
+    "gitmodulesMissing",
+    "gitmodulesBlob",
+    "gitmodulesLarge",
+    "gitmodulesName",
+    "gitmodulesParse",
+    "gitmodulesPath",
+    "gitmodulesUrl",
+    "gitmodulesUpdate",
+    "badFilemode",
+    "badName",
+    "gitattributesLarge",
+    "gitattributesLineLength",
+    "gitattributesMissing",
+    "gitattributesBlob",
+    "largePathname",
+    "nulInCommit",
+    "badTree",
+)
+
+#: Landing's operations (#596), a second CLOSED set beside :data:`OPS` (kept apart so :data:`OPS`, which the isolation
+#: tests walk against ordinary work-tree repositories, stays what it was). ``land_*`` runs ONLY in the host-owned bare
+#: repository of :mod:`orch.land.git` (:func:`land_check` on top of the gate, in :func:`command`); agent repositories
+#: are read by gitread, never here. Every revision is a full object id (``<oid>``), the only ref is ``refs/land/<id>``;
+#: no operation touches the network (that is task 4's ``land_push``/``land_fetch``) or a work tree.
+LAND_OPS: dict[str, Op] = {
+    "land_has": Op(("cat-file", "-e", "<oid>")),
+    "land_commit": Op(("cat-file", "commit", "<oid>")),
+    "land_merge_base": Op(("merge-base", "<oid>", "<oid>")),
+    "land_is_ancestor": Op(("merge-base", "--is-ancestor", "<oid>", "<oid>")),
+    "land_count": Op(("rev-list", "--count", "<oid>..<oid>")),
+    # a merge computed from objects only (no index, no work tree); exit 1 = conflicts (paths listed)
+    # Every merge knob the allow-list tolerates in a repository's config is pinned (Codex #4 on #761), so the tree is a
+    # function of the two commits only (I4), whatever the host repository's own config says.
+    "land_merge_tree": Op(
+        ("merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "<oid>", "<oid>"),
+        pins=(
+            "-c", "merge.renormalize=false", "-c", "merge.renames=true", "-c", "merge.renameLimit=1000",
+            "-c", "merge.directoryRenames=conflict", "-c", "merge.conflictStyle=merge", "-c", "diff.renames=true",
+            "-c", "diff.renameLimit=1000", "-c", "diff.algorithm=default", "-c", "core.autocrlf=false",
+            "-c", "core.eol=lf", "-c", "core.safecrlf=false",
+        ),
+    ),  # fmt: skip
+    # message on stdin; identity and dates only from the caller's GIT_AUTHOR_* / GIT_COMMITTER_* (I4: deterministic)
+    "land_commit_tree": Op(
+        ("commit-tree", "--no-gpg-sign", "-p", "<oid>", "-p", "<oid>", "-F", "-", "<oid>"),
+        pins=("-c", "commit.gpgsign=false"),
+        env=frozenset({"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+                       "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE"}),
+    ),  # fmt: skip
+    "land_diff_raw": Op(("diff-tree", "-r", "--raw", "-z", "--no-renames", "--ignore-submodules=none", "--no-color",
+                         "<oid>", "<oid>")),  # fmt: skip
+    # git's own strict check of the INCOMING objects only (like a receive: ``index-pack --strict`` on the pack the
+    # importer built, run with the quarantine as object directory and the host's objects as alternate): the check that
+    # decides which tree entries are acceptable; the importer's own name check is only an early refusal. Every relevant
+    # message id is an error. The pack arrives on stdin; git writes it and its index into the quarantine.
+    "land_index_pack": Op(
+        ("index-pack", "--stdin", "--strict=" + ",".join(f"{i}=error" for i in FSCK_ERRORS)),
+        env=frozenset({"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}),
+    ),
+    # fold the packs the importer added into one (``-a -d``); ``-k`` keeps objects no ref reaches (imported source
+    # commits are not refs): only ever objects git already accepted, nothing is dropped. No bitmap, no size split.
+    "land_repack": Op(
+        ("repack", "-a", "-d", "-k", "-q", "--no-write-bitmap-index"),
+        pins=("-c", "pack.packSizeLimit=0", "-c", "gc.auto=0", "-c", "repack.useDeltaIslands=false",
+              "-c", "repack.packKeptObjects=false", "-c", "pack.threads=1"),
+    ),  # fmt: skip
+    "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
+}  # fmt: skip
+
 
 #: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
 #: :func:`_branch_ok` (git's own ref rules, Unicode allowed). No operation of :data:`OPS` takes one since #565;
@@ -473,6 +567,12 @@ def _check(kind: str, value: object) -> str:
     elif kind == "context":
         if not re.fullmatch(r"[0-9]|10", value):
             raise Unsafe("invalid context")
+    elif kind == "oid":  # a full object id, never a name: no ref, no ``^``, no range
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
+            raise Unsafe("invalid object id")
+    elif kind == "lref":  # the one namespace the landing code writes in its own repository: ``refs/land/<id>``
+        if not re.fullmatch(r"refs/land/(?:[0-9a-f]{40}|[0-9a-f]{64})", value):
+            raise Unsafe("invalid landing ref")
     elif value.startswith("/") or len(value) > 4096 or ".." in value.split("/"):  # relative to -C <repo>, below it
         raise Unsafe("invalid path")
     return value
@@ -497,18 +597,72 @@ def command(
     *,
     operand: str | tuple[str, ...] | None = None,
     timeout: float = GATE_SECONDS,
+    env_extra: Mapping[str, str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
     spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time; none of the person's configuration reaches
     git. Raises :class:`Unsafe` (git must not run) for an unknown operation, an invalid operand or a refusal. The
     race between the gate and the spawn is accepted only for the operations of :data:`OPS` (its race note, #565)."""
-    spec = OPS.get(op)
+    spec = OPS.get(op) or LAND_OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")
     args = _fill(spec, operand)
+    extra = dict(env_extra or {})
+    if not set(extra) <= spec.env or "GIT_DIR" in extra or any("\0" in v for v in extra.values()):
+        raise Unsafe("invalid git environment")
     local = gate(repo, own, timeout=timeout)
-    entries = _driver_pins(local) if spec.args[0] == "diff" else []
-    return _argv(repo, args), isolated_env(own, entries)
+    if op in LAND_OPS:
+        land_check(repo, local)
+        _land_env_ok(repo, extra)
+        extra["GIT_DIR"] = repo  # git never discovers a repository: this one, and no other, no ``.git`` redirection
+    entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
+    return _argv(repo, args, spec.pins), {**isolated_env(own, entries), **extra}
+
+
+def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:
+    """The landing-specific half of the gate (Codex #2 on the Landing design): the repository of an operation named
+    ``land_*`` is the host-owned **bare** repository (``core.bare=true``, a real directory path, no symlinked top), with
+    no alternates, no shallow file and no grafts: nothing that makes git read objects or history from elsewhere. Raises
+    :class:`Unsafe`. (Config keys are already the gate's allow-list: no hook, include, filter or merge driver.)"""
+    if os.path.realpath(repo) != repo:
+        raise Unsafe("the landing repository path is not a real path")
+    bare = [v.strip().lower() for _s, k, v in local if k.lower() == "core.bare"]
+    if not bare or bare[-1] not in ("true", "yes", "on", "1"):  # git's last value wins
+        raise Unsafe("the landing repository is not bare")
+    for rel in ("objects", "refs", "HEAD"):
+        _check_path(os.path.join(repo, rel), f"landing {rel}", must_exist=True)
+    for rel in (
+        "objects/info/alternates", "objects/info/http-alternates", "shallow", "info/grafts", "info/attributes",
+        ".git", "commondir", "gitdir",
+    ):  # fmt: skip
+        if os.path.lexists(os.path.join(repo, rel)):
+            raise Unsafe(f"the landing repository has {rel}")
+
+
+def _land_env_ok(repo: str, extra: Mapping[str, str]) -> None:
+    """The object-directory variables an operation may carry (the import quarantine, like git's receive quarantine):
+    the directory must be ``<repo>/incoming-<hex>`` and the alternate exactly ``<repo>/objects``; nothing else."""
+    for key, value in extra.items():
+        if key == "GIT_OBJECT_DIRECTORY":
+            ok = re.fullmatch(re.escape(repo) + r"/incoming-[0-9a-f]{16}", value) is not None
+        elif key == "GIT_ALTERNATE_OBJECT_DIRECTORIES":
+            ok = value == f"{repo}/objects"
+        else:
+            ok = True  # the identity variables of land_commit_tree: free text, never a path git reads
+        if not ok:
+            raise Unsafe("invalid git environment")
+
+
+def land_init(path: str, own: Mapping[str, str]) -> tuple[list[str], dict[str, str]]:
+    """argv and environment that create the bare landing repository at ``path`` (absolute, clean, not yet a
+    repository): no template (so no hook, no sample file), SHA-1, an isolated environment. The caller spawns it."""
+    if not path.startswith("/") or "\0" in path or len(path) > 4096 or ".." in path.split("/"):
+        raise Unsafe("invalid landing repository path")
+    return (
+        ["git", *HARDEN, "init", "--bare", "--quiet", "--template=", "--object-format=sha1",
+         "--initial-branch=orch-land", "--", path],
+        isolated_env(own),
+    )  # fmt: skip
 
 
 #: git's built-in diff drivers: its userdiff set AS OF GIT 2.54 (userdiff.c, 27 drivers). An attribute can select them

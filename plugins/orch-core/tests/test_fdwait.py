@@ -8,8 +8,10 @@ from __future__ import annotations
 import ast
 import contextlib
 import os
+import pty
 import resource
 import socket
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -49,6 +51,8 @@ def high_fds() -> Iterator[None]:
 def test_no_select_select_in_the_product_code():
     hits = []
     for p in sorted(SRC.rglob("*.py")):
+        if p == SRC / "fdwait.py":  # the one place: the fallback for fds kqueue cannot watch (/dev/tty on macOS)
+            continue
         for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
             if (
                 isinstance(n, ast.Attribute)
@@ -83,3 +87,51 @@ def test_the_git_read_path_works_above_fd_setsize():
     with high_fds():
         res = gitbrowse.spawn(["/bin/echo", "past 1024"], {"PATH": "/usr/bin:/bin"}, timeout=10)
     assert res.out == b"past 1024\n" and not res.cut
+
+
+def test_a_controlling_tty_can_be_waited_on():
+    """kqueue (macOS) refuses ``/dev/tty`` with EINVAL; the wait must fall back instead of raising."""
+    pid, master = pty.fork()
+    if pid == 0:  # child: the pty is now its controlling terminal
+        code = 90
+        try:
+            with open("/dev/tty", "rb", buffering=0) as tty:
+                if fdwait.readable(tty, 0.2):
+                    code = 91
+                else:
+                    os.write(1, b"ready\n")
+                    code = 92 if not fdwait.readable(tty, 10) else 0
+        except BaseException:
+            code = 93
+        os._exit(code)
+    try:
+        deadline = time.monotonic() + 10
+        buf = b""
+        while b"ready" not in buf and time.monotonic() < deadline:
+            if fdwait.readable(master, 0.2):
+                try:
+                    chunk = os.read(master, 1024)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+        os.write(master, b"hello\n")
+        status = None
+        while time.monotonic() < deadline + 10:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+                break
+            if fdwait.readable(master, 0.05):  # keep draining: macOS blocks a child's exit on unread tty output
+                try:
+                    os.read(master, 1024)
+                except OSError:
+                    pass
+        if status is None:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+            pytest.fail("the child did not finish")
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"child exit status {status}"
+    finally:
+        os.close(master)

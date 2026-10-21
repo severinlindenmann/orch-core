@@ -44,7 +44,7 @@ def test_a_second_spawn_with_the_same_run_id_gets_nothing():
     with pytest.raises(GrantError) as e:
         s.secret_for(WS, ME, FGID, run=RUN)
     assert e.value.code == "launch.no_grant"
-    assert s.secrets() == []
+    assert s._run_slots == {}
 
 
 def test_a_different_run_id_cannot_consume():

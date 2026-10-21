@@ -206,3 +206,28 @@ def test_warm_start_shows_what_the_first_poll_found(setup):
     assert shown.pulls == live.pulls and not shown.verified
     assert shown.state == "bad_token" and shown.last_error_kind == "unauthorized"
     second.close()
+
+
+def test_core_dumps_are_disabled_before_the_token_is_loaded(monkeypatch, tmp_path):
+    order = []
+    monkeypatch.setattr(service_module, "_core_disabled", False)
+    monkeypatch.setattr(service_module.resource, "setrlimit", lambda *a: order.append("core"))
+    monkeypatch.setattr(service_module.token, "load", lambda *a: order.append("load") or token.Token(SECRET))
+    service = GitHubService(tmp_path, "ws")
+    try:
+        service.poller._token_source()
+    finally:
+        service.close()
+    assert order == ["core", "load"]
+
+
+def test_a_failed_core_limit_is_logged_without_the_token(monkeypatch, caplog):
+    monkeypatch.setattr(service_module, "_core_disabled", False)
+
+    def boom(*a):
+        raise OSError("nope")
+
+    monkeypatch.setattr(service_module.resource, "setrlimit", boom)
+    with caplog.at_level("WARNING", logger=service_module.log.name):
+        service_module._disable_core()
+    assert "core dumps" in caplog.text and SECRET not in caplog.text

@@ -242,3 +242,11 @@ def test_log_filter_redacts_tokens_in_exception_text():
     out = stream.getvalue()
     assert "RuntimeError" in out and "[redacted]" in out
     assert token not in out and SECRET not in out
+
+
+def test_log_filter_withholds_a_record_that_cannot_be_formatted():
+    token = "github_pat_" + "d" * 36
+    rec = logging.LogRecord("orch.runner", logging.INFO, __file__, 1, "bad %d", (token,), None)
+    assert RedactFilter(GrantStore()).filter(rec)
+    out = logging.Formatter().format(rec)
+    assert token not in out and "withheld" in out

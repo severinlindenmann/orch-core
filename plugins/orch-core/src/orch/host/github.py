@@ -31,8 +31,8 @@ def _disable_core():
             _core_disabled = True
             try:
                 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                log.warning("could not disable core dumps before loading the GitHub credential (%s)", type(exc).__name__)
 
 
 @dataclass(frozen=True)
@@ -71,9 +71,8 @@ class GitHubService:
         self._viewers, self._refreshes = {}, deque()
 
         def source():
-            value = token.load(self.state_dir, self.ws_id, self.host_uid)
-            _disable_core()
-            return value
+            _disable_core()  # before the credential is in memory
+            return token.load(self.state_dir, self.ws_id, self.host_uid)
 
         self.poller = Poller(
             token_source=source, client_factory=client_factory, clock=clock, rng=self.rng, priority=priority

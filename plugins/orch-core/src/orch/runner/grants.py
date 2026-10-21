@@ -149,8 +149,9 @@ class RedactFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             text = record.getMessage()
-        except Exception:  # noqa: BLE001 - a broken record is passed on unchanged
-            return True
+        except Exception:  # noqa: BLE001 - a record that cannot be formatted may carry a secret in its args
+            record.msg, record.args = "[log message withheld: format error]", ()
+            text = record.msg
         clean = self._clean(text)
         if clean != text:
             record.msg, record.args = clean, None

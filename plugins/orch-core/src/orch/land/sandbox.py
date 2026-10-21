@@ -141,7 +141,10 @@ def _canon_existing(path: str) -> str:
 
 def _real(path: Path | str) -> Path:
     """Canonical path; for a missing path, the deepest existing parent canonicalised plus the remaining names."""
-    p = os.path.abspath(os.fspath(path))
+    raw = os.fspath(path)
+    if os.path.islink(raw) and not os.path.exists(raw):
+        raise SandboxError("a path is a dangling symlink")
+    p = os.path.realpath(raw)  # symlinks first, then ``..`` (never a lexical collapse)
     rest: list[str] = []
     while not os.path.lexists(p) and p != "/":
         p, tail = os.path.split(p)
@@ -176,7 +179,15 @@ _SYSTEM_ROOTS = (
 def _secret_paths() -> list[Path]:
     """Paths that are always forbidden: the account's credential directories (and ``$HOME``'s, if it differs)."""
     homes = {_account_home(), _real(Path.home())}
-    return [h / n for h in homes for n in _ACCOUNT_SECRETS]
+    out: dict[Path, None] = {}
+    for h in homes:
+        for n in _ACCOUNT_SECRETS:
+            out[h / n] = None  # the literal spelling (what the profile sees if it is a symlink)
+            try:
+                out[_real(h / n)] = None  # and where it really points (~/.ssh -> ~/dotfiles/ssh)
+            except SandboxError:
+                pass
+    return list(out)
 
 
 def _private_dir(raw: Path | str, what: str) -> Path:
@@ -535,7 +546,7 @@ def _execute(backend: str, spec: Spec) -> Result:
                 break
             if fdwait.readable(fd, min(left, 0.2)):
                 open_ = pull()
-            elif _exited(proc.pid):
+            if open_ and _exited(proc.pid):
                 break
         _killpg(pgid)  # on timeout, and on exit: nothing the check started survives the result
         proc.wait()

@@ -793,3 +793,35 @@ def test_group_is_killed_after_the_leader_exits_without_reaping_early(lay: Layou
         argv=["/bin/sh", "-c", "sleep 100 & exit 0"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp
     )
     assert sbx.run_check(spec, backend=backend).returncode == 0
+
+
+def test_symlink_then_dotdot_is_resolved_like_the_kernel(lay: Layout) -> None:
+    deep = lay.root / "deep" / "dir"
+    deep.mkdir(parents=True)
+    (lay.root / "deep" / "key").write_text("K")
+    (lay.root / "lnk").symlink_to(deep)
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    with pytest.raises(sbx.SandboxError):  # lnk/../key is deep/key, inside the toolchain
+        sbx._validated(sbx.Spec(toolchain_ro=[lay.root / "deep"], forbidden=[lay.root / "lnk" / ".." / "key"], **base))
+
+
+def test_dangling_forbidden_symlink_fails_closed(lay: Layout) -> None:
+    (lay.root / "dangling").symlink_to(lay.root / "nowhere")
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(forbidden=[lay.root / "dangling"], **base))
+
+
+def test_symlinked_ssh_dir_is_forbidden_at_both_spellings(lay: Layout, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = lay.root / "dotfiles" / "ssh"
+    real.mkdir(parents=True)
+    home = lay.root / "h2"
+    home.mkdir()
+    (home / ".ssh").symlink_to(real)
+    monkeypatch.setattr(sbx, "_account_home", lambda: home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    secrets = sbx._secret_paths()
+    assert home / ".ssh" in secrets and sbx._real(real) in secrets
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(toolchain_ro=[real], **base))

@@ -50,7 +50,8 @@ from orch.gitread.objects import ObjectStore
 from orch.gitread.pinning import pin_repo
 from orch.gitread.refs import branch_ok
 from orch.gitread.repo import Repo
-from orch.land.key import LandKeyError, pinned_exe
+from orch.land import key
+from orch.land.key import LandKeyError
 
 __all__ = [
     "BOT_EMAIL", "BOT_NAME", "Candidate", "Conflict", "ImportStats", "LandGitError", "LandRepo", "target_ref",
@@ -116,9 +117,9 @@ def _system_env(own: Mapping[str, str]) -> dict[str, str]:
     return {**own, "PATH": "/usr/bin:/bin"}
 
 
-def _pinned_git() -> str:
+def _pinned_git() -> tuple[str, str]:
     try:
-        return pinned_exe("git")
+        return key.pinned_git()
     except LandKeyError as e:
         raise LandGitError(e.code, e.reason) from None
 
@@ -241,7 +242,7 @@ class LandRepo:
             raise LandGitError("land.bad_input", "the landing repository path is not absolute")
         self.path = path
         self.own: Mapping[str, str] = _system_env(os.environ if own is None else own)
-        self.git = _pinned_git()
+        self.git, self.exec_path = _pinned_git()
 
     # -- creating
     @classmethod
@@ -259,12 +260,12 @@ class LandRepo:
             os.mkdir(path, 0o700)
         except OSError:
             raise LandGitError("land.unavailable", "the landing repository cannot be created") from None
+        repo = cls(path, env_own)
         try:
-            argv, env = gitsafe.land_init(path, env_own)
+            with gitsafe.pinned(repo.git, repo.exec_path):
+                argv, env = gitsafe.land_init(path, env_own)
         except gitsafe.Unsafe as e:
             raise LandGitError("land.unsafe", e.reason) from None
-        repo = cls(path, env_own)
-        argv[0] = repo.git
         code, _ = repo._spawn(argv, env, b"")
         if code != 0:
             raise LandGitError("land.unavailable", "the landing repository cannot be initialised")
@@ -297,7 +298,14 @@ class LandRepo:
     ) -> tuple[int, bytes]:  # fmt: skip
         try:
             argv, env = gitsafe.command(
-                self.path, op, self.own, operand=operand, env_extra=env_extra, net=net, git=self.git
+                self.path,
+                op,
+                self.own,
+                operand=operand,
+                env_extra=env_extra,
+                net=net,
+                git=self.git,
+                exec_path=self.exec_path,
             )
         except gitsafe.Unsafe as e:
             raise LandGitError("land.unsafe", e.reason) from None

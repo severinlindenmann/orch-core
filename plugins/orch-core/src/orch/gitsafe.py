@@ -108,6 +108,7 @@ tool) and by ``orch check --staged`` (:mod:`orch.ops.health`). The records tool 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import os
 import re
@@ -121,7 +122,7 @@ from orch.gitread.refs import branch_ok as _branch_ok  # #561's validator, moved
 
 __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
-    "NetSpec", "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
+    "NetSpec", "Op", "Unsafe", "command", "pinned", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
     "land_check", "land_init", "local_config", "target_tracking_ref",
 ]  # fmt: skip
 
@@ -339,6 +340,31 @@ def _parse(raw: bytes) -> list[tuple[str, str, str]]:
     return out
 
 
+#: The pinned git of a landing run (:func:`pinned`): the executable every git process of this context starts (the
+#: gate's version and config reads included, not only the operation) and its ``GIT_EXEC_PATH``. ``None``: ``git`` from
+#: ``PATH``, as every other caller of this module.
+_PIN: contextvars.ContextVar[tuple[str, str | None] | None] = contextvars.ContextVar("orch_git_pin", default=None)
+
+
+@contextlib.contextmanager
+def pinned(git: str, exec_path: str | None = None):  # noqa: ANN201
+    """Run every git process started in this block from ``git`` (absolute, plain path) with ``GIT_EXEC_PATH`` set to
+    ``exec_path``: git's own helpers (``index-pack``, ``upload-pack``...) come from the same root-owned place."""
+    for v in (git, exec_path):
+        if v is not None and (_SAFE_PATH.fullmatch(v) is None or ".." in v.split("/")):
+            raise Unsafe("invalid git executable")
+    token = _PIN.set((git, exec_path))
+    try:
+        yield
+    finally:
+        _PIN.reset(token)
+
+
+def _git_exe() -> str:
+    pin = _PIN.get()
+    return pin[0] if pin else "git"
+
+
 def isolated_env(own: Mapping[str, str], person: Sequence[tuple[str, str]] = ()) -> dict[str, str]:
     """THE environment of every isolated git command (:data:`ISOLATION`, #541, #546): built from scratch out of
     ``own`` (:data:`_KEEP` only: never a ``GIT_*`` variable, a token or an ``ORCH_*`` variable of the caller), system
@@ -352,6 +378,9 @@ def isolated_env(own: Mapping[str, str], person: Sequence[tuple[str, str]] = ())
         GIT_GRAFT_FILE="/dev/null",  # info/grafts could change a commit's parents, so a diff's base (MC)
     )  # fmt: skip
     env.update(config_env(person))
+    pin = _PIN.get()
+    if pin is not None and pin[1] is not None:
+        env["GIT_EXEC_PATH"] = pin[1]
     return env
 
 
@@ -380,7 +409,7 @@ def _argv(repo: str, args: Sequence[str], op_pins: Sequence[str] = ()) -> list[s
     if rest and rest[0] in _NO_PROGRAMS:
         rest[1:1] = ["--no-ext-diff", "--no-textconv"]
         pins = _DIFF_PINS
-    return ["git", *HARDEN, *pins, *op_pins, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
+    return [_git_exe(), *HARDEN, *pins, *op_pins, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
 
 
 @dataclass(frozen=True)
@@ -714,6 +743,28 @@ def command(
     env_extra: Mapping[str, str] | None = None,
     net: NetSpec | None = None,
     git: str | None = None,
+    exec_path: str | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """The argv and environment of operation ``op`` (see :func:`_command`). A landing operation passes ``git`` (and
+    ``exec_path``): the pinned executable runs the gate's own reads and the operation, never whatever ``PATH`` names
+    (Codex on #762, Opus M1 on #762)."""
+    if git is None and net is None:
+        return _command(repo, op, own, operand=operand, timeout=timeout, env_extra=env_extra, net=net)
+    if op not in LAND_OPS or (net is not None and git is not None and git != net.git):
+        raise Unsafe("invalid git executable")
+    with pinned(git if git is not None else net.git, exec_path):  # type: ignore[union-attr]
+        return _command(repo, op, own, operand=operand, timeout=timeout, env_extra=env_extra, net=net)
+
+
+def _command(
+    repo: str,
+    op: str,
+    own: Mapping[str, str],
+    *,
+    operand: str | tuple[str, ...] | None = None,
+    timeout: float = GATE_SECONDS,
+    env_extra: Mapping[str, str] | None = None,
+    net: NetSpec | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
     spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time; none of the person's configuration reaches
@@ -736,14 +787,7 @@ def command(
     entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
     argv = _argv(repo, args, spec.pins)
     env = {**isolated_env(own, entries), **extra}
-    if git is not None:  # a landing operation runs the pinned executable, not whatever ``PATH`` names (Codex on #762)
-        if op not in LAND_OPS or _SAFE_PATH.fullmatch(git) is None:
-            raise Unsafe("invalid git executable")
-        argv[0] = git
     if net is not None:
-        if git is not None and git != net.git:
-            raise Unsafe("invalid network specification")
-        argv[0] = net.git
         env.update(_net_env(net))
     return argv, env
 
@@ -792,7 +836,7 @@ def land_init(path: str, own: Mapping[str, str]) -> tuple[list[str], dict[str, s
     if not path.startswith("/") or "\0" in path or len(path) > 4096 or ".." in path.split("/"):
         raise Unsafe("invalid landing repository path")
     return (
-        ["git", *HARDEN, "init", "--bare", "--quiet", "--template=", "--object-format=sha1",
+        [_git_exe(), *HARDEN, "init", "--bare", "--quiet", "--template=", "--object-format=sha1",
          "--initial-branch=orch-land", "--", path],
         isolated_env(own),
     )  # fmt: skip
@@ -906,12 +950,13 @@ _VERSIONS: dict[str, tuple[int, int]] = {}
 def git_version(own: Mapping[str, str], *, timeout: float = GATE_SECONDS) -> tuple[int, int]:
     """The ``(major, minor)`` of the git on ``own``'s ``PATH`` (asked once per ``PATH``); :class:`Unsafe` when it is
     older than :data:`MIN_GIT` or cannot be told."""
-    key = isolated_env(own)["PATH"]
+    exe = _git_exe()
+    key = isolated_env(own)["PATH"] if _PIN.get() is None else f"{exe}|{isolated_env(own)['PATH']}"
     got = _VERSIONS.get(key)
     if got is None:
         try:
             done = subprocess.run(  # noqa: S603 - fixed argv
-                ["git", "--version"], stdin=subprocess.DEVNULL, capture_output=True, env=isolated_env(own), cwd="/",
+                [exe, "--version"], stdin=subprocess.DEVNULL, capture_output=True, env=isolated_env(own), cwd="/",
                 timeout=timeout, check=False, start_new_session=True,
             )  # fmt: skip
         except (OSError, subprocess.SubprocessError):

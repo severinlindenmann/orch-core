@@ -45,7 +45,11 @@ def push_candidate(repo: LandRepo, store: KeyStore, remote: str, branch: str, ca
     (:meth:`LandRepo.check_push_shape`), (2) the target must be an ancestor of it and (3) it must differ from it. The
     lease then pins the remote's old value exactly (``--force-with-lease=<ref>:<target_sha>``): a remote that moved is
     refused (``land.target_moved``). No ``+``, no ``--force``, one atomic ref. Afterwards the remote is fetched again
-    and must show the candidate (``land.push_unverified``)."""
+    and must show the candidate (``land.push_unverified``).
+
+    **Outcome unknown:** a push that times out (or whose process dies) raises ``land.unavailable``; the remote may or
+    may not have taken it. A caller that resumes (task 7) must ``ls-remote``/:func:`fetch_target` before it pushes
+    again, never assume "not pushed"."""
     ref = target_ref(branch)
     repo.check_push_shape(candidate)
     target, sha = _oid(candidate.target_sha, "target"), _oid(candidate.sha, "candidate")

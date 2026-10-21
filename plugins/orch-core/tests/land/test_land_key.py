@@ -24,9 +24,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from orch import gitsafe
 from orch.land import key as lk
-from orch.land.git import Candidate, LandGitError
+from orch.land.git import Candidate, LandGitError, LandRepo
 from orch.land.key import KeyStore, LandKeyError
 from orch.land.remote import fetch_target, push_candidate
+from tests.land.conftest import dev_git
 from tests.land.test_land_git import World, sh
 
 HOST = "example.com"
@@ -183,7 +184,7 @@ def test_scrub_removes_key_blocks_and_long_base64():
 
 @needs_system_git
 def test_the_system_git_and_ssh_are_trusted():
-    assert lk.pinned_exe("git") == "/usr/bin/git" and lk.pinned_exe("ssh") == "/usr/bin/ssh"
+    assert lk.pinned_exe("ssh") == "/usr/bin/ssh"
 
 
 def test_a_user_owned_executable_is_not_trusted(tmp_path):
@@ -225,10 +226,11 @@ def test_pinned_exe_refuses_an_untrusted_candidate_and_never_uses_path(monkeypat
     fake.write_text("#!/bin/sh\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin")
-    monkeypatch.setattr(lk, "EXE_CANDIDATES", {"git": (str(fake),), "ssh": ()})
+    monkeypatch.setattr(lk, "EXE_CANDIDATES", {"ssh": (str(fake),)})
     with pytest.raises(LandKeyError) as e:
-        lk.pinned_exe("git")
+        lk.pinned_exe("ssh")
     assert e.value.code == "land.untrusted_exe"
+    monkeypatch.setattr(lk, "EXE_CANDIDATES", {"ssh": ()})
     with pytest.raises(LandKeyError):
         lk.pinned_exe("ssh")  # nothing listed: PATH is never consulted
     with pytest.raises(LandKeyError):
@@ -319,7 +321,7 @@ def test_net_spec_needs_key_and_pin_and_never_trusts_on_first_use(store, state):
     assert e.value.code == "land.no_pin"
     store.pin_host_key(r, host_line()[0])
     spec = store.net_spec(r)
-    assert spec.git == "/usr/bin/git" and spec.ssh == "/usr/bin/ssh" and spec.key.endswith("/key")
+    assert spec.git == dev_git()[0] and spec.ssh == "/usr/bin/ssh" and spec.key.endswith("/key")
     # a pin for another remote does not serve this one
     with pytest.raises(LandKeyError) as e:
         store.net_spec("ssh://git@other.example/o/r")
@@ -481,7 +483,7 @@ class Net:
         self.w = World(base, make_repo)
         self.log = base / "ssh.log"
         self.fail = base / "ssh.fail"
-        exec_path = subprocess.run([REAL_GIT, "--exec-path"], capture_output=True, text=True, check=True).stdout.strip()
+        exec_path = dev_git()[1]
         script = base / "bin" / "ssh"
         script.parent.mkdir()
         script.write_text(
@@ -500,7 +502,7 @@ class Net:
         script.chmod(0o755)
         self.fake = str(script)
         orig = lk.trusted_exe
-        monkeypatch.setattr(lk, "EXE_CANDIDATES", {"git": (REAL_GIT,), "ssh": (self.fake,)})
+        monkeypatch.setattr(lk, "EXE_CANDIDATES", {"ssh": (self.fake,)})
         monkeypatch.setattr(lk, "trusted_exe", lambda p: p == self.fake or orig(p))
         self.remote = f"ssh://git@{HOST}{self.w.origin}"
         self.store = KeyStore(state, "ws-net")
@@ -665,28 +667,120 @@ def test_git_comes_from_the_pinned_path_never_from_path(net, tmp_path, monkeypat
     marker = tmp_path / "wrapper-ran"
     wrapper = tmp_path / "evil" / "git"
     wrapper.parent.mkdir()
-    wrapper.write_text(f"#!/bin/sh\ntouch '{marker}'\nexec {REAL_GIT} \"$@\"\n")
+    wrapper.write_text(f"#!/bin/sh\ntouch '{marker}'\nexec {dev_git()[0]} \"$@\"\n")
     wrapper.chmod(0o755)
     own = {**net.w.own, "PATH": f"{wrapper.parent}:/usr/bin:/bin"}
-    from orch.land.git import LandRepo
-
     repo = LandRepo(net.w.host_path, own)
-    assert repo.git == REAL_GIT and repo.own["PATH"] == "/usr/bin:/bin"
+    assert repo.git == dev_git()[0] and repo.own["PATH"] == "/usr/bin:/bin"
     t0 = fetch_target(repo, net.store, net.remote, "main")  # gate, ancestry reads and the fetch itself
     assert repo.has(t0) and repo.is_ancestor(t0, t0)
     assert not marker.exists()
 
 
-def test_a_landing_repo_refuses_an_untrusted_git(tmp_path, monkeypatch):
-    fake = tmp_path / "git"
-    fake.write_text("#!/bin/sh\n")
-    fake.chmod(0o755)
-    monkeypatch.setattr(lk, "EXE_CANDIDATES", {"git": (str(fake),), "ssh": ()})
-    from orch.land.git import LandRepo
+def fake_developer_dir(base: Path) -> tuple[Path, Path]:
+    """``<dev>/usr/bin/git`` + ``<dev>/usr/libexec/git-core`` and a link to ``<dev>``, all owned by the test user."""
+    dev = base.resolve() / "Developer"
+    (dev / "usr" / "bin").mkdir(parents=True)
+    (dev / "usr" / "libexec" / "git-core").mkdir(parents=True)
+    git = dev / "usr" / "bin" / "git"
+    git.write_text("#!/bin/sh\n")
+    git.chmod(0o755)
+    link = base.resolve() / "xcode_select_link"
+    link.symlink_to(dev)
+    return dev, link
 
-    with pytest.raises(LandGitError) as e:
+
+@pytest.fixture
+def real_resolution(monkeypatch):
+    monkeypatch.setattr(lk, "pinned_git", lk.resolve_git)
+
+
+def test_macos_git_is_the_developer_dir_behind_the_root_owned_link_not_the_shim(real_resolution, tmp_path, monkeypatch):
+    dev, link = fake_developer_dir(tmp_path)
+    monkeypatch.setattr(lk, "PLATFORM", "darwin")
+    monkeypatch.setattr(lk, "XCODE_LINK", str(link))
+    # user-owned (as an ordinary Xcode install is): refused, with a plain hint
+    with pytest.raises(LandKeyError) as e:
+        lk.resolve_git()
+    assert e.value.code == "land.untrusted_exe" and "Command Line Tools" in e.value.reason
+    with pytest.raises(LandGitError) as e2:  # LandRepo refuses too: no landing git process starts
         LandRepo(str(tmp_path / "x.git"))
+    assert e2.value.code == "land.untrusted_exe"
+    # root-owned (the owner check is the test seam; tests cannot chown): accepted, and never /usr/bin/git
+    monkeypatch.setattr(lk, "trusted_link", lambda p: True)
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: True)
+    monkeypatch.setattr(lk, "_chain_ok", lambda p: True)
+    assert lk.resolve_git() == (str(dev / "usr/bin/git"), str(dev / "usr/libexec/git-core"))
+
+
+def test_macos_refuses_a_missing_or_foreign_link_or_helper_dir(real_resolution, tmp_path, monkeypatch):
+    dev, link = fake_developer_dir(tmp_path)
+    monkeypatch.setattr(lk, "PLATFORM", "darwin")
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: True)
+    monkeypatch.setattr(lk, "_chain_ok", lambda p: True)
+    monkeypatch.setattr(lk, "XCODE_LINK", str(tmp_path / "nope"))
+    monkeypatch.setattr(lk, "trusted_link", lambda p: True)
+    with pytest.raises(LandKeyError):  # no link
+        lk.resolve_git()
+    monkeypatch.setattr(lk, "XCODE_LINK", str(link))
+    monkeypatch.setattr(lk, "trusted_link", lambda p: False)
+    with pytest.raises(LandKeyError):  # a link that is not root-owned
+        lk.resolve_git()
+    monkeypatch.setattr(lk, "trusted_link", lambda p: True)
+    shutil.rmtree(dev / "usr" / "libexec" / "git-core")
+    with pytest.raises(LandKeyError):  # no helper directory
+        lk.resolve_git()
+
+
+def test_the_real_trusted_link_check_needs_a_root_owned_link(tmp_path):
+    _dev, link = fake_developer_dir(tmp_path)
+    assert lk.trusted_link(str(link)) is False and lk.trusted_link(str(tmp_path / "missing")) is False
+
+
+def test_linux_git_needs_a_root_owned_exe_and_exec_dir(real_resolution, monkeypatch):
+    monkeypatch.setattr(lk, "PLATFORM", "linux")
+    if not os.path.isfile("/usr/bin/git"):
+        pytest.skip("no /usr/bin/git")
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: False)
+    with pytest.raises(LandKeyError) as e:
+        lk.resolve_git()
     assert e.value.code == "land.untrusted_exe"
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: True)
+    monkeypatch.setattr(lk, "_chain_ok", lambda p: False)  # the exec dir chain is not root-owned
+    with pytest.raises(LandKeyError):
+        lk.resolve_git()
+    monkeypatch.setattr(lk, "_chain_ok", lambda p: True)
+    git, exec_dir = lk.resolve_git()
+    want = subprocess.run(["/usr/bin/git", "--exec-path"], capture_output=True, text=True, check=True).stdout.strip()
+    assert git == "/usr/bin/git" and exec_dir == os.path.realpath(want)
+
+
+def test_every_landing_git_process_runs_the_pinned_git_with_its_exec_path(net, tmp_path, monkeypatch):
+    """The gate's own reads (version, config, rev-parse) are landing git processes too (Opus M1 on #762)."""
+    git, exec_dir = dev_git()
+    log = tmp_path / "git.log"
+    wrapper = tmp_path / "pin" / "git"
+    wrapper.parent.mkdir()
+    wrapper.write_text(f'#!/bin/sh\necho "$1 $GIT_EXEC_PATH" >> \'{log}\'\nexec {git} "$@"\n')
+    wrapper.chmod(0o755)
+    monkeypatch.setattr(lk, "pinned_git", lambda: (str(wrapper), exec_dir))
+    monkeypatch.setattr(gitsafe, "_VERSIONS", {})
+    repo = LandRepo(net.w.host_path, {"PATH": f"{tmp_path}/evil:/usr/bin:/bin", "HOME": str(tmp_path)})
+    repo.has("a" * 40)
+    lines = log.read_text().splitlines()
+    assert any(ln.startswith("--version") for ln in lines)  # the gate's version read
+    assert len(lines) >= 4 and all(ln.endswith(f" {exec_dir}") or ln.startswith("-c ") for ln in lines)
+    assert all(exec_dir in ln for ln in lines)
+
+
+def test_public_key_reads_the_descriptor_it_checked_not_the_path(store, monkeypatch):
+    store.generate()
+
+    def no_open(*a, **k):
+        raise AssertionError("reopened by path")
+
+    monkeypatch.setattr("builtins.open", no_open)
+    assert store.public_key().startswith("ssh-ed25519 ")
 
 
 def test_a_command_with_a_git_path_must_be_a_landing_op_with_a_plain_path(bare):

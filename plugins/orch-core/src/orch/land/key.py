@@ -30,6 +30,8 @@ import os
 import re
 import secrets
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -42,8 +44,12 @@ from orch.host.errors import HostError
 
 __all__ = ["KeyStore", "LandKeyError", "fingerprint", "pinned_exe", "remote_host", "scrub", "trusted_exe"]
 
-#: the only places ``git`` and ``ssh`` may come from (Linux and macOS both have them here)
-EXE_CANDIDATES: dict[str, tuple[str, ...]] = {"git": ("/usr/bin/git",), "ssh": ("/usr/bin/ssh",)}
+#: the only places ``ssh`` may come from (a real binary on Linux and macOS). ``git`` is :func:`pinned_git`: on macOS
+#: ``/usr/bin/git`` is a shim that runs whatever ``xcode-select`` names, so it is never the pin.
+EXE_CANDIDATES: dict[str, tuple[str, ...]] = {"ssh": ("/usr/bin/ssh",)}
+#: macOS: the root-owned link ``xcode-select`` keeps to the active developer directory (tests replace it)
+XCODE_LINK = "/var/db/xcode_select_link"
+PLATFORM = sys.platform
 COMMENT = "orch-land"
 _MAX_PIN_LINES = 8
 _KEY_TYPES = frozenset({
@@ -110,12 +116,68 @@ def trusted_exe(path: str) -> bool:
 
 
 def pinned_exe(name: str) -> str:
-    """The absolute path of ``git`` or ``ssh``: the first candidate of :data:`EXE_CANDIDATES` that
+    """The absolute path of ``ssh``: the first candidate of :data:`EXE_CANDIDATES` that
     :func:`trusted_exe` accepts. Never looked up on ``PATH``; a user-writable one (``/opt/homebrew/bin``) is refused."""
     for cand in EXE_CANDIDATES.get(name, ()):
         if os.path.isfile(cand) and trusted_exe(cand):
             return cand
     raise LandKeyError("land.untrusted_exe", f"{name} is not a root-owned system program")
+
+
+def _untrusted_git() -> LandKeyError:
+    return LandKeyError(
+        "land.untrusted_exe",
+        "git is not a root-owned system program (install the Command Line Tools or an App Store Xcode, "
+        "which are owned by the system)",
+    )
+
+
+def trusted_link(path: str) -> bool:
+    """A symlink owned by root in a root-owned directory chain (macOS ``xcode_select_link``). Tests replace it."""
+    try:
+        st = os.lstat(path)
+        return stat.S_ISLNK(st.st_mode) and st.st_uid == 0 and _chain_ok(os.path.dirname(path))
+    except OSError:
+        return False
+
+
+def resolve_git() -> tuple[str, str]:
+    """``(git, GIT_EXEC_PATH)``: a root-owned git and its root-owned helper directory, both with a root-owned directory
+    chain and no foreign write ACL; anything else is ``land.untrusted_exe``. macOS: the developer directory behind the
+    root-owned ``xcode_select_link`` (``<dir>/usr/bin/git``, ``<dir>/usr/libexec/git-core``), never the ``/usr/bin/git``
+    shim, which execs the ``xcode-select``'d git (user-writable in an ordinary Xcode install) and keeps a user-writable
+    cache. Linux: ``/usr/bin/git`` and the directory it reports for ``--exec-path``."""
+    if PLATFORM == "darwin":
+        if not trusted_link(XCODE_LINK):
+            raise _untrusted_git()
+        dev = os.path.realpath(XCODE_LINK)
+        git, libexec = f"{dev}/usr/bin/git", f"{dev}/usr/libexec/git-core"
+    else:
+        git = "/usr/bin/git"
+        if not os.path.isfile(git) or not trusted_exe(git):
+            raise _untrusted_git()
+        try:
+            done = subprocess.run(  # noqa: S603 - fixed argv, the system git, a minimal environment
+                [git, "--exec-path"], stdin=subprocess.DEVNULL, capture_output=True, cwd="/", timeout=10, check=False,
+                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": "/nonexistent"}, start_new_session=True,
+            )  # fmt: skip
+        except (OSError, subprocess.SubprocessError):
+            raise _untrusted_git() from None
+        libexec = done.stdout.decode("utf-8", "replace").strip() if done.returncode == 0 else ""
+    if not (os.path.isfile(git) and trusted_exe(git) and libexec.startswith("/") and os.path.isdir(libexec)):
+        raise _untrusted_git()
+    real = os.path.realpath(libexec)
+    try:
+        if not (_chain_ok(real) and _chain_ok(libexec)):
+            raise _untrusted_git()
+    except OSError:
+        raise _untrusted_git() from None
+    return git, real
+
+
+def pinned_git() -> tuple[str, str]:
+    """:func:`resolve_git`; the one name callers use (tests replace it to run on a developer's own git)."""
+    return resolve_git()
 
 
 # -- the remote --------------------------------------------------------------------------------------------------------
@@ -212,13 +274,16 @@ class KeyStore:
     def _key_path(self) -> Path:
         return self._state / "land" / self._ws / "key"
 
-    def _secret_file_ok(self, path: Path) -> None:
+    def _secret_file_ok(self, path: Path, *, read: int = 0) -> bytes:
+        """Check the key/pin file (regular, ours, private, one link, no ACL) on the OPEN descriptor, and with ``read``
+        return up to that many bytes read from that same descriptor (never reopened by path)."""
         try:
             fd = os.open(path, _FLAGS_FILE)
         except FileNotFoundError:
             raise LandKeyError("land.no_key", "this workspace has no landing key yet") from None
         except OSError:
             raise _unsafe() from None
+        data = b""
         try:
             st = os.fstat(fd)
             try:
@@ -227,13 +292,19 @@ class KeyStore:
                 raise LandKeyError(
                     "land.key_unsafe", "the landing key file is not a private file of this user"
                 ) from None
+            if (
+                not stat.S_ISREG(st.st_mode) or st.st_uid != self.host_uid or stat.S_IMODE(st.st_mode) & 0o177
+                or st.st_nlink != 1
+            ):  # fmt: skip
+                raise LandKeyError("land.key_unsafe", "the landing key file is not a private file of this user")
+            if read:
+                try:
+                    data = os.read(fd, read)
+                except OSError:
+                    raise LandKeyError("land.key_unsafe", "the landing key file cannot be read") from None
         finally:
             os.close(fd)
-        if (
-            not stat.S_ISREG(st.st_mode) or st.st_uid != self.host_uid or stat.S_IMODE(st.st_mode) & 0o177
-            or st.st_nlink != 1
-        ):  # fmt: skip
-            raise LandKeyError("land.key_unsafe", "the landing key file is not a private file of this user")
+        return data
 
     # -- the key
     def generate(self, *, replace: bool = False) -> str:
@@ -275,10 +346,9 @@ class KeyStore:
         key at the remote. Derived from the private file each time (no second copy to drift)."""
         self._dir(create=False)
         path = self._key_path
-        self._secret_file_ok(path)
+        raw = self._secret_file_ok(path, read=16384)  # read from the descriptor that was checked
         try:
-            with open(path, "rb") as f:  # noqa: PTH123 - mode and owner were checked just above
-                loaded = serialization.load_ssh_private_key(f.read(16384), password=None)
+            loaded = serialization.load_ssh_private_key(raw, password=None)
             if not isinstance(loaded, Ed25519PrivateKey):
                 raise ValueError
             line = loaded.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
@@ -334,7 +404,7 @@ class KeyStore:
         this remote's pin, each checked now (private directories and files of this user). A missing key is
         ``land.no_key``, a missing pin ``land.no_pin`` (never "accept on first use")."""
         host = remote_host(remote)
-        git, ssh = pinned_exe("git"), pinned_exe("ssh")
+        (git, _exec), ssh = pinned_git(), pinned_exe("ssh")
         directory = self._dir(create=False)
         self._secret_file_ok(directory / "key")
         pins = self._pins_dir(create=False) if (directory / "known_hosts").is_dir() else None

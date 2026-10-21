@@ -20,6 +20,8 @@ SECTION_10_3 = [
     "grant", "grant revoke", "member add", "member remove", "member role",
     "init", "doctor", "check", "instructions sync", "instructions hook", "import v1",
     *(f"addon {v}" for v in "list grant preview disable purge".split()),
+    "widgets check",
+    "widgets types",
     "quick list",  # H11f; `quick add` is a CLI composite (new, then set), not an operation
 ]  # fmt: skip
 

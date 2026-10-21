@@ -1,0 +1,37 @@
+<style>
+svg{display:block;width:100%;height:auto}
+.axis{stroke:GrayText;stroke-width:1}
+.line{fill:none;stroke:LinkText;stroke-width:2}
+.dot{fill:LinkText}
+text{font:10px ui-sans-serif,system-ui,sans-serif;fill:GrayText}
+</style>
+<svg id="c" viewBox="0 0 320 150" role="img"></svg>
+<script>
+(function () {
+  var d = orch.data, ns = 'http://www.w3.org/2000/svg', svg = document.getElementById('c')
+  var pts = d.points || [], unit = d.unit ? ' ' + d.unit : ''
+  function el(n, a, t) {
+    var e = document.createElementNS(ns, n)
+    for (var k in a) e.setAttribute(k, a[k])
+    if (t != null) e.textContent = t
+    return e
+  }
+  var xs = pts.map(function (p) { return p[0] }), ys = pts.map(function (p) { return p[1] })
+  var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys), y0 = Math.min(0, Math.min.apply(null, ys))
+  function X(v) { return 34 + (x1 === x0 ? 0 : (v - x0) / (x1 - x0)) * 272 }
+  function Y(v) { return 126 - (y1 === y0 ? 0 : (v - y0) / (y1 - y0)) * 106 }
+  svg.appendChild(el('title', {}, (d.title || 'Line chart') + ': ' + pts.map(function (p) { return p[0] + ' ' + p[1] + unit }).join(', ')))
+  svg.appendChild(el('line', { 'class': 'axis', x1: 34, y1: 126, x2: 306, y2: 126 }))
+  svg.appendChild(el('line', { 'class': 'axis', x1: 34, y1: 20, x2: 34, y2: 126 }))
+  svg.appendChild(el('text', { x: 30, y: 24, 'text-anchor': 'end' }, String(y1)))
+  svg.appendChild(el('text', { x: 30, y: 126, 'text-anchor': 'end' }, String(y0)))
+  svg.appendChild(el('text', { x: 34, y: 142 }, String(x0)))
+  svg.appendChild(el('text', { x: 306, y: 142, 'text-anchor': 'end' }, String(x1)))
+  svg.appendChild(el('polyline', { 'class': 'line', points: pts.map(function (p) { return X(p[0]) + ',' + Y(p[1]) }).join(' ') }))
+  pts.forEach(function (p) {
+    var c = el('circle', { 'class': 'dot', cx: X(p[0]), cy: Y(p[1]), r: 3 })
+    c.appendChild(el('title', {}, p[0] + ': ' + p[1] + unit))
+    svg.appendChild(c)
+  })
+})()
+</script>

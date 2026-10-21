@@ -1,5 +1,6 @@
 import contextlib
 
+from . import widget_frame
 from .errors import response
 from .testrun import UPLOAD_LIMIT
 
@@ -9,7 +10,19 @@ from .testrun import UPLOAD_LIMIT
 # `localhost`); `script-src` and `style-src` are not loosened for xterm.
 CSP = (
     "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
-    "form-action 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:{port}; img-src 'self' data:"
+    "form-action 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:{port}; img-src 'self' data:; "
+    "frame-src http://127.0.0.1:{port}/widget-frame/"
+)
+# Frames: only the locked Widgets route (a path source, never `'self'`). Without `frame-src` the `default-src 'self'`
+# fallback allowed any same-origin frame; this narrows that. On or off is the route's own check, not this header.
+_FRAME_OWN = frozenset(
+    {
+        b"content-security-policy",
+        b"x-frame-options",
+        b"x-content-type-options",
+        b"referrer-policy",
+        b"cross-origin-resource-policy",
+    }
 )
 TERM_PATH = "/term"
 # Bodies of the sign routes are tiny (ids, a hash, a typed word, the switch's passphrase of at most 1024 characters);
@@ -42,12 +55,24 @@ class Security:
             if message["type"] == "http.response.start":
                 started = True
                 hs = list(message.get("headers", []))
-                hs += [
-                    (b"content-security-policy", CSP.format(port=self.port).encode()),
-                    (b"x-content-type-options", b"nosniff"),
-                    (b"x-frame-options", b"DENY"),
-                    (b"referrer-policy", b"no-referrer"),
-                ]
+                if path.startswith(widget_frame.PREFIX):
+                    # The Widgets frame: its own CSP REPLACES the global one (two CSP headers would both apply), and
+                    # it carries no X-Frame-Options (DENY would stop the dashboard framing it; `frame-ancestors` names
+                    # the dashboard). One place, whatever the route set.
+                    hs = [(k, v) for k, v in hs if k.lower() not in _FRAME_OWN]
+                    hs += [
+                        (b"content-security-policy", widget_frame.frame_csp(path, self.port).encode()),
+                        (b"cross-origin-resource-policy", b"same-origin"),
+                        (b"x-content-type-options", b"nosniff"),
+                        (b"referrer-policy", b"no-referrer"),
+                    ]
+                else:
+                    hs += [
+                        (b"content-security-policy", CSP.format(port=self.port).encode()),
+                        (b"x-content-type-options", b"nosniff"),
+                        (b"x-frame-options", b"DENY"),
+                        (b"referrer-policy", b"no-referrer"),
+                    ]
                 if path.startswith(("/api", "/auth")):
                     hs = [(k, v) for k, v in hs if k.lower() != b"cache-control"]
                     hs.append((b"cache-control", b"no-store"))

@@ -29,7 +29,7 @@ from .gateway import Gateway
 PREFIX = "/widget-frame/"
 ADDON = "widgets"
 IMMUTABLE = "public, max-age=31536000, immutable"
-FRAME_PATH = re.compile(r"^/widget-frame/([a-z][a-z0-9-]*)@([0-9]{1,6})/([0-9a-f]{64})$")
+FRAME_PATH = re.compile(r"/widget-frame/([a-z][a-z0-9-]*)@([1-9][0-9]{0,5})/([0-9a-f]{64})")
 _SCRIPT = re.compile(r"<script>(.*?)</script>", re.S)
 _TEMPLATES_DIR = Path(__file__).parent / "widget_templates"
 
@@ -198,9 +198,14 @@ def register(app: FastAPI, gateway: Gateway):
     # slash redirect or the app's page fallback. Exact match or 404.
     @app.api_route(PREFIX + "{rest:path}", methods=["GET", "HEAD"])
     def frame(rest: str, request: Request):
-        template = match(request.url.path)
+        # The same decoded path the security layer matched (its CSP depends on it); the raw path may differ from it
+        # only by the `%40` browsers write for `@`, never by another escape (no alias of a pin).
+        path = request.scope["path"]
+        raw = request.scope.get("raw_path", path.encode()).decode("ascii", "replace")
+        template = match(path)
         if (
             template is None
+            or raw.replace("%40", "@") != path
             or request.scope.get("query_string")
             or request.headers.getlist("sec-fetch-dest") != ["iframe"]
             or request.headers.getlist("sec-fetch-site") not in ([], ["same-origin"])
@@ -210,5 +215,5 @@ def register(app: FastAPI, gateway: Gateway):
         return Response(
             template.document,
             media_type="text/html",
-            headers={"Cache-Control": IMMUTABLE},
+            headers={"Cache-Control": IMMUTABLE, "Vary": "Sec-Fetch-Dest, Sec-Fetch-Site"},
         )

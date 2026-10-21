@@ -117,6 +117,12 @@ def test_an_exact_hit_answers_with_exactly_the_frame_headers(client, widgets_on)
     assert '<template id="orch-page">' in res.text and LINE.page in res.text
 
 
+def test_a_browser_written_at_sign_is_the_one_accepted_escape(client, widgets_on):
+    res = client.get(LINE.path.replace("@", "%40"), headers=IFRAME)
+    assert res.status_code == 200 and res.content == LINE.document
+    assert "sec-fetch-dest" in res.headers["vary"].lower()
+
+
 def test_the_global_csp_is_replaced_not_added_to(client, widgets_on):
     res = client.get(LINE.path, headers=IFRAME)
     assert len(res.headers.get_list("content-security-policy")) == 1
@@ -133,6 +139,10 @@ def test_the_global_csp_is_replaced_not_added_to(client, widgets_on):
         pytest.param(lambda t: t.path.replace("line-chart@1", "no-such@1"), id="unknown-name"),
         pytest.param(lambda t: t.path.replace("/widget-frame/", "/widget-frame//"), id="double-slash"),
         pytest.param(lambda t: t.path + "/x", id="extra-segment"),
+        pytest.param(lambda t: t.path.replace("@1", "@01"), id="leading-zero-version"),
+        pytest.param(lambda t: t.path.replace("@1/", "%401%2f"), id="encoded-separator"),
+        pytest.param(lambda t: t.path + "%0a", id="trailing-newline"),
+        pytest.param(lambda t: t.path.replace("line-chart", "line%2dchart"), id="encoded-name"),
         pytest.param(lambda t: "/widget-frame/line-chart@1", id="no-digest"),
         pytest.param(lambda t: "/widget-frame/", id="prefix-only"),
     ],

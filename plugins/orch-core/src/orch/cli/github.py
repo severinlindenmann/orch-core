@@ -7,11 +7,12 @@ import json
 import os
 import re
 import resource
-import sys
 import time
 import unicodedata
 from pathlib import Path
 
+from orch import tokenshape
+from orch.custody import NoPrompt
 from orch.github import token as tokens
 from orch.github.client import ROUTES, GitHubClient, GitHubError
 from orch.host import securitylog
@@ -83,13 +84,12 @@ def _no_core_dump() -> None:
         pass
 
 
-def _login(state, wid, uid, stdin, out, now):
-    if stdin.isatty():
+def _login(state, wid, uid, out, now):
+    # Only the person's own terminal (/dev/tty): never stdin, which a script or an agent may feed.
+    try:
         raw = TERMINAL._read(PROMPT, echo=False)
-    else:
-        raw = getattr(stdin, "buffer", stdin).readline(512)
-        if isinstance(raw, bytes):
-            raw = raw.decode("ascii", "replace")
+    except NoPrompt:
+        raise _Refusal("invalid.input", "orch github login needs your own terminal (it never reads stdin)") from None
     raw = raw.rstrip()
     if raw.startswith("ghp_"):
         raise _Refusal(
@@ -97,7 +97,7 @@ def _login(state, wid, uid, stdin, out, now):
             "orch accepts only fine-grained tokens (they can be limited to chosen repositories); "
             "a classic token cannot",
         )
-    if not raw.startswith("github_pat_"):
+    if not tokenshape.GITHUB_TOKEN_SHAPE.fullmatch(raw) or not raw.startswith("github_pat_"):
         raise _Refusal("invalid.input", "Invalid fine-grained GitHub token")
     try:
         token = tokens.Token(raw)
@@ -168,7 +168,7 @@ def main(args, *, env, out, err, stdin=None, now=time.time) -> int:
         if args.command != "logout":
             _no_core_dump()
         if args.command == "login":
-            _login(state, wid, uid, sys.stdin if stdin is None else stdin, out, now)
+            _login(state, wid, uid, out, now)
         elif args.command == "logout":
             removed = tokens.remove(state, wid)
             securitylog.record(state, uid, now(), "github.logout")

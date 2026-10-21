@@ -10,13 +10,14 @@ import resource
 import pytest
 
 from orch.cli import github as cli
+from orch.custody import NoPrompt
 from orch.github import token as t
 from orch.github.client import GitHubClient
 from orch.host.custody import write_private
 from orch.host.registry import registry_path
 from tests.github.fake import busy_day, user
 
-SECRET = "github_pat_synthetic_cli_only"
+SECRET = "github_pat_synthetic_cli_only_0123"
 
 
 @pytest.fixture
@@ -30,7 +31,19 @@ def lab(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(resource, "setrlimit", lambda *args: calls.append(args))
 
-    def run(command, *args, stdin=None, env=None):
+    typed = {"value": SECRET}
+
+    class Terminal:
+        def _read(self, prompt, echo):
+            assert echo is False
+            if typed["value"] is None:
+                raise NoPrompt("no controlling terminal")
+            return typed["value"]
+
+    monkeypatch.setattr(cli, "TERMINAL", Terminal())
+
+    def run(command, *args, stdin=None, env=None, typed_value=SECRET):
+        typed["value"] = typed_value
         fake.closed = False
         out, err = io.StringIO(), io.StringIO()
         code = cli.main(
@@ -38,7 +51,7 @@ def lab(tmp_path, monkeypatch):
             env={} if env is None else env,
             out=out,
             err=err,
-            stdin=io.StringIO(SECRET + "\n") if stdin is None else stdin,
+            stdin=io.StringIO(SECRET + "\n") if stdin is None else stdin,  # must never be read
             now=lambda: 123,
         )
         assert SECRET not in out.getvalue() + err.getvalue()
@@ -71,29 +84,36 @@ def test_full_flow_leak_sweep(lab, caplog):
             assert SECRET.encode() not in path.read_bytes()
 
 
-def test_terminal_and_env_ignored(lab, monkeypatch):
+def test_terminal_only_and_env_ignored(lab):
     state, fake, run, _ = lab
-    prompts = []
-
-    class TTY(io.StringIO):
-        def isatty(self):
-            return True
-
-    class Terminal:
-        def _read(self, prompt, echo):
-            prompts.append((prompt, echo))
-            return SECRET
-
-    monkeypatch.setattr(cli, "TERMINAL", Terminal())
-    assert run("login", stdin=TTY(), env={"GH_TOKEN": "bad", "GITHUB_TOKEN": "bad"})[0] == 0
-    assert prompts == [(cli.PROMPT, False)]
-    assert run("login", stdin=io.StringIO(""), env={"GH_TOKEN": SECRET, "GITHUB_TOKEN": SECRET})[0] == 1
+    assert run("login", env={"GH_TOKEN": "bad", "GITHUB_TOKEN": "bad"})[0] == 0
+    t.remove(state, "ws")
+    assert run("login", typed_value="", env={"GH_TOKEN": SECRET, "GITHUB_TOKEN": SECRET})[0] == 1
 
 
-@pytest.mark.parametrize("value", ["ghp_classic_fake", "bad", "github_pat_bad control", "github_pat_" + "a" * 512])
+def test_piped_stdin_is_refused_and_stores_nothing(lab):
+    state, fake, run, _ = lab
+    code, out, err = run("login", stdin=io.StringIO(SECRET + "\n"), typed_value=None)
+    assert code == 1 and "own terminal" in err
+    assert not fake.seen
+    with pytest.raises(t.NoToken):
+        t.load(state, "ws", os.getuid())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ghp_classic_fake",
+        "bad",
+        "github_pat_bad control",
+        "github_pat_short",
+        "github_pat_" + "a" * 20 + "!",
+        "github_pat_" + "a" * 512,
+    ],
+)
 def test_bad_inputs(lab, value):
     state, fake, run, _ = lab
-    code, out, err = run("login", stdin=io.StringIO(value))
+    code, out, err = run("login", typed_value=value)
     assert code == 1 and value not in out + err
     assert not fake.seen
     with pytest.raises(t.NoToken):
@@ -133,7 +153,7 @@ def test_rotation_and_hostile_reply(lab):
     for name in t.CACHE_FILES:
         (t.github_dir(state, "ws") / name).write_text("old")
     fake.register("/user", json_body=user(SECRET))
-    assert run("login", stdin=io.StringIO(SECRET + "2"))[0] == 0
+    assert run("login", typed_value=SECRET + "2")[0] == 0
     assert all(not (t.github_dir(state, "ws") / name).exists() for name in t.CACHE_FILES)
     fake.register("/rate_limit", json_body={"resources": []})
     assert "unknown" in run("whoami")[1]
@@ -142,20 +162,12 @@ def test_rotation_and_hostile_reply(lab):
     assert run("whoami", *[item for _ in range(21) for item in ("--repo", "team/alpha")])[0] == 1
 
 
-def test_bounded_binary_stdin_and_expiry(lab):
+def test_expiry_is_shown(lab):
     _, fake, run, _ = lab
     expiry = "2027-01-01 00:00:00 UTC"
     fake.register("/user", json_body=user(), headers={"github-authentication-token-expiration": expiry})
-
-    class Bounded(io.BytesIO):
-        def readline(self, size=-1):
-            assert size == 512
-            return super().readline(size)
-
-    stream = Bounded((SECRET + "\nsecond line\n").encode())
-    code, out, _ = run("login", stdin=stream)
+    code, out, _ = run("login")
     assert code == 0 and expiry in out
-    assert stream.read() == b"second line\n"
 
 
 def test_dispatch(monkeypatch):

@@ -11,7 +11,7 @@ import pytest
 from orch.github import token as t
 from orch.host.errors import HostError
 
-SECRET = "github_pat_synthetic_test_only"
+SECRET = "github_pat_synthetic_test_only_0123"
 
 
 @pytest.fixture
@@ -105,6 +105,16 @@ def test_foreign_file_owner(state, monkeypatch):
         return info
 
     monkeypatch.setattr(os, "fstat", foreign)
+    with pytest.raises(HostError) as caught:
+        t.load(state, "ws", os.getuid())
+    assert caught.value.code == "custody.unsafe_mode"
+
+
+def test_token_shape_is_checked_on_store_and_load(state):
+    with pytest.raises(HostError):
+        t.store(state, "ws", os.getuid(), t.Token("github_pat_short"))
+    t.store(state, "ws", os.getuid(), t.Token(SECRET))
+    (t.github_dir(state, "ws") / t.TOKEN_FILE).write_text('{"v":1,"token":"github_pat_short"}')
     with pytest.raises(HostError) as caught:
         t.load(state, "ws", os.getuid())
     assert caught.value.code == "custody.unsafe_mode"

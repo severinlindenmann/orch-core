@@ -11,6 +11,7 @@ import secrets
 import stat
 from pathlib import Path
 
+from orch import tokenshape
 from orch.host import custody
 
 # This is the only module that opens the token file.
@@ -63,6 +64,10 @@ class Token:
     def fingerprint(self) -> str:
         """Partition future cache entries by credential without storing the credential."""
         return hashlib.sha256(self.__value.encode("ascii")).hexdigest()
+
+
+def _shaped(value: str) -> bool:
+    return value.startswith("github_pat_") and tokenshape.GITHUB_TOKEN_SHAPE.fullmatch(value) is not None
 
 
 TOKEN_FILE = "token"
@@ -159,7 +164,7 @@ def load(state_dir, workspace_id, host_uid) -> Token:
     value = doc.get("token") if valid else None
     try:
         token = Token(value)
-        valid = value.startswith("github_pat_")
+        valid = _shaped(value)
     except ValueError:
         valid = False
     if not valid:
@@ -171,7 +176,7 @@ def store(state_dir, workspace_id, host_uid, token: Token) -> None:
     """Rotation discards cached responses so credentials never inherit another account's data."""
     directory = github_dir(state_dir, workspace_id)
     custody.check_tree(directory.parent, host_uid)
-    if not token.reveal().startswith("github_pat_"):
+    if not _shaped(token.reveal()):
         raise custody.unsafe("Invalid GitHub credential")
     data = json.dumps({"v": 1, "token": token.reveal()}, sort_keys=True, separators=(",", ":")).encode()
     with _open_dir(directory, host_uid, create=True) as dfd:

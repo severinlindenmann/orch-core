@@ -167,7 +167,7 @@ def test_warm_cache_dropped_on_rotation_before_success(setup):
     target = "/repos/team/alpha/pulls?page=1&per_page=100&state=open"
     fake.fail(target)
     assert not second.run_once().verified and second.snapshot().pulls
-    token.store(state, "ws", os.getuid(), token.Token("github_pat_new_synthetic"))
+    token.store(state, "ws", os.getuid(), token.Token("github_pat_new_synthetic_0123456789"))
     fake.register(target, status=401)
     result = second.run_once()
     assert result.state == "bad_token" and not result.pulls

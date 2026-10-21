@@ -209,11 +209,14 @@ def test_a_user_writable_directory_chain_is_not_trusted(monkeypatch):
 
 
 def test_a_group_writable_executable_is_not_trusted(monkeypatch):
+    # trusted_exe checks the RESOLVED file. Match on the realpath, not the name: on Linux /usr/bin/true can be a link
+    # to a multi-call binary (uutils coreutils), whose path does not end in "/true".
     real_stat = os.stat
+    target = os.path.realpath("/usr/bin/true")
 
     def fake(path, *a, **k):
         st = real_stat(path, *a, **k)
-        if str(path).endswith("/true"):
+        if os.path.realpath(path) == target:
             return os.stat_result((st.st_mode | 0o020, *tuple(st)[1:]))
         return st
 

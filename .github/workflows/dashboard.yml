@@ -108,7 +108,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       # The realhost module starts a real orch host and a pty-driven signer: run it locally (see server/README.md).
-      - run: uv run pytest -q -m "not realhost"
+      - run: uv run pytest -q -m "not realhost" -n auto
   gate:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: dashboard gate

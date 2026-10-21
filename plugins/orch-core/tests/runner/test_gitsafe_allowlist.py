@@ -181,7 +181,10 @@ def _populated_submodule(repo: Path, marker: Path) -> Path:
     _git(repo, "add", "sub")
     _git(repo, "commit", "-qm", "gitlink")
     _git(sub, "config", "filter.m.clean", f"touch {marker}; cat")
-    (sub / "a").write_text("a\nchanged\n")
+    # Same size as the committed "a\n": git then has to read (and so filter) the file to see the change. A different
+    # size is reported as modified from the stat data alone, and whether the filter also ran depended on whether the
+    # index entry was still "racy" (written in the same clock tick), which made the control below flaky.
+    (sub / "a").write_text("b\n")
     return sub
 
 

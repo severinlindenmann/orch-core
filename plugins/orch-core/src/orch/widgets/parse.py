@@ -215,8 +215,8 @@ def _check(raw):
     return BlockResult(spec=spec)
 
 
-_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})([^\n\r\u2028\u2029]*)\Z")
-_CLOSE = re.compile(r" {0,3}(`+|~+)[" + JS_SPACE + r"]*\Z")
+_OPEN = re.compile(r" {0,3}(`{3,}+|~{3,}+)([^\n\r\u2028\u2029]*)\Z")
+_CLOSE = re.compile(r" {0,3}(`++|~++)[" + JS_SPACE + r"]*\Z")
 _LAZY_BLOCK = re.compile(r"^(#{1,6}( |\Z)|>|([-*_])( *\3){2,} *\Z)")
 _LIST = re.compile(r"^ {0,3}([-*+]|\d{1,9}[.)])( |\Z)", re.ASCII)
 

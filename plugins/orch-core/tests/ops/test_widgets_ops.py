@@ -29,3 +29,9 @@ def test_widgets_check_and_types_cli(ws, cli, tmp_path):
     assert cli("widgets", "check", str(f), "--section", "plan").code != 0
     out = cli("widgets", "types").out
     assert "timeline" in out and "example:" in out
+
+
+def test_new_refuses_a_widget_block_in_the_summary(ws, cli):
+    r = cli.j("new", "T", "--message", GOOD)
+    assert r.err_code == "parse.text"
+    assert cli("new", "T", "--message", "plain").code == 0

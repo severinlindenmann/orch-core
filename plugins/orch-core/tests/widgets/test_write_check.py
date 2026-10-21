@@ -72,3 +72,20 @@ def test_message_shows_three_problems_and_the_count_of_the_rest():
     ps = check.check_write({}, "context", "\n".join([BAD] * 5))
     m = check.message(ps, "context")
     assert m.count("widget block") == 3 and "(+2 more)" in m
+
+
+def test_cap_refusal_names_a_real_line():
+    ps = check.check_write({"verification": "\n".join([GOOD] * 39)}, "context", "intro\n\n" + GOOD + "\n\n" + GOOD)
+    assert [(p.block, p.line) for p in ps] == [(2, 7)]
+
+
+def test_hostile_inputs_stay_fast():
+    import time
+
+    t = time.monotonic()
+    check.check_section_text({}, "context", "~" * 60000 + " x")
+    kv = json.dumps({"type": "kv", "items": {str(i): 0 for i in range(7000)}}, separators=(",", ":"))
+    for _ in range(6):
+        parse_block(kv)
+    check.check_section_text({}, "context", "```orch\n" + "[" * 60000 + "\n```")
+    assert time.monotonic() - t < 3

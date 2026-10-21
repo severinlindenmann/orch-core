@@ -30,7 +30,10 @@ def js_order(o: dict) -> dict:
     indices = sorted(
         (k for k in o if re.fullmatch(r"0|[1-9][0-9]*", k) and len(k) <= 10 and int(k) < 2**32 - 1), key=int
     )
-    return {k: o[k] for k in [*indices, *(k for k in o if k not in indices)]}
+    if not indices:
+        return o
+    seen = set(indices)
+    return {k: o[k] for k in [*indices, *(k for k in o if k not in seen)]}
 
 
 def js_string(v) -> str:

@@ -73,8 +73,11 @@ def check_write(
     old = count_blocks(body.get(section) or "", section)
     others = sum(count_blocks(v or "", k) for k, v in body.items() if k != section and v)
     if new > old and others + new > MAX_BLOCKS:
+        lines = [x.block.line for x in parse_section(text, section) if isinstance(x, WidgetSegment)]
         return [
-            Problem(new, 1, f"a ticket holds at most {MAX_BLOCKS} widgets; the other sections already hold {others}")
+            Problem(
+                new, lines[-1], f"a ticket holds at most {MAX_BLOCKS} widgets; the other sections already hold {others}"
+            )
         ]
     return []
 

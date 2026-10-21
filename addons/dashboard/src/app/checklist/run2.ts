@@ -1,12 +1,12 @@
-// The tester's checklist of e2e RUN 3 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
+// The tester's checklist of e2e RUN 4 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
 // Step ids match the sections and numbers of that file (A1, B1.3, C5 ...); the server accepts ids of the form
 // [A-Z]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
 
 import { ADDON_SECTIONS } from './addons'
 
-// FLIP AT THE NEXT PIN: change this one value to 'run4' (the whole page, the server path and "Done in run N" follow it).
+// FLIP AT THE NEXT PIN: change this one value to 'run5' (the whole page, the server path and "Done in run N" follow it).
 // Steps passed in earlier runs are then carried over (see carry.ts); the step texts below may stay or be edited.
-export const RUN_ID = 'run3'
+export const RUN_ID = 'run4'
 export const RUN_NUMBER = Number(RUN_ID.slice(3))
 
 export interface ChecklistStep {
@@ -37,15 +37,15 @@ export interface ChecklistSection {
   steps: ChecklistStep[]
 }
 
-export const RUN2_TITLE = 'Test checklist: end-to-end run 3'
-export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 19 Oct 2026: core A to F, add-ons H to R)'
+export const RUN2_TITLE = 'Test checklist: end-to-end run 4'
+export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 21 Oct 2026: core A to F, add-ons H to V, new checks W to T)'
 
 export const RUN2_INTRO = [
   'You test on this Mac (Battlepad, user severin) with a real install from develop, in NEW empty test folders. Never your real projects.',
   'Lens: you are not a developer. Note what is confusing, not only what breaks.',
   'Items marked with a warning could not be verified from code or docs. Each step shows a "next:" line when something is left; if it differs, follow it and report it.',
   'Never paste or photograph the secret words, recovery code, passphrase, QR or invite. (Test words you paste to the lead are fine.)',
-  'Run order: A, B, C, D, E, then the add-ons H to R. F (phone) is optional and needs the iPhone ready. At the end press "Copy report" and send it to the lead. All times on screen are your local time.',
+  'Run order: A, B, C, D, E, then the add-ons H to V and the new checks W, X, Y, Z, S and T. F (phone) is optional and needs the iPhone ready. At the end press "Copy report" and send it to the lead. All times on screen are your local time.',
 ]
 
 export const RUN2_KNOWN_GAPS = [

@@ -225,6 +225,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
@@ -11939,7 +11940,7 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 (§12.6.2), `attach.end {att, reason}`, `grant.put {deposit_id, workspace_id, person, grant, secret, until}`,
 `grant.drop {grant}`, `git {op:"worktree.add"|"worktree.remove", repo_pin, path, branch, base, force, generation}`.
 
-- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_HARNESS`,
+- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `ORCH_HARNESS`,
   `CLAUDE_CODE_SUBAGENT_MODEL`); `grant` is an id the runner resolves in its own store. The host never sends a secret
   except once in `grant.put`.
 - The runner validates every command as defence in depth (registry program or `$SHELL`, pin, sizes). `runner.hello`
@@ -12155,7 +12156,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 | `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `ORCH_HOST_RUN_DIR` | if set | if set | the runner unit's (written by `orch runner enable` from the host unit's values) |
 | `ORCH_SESSION` | `s_<ULID>` drawn by the runner | never | runner |
 | `ORCH_GRANT` | the runner grant | **never** | the runner's grant store |
-| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
+| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
 | `pass_env` names from `<person state>/runner.json` | ✓ | ✓ | terminal-only config; values from the runner's environment |
 
 - `pass_env` refuses names matching `LD_*`, `DYLD_*`, `PYTHON*`, `GIT_*`, `ORCH_*`, `BASH_ENV`, `ENV`, `ZDOTDIR`,
@@ -12166,7 +12167,14 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 #### 12.4.4 Working directory
 
 In order: the ticket's registered worktree for its primary repo (created by `agent.start` when `worktree:true` and the
-ticket has a branch for it), the declared working copy (labelled "shared working copy"), the workspace root. Sent as a
+ticket has a branch for it), the declared working copy (labelled "shared working copy"). A ticket with **no
+codebase** (it links no repo, or none that is declared and readable) works in its **work folder**
+`<project>/.orch-work/<KEY>/` (cwd kind `workdir`, `ORCH_WORKDIR`; a sibling of `.orch/`, never inside it). Core decides
+this in `host/agents.py` and nowhere else. `agent.start` (or `term.open`) makes the folder mode 0700 below the project
+fd with `O_NOFOLLOW` at every step (a link, a file or a foreign owner is `launch.cwd_changed`); the preview binds
+"to be made" or the folder's `{dev, ino}` in the spec digest. The folder stays after the ticket closes until the person
+deletes it. Check commands of such a ticket run in it; its results are filed as ticket artifacts
+(`orch artifact add`, at most 64 MiB a file and 512 MiB a ticket). Without a ticket, the workspace root. Sent as a
 pin `{path, dev, ino}`; the trampoline opens it component-wise with `O_NOFOLLOW`, compares, and `fchdir`s
 (`launch.cwd_changed` on a mismatch). `ORCH_WORKTREES` lists the other repos' worktrees as `repo=path` pairs separated
 by `:` (a path containing `:` is left out and named in `warnings`).
@@ -12507,6 +12515,12 @@ Worktree = {ticket:Key, repo:RepoName, branch:str, path:str, generation:int, cre
 worktree.list   {ticket?:Ref, check?:bool = false} → {worktrees:[Worktree]{0..200}}
 worktree.create {ticket:Ref, repo?:RepoName, base?:"default"|"current" = "default"} + opts.idem? → {worktree}
 worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:true}
+workdir.get     {ticket:Ref} → {codebase:true, exists:false} | {codebase:false, exists:bool, folder?:".orch-work/<KEY>", files?:int, bytes?:int, truncated?:bool}
+                // column P; the folder is named below the project, never by its full path
+workdir.delete  {ticket:Ref} + opts.idem → {deleted:bool, folder}
+                // column P (a person-class owner or maintainer, the ticket's owner, an assignee); no log event; deletes exactly
+                // <project>/.orch-work/<KEY> through descriptors without following a link; a live run in it: worktree.in_use;
+                // a ticket with a codebase: invalid.input; gone already: deleted:false
 ```
 
 - `repo` defaults to the only linked repo (required with several). The branch is the current `links.branches.<repo>`

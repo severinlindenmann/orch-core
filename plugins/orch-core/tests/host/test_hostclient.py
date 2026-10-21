@@ -24,8 +24,10 @@ GATE = re.compile(r"(?<=#)[0-9a-f]{12}")
 PERSON = re.compile(r"p_[0-9a-f]{32}|gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")  # each lab draws its own owner key and grant
 
 
-def flat(r, wid: str) -> tuple[int, str, str]:
+def flat(r, wid: str, root=None) -> tuple[int, str, str]:
     def mask(text: str) -> str:
+        if root is not None:  # the project folder differs per lab (a work folder line names its full path)
+            text = text.replace(str(root), "<root>")
         return PERSON.sub("<person>", GATE.sub("<gate>", NONCE.sub("<nonce>", text.replace(wid, "<ws>"))))
 
     return r.code, mask(r.out), mask(r.err)
@@ -99,11 +101,11 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     other = Lab(tmp_path_factory.mktemp("h"))
     try:
         d = Cli(direct.ws)
-        want = [flat(d(*argv), WS) for argv in SCRIPT]
+        want = [flat(d(*argv), WS, direct.root) for argv in SCRIPT]
         served = hosted(other)
         try:
             h = hcli(other)
-            got = [flat(h(*argv), WS) for argv in SCRIPT]
+            got = [flat(h(*argv), WS, other.root) for argv in SCRIPT]
         finally:
             served.close()
     finally:

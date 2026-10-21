@@ -91,6 +91,7 @@ function fake(
     done?: boolean
     click?: boolean
     relayUnavailable?: boolean
+    noGit?: boolean
     complete?: boolean
     defaults?: boolean
     suggested?: Record<string, unknown>
@@ -107,6 +108,7 @@ function fake(
         ...state,
         ...(options.stateError ? {phase: 'failed', error: {code: 'demo.failure', message: 'Runner could not connect'}} : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
+        ...(options.noGit ? { git: { repo: false } } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
@@ -942,6 +944,36 @@ test.each([
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
+})
+
+test('a folder without git offers to make one when Worktrees is on, and never commits anything', async () => {
+  const f = fake({ defaults: true, noGit: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByText(/This folder is not a git repository/)).toBeInTheDocument()
+  expect(screen.getByText(/None of your files is committed/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Choose above to continue/ })).toBeDisabled()
+  fireEvent.click(screen.getByLabelText(/Make it a git repository/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
+})
+
+test('choosing to continue without worktrees drops them and asks no git question', async () => {
+  const f = fake({ defaults: true, noGit: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByLabelText(/Continue without worktrees/))
+  expect(screen.queryByText(/This folder is not a git repository/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  const sent = f.calls.find((c) => c.path === 'profile')?.body as { addons: string[]; git_init: boolean }
+  expect(sent.addons).not.toContain('worktrees')
+  expect(sent.git_init).toBe(false)
 })
 
 test('after the terminal confirms, the words are replaced by a matched notice', async () => {

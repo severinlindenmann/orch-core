@@ -117,7 +117,7 @@ def agent_preview(data):
     whether the worktree is created first), with which environment names and runner grant, and what blocks it. Not
     `argv` or `program`: `display` is what the person is shown."""
     cwd = data.get("cwd") if isinstance(data.get("cwd"), dict) else {}
-    kind = cwd.get("kind") if cwd.get("kind") in ("workspace", "repo", "worktree") else None
+    kind = cwd.get("kind") if cwd.get("kind") in ("workspace", "repo", "worktree", "workdir") else None
     shown = {"kind": kind}
     for key in ("repo", "ticket"):
         value = text(cwd.get(key), 64)

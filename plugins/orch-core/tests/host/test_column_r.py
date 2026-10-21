@@ -173,6 +173,7 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
     # widgets ops are refused to R on purpose (agents' local helpers)
     reads -= {"widgets.check", "widgets.types"}
     assert not {"widgets.check", "widgets.types"} & columns.RELAY_OPS
+    reads -= {"addon.preview"}  # refused for R on purpose: turning an add-on on is a sequence, which no phone signs
     host = {
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import orch.relay
+from orch import fdwait
 from orch.relay import worker as W
 from orch.relay.state import StateDir
 
@@ -367,7 +368,6 @@ def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate,
     """In the child: no store job, no start, no stop effect, no logout, no close; it never takes the worker's lock (a
     parent thread may hold it at the fork: ``held`` forks while another thread holds it). Bounded: the parent waits
     at most 10 s for the child's answer and kills it otherwise."""
-    import select
     import signal
 
     r = Rig(tmp_path)
@@ -410,7 +410,7 @@ def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate,
         os._exit(0)
     os.close(wfd)
     try:
-        ready, _, _ = select.select([rfd], [], [], 10)
+        ready = fdwait.readable(rfd, 10)
         got = os.read(rfd, 1) if ready else b"hang"
     finally:
         os.close(rfd)

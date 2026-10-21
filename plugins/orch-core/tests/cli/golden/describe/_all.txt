@@ -1,5 +1,5 @@
 ok describe all
-Context: status, describe, help
+Context: status, describe, help, widgets types|check
 Read: show, list, quick list, search, next, inbox
 Lifecycle: new, claim, release, handoff, submit, ask, wait
 Edit: set, section set, ac add|edit, task list|next|add|edit|start|done|skip|block|reopen, artifact add|replace|list, log, apply

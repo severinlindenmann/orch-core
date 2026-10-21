@@ -133,11 +133,35 @@ def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     return Out({"question": qid_n, "blocking": q["blocking"]}, ["orch wait" if q["blocking"] else "orch task next"])
 
 
+def _widgets_addon_on(c: Call) -> bool:
+    from orch.addons.install import as_addons
+
+    try:
+        a = as_addons(c.store.state.workspace.addons).get("widgets")
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return a is not None and a.enabled and not a.purged
+
+
+def check_widgets(c: Call, p: Projection, sid: str, text: str) -> None:
+    """Refuse a section whose ``orch`` widget blocks the strict validator (the dashboard's, ported) would not draw, so
+    the author learns it where it can fix it. Text without a fence is not even parsed."""
+    from orch.widgets import check
+
+    if not check.has_fence(text):
+        return
+    body = c.store.body_sections(p.view.uid)
+    problems = check.check_write(body, sid, text, templates_ok=_widgets_addon_on(c))
+    if problems:
+        raise OrchError("parse.text", check.message(problems, sid))
+
+
 def section_set(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     sid = args["section"]
     if sid not in SECTIONS_BY_TYPE[p.view.type]:
         raise OrchError("invalid.input", f"a {p.view.type} ticket has no section {sid}")
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=65536, what=f"section {sid}").strip("\n")
+    check_widgets(c, p, sid, text)
     p.add(
         {
             "type": "ticket.updated",

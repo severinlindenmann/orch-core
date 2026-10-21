@@ -4,6 +4,7 @@ store (D-P2-27, D-P2-28, §12.4.3)."""
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import time
@@ -215,3 +216,37 @@ def test_own_env_is_untouched():
     before = dict(os.environ)
     spawn_spec(agent(), OWN, RunnerConfig(), store_with((WS, ME, GID, SECRET)))
     assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize("prefix", ["github_pat_"] + ["gh" + kind + "_" for kind in "pousr"])
+def test_log_filter_redacts_github_tokens_without_a_held_grant(prefix):
+    token = prefix + "b" * 36
+    rec = logging.LogRecord("orch.runner", logging.INFO, __file__, 1, "before %s after", (token,), None)
+    assert RedactFilter(GrantStore()).filter(rec)
+    assert rec.getMessage() == "before [redacted] after"
+
+
+def test_log_filter_redacts_tokens_in_exception_text():
+    token = "github_pat_" + "c" * 36
+    try:
+        raise RuntimeError(f"boom {token} {SECRET}")
+    except RuntimeError:
+        import sys
+
+        info = sys.exc_info()
+    rec = logging.LogRecord("orch.runner", logging.ERROR, __file__, 1, "failed", None, info)
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RedactFilter(store_with((WS, ME, GID, SECRET))))
+    handler.handle(rec)
+    out = stream.getvalue()
+    assert "RuntimeError" in out and "[redacted]" in out
+    assert token not in out and SECRET not in out
+
+
+def test_log_filter_withholds_a_record_that_cannot_be_formatted():
+    token = "github_pat_" + "d" * 36
+    rec = logging.LogRecord("orch.runner", logging.INFO, __file__, 1, "bad %d", (token,), None)
+    assert RedactFilter(GrantStore()).filter(rec)
+    out = logging.Formatter().format(rec)
+    assert token not in out and "withheld" in out

@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
 __all__ = ["GrantError", "GrantStore", "RedactFilter"]
 
 GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
@@ -140,6 +142,7 @@ class RedactFilter(logging.Filter):
         except Exception:  # noqa: BLE001 - a broken record is passed on unchanged
             return True
         clean = GRANT_SHAPE.sub("[redacted]", text)
+        clean = GITHUB_TOKEN_SHAPE.sub("[redacted]", clean)
         for secret in self.store.secrets():
             clean = clean.replace(secret, "[redacted]")
             tail = secret.partition(".")[2]

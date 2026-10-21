@@ -45,6 +45,7 @@ from orch.layout import Layout, LayoutError, StorePin
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
+from orch.tokenshape import GITHUB_TOKEN_SHAPE
 
 __all__ = [
     "Call",
@@ -947,8 +948,10 @@ class Call:
     def check_secret(self, data: str | bytes) -> None:
         text = data if isinstance(data, str) else data.decode("latin-1")
         secret = (self.ctx.grant or "").partition(".")[2]
-        if GRANT_SHAPE.search(text) or (len(secret) >= 8 and secret in text):
-            raise OrchError("grant.secret_in_args", "the text contains a grant secret; it was not stored")
+        if GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text) or (len(secret) >= 8 and secret in text):
+            raise OrchError(
+                "grant.secret_in_args", "the text contains a secret (a grant or a GitHub token); it was not stored"
+            )
 
     def read_text_source(
         self, args: Mapping[str, Any], names: tuple[str, ...] = ("text", "message", "file")

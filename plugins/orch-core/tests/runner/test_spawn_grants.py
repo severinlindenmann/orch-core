@@ -215,3 +215,11 @@ def test_own_env_is_untouched():
     before = dict(os.environ)
     spawn_spec(agent(), OWN, RunnerConfig(), store_with((WS, ME, GID, SECRET)))
     assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize("prefix", ["github_pat_"] + ["gh" + kind + "_" for kind in "pousr"])
+def test_log_filter_redacts_github_tokens_without_a_held_grant(prefix):
+    token = prefix + "b" * 36
+    rec = logging.LogRecord("orch.runner", logging.INFO, __file__, 1, "before %s after", (token,), None)
+    assert RedactFilter(GrantStore()).filter(rec)
+    assert rec.getMessage() == "before [redacted] after"

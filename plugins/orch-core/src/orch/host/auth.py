@@ -31,12 +31,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from orch.tokenshape import GITHUB_TOKEN_BYTES, GITHUB_TOKEN_SHAPE
+
 from .columns import GrantState
 from .errors import HostError
 
 __all__ = [
     "AuthView",
     "GRANT_SHAPE",
+    "GITHUB_TOKEN_SHAPE",
     "GrantEntry",
     "Redactor",
     "Verified",
@@ -193,7 +196,7 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
     secret = _secret_of(grant)
     for part in (frame.get("args"), frame.get("opts"), frame.get("files")):
         for text in _strings(part):
-            if GRANT_SHAPE.search(text) or (secret is not None and secret in text):
+            if GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text) or (secret is not None and secret in text):
                 return True
     inline = [spec.get("b64") if isinstance(spec, Mapping) else None for spec in (frame.get("files") or {}).values()]
     if frame.get("op") == "blob.put" and isinstance(frame.get("args"), Mapping):
@@ -205,7 +208,11 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
             data = base64.b64decode(raw, validate=True)
         except (binascii.Error, ValueError):
             continue  # not base64: blob.invalid later (§0.6 step 8)
-        if _GRANT_BYTES.search(data) or (secret is not None and secret.encode() in data):
+        if (
+            _GRANT_BYTES.search(data)
+            or GITHUB_TOKEN_BYTES.search(data)
+            or (secret is not None and secret.encode() in data)
+        ):
             return True
     return False
 
@@ -230,6 +237,7 @@ class Redactor:
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)
         text = GRANT_SHAPE.sub(REDACTED, text)
+        text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)
 
     def obj(self, value: Any) -> Any:

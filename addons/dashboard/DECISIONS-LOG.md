@@ -1975,3 +1975,12 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 - **Owner review:** pending (run 4).
 - **Revert:** Restore the start-agent add-on page and Running/Ended lists when the owner requests a dedicated page view.
 
+## 2026-10-19 — Add-on settings and enable in one review
+
+**Decision:** Publish and Model routing collect required settings before turning on, then use core's two-step `addon_enable` sequence. The dashboard server reads the preview grant and includes the latest add-on switch event in the idempotency base. Publish stays terminal-only. Existing settings use a plain grant; older on-but-unconfigured workspaces get settings-only setup. Clearing every model while on offers to turn Model routing off.
+
+**Why:** One review covers the settings and grant, with settings signed first. The browser cannot supply the grant. Shared forms keep setup and later edits consistent.
+
+**Revert:** Remove the dashboard `addon_enable` action and setup dialog together; restore the previous switching flow only with a compatible core settings policy.
+
+**Integration note:** needs core #737: the host read `addon.preview` and the top-level `publish` of `workspace.settings` (the Publish addresses, for a person only).

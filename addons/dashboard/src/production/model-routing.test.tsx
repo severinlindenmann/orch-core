@@ -82,7 +82,7 @@ it('Review and sign sends exactly the chosen table, from the closed list, as one
   expect(posted()[0].body).toEqual({ action: 'models_set', models: { 'claude-code': { work: 'sonnet' }, codex: { context: 'o3' } } })
 })
 
-it('choosing the agent default again clears a row; an empty table clears the setting', async () => {
+it('choosing the agent default for every row turns Model routing off', async () => {
   route({ 'claude-code': { work: 'sonnet' } })
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
@@ -90,9 +90,9 @@ it('choosing the agent default again clears a row; an empty table clears the set
   const pick = within(box).getByLabelText('Do the work', { selector: '#route-claude-code-work' })
   await waitFor(() => expect(pick).toHaveValue('sonnet'), T)
   await user.selectOptions(pick, '')
-  await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
+  await user.click(within(box).getByRole('button', { name: 'Turn off Model routing' }))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  expect(posted()[0].body).toEqual({ action: 'models_set', models: {} })
+  expect(posted()[0].body).toEqual({ action: 'addon_disable', name: 'model-routing' })
 })
 
 it('a member can read it but not change it', async () => {

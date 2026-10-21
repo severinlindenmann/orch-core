@@ -32,6 +32,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         sets["ticket.parent"] = pv.key
     text = c.read_text_source(args, ("message", "file"))
     summary = c.text(text, limit=65536, what="description").strip("\n") if text is not None else ""
+    if summary:  # the summary is gate-signed: widget blocks are refused there, as `section set` does
+        from orch.widgets import check
+
+        problems = check.check_write({}, "summary", summary)
+        if problems:
+            raise OrchError("parse.text", check.message(problems, "summary"))
     if ctx.prepare is not None:
         return _prepare(ctx, c, title, kind, bool(sets or summary))
     if ctx.dry_run:

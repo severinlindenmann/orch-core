@@ -18,6 +18,7 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=2048, what="handoff").strip("\n")
     if not text:
         raise OrchError("invalid.input", "the handoff is empty")
+    plans.check_widgets(c, p, "current_state", text)
     p.add({"type": "handoff.written", "text": text})
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "handoff"})
     return plans.Out({"bytes": len(text.encode("utf-8"))}, [views.claim_hint(c)])

@@ -64,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing", "github", "wiki"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -113,6 +113,18 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "model-routing": (
             "Model routing",
             "Choose which AI model each kind of agent work starts on. You still see the model before every start.",
+            False,
+            False,
+        ),
+        "github": (
+            "GitHub",
+            "See pull requests, checks and issues of your repositories. Read only; orch never writes to GitHub.",
+            False,
+            False,
+        ),
+        "wiki": (
+            "Wiki",
+            "Keep team notes as pages in your project's wiki folder. Read and search them in the dashboard.",
             False,
             False,
         ),

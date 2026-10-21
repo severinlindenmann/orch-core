@@ -469,6 +469,7 @@ class Human:
     def artifacts_ok(self, view: Any, gate: str) -> None:
         """F1 5.7: recompute the SHA-256 of every bound artifact file; a mismatch is ``artifact.mismatch``."""
         g = view.gates[gate].input or {}
+        self._checked_artifacts = {}
         for name, a in (g.get("artifacts") or {}).items():
             p = self.store.root / "tickets" / view.uid / "artifacts" / name
             try:
@@ -479,6 +480,7 @@ class Human:
                 raise OrchError("artifact.mismatch", f"{short(name, 60)}: the file cannot be read") from None
             if canon.artifact_digest(data) != a["digest"]:
                 raise OrchError("artifact.mismatch", f"{short(name, 60)} differs from the digest in the log")
+            self._checked_artifacts[(view.uid, name, a["digest"])] = data
 
     def header(self, view: Any, *more: str) -> list[str]:
         """What the person reads before any ticket operation: which ticket (the key is derived by orch from the log id
@@ -511,6 +513,22 @@ class Human:
         acceptance = f.get("acceptance") or []
         for a in acceptance:
             body += [f"{a['id']}:", *self._data(a["text"].split("\n"))]
+            if gate == "verify":
+                from orch.host.acceptance import artifact_statement
+                from orch.model.accept import criterion_hash
+
+                ticket = self.store.state._core.tickets[view.uid]
+                for art in ticket.artifacts.values():
+                    data = getattr(self, "_checked_artifacts", {}).get((view.uid, art.name, art.digest))
+                    if art.ac != a["id"] or data is None:
+                        continue
+                    statement = artifact_statement(art, data)
+                    if statement is None:
+                        continue
+                    if statement["hash"] == criterion_hash(a["id"], a["text"]):
+                        body.append(f"{a['id']}: accepted manually by {art.by} (no automated check)")
+                    else:
+                        body.append(f"{a['id']}: accepted for an earlier wording, no longer counts")
         tasks = inp.get("tasks") or []
         for t in tasks:
             verify = (t.get("verify") or {}).get("cmd")
@@ -643,6 +661,7 @@ class Human:
         log: str,
         action: str,
         precommit: Callable[[], None] | None = None,
+        artifacts: dict[str, bytes] | None = None,
     ) -> Any:
         """Build the person event, ask for the passphrase (the prompt shows the decisive fields of the signing bytes),
         sign, append; ``precommit`` runs inside ``Store.append`` with the workspace lock held (D58: git is read again
@@ -657,7 +676,7 @@ class Human:
             precommit = self._readers_check(precommit, [ev])  # H12d-2: before the mark, so a refusal sets none
         if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
             precommit = self._mark_seen(precommit)
-        return self.store.append(ev, log=log, precommit=precommit)
+        return self.store.append(ev, log=log, precommit=precommit, artifacts=artifacts)
 
     def _mark_seen(self, inner: Callable[[], None] | None) -> Callable[[], None]:
         """``precommit`` that also sets the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); a mark that
@@ -688,6 +707,7 @@ class Human:
         *,
         precommit: Callable[[], None] | None = None,
         review: list[str] | None = None,
+        artifacts: dict[str, bytes] | None = None,
     ) -> Any:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
         and append; ``None`` for a dry run. The word the person types comes from what is signed: the verified key of
@@ -701,7 +721,7 @@ class Human:
         if capture is not None:
             from orch.ops.prepare import Captured
 
-            capture.add(Captured(log, dict(event)))  # submit re-reads git itself (D58)
+            capture.add(Captured(log, dict(event), artifacts=artifacts))  # submit re-reads git itself (D58)
             return None
         if review is not None:
             if log == "workspace":  # no ticket key: the name the event itself carries, never a word the caller picks
@@ -712,7 +732,7 @@ class Human:
                 word = view.key if view is not None else None
             if word is None or not review_prompt("\n".join(review), word):
                 raise OrchError("invalid.input", "not confirmed: nothing was signed")
-        return self._sign_and_append(event, log, action, precommit)
+        return self._sign_and_append(event, log, action, precommit, artifacts)
 
     def recheck_source(self, view: Any, signed: list[dict[str, str]]) -> Callable[[], None]:
         """For ``precommit`` of a decision that binds the source list (D58, D59): inside the append, with the lock held,

@@ -891,6 +891,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
 })
 
 
+
 it('addon enable confirms the grant name and renders the workspace review without a ticket', async () => {
   const { workspaceConfirmWord, fingerprintOf, reviewDigestOf, requestIsConsistent } = await import('@/api/handoff')
   const { clickEligible } = await import('@/api/click')
@@ -918,4 +919,61 @@ it('addon enable confirms the grant name and renders the workspace review withou
   expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
   expect(screen.getByText('Choose GPT-5.4 for work. Settings first, then turn on Model routing.')).toBeVisible()
   expect(screen.getAllByText('model-routing~89abcdef').length).toBeGreaterThan(0)
+})
+it('reviews the exact task edit and relays that action through the existing handoff', async () => {
+  const { fakeRequest, state } = await import('./handoffHarness')
+  const ws = 'a'.repeat(32)
+  const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
+  const action = { action: 'edit_sequence' as const, key: 'DEMO-0043', head_seq: 7, tasks: { edit: { T3: { text: 'Check every header', verify: null } }, add: [] } }
+  const payload = { base_rev: { 'ticket.tasks': 'sha256:' + '0'.repeat(64) }, set: { 'ticket.tasks': [{ id: 'T3', text: 'Check every header', verify: null, proves: [] }] } }
+  const event = { id: 'event-task', type: 'ticket.updated', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, ...payload }
+  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload, derived: {} }] }
+  const request = { ...fakeRequest(), op: 'task.edit', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Edit task', fields_changed: [{ field: 'text', before: 'Check header', after: 'Check every header' }, { field: 'check', before: 'check-header', after: null }] } }
+  request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
+  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Edit task" action={action} onClose={() => {}} /></QueryClientProvider>)
+  const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+  await waitFor(() => expect(button).toBeEnabled())
+  button.click()
+  await waitFor(() => expect(prepare).toHaveBeenCalled())
+  expect(await screen.findByText('Check every header')).toBeVisible()
+  expect(screen.getByText('(not set)')).toBeVisible()
+  expect(prepare).toHaveBeenCalledWith(ws, action, 0)
+})
+
+// R3: each manual authority path uses the existing host signing dialog, posting only its reviewed intent.
+describe('manual acceptance signing paths', () => {
+  it.each(['accept', 'withdraw', 'done'] as const)('reviews and prepares %s without signing after a host refusal', async kind => {
+    const { ManualDialog } = await import('@/app/pages/ticket/ManualAcceptance')
+    const { refusal } = await import('./handoffHarness')
+    const { setFeatures } = await import('@/api/features')
+    const ws = 'a'.repeat(32)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+    const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(refusal('role.denied', 403))
+    const post = vi.spyOn(api, 'postAction')
+    const ticket = { key: 'DEMO-0001' } as import('@/api/types').TicketDocument
+    const ac = { id: 'AC2', text: 'Exact criterion wording' } as import('@/api/types').AcceptanceStatus
+    const task = { id: 'T2', text: 'Exact task wording', lease: null } as import('@/api/types').TaskStatus
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><ManualDialog ticket={ticket} ws={ws} choice={kind === 'done' ? { kind, task } : { kind, ac }} onClose={() => {}} /></QueryClientProvider>)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(kind === 'done' ? task.text : ac.text)
+    if (kind !== 'done') await user.type(within(dialog).getByRole('textbox'), ' Checked personally ')
+    const button = await within(dialog).findByRole('button', { name: 'Sign in Terminal' })
+    await waitFor(() => expect(button).toBeEnabled())
+    await user.click(button)
+    const expected = kind === 'done' ? { action: 'mark_task_done', key: ticket.key, task: 'T2' }
+      : kind === 'accept' ? { action: 'accept_criterion', key: ticket.key, ac: 'AC2', note: 'Checked personally' }
+      : { action: 'withdraw_acceptance', key: ticket.key, ac: 'AC2', reason: 'Checked personally' }
+    await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, expected, 0))
+    expect(post).not.toHaveBeenCalled()
+    setFeatures(null)
+  })
 })

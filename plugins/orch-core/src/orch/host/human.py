@@ -444,6 +444,11 @@ class HumanOps:
             raise _store_error(e) from None
         if not capture.events:
             raise HostError("invalid.input", f"{name} has nothing to sign")
+        if name not in ("ac.accept", "ac.unaccept") and any(
+            isinstance(c.event.get("label"), str) and c.event["label"].startswith(("accepted ", "withdrawn "))
+            for c in capture.events
+        ):  # R3: only the acceptance ops write the labels that mean "accepted manually" / "withdrawn"
+            raise HostError("invalid.input", f"{name} cannot write a label that means a manual acceptance")
         logs = {c.log for c in capture.events}
         if len(logs) != 1:
             raise HostError("internal", f"{name} prepared events for more than one log")
@@ -718,7 +723,7 @@ class HumanOps:
             g = view.gates[gate]
             inp = thaw(g.input)
             texts = store.body_sections(view.uid)  # every section the gate binds, as the signer must show it (P1)
-            return {
+            material = {
                 "kind": "gate",
                 "gate": gate,
                 "input": inp,
@@ -726,11 +731,28 @@ class HumanOps:
                 "texts": {sid: texts.get(sid, "") for sid in sorted(inp.get("sections") or {})},
                 "ticket": ticket,
             }
+            if gate == "verify":
+                from orch.model.accept import criterion_hash, parse_label
+
+                t = store.state._core.tickets[view.uid]
+                criteria = {a["id"]: a["text"] for a in t.fields["acceptance"]}
+                material["manual_acceptances"] = [
+                    {"ac": a.ac, "name": a.name, "by": a.by}
+                    for a in sorted(t.artifacts.values(), key=lambda a: a.name)
+                    if a.kind == "feedback"
+                    and a.evidence_ok
+                    and a.by.startswith("p_")
+                    and a.ac in criteria
+                    and parse_label(a.label) == (a.ac, criterion_hash(a.ac, criteria[a.ac]))
+                ]
+            return material
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]
             question = next((thaw(q) for q in view.fields["questions"] if q["id"] == qid), None)
             return {"kind": "question", "ticket": ticket, "question": question}
         material: dict[str, Any] = {"kind": "payload", "ticket": ticket}
+        if capture.statement is not None:
+            material["statement"] = capture.statement
         texts: dict[str, str] = {}
         for ev, extra in zip(events, extras, strict=True):
             sections = ev.get("sections")

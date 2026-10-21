@@ -4,7 +4,7 @@
 // when the ticket has changed since, and the signer signs one ordinary event per change, each checked against the
 // reviewed intent. Nothing here signs or names an op: it builds the typed `edit_sequence` action.
 import { Pencil, Plus, X } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { handoffMode } from '@/api/features'
@@ -25,12 +25,16 @@ import { Section } from '../new-ticket/SectionsEditor'
 import { PeoplePicker, type PeopleValue } from '../new-ticket/PeoplePicker'
 import type { Viewer } from './shared'
 
+export type EditFocus = { kind: 'ac' | 'task'; id: string }
+type TaskDraft = { text: string; verify: string; proves: string[] }
+type TaskDrafts = { edit: Record<string, TaskDraft>; add: TaskDraft[] }
+
 type Edit = NonNullable<Extract<HandoffAction, { action: 'edit_sequence' }>>
 
 /** What the person changed, as the typed action; or what is wrong with it. Pure: tested without the dialog. */
 export function buildEdit(
-  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'> },
-  want: { sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
+  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'>; tasks_state?: TicketDocument['tasks_state'] },
+  want: { tasks?: TaskDrafts; sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
   mayEditPeople: boolean,
 ): { action: Edit; steps: number } | { problem: string } | { nothing: true } {
   const sections: Record<string, string> = {}
@@ -54,6 +58,34 @@ export function buildEdit(
   }
   const add = want.added.map((t) => t.trim()).filter(Boolean)
   if (Object.keys(edit).length + add.length > MAX_CRITERIA) return { problem: `At most ${MAX_CRITERIA} acceptance criteria can be changed or added in one signature.` }
+  const tasks: NonNullable<Edit['tasks']> = { edit: {}, add: [] }
+  const sortProves = (ids: string[]) => [...new Set(ids)].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)))
+  const taskProblem = (t: TaskDraft): string | undefined => {
+    if (!t.text.trim()) return 'Task text cannot be empty.'
+    if ([...t.text.trim()].length > 500) return 'Task text is too long. Use at most 500 characters.'
+    if (new TextEncoder().encode(t.verify.trim()).length > 4096) return 'The check is too long. Shorten it.'
+    if (t.proves.some(id => !ticket.acceptance_state.some(a => a.id === id))) return 'Choose criteria already on this ticket.'
+  }
+  for (const t of ticket.tasks_state ?? []) {
+    const draft = want.tasks?.edit[t.id]
+    if (!draft) continue
+    const problem = taskProblem(draft)
+    if (problem) return { problem }
+    const change: NonNullable<Edit['tasks']>['edit'][string] = {}
+    const text = draft.text === t.text ? t.text : draft.text.trim()
+    const verify = draft.verify === (t.verify?.cmd ?? '') ? (t.verify?.cmd ?? null) : (draft.verify.trim() || null)
+    const proves = sortProves(draft.proves)
+    if (text !== t.text) change.text = text
+    if (verify !== (t.verify?.cmd ?? null)) change.verify = verify
+    if (JSON.stringify(proves) !== JSON.stringify(sortProves(t.proves))) change.proves = proves
+    if (t.state === 'done' && ('verify' in change || 'proves' in change)) return { problem: `Task ${t.id} is done: its check and criteria cannot change because its receipt stands for them. Reopen it first.` }
+    if (Object.keys(change).length) tasks.edit[t.id] = change
+  }
+  for (const draft of want.tasks?.add ?? []) {
+    const problem = taskProblem(draft)
+    if (problem) return { problem }
+    tasks.add.push({ text: draft.text.trim(), ...(draft.verify.trim() ? { verify: draft.verify.trim() } : {}), proves: sortProves(draft.proves) })
+  }
   let links: Edit['links']
   if (want.links) {
     const was = { repos: ticket.links?.repos ?? [], branches: ticket.links?.branches ?? {} }
@@ -85,7 +117,8 @@ export function buildEdit(
   if (missingPasted(texts).some((n) => !(ticket.artifacts ?? []).some((a) => a.name === n))) return { problem: 'A pasted picture is no longer here (the page was reloaded). Paste it again, or take its line out of the text.' }
   const images = pastedIn(texts).filter((i) => !(ticket.artifacts ?? []).some((a) => a.name === i.name))
   if (images.length > MAX_IMAGES) return { problem: `At most ${MAX_IMAGES} pictures fit in one signing run.` }
-  const steps = images.length + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
+  const taskSteps = Object.keys(tasks.edit).length + tasks.add.length
+  const steps = images.length + taskSteps + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
   if (steps === 0) return { nothing: true }
   if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Sign some now and the rest after.` }
   return {
@@ -96,6 +129,7 @@ export function buildEdit(
       head_seq: ticket.head.seq,
       ...(Object.keys(sections).length ? { sections } : {}),
       ...(Object.keys(edit).length || add.length ? { acceptance: { edit, add } } : {}),
+      ...(taskSteps ? { tasks } : {}),
       ...(links ? { links } : {}),
       ...(Object.keys(people).length ? { people } : {}),
       ...(images.length ? { images } : {}),
@@ -103,30 +137,33 @@ export function buildEdit(
   }
 }
 
-/** The button and the dialog. Offered where the viewer may change the ticket and the host signs it. */
-export function EditTicket({ ticket, viewer }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'> }) {
-  const [open, setOpen] = useState(false)
-  // The signed edit moves the ticket's seq before the hand-off reports "signed": re-keying the dialog then would throw
-  // away its finish (it would reopen as a fresh form), so the key is held while a signing is under way.
+/** One shared rule and one dialog for the overview and row shortcuts. */
+export function canEditTicket(ticket: Pick<TicketDocument, 'status' | 'head'>, role: Viewer['role'], handoff: boolean) {
+  return handoff && can(role, 'ticket.act') && ticket.status !== 'done' && ticket.head.seq >= 1
+}
+const EditContext = createContext<((focus?: EditFocus) => void) | null>(null)
+export const useTicketEdit = () => useContext(EditContext)
+
+export function TicketEditProvider({ ticket, viewer, children }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; children: ReactNode }) {
+  const [open, setOpen] = useState<{ focus?: EditFocus } | null>(null)
   const [busy, setBusy] = useState(false)
   const keySeq = useRef(ticket.head.seq)
   if (!busy) keySeq.current = ticket.head.seq
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
-  // Only where the host signs (hand-off), for a member, on a ticket that is not finished, read in full (a head to chain on).
-  if (!ws || !handoffMode(ws.id) || !can(viewer.role, 'ticket.act') || ticket.status === 'done' || ticket.head.seq < 1) return null
-  return (
-    <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Pencil />
-        Edit text, checks, repositories and people
-      </Button>
-      {open && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} onBusy={setBusy} onClose={() => setOpen(false)} />}
-    </>
-  )
+  const allowed = canEditTicket(ticket, viewer.role, !!ws && handoffMode(ws.id))
+  return <EditContext.Provider value={allowed ? (focus) => setOpen({ focus }) : null}>
+    {children}
+    {open && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} focus={open.focus} onBusy={setBusy} onClose={() => setOpen(null)} />}
+  </EditContext.Provider>
 }
 
-function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; onClose: () => void; onBusy: (busy: boolean) => void }) {
+export function EditTicket(_props: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'> }) {
+  const edit = useTicketEdit()
+  return edit ? <Button type="button" variant="outline" size="sm" onClick={() => edit()}><Pencil />Edit text, checks, repositories and people</Button> : null
+}
+
+export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; focus?: EditFocus; onClose: () => void; onBusy: (busy: boolean) => void }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
@@ -134,6 +171,8 @@ function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocumen
   const [sections, setSections] = useState<Partial<Record<SectionName, string>>>(() => ({ ...ticket.body }))
   const [criteria, setCriteria] = useState<Record<string, string>>(() => Object.fromEntries(ticket.acceptance_state.map((a) => [a.id, a.text])))
   const [added, setAdded] = useState<string[]>([])
+  const focusInput = useRef<HTMLInputElement | null>(null)
+  const [tasks, setTasks] = useState<TaskDrafts>(() => ({ edit: Object.fromEntries(ticket.tasks_state.map(t => [t.id, { text: t.text, verify: t.verify?.cmd ?? '', proves: [...t.proves] }])), add: [] }))
   const [next, setNext] = useState('')
   const [people, setPeople] = useState<PeopleValue>(() => ({ owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] }))
   const [links, setLinks] = useState<{ repos: string[]; branches: Record<string, string> }>(() => ({ repos: [...ticket.links.repos], branches: { ...ticket.links.branches } }))
@@ -141,7 +180,7 @@ function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocumen
   const [problem, setProblem] = useState<string | null>(null)
   useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
   const acId = useId()
-  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people, links }, mayEditPeople), [ticket, sections, criteria, added, people, links, mayEditPeople])
+  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people, links, tasks }, mayEditPeople), [ticket, sections, criteria, added, people, links, tasks, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')
   // K10: anything changed (even something not signable yet) is asked about before it is thrown away.
   const [asking, setAsking] = useState(false)
@@ -161,11 +200,11 @@ function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocumen
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && !asking && requestClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
+      <DialogContent onOpenAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); focusInput.current.focus(); focusInput.current.scrollIntoView?.({ block: 'center' }) } }} className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
         <DialogHeader>
           <DialogTitle>Edit {ticket.key}</DialogTitle>
           <DialogDescription>
-            Change the text, the acceptance checks, the repositories and the people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
+            Change the text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
@@ -181,7 +220,7 @@ function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocumen
                 {ticket.acceptance_state.map((a) => (
                   <li key={a.id} className="flex items-center gap-2">
                     <span className="w-9 font-mono text-[11px] text-text-faint">{a.id}</span>
-                    <Input aria-label={`Text of ${a.id}`} value={criteria[a.id] ?? a.text} onChange={(e) => setCriteria((c) => ({ ...c, [a.id]: e.target.value }))} className="h-8 text-[13px]" />
+                    <Input ref={focus?.kind === 'ac' && focus.id === a.id ? focusInput : undefined} aria-label={`Text of ${a.id}`} value={criteria[a.id] ?? a.text} onChange={(e) => setCriteria((c) => ({ ...c, [a.id]: e.target.value }))} className="h-8 text-[13px]" />
                   </li>
                 ))}
               </ol>
@@ -218,6 +257,24 @@ function EditDialog({ ticket, viewer, onClose, onBusy }: { ticket: TicketDocumen
                 Add
               </Button>
             </div>
+          </section>
+          <section className="space-y-3" aria-label="Tasks">
+            <h2 className="text-[13px] font-medium">Tasks</h2>
+            <p className="text-[12px] text-text-muted">Choose existing criteria for each task. New criteria can be linked after this edit is signed. Leave the check empty when a person checks the task.</p>
+            {[...ticket.tasks_state.map(t => ({ id: t.id, draft: tasks.edit[t.id], done: t.state === 'done', index: -1 })), ...tasks.add.map((draft, index) => ({ id: `new task ${index + 1}`, draft, done: false, index }))].map(({ id, draft, done, index }) => {
+              const update = (change: Partial<TaskDraft>) => setTasks(old => index < 0 ? { ...old, edit: { ...old.edit, [id]: { ...old.edit[id], ...change } } } : { ...old, add: old.add.map((t, i) => i === index ? { ...t, ...change } : t) })
+              return <div key={id} className="space-y-1.5">
+                <p className="text-[12px] font-medium">{index < 0 ? `Task ${ticket.tasks_state.findIndex(t => t.id === id) + 1}` : `New task ${index + 1}`}</p>
+                <Input ref={focus?.kind === 'task' && focus.id === id ? focusInput : undefined} aria-label={`Text of ${id}`} placeholder="What needs doing" value={draft.text} onChange={e => update({ text: e.target.value })} />
+                <label className="block text-[12px] text-text-muted">How it is checked
+                  <Input aria-label={`Check command of ${id}`} disabled={done} value={draft.verify} onChange={e => update({ verify: e.target.value })} placeholder="Checked by a person" />
+                </label>
+                <div className="flex flex-wrap gap-1">{ticket.acceptance_state.map(a => <Button key={a.id} type="button" size="sm" className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-left" variant={draft.proves.includes(a.id) ? 'secondary' : 'outline'} disabled={done} aria-label={`${id} proves ${a.id}`} aria-pressed={draft.proves.includes(a.id)} onClick={() => update({ proves: draft.proves.includes(a.id) ? draft.proves.filter(x => x !== a.id) : [...draft.proves, a.id] })}>{criteria[a.id] || a.text}</Button>)}</div>
+                {done && <p className="text-[12px] text-text-muted">Its receipt stands for this check and these criteria. Reopen the task to change them.</p>}
+                {index >= 0 && <Button type="button" variant="ghost" size="sm" onClick={() => setTasks(old => ({ ...old, add: old.add.filter((_, i) => i !== index) }))}>Remove new task {index + 1}</Button>}
+              </div>
+            })}
+            <Button type="button" variant="outline" size="sm" onClick={() => setTasks(old => ({ ...old, add: [...old.add, { text: '', verify: '', proves: [] }] }))}><Plus />Add task</Button>
           </section>
           <RepoLinks ticketKey={ticket.key} wsId={ws?.id} value={links} onChange={setLinks} />
           {mayEditPeople ? (

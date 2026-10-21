@@ -81,6 +81,11 @@ export function eventDetail(e: OrchEvent, v: Viewer, changed?: string[]): string
   const why = invalidatedText(e, changed)
   if (why) return why
   // A real host serves each event with its one-line text and no payload fields: show that, never a guess from fields.
+  const manual = e.manual_acceptance as { kind?: unknown; ac?: unknown } | undefined
+  if (manual && e.actor.kind === 'person' && typeof manual.ac === 'string' && /^AC[1-9][0-9]*$/.test(manual.ac)) {
+    if (manual.kind === 'accepted') return `accepted ${manual.ac} manually`
+    if (manual.kind === 'withdrawn') return `withdrew the manual acceptance of ${manual.ac}`
+  }
   if (typeof e.summary === 'string') return e.summary ? `${e.type}: ${e.summary}` : e.type
   const s = (k: string) => String(e[k] ?? '')
   switch (e.type) {
@@ -97,6 +102,7 @@ export function eventDetail(e: OrchEvent, v: Viewer, changed?: string[]): string
     case 'lease.taken':
       return `Lease on ${s('task')} (${e.actor.kind === 'agent' ? e.actor.session : ''})`
     case 'task.done': {
+      if (!e.receipt) return 'Marked done, no receipt'
       const r = e.receipt as { exit: number; ms: number; commit?: string }
       return `${s('task')} done, receipt exit ${r.exit} in ${r.ms} ms${r.commit ? ` at ${r.commit}` : ''}`
     }

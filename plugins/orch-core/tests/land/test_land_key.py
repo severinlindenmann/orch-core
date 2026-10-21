@@ -648,7 +648,7 @@ def test_the_key_text_is_not_in_the_environment_or_command_line_of_anything(net)
     assert secret_line not in net.log.read_text()
 
 
-# -- Codex on #762: named-remote redirect, PATH git, ACLs ---------------------------------------------------------------
+# -- Codex on #762: named-remote redirect, PATH git, ACLs ------------------------------------------
 
 
 def test_a_remote_named_like_the_url_cannot_redirect_a_network_operation(bare):

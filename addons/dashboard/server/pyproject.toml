@@ -28,6 +28,9 @@ packages = ["src/orch_dashboard"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when it cannot start"]
+# `-n auto` in CI: tests marked xdist_group("wheel-build") share one worker, so two `uv build --wheel` runs never write the
+# UI assets in the source tree (src/orch_dashboard/static) at the same time.
+addopts = "--dist loadgroup"
 pythonpath = ["..", "../../../plugins/orch-core"]
 
 [tool.ruff]

@@ -37,6 +37,7 @@ def test_dev_files_say_never_shipped():
         assert "never shipped" in (DEVHOST / module).read_text().split('"""')[1]
 
 
+@pytest.mark.xdist_group("wheel-build")  # builds a wheel from the source tree (see pyproject addopts)
 def test_a_built_wheel_has_no_devhost(tmp_path):
     uv = shutil.which("uv")
     if uv is None:

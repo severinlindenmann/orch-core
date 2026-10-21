@@ -15,7 +15,7 @@ from orch import schema
 from orch.cli import meta, parser, render
 from orch.cli.args import arg_specs
 from orch.cli.errors import UsageError
-from orch.cli.session import STOP_AFTER, MemoryRecords, fingerprint
+from orch.cli.session import STOP_AFTER, FileRecords, MemoryRecords, fingerprint
 from orch.ops import Context, NotImplementedYet, Operation, Result
 from orch.ops.errors import ERRORS, GLOBAL_ERRORS, OrchError
 
@@ -309,93 +309,103 @@ def main(
 
     render.new_nonce()
     workspace = Workspace(env, now, files=Files.direct())
-    if hooks is None or records is None:
-        from orch.cli.store_hooks import workspace_hooks, workspace_records
-    hooks = hooks or workspace_hooks(workspace)
-    records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
-
-    if args == ["--version"]:
-        out.write(VERSION_LINE + "\n")
-        return 0
-    grant_env = env.get("ORCH_GRANT") or None
-    secrets = _secrets(grant_env)
-    head_args = args[: args.index("--")] if "--" in args else args
-    as_json = "--json" in head_args or env.get("ORCH_OUTPUT") == "json"
-
-    def emit(text: str, stream: TextIO) -> None:
-        stream.write(render.redact(text, secrets) + "\n")
-
-    hosted = False
-
-    def fail(e: OrchError, op: Operation | None) -> int:
-        envelope = render.error_envelope(e, op)
-        if as_json:
-            emit(render.dumps(envelope), out)
-        else:
-            emit(render.error_text(envelope, render.use_color(err, as_json, env)), err)
-        wire = getattr(e, "wire_exit", None)  # a refusal from the host keeps the exit the socket sent (§0.6)
-        return wire if wire is not None else render.error_exit(e.code)
-
-    op: Operation | None = None
-    parsed: parser.Parsed | None = None
-    ctx: Context | None = None
+    own_records = records is None  # opened here, so closed here (its pinned root fd)
     try:
-        for t in args:
-            if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
-                raise OrchError("grant.secret_in_args", "an argument contains a grant secret")
-        sc = parser.scan(args)
-        as_json = as_json or sc.json
-        if sc.help:
-            if sc.op is not None:
-                emit(meta.op_help(sc.op), out)
-                return 0
-            args = ["help"]
-        elif sc.op is None and not sc.rest:
-            args = ["help"]
-        parsed = parser.parse(args)
-        op = parsed.op
-        session = env.get("ORCH_SESSION") or None
-        if session and not _SESSION.search(session):
-            raise OrchError("invalid.input", "ORCH_SESSION is not a session id (s_<ULID>, then at most three .n)")
-        ctx = Context(
-            session=session,
-            grant=grant_env,
-            # a call that carries an agent's grant is never a person's; whether there is a person at a terminal is
-            # the custody prompt's business (/dev/tty, fail closed), not an environment variable's
-            human_presence="ORCH_GRANT" not in env,  # an empty value counts as set
-            dry_run=parsed.dry_run,
-            now=now,
-            env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
-            workspace=workspace,
-            progress=lambda line: _progress(line, err),
-        )
-        from orch import hostclient
+        if hooks is None or records is None:
+            from orch.cli.store_hooks import workspace_hooks, workspace_records
+        hooks = hooks or workspace_hooks(workspace)
+        records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
-        target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
-        if target is not None:
-            hosted = True
-            hostclient.forget_host()
-            try:
-                res = run_hosted(parsed, ctx, target)
-            finally:
-                if (stale := hostclient.stale_host_warning()) is not None:
-                    err.write(stale + "\n")
-        else:
-            res = run(parsed, ctx, records, hooks)
-        if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent
-            emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
-        if session and op.is_write and not parsed.dry_run and not hosted:
-            records.succeeded_write(session)
-        return res.exit
-    except OrchError as e:
-        session = env.get("ORCH_SESSION") or None
-        if op is not None and parsed is not None and not hosted:
-            e = stop_rule(op, parsed.args, ctx, session, records, hooks, e, now)
-        return fail(e, op)
-    except render.TemplateError as e:
-        return fail(OrchError("internal", _cap(f"output template: {e}", secrets, 200)), op)
-    except Exception as e:  # the safety net: an unexpected failure is still an envelope
-        return fail(OrchError("internal", _cap(f"{type(e).__name__}: {e}", secrets, 200)), op)
+        if args == ["--version"]:
+            out.write(VERSION_LINE + "\n")
+            return 0
+        grant_env = env.get("ORCH_GRANT") or None
+        secrets = _secrets(grant_env)
+        head_args = args[: args.index("--")] if "--" in args else args
+        as_json = "--json" in head_args or env.get("ORCH_OUTPUT") == "json"
+
+        def emit(text: str, stream: TextIO) -> None:
+            stream.write(render.redact(text, secrets) + "\n")
+
+        hosted = False
+
+        def fail(e: OrchError, op: Operation | None) -> int:
+            envelope = render.error_envelope(e, op)
+            if as_json:
+                emit(render.dumps(envelope), out)
+            else:
+                emit(render.error_text(envelope, render.use_color(err, as_json, env)), err)
+            wire = getattr(e, "wire_exit", None)  # a refusal from the host keeps the exit the socket sent (§0.6)
+            return wire if wire is not None else render.error_exit(e.code)
+
+        op: Operation | None = None
+        parsed: parser.Parsed | None = None
+        ctx: Context | None = None
+        try:
+            for t in args:
+                if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
+                    raise OrchError("grant.secret_in_args", "an argument contains a grant secret")
+            sc = parser.scan(args)
+            as_json = as_json or sc.json
+            if sc.help:
+                if sc.op is not None:
+                    emit(meta.op_help(sc.op), out)
+                    return 0
+                args = ["help"]
+            elif sc.op is None and not sc.rest:
+                args = ["help"]
+            parsed = parser.parse(args)
+            op = parsed.op
+            session = env.get("ORCH_SESSION") or None
+            if session and not _SESSION.search(session):
+                raise OrchError("invalid.input", "ORCH_SESSION is not a session id (s_<ULID>, then at most three .n)")
+            ctx = Context(
+                session=session,
+                grant=grant_env,
+                # a call that carries an agent's grant is never a person's; whether there is a person at a terminal is
+                # the custody prompt's business (/dev/tty, fail closed), not an environment variable's
+                human_presence="ORCH_GRANT" not in env,  # an empty value counts as set
+                dry_run=parsed.dry_run,
+                now=now,
+                env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
+                workspace=workspace,
+                progress=lambda line: _progress(line, err),
+            )
+            from orch import hostclient
+
+            target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
+            if target is not None:
+                hosted = True
+                hostclient.forget_host()
+                try:
+                    res = run_hosted(parsed, ctx, target)
+                finally:
+                    if (stale := hostclient.stale_host_warning()) is not None:
+                        err.write(stale + "\n")
+            else:
+                res = run(parsed, ctx, records, hooks)
+            # a hook outside a workspace is silent
+            if not (isinstance(res.data, dict) and res.data.get("silent") is True):
+                emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
+            if session and op.is_write and not parsed.dry_run and not hosted:
+                records.succeeded_write(session)
+            return res.exit
+        except OrchError as e:
+            session = env.get("ORCH_SESSION") or None
+            if op is not None and parsed is not None and not hosted:
+                e = stop_rule(op, parsed.args, ctx, session, records, hooks, e, now)
+            return fail(e, op)
+        except render.TemplateError as e:
+            return fail(OrchError("internal", _cap(f"output template: {e}", secrets, 200)), op)
+        except Exception as e:  # the safety net: an unexpected failure is still an envelope
+            return fail(OrchError("internal", _cap(f"{type(e).__name__}: {e}", secrets, 200)), op)
+    finally:
+        # Every fd this call opened (the store's root and cached directory fds, the index and pin databases, the
+        # records' pinned root) is released here, deterministically: left to the cyclic GC they pile up in a
+        # long-lived process that runs many calls (the host, a test worker) past FD_SETSIZE.
+        workspace.close()
+        if own_records and isinstance(records, FileRecords):
+            records.close()
 
 
 _DEFAULT_RECORDS = MemoryRecords()

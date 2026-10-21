@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from orch import fdwait
 from orch.host import paircli
 from orch.host.relaylink import link_path
 from tests.host.lifecycle_helpers import Lab
@@ -111,7 +112,6 @@ def test_the_tty_ask_works_on_a_real_terminal(tmp_path):
     prompt of ``orch host relay pair`` could never be answered. A child with a pseudo-terminal as its controlling
     terminal asks and gets the typed line."""
     import os
-    import select
     import subprocess
     import sys
     import time
@@ -131,7 +131,7 @@ def test_the_tty_ask_works_on_a_real_terminal(tmp_path):
     end = time.monotonic() + 30
     try:
         while time.monotonic() < end and b"GOT:" not in out:
-            if select.select([master], [], [], 0.2)[0]:
+            if fdwait.readable(master, 0.2):
                 try:
                     out += os.read(master, 4096)
                 except OSError:

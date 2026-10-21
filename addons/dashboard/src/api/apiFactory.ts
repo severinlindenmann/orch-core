@@ -1,4 +1,5 @@
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
+import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import type { Transport } from './transport'
 import {
   ApiError,
@@ -130,7 +131,12 @@ export function createApi(transport: Transport) {
     prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
-    prepareClick: (ws: string, action: ClickAction, retry = 0) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) }),
+    prepareClick: async (ws: string, action: ClickAction, retry = 0) => {
+      await uploadFor(action as { images?: PastedRef[] }, (b) => call('POST', `/api/w/${ws}/click/images`, b)) // R3 part B
+      return call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) })
+    },
+    /** R3 part B: the bytes of a picture file of a ticket (the page hashes them before showing them). */
+    getArtifactImage: (ws: string, key: string, name: string) => call<{ image: ArtifactImage | null }>('GET', `/api/w/${ws}/tickets/${key}/artifacts/${encodeURIComponent(name)}`),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
     signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

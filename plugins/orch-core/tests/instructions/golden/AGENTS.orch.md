@@ -12,6 +12,7 @@ and `orch artifact add` (without --ac) work.
 1. Run `orch claim --next`, then `orch show`.
    If the person named a ticket: `orch claim ABC-0001`, not --next.
 2. Read the ticket, then run `orch task next`.
+   Images: `artifact:NAME`, path in `orch artifact list`.
 3. Do the task; record it with `orch task done T3 --run` (the real task id).
 4. Give every AC evidence: a task receipt, or `orch artifact add --ac AC1`.
 5. Run `orch submit`; to hand over instead: `orch handoff -m "done, next"`.

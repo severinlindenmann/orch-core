@@ -737,6 +737,17 @@ SEQ = {
 }
 
 
+def test_pictures_are_never_a_terminal_hand_off(ready, host_calls):
+    """R3 part B: the signer holds the pasted files, so a terminal hand-off with pictures is refused before the host."""
+    client, token, stub, rich, signing = ready
+    digest = "ab" * 32
+    pic = {"name": f"paste-20261019-101500-{digest[:8]}.png", "sha256": f"sha256:{digest}", "bytes": 5, "alt": "x"}
+    body = {**SEQ, "sections": {"summary": f"![x](artifact:{pic['name']})"}, "images": [pic]}
+    res = post(client, token, stub, body)
+    assert res.status_code == 400 and "one click" in res.text
+    assert not [1 for op, _, _ in host_calls if op == "human.prepare" and "images" in repr(_)]
+
+
 def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, {**SEQ})

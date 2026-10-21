@@ -12,6 +12,7 @@ import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, Cl
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
+import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import {
   ApiError,
   type ApiErrorBody,
@@ -266,7 +267,13 @@ const handoff = {
  * the key is in core's signer process and never here.
  */
 const click = {
-  prepareClick: (ws: string, action: ClickAction, retry = 0) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
+  prepareClick: async (ws: string, action: ClickAction, retry = 0) => {
+    await uploadFor(action as { images?: PastedRef[] }, (b) => call(`${w(ws)}/click/images`, 'POST', b)) // R3 part B
+    return call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) })
+  },
+  /** R3 part B: the bytes of a picture file of a ticket (the page hashes them before showing them). */
+  getArtifactImage: (ws: string, key: string, name: string) =>
+    call<{ image: ArtifactImage | null }>(`${w(ws)}/tickets/${encodeURIComponent(key)}/artifacts/${encodeURIComponent(name)}`),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
   signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

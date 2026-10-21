@@ -18,8 +18,7 @@ the single place a later move to host-mediated `fs.*` ops replaces.
   store is refused whatever its name or path (a bind mount or a hard-linked name cannot sneak it in).
 
 **Deny list** (`deny`; one list, applies to every root, case-insensitive because macOS volumes are):
-git internals (`.git`, at any depth, file or folder), the orch store (`.orch` at any depth; in the legacy layout also
-`.state events tickets addons config.json keys.jsonl AGENTS.orch.md` directly in the workspace folder), key material
+git internals (`.git`, at any depth, file or folder), the orch store (`.orch` at any depth), key material
 (`*.pem *.key *.p8 *.p12 *.pfx`, `id_rsa`-style private keys, `.ssh`, `.gnupg`, `.netrc`, `keys.jsonl`) and every
 `.env*` file. The names live in `orch.gitbrowse` and git excludes the same ones with pathspecs.
 A denied entry is **shown locked** in its folder (name and kind of lock, no size, no content); reading, listing,
@@ -53,9 +52,6 @@ WALK_LIMIT = 50_000
 MAX_PATH_PARTS = 64
 MAX_PART = 255
 
-#: directly in the workspace folder, in the legacy layout (config.json next to the folders); in the new layout `.orch`
-LEGACY_STORE = frozenset({".state", "events", "tickets", "addons", "config.json", "keys.jsonl", "agents.orch.md"})
-
 
 class GuardError(Exception):
     """Base of the refusals; `reason` is plain words for the person."""
@@ -81,15 +77,14 @@ class Unusable(GuardError):
     """The root is not a folder the explorer may open."""
 
 
-def deny(parts: tuple[str, ...], *, store_names: frozenset[str] = frozenset()) -> str | None:
-    """Why this relative path is locked (a short plain phrase), or None. ``store_names`` are the store entries directly
-    in the root (legacy layout; lower-case). The empty path (the root itself) is never locked. The names are
-    :data:`orch.gitbrowse.DENIED_NAMES` and friends: the same list git excludes with pathspecs."""
+def deny(parts: tuple[str, ...]) -> str | None:
+    """Why this relative path is locked (a short plain phrase), or None. The empty path (the root itself) is never
+    locked. The names are :data:`orch.gitbrowse.DENIED_NAMES` and friends: the same list git excludes with pathspecs."""
     for index, part in enumerate(parts):
         low = part.casefold()
         if low == ".git":
             return "Git internals"
-        if low == ".orch" or (index == 0 and low in store_names):
+        if low in (".orch", ".state"):  # the store, and orch's local state wherever a folder of that name is
             return "orch's own files"
         if low == ".env" or low.startswith(".env."):
             return "Secrets (.env)"
@@ -130,18 +125,14 @@ def _inside(path: str, folder: str) -> bool:
 @dataclass(frozen=True)
 class Root:
     """A folder the explorer may show. ``id``: ``"ws"`` for the workspace folder, ``"repo:<name>"`` for a declared
-    repository; ``path``: absolute and real; ``store``: names of orch's own entries directly inside (legacy layout);
-    ``forbidden``: real paths whose folders (by identity) can never be opened."""
+    repository; ``path``: absolute and real; ``forbidden``: real paths whose folders (by identity) can never be
+    opened."""
 
     id: str
     label: str
     path: str
     kind: str
-    store: frozenset[str] = frozenset()
     forbidden: tuple[str, ...] = field(default=())
-    #: every other orch-owned place of the workspace (the legacy store files in the workspace folder), absolute: given
-    #: to EVERY root of the workspace, repository roots included, so a hard link to one is found wherever it is
-    orch: tuple[str, ...] = field(default=())
 
     def _banned(self) -> set[tuple[int, int]]:
         found = set()
@@ -152,15 +143,15 @@ class Root:
 
     @cached_property
     def _banned_files(self) -> tuple[set[tuple[int, int]], bool]:
-        """``(identities, complete)``: the files of EVERY orch-owned place of the workspace (the state and run folders,
-        the store folder, and the legacy store files directly in the workspace folder, :attr:`orch`), found by walking
-        them without a depth limit but with an entry limit (:data:`WALK_LIMIT`). ``complete`` is False when the limit
-        was reached or a folder could not be read: the caller then treats every file with more than one name as locked
-        (fail closed). A HARD LINK to one of these files, made under any name anywhere, is the same file."""
+        """``(identities, complete)``: the files of EVERY orch-owned place of the workspace (the state and run folders
+        and the store folder), found by walking them without a depth limit but with an entry limit
+        (:data:`WALK_LIMIT`). ``complete`` is False when the limit was reached or a folder could not be read: the
+        caller then treats every file with more than one name as locked (fail closed). A HARD LINK to one of these
+        files, made under any name anywhere, is the same file."""
         found: set[tuple[int, int]] = set()
         complete = True
         seen = 0
-        starts = {*self.forbidden, *self.orch, *(os.path.join(self.path, n) for n in self.store)}
+        starts = set(self.forbidden)
         # a starting place may itself be a link (a symlinked config folder): follow THAT, once, and only that; links met
         # inside the walk are never followed. Each real place once.
         stack = sorted({os.path.realpath(p) for p in starts})
@@ -220,7 +211,7 @@ class Root:
         `Missing` when a component is absent, a link or not a folder."""
         fds: list[int] = []
         try:
-            if reason := deny(parts, store_names=self.store):
+            if reason := deny(parts):
                 raise Denied(reason)
             fd = self._open_root()
             fds.append(fd)
@@ -252,7 +243,7 @@ class Root:
                         more = True
                         break
                     name = entry.name
-                    row = {"name": name, "label": label(name), "locked": deny((*parts, name), store_names=self.store)}
+                    row = {"name": name, "label": label(name), "locked": deny((*parts, name))}
                     try:
                         st = entry.stat(follow_symlinks=False)
                     except OSError:
@@ -288,7 +279,7 @@ class Root:
         a pipe, `Denied` for a locked path, `Missing` for a link, a folder or an absent file."""
         if not parts:
             raise Invalid("Choose a file.")
-        if reason := deny(parts, store_names=self.store):
+        if reason := deny(parts):
             raise Denied(reason)
         with self.dir(parts[:-1]) as fd:
             try:
@@ -314,7 +305,7 @@ class Root:
         """``lstat`` of a path below the root (no link followed), after the same checks as :meth:`read`."""
         if not parts:
             raise Invalid("Choose a file.")
-        if reason := deny(parts, store_names=self.store):
+        if reason := deny(parts):
             raise Denied(reason)
         with self.dir(parts[:-1]) as fd:
             try:
@@ -390,9 +381,9 @@ class Root:
         return found, False
 
 
-def exclude_globs(store: frozenset[str]) -> list[str]:
+def exclude_globs() -> list[str]:
     """The deny list as ripgrep ``--glob`` exclusions (keeps a search from READING locked files; every hit is also
     re-checked with :func:`deny`, so a glob that misses something cannot leak it)."""
     out = [f"!{g}" for g in gitbrowse.DENY_GLOBS] + [f"!{g}/**" for g in gitbrowse.DENY_GLOBS]
-    out += [f"!/{n}" for n in sorted(store)]  # leading slash: directly in the root only
+    out += ["!.state", "!.state/**"]
     return out

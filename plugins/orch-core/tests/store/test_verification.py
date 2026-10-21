@@ -85,7 +85,7 @@ def test_open_refuses_to_trust_a_log_that_fails_and_checkpoints_that_fail_do_not
     p.write_bytes(canon.event_line(e))
     s = env.open()
     assert s.chain_errors()
-    for f in (env.root / ".state" / "checkpoints").glob("ticket-*.json"):
+    for f in (env.store_dir / ".state" / "checkpoints").glob("ticket-*.json"):
         f.unlink()  # deleting the checkpoints must not make a broken log appendable
     s.close()
     s = env.open()
@@ -97,7 +97,7 @@ def test_a_forged_pending_manifest_installs_nothing(env):
     s = env.bootstrap()
     uid = env.new_ticket()
     s.close()
-    pdir = env.root / ".state" / "pending" / "01J9ZP0000000000000000F0RG"
+    pdir = env.store_dir / ".state" / "pending" / "01J9ZP0000000000000000F0RG"
     pdir.mkdir(parents=True)
     evil = b'{"evil":true}'
     (pdir / "0").write_bytes(evil)
@@ -132,7 +132,7 @@ def test_recovery_and_repair_only_append_host_events_through_admit(env, monkeypa
     doc["title"] = "x"
     env.path(uid, "ticket.json").write_text(json.dumps(doc))
     env.path(uid, "body.md").write_text("## Context\n\nhand\n")
-    (env.root / "keys.jsonl").write_bytes(b"")
+    (env.store_dir / "keys.jsonl").write_bytes(b"")
     s.scan()
     assert seen and set(seen) <= {"projection.repaired", "edit.external"}
     kinds = {e["type"] for e in env.read_events(uid)[1:]} | {e["type"] for e in env.read_events("workspace")[2:]}
@@ -148,13 +148,13 @@ def test_the_index_is_never_consulted_for_authorization(env):
     hooks = hooks_for(s)
     hooks.grant_valid(Context(grant=token))
     s.index.dump()  # make sure there is one
-    db = sqlite3.connect(env.root / ".state" / "index.sqlite")
+    db = sqlite3.connect(env.store_dir / ".state" / "index.sqlite")
     db.execute("UPDATE members SET role = 'viewer'")
     db.commit()
     db.close()
     hooks.grant_valid(Context(grant=token))  # still valid: decided from the logs
     s.append(env.person_event(env.owner, "workspace", "grant.revoked", grant=env.grant_id), log="workspace")
-    db = sqlite3.connect(env.root / ".state" / "index.sqlite")
+    db = sqlite3.connect(env.store_dir / ".state" / "index.sqlite")
     db.execute("DELETE FROM members")
     db.commit()
     db.close()

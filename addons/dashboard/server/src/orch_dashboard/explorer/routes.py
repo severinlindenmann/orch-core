@@ -119,7 +119,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             raise fail("invalid.input", "Choose a file.", exit=5)
         name = parts[-1]
         base = {"root": root.id, "path": "/".join(parts), "name": name, "label": guard.label(name)}
-        reason = guard.deny(parts, store_names=root.store)
+        reason = guard.deny(parts)
         if reason:
             return {**base, "kind": "locked", "reason": reason}
         try:
@@ -270,7 +270,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             for status, rel in changed[:200]:
                 try:
                     parts = (*prefix, *guard.split(rel))
-                    if guard.deny(parts, store_names=root.store):
+                    if guard.deny(parts):
                         continue
                 except guard.GuardError:
                     continue

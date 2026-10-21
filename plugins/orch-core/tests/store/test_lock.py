@@ -62,7 +62,7 @@ def test_two_processes_creating_tickets_never_share_a_key(env):
     s = env.open()
     assert sorted(t.key for t in s.state.tickets.values()) == [f"DEMO-{i:04d}" for i in range(1, 13)]
     assert s.chain_errors() == []
-    lines = (env.root / "keys.jsonl").read_text().splitlines()
+    lines = (env.store_dir / "keys.jsonl").read_text().splitlines()
     assert len(lines) == 12 and not s.reports
     assert s.scan() == []  # keys.jsonl and every ticket.json agree with the logs
 

@@ -58,6 +58,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from orch import fdwait
+
 from . import procs
 from .cgroup import CgroupTree, detect
 from .ring import RING_BYTES, Ring
@@ -622,8 +624,7 @@ class Supervisor:
             left = deadline - time.monotonic()
             if left <= 0:
                 return {"step": "timeout", "errno": 0}
-            ready, _, _ = select.select([fd], [], [], left)
-            if not ready:
+            if not fdwait.readable(fd, left):
                 continue
             part = os.read(fd, 4096)
             if not part:

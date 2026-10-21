@@ -18,7 +18,7 @@ def replayed(env: Env):
     """A fresh replay of the files on disk, the way any reader sees the workspace."""
     s = env.store
     ws = env.read_events("workspace")
-    tickets = {p.name: env.read_events(p.name) for p in (env.root / "tickets").iterdir() if p.is_dir()}
+    tickets = {p.name: env.read_events(p.name) for p in (env.store_dir / "tickets").iterdir() if p.is_dir()}
     return replay(
         ws,
         tickets,
@@ -109,7 +109,9 @@ def test_a_refused_event_changes_nothing_on_disk(env):
         s.append({"type": "log.added", "actor": env.agent, "text": "x", "extra": 1}, log=uid)
     assert e.value.code == "validation.event"
     assert snapshot(env.root) == before
-    assert not (env.root / ".state" / "pending").exists() or not list((env.root / ".state" / "pending").iterdir())
+    assert not (env.store_dir / ".state" / "pending").exists() or not list(
+        (env.store_dir / ".state" / "pending").iterdir()
+    )
     env.log(uid)  # and the store is still fine
 
 
@@ -168,7 +170,7 @@ def test_artifact_bytes_are_written_and_checked(env):
     with pytest.raises(StoreError):
         s.append(ev, log=uid)
     s.append(ev, log=uid, artifacts={"shot.png": data})
-    assert (env.root / "tickets" / uid / "artifacts" / "shot.png").read_bytes() == data
+    assert (env.store_dir / "tickets" / uid / "artifacts" / "shot.png").read_bytes() == data
 
 
 def test_inline_artifact_references_are_checked(env):
@@ -273,6 +275,7 @@ def test_the_genesis_must_name_the_hosts_workspace_key(env):
             host=other.signer,
             host_state_dir=other.host_state,
             clock=lambda: env.clock[0],
+            create=True,
         ).append(g, log="workspace")
     assert e.value.code == "validation.host_key"
     assert s.state.workspace.genesis is None
@@ -281,14 +284,14 @@ def test_the_genesis_must_name_the_hosts_workspace_key(env):
 def test_keys_jsonl_is_cj_lines_and_the_allocator_never_reuses_a_number(env):
     s = env.bootstrap()
     a, b = env.new_ticket(), env.new_ticket()
-    lines = (env.root / "keys.jsonl").read_bytes().splitlines(keepends=True)
+    lines = (env.store_dir / "keys.jsonl").read_bytes().splitlines(keepends=True)
     assert len(lines) == 2 and all(canon.parse_event_line.__name__ for _ in lines)
     assert json.loads(lines[1])["key"] == "DEMO-0002"
     assert lines[0] == canon.cj_checked(json.loads(lines[0])) + b"\n"
     assert next_key(s) == "DEMO-0003"
-    (env.root / "keys.jsonl").write_bytes(b"")  # a deleted file can not make a number reusable
+    (env.store_dir / "keys.jsonl").write_bytes(b"")  # a deleted file can not make a number reusable
     assert next_key(s) == "DEMO-0003"
-    (env.root / "keys.jsonl").write_bytes(canon.cj_checked({"key": "DEMO-0099", "uid": a, "at": ts(1)}) + b"\n")
+    (env.store_dir / "keys.jsonl").write_bytes(canon.cj_checked({"key": "DEMO-0099", "uid": a, "at": ts(1)}) + b"\n")
     assert next_key(s) == "DEMO-0100"  # ... and a number seen in keys.jsonl is never handed out again
     assert b
 
@@ -333,7 +336,7 @@ def test_repo_settings_survive_replay_and_config_rendering(env):
     e = env.person_event(env.owner, "workspace", "settings.changed", set={"repos": {"repo": entry}})
     s.append(e, log="workspace")
     assert dict(replayed(env).workspace.repos["repo"]) == entry
-    stored = json.loads((env.root / "config.json").read_bytes())["settings"]["repos"]["repo"]
+    stored = json.loads((env.store_dir / "config.json").read_bytes())["settings"]["repos"]["repo"]
     assert stored == entry
     assert list(stored) == sorted(entry)
     for field in ("remote", "default_branch"):

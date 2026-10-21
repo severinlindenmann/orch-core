@@ -225,6 +225,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
@@ -456,9 +457,6 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `host.busy` | 4 | no | stays | a second host on the same state or run directory (at start); `register` or `bootstrap` of a root or id that is already registered, has a genesis, or is being bootstrapped (N5) | — |
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
-| `migrate.refused` | 3 | no | stays | `host.store_migrate` was refused before anything moved (the directory is not a complete legacy store, two stores, a link or an odd entry, records are enabled); the message names it | — |
-| `migrate.stuck` | 3 | no | stays | `host.store_migrate` (or a host start) found a migration it cannot finish or roll back right now: files may be half way. Nothing is deleted or guessed; the journal `hosts/<ws>/migrate.json` keeps its step and the next `store_migrate` or host start continues from it | — |
-| `migrate.failed` | 1 | no | stays | `host.store_migrate` moved the store, the check after the move failed and everything was rolled back; nothing was lost, the legacy layout is as before | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
@@ -620,7 +618,6 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `host.wsk_create` | none |
 | `host.register` | `host.busy` (root already registered), `lock.busy`, `trust.genesis_mismatch`, `custody.unsafe_mode`, `op.not_allowed` (peers map) |
 | `host.unregister` | `not_found` |
-| `host.store_migrate` | `not_found`, `lock.busy` (owner lock or the workspace store lock), `migrate.refused`, `migrate.failed`, `migrate.stuck`, `trust.genesis_mismatch`, `custody.unsafe_mode` |
 | `host.bootstrap` | `host.busy` (id already has a genesis or a registration, N5), `not_found` (id not from `wsk_create`), `custody.unsafe_mode`, the genesis model codes |
 
 **As built in B5 (16 Oct 2026).** The "new empty directory" rule of `host.bootstrap` existed so that the rollback (`_clean_root`)
@@ -4602,9 +4599,9 @@ the D-P2-17 custody list) holds, per workspace:
  "repos":{"acme-energy-dbt":{"gitdir":{"path":"…","dev":1,"ino":2},"commondir":{"path":"…","dev":1,"ino":3}}}}
 ```
 
-`root` is the project directory. Once the store lives in `<project>/.orch/` the entry also has `"store":".orch"` (absent:
-the store is the project itself; any other value is refused when the registry is read). It is written by `host.bootstrap`
-and `host.register` from the store the host opened, and by `host.store_migrate` after its commit point.
+`root` is the project directory; the store is always `<root>/.orch/`. An earlier host also wrote `"store":".orch"`; it is
+tolerated when the registry is read (any other value is refused) and never written. A root that holds a store from an older
+version in the project root is served as unavailable with the message that says to delete it (there is no migration).
 
 - The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
 - **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
@@ -11943,7 +11940,7 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 (§12.6.2), `attach.end {att, reason}`, `grant.put {deposit_id, workspace_id, person, grant, secret, until}`,
 `grant.drop {grant}`, `git {op:"worktree.add"|"worktree.remove", repo_pin, path, branch, base, force, generation}`.
 
-- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_HARNESS`,
+- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `ORCH_HARNESS`,
   `CLAUDE_CODE_SUBAGENT_MODEL`); `grant` is an id the runner resolves in its own store. The host never sends a secret
   except once in `grant.put`.
 - The runner validates every command as defence in depth (registry program or `$SHELL`, pin, sizes). `runner.hello`
@@ -12159,7 +12156,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 | `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `ORCH_HOST_RUN_DIR` | if set | if set | the runner unit's (written by `orch runner enable` from the host unit's values) |
 | `ORCH_SESSION` | `s_<ULID>` drawn by the runner | never | runner |
 | `ORCH_GRANT` | the runner grant | **never** | the runner's grant store |
-| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
+| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
 | `pass_env` names from `<person state>/runner.json` | ✓ | ✓ | terminal-only config; values from the runner's environment |
 
 - `pass_env` refuses names matching `LD_*`, `DYLD_*`, `PYTHON*`, `GIT_*`, `ORCH_*`, `BASH_ENV`, `ENV`, `ZDOTDIR`,
@@ -12170,7 +12167,14 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 #### 12.4.4 Working directory
 
 In order: the ticket's registered worktree for its primary repo (created by `agent.start` when `worktree:true` and the
-ticket has a branch for it), the declared working copy (labelled "shared working copy"), the workspace root. Sent as a
+ticket has a branch for it), the declared working copy (labelled "shared working copy"). A ticket with **no
+codebase** (it links no repo, or none that is declared and readable) works in its **work folder**
+`<project>/.orch-work/<KEY>/` (cwd kind `workdir`, `ORCH_WORKDIR`; a sibling of `.orch/`, never inside it). Core decides
+this in `host/agents.py` and nowhere else. `agent.start` (or `term.open`) makes the folder mode 0700 below the project
+fd with `O_NOFOLLOW` at every step (a link, a file or a foreign owner is `launch.cwd_changed`); the preview binds
+"to be made" or the folder's `{dev, ino}` in the spec digest. The folder stays after the ticket closes until the person
+deletes it. Check commands of such a ticket run in it; its results are filed as ticket artifacts
+(`orch artifact add`, at most 64 MiB a file and 512 MiB a ticket). Without a ticket, the workspace root. Sent as a
 pin `{path, dev, ino}`; the trampoline opens it component-wise with `O_NOFOLLOW`, compares, and `fchdir`s
 (`launch.cwd_changed` on a mismatch). `ORCH_WORKTREES` lists the other repos' worktrees as `repo=path` pairs separated
 by `:` (a path containing `:` is left out and named in `warnings`).
@@ -12511,6 +12515,12 @@ Worktree = {ticket:Key, repo:RepoName, branch:str, path:str, generation:int, cre
 worktree.list   {ticket?:Ref, check?:bool = false} → {worktrees:[Worktree]{0..200}}
 worktree.create {ticket:Ref, repo?:RepoName, base?:"default"|"current" = "default"} + opts.idem? → {worktree}
 worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:true}
+workdir.get     {ticket:Ref} → {codebase:true, exists:false} | {codebase:false, exists:bool, folder?:".orch-work/<KEY>", files?:int, bytes?:int, truncated?:bool}
+                // column P; the folder is named below the project, never by its full path
+workdir.delete  {ticket:Ref} + opts.idem → {deleted:bool, folder}
+                // column P (a person-class owner or maintainer, the ticket's owner, an assignee); no log event; deletes exactly
+                // <project>/.orch-work/<KEY> through descriptors without following a link; a live run in it: worktree.in_use;
+                // a ticket with a codebase: invalid.input; gone already: deleted:false
 ```
 
 - `repo` defaults to the only linked repo (required with several). The branch is the current `links.branches.<repo>`
@@ -12609,7 +12619,7 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |
     | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would. **Race note (#565):** `remove` always runs `--force`, after orch's own clean check (the host's `tree.check`, or `LocalGitReader` in direct mode; only a person's force skips it), so git's own `status` never runs; `prune` checks out nothing; **`add`'s checkout is the open residual (tier A):** an agent that commits a repo config in its worktree, then a column-G `worktree.create` runs its smudge filter, once per checked-out file the filter's attribute selects, on every `add` that hits the window; the UID is the boundary in tier A (D-P2-31); fix tracked in #584. **What `--force` costs:** host mode no longer has git's own second clean check at remove time (a non-forced remove ran `status` again). Accepted: that check is exactly the `status` that runs the repository's clean filters (the #565 race), orch's reader check is the one that decides, and what can change between the two is data the worktree's own agent (or the person) writes, not code that runs; such a file is deleted with the worktree. Since #583 the reader's ignore rules fail toward "nothing ignored" (an include or empty `excludesFile` in the person's config, an unclosed `[`), so a file git shows is never one it misses |
-    | `gitbrowse.run` (the explorer: `dashboard/server/explorer/git.py` and `search.py`; `gitbrowse.py` `command`/`run`) | `gitbrowse.OPS` is its own closed table over `gitsafe.gate`, `isolated_env`, `_argv` (`--no-ext-diff --no-textconv`, diff pins) and a layout confirmed by `layout`. **Race note (#565):** only history commands (`log`, `show`, `diff` between two commits, `cat-file`, `rev-parse`), no work-tree or index command: no `status`, no clean/smudge filter, no checkout, which is what the #565 race needed. A key written into the config between the gate and the spawn cannot name a program one of these commands runs (`--no-ext-diff`, `--no-textconv`, `--no-pager`, hooks are not run by read commands); so the window is harmless here. Not moved to gitread (it needs `log`/`show` formats the reader does not produce) |
+    | `gitbrowse.run` (the explorer: `dashboard/server/explorer/git.py` and `search.py`; `gitbrowse.py` `command`/`run`) | `gitbrowse.OPS` is its own closed table over `gitsafe.gate`, `isolated_env`, `_argv` (`--no-ext-diff --no-textconv`, diff pins) and a layout confirmed by `layout`. **Race note (#565):** only history commands (`log`, `show`, `diff` between two commits, `cat-file`, `rev-parse`) and `grep --cached` (it reads the index as it is: no refresh, no filters, no work-tree file opened), no other work-tree or index command: no `status`, no clean/smudge filter, no checkout, which is what the #565 race needed. A key written into the config between the gate and the spawn cannot name a program one of these commands runs (`--no-ext-diff`, `--no-textconv`, `--no-pager`, hooks are not run by read commands); so the window is harmless here. Not moved to gitread (it needs `log`/`show` formats the reader does not produce) |
     | `gitread/*` (host mode's reader children) | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git

@@ -30,7 +30,7 @@ def lab(tmp_path):
 
 
 def tickets(lab):
-    path = os.path.join(lab.root, "tickets")
+    path = os.path.join(lab.root, ".orch", "tickets")
     return sorted(os.listdir(path)) if os.path.isdir(path) else []
 
 
@@ -205,21 +205,25 @@ def killed_bootstrap(lab, tmp_path):
 def test_recovery_leaves_a_root_whose_config_names_another_workspace(lab, tmp_path):
     root, created, idem = killed_bootstrap(lab, tmp_path)
     foreign = {"workspace": {"id": "b" * 32, "prefix": "DIRECT"}}
-    (root / "config.json").write_text(json.dumps(foreign))  # a direct `orch init` ran here after the host died
-    (root / "events").mkdir(exist_ok=True)
-    (root / "events" / "workspace.jsonl").write_text("direct init genesis\n")
+    (root / ".orch" / "config.json").write_text(
+        json.dumps(foreign)
+    )  # a direct `orch init` ran here after the host died
+    (root / ".orch" / "events").mkdir(exist_ok=True)
+    (root / ".orch" / "events" / "workspace.jsonl").write_text("direct init genesis\n")
     with lab.host() as h, h.client() as c:
         assert h.host.recovered == [("host.bootstrap", "failed")]
         outcome = ok(c.call("host.outcome", {"idem": idem}))["data"]
         assert outcome["state"] == "failed" and outcome["error"]["code"] == "control.rolled_back"
-    assert json.loads((root / "config.json").read_text()) == foreign  # the other workspace's files are intact
-    assert (root / "events" / "workspace.jsonl").read_text() == "direct init genesis\n"
+    assert json.loads((root / ".orch" / "config.json").read_text()) == foreign  # the other workspace's files are intact
+    assert (root / ".orch" / "events" / "workspace.jsonl").read_text() == "direct init genesis\n"
     assert not (lab.state / "hosts" / created["workspace_id"]).exists()  # the host's own id and key still go
 
 
 def test_recovery_still_cleans_a_root_whose_config_names_this_workspace(lab, tmp_path):
     root, created, _ = killed_bootstrap(lab, tmp_path)
-    (root / "config.json").write_text(json.dumps({"workspace": {"id": created["workspace_id"]}}))  # the host's own
+    (root / ".orch" / "config.json").write_text(
+        json.dumps({"workspace": {"id": created["workspace_id"]}})
+    )  # the host's own
     with lab.host():
         pass
     assert os.listdir(root) == []  # the store's files go; the person's own directory stays
@@ -229,10 +233,10 @@ def test_recovery_leaves_a_root_whose_workspace_log_starts_with_another_genesis(
     root, created, idem = killed_bootstrap(lab, tmp_path)
     # a direct `orch init` that landed its genesis line but not yet its config.json
     for name in ("config.json",):
-        (root / name).unlink(missing_ok=True)
-    (root / "events").mkdir(exist_ok=True)
+        (root / ".orch" / name).unlink(missing_ok=True)
+    (root / ".orch" / "events").mkdir(exist_ok=True)
     line = json.dumps({"id": "01J9ZP0000000000000000DIRC", "type": "workspace.created", "seq": 1}) + "\n"
-    (root / "events" / "workspace.jsonl").write_text(line)
+    (root / ".orch" / "events" / "workspace.jsonl").write_text(line)
     with lab.host() as h:
         assert h.host.recovered == [("host.bootstrap", "failed")]
-    assert (root / "events" / "workspace.jsonl").read_text() == line  # not ours: left alone
+    assert (root / ".orch" / "events" / "workspace.jsonl").read_text() == line  # not ours: left alone

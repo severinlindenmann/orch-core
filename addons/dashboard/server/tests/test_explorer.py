@@ -17,7 +17,7 @@ SHA = "a" * 40
 
 def _use(world, folder):
     """Make ``folder`` the workspace folder (the root `ws`) of this test, and forget what was confirmed."""
-    world.mp.setattr(world.gateway, "workspace_folder", lambda ws: (folder, None))
+    world.mp.setattr(world.gateway, "workspace_folder", lambda ws: (folder, folder / ".orch"))
     world.link.repos = {}
     scope._repos_seen.clear()
     git_mod = __import__("orch_dashboard.explorer.git", fromlist=["x"])
@@ -111,15 +111,15 @@ def world(tmp_path, gateway, monkeypatch, stub):
     (proj / ".env").write_text("TOKEN=needle\n")
     (proj / "keys").mkdir()
     (proj / "keys" / "server.pem").write_text("needle\n")
-    (proj / "events").mkdir()
-    (proj / "events" / "e1.json").write_text('{"needle": 1}\n')
-    (proj / "config.json").write_text("{}\n")
     (proj / ".orch").mkdir()
+    (proj / ".orch" / "events").mkdir()
+    (proj / ".orch" / "events" / "e1.json").write_text('{"needle": 1}\n')
     (proj / ".orch" / "config.json").write_text("needle\n")
+    (proj / "config.json").write_text("{}\n")  # the project's own file: not orch's (the store is .orch/)
     (proj / "link-out").symlink_to(w.outside / "secret.txt")
     (proj / "link-dir").symlink_to(w.outside)
     (proj / "link-orch").symlink_to(proj / ".orch" / "config.json")
-    (proj / "link-events").symlink_to(proj / "events")
+    (proj / "link-events").symlink_to(proj / ".orch" / "events")
     git(proj, "init", "-q", "-b", "main")
     git(proj, "add", "-f", "-A")
     git(proj, "commit", "-q", "-m", "first\n\nthe body", n=1)
@@ -137,7 +137,7 @@ def world(tmp_path, gateway, monkeypatch, stub):
     w.link = Link()
     w.link.repos = {"other": str(w.other), "proj": "."}
     monkeypatch.setattr(gateway, "link", lambda ws: w.link)
-    monkeypatch.setattr(gateway, "workspace_folder", lambda ws: (proj, None))
+    monkeypatch.setattr(gateway, "workspace_folder", lambda ws: (proj, proj / ".orch"))
     monkeypatch.setattr(search, "rg_path", lambda: None)
     w.ws = stub.ws
     w.gateway = gateway
@@ -214,11 +214,11 @@ def rows(res):
 def test_the_tree_shows_denied_entries_locked_and_links_as_links(get):
     got = rows(get("/tree", root="ws"))
     for name, why in {
-        ".git": "Git internals", ".orch": "orch's own files", "events": "orch's own files",
-        "config.json": "orch's own files", ".env": "Secrets (.env)",
+        ".git": "Git internals", ".orch": "orch's own files", ".env": "Secrets (.env)",
     }.items():  # fmt: skip
         assert got[name]["locked"] == why, name
         assert "size" not in got[name]
+    assert got["config.json"]["locked"] is None  # a project's own config.json is the project's
     assert got["keys"]["locked"] is None  # the folder is shown; its key file is locked inside
     assert rows(get("/tree", root="ws", path="keys"))["server.pem"]["locked"] == "Keys"
     for link in ("link-out", "link-dir", "link-orch", "link-events"):
@@ -232,7 +232,7 @@ def test_the_tree_shows_denied_entries_locked_and_links_as_links(get):
 def test_a_locked_or_linked_folder_cannot_be_listed(get):
     assert get("/tree", root="ws", path=".git").status_code == 403
     assert get("/tree", root="ws", path=".orch").status_code == 403
-    assert get("/tree", root="ws", path="events").status_code == 403
+    assert get("/tree", root="ws", path=".orch/events").status_code == 403
     assert get("/tree", root="ws", path="src/.git/x").status_code == 403
     assert get("/tree", root="ws", path="link-dir").status_code == 404
     assert get("/tree", root="ws", path="link-events").status_code == 404
@@ -317,12 +317,14 @@ def test_invisible_characters_in_a_file_are_reported(get, world):
 
 
 def test_locked_files_say_locked_and_show_no_content(get):
-    for path in (".env", "keys/server.pem", ".orch/config.json", "events/e1.json", "config.json", ".git/HEAD"):
+    for path in (".env", "keys/server.pem", ".orch/config.json", ".orch/events/e1.json", ".git/HEAD"):
         got = get("/file", root="ws", path=path).json()
         assert got["kind"] == "locked" and got["reason"] and "text" not in got and "needle" not in str(got), path
 
 
-@pytest.mark.parametrize("name", [".GIT/config", ".Env", "KEYS/SERVER.PEM", "keys/x.PEM", ".Orch/x", "Events/e1.json"])
+@pytest.mark.parametrize(
+    "name", [".GIT/config", ".Env", "KEYS/SERVER.PEM", "keys/x.PEM", ".Orch/x", ".ORCH/events/e1.json"]
+)
 def test_the_deny_list_ignores_case(get, name):
     assert get("/file", root="ws", path=name).json()["kind"] == "locked"
 
@@ -421,9 +423,9 @@ def test_every_hit_of_ripgrep_is_checked_again_by_the_guard(get, world, tmp_path
     lines = [
         ("./src/app.py", "1:print one"), ("./link-out", "1:TOPSECRET needle"), ("./link-orch", "1:needle"),
         ("./link-dir/secret.txt", "1:TOPSECRET"), ("./.env", "1:TOKEN needle"), ("./keys/server.pem", "1:needle"),
-        ("./events/e1.json", "1:needle"), ("./.orch/config.json", "1:needle"), ("./.git/HEAD", "1:ref needle"),
+        ("./.orch/events/e1.json", "1:needle"), ("./.orch/config.json", "1:needle"), ("./.git/HEAD", "1:ref needle"),
         ("../outside/secret.txt", "1:TOPSECRET"), ("/etc/passwd", "1:root"), ("./src", "1:dir"),
-        ("./link-events/e1.json", "1:needle"), ("./CONFIG.JSON", "1:needle"), ("./src/ünï.txt", "1:unicode needle"),
+        ("./link-events/e1.json", "1:needle"), ("./src/ünï.txt", "1:unicode needle"),
     ]  # fmt: skip
     body = "".join(f"printf '%s\\0%s\\n' '{p}' '{t}'\n" for p, t in lines)
     fake.write_text("#!/bin/sh\n" + body)
@@ -446,7 +448,7 @@ def test_ripgrep_is_started_with_no_config_no_follow_and_the_deny_globs(world, m
 
     monkeypatch.setattr(search, "rg_path", lambda: "/usr/bin/rg")
     monkeypatch.setattr(search.gitbrowse, "spawn", spawn)
-    root = guard.Root("ws", "w", os.path.realpath(world.proj), "workspace", guard.LEGACY_STORE)
+    root = guard.Root("ws", "w", os.path.realpath(world.proj), "workspace", frozenset())
     search.search([root], (), "needle --pre=/bin/sh")
     argv = seen["argv"]
     assert argv[:2] == ["/usr/bin/rg", "--no-config"] and "-L" not in argv and "--follow" not in argv
@@ -458,7 +460,7 @@ def test_ripgrep_is_started_with_no_config_no_follow_and_the_deny_globs(world, m
         ".",
     ]  # the text is the value of -e, after it comes only "."
     globs = [argv[i + 1] for i, a in enumerate(argv) if a == "--glob"]
-    for need in ("!.git", "!.orch", "!.env", "!.env.*", "!*.pem", "!/events", "!/config.json", "!id_rsa*"):
+    for need in ("!.git", "!.orch", "!.env", "!.env.*", "!*.pem", "!.state", "!id_rsa*"):
         assert need in globs, need
     assert (
         set(seen["env"]) == {"PATH", "LC_ALL", "HOME"}
@@ -508,7 +510,7 @@ def test_a_file_in_no_repository_has_no_history(get, world):
 
 
 def test_history_commit_compare_and_versions_refuse_locked_paths(get, world):
-    for path in (".env", "keys/server.pem", ".orch/config.json", "events/e1.json", "config.json", ".git/HEAD"):
+    for path in (".env", "keys/server.pem", ".orch/config.json", ".orch/events/e1.json", ".git/HEAD"):
         assert get("/history", root="ws", path=path).status_code == 403, path
         assert get("/commit", root="ws", path=path, sha=world.c1).status_code == 403, path
         assert get("/compare", root="ws", path=path, a=world.c1, b=world.c2).status_code == 403, path
@@ -595,7 +597,7 @@ def test_files_changed_of_a_ticket_come_from_its_own_events(get, world):
     )
     assert paths["src/app.py"]["root"] == "ws" and paths["src/app.py"]["via"] in ("push", "task")
     # locked files in a commit are not listed
-    assert not any(p.startswith((".env", ".orch", "events", "keys/server")) or p == "config.json" for p in paths)
+    assert not any(p.startswith((".env", ".orch", "keys/server")) for p in paths)
     assert get("/ticket/DEMO-9").status_code == 404 or get("/ticket/DEMO-9").json()["files"] == []
 
 
@@ -619,19 +621,20 @@ def test_the_commit_a_branch_was_cut_from_is_not_work_of_an_open_ticket(get, wor
 
 
 @pytest.mark.parametrize(
-    "parts,store,why",
+    "parts,why",
     [
-        ((".git",), frozenset(), "Git internals"), (("a", ".GIT", "x"), frozenset(), "Git internals"),
-        ((".orch",), frozenset(), "orch's own files"), (("tickets", "T-1"), frozenset({"tickets"}), "orch's own files"),
-        (("a", "tickets"), frozenset({"tickets"}), None), (("tickets",), frozenset(), None),
-        ((".env",), frozenset(), "Secrets (.env)"), ((".env.local",), frozenset(), "Secrets (.env)"),
-        (("env.txt",), frozenset(), None), (("x.pem",), frozenset(), "Keys"), (("a", "id_rsa"), frozenset(), "Keys"),
-        (("id_ed25519.pub",), frozenset(), "Keys"), (("keys.jsonl",), frozenset(), "Keys"), ((".ssh", "config"), frozenset(), "Keys"),
-        (("src", "main.py"), frozenset(), None), ((), frozenset({"x"}), None),
+        ((".git",), "Git internals"), (("a", ".GIT", "x"), "Git internals"),
+        ((".orch",), "orch's own files"), ((".ORCH", "tickets"), "orch's own files"),
+        ((".state",), "orch's own files"), (("a", ".STATE", "x"), "orch's own files"), (("tickets", "T-1"), None),
+        (("a", "tickets"), None), (("tickets",), None),
+        ((".env",), "Secrets (.env)"), ((".env.local",), "Secrets (.env)"),
+        (("env.txt",), None), (("x.pem",), "Keys"), (("a", "id_rsa"), "Keys"),
+        (("id_ed25519.pub",), "Keys"), (("keys.jsonl",), "Keys"), ((".ssh", "config"), "Keys"),
+        (("src", "main.py"), None), ((), None),
     ],
 )  # fmt: skip
-def test_the_deny_list(parts, store, why):
-    assert guard.deny(parts, store_names=store) == why
+def test_the_deny_list(parts, why):
+    assert guard.deny(parts) == why
 
 
 def test_the_guard_refuses_roots_it_must_not_open(tmp_path):
@@ -663,7 +666,7 @@ def test_the_nav_feature_exists_only_while_the_addon_is_on_for_an_owner(p1, gate
     from orch.addons.package import read_package
 
     assert "explorer" not in gateway.workspaces()[0].features
-    directory = package_dir(p1.root, "explorer")
+    directory = package_dir(p1.store_dir, "explorer")
     directory.mkdir(parents=True)
     (directory / "orch-addon.json").write_bytes(builtin.manifest_bytes("explorer"))
     event = grant_event(load_manifest(builtin.manifest_bytes("explorer")), read_package(directory))
@@ -959,10 +962,10 @@ def test_a_declared_folder_that_is_not_a_plain_repository_is_not_a_root(get, wor
 
 
 def test_a_hard_link_to_an_orch_file_is_not_readable_under_another_name(get, world):
-    (world.proj / ".state").mkdir(exist_ok=True)
-    (world.proj / ".state" / "secret.json").write_text("KEYMATERIAL\n")
-    os.link(world.proj / ".state" / "secret.json", world.proj / "innocent.txt")
-    os.link(world.proj / "config.json", world.proj / "cfg-copy.txt")
+    (world.proj / ".orch" / ".state").mkdir(exist_ok=True)
+    (world.proj / ".orch" / ".state" / "secret.json").write_text("KEYMATERIAL\n")
+    os.link(world.proj / ".orch" / ".state" / "secret.json", world.proj / "innocent.txt")
+    os.link(world.proj / ".orch" / "config.json", world.proj / "cfg-copy.txt")
     for name in ("innocent.txt", "cfg-copy.txt"):
         got = get("/file", root="ws", path=name)
         assert "KEYMATERIAL" not in got.text and (got.status_code == 403 or got.json().get("kind") != "text"), name
@@ -985,8 +988,8 @@ def test_ripgrep_starts_in_the_folder_the_guard_opened_not_in_a_path(world):
 
 
 def _keys_and_link(world, link="notes.txt"):
-    (world.proj / "keys.jsonl").write_text("KEYMATERIAL needle\n")
-    os.link(world.proj / "keys.jsonl", world.proj / link)
+    (world.proj / ".orch" / "keys.jsonl").write_text("KEYMATERIAL needle\n")
+    os.link(world.proj / ".orch" / "keys.jsonl", world.proj / link)
     git(world.proj, "add", "-f", "-A")
     git(world.proj, "commit", "-q", "-m", "keys by another name", n=5)
 
@@ -1012,9 +1015,9 @@ def test_when_the_walk_of_orch_files_is_cut_short_every_multi_link_file_is_locke
     assert get("/file", root="ws", path="src/app.py").json()["kind"] == "text"  # a file with one name is unaffected
 
 
-def test_a_hard_link_in_a_repository_root_to_a_legacy_store_file_is_locked(get, world):
-    (world.proj / "keys.jsonl").write_text("KEYMATERIAL\n")
-    os.link(world.proj / "keys.jsonl", world.other / "innocent.txt")
+def test_a_hard_link_in_a_repository_root_to_a_store_file_is_locked(get, world):
+    (world.proj / ".orch" / "keys.jsonl").write_text("KEYMATERIAL\n")
+    os.link(world.proj / ".orch" / "keys.jsonl", world.other / "innocent.txt")
     got = get("/file", root="repo:other", path="innocent.txt")
     assert got.status_code == 403 and "KEYMATERIAL" not in got.text
     assert get("/file", root="repo:other", path="o.txt").json()["kind"] == "text"

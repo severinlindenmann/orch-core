@@ -27,7 +27,7 @@ def test_only_the_tickets_own_events_are_kept(imported, hws):
 
 def test_the_marker_is_bound_by_its_digest_in_the_log(imported, hws):
     uid = hws.uid("DEMO-0003")
-    data = (hws.root / "tickets" / uid / "artifacts" / "v1-import.json").read_bytes()
+    data = (hws.store_dir / "tickets" / uid / "artifacts" / "v1-import.json").read_bytes()
     ev = next(e for e in hws.events("DEMO-0003") if e["type"] == "artifact.added" and e["name"] == "v1-import.json")
     assert ev["sha256"] == canon.artifact_digest(data) and ev["bytes"] == len(data) and ev["kind"] == "other"
     assert json.loads(data)["note"].startswith("A read-only copy")
@@ -40,7 +40,7 @@ def test_every_person_event_is_the_importers_signature(imported, hws):
 
 
 def test_hostile_text_is_cleaned_and_counted(imported, hws):
-    body = (hws.root / "tickets" / hws.uid("DEMO-0004") / "body.md").read_text()
+    body = (hws.store_dir / "tickets" / hws.uid("DEMO-0004") / "body.md").read_text()
     assert "\x1b" not in body and "‮" not in body and "�" in body
     assert "red" in body
     assert marker(hws, "DEMO-0004")["v1_file"].count("\x1b") == 1  # the original stays in the history
@@ -67,7 +67,7 @@ def test_an_agent_session_and_an_approval_work_on_an_imported_ticket(imported, h
 def test_doctor_and_check_are_clean_after_an_import_and_a_session(imported, hws, agent, me):  # noqa: F811
     from orch.instructions import write_workspace_files
 
-    write_workspace_files(hws.root)
+    write_workspace_files(hws.root, store=hws.store_dir)
     assert agent("claim", "DEMO-0003").code == 0
     assert agent("log", "-m", "after the import").code == 0
     assert agent("release").code == 0

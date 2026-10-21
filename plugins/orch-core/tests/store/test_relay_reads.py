@@ -144,7 +144,7 @@ def test_a_symlinked_abandoned_directory_is_refused_not_followed(grown, tmp_path
     outside.mkdir()
     forked = _forked(env, uid)
     (outside / "workspace-1.json").write_bytes(canon.cj_checked(forked))
-    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab = env.store_dir / ".state" / "checkpoints" / "abandoned"
     shutil.rmtree(ab, ignore_errors=True)
     ab.symlink_to(outside)
     with pytest.raises(StoreError) as e:
@@ -155,7 +155,7 @@ def test_a_symlinked_abandoned_directory_is_refused_not_followed(grown, tmp_path
 def test_a_symlinked_checkpoints_component_is_refused(grown, tmp_path):
     env, uid = grown
     forked = _forked(env, uid)
-    cps = env.root / ".state" / "checkpoints"
+    cps = env.store_dir / ".state" / "checkpoints"
     moved = tmp_path / "moved"
     shutil.move(str(cps), str(moved))
     cps.symlink_to(moved)
@@ -167,7 +167,7 @@ def test_a_symlinked_checkpoints_component_is_refused(grown, tmp_path):
 def test_a_symlinked_abandoned_entry_is_not_evidence_and_a_real_one_is(grown, tmp_path):
     env, uid = grown
     forked = _forked(env, uid)
-    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab = env.store_dir / ".state" / "checkpoints" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     target = tmp_path / "elsewhere.json"
     target.write_bytes(canon.cj_checked(forked))
@@ -252,7 +252,7 @@ def test_ancestry_needs_order_and_a_verified_path(grown):
 def test_an_abandoned_entry_that_is_not_a_file_is_skipped(grown):
     env, uid = grown
     forked = _forked(env, uid)
-    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab = env.store_dir / ".state" / "checkpoints" / "abandoned"
     (ab / "workspace-1.json").mkdir(parents=True)  # (highest_n's own reader trips on it; this reader skips it)
     (ab / "workspace-2.json").write_bytes(canon.cj_checked(forked))
     found = list(env.store._abandoned_workspace_checkpoints())  # noqa: SLF001
@@ -267,7 +267,7 @@ def test_a_fifo_in_abandoned_never_blocks_and_is_skipped(grown):
     import threading
 
     env, uid = grown
-    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab = env.store_dir / ".state" / "checkpoints" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     os.mkfifo(ab / "workspace-1.json")
     out = {}
@@ -295,7 +295,7 @@ def test_a_symlinked_root_is_never_followed(grown, tmp_path):
     (outside / ".state" / "checkpoints" / "abandoned").mkdir(parents=True)
     (outside / ".state" / "checkpoints" / "abandoned" / "workspace-9.json").write_bytes(b'{"outside": true}')
     genuine = canon.cj_checked(_forked(env, uid))
-    ab = real / ".state" / "checkpoints" / "abandoned"
+    ab = real / ".orch" / ".state" / "checkpoints" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     (ab / "workspace-8.json").write_bytes(genuine)  # in the store's own tree: it must be found (the walk works)
     os.rename(real, moved)
@@ -383,7 +383,7 @@ def test_every_component_of_the_abandoned_path_is_pinned(grown, tmp_path):
 def test_only_named_regular_files_within_4_mib_are_evidence(grown):
     env, uid = grown
     forked = _forked(env, uid)
-    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab = env.store_dir / ".state" / "checkpoints" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     (ab / "ticket-x-3.json").write_bytes(canon.cj_checked(forked))  # another name: not a workspace checkpoint
     (ab / "workspace-big.json").write_bytes(b" " * (4 << 20) + canon.cj_checked(forked))  # above 4 MiB

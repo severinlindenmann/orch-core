@@ -46,7 +46,7 @@ def refresh(hws):
 
 
 def setup(hws, me, man=None):
-    make_package(hws.root, man=man)
+    make_package(hws.store_dir, man=man)
     assert me("addon", "grant", "echo").code == 0
     uid = hws.new_ticket("with an addon field")
     write(hws, uid, 5)
@@ -61,7 +61,7 @@ def test_live_data_is_bound_by_its_gate_and_shown_active(hws, me):
     uid = setup(hws, me)
     state = refresh(hws)
     assert state.ticket(uid).fields["addons"]["echo"]["points"] == 5
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     assert view_data(reg, state.ticket(uid).fields["addons"]) == {
         "echo": {"state": "active", "active": True, "fields": {"points": 5}}
     }
@@ -76,7 +76,7 @@ def test_disabled_data_stays_but_is_inactive_and_not_bound(hws, me):
     assert me("addon", "disable", "echo").code == 0
     state = refresh(hws)
     assert state.ticket(uid).fields["addons"]["echo"]["points"] == 5  # untouched
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     assert view_data(reg, state.ticket(uid).fields["addons"])["echo"] == {
         "state": "disabled",
         "active": False,
@@ -108,7 +108,7 @@ def test_purge_removes_the_data_from_the_derived_state_of_every_ticket(hws, me):
     state = refresh(hws)
     for u in (uid, uid2):
         assert "echo" not in state.ticket(u).fields["addons"]
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     assert reg.state("echo") == "purged"
     assert plan_hash(hws, uid) != live
     # the data of a purged addon is not in the ticket.json on disk either (it is rebuilt from the same state)
@@ -125,7 +125,7 @@ def test_a_new_grant_after_purge_starts_empty(hws, me):
 
 
 def test_data_of_a_never_granted_addon_is_shown_unknown_and_never_active(hws, me):
-    reg = install.load_registry(hws.root, {})
+    reg = install.load_registry(hws.store_dir, {})
     shown = view_data(reg, {"ghost": {"x": 1}})
     assert shown == {"ghost": {"state": "unknown", "active": False, "fields": {"x": 1}}}
 
@@ -134,13 +134,13 @@ def test_inactive_data_is_never_an_input_of_a_needs_rule(hws, me):
     rule = {"id": "big", "when": ["gt", ["field", "points"], 3], "who": ["owner"], "text": "large estimate"}
     uid = setup(hws, me, man=manifest(needs=[rule]))
     state = refresh(hws)
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     got = needs_of_ticket(reg, state.workspace, state.ticket(uid))
     assert [(n.kind, n.ref, n.detail) for n in got] == [("addon", "echo.big", "large estimate")]
     assert got[0].who == (hws.owner.ref,)
     me("addon", "disable", "echo")
     state = refresh(hws)
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     assert (
         needs_of_ticket(reg, state.workspace, state.ticket(uid)) == []
     )  # the data is there, the rule does not read it
@@ -157,7 +157,7 @@ def test_a_rule_reaches_the_persons_who_hold_its_tokens_and_can_see_the_ticket(h
     hws.add_member("vera", "viewer")  # a viewer holds no token
     uid = setup(hws, me, man=manifest(needs=[rule]))
     state = refresh(hws)
-    reg = install.load_registry(hws.root, state.workspace.addons)
+    reg = install.load_registry(hws.store_dir, state.workspace.addons)
     (need,) = needs_of_ticket(reg, state.workspace, state.ticket(uid))
     assert set(need.who) == {hws.owner.ref, maria.ref}
     hws.store.append(

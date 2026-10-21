@@ -11,6 +11,7 @@ import pytest
 
 from orch.ops import health
 from orch.ops.caps import Capabilities
+from orch.store import StoreError
 from tests.store.helpers import WS, Env
 from tests.store.outside import snapshot, swap, watch
 
@@ -60,14 +61,14 @@ def test_inspect_never_follows_a_directory_swapped_after_open(env, outside, tmp_
     env.store.checkpoint()
     env.store.close()
     env.store = None
-    shutil.copytree(env.root / "tickets" / uid, outside / uid)
-    shutil.copytree(env.root / ".state" / "checkpoints", outside / "checkpoints")
+    shutil.copytree(env.store_dir / "tickets" / uid, outside / uid)
+    shutil.copytree(env.store_dir / ".state" / "checkpoints", outside / "checkpoints")
     real = health.InspectStore.open.__func__
 
     def opened(cls, *a, **k):
         s = real(cls, *a, **k)  # the store is open: now the swaps land
-        swap(env.root / "tickets" / uid, outside / uid, tmp_path / "t-moved")
-        swap(env.root / ".state" / "checkpoints", outside / "checkpoints", tmp_path / "cp-moved")
+        swap(env.store_dir / "tickets" / uid, outside / uid, tmp_path / "t-moved")
+        swap(env.store_dir / ".state" / "checkpoints", outside / "checkpoints", tmp_path / "cp-moved")
         return s
 
     monkeypatch.setattr(health.InspectStore, "open", classmethod(opened))
@@ -88,7 +89,7 @@ def test_the_workspace_name_is_read_below_the_pinned_root(env, outside, tmp_path
 
     s = env.bootstrap()
     shutil.copytree(env.root, outside / "ws")
-    cfg = outside / "ws" / "config.json"
+    cfg = outside / "ws" / ".orch" / "config.json"
     cfg.write_bytes(cfg.read_bytes().replace(b'"Acme"', b'"Evil"'))
     assert reads_ws._name(SimpleNamespace(store=s), "X") == "Acme"
     env.root.rename(tmp_path / "ws-moved")
@@ -99,7 +100,7 @@ def test_the_workspace_name_is_read_below_the_pinned_root(env, outside, tmp_path
     s.close()
 
 
-def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
+def test_a_records_snapshot_reads_nothing_through_a_swapped_project_path(env, outside, tmp_path):
     from orch.host import records as host_records
 
     s = env.bootstrap()
@@ -107,11 +108,12 @@ def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
     ctx = SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS)
     want = host_records._take(ctx)
     shutil.copytree(env.root, outside / "ws")
-    (outside / "ws" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
+    (outside / "ws" / ".orch" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
     env.root.rename(tmp_path / "ws-moved")
     os.symlink(outside / "ws", env.root)
     with watch(outside) as seen:
-        got = host_records._take(SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS))
-    assert seen == []
-    assert got["files"] == want["files"]  # the store's own directory, not the one the path now names
+        with pytest.raises(StoreError):  # the project path now names another directory: the snapshot fails closed
+            host_records._take(SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS))
+    assert all(x.endswith("/outside/ws") for x in seen)  # only the refused no-follow open of the project path itself
+    assert want["files"]
     s.close()

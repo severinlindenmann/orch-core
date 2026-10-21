@@ -39,7 +39,7 @@ def _clean_hit(root: guard.Root, rel: str, line: int, text: str) -> dict | None:
     """The page's row for one hit, or None when the guard refuses the path."""
     try:
         parts = guard.split(rel)
-        if not parts or guard.deny(parts, store_names=root.store):
+        if not parts or guard.deny(parts):
             return None
         st = root.stat_file(parts)  # no link in any component, not denied, present
     except guard.GuardError:
@@ -65,7 +65,7 @@ def _rg(root: guard.Root, folder: tuple[str, ...], query: str, budget: int):
         "--max-count", "5", "--no-messages", "--no-require-git", "--no-ignore-global", "--no-ignore-parent",
         "--max-count", "5",
     ]  # fmt: skip
-    for g in guard.exclude_globs(root.store if not folder else frozenset()):
+    for g in guard.exclude_globs():
         argv += ["--glob", g]
     argv += ["--glob", "!node_modules", "--glob", "!node_modules/**", "-e", query, "--", "."]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "HOME": os.environ.get("HOME", "/")}
@@ -93,7 +93,7 @@ def _git(root: guard.Root, folder: tuple[str, ...], query: str, budget: int):
     if repo is None or repo.prefix:
         return [], False
     try:
-        res = gitbrowse.run(repo.folder, "grep", os.environ, operand=(query,), exclude_top=repo.exclude_top,
+        res = gitbrowse.run(repo.folder, "grep", os.environ, operand=(query,),
                             max_bytes=MAX_BYTES, timeout=SECONDS)  # fmt: skip
     except gitsafe.Unsafe:
         return [], False

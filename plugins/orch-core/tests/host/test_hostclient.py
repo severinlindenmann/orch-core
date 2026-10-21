@@ -24,8 +24,10 @@ GATE = re.compile(r"(?<=#)[0-9a-f]{12}")
 PERSON = re.compile(r"p_[0-9a-f]{32}|gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")  # each lab draws its own owner key and grant
 
 
-def flat(r, wid: str) -> tuple[int, str, str]:
+def flat(r, wid: str, root=None) -> tuple[int, str, str]:
     def mask(text: str) -> str:
+        if root is not None:  # the project folder differs per lab (a work folder line names its full path)
+            text = text.replace(str(root), "<root>")
         return PERSON.sub("<person>", GATE.sub("<gate>", NONCE.sub("<nonce>", text.replace(wid, "<ws>"))))
 
     return r.code, mask(r.out), mask(r.err)
@@ -99,11 +101,11 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     other = Lab(tmp_path_factory.mktemp("h"))
     try:
         d = Cli(direct.ws)
-        want = [flat(d(*argv), WS) for argv in SCRIPT]
+        want = [flat(d(*argv), WS, direct.root) for argv in SCRIPT]
         served = hosted(other)
         try:
             h = hcli(other)
-            got = [flat(h(*argv), WS) for argv in SCRIPT]
+            got = [flat(h(*argv), WS, other.root) for argv in SCRIPT]
         finally:
             served.close()
     finally:
@@ -153,11 +155,11 @@ def test_mode_is_by_registration_and_a_dead_host_is_never_a_direct_write(lab):
         assert target.role == "person" and target.host_uid == UID
     finally:
         served.close()
-    n = len(list((lab.ws.root / "tickets").iterdir()))
+    n = len(list((lab.ws.store_dir / "tickets").iterdir()))
     r = hcli(lab).j("new", "Nowhere")
     assert (r.code, r.err_code) == (9, "host.unavailable"), r.out
     assert "host" in r.doc["error"]["message"] and r.doc["error"]["retryable"] is True
-    assert len(list((lab.ws.root / "tickets").iterdir())) == n  # nothing written directly
+    assert len(list((lab.ws.store_dir / "tickets").iterdir())) == n  # nothing written directly
     r = hcli(lab).j("show", "1")
     assert (r.code, r.err_code) == (9, "host.unavailable")
 
@@ -247,7 +249,7 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
-        make_package(lab.ws.root, "lint")
+        make_package(lab.ws.store_dir, "lint")
         r = hcli(lab, grant=False).j("addon", "grant", "lint")
         assert r.code == 0, r.out
     finally:
@@ -448,8 +450,10 @@ def _registry(state, root_of):
 
 
 def _tree(path, wid):
-    path.mkdir(parents=True)
-    (path / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": wid, "name": "n"}}))
+    (path / ".orch").mkdir(parents=True)
+    (path / ".orch" / "config.json").write_text(
+        json.dumps({"schema": "orch.workspace/2", "workspace": {"id": wid, "name": "n"}})
+    )
     return path
 
 
@@ -467,7 +471,7 @@ def test_a_config_json_naming_another_registered_workspace_is_not_routed_to_it(t
         return hostclient.locate(env, Workspace(env | {"ORCH_WORKSPACE": str(root)}, files=_files()), state=state)
 
     assert locate(a).workspace_id == a_id and locate(b).workspace_id == b_id
-    (a / "config.json").write_text(
+    (a / ".orch" / "config.json").write_text(
         json.dumps({"schema": "orch.workspace/2", "workspace": {"id": b_id, "name": "n"}})
     )  # A's config now carries B's id
     with pytest.raises(hostclient.HostFailure) as caught:
@@ -475,7 +479,7 @@ def test_a_config_json_naming_another_registered_workspace_is_not_routed_to_it(t
     assert (caught.value.code, caught.value.wire_exit) == ("host.unavailable", 9)
     assert str(b) in caught.value.message
     # an id that is not 32 hex characters never reaches a socket path
-    (a / "config.json").write_text(
+    (a / ".orch" / "config.json").write_text(
         json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "/tmp/x", "name": "n"}})
     )
     assert locate(a) is None

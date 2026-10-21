@@ -694,6 +694,50 @@ class PublishSetup(Action):
         return self
 
 
+class PublishAddresses(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    server: Origin
+    share: Origin
+
+    @model_validator(mode="after")
+    def different(self):
+        PublishSetup(action="publish_setup", server=self.server, share=self.share)
+        return self
+
+
+class AddonEnable(Action):
+    action: Literal["addon_enable"]
+    name: Literal["publish", "model-routing"]
+    publish: PublishAddresses | None = None
+    models: dict[str, dict[str, str]] | None = None
+
+    @model_validator(mode="after")
+    def settings_match(self):
+        if self.name == "publish":
+            if self.publish is None or self.models is not None:
+                raise ValueError("Publish needs exactly publish settings")
+        else:
+            if self.models is None or self.publish is not None:
+                raise ValueError("Model routing needs exactly models settings")
+            self.models = ModelsSet(action="models_set", models=self.models).models
+            if not self.models:
+                raise ValueError("choose at least one model")
+        return self
+
+    def settings(self) -> dict:
+        return {"publish": self.publish.model_dump()} if self.publish is not None else {"models": self.models}
+
+    def intent(self, grant: dict) -> dict:
+        from orch.host import sequence
+
+        try:
+            return sequence.validate_intent(
+                {"v": 1, "kind": "addon_enable", "name": self.name, "settings": self.settings(), "grant": grant}
+            )
+        except sequence.SequenceInvalid as exc:
+            raise fail("invalid.input", f"That add-on can't be signed: {exc}", exit=1) from None
+
+
 class PublishShare(Action):
     """`publish.share {staged_id}` through `human.prepare`: a person's signature over the exact words the host builds
     from the staged copy (ticket, kind, days, server, every file with size and hash). The page then calls
@@ -761,6 +805,7 @@ PrepareBody = Annotated[
     | AddonGrant
     | AddonDisable
     | PublishSetup
+    | AddonEnable
     | PublishShare
     | GrantRevoke
     | RunnerGrant,
@@ -899,6 +944,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
         case ModelsSet():
             return "settings.set", {"set": {"models": action.models or None}}
+        case AddonEnable():
+            return "settings.set", {"set": action.settings()}
         case PublishSetup():
             return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
         case PublishShare():
@@ -963,7 +1010,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup():
+        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -1120,6 +1167,18 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": len(sequence.steps(intent)), "digest": digest, "intent": intent}
         base = {"sequence": digest}  # the whole intent is part of the intent's idem
+    if isinstance(body, AddonEnable):
+        from orch.host import sequence
+
+        from .addon_switches import addon_base
+
+        if link.welcome.get("ops", {}).get("addon.preview") != 1:
+            raise fail("op.unsupported", "This host does not serve addon.preview yet.", exit=1)
+        switch_base = addon_base(link, body.name, True)
+        intent = body.intent(gateway.call(ws, "addon.preview", {"name": body.name})["grant"])
+        digest = sequence.digest_of(ws, person, intent)
+        meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
+        base = {"sequence": digest, "addon": switch_base}
     return Plan(op, args, host_files(body), base, person, meta)
 
 

@@ -1875,6 +1875,12 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
     [
         {"action": "publish_setup", "server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"},
         {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
+        {"action": "addon_grant", "name": "publish"},  # turning Publish on is terminal only, however it is asked
+        {
+            "action": "addon_enable",
+            "name": "publish",
+            "publish": {"server": "https://files.example.test", "share": "https://links.example.test"},
+        },
     ],
 )
 def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
@@ -1983,3 +1989,28 @@ def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
     body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
     res = client.post(url(stub, "images"), json=body, headers=hdr(token))
     assert res.status_code >= 400 and "orch-core" in res.text
+
+
+@pytest.mark.parametrize("supports_sequence", [False, True])
+def test_model_routing_enable_is_a_click_sequence(
+    client, token, stub, script, gateway, monkeypatch, tmp_path, supports_sequence
+):
+    from orch.addons.settings_needs import preview_grant
+    from test_addon_enable import MODELS, Link
+
+    link = Link()
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args: {"grant": preview_grant(tmp_path, "model-routing")})
+    body = {"action": "addon_enable", "name": "model-routing", "models": MODELS}
+    script.features = ["custody", "sequence"] if supports_sequence else ["custody"]
+    res = prepare(client, token, stub, body)
+    if not supports_sequence:
+        assert res.json()["error"]["code"] == "click.contract"
+        assert script.prepared == 0
+        return
+    assert res.status_code == 200, res.text
+    sent = [args for cl in script.clients for op, args in cl.calls if op == "prepare"][-1]
+    assert sent["op"] == "settings.set" and sent["args"] == {"set": {"models": MODELS}}
+    assert sent["sequence"]["of"] == 2
+    assert sent["sequence"]["intent"]["kind"] == "addon_enable"

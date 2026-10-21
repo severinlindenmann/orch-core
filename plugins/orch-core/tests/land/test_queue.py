@@ -179,7 +179,9 @@ def test_log_progress(length: int, head: str, next_head: str) -> None:
     if next_head != head:
         with pytest.raises(QueueError, match="land.log_regressed"):
             check_log_progress(mark, length, next_head)
-    assert check_log_progress(mark, length, head) == mark
+    assert check_log_progress(mark, length, head, prefix_head_at=lambda _: head) == mark
+    with pytest.raises(QueueError, match="land.log_regressed"):  # no continuity proof: refused
+        check_log_progress(mark, length + 1, next_head)
     assert check_log_progress(mark, length + 1, next_head, prefix_head_at=lambda _: head) == LogMark(
         length + 1, next_head
     )
@@ -495,3 +497,27 @@ def test_informational_ci_does_not_change_signed_requirements(result: CheckResul
             )
             == "rerun"
         )
+
+
+def test_requeue_cap_canonical_target_and_legacy_entry() -> None:
+    e = entry()
+    state = queued(e)
+    for _ in range(3):
+        state, a = begin(state, e)
+        state = tidy(record_outcome(state, a.n, "requeued", now="2026-10-21T12:00:00Z", reason="target_moved"), a.n)
+    with pytest.raises(QueueError, match="land.changed"):
+        begin(state, e)
+    with pytest.raises(QueueError, match="land.no_target"):
+        enqueue(QueueState(), entry(target="Develop"), settings=SETTINGS, consumed_ids=())
+    from orch.land.queue import from_json
+
+    legacy = {
+        "ticket": "T9",
+        "branch": "feat/x",
+        "source_sha": "s",
+        "enqueued": "2026-10-21T12:00:00Z",
+        "by": "p",
+        "script": ["clean"],
+    }
+    got = from_json(legacy, QueuedEntry, defaults={"remote": "r", "target": "develop"})
+    assert (got.remote, got.target, got.ticket) == ("r", "develop", "T9")

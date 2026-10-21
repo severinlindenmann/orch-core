@@ -18,6 +18,7 @@ from .policy import QueueError, check_owner_flag, norm_target
 
 Phase = Literal["begin", "pushing", "outcome"]
 Outcome = Literal["merged", "failed", "requeued"]
+MAX_REQUEUES = 3
 Reason = Literal["conflict", "red_checks", "timeout", "target_moved", "owner_required", "invalid_target"]
 CheckResult = Literal["pass", "fail", "running", "waiting", "timeout"]
 
@@ -205,11 +206,11 @@ def enqueue(
     targets = settings.get("targets", [])
     if (
         target is None
+        or target != entry.target  # exact canonical ref only: never rewrite the signed destination
         or not isinstance(targets, list)
         or target not in {norm_target(t) for t in targets if isinstance(t, str)}
     ):
         raise QueueError("land.no_target", entry.target)
-    entry = replace(entry, target=target)
     q = queue_for(state, entry.remote, target, head=entry.target_head)
     if any(e.ticket == entry.ticket for e in q.entries):
         raise QueueError("land.target_busy", entry.ticket)
@@ -329,6 +330,8 @@ def begin_attempt(
     q = queue_for(state, entry.remote, entry.target)
     if entry not in q.entries:
         raise QueueError("land.stale", "entry is no longer queued or has changed")
+    if sum(a.queued == entry.id and a.outcome == "requeued" for a in state.attempts) >= MAX_REQUEUES:
+        raise QueueError("land.changed", "requeue cap reached; fail the entry or enqueue again")
     if not descends:
         raise QueueError("land.changed", "target does not descend from the approved target head")
     if entry.owner_target and candidate_sha != entry.source_sha:
@@ -473,15 +476,16 @@ def check_log_progress(
     *,
     prefix_head_at: Callable[[int], str | None] | None = None,
 ) -> LogMark:
+    if mark is not None and prefix_head_at is None:
+        raise QueueError("land.log_regressed", "continuity proof (prefix_head_at) required")
     if (
         length < 0
         or mark is not None
+        and prefix_head_at is not None
         and (
             length < mark.length
-            or length == mark.length
-            and head != mark.head
-            or prefix_head_at is not None
-            and prefix_head_at(mark.length) != mark.head
+            or (length == mark.length and head != mark.head)
+            or prefix_head_at(mark.length) != mark.head
         )
     ):
         raise QueueError("land.log_regressed", "log is shorter or its recorded prefix changed")
@@ -512,6 +516,8 @@ def from_json(data: Mapping[str, Any], kind: None = None) -> QueuedEntry | Attem
 def from_json(
     data: Mapping[str, Any],
     kind: type[QueuedEntry] | type[Attempt] | None = None,
+    *,
+    defaults: Mapping[str, Any] | None = None,
 ) -> QueuedEntry | Attempt:
     """Parse model or legacy mock data; missing check bindings never imply pass.
 
@@ -526,4 +532,19 @@ def from_json(
         values["required_checks"] = tuple(values.get("required_checks", ()))
         values.setdefault("phase", "outcome" if values.get("outcome") is not None else "begin")
         return Attempt(**values)
+    # A mock entry lacks what its queue carries (remote, target) and the new signed bindings:
+    # `defaults` supplies the queue's values; the rest default to display-only blanks.
+    values = {**(defaults or {}), **values}
+    for simulator_only in ("script", "signed_event"):
+        values.pop(simulator_only, None)
+    values.setdefault("id", values.get("ticket", ""))
+    values.setdefault("repo", values.get("remote", ""))
+    for key, blank in (
+        ("target_head", ""),
+        ("commits", 0),
+        ("range_digest", ""),
+        ("settings_gen", 0),
+        ("owner_target", False),
+    ):
+        values.setdefault(key, blank)
     return QueuedEntry(**values)

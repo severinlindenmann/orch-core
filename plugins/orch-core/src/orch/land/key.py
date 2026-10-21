@@ -49,6 +49,8 @@ __all__ = ["KeyStore", "LandKeyError", "fingerprint", "pinned_exe", "remote_host
 EXE_CANDIDATES: dict[str, tuple[str, ...]] = {"ssh": ("/usr/bin/ssh",)}
 #: macOS: the root-owned link ``xcode-select`` keeps to the active developer directory (tests replace it)
 XCODE_LINK = "/var/db/xcode_select_link"
+#: macOS: the root-owned Command Line Tools directory, tried before the ``xcode-select`` one (tests replace it)
+CLT_DIR = "/Library/Developer/CommandLineTools"
 PLATFORM = sys.platform
 COMMENT = "orch-land"
 _MAX_PIN_LINES = 8
@@ -141,17 +143,31 @@ def trusted_link(path: str) -> bool:
         return False
 
 
+def _vetted(git: str, libexec: str) -> tuple[str, str] | None:
+    """``(git, real libexec)`` when both are root-owned with a root-owned chain, else ``None``."""
+    if not (os.path.isfile(git) and trusted_exe(git) and libexec.startswith("/") and os.path.isdir(libexec)):
+        return None
+    real = os.path.realpath(libexec)
+    try:
+        if not (_chain_ok(real) and _chain_ok(libexec)):
+            return None
+    except OSError:
+        return None
+    return git, real
+
+
 def resolve_git() -> tuple[str, str]:
     """``(git, GIT_EXEC_PATH)``: a root-owned git and its root-owned helper directory, both with a root-owned directory
-    chain and no foreign write ACL; anything else is ``land.untrusted_exe``. macOS: the developer directory behind the
-    root-owned ``xcode_select_link`` (``<dir>/usr/bin/git``, ``<dir>/usr/libexec/git-core``), never the ``/usr/bin/git``
-    shim, which execs the ``xcode-select``'d git (user-writable in an ordinary Xcode install) and keeps a user-writable
-    cache. Linux: ``/usr/bin/git`` and the directory it reports for ``--exec-path``."""
+    chain and no foreign write ACL; anything else is ``land.untrusted_exe``. macOS: first the Command Line Tools
+    (``/Library/Developer/CommandLineTools/usr/bin/git`` + ``usr/libexec/git-core``), else the developer directory
+    behind the root-owned ``xcode_select_link`` (``<dir>/usr/bin/git``, ``<dir>/usr/libexec/git-core``; an ordinary
+    Xcode install is user-owned and fails here); never the ``/usr/bin/git`` shim, which execs the ``xcode-select``'d git
+    and keeps a user-writable cache. Linux: ``/usr/bin/git`` and the directory it reports for ``--exec-path``."""
     if PLATFORM == "darwin":
-        if not trusted_link(XCODE_LINK):
-            raise _untrusted_git()
-        dev = os.path.realpath(XCODE_LINK)
-        git, libexec = f"{dev}/usr/bin/git", f"{dev}/usr/libexec/git-core"
+        found = _vetted(f"{CLT_DIR}/usr/bin/git", f"{CLT_DIR}/usr/libexec/git-core")
+        if found is None and trusted_link(XCODE_LINK):
+            dev = os.path.realpath(XCODE_LINK)
+            found = _vetted(f"{dev}/usr/bin/git", f"{dev}/usr/libexec/git-core")
     else:
         git = "/usr/bin/git"
         if not os.path.isfile(git) or not trusted_exe(git):
@@ -164,15 +180,10 @@ def resolve_git() -> tuple[str, str]:
         except (OSError, subprocess.SubprocessError):
             raise _untrusted_git() from None
         libexec = done.stdout.decode("utf-8", "replace").strip() if done.returncode == 0 else ""
-    if not (os.path.isfile(git) and trusted_exe(git) and libexec.startswith("/") and os.path.isdir(libexec)):
+        found = _vetted(git, libexec)
+    if found is None:
         raise _untrusted_git()
-    real = os.path.realpath(libexec)
-    try:
-        if not (_chain_ok(real) and _chain_ok(libexec)):
-            raise _untrusted_git()
-    except OSError:
-        raise _untrusted_git() from None
-    return git, real
+    return found
 
 
 def pinned_git() -> tuple[str, str]:

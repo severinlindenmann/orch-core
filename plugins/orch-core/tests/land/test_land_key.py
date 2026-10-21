@@ -698,6 +698,7 @@ def real_resolution(monkeypatch):
 def test_macos_git_is_the_developer_dir_behind_the_root_owned_link_not_the_shim(real_resolution, tmp_path, monkeypatch):
     dev, link = fake_developer_dir(tmp_path)
     monkeypatch.setattr(lk, "PLATFORM", "darwin")
+    monkeypatch.setattr(lk, "CLT_DIR", str(tmp_path / "no-clt"))
     monkeypatch.setattr(lk, "XCODE_LINK", str(link))
     # user-owned (as an ordinary Xcode install is): refused, with a plain hint
     with pytest.raises(LandKeyError) as e:
@@ -716,6 +717,7 @@ def test_macos_git_is_the_developer_dir_behind_the_root_owned_link_not_the_shim(
 def test_macos_refuses_a_missing_or_foreign_link_or_helper_dir(real_resolution, tmp_path, monkeypatch):
     dev, link = fake_developer_dir(tmp_path)
     monkeypatch.setattr(lk, "PLATFORM", "darwin")
+    monkeypatch.setattr(lk, "CLT_DIR", str(tmp_path / "no-clt"))
     monkeypatch.setattr(lk, "trusted_exe", lambda p: True)
     monkeypatch.setattr(lk, "_chain_ok", lambda p: True)
     monkeypatch.setattr(lk, "XCODE_LINK", str(tmp_path / "nope"))
@@ -730,6 +732,42 @@ def test_macos_refuses_a_missing_or_foreign_link_or_helper_dir(real_resolution, 
     shutil.rmtree(dev / "usr" / "libexec" / "git-core")
     with pytest.raises(LandKeyError):  # no helper directory
         lk.resolve_git()
+
+
+def fake_clt(base: Path) -> Path:
+    clt = base.resolve() / "CLT"
+    (clt / "usr" / "bin").mkdir(parents=True)
+    (clt / "usr" / "libexec" / "git-core").mkdir(parents=True)
+    git = clt / "usr" / "bin" / "git"
+    git.write_text("#!/bin/sh\n")
+    git.chmod(0o755)
+    return clt
+
+
+def test_macos_prefers_the_command_line_tools_over_a_user_owned_xcode(real_resolution, tmp_path, monkeypatch):
+    dev, link = fake_developer_dir(tmp_path)
+    clt = fake_clt(tmp_path)
+    monkeypatch.setattr(lk, "PLATFORM", "darwin")
+    monkeypatch.setattr(lk, "XCODE_LINK", str(link))
+    monkeypatch.setattr(lk, "CLT_DIR", str(clt))
+    monkeypatch.setattr(lk, "trusted_link", lambda p: True)
+    monkeypatch.setattr(lk, "_chain_ok", lambda p: True)
+    # the Command Line Tools are trusted, the xcode-select dir (user-owned) is not
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: str(p).startswith(str(clt)))
+    assert lk.resolve_git() == (str(clt / "usr/bin/git"), str(clt / "usr/libexec/git-core"))
+    # CLT untrusted: fall back to the xcode_select_link dir when that is trusted
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: str(p).startswith(str(dev)))
+    assert lk.resolve_git() == (str(dev / "usr/bin/git"), str(dev / "usr/libexec/git-core"))
+    # CLT missing: same fallback
+    monkeypatch.setattr(lk, "CLT_DIR", str(tmp_path / "gone"))
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: True)
+    assert lk.resolve_git()[0] == str(dev / "usr/bin/git")
+    # both untrusted: refused
+    monkeypatch.setattr(lk, "CLT_DIR", str(clt))
+    monkeypatch.setattr(lk, "trusted_exe", lambda p: False)
+    with pytest.raises(LandKeyError) as e:
+        lk.resolve_git()
+    assert e.value.code == "land.untrusted_exe"
 
 
 def test_the_real_trusted_link_check_needs_a_root_owned_link(tmp_path):

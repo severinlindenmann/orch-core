@@ -491,6 +491,13 @@ FSCK_ERRORS = (
     "gitmodulesUpdate",
     "badFilemode",
     "badName",
+    "gitattributesLarge",
+    "gitattributesLineLength",
+    "gitattributesMissing",
+    "gitattributesBlob",
+    "largePathname",
+    "nulInCommit",
+    "badTree",
 )
 
 #: Landing's operations (#596), a second CLOSED set beside :data:`OPS` (kept apart so :data:`OPS`, which the isolation
@@ -525,12 +532,13 @@ LAND_OPS: dict[str, Op] = {
     ),  # fmt: skip
     "land_diff_raw": Op(("diff-tree", "-r", "--raw", "-z", "--no-renames", "--ignore-submodules=none", "--no-color",
                          "<oid>", "<oid>")),  # fmt: skip
-    # git's own fsck of everything reachable from one commit: the check that decides which tree entries are acceptable
-    # (the importer's own name check is only an early refusal); every relevant message id is an error
-    "land_fsck": Op(
-        ("fsck", "--strict", "--no-dangling", "--no-reflogs", "--no-progress", "--no-name", "<oid>"),
+    # git's own strict check of the INCOMING objects only (like a receive: ``index-pack --strict`` on the pack the
+    # importer built, run with the quarantine as object directory and the host's objects as alternate): the check that
+    # decides which tree entries are acceptable; the importer's own name check is only an early refusal. Every relevant
+    # message id is an error. The pack arrives on stdin; git writes it and its index into the quarantine.
+    "land_index_pack": Op(
+        ("index-pack", "--stdin", "--strict=" + ",".join(f"{i}=error" for i in FSCK_ERRORS)),
         env=frozenset({"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}),
-        pins=tuple(x for i in FSCK_ERRORS for x in ("-c", f"fsck.{i}=error")),
     ),
     "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
 }  # fmt: skip
@@ -593,12 +601,13 @@ def command(
         raise Unsafe("unknown git operation")
     args = _fill(spec, operand)
     extra = dict(env_extra or {})
-    if not set(extra) <= spec.env or any("\0" in v for v in extra.values()):
+    if not set(extra) <= spec.env or "GIT_DIR" in extra or any("\0" in v for v in extra.values()):
         raise Unsafe("invalid git environment")
     local = gate(repo, own, timeout=timeout)
-    if op.startswith("land_"):
+    if op in LAND_OPS:
         land_check(repo, local)
         _land_env_ok(repo, extra)
+        extra["GIT_DIR"] = repo  # git never discovers a repository: this one, and no other, no ``.git`` redirection
     entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
     return _argv(repo, args, spec.pins), {**isolated_env(own, entries), **extra}
 
@@ -615,7 +624,10 @@ def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:
         raise Unsafe("the landing repository is not bare")
     for rel in ("objects", "refs", "HEAD"):
         _check_path(os.path.join(repo, rel), f"landing {rel}", must_exist=True)
-    for rel in ("objects/info/alternates", "objects/info/http-alternates", "shallow", "info/grafts", "info/attributes"):
+    for rel in (
+        "objects/info/alternates", "objects/info/http-alternates", "shallow", "info/grafts", "info/attributes",
+        ".git", "commondir", "gitdir",
+    ):  # fmt: skip
         if os.path.lexists(os.path.join(repo, rel)):
             raise Unsafe(f"the landing repository has {rel}")
 

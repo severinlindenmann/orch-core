@@ -254,7 +254,7 @@ def test_merge_candidate_has_the_target_as_first_parent_and_both_changes(w):
     assert w.hgit("cat-file", "-p", f"{c.sha}:src/b.txt") == "b"
     assert w.hgit("cat-file", "-p", f"{c.sha}:src/t.txt") == "t"
     assert w.hgit("rev-parse", f"refs/land/{c.sha}") == c.sha
-    w.host.check_push_shape(t1, c.sha)
+    w.host.check_push_shape(c)
 
 
 def test_conflict_is_a_result_not_an_exception(w):
@@ -502,19 +502,45 @@ def test_a_candidate_needs_its_objects(w):
 # -- F2 shape check ------------------------------------------------------------------------------------------------
 
 
-def test_push_shape_rejects_a_candidate_that_does_not_contain_the_target(w):
+def test_push_shape_accepts_what_candidate_made_and_rejects_the_rest(w):
     t0 = w.fetch()
     s = w.ticket("src/b.txt", "b\n")
     w.importing()
+    ff = w.cand(target=t0, source=s, head=t0)
+    w.host.check_push_shape(ff)
     t1 = w.advance_target("src/t.txt", "t\n")
     w.fetch()
-    w.host.check_push_shape(t0, s)  # t0 is an ancestor of s
-    with pytest.raises(LandGitError) as e:
-        w.host.check_push_shape(t1, s)
+    with pytest.raises(LandGitError) as e:  # the target moved: the old fast-forward no longer contains it
+        w.host.check_push_shape(Candidate(s, "fast_forward", t1, s))
     assert e.value.code == "land.changed"
     c = w.cand(target=t1, source=s, head=t0)
-    with pytest.raises(LandGitError):  # the source is the second parent, not the first
-        w.host.check_push_shape(s, c.sha)
+    w.host.check_push_shape(c)
+    for bad in (
+        Candidate(c.sha, "merge", s, t1),  # swapped parents
+        Candidate(c.sha, "fast_forward", t1, s),  # a merge presented as a fast-forward
+        Candidate(s, "merge", t0, s),  # a fast-forward presented as a merge
+        Candidate(c.sha, "rebase", t1, s),
+    ):
+        with pytest.raises(LandGitError):
+            w.host.check_push_shape(bad)
+
+
+def test_a_source_tip_that_is_a_merge_with_the_target_as_second_parent_is_a_valid_fast_forward(w):
+    t0 = w.fetch()
+    w.ticket("src/b.txt", "b\n")
+    w.src.git("checkout", "-q", "-b", "side", t0)
+    w.src.write("side.txt", "s\n")
+    w.src.commit("side")
+    w.src.git("merge", "-q", "--no-ff", "-m", "merge ticket", "ticket")  # tip: first parent = side, second = ticket
+    sh("-C", str(w.src.path), "push", "-q", "origin", "side:main", env=w.env)
+    t1 = w.fetch()
+    w.src.git("checkout", "-q", "-B", "ticket3", t1)
+    w.src.git("merge", "-q", "--no-ff", "-m", "merge main", "side")
+    tip = w.src.sha("HEAD")
+    w.importing(tip)
+    c = w.cand(target=t1, source=tip, head=t1, commits=w.host.count(t1, tip))
+    assert c.kind == "fast_forward" and c.sha == tip
+    w.host.check_push_shape(c)
 
 
 # -- gitsafe: the closed set ---------------------------------------------------------------------------------------
@@ -524,7 +550,7 @@ def test_land_ops_take_only_object_ids_and_the_landing_ref(w):
     own = w.own
     ok = "a" * 40
     argv, env = gitsafe.command(w.host_path, "land_is_ancestor", own, operand=(ok, ok))
-    assert argv[-3:] == ["--is-ancestor", ok, ok] and "GIT_DIR" not in env
+    assert argv[-3:] == ["--is-ancestor", ok, ok] and env["GIT_DIR"] == w.host_path
     for operand in (("HEAD", ok), (ok, "refs/heads/main"), (ok + "^", ok), ("-x", ok), (ok,), (ok, ok, ok), "a" * 40):
         with pytest.raises(gitsafe.Unsafe):
             gitsafe.command(w.host_path, "land_is_ancestor", own, operand=operand)
@@ -546,8 +572,11 @@ def test_only_the_commit_tree_operation_takes_identity_environment(w):
     ok = "a" * 40
     ident = {"GIT_AUTHOR_NAME": "n", "GIT_COMMITTER_DATE": "1 +0000"}
     gitsafe.command(w.host_path, "land_commit_tree", w.own, operand=(ok, ok, ok), env_extra=ident)
-    for extra in ({"GIT_DIR": "/x"}, {"GIT_EXTERNAL_DIFF": "/bin/sh"}, {"GIT_SSH_COMMAND": "x"}, {"PATH": "/tmp"},
-                  {"GIT_AUTHOR_NAME": "a\0b"}):  # fmt: skip
+    bad_env = (
+        {"GIT_DIR": w.host_path}, {"GIT_EXTERNAL_DIFF": "/bin/sh"}, {"GIT_SSH_COMMAND": "x"}, {"PATH": "/tmp"},
+        {"GIT_AUTHOR_NAME": "a\0b"},
+    )  # fmt: skip
+    for extra in bad_env:
         with pytest.raises(gitsafe.Unsafe):
             gitsafe.command(w.host_path, "land_commit_tree", w.own, operand=(ok, ok, ok), env_extra=extra)
     with pytest.raises(gitsafe.Unsafe):
@@ -556,7 +585,7 @@ def test_only_the_commit_tree_operation_takes_identity_environment(w):
     hostile = {**w.own, "GIT_DIR": "/x", "GIT_SSH_COMMAND": "x", "GIT_EXTERNAL_DIFF": "x", "GIT_CONFIG_COUNT": "1"}
     _, env = gitsafe.command(w.host_path, "land_has", hostile, operand=ok)
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_COUNT"] == "0"
-    assert not {"GIT_DIR", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF"} & set(env)
+    assert env["GIT_DIR"] == w.host_path and not {"GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF"} & set(env)
 
 
 def test_the_land_gate_refuses_a_tampered_landing_repository(w):
@@ -617,11 +646,11 @@ def test_land_ops_are_a_closed_set_and_leave_ops_alone():
     assert set(gitsafe.OPS) == {"staged_raw", "staged_blob"}
     assert set(gitsafe.LAND_OPS) == {
         "land_has", "land_commit", "land_merge_base", "land_is_ancestor", "land_count", "land_merge_tree",
-        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_fsck",
+        "land_commit_tree", "land_diff_raw", "land_update_ref", "land_index_pack",
     }  # fmt: skip
     # no operation can reach the network, a work tree, a free argument or the person's configuration
     assert {op.args[0] for op in gitsafe.LAND_OPS.values()} <= {
-        "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref", "fsck",
+        "cat-file", "merge-base", "rev-list", "merge-tree", "commit-tree", "diff-tree", "update-ref", "index-pack",
     }  # fmt: skip
     for op in gitsafe.LAND_OPS.values():
         assert not {"-c", "-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack"} & set(
@@ -776,21 +805,21 @@ def test_any_failure_mid_import_leaves_objects_unchanged_and_the_next_import_wor
     w.ticket("c.txt", "c\n")
     tip = w.src.sha("HEAD")
     before = _objects_snapshot(w)
-    real = LandRepo._write_loose
+    real = lg.PackWriter.add
     calls = {"n": 0}
 
-    def flaky(self, objects, oid, kind, data):
+    def flaky(self, oid, kind, data):
         if calls["n"] >= after:
             raise exc
         calls["n"] += 1
-        return real(self, objects, oid, kind, data)
+        return real(self, oid, kind, data)
 
-    monkeypatch.setattr(LandRepo, "_write_loose", flaky)
+    monkeypatch.setattr(lg.PackWriter, "add", flaky)
     with pytest.raises(type(exc)):
         w.importing(tip)
     assert _objects_snapshot(w) == before and _no_quarantine(w)
     assert not w.host.has(tip)
-    monkeypatch.setattr(LandRepo, "_write_loose", real)
+    monkeypatch.setattr(lg.PackWriter, "add", real)
     assert w.importing(tip).commits == 2
     assert w.host.has(tip) and _no_quarantine(w)
     assert w.hgit("fsck", "--no-dangling", "--connectivity-only") == ""
@@ -806,7 +835,7 @@ def test_a_failure_while_promoting_leaves_only_whole_objects(w, monkeypatch):
     def flaky(src, dst, **kw):
         if kw.get("src_dir_fd") is not None and src == dst:  # promotion renames only
             n["i"] += 1
-            if n["i"] == 3:
+            if n["i"] == 2:  # the index, after the pack was moved
                 raise OSError("boom")
         return real(src, dst, **kw)
 
@@ -814,23 +843,95 @@ def test_a_failure_while_promoting_leaves_only_whole_objects(w, monkeypatch):
     with pytest.raises(LandGitError):
         w.importing(tip)
     monkeypatch.setattr(os, "replace", real)
-    assert _no_quarantine(w)
-    # what was promoted is children first: a later import completes, and the repository is connected
+    assert _no_quarantine(w) and list((Path(w.host_path) / "objects" / "pack").iterdir()) == []
+    # nothing half-moved stays: a later import completes, and the repository is connected
     assert w.importing(tip).commits == 1
     assert w.hgit("fsck", "--no-dangling", "--connectivity-only") == ""
 
 
-def test_the_fsck_environment_is_confined_to_the_quarantine_and_the_hosts_objects(w):
+def test_the_index_pack_environment_is_confined_to_the_quarantine_and_the_hosts_objects(w):
     ok = "a" * 40
     q = f"{w.host_path}/incoming-{'0' * 16}"
     good = {"GIT_OBJECT_DIRECTORY": q, "GIT_ALTERNATE_OBJECT_DIRECTORIES": f"{w.host_path}/objects"}
-    gitsafe.command(w.host_path, "land_fsck", w.own, operand=ok, env_extra=good)
+    gitsafe.command(w.host_path, "land_index_pack", w.own, env_extra=good)
     for extra in (
         {"GIT_OBJECT_DIRECTORY": "/tmp/x"}, {"GIT_OBJECT_DIRECTORY": w.host_path + "/objects"},
         {"GIT_OBJECT_DIRECTORY": q + "/../.."}, {"GIT_ALTERNATE_OBJECT_DIRECTORIES": "/etc"},
         {"GIT_ALTERNATE_OBJECT_DIRECTORIES": f"{w.host_path}/objects:/etc"},
     ):  # fmt: skip
         with pytest.raises(gitsafe.Unsafe):
-            gitsafe.command(w.host_path, "land_fsck", w.own, operand=ok, env_extra=extra)
+            gitsafe.command(w.host_path, "land_index_pack", w.own, env_extra=extra)
     with pytest.raises(gitsafe.Unsafe):  # other operations never get them
         gitsafe.command(w.host_path, "land_has", w.own, operand=ok, env_extra={"GIT_OBJECT_DIRECTORY": q})
+
+
+# -- Opus review of #761 -------------------------------------------------------------------------------------------
+
+
+def test_old_odd_history_on_the_target_does_not_block_a_landing(w):
+    """git's check covers only the incoming objects: a zero-padded mode already in the target's history (fetched, not
+    ours to judge) must not refuse every landing."""
+    blob = sh("hash-object", "-w", "--stdin", env=w.target.env, cwd=w.target.path, stdin=b"old\n")
+    tree = sh("hash-object", "-w", "-t", "tree", "--literally", "--stdin", env=w.target.env, cwd=w.target.path,
+              stdin=b"040000 d\0" + bytes.fromhex(sh("mktree", env=w.target.env, cwd=w.target.path, stdin=b"")) +
+              b"0100644 odd\0" + bytes.fromhex(blob))  # fmt: skip
+    odd = sh("commit-tree", tree, "-p", w.target.sha("HEAD"), "-m", "odd", env=w.target.env, cwd=w.target.path)
+    w.target.git("update-ref", "refs/heads/main", odd)
+    w.target.git("push", "-q", "origin", "main")
+    control = subprocess.run(
+        [GIT, "-C", str(w.origin), "fsck", "--strict"], capture_output=True, env=w.env, check=False
+    )
+    assert b"zeroPaddedFilemode" in control.stderr  # positive control: git's strict fsck does object to the old tree
+    t = w.fetch()
+    assert t == odd
+    w.sync_source()
+    s = w.ticket("src/b.txt", "b\n")
+    assert w.importing(s).commits == 1
+    assert w.cand(target=t, source=s, head=t).sha == s
+
+
+def test_the_early_name_refusal_and_size_cap_also_leave_nothing(w, monkeypatch):
+    w.fetch()
+    tip = _raw_tree_commit(w, [("100644", b".git", "x\n")])
+    before = _objects_snapshot(w)
+    with pytest.raises(LandGitError):  # our own early check
+        w.importing(tip)
+    monkeypatch.setattr(lg, "MAX_OBJECTS", 1)
+    w.ticket("a.txt", "a\n")
+    with pytest.raises(LandGitError) as e:
+        w.importing()
+    assert e.value.code == "land.too_big"
+    assert _objects_snapshot(w) == before and _no_quarantine(w)
+
+
+def test_land_check_refuses_a_gitfile_and_a_commondir(w):
+    base = Path(w.host_path)
+    for name in (".git", "commondir"):
+        (base / name).write_text("gitdir: /elsewhere\n")
+        with pytest.raises(LandGitError) as e:
+            w.host.has("a" * 40)
+        assert e.value.code == "land.unsafe"
+        (base / name).unlink()
+    w.host.has("a" * 40)
+
+
+def test_commit_date_is_explicit_and_bounded(w):
+    t0 = w.fetch()
+    s = w.ticket("src/b.txt", "b\n")
+    w.importing()
+    t1 = w.advance_target("src/t.txt", "t\n")
+    w.fetch()
+    for bad in (0, 1234, 946_684_799, 4_102_444_801):
+        with pytest.raises(LandGitError) as e:
+            w.cand(target=t1, source=s, head=t0, when=bad)
+        assert e.value.code == "land.bad_input"
+    c = w.cand(target=t1, source=s, head=t0, when=946_684_800)
+    assert w.hgit("show", "-s", "--format=%at", c.sha) == "946684800"
+
+
+@pytest.mark.parametrize("i", gitsafe.FSCK_ERRORS)
+def test_every_fsck_message_id_is_known_to_this_git(i):
+    """index-pack refuses an id it does not know ("Unhandled message id"), so this fails loudly on a git upgrade."""
+    done = subprocess.run([GIT, "index-pack", "--stdin", f"--strict={i}=error"], input=b"", capture_output=True,
+                          env={"PATH": os.environ["PATH"], "GIT_DIR": "/nonexistent"}, check=False)  # fmt: skip
+    assert b"Unhandled message id" not in done.stderr

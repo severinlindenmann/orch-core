@@ -29,6 +29,7 @@ This module is the only code that decides **which commit a landing would push**.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import re
 import secrets
@@ -64,6 +65,7 @@ RUN_SECONDS = 60.0
 OUT_MAX = 16 * limits.MiB
 MESSAGE_MAX = 4096
 _OID = re.compile(r"[0-9a-f]{40}")
+_WHEN_MIN, _WHEN_MAX = 946_684_800, 4_102_444_800  # 2000-01-01 .. 2100-01-01
 _GITLINK = 0o160000
 _SYMLINK = 0o120000
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git knows it without the object
@@ -161,6 +163,56 @@ def _topo(new: Mapping[str, Sequence[str]]) -> list[str]:
             stack.append((oid, True))
             stack.extend((p, False) for p in new[oid] if p in new and p not in done)
     return out
+
+
+_PACK_TYPES = {"commit": 1, "tree": 2, "blob": 3}
+
+
+class PackWriter:
+    """The incoming objects as ONE undeltified pack v2 file in the private quarantine directory (written entry by entry,
+    so memory stays flat). git's ``index-pack --strict`` is the only thing that turns it into objects."""
+
+    def __init__(self, directory: str) -> None:
+        self.path = os.path.join(directory, "incoming.pack")
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        self._f = os.fdopen(fd, "wb")
+        self._f.write(b"PACK\0\0\0\2\0\0\0\0")  # the object count is filled in at the end
+        self._sha = hashlib.sha1()  # noqa: S324 - git's object format
+        self.count = 0
+        self._seen: set[str] = set()
+
+    def add(self, oid: str, kind: str, data: bytes) -> bool:
+        """Append one hash-checked object; ``False`` if this pack already has it."""
+        if oid in self._seen:
+            return False
+        self._seen.add(oid)
+        size = len(data)
+        byte = (_PACK_TYPES[kind] << 4) | (size & 15)
+        size >>= 4
+        head = bytearray()
+        while size:
+            head.append(byte | 0x80)
+            byte = size & 0x7F
+            size >>= 7
+        head.append(byte)
+        self._f.write(bytes(head) + zlib.compress(data, 1))
+        self.count += 1
+        return True
+
+    def finish(self) -> bytes:
+        """The whole pack (header with the count, entries, SHA-1 trailer), for git's stdin."""
+        self._f.flush()
+        self._f.close()
+        with open(self.path, "r+b") as f:
+            f.seek(8)
+            f.write(self.count.to_bytes(4, "big"))
+        with open(self.path, "rb") as f:
+            data = f.read()
+        return data + hashlib.sha1(data).digest()  # noqa: S324
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._f.close()
 
 
 class LandRepo:
@@ -264,39 +316,6 @@ class LandRepo:
         self._run("land_update_ref", (f"refs/land/{_oid(oid, 'object')}", oid))
 
     # -- F5: object import through gitread
-    def _write_loose(self, objects: Dir, oid: str, kind: str, data: bytes) -> bool:
-        """Write one hash-checked object as a loose file, relative to the no-follow descriptor of ``objects``: the
-        fan-out directory is opened ``O_NOFOLLOW``, the data is flushed to disk, then the file is renamed into place
-        (atomic), so a crash leaves no half object and, children being written first, no object without its closure.
-        ``True`` if it is new."""
-        flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        try:
-            with contextlib.suppress(FileExistsError):
-                os.mkdir(oid[:2], 0o755, dir_fd=objects.fd)
-            dfd = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=objects.fd)
-        except OSError:
-            raise LandGitError("land.unsafe", "the landing object store is not what git wrote") from None
-        try:
-            with contextlib.suppress(FileNotFoundError):
-                os.stat(oid[2:], dir_fd=dfd, follow_symlinks=False)
-                return False
-            tmp = f"tmp_obj_{secrets.token_hex(8)}"
-            raw = zlib.compress(f"{kind} {len(data)}\0".encode() + data, 1)
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o444, dir_fd=dfd)
-            try:
-                with os.fdopen(fd, "wb") as f:
-                    f.write(raw)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp, oid[2:], src_dir_fd=dfd, dst_dir_fd=dfd)
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp, dir_fd=dfd)
-                raise
-            return True
-        finally:
-            os.close(dfd)
-
     def import_commits(self, source_path: str, tip: str, *, max_commits: int = MAX_COMMITS) -> ImportStats:
         """Bring commit ``tip`` of the repository at ``source_path`` (a real path of a working copy) and everything it
         needs that this repository does not have yet, into this repository. Walking stops at every commit already
@@ -315,25 +334,23 @@ class LandRepo:
         host_dir, _ = open_walk(os.path.join(self.path, "objects"))
         host = ObjectStore(host_dir, "sha1")
         counts = {"objects": 0, "bytes": 0}
-        fresh: list[str] = []  # objects written to the quarantine, children before parents (the promotion order)
         quarantine = os.path.join(self.path, f"incoming-{secrets.token_hex(8)}")
-        q_dir: Dir | None = None
+        pack: PackWriter | None = None
 
         def put(src: Repo, oid: str, kind: str) -> None:
             _, data = src.objects.read(oid, kind)
             counts["bytes"] += len(data)
             if counts["bytes"] > MAX_BYTES or counts["objects"] >= MAX_OBJECTS:
                 raise LandGitError("land.too_big", "the change is too large to land")
-            if self._write_loose(q_dir, oid, kind, data):  # type: ignore[arg-type]
+            if pack.add(oid, kind, data):  # type: ignore[union-attr]
                 counts["objects"] += 1
-                fresh.append(oid)
 
         try:
             try:
                 os.mkdir(quarantine, 0o700)
             except OSError:
                 raise LandGitError("land.unavailable", "the import area cannot be created") from None
-            q_dir, _ = open_walk(quarantine)
+            pack = PackWriter(quarantine)
             with Repo(pin_repo(real, None)) as src:
                 if src.algo != "sha1":
                     raise LandGitError("land.unavailable", "only SHA-1 repositories can land")
@@ -363,13 +380,14 @@ class LandRepo:
                 for oid in _topo(new):
                     self._import_tree(src, host, host_dir, src.commit(oid).tree, put)
                     put(src, oid, "commit")
-            self._fsck(tip, quarantine)  # git's check, over the quarantine plus what the host already has
-            self._promote(q_dir, host_dir, fresh)
+            if pack.count:
+                self._index(pack.finish(), quarantine)  # git's strict check of the incoming objects only
+                self._promote(quarantine, os.path.join(self.path, "objects", "pack"))
         finally:
             # whatever happened (BaseException included) the quarantine goes, by its exact path: an object in objects/
             # is only ever one git accepted, with its whole closure
-            if q_dir is not None:
-                q_dir.close()
+            if pack is not None:
+                pack.close()
             shutil.rmtree(quarantine, ignore_errors=True)
             host.close()
             host_dir.close()
@@ -401,17 +419,18 @@ class LandRepo:
                     put(src, e.oid, "blob")
                     written.add(e.oid)
 
-    def _fsck(self, tip: str, quarantine: str) -> None:
-        """git's own strict check of everything reachable from ``tip`` (the structural answer to "which tree entries
-        may land": git's ``verify_path`` and fsck rules, not a spelling list of ours), reading the quarantine as its
-        object directory and the host's own objects as its alternate, like git's receive quarantine.
-        ``land.hostile_path`` on any error."""
+    def _index(self, pack: bytes, quarantine: str) -> None:
+        """git's own strict check of the incoming objects (``index-pack --strict`` with every relevant fsck message an
+        error: git's ``verify_path`` and fsck rules, not a spelling list of ours), reading the quarantine as its object
+        directory and the host's own objects as its alternate, like git's receive quarantine. Only what is in the pack
+        is checked, never the history the host already holds. ``land.hostile_path`` on any error."""
         env = {
             "GIT_OBJECT_DIRECTORY": quarantine,
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.path.join(self.path, "objects"),
         }
+        os.makedirs(os.path.join(quarantine, "pack"), mode=0o700, exist_ok=True)
         try:
-            code, _ = self._run("land_fsck", tip, env_extra=env, ok=(0, 1, 2, 4, 8, 16))
+            code, _ = self._run("land_index_pack", env_extra=env, stdin=pack, ok=tuple(range(256)))
         except LandGitError as e:
             if e.code == "land.unsafe":
                 raise
@@ -419,27 +438,42 @@ class LandRepo:
         if code != 0:
             raise LandGitError("land.hostile_path", "git's own object check refuses the change")
 
-    @staticmethod
-    def _promote(q: Dir, objects: Dir, oids: list[str]) -> None:
-        """Move the checked objects into ``objects/``, one rename each (atomic), in write order (children first),
-        through no-follow directory descriptors; an interruption leaves only complete objects with their closure."""
+    _PACK_FILE = re.compile(r"pack-[0-9a-f]{40}\.(pack|rev|idx)")
+
+    @classmethod
+    def _promote(cls, quarantine: str, dest: str) -> None:
+        """Move the pack git wrote (and checked) from the quarantine into ``objects/pack``: ``.pack`` and ``.rev``
+        first, ``.idx`` last (an index makes the pack visible), one rename each. On a failure what was moved is removed
+        again, so ``objects/`` only ever gains complete, accepted packs."""
+        src = os.path.join(quarantine, "pack")
+        try:
+            names = sorted(n for n in os.listdir(src) if not n.startswith("tmp_"))
+        except OSError:
+            raise LandGitError("land.unavailable", "git wrote no pack") from None
+        if not names or any(cls._PACK_FILE.fullmatch(n) is None for n in names):
+            raise LandGitError("land.unavailable", "git wrote an unexpected file")
+        names.sort(key=lambda n: n.endswith(".idx"))
         flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        for oid in oids:
-            try:
-                with contextlib.suppress(FileExistsError):
-                    os.mkdir(oid[:2], 0o755, dir_fd=objects.fd)
-                dst = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=objects.fd)
-                try:
-                    src = os.open(oid[:2], os.O_RDONLY | flags, dir_fd=q.fd)
-                    try:
-                        os.replace(oid[2:], oid[2:], src_dir_fd=src, dst_dir_fd=dst)
-                        os.fsync(dst)
-                    finally:
-                        os.close(src)
-                finally:
-                    os.close(dst)
-            except OSError:
-                raise LandGitError("land.unsafe", "the landing object store is not what git wrote") from None
+        moved: list[str] = []
+        sfd = dfd = -1
+        try:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(dest, 0o755)
+            sfd = os.open(src, os.O_RDONLY | flags)
+            dfd = os.open(dest, os.O_RDONLY | flags)
+            for n in names:
+                os.replace(n, n, src_dir_fd=sfd, dst_dir_fd=dfd)
+                moved.append(n)
+            os.fsync(dfd)
+        except OSError:
+            for n in moved:
+                with contextlib.suppress(OSError):
+                    os.unlink(n, dir_fd=dfd)
+            raise LandGitError("land.unsafe", "the landing object store is not what git wrote") from None
+        finally:
+            for fd in (sfd, dfd):
+                if fd >= 0:
+                    os.close(fd)
 
     # -- submodules
     def _refuse_gitlinks(self, base: str | None, head: str) -> None:
@@ -466,7 +500,7 @@ class LandRepo:
         target_head = _oid(target_head, "the recorded target head")
         if not isinstance(commits, int) or isinstance(commits, bool) or commits < 0:
             raise LandGitError("land.bad_input", "the commit count is invalid")
-        if not isinstance(when, int) or isinstance(when, bool) or not 0 <= when < 1 << 40:
+        if not isinstance(when, int) or isinstance(when, bool) or not _WHEN_MIN <= when <= _WHEN_MAX:
             raise LandGitError("land.bad_input", "the attempt time is invalid")
         if not isinstance(message, str) or not message or len(message) > MESSAGE_MAX or "\0" in message:
             raise LandGitError("land.bad_input", "the commit message is invalid")
@@ -490,7 +524,7 @@ class LandRepo:
         tree = fields[0].decode("ascii", "replace") if fields else ""
         if _OID.fullmatch(tree) is None:
             raise LandGitError("land.unavailable", "git printed no tree")
-        stamp = f"{when} +0000"
+        stamp = f"@{when} +0000"
         ident = {
             "GIT_AUTHOR_NAME": BOT_NAME, "GIT_AUTHOR_EMAIL": BOT_EMAIL, "GIT_AUTHOR_DATE": stamp,
             "GIT_COMMITTER_NAME": BOT_NAME, "GIT_COMMITTER_EMAIL": BOT_EMAIL, "GIT_COMMITTER_DATE": stamp,
@@ -503,12 +537,16 @@ class LandRepo:
         self.pin(sha)
         return Candidate(sha, "merge", target_sha, source_sha)
 
-    def check_push_shape(self, target_sha: str, candidate_sha: str) -> None:
-        """F2: the target must be an ancestor of the candidate and, for a merge commit, its **first** parent. Called by
-        the push operation right before it pushes (task 4); raises ``land.changed``."""
-        target_sha, candidate_sha = _oid(target_sha, "the target"), _oid(candidate_sha, "the candidate")
-        if not self.is_ancestor(target_sha, candidate_sha):
-            raise LandGitError("land.changed", "the candidate does not contain the target")
-        parents = self.parents(candidate_sha)
-        if len(parents) > 1 and parents[0] != target_sha:
-            raise LandGitError("land.changed", "the target is not the first parent of the candidate")
+    def check_push_shape(self, candidate: Candidate) -> None:
+        """F2, called by the push operation right before it pushes (task 4): a fast-forward candidate is the source and
+        contains the target; a merge candidate has exactly ``(target, source)`` as its parents. Anything else is
+        ``land.changed`` (a source tip that is itself a merge with the target as 2nd parent is a valid fast-forward)."""
+        target, source, sha = (_oid(x, "commit") for x in (candidate.target_sha, candidate.source_sha, candidate.sha))
+        if candidate.kind == "fast_forward":
+            ok = sha == source and self.is_ancestor(target, sha)
+        elif candidate.kind == "merge":
+            ok = self.parents(sha) == (target, source)
+        else:
+            ok = False
+        if not ok:
+            raise LandGitError("land.changed", "the candidate does not extend the target as recorded")

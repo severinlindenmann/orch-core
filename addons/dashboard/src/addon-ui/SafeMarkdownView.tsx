@@ -1,10 +1,15 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import rehypeSanitize from 'rehype-sanitize'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { ChevronDown } from 'lucide-react'
+import { ArtifactImagesContext } from './artifactImagesContext'
 
 const isHttp = (href?: string) => !!href && /^https?:\/\//i.test(href)
+// R3 part B: `artifact:NAME` survives the sanitizer as an image address (it is a name, not a URL). It never reaches the
+// browser as a URL: `img` below swaps it for a data: URL of bytes core verified, or shows the alt-text placeholder.
+const ARTIFACT_SRC = /^artifact:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const SCHEMA = { ...defaultSchema, protocols: { ...defaultSchema.protocols, src: [...(defaultSchema.protocols?.src ?? []), 'artifact'] } }
 
 export interface Heading {
   id: string
@@ -116,6 +121,7 @@ function TocColumn({ items }: { items: Heading[] }) {
  */
 export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: boolean }) {
   const found = useRef<Heading[]>([])
+  const held = useContext(ArtifactImagesContext)
   const [headings, setHeadings] = useState<Heading[]>([])
   const owner = useId()
   const [slot, setSlot] = useState(0)
@@ -143,8 +149,8 @@ export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: bo
     <div className="addon-md text-[13px] leading-relaxed text-text [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_blockquote]:border-l-2 [&_blockquote]:border-border-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-muted [&_code]:rounded [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:scroll-mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:scroll-mt-4 [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-3 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize, plugin]}
-        urlTransform={(url) => (isHttp(url) ? url : '')}
+        rehypePlugins={[[rehypeSanitize, SCHEMA], plugin]}
+        urlTransform={(url) => (isHttp(url) || ARTIFACT_SRC.test(url) ? url : '')}
         components={{
           a: ({ href, children }) =>
             isHttp(href) ? (
@@ -154,7 +160,15 @@ export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: bo
             ) : (
               <span>{children}</span>
             ),
-          img: ({ alt }) => <span className="text-text-faint">[image: {alt || 'not loaded'}]</span>,
+          img: ({ alt, src }) => {
+            const name = typeof src === 'string' && ARTIFACT_SRC.test(src) ? src.slice('artifact:'.length) : null
+            const url = name ? held[name] : undefined
+            return url ? (
+              <img src={url} alt={alt ?? ''} data-testid="md-picture" className="my-2 block max-h-96 max-w-full rounded-md border border-border object-contain" />
+            ) : (
+              <span className="text-text-faint">[image: {alt || 'not loaded'}]</span>
+            )
+          },
         }}
       >
         {text}

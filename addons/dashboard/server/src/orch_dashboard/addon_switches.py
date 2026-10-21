@@ -130,6 +130,10 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         can_sign = served.get("addon.grant") == 1 and served.get("addon.disable") == 1
         runs = live_runs(gateway, ws)
         own = versions_of(link)
+        try:
+            settings = gateway.call(ws, "workspace.settings", {})
+        except Exception:  # noqa: BLE001 - an unread setting is unknown, not unset
+            settings = None
         rows = []
         for info in facts.catalog(optional=True):
             if info.id in LOCKED:
@@ -139,6 +143,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                         "title": info.title,
                         "desc": info.desc,
                         "state": "on",
+                        "needs": None,
+                        "set_up": True,
                         "locked": LOCKED[info.id],
                         "blocked": None,
                         # always-on parts ship with the install: the dashboard's own package, quick tasks are core
@@ -156,12 +162,26 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 blocked = "This host cannot change add-ons from the dashboard yet."
             else:
                 blocked = busy(info.id, runs) if on else needs(info.id, runner)
+            setting = {"publish": "publish", "model-routing": "models"}.get(info.id)
+            set_up = True
+            if setting:
+                set_up = (
+                    None
+                    if settings is None
+                    else (
+                        isinstance(settings.get("publish"), dict)
+                        if setting == "publish"
+                        else isinstance(settings.get("models"), dict) and any(settings["models"].values())
+                    )
+                )
             rows.append(
                 {
                     "id": info.id,
                     "title": info.title,
                     "desc": info.desc,
                     "state": state,
+                    "needs": setting,
+                    "set_up": set_up,
                     "locked": None,
                     "blocked": blocked,
                     "version": clean_version(got.get("version")) if got else None,

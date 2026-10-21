@@ -1,0 +1,128 @@
+"""Settings and the grant are one server-built, workspace-only intent."""
+
+from types import SimpleNamespace
+
+import pytest
+from orch.addons.settings_needs import preview_grant
+from orch.host import sequence
+from pydantic import TypeAdapter, ValidationError
+
+from orch_dashboard.errors import HostError
+from orch_dashboard.handoff import PrepareBody, expected, host_call, host_files, plan
+
+PUBLISH = {"server": "https://files.example.test", "share": "https://links.example.test"}
+MODELS = {"codex": {"work": "gpt-5.4"}}
+
+
+def parse(**fields):
+    return TypeAdapter(PrepareBody).validate_python({"action": "addon_enable", **fields})
+
+
+@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH}), ("model-routing", {"models": MODELS})])
+def test_first_step_and_expected(name, fields):
+    body = parse(name=name, **fields)
+    assert host_call(body) == ("settings.set", {"set": fields})
+    assert host_files(body) is None
+    check = expected(body)
+    assert check([{"type": "settings.changed", "set": fields}])
+    assert not check([{"type": "settings.changed", "set": {}}])
+    assert not check([{"type": "settings.changed", "set": fields}] * 2)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"name": "publish", "publish": PUBLISH, "grant": {}},
+        {"name": "publish", "models": MODELS},
+        {"name": "model-routing", "publish": PUBLISH},
+        {"name": "publish", "publish": PUBLISH, "models": MODELS},
+        {"name": "publish", "publish": {**PUBLISH, "extra": "x"}},
+        {"name": "publish", "publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},
+        {"name": "model-routing", "models": {"codex": {"work": "invented"}}},
+        {"name": "model-routing", "models": {}},
+        {"name": "model-routing", "models": {"codex": {}}},
+    ],
+)
+def test_invalid_input(fields):
+    with pytest.raises(ValidationError):
+        parse(**fields)
+
+
+class Link:
+    def __init__(self):
+        self.welcome = {"peer": {"person": "p_" + "1" * 32}, "ops": {"settings.set": 1, "addon.preview": 1}}
+        self.state, self.head = "not_granted", None
+
+    def call(self, op, args=None):
+        if op == "addon.list":
+            return {"addons": [{"name": "model-routing", "state": self.state}]}
+        assert op == "activity.list"
+        return {
+            "items": []
+            if self.head is None
+            else [{"type": "addon.disabled", "id": self.head, "data": {"name": "model-routing"}}]
+        }
+
+
+def test_plan_uses_preview_and_latest_switch(tmp_path):
+    link = Link()
+    grant = preview_grant(tmp_path, "model-routing")
+    reads = []
+
+    def call(ws, op, args):
+        reads.append((op, args))
+        assert op == "addon.preview" and args == {"name": "model-routing"}
+        return {"grant": grant}
+
+    gateway = SimpleNamespace(link=lambda ws: link, call=call)
+    body = parse(name="model-routing", models=MODELS)
+    ws = "a" * 32
+    first = plan(gateway, ws, body)
+    intent = body.intent(grant)
+    digest = sequence.digest_of(ws, link.welcome["peer"]["person"], intent)
+    assert first.sequence == {"step": 0, "of": 2, "digest": digest, "intent": intent}
+    assert intent["grant"] == grant and first.files is None
+    assert first.base == {"sequence": digest, "addon": {"addon": "model-routing", "head": None}}
+    assert plan(gateway, ws, body).idem(ws) == first.idem(ws)
+    link.state = "active"
+    with pytest.raises(HostError) as err:
+        plan(gateway, ws, body)
+    assert err.value.error["code"] == "addon.already"
+    link.state, link.head = "disabled", "second-switch"
+    assert plan(gateway, ws, body).idem(ws) != first.idem(ws)
+    link.welcome["ops"].pop("addon.preview")
+    with pytest.raises(HostError) as err:
+        plan(gateway, ws, body)
+    assert err.value.error["code"] == "op.unsupported"
+
+
+@pytest.mark.parametrize(
+    "settings,want",
+    [
+        ({"publish": PUBLISH, "models": MODELS}, (True, True)),
+        ({"publish": None, "models": {"codex": {}}}, (False, False)),
+        (None, (None, None)),
+    ],
+)
+def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, want):
+    from test_addon_switches import _get, _VersionLink
+
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+    reads = []
+
+    def call(ws, op, args=None):
+        if op == "whoami":
+            return {"runner": None}
+        assert op == "workspace.settings"
+        reads.append(op)
+        if settings is None:
+            raise RuntimeError("unavailable")
+        return settings
+
+    monkeypatch.setattr(gateway, "call", call)
+    rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
+    assert rows["publish"]["needs"] == "publish" and rows["publish"]["set_up"] is want[0]
+    assert rows["model-routing"]["needs"] == "models" and rows["model-routing"]["set_up"] is want[1]
+    assert rows["quick"]["needs"] is None and rows["quick"]["set_up"] is True
+    assert rows["usage"]["needs"] is None and rows["usage"]["set_up"] is True
+    assert reads == ["workspace.settings"]

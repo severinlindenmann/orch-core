@@ -34,7 +34,11 @@ import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
-import { clickProblem, type ClickCard } from '@/api/click'
+import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { pastedIn } from '@/api/pasteImage'
+import { Section } from '@/app/pages/new-ticket/SectionsEditor'
+import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
+import { storyOf } from '@/components/sign/story'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
@@ -125,6 +129,10 @@ export const LAYOUT_SCENARIOS = [
   'new-sequence-start-nogrant',
   // B12D (N3): the ticket page's edit of text, criteria and people, and its ONE review.
   'edit-ticket',
+  // R3 part B: paste a screenshot into a section, and the sign dialog's picture check (match, and a swapped file).
+  'paste-sign',
+  // R3 variant B: the simpler sign dialog, one scenario per case.
+  'sign-b-new', 'sign-b-new-access', 'sign-b-requirements', 'sign-b-plan', 'sign-b-extend',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -853,6 +861,8 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario === 'new-sequence') return <NewSequencePreview />
   if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
+  if (scenario === 'paste-sign') return <PasteSignPreview />
+  if (scenario.startsWith('sign-b-')) return <SignBPreview scenario={scenario} ws={workspace.id} />
   if (scenario === 'setup-words') return <div className="setup max-w-xl p-4"><ConfirmWords words={['apple', 'river', 'cloud']} /></div>
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
@@ -966,6 +976,72 @@ function NewSequencePreview({ start = false }: { start?: boolean }) {
     setOn(true)
   }, [])
   return on ? <NewTicketPage /> : null
+}
+
+/** R3 part B: the real section editor (paste a picture into it) and the real sign panel with a View that names the pasted
+ * pictures: once as the signer would build it, once as a host that swapped the file would. Nothing here signs. */
+function PasteSignPreview() {
+  const [text, setText] = useState('The export button does nothing when I click it.')
+  const pics = pastedIn([text])
+  const view = (images: { name: string; sha256: string; bytes: number; alt: string }[]): ClickViewAnswer => ({
+    view_digest: 'sha256:' + 'a'.repeat(64),
+    view: {
+      risk: CLICK_RISK,
+      op: 'new',
+      workspace: { id: 'f'.repeat(32), name: 'Acme energy data', prefix: 'DEMO' },
+      fingerprint: 'abcdef012345',
+      lines: ['Create DEMO-0044'],
+      checks: [],
+      confirm: { kind: 'click' },
+      expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+      auth: 'convenience',
+      device: PLACEHOLDER_DEVICE,
+      artifacts: 'checked',
+      headline: 'Create DEMO-0044',
+      content: {
+        headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Export does nothing',
+        title: 'New ticket Export does nothing',
+        subline: 'Includes its text (1 section)',
+        ticket: { key: 'DEMO-0044', title: 'Export does nothing', uid_tail: '0000000A', new: true, key_note: 'key per host, not proven' },
+        sections: [{ id: 'context', title: 'Context', text }],
+        images,
+        notes: [`Adds ${images.length} screenshot${images.length === 1 ? '' : 's'}. The dashboard shows each one from the file you pasted and checks its digest against the one signed.`],
+      },
+    },
+  })
+  const swapped = pics.map((p) => ({ ...p, sha256: `sha256:${'0'.repeat(64)}` }))
+  return (
+    <div className="mx-auto max-w-2xl space-y-8 p-4">
+      <Section type="bug" name="context" value={text} onChange={setText} />
+      <section aria-label="What you sign" className="space-y-2">
+        <h2 className="text-[13px] font-medium">The sign dialog</h2>
+        <ClickSignPanel answer={view(pics)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+      <section aria-label="If the host swapped the file" className="space-y-2">
+        <h2 className="text-[13px] font-medium">If the host had swapped the file</h2>
+        <ClickSignPanel answer={view(swapped)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+    </div>
+  )
+}
+
+const SIGN_B_PERSON = 'p_2e954b7df6ad0c419ab05d2136b7e842'
+/** R3 variant B: the real panel with a fixture View, in the width of a dialog. */
+function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
+  const kind = scenario.slice('sign-b-'.length)
+  const fields = [{ field: 'type', before: null, after: 'feature' }, { field: 'owner', before: null, after: SIGN_B_PERSON }, { field: 'estimate', before: null, after: '3 points (size M)' }]
+  const content: import('@/api/signing').SignContent = kind === 'extend'
+    ? { headline: 'Extend agent access', title: 'Extend agent access', fields_changed: [{ field: 'who', before: null, after: 'Agents working for you (Claude Code)' }, { field: 'owner', before: null, after: SIGN_B_PERSON }, { field: 'computer', before: null, after: 'Sevi’s MacBook' }, { field: 'until', before: 'Thu 22 Oct, 16:34', after: 'Thu 22 Oct, 16:34 (replaced)' }] }
+    : { headline: kind === 'new' || kind === 'new-access' ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', title: kind.startsWith('new') ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', ticket: { key: 'TESTOR-0007', title: 'Export report as PDF', uid_tail: '9f3c1a', key_note: '', new: kind.startsWith('new') },
+      sections: [{ id: 'requirements', title: 'Requirements', text: 'Export button on the report page\nPDF has the company logo\nWorks for reports up to 200 rows' }, ...(kind === 'plan' ? [{ id: 'plan', title: 'Plan you are approving', text: '1. Add an Export button.\n2. Generate a PDF with the logo.\n3. Check a short and a 200-row report.' }] : [])], fields_changed: fields }
+  const word = kind === 'new-access' || kind === 'extend' ? 'GRANT' : null
+  const action = (kind === 'new' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {} }
+    : kind === 'new-access' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {}, agent: { hours: 168 } }
+    : kind === 'requirements' ? { action: 'approve', key: 'TESTOR-0007', gate: 'requirements' }
+    : kind === 'plan' ? { action: 'approve', key: 'TESTOR-0007', gate: 'plan' }
+    : { action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' }) as import('@/api/click').ClickAction
+  const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: word ? { kind: 'word', word } : { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
+  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} onPhone={kind === 'plan' ? () => {} : undefined} /></div>
 }
 
 /** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */

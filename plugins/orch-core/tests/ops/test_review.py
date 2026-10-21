@@ -343,6 +343,7 @@ def test_typeahead_before_the_review_confirms_nothing():
             except OSError:
                 pass
     os.kill(pid, signal.SIGKILL)
+    os.close(tty)  # macOS: a killed child blocks in exit until its pty output is drained or the master is closed
     os.waitpid(pid, 0)
     assert "RESULT False" in out, out
 

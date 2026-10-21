@@ -26,13 +26,13 @@ export type HandoffAction =
    * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
    * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
    */
-  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number } }
+  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number }; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
    * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
-  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>> }
+  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   /** `via: 'estimate'`: the Estimate box (size only, 'none' = not estimated); the server refuses it while the add-on is off. */
@@ -58,6 +58,8 @@ export type HandoffAction =
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
   | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
   | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
+  /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
+  | { action: 'addon_enable'; name: 'publish' | 'model-routing'; publish?: { server: string; share: string }; models?: import('./modelRouting').ModelTable }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
   | { action: 'publish_setup'; server: string; share: string }
   /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
@@ -254,6 +256,8 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
   const sequence = sequenceWord(request.material)
   if (sequence) return sequence
   if (request.material.ticket) return null
+  const intent = request.material.sequence?.intent
+  if (intent?.kind === 'addon_enable' && typeof intent.name === 'string') return workspace ? `${intent.name}~${workspace.id.slice(-8)}` : null
   if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
     const person = request.events[0]?.person
     return typeof person === 'string' ? person : null

@@ -1,0 +1,3 @@
+List the widget types you may write in a ticket (charts, tables, checks) with a working example of each.
+usage: orch widgets types
+more: orch describe widgets.types

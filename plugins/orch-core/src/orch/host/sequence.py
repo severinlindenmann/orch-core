@@ -94,6 +94,14 @@ _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PERSON = re.compile(r"^p_[0-9a-f]{32}$")
 _AC_ID = re.compile(r"^AC[1-9][0-9]*$")
 MAX_AC = 8  # acceptance criteria one sequence adds or edits
+#: R3 part B: pasted screenshots one sequence adds (one signed ``artifact.add`` each, before the section showing it)
+MAX_IMAGES = 6
+IMAGE_MAX_BYTES = 5 * 1024 * 1024
+#: the name the dashboard gives a pasted picture: when it was pasted and the first 8 hex of its digest (so a name can
+#: never stand for other bytes than the ones it was made from); a F1 section 6 name
+_IMAGE_NAME = re.compile(r"^paste-[0-9]{8}-[0-9]{6}-([0-9a-f]{8})\.(?:png|webp)$")
+_IMAGE_KEYS = frozenset({"name", "sha256", "bytes", "alt"})
+_ARTIFACT_REF = re.compile(r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)")  # store.render._REFS, the same text rule
 MAX_PEOPLE = 16
 #: the people roles a sequence sets, in the order they are signed: the owner LAST (after it the signer may no longer
 #: manage the ticket if the signer is only a member, so nothing else may follow it)
@@ -189,15 +197,52 @@ def _new_people(value: Any) -> dict[str, Any]:
     return out
 
 
+def _images(value: Any, texts: list[str]) -> list[dict[str, Any]]:
+    """The pasted screenshots of an intent: at most :data:`MAX_IMAGES`, sorted by name, each ``{name, sha256, bytes,
+    alt}``, each shown by at least one of the written ``texts`` (``![alt](artifact:NAME)``): nothing is signed that no
+    text shows. The bytes are not in the intent: the signer holds them and checks them against ``sha256``."""
+    from orch.canon.text import TextError, normalize_text
+
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_IMAGES:
+        raise SequenceInvalid(f"images: 1 to {MAX_IMAGES} screenshots (leave it out for none)")
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != _IMAGE_KEYS:
+            raise SequenceInvalid("an image is {name, sha256, bytes, alt}")
+        name, digest, size, alt = item["name"], item["sha256"], item["bytes"], item["alt"]
+        m = _IMAGE_NAME.fullmatch(name) if isinstance(name, str) else None
+        if m is None:
+            raise SequenceInvalid("an image name is paste-<date>-<time>-<digest>.png (or .webp)")
+        if not isinstance(digest, str) or not _HASH.fullmatch(digest) or digest[len("sha256:") :][:8] != m.group(1):
+            raise SequenceInvalid("an image name carries the first 8 characters of its digest")
+        if type(size) is not int or not 1 <= size <= IMAGE_MAX_BYTES:
+            raise SequenceInvalid("a screenshot is 1 byte to 5 MiB")
+        if not isinstance(alt, str) or not 1 <= len(alt) <= 120:
+            raise SequenceInvalid("an image description is 1 to 120 characters")
+        try:
+            if normalize_text(alt, one_line=True) != alt:
+                raise SequenceInvalid("an image description is not normalised")
+        except TextError as exc:
+            raise SequenceInvalid(f"an image description: {exc}") from None
+        out.append({"name": name, "sha256": digest, "bytes": size, "alt": alt})
+    names = [i["name"] for i in out]
+    if names != sorted(set(names)):
+        raise SequenceInvalid("images are sorted by name, without repeats")
+    shown = {n for t in texts for n in _ARTIFACT_REF.findall(t)}
+    if any(n not in shown for n in names):
+        raise SequenceInvalid("every screenshot is shown by a written section (![...](artifact:NAME))")
+    return out
+
+
 def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     """An edit of an existing ticket: the ticket (key and log id), the head the person reviewed, and what changes."""
     from orch.canon.text import TextError, normalize_text
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "people", "links"}:
+    if not base <= set(intent) <= base | {"acceptance", "people", "links", "images"}:
         raise SequenceInvalid(
-            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, links and people"
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, links, images and people"
         )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
@@ -250,6 +295,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
         out["links"] = _edit_links(intent["links"])
     if "people" in intent:
         out["people"] = _edit_people(intent["people"])
+    if "images" in intent:
+        out["images"] = _images(intent["images"], [e["text"] for e in out_sections.values()])
     if len(steps(out)) > MAX_STEPS:
         raise SequenceInvalid("too many changes for one review")
     if not steps(out):
@@ -392,8 +439,8 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
 
     base = {"v", "kind", "title", "ticket_type", "set", "sections"}
     # B12D: acceptance and people are optional (left out when empty, so every earlier intent keeps its digest)
-    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people", "agent"}:
-        raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance, people and agent")
+    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people", "agent", "images"}:
+        raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance, people, images, agent")
     if intent["v"] != VERSION or intent["kind"] != KIND:
         raise bad("this signer does not know that sequence")
     title, kind = intent["title"], intent["ticket_type"]
@@ -459,6 +506,8 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
         result["acceptance"] = [_one_line(t, "a criterion", 200) for t in ac]
     if "people" in intent:
         result["people"] = _new_people(intent["people"])
+    if "images" in intent:
+        result["images"] = _images(intent["images"], list(out_sections.values()))
     if "agent" in intent:  # U4: the runner grant, signed last in the same confirmation (left out when none)
         from . import seqquick
 
@@ -512,6 +561,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
                 if k in sets:
                     pairs.append(f"{k}={','.join(sets[k]) if k == 'labels' else sets[k]}")
             out.append({"op": "set", "args": {"pairs": pairs}, "kind": "set", "ref": True})
+        out.extend(_image_steps(intent))  # before the sections that show them: a reference to a missing file is refused
         for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
             out.append(
                 {
@@ -535,6 +585,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
             out.append(seqquick.grant_step(intent["agent"]))
         return out
     # EDIT: the existing ticket's sections, then its acceptance criteria, then its people (owner last)
+    out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
             {
@@ -566,6 +617,19 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return out
+
+
+def _image_steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One ``artifact.add`` per pasted screenshot: its file is uploaded by the signer, never named by a path."""
+    return [
+        {
+            "op": "artifact.add",
+            "args": {"path": i["name"], "name": i["name"], "kind": "screenshot", "label": i["alt"]},
+            "kind": "image",
+            "ref": True,
+        }
+        for i in intent.get("images", ())
+    ]
 
 
 def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, dict[str, Any]]:
@@ -623,6 +687,16 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
         }
     step = plan[k]
     op = step["op"]
+    if step["kind"] == "image":
+        img = next(i for i in intent["images"] if i["name"] == step["args"]["name"])
+        return {
+            "type": "artifact.added",
+            "name": img["name"],
+            "kind": "screenshot",
+            "label": img["alt"],
+            "sha256": img["sha256"],
+            "bytes": img["bytes"],
+        }
     if step["kind"] == "links":
         return {
             "type": "ticket.updated",
@@ -899,8 +973,18 @@ def check_meta(meta: Any, *, op: str, args: Mapping[str, Any], workspace_id: str
         raise SequenceInvalid("prev is an event id")
     if not isinstance(meta["ticket"], str) or not _KEY.fullmatch(meta["ticket"]):
         raise SequenceInvalid("ticket is a ticket key")
-    if op not in ("set", "section.set", "ac.add", "ac.edit", "task.add", "people.set", "approve", "grant"):
-        raise SequenceInvalid("a later step is a set, section, criterion, task, people, approval or grant step")
+    if op not in (
+        "set",
+        "section.set",
+        "ac.add",
+        "ac.edit",
+        "task.add",
+        "people.set",
+        "approve",
+        "grant",
+        "artifact.add",
+    ):
+        raise SequenceInvalid("a later step is a set, section, file, criterion, task, people, approval or grant step")
     return dict(meta)
 
 
@@ -1012,6 +1096,16 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             content.setdefault("notes", []).append(
                 "The owner is set last. After that you may no longer be able to change this ticket yourself."
             )
+    if intent.get("images"):
+        # the browser compares the digest of the bytes IT holds with this one, and shows them only when they match
+        content["images"] = [
+            {"name": i["name"], "sha256": i["sha256"], "bytes": i["bytes"], "alt": signcontent.one(i["alt"])}
+            for i in intent["images"]
+        ]
+        content.setdefault("notes", []).append(
+            f"Adds {len(intent['images'])} screenshot{'s' if len(intent['images']) != 1 else ''}. "
+            "The dashboard shows each one from the file you pasted and checks its digest against the one signed."
+        )
     content.setdefault("notes", []).append(
         f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
         "signing stops and what is already signed stays."
@@ -1094,6 +1188,15 @@ def _link_changes(lk: Mapping[str, Any]) -> list[str]:
     return out
 
 
+def _image_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list[str]:
+    from orch.host.signcontent import one
+
+    return [
+        f"screenshot: {clean(i['name'])}, {i['bytes']} bytes, {clean(i['sha256'])} ({clean(one(i['alt']))})"
+        for i in intent.get("images", ())
+    ]
+
+
 def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list[str]:
     """The intent in plain words, for a terminal prompt that has no SignContent."""
     from orch.host.signcontent import one
@@ -1128,13 +1231,14 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
         for role, ch in (intent.get("people") or {}).items():
             lines += [f"{clean(role)} add: {clean(who)}" for who in ch["add"]]
             lines += [f"{clean(role)} remove: {clean(who)}" for who in ch["remove"]]
-        return lines
+        return lines + _image_lines(intent, clean)
     lines = [f"title: {clean(one(intent['title']))}", f"type: {clean(intent['ticket_type'])}"]
     lines += [f"{clean(k)}: {clean(one(v))}" for k, v in intent["set"].items()]
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         lines.append(f"section {clean(sid)}:")
         lines += ["| " + clean(line) for line in intent["sections"][sid].split("\n")]
     lines += [f"acceptance: {clean(one(t))}" for t in intent.get("acceptance", ())]
+    lines += _image_lines(intent, clean)
     for role, who in (intent.get("people") or {}).items():
         lines += [f"{clean(role)}: {clean(one(x))}" for x in ([who] if role == "owner" else who)]
     return lines
@@ -1329,7 +1433,8 @@ class Port:
     into an abort (what landed stays a draft)."""
 
     #: ``(op, args, sequence) -> prepared``: ``human.prepare`` bound to this signer's device
-    prepare: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
+    #: (a step that adds a pasted screenshot also gets ``files={"path": bytes}``; the port uploads inline or as a blob)
+    prepare: Callable[..., dict[str, Any]]
     #: the signer's own checks of a prepared request (:func:`orch.host.signer.check`), before anything is signed
     check: Callable[[dict[str, Any]], None]
     #: ``prepared -> signed events`` (the custody backend; one unlock for the whole sequence)
@@ -1359,8 +1464,11 @@ class Driver:
         intent: Mapping[str, Any],
         on_step: Callable[[int, int], None] | None = None,
         now: Callable[[], float] = time.time,
+        images: Mapping[str, bytes] | None = None,
     ) -> None:
         self.now = now
+        #: R3 part B: the bytes of the pasted screenshots by name, held by the signer (never taken from the host)
+        self.images = dict(images or {})
         self.port, self.sessions = port, sessions
         self.workspace_id, self.person = workspace_id, person
         self.intent = validate_intent(intent)
@@ -1396,6 +1504,7 @@ class Driver:
     def run(self, first: Mapping[str, Any] | None) -> dict[str, Any]:
         """Sign every step. With a live session this is a resume: ``first`` (a request prepared for the same intent
         before the person asked again) is cancelled, never signed. Returns ``{"key", "uid", "results", "landed"}``."""
+        self._check_images()
         rec = self.resumable()
         if rec is None:
             if first is None:
@@ -1465,6 +1574,29 @@ class Driver:
         assert who is not None
         return {"key": who["key"], "uid": who["uid"], "results": results, "landed": self.total, "requests": requests}
 
+    def _check_images(self) -> None:
+        """Before anything is signed: every screenshot of the intent is held here, is the file the person reviewed
+        (digest and size of the intent) and passes the picture check (:mod:`orch.host.imagecheck`)."""
+        from . import imagecheck
+
+        wanted = self.intent.get("images", ())
+        if not wanted:
+            if self.images:
+                raise Aborted("screenshots were sent that no section shows, review again")
+            return
+        if set(self.images) != {i["name"] for i in wanted}:
+            raise Aborted(
+                "The screenshots are not here. Screenshots are signed with a click in the dashboard, review again"
+            )
+        for i in wanted:
+            data = self.images[i["name"]]
+            if canon.artifact_digest(data) != i["sha256"] or len(data) != i["bytes"]:
+                raise Aborted("a screenshot is not the file you reviewed, review again")
+            try:
+                imagecheck.check(data)
+            except imagecheck.ImageRefused as exc:
+                raise Aborted(f"{i['name']}: {exc}") from None
+
     def _land(self, rec: dict[str, Any], k: int, res: Mapping[str, Any]) -> str | None:
         """The step landed: read the head the host reports and require it to be the head of the event this signer just
         signed (its ``seq`` is the submit's), so the next step chains to it. A foreign event already on top aborts."""
@@ -1521,7 +1653,11 @@ class Driver:
                 assert who is not None
                 op, args = step_args(self.intent, k, who["key"])
                 meta = {"step": k, "of": self.total, "digest": self.digest, "prev": prev_id, "ticket": who["key"]}
-                prepared = self.port.prepare(op, args, meta)
+                step = steps(self.intent)[k]
+                if step["kind"] == "image":  # the signer uploads the file it holds (its digest is the intent's)
+                    prepared = self.port.prepare(op, args, meta, files={"path": self.images[step["args"]["name"]]})
+                else:
+                    prepared = self.port.prepare(op, args, meta)
                 self.port.check(prepared)
             done = {st["k"]: st["signed"][-1]["id"] for st in rec["steps"] if st["state"] == "landed"}
             found = check_step(

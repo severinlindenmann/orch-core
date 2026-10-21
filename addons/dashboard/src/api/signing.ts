@@ -10,6 +10,8 @@ export interface SignContent {
   subline?: string
   ticket?: { key: string; title: string; uid_tail: string; key_note: string; /** This review creates the ticket (U3): its signed id is then only a technical detail. */ new?: boolean }
   sections?: { id: string; title: string; text: string }[]
+  /** R3 part B: pasted screenshots the review adds; shown from the browser's own bytes when the sha256 matches. */
+  images?: { name: string; sha256: string; bytes: number; alt: string }[]
   acceptance?: { id: string; text: string; checked?: boolean }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]
   fields_title?: string

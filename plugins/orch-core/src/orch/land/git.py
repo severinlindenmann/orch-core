@@ -1,7 +1,7 @@
 """Landing's git layer (#596 task 2): the host-owned bare repository, the object import, the deterministic candidate.
 
-This module is the only code that decides **which commit a landing would push**. It never pushes or fetches (task 4's
-``land_push``/``land_fetch``) and never writes a ref an agent or a person owns.
+This module is the only code that decides **which commit a landing would push**. It never pushes or fetches (that is
+:mod:`orch.land.remote`, over ``land_push``/``land_fetch``) and never writes a ref an agent or a person owns.
 
 * **Host-owned bare repository (I6).** Every git process runs through :mod:`orch.gitsafe` (``land_*`` operations of
   :data:`orch.gitsafe.OPS`, a closed set: full object ids only, no free argv; the gate plus
@@ -50,6 +50,8 @@ from orch.gitread.objects import ObjectStore
 from orch.gitread.pinning import pin_repo
 from orch.gitread.refs import branch_ok
 from orch.gitread.repo import Repo
+from orch.land import key
+from orch.land.key import LandKeyError
 
 __all__ = [
     "BOT_EMAIL", "BOT_NAME", "Candidate", "Conflict", "ImportStats", "LandGitError", "LandRepo", "target_ref",
@@ -107,6 +109,19 @@ class ImportStats:
     commits: int
     objects: int
     bytes: int
+
+
+def _system_env(own: Mapping[str, str]) -> dict[str, str]:
+    """``own`` with ``PATH`` the system directories: no git process of Landing (the gate's reads included) ever finds a
+    ``git`` in a user-writable directory (Codex on #762); the operations themselves run :func:`_pinned_git`."""
+    return {**own, "PATH": "/usr/bin:/bin"}
+
+
+def _pinned_git() -> tuple[str, str]:
+    try:
+        return key.pinned_git()
+    except LandKeyError as e:
+        raise LandGitError(e.code, e.reason) from None
 
 
 def target_ref(name: str) -> str:
@@ -226,13 +241,14 @@ class LandRepo:
         if not path.startswith("/") or "\0" in path:
             raise LandGitError("land.bad_input", "the landing repository path is not absolute")
         self.path = path
-        self.own: Mapping[str, str] = dict(os.environ if own is None else own)
+        self.own: Mapping[str, str] = _system_env(os.environ if own is None else own)
+        self.git, self.exec_path = _pinned_git()
 
     # -- creating
     @classmethod
     def create(cls, path: str, own: Mapping[str, str] | None = None) -> LandRepo:
         """Create (or reopen) the bare repository at ``path``; its parent directory must exist and be the person's."""
-        env_own = dict(os.environ if own is None else own)
+        env_own = _system_env(os.environ if own is None else own)
         if not path.startswith("/") or "\0" in path:
             raise LandGitError("land.bad_input", "the landing repository path is not absolute")
         if os.path.lexists(path):
@@ -244,11 +260,12 @@ class LandRepo:
             os.mkdir(path, 0o700)
         except OSError:
             raise LandGitError("land.unavailable", "the landing repository cannot be created") from None
+        repo = cls(path, env_own)
         try:
-            argv, env = gitsafe.land_init(path, env_own)
+            with gitsafe.pinned(repo.git, repo.exec_path):
+                argv, env = gitsafe.land_init(path, env_own)
         except gitsafe.Unsafe as e:
             raise LandGitError("land.unsafe", e.reason) from None
-        repo = cls(path, env_own)
         code, _ = repo._spawn(argv, env, b"")
         if code != 0:
             raise LandGitError("land.unavailable", "the landing repository cannot be initialised")
@@ -277,10 +294,19 @@ class LandRepo:
 
     def _run(
         self, op: str, operand: str | tuple[str, ...] | None = None, *, stdin: bytes = b"",
-        env_extra: Mapping[str, str] | None = None, ok: tuple[int, ...] = (0,),
+        env_extra: Mapping[str, str] | None = None, ok: tuple[int, ...] = (0,), net: gitsafe.NetSpec | None = None,
     ) -> tuple[int, bytes]:  # fmt: skip
         try:
-            argv, env = gitsafe.command(self.path, op, self.own, operand=operand, env_extra=env_extra)
+            argv, env = gitsafe.command(
+                self.path,
+                op,
+                self.own,
+                operand=operand,
+                env_extra=env_extra,
+                net=net,
+                git=self.git,
+                exec_path=self.exec_path,
+            )
         except gitsafe.Unsafe as e:
             raise LandGitError("land.unsafe", e.reason) from None
         code, out = self._spawn(argv, env, stdin)

@@ -14,11 +14,12 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any, Literal, overload
 
-from .policy import QueueError, check_owner_flag, norm_target
+from .policy import QueueError, check_owner_flag, is_owner_target, norm_target
 
 Phase = Literal["begin", "pushing", "outcome"]
 Outcome = Literal["merged", "failed", "requeued"]
 MAX_REQUEUES = 3
+MAX_TIMEOUT_MINUTES = 24 * 60
 Reason = Literal["conflict", "red_checks", "timeout", "target_moved", "owner_required", "invalid_target"]
 CheckResult = Literal["pass", "fail", "running", "waiting", "timeout"]
 
@@ -67,6 +68,21 @@ def consumed(entry_id: str, later: Iterable[Later]) -> bool:
     return any(e.kind == "attempt" and e.queued == entry_id and e.outcome == "merged" for e in later)
 
 
+def _strict(ticket_done: object, settings_gen: object) -> None:
+    if type(ticket_done) is not bool or type(settings_gen) is not int:
+        raise QueueError("land.bad_transition", "ticket_done must be bool and settings_gen int")
+
+
+@dataclass(frozen=True)
+class Live:
+    """The replayed inputs of I2 for one entry, supplied again at every step that acts on it."""
+
+    ticket_done: bool
+    gates: Mapping[str, str | None]
+    settings_gen: int
+    later: tuple[Later, ...] = ()
+
+
 def live_entry(
     entry: QueuedEntry,
     *,
@@ -76,6 +92,7 @@ def live_entry(
     later: Iterable[Later],
 ) -> bool:
     """Derive I2, including settings invalidation and one-use enqueue authority."""
+    _strict(ticket_done, settings_gen)
     return (
         ticket_done
         and "verify" in gates  # the verify gate always applies; an empty map is never live
@@ -99,6 +116,7 @@ def require_live_entry(
     later: Iterable[Later],
 ) -> None:
     """Explain liveness refusal for callers that need a public error code."""
+    _strict(ticket_done, settings_gen)
     events = tuple(later)
     if consumed(entry.id, events):
         raise QueueError("land.consumed", entry.id)
@@ -106,6 +124,17 @@ def require_live_entry(
         raise QueueError("land.not_approved", entry.ticket)
     if not live_entry(entry, ticket_done=ticket_done, gates=gates, settings_gen=settings_gen, later=events):
         raise QueueError("land.stale", entry.id)
+
+
+def require_live(entry: QueuedEntry, live: Live) -> None:
+    require_live_entry(
+        entry, ticket_done=live.ticket_done, gates=live.gates, settings_gen=live.settings_gen, later=live.later
+    )
+
+
+def check_policy_digest(required_checks: Sequence[str]) -> str:
+    """Digest of the (sorted, unique) required check names; computed here, never supplied by a caller."""
+    return range_digest(("checks", *sorted(set(required_checks))))
 
 
 @dataclass(frozen=True)
@@ -286,6 +315,11 @@ def blocked(
 class Selection:
     entry: QueuedEntry | None
     drop: tuple[QueuedEntry, ...] = ()
+    capped: tuple[QueuedEntry, ...] = ()  # at the requeue cap: skipped so they never block the queue
+
+
+def requeues(state: QueueState, entry_id: str) -> int:
+    return sum(a.queued == entry_id and a.outcome == "requeued" for a in state.attempts)
 
 
 def next_entry(
@@ -298,16 +332,21 @@ def next_entry(
     allowed = frozenset(targets)
     eligible: list[QueuedEntry] = []
     drop: list[QueuedEntry] = []
+    capped: list[QueuedEntry] = []
     for q in state.queues:
         if q.target not in allowed:
             continue
         for entry in q.entries:
             if not is_live(entry):
                 drop.append(entry)
+            elif requeues(state, entry.id) >= MAX_REQUEUES:
+                capped.append(entry)
             elif blocked_fn(entry) is None:
                 eligible.append(entry)
     return Selection(
-        min(eligible, key=lambda e: (datetime.fromisoformat(e.enqueued), e.ticket), default=None), tuple(drop)
+        min(eligible, key=lambda e: (datetime.fromisoformat(e.enqueued), e.ticket), default=None),
+        tuple(drop),
+        tuple(capped),
     )
 
 
@@ -322,7 +361,19 @@ def begin_attempt(
     rebase: Literal["clean", "conflict"],
     required_checks: Sequence[str],
     descends: bool,
+    settings: Mapping[str, Any],
+    live: Live,
 ) -> tuple[QueueState, Attempt]:
+    if type(descends) is not bool:
+        raise QueueError("land.bad_transition", "descends must be bool")
+    if (
+        type(timeout_minutes) not in (int, float)
+        or not 0 < timeout_minutes <= MAX_TIMEOUT_MINUTES
+        or not required_checks
+    ):
+        raise QueueError("land.bad_transition", "timeout out of range or no required checks")
+    check_owner_flag(settings, entry.target, entry.owner_target)  # never trust the stored flag
+    require_live(entry, live)
     if state.worker.current is not None or any(a.phase != "outcome" for a in state.attempts):
         raise QueueError("land.target_busy", "worker is occupied")
     if entry.id in state.consumed_ids:
@@ -330,7 +381,7 @@ def begin_attempt(
     q = queue_for(state, entry.remote, entry.target)
     if entry not in q.entries:
         raise QueueError("land.stale", "entry is no longer queued or has changed")
-    if sum(a.queued == entry.id and a.outcome == "requeued" for a in state.attempts) >= MAX_REQUEUES:
+    if requeues(state, entry.id) >= MAX_REQUEUES:
         raise QueueError("land.changed", "requeue cap reached; fail the entry or enqueue again")
     if not descends:
         raise QueueError("land.changed", "target does not descend from the approved target head")
@@ -379,7 +430,8 @@ def _passing(attempt: Attempt, checks: Sequence[Check], required_checks: Sequenc
     # informational CI is not required (Codex challenge row 12).
     names = [c.name for c in checks]
     return (
-        attempt.rebase == "clean"
+        bool(required_checks)
+        and attempt.rebase == "clean"
         and len(names) == len(set(names))
         and set(required_checks).issubset(names)
         and all(
@@ -395,12 +447,24 @@ def record_checks(state: QueueState, n: int, checks: Sequence[Check]) -> QueueSt
     return _update_attempt(state, replace(a, checks=tuple(checks)))
 
 
-def mark_pushing(state: QueueState, n: int, checks: Sequence[Check], check_policy_digest: str) -> QueueState:
+def _entry_of(state: QueueState, a: Attempt) -> QueuedEntry | None:
+    return next((e for q in state.queues if q.id == a.queue for e in q.entries if e.id == a.queued), None)
+
+
+def mark_pushing(
+    state: QueueState, n: int, checks: Sequence[Check], *, settings: Mapping[str, Any], live: Live
+) -> QueueState:
     a = _active(state, n, ("begin",))
-    if not check_policy_digest or not _passing(a, checks, a.required_checks):
-        raise QueueError("land.bad_transition", "complete passing candidate checks and policy digest required")
+    entry = _entry_of(state, a)
+    if entry is None:
+        raise QueueError("land.stale", "entry is no longer queued")
+    check_owner_flag(settings, entry.target, entry.owner_target)
+    require_live(entry, live)  # approvals still bound, not dequeued, settings unchanged
+    if not _passing(a, checks, a.required_checks):
+        raise QueueError("land.bad_transition", "complete passing candidate checks required")
     return _update_attempt(
-        state, replace(a, phase="pushing", checks=tuple(checks), check_policy_digest=check_policy_digest)
+        state,
+        replace(a, phase="pushing", checks=tuple(checks), check_policy_digest=check_policy_digest(a.required_checks)),
     )
 
 
@@ -414,6 +478,12 @@ def record_outcome(
     file: str | None = None,
 ) -> QueueState:
     a = _active(state, n, ("begin", "pushing"))
+    if (
+        (outcome == "merged" and reason is not None)
+        or (outcome == "requeued" and reason != "target_moved")
+        or (outcome == "failed" and reason is None)
+    ):
+        raise QueueError("land.bad_transition", "reason does not fit the outcome")
     if outcome not in ("merged", "failed", "requeued") or outcome == "merged" and a.phase != "pushing":
         raise QueueError("land.bad_transition", "merge requires a durable pushing record")
     state = _update_attempt(state, replace(a, phase="outcome", outcome=outcome, reason=reason, file=file, ended=now))
@@ -440,24 +510,33 @@ def tidy(state: QueueState, n: int) -> QueueState:
 
 def resume_decision(
     attempt: Attempt,
+    entry: QueuedEntry | None,
     *,
     remote_target_sha: str,
     candidate_reached: bool,
     required_checks: Sequence[str],
-    check_policy_digest: str,
-) -> Literal["rerun", "retry_push", "merged", "target_moved", "done"]:
+    settings: Mapping[str, Any],
+    live: Live,
+) -> Literal["rerun", "retry_push", "merged", "target_moved", "done", "stale"]:
+    """I9. A retry needs a pushing record, complete passing checks under the CURRENT required list,
+    the remote still at target_sha, and the entry still live (approvals bound, not dequeued)."""
     if attempt.phase == "outcome":
         return "done"
     if attempt.phase != "pushing":
         return "rerun"
     if candidate_reached:
         return "merged"
+    if entry is None or entry.id != attempt.queued:
+        return "stale"
+    try:
+        check_owner_flag(settings, entry.target, entry.owner_target)
+        require_live(entry, live)
+    except QueueError:
+        return "stale"
     if remote_target_sha != attempt.target_sha:
         return "target_moved"
-    if (
-        check_policy_digest
-        and attempt.check_policy_digest == check_policy_digest
-        and _passing(attempt, attempt.checks, required_checks)
+    if attempt.check_policy_digest == check_policy_digest(required_checks) and _passing(
+        attempt, attempt.checks, required_checks
     ):
         return "retry_push"
     return "rerun"
@@ -518,6 +597,7 @@ def from_json(
     kind: type[QueuedEntry] | type[Attempt] | None = None,
     *,
     defaults: Mapping[str, Any] | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> QueuedEntry | Attempt:
     """Parse model or legacy mock data; missing check bindings never imply pass.
 
@@ -544,7 +624,10 @@ def from_json(
         ("commits", 0),
         ("range_digest", ""),
         ("settings_gen", 0),
-        ("owner_target", False),
     ):
         values.setdefault(key, blank)
+    if "owner_target" not in values:  # never default it: derive from signed settings or refuse
+        if settings is None or "target" not in values:
+            raise QueueError("land.owner_required", "owner_target missing and no settings to derive it")
+        values["owner_target"] = is_owner_target(settings, values["target"])
     return QueuedEntry(**values)

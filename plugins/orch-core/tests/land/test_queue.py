@@ -16,6 +16,7 @@ from orch.land.queue import (
     Check,
     CheckResult,
     Later,
+    Live,
     LogMark,
     Outcome,
     Phase,
@@ -25,6 +26,7 @@ from orch.land.queue import (
     begin_attempt,
     blocked,
     check_log_progress,
+    check_policy_digest,
     consumed,
     dequeue,
     enqueue,
@@ -72,6 +74,18 @@ def queued(e: QueuedEntry | None = None) -> QueueState:
     return enqueue(QueueState(), e or entry(), settings=SETTINGS, consumed_ids=())
 
 
+LIVE = Live(True, {"verify": "source", "code": "source"}, 1)
+
+
+REASON = {"merged": None, "failed": "red_checks", "requeued": "target_moved"}
+
+
+def push(state: QueueState, n: int, cs: object, **kw: object) -> QueueState:
+    args = dict(settings=SETTINGS, live=LIVE)
+    args.update(kw)
+    return mark_pushing(state, n, cs, **args)
+
+
 def begin(
     state: QueueState | None = None, e: QueuedEntry | None = None, **changes: object
 ) -> tuple[QueueState, Attempt]:
@@ -83,6 +97,8 @@ def begin(
         rebase="clean",
         required_checks=("t2", "ci"),
         descends=True,
+        settings=SETTINGS,
+        live=LIVE,
     )
     args.update(changes)
     return begin_attempt(state or queued(e), e or entry(), **args)
@@ -94,7 +110,7 @@ def checks(result: CheckResult = "pass", sha: str = "candidate") -> tuple[Check,
 
 def merged(state: QueueState | None = None, e: QueuedEntry | None = None) -> QueueState:
     state, a = begin(state, e)
-    state = mark_pushing(state, a.n, checks(), "policy")
+    state = push(state, a.n, checks())
     return tidy(record_outcome(state, a.n, "merged", now=NOW), a.n)
 
 
@@ -197,18 +213,18 @@ def test_push_requires_every_check(result: CheckResult, index: int) -> None:
     bad[index] = replace(bad[index], result=result)
     for invalid in (bad, checks()[:index] + checks()[index + 1 :]):
         with pytest.raises(QueueError, match="land.bad_transition"):
-            mark_pushing(state, a.n, invalid, "policy")
+            push(state, a.n, invalid)
 
 
 def test_checks_bound_to_candidate_and_unambiguous() -> None:
     state, a = begin()
     for invalid in (checks(sha="other"), checks(sha=""), (*checks(), checks()[0])):
         with pytest.raises(QueueError, match="land.bad_transition"):
-            mark_pushing(state, a.n, invalid, "policy")
+            push(state, a.n, invalid)
     with pytest.raises(QueueError, match="land.bad_transition"):
         record_checks(state, a.n, checks(sha="other"))
-    with pytest.raises(QueueError, match="land.bad_transition"):
-        mark_pushing(state, a.n, checks(), "")
+    with pytest.raises(QueueError, match="land.not_approved"):
+        push(state, a.n, checks(), live=Live(False, {"verify": "source"}, 1))
     recorded = record_checks(state, a.n, checks("running"))
     assert recorded.attempts[-1].checks[0].result == "running"
     assert state.attempts[-1].checks == ()
@@ -221,13 +237,20 @@ def test_resume_exhaustive() -> None:
         phases, RESULTS, (False, True), (False, True), (False, True), (False, True), (False, True)
     ):
         cs = checks(result, sha="candidate" if same_sha else "other")
-        a = replace(base, phase=phase, checks=cs[:1] if missing else cs, check_policy_digest="policy")
+        a = replace(
+            base,
+            phase=phase,
+            checks=cs[:1] if missing else cs,
+            check_policy_digest=check_policy_digest(("t2", "ci")) if same_policy else "other",
+        )
         decision = resume_decision(
             a,
+            entry(),
+            settings=SETTINGS,
+            live=LIVE,
             remote_target_sha="target" if same_target else "moved",
             candidate_reached=reached,
             required_checks=("t2", "ci"),
-            check_policy_digest="policy" if same_policy else "new",
         )
         expected = (
             "done"
@@ -292,7 +315,7 @@ def test_oldest_first_drop_parent_first_and_queue_identity() -> None:
     assert next_entry(state, targets=["develop"], is_live=lambda _: True, blocked_fn=lambda _: None).entry == stale
     state, a = begin(state, parent)
     assert blocked(state, child, target_ancestry=frozenset()) == Block("parent", "ahead")
-    state = tidy(record_outcome(mark_pushing(state, a.n, checks(), "policy"), a.n, "merged", now=NOW), a.n)
+    state = tidy(record_outcome(push(state, a.n, checks()), a.n, "merged", now=NOW), a.n)
     assert blocked(state, child, target_ancestry=frozenset({"candidate"})) is None
 
 
@@ -318,16 +341,16 @@ def test_serial_transitions_and_tidy(outcomes: list[Outcome]) -> None:
         with pytest.raises(QueueError, match="land.bad_transition"):
             record_outcome(state, a.n, "merged", now=NOW)
         if outcome == "merged":
-            state = mark_pushing(state, a.n, checks(), "policy")
+            state = push(state, a.n, checks())
             assert state.attempts[-1].phase == "pushing"
             with pytest.raises(QueueError, match="land.bad_transition"):
-                mark_pushing(state, a.n, checks(), "policy")
+                push(state, a.n, checks())
             with pytest.raises(QueueError, match="land.bad_transition"):
                 record_checks(state, a.n, checks())
-        state = record_outcome(state, a.n, outcome, now=NOW)
+        state = record_outcome(state, a.n, outcome, now=NOW, reason=REASON[outcome])
         assert state.worker.current == a.n  # durable record precedes cleanup
         with pytest.raises(QueueError, match="land.bad_transition"):
-            record_outcome(state, a.n, outcome, now=NOW)
+            record_outcome(state, a.n, outcome, now=NOW, reason=REASON[outcome])
         state = tidy(state, a.n)
         assert state == tidy(state, a.n)
         assert state.worker.current is None
@@ -394,21 +417,21 @@ def test_errors_and_owner_ff() -> None:
 @pytest.mark.parametrize("outcome", ["failed", "requeued"])
 def test_nonmerge_outcomes_from_pushing(outcome: Outcome) -> None:
     state, a = begin()
-    state = mark_pushing(state, a.n, checks(), "policy")
-    assert record_outcome(state, a.n, outcome, now=NOW).attempts[-1].outcome == outcome
+    state = push(state, a.n, checks())
+    assert record_outcome(state, a.n, outcome, now=NOW, reason=REASON[outcome]).attempts[-1].outcome == outcome
 
 
 def test_conflict_cannot_push_even_with_green_checks() -> None:
     state, a = begin(rebase="conflict")
     with pytest.raises(QueueError, match="land.bad_transition"):
-        mark_pushing(state, a.n, checks(), "policy")
+        push(state, a.n, checks())
     state = record_outcome(state, a.n, "failed", now=NOW, reason="conflict", file="x.sql")
     assert tidy(state, a.n).queues[0].entries == ()
 
 
 def test_json_round_trip_and_mock_fixture() -> None:
     state, a = begin()
-    state = mark_pushing(state, a.n, checks(), "policy")
+    state = push(state, a.n, checks())
     for value in (entry(), state.attempts[-1]):
         payload = json.loads(json.dumps(to_json(value)))
         assert from_json(payload) == value
@@ -438,21 +461,27 @@ def test_json_round_trip_and_mock_fixture() -> None:
     assert (
         resume_decision(
             parsed,
+            entry(),
+            settings=SETTINGS,
+            live=LIVE,
             remote_target_sha=parsed.target_sha,
             candidate_reached=False,
             required_checks=("T2 integration checks",),
-            check_policy_digest="policy",
         )
         == "rerun"
     )
-    parsed = replace(parsed, phase="pushing", check_policy_digest="policy")
+    parsed = replace(
+        parsed, queued="e1", phase="pushing", check_policy_digest=check_policy_digest(("T2 integration checks",))
+    )
     assert (
         resume_decision(
             parsed,
+            entry(),
+            settings=SETTINGS,
+            live=LIVE,
             remote_target_sha=parsed.target_sha,
             candidate_reached=False,
             required_checks=("T2 integration checks",),
-            check_policy_digest="policy",
         )
         == "rerun"
     )
@@ -475,14 +504,16 @@ def test_state_values_are_immutable_and_copy_input_sequences() -> None:
 def test_informational_ci_does_not_change_signed_requirements(result: CheckResult) -> None:
     state, a = begin(required_checks=("t2",))
     results = (checks()[0], replace(checks()[1], result=result))
-    state = mark_pushing(state, a.n, results, "policy")
+    state = push(state, a.n, results)
     assert (
         resume_decision(
             state.attempts[-1],
+            entry(),
+            settings=SETTINGS,
+            live=LIVE,
             remote_target_sha="target",
             candidate_reached=False,
             required_checks=("t2",),
-            check_policy_digest="policy",
         )
         == "retry_push"
     )
@@ -490,10 +521,12 @@ def test_informational_ci_does_not_change_signed_requirements(result: CheckResul
         assert (
             resume_decision(
                 state.attempts[-1],
+                entry(),
+                settings=SETTINGS,
+                live=LIVE,
                 remote_target_sha="target",
                 candidate_reached=False,
                 required_checks=("t2", "ci"),
-                check_policy_digest="policy",
             )
             == "rerun"
         )
@@ -519,5 +552,80 @@ def test_requeue_cap_canonical_target_and_legacy_entry() -> None:
         "by": "p",
         "script": ["clean"],
     }
-    got = from_json(legacy, QueuedEntry, defaults={"remote": "r", "target": "develop"})
+    got = from_json(legacy, QueuedEntry, defaults={"remote": "r", "target": "develop"}, settings=SETTINGS)
     assert (got.remote, got.target, got.ticket) == ("r", "develop", "T9")
+
+
+def test_empty_required_checks_and_digest_computed() -> None:
+    with pytest.raises(QueueError, match="land.bad_transition"):
+        begin(required_checks=())
+    state, a = begin()
+    assert push(state, a.n, checks()).attempts[-1].check_policy_digest == check_policy_digest(("ci", "t2"))
+    assert check_policy_digest(("t2",)) != check_policy_digest(("t2", "ci"))
+
+
+def test_begin_and_push_rederive_owner_and_liveness() -> None:
+    main = entry(target="main", owner_target=False)  # a legacy-style entry with the flag wrong
+    settings = {"targets": ["develop", "main"]}
+    with pytest.raises(QueueError, match="land.owner_required"):
+        begin_attempt(
+            QueueState(),
+            main,
+            settings=settings,
+            live=LIVE,
+            target_sha="t",
+            candidate_sha="rebased",
+            now=NOW,
+            timeout_minutes=30,
+            rebase="clean",
+            required_checks=("t2",),
+            descends=True,
+        )
+    with pytest.raises(QueueError, match="land.stale"):
+        begin(live=Live(True, {"verify": "source"}, 2))
+    with pytest.raises(QueueError, match="land.not_approved"):
+        begin(live=Live(True, {"verify": "changed"}, 1))
+    with pytest.raises(QueueError, match="land.stale"):
+        begin(live=Live(True, {"verify": "source"}, 1, (Later("dequeued", "e1"),)))
+    state, a = begin()
+    for stale in (Live(True, {"verify": "other"}, 1), Live(True, {"verify": "source"}, 3)):
+        with pytest.raises(QueueError):
+            push(state, a.n, checks(), live=stale)
+    pushed = push(state, a.n, checks())
+    args = dict(remote_target_sha="target", candidate_reached=False, required_checks=("t2", "ci"), settings=SETTINGS)
+    at = pushed.attempts[-1]
+    assert resume_decision(at, entry(), live=LIVE, **args) == "retry_push"
+    assert resume_decision(at, entry(), live=Live(True, {"verify": "x"}, 1), **args) == "stale"
+    assert resume_decision(at, None, live=LIVE, **args) == "stale"
+
+
+def test_legacy_entry_owner_flag_never_defaults() -> None:
+    legacy = {"ticket": "T9", "branch": "b", "source_sha": "s", "enqueued": NOW, "by": "p"}
+    with pytest.raises(QueueError, match="land.owner_required"):
+        from_json(legacy, QueuedEntry, defaults={"remote": "r", "target": "main"})
+    got = from_json(legacy, QueuedEntry, defaults={"remote": "r", "target": "main"}, settings=SETTINGS)
+    assert got.owner_target is True
+
+
+def test_strict_types_reason_timeout_and_cap_skip() -> None:
+    for bad in (1, 0, "yes"):
+        with pytest.raises(QueueError):
+            begin(descends=bad)
+        with pytest.raises(QueueError):
+            live_entry(entry(), ticket_done=bad, gates={"verify": "source"}, settings_gen=1, later=[])
+    with pytest.raises(QueueError):
+        live_entry(entry(), ticket_done=True, gates={"verify": "source"}, settings_gen=True, later=[])
+    for t in (0, -1, 10**6, True):
+        with pytest.raises(QueueError):
+            begin(timeout_minutes=t)
+    state, a = begin()
+    for outcome, reason in (("merged", "conflict"), ("requeued", None), ("failed", None)):
+        with pytest.raises(QueueError, match="land.bad_transition"):
+            record_outcome(state, a.n, outcome, now=NOW, reason=reason)
+    e = entry()
+    state = queued(e)
+    for _ in range(3):
+        state, a = begin(state, e)
+        state = tidy(record_outcome(state, a.n, "requeued", now=NOW, reason="target_moved"), a.n)
+    sel = next_entry(state, targets=["develop"], is_live=lambda _: True, blocked_fn=lambda _: None)
+    assert sel.entry is None and sel.capped == (e,)

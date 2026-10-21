@@ -80,5 +80,5 @@ def test_configured_policy_and_remote_prefix() -> None:
     assert norm_target("company/refs/remotes/company/MAIN", ["company"]) == "main"
     assert norm_target("feature/new-api") == "feature/new-api"
     assert is_owner_target({"owner_targets": ["origin/RELEASE"]}, "refs/heads/release")
-    assert not is_owner_target({"owner_targets": []}, "main")
-    assert not is_owner_target({"owner_targets": ["release"]}, "main")
+    assert is_owner_target({"owner_targets": []}, "main")  # main/master stay owner targets always
+    assert is_owner_target({"owner_targets": ["release"]}, "main")

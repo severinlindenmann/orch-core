@@ -57,11 +57,9 @@ def is_owner_target(settings: Mapping[str, Any], target: str) -> bool:
     if normalized is None:
         return True
     configured = settings.get("owner_targets")
-    owners = (
-        configured
-        if isinstance(configured, list) and all(isinstance(name, str) for name in configured)
-        else DEFAULT_OWNER_TARGETS
-    )
+    extra = configured if isinstance(configured, list) and all(isinstance(name, str) for name in configured) else []
+    # main/master are owner targets always: a signed empty or partial list can add, never remove.
+    owners = (*DEFAULT_OWNER_TARGETS, *extra)
     return any(norm_target(name) == normalized for name in owners)
 
 

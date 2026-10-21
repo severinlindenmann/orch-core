@@ -52,7 +52,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("reads_ws.py", "_next_key"): (1, "R: next_key only where may_create says so (G and N: null)"),
     ("reads_ws.py", "workspace_settings"): (
         4,
-        "R reads as P: the full repo entries, the settings stamps and the Publish server addresses (G and N: none); `check` is P only",
+        "R reads as P: the full repo entries, settings stamps, Publish addresses (G, N: none); `check` is P only",
     ),
     ("runners.py", "RunnerHub.open_sub"): (3, "unreachable (run.sub is not an R op)"),
     ("runners.py", "RunnerHub.visible"): (2, "R sees no run (only P and G do)"),

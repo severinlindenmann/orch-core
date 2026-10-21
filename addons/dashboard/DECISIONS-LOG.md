@@ -1927,6 +1927,14 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 
 **Revert:** Revert these dashboard changes only together with a replacement core launch/auth contract.
 
+### 2026-10-21 — Wiki read API (#603)
+
+Decision: serve flat `wiki/<slug>.md` pages from the workspace folder's own Git HEAD through four GET routes.
+All workspace member roles may read while dashboard and Wiki are enabled. Ticket backlinks use the host's visible
+query results and a cache keyed by workspace and person. There is no dashboard write route.
+Why: keep repository content independent of staged edits and avoid sharing restricted ticket data between viewers.
+Revert: remove Wiki route registration and feature advertisement; repository pages remain ordinary files.
+
 ## 2026-10-19 — Edit tasks and preview cancelled approvals
 
 **Decision:** Share one ticket edit dialog between the overview and row pencils. Task drafts carry only changed fields; done tasks retain their checks and criteria. Offer existing criteria only in task chips. Project the host's task snapshot before constructing the sequence, and include the acceptance snapshot whenever task changes remain. Show valid cancellation context with resolved names and an explicit “per host, not signed” note.

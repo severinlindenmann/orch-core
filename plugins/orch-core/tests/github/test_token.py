@@ -108,3 +108,45 @@ def test_foreign_file_owner(state, monkeypatch):
     with pytest.raises(HostError) as caught:
         t.load(state, "ws", os.getuid())
     assert caught.value.code == "custody.unsafe_mode"
+
+
+def test_hard_linked_token_file_is_refused(state):
+    t.store(state, "ws", os.getuid(), t.Token(SECRET))
+    os.link(t.github_dir(state, "ws") / t.TOKEN_FILE, state / "elsewhere")
+    with pytest.raises(HostError) as caught:
+        t.load(state, "ws", os.getuid())
+    assert caught.value.code == "custody.unsafe_mode"
+
+
+def test_directory_swapped_after_the_check_is_not_followed(state, monkeypatch):
+    """The directory is swapped for a link to another one right after it was opened: the opened fd still wins."""
+    t.store(state, "ws", os.getuid(), t.Token(SECRET))
+    directory = t.github_dir(state, "ws")
+    other = state / "other"
+    other.mkdir(mode=0o700)
+    (other / t.TOKEN_FILE).write_text('{"v":1,"token":"github_pat_attacker"}')
+    (other / t.TOKEN_FILE).chmod(0o600)
+    real = t.custody.check_tree
+
+    def swap(path, uid, **kw):
+        result = real(path, uid, **kw)
+        if Path(path) == directory:
+            directory.rename(state / "moved")
+            directory.symlink_to(other)
+        return result
+
+    monkeypatch.setattr(t.custody, "check_tree", swap)
+    with pytest.raises(HostError) as caught:
+        t.load(state, "ws", os.getuid())
+    assert caught.value.code == "custody.unsafe_mode"
+    assert "attacker" not in str(caught.value)
+
+
+def test_symlinked_directory_is_refused(state):
+    other = state / "other"
+    other.mkdir(mode=0o700)
+    t.github_dir(state, "ws").symlink_to(other)
+    with pytest.raises(HostError) as caught:
+        t.store(state, "ws", os.getuid(), t.Token(SECRET))
+    assert caught.value.code == "custody.unsafe_mode"
+    assert list(other.iterdir()) == []

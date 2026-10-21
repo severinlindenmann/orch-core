@@ -62,6 +62,8 @@ MODULES = (
     "addon_grant",
     "addon_disable",
     "addon_purge",
+    "widgets_types",
+    "widgets_check",
 )
 
 

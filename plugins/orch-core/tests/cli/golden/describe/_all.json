@@ -388,6 +388,20 @@
         "group": "Admin",
         "who": "human",
         "summary": "Delete an addon's data."
+      },
+      {
+        "name": "widgets.types",
+        "cli": "widgets types",
+        "group": "Context",
+        "who": "read",
+        "summary": "List the widget types you may write in a ticket (charts, tables, checks) with a working example of each."
+      },
+      {
+        "name": "widgets.check",
+        "cli": "widgets check",
+        "group": "Context",
+        "who": "read",
+        "summary": "Check the widget blocks in a text file the way a section write does; nothing is stored."
       }
     ]
   },

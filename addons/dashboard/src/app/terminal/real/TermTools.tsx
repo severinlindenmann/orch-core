@@ -42,7 +42,7 @@ export function TermTools({ view, run, finding, onFinding }: {
     }}>
       <Input ref={input} aria-label="Find in terminal" value={query} onChange={(e) => setQuery(e.target.value)} className="h-6 min-w-0 flex-1 px-2 text-xs md:text-xs" />
       <Button type="submit" size="xs" variant="secondary" disabled={!view}>Find next</Button>
-      <Button type="button" size="icon-xs" variant="ghost" aria-label="Close find" disabled={!view} onClick={() => onFinding(false)}><X /></Button>
+      <Button type="button" size="icon-xs" variant="ghost" aria-label="Close find" disabled={!view} onClick={() => { onFinding(false); view?.term.textarea?.focus() }}><X /></Button>
       <span role="status" className="text-text-muted">{result}</span>
     </form>}
   </div>

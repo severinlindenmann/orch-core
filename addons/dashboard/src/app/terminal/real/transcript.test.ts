@@ -9,6 +9,12 @@ it('reads only buffer lines, preserving inner empty lines and trimming trailing 
   expect(transcript(term)).toBe('first\n\n  last  ')
   term.dispose()
 })
+it('joins soft-wrapped rows into one line', async () => {
+  const term = new Terminal({ cols: 10 })
+  await new Promise<void>((resolve) => term.write('abcdefghijklmnopqrstuvwxy\r\nnext\r\n', resolve))
+  expect(transcript(term)).toBe('abcdefghijklmnopqrstuvwxy\nnext')
+  term.dispose()
+})
 it('names transcripts with a bounded slug and local date and time', () => {
   const run = (label: string) => ({ label } as Run)
   const now = new Date(2026, 0, 2, 3, 4)

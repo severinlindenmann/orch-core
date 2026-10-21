@@ -4,7 +4,15 @@ import { runName } from './runName'
 
 export function transcript(term: Pick<Terminal, 'buffer'>): string {
   const buffer = term.buffer.active
-  const lines = Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '')
+  // Soft-wrapped rows are one logical line: join them without a newline (the wrapped row keeps its full width).
+  const lines: string[] = []
+  for (let i = 0; i < buffer.length; i++) {
+    const row = buffer.getLine(i)
+    const wrapped = !!row?.isWrapped && lines.length > 0
+    const text = row?.translateToString(!buffer.getLine(i + 1)?.isWrapped) ?? ''
+    if (wrapped) lines[lines.length - 1] += text
+    else lines.push(text)
+  }
   while (lines.at(-1) === '') lines.pop()
   return lines.join('\n')
 }

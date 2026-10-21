@@ -12,7 +12,7 @@ from typing import Any
 from orch.canon import ARTIFACT_KINDS
 
 from . import addon_rules, claims, gates, generations, source
-from .accept import WORKABLE, criterion_hash, may_accept, parse_label
+from .accept import WORKABLE, criterion_hash, may_accept, parse_label, parse_withdraw_label
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -191,6 +191,19 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         and not (a["kind"] == "person" and may_accept(ws, t, a["id"]) and t.status in WORKABLE)
     ):
         counts = False  # R3: a manual acceptance of anyone else, or on a ticket not open for work, is never evidence
+    withdrawn = parse_withdraw_label(e.get("label"))
+    if (
+        typ == "artifact.replaced"
+        and e["kind"] == "feedback"
+        and "ac" not in e
+        and withdrawn in {x["id"] for x in t.fields["acceptance"]}
+        and a["kind"] == "person"
+        and may_accept(ws, t, a["id"])
+        and t.status in WORKABLE
+    ):
+        for art in t.artifacts.values():
+            if art.kind == "feedback" and art.ac == withdrawn and (art.label or "").startswith("accepted "):
+                art.evidence_ok = False
     t.artifacts[name] = ArtifactCore(
         name,
         e["kind"],

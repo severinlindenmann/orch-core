@@ -1256,3 +1256,36 @@ def test_u3_only_a_creation_drops_the_cancel_notes_and_never_another_note():
     assert "notes" not in only
     changed = signcontent._new_ticket({"fields_changed": [{"field": "type", "before": "bug", "after": "feature"}]})
     assert "fields_title" not in changed  # a row with an earlier value is a change, not a detail
+
+
+def test_verify_manual_acceptances_are_host_told_and_closed():
+    event = {"type": "gate.approved", "gate": "verify"}
+    material = material_for("gate.approved", event)
+    material["gate"] = "verify"
+    material["manual_acceptances"] = [{"ac": "AC1", "name": "accept-AC1-1.md", "by": "p_" + "1" * 32}]
+    request = {"op": "approve", "events": [event], "material": material}
+    content = build(request)
+    rows = {r["field"]: r["after"] for r in content["fields_changed"]}
+    assert rows["accepted manually"] == "AC1 by p_" + "1" * 32 + " (per host)"
+    material["manual_acceptances"][0]["unknown"] = "refuse"
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(request)
+
+
+def test_gate_material_lists_only_live_authorised_manual_acceptances():
+    from types import SimpleNamespace
+
+    from orch.host.human import HumanOps
+    from tests.model.test_acceptance import _two_members, _withdraw_after_wording_change, artifact
+    from tests.schema.examples import digest
+
+    w, uid = _two_members()
+    _withdraw_after_wording_change(w, uid)
+    w.tev(uid, "artifact.added", "sev", **artifact(name="accept-AC1-3.md", sha256=digest("statement3")))
+    w.tev(uid, "artifact.added", "mara", **artifact(name="accept-AC1-4.md", sha256=digest("statement4")))
+    store = SimpleNamespace(state=w.state(), ticket=lambda _: w.view(uid), body_sections=lambda _: {})
+    material = HumanOps._material(
+        store, uid, [{"type": "gate.approved", "gate": "verify"}], SimpleNamespace(pair=None), []
+    )
+    assert material["manual_acceptances"] == [{"ac": "AC1", "name": "accept-AC1-3.md", "by": w.people["sev"]}]
+    assert all("label" not in a and "by" not in a for a in material["input"]["artifacts"].values())

@@ -409,7 +409,7 @@ def _shape(
 _MATERIAL_KEYS = {
     "gate": (
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
-        {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence", "statement"}),
@@ -428,6 +428,17 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     keys = _MATERIAL_KEYS.get(kind)
     if keys is None or not keys[0] <= set(material) <= keys[1]:  # fail closed: a key outside the Material schema
         _refuse(f"material has keys outside the {kind!r} schema")
+    if "manual_acceptances" in material:
+        manual = material["manual_acceptances"]
+        if material.get("gate") != "verify" or not isinstance(manual, list):
+            _refuse("manual acceptances require a verify gate list")
+        for row in manual:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"ac", "name", "by"}
+                or not all(isinstance(value, str) for value in row.values())
+            ):
+                _refuse("malformed manual acceptance")
     ticket = material.get("ticket")
     if ticket is not None and (not isinstance(ticket, dict) or set(ticket) != {"key", "uid"}):
         _refuse("material.ticket is malformed")

@@ -146,3 +146,43 @@ def test_a_person_never_carries_a_receipt_and_never_makes_evidence_with_one():
         assert refused(w, uid, "task.done", who, task="T1", receipt=receipt) == Code.TASK_BAD_RECEIPT, who
     assert refused(w, uid, "task.done", "vik", task="T1", receipt=receipt) == Code.ROLE_DENIED
     assert not w.view(uid).acceptance[0].evidence
+
+
+def _withdraw_after_wording_change(w, uid, who="sev", ac="AC1"):
+    w.tev(uid, "artifact.added", "sev", **artifact())
+    w.edit(uid, "sev", {"ticket.acceptance": [{"id": "AC1", "text": "works differently"}]})
+    w.tev(
+        uid,
+        "artifact.added",
+        "sev",
+        **artifact(name="accept-AC1-2.md", label=label("AC1", "works differently"), sha256=digest("statement2")),
+    )
+    withdrawn = artifact(
+        name="accept-AC1-2.md", label=f"withdrawn {ac}", sha256=digest("withdrawn"), replaces=digest("statement2")
+    )
+    del withdrawn["ac"]
+    w.tev(uid, "artifact.replaced", who, **withdrawn)
+    w.edit(uid, "sev", {"ticket.acceptance": [{"id": "AC1", "text": "works"}]})
+
+
+def test_withdrawal_voids_all_earlier_acceptances_when_wording_returns():
+    w, uid = setup()
+    _withdraw_after_wording_change(w, uid)
+    assert not w.view(uid).acceptance[0].evidence
+    assert acceptance_state(w.state()._core.tickets[uid], "AC1") is None
+
+
+def test_new_acceptance_counts_after_withdrawal():
+    w, uid = setup()
+    _withdraw_after_wording_change(w, uid)
+    w.tev(uid, "artifact.added", "sev", **artifact(name="accept-AC1-3.md", sha256=digest("statement3")))
+    assert w.view(uid).acceptance[0].evidence == ("artifact:accept-AC1-3.md",)
+    assert acceptance_state(w.state()._core.tickets[uid], "AC1") == "accepted"
+
+
+@pytest.mark.parametrize("who,ac", [("mara", "AC1"), ("sev", "AC2")])
+def test_unauthorised_or_unknown_withdrawal_does_not_void_earlier_acceptances(who, ac):
+    w, uid = _two_members()
+    _withdraw_after_wording_change(w, uid, who, ac)
+    assert w.view(uid).acceptance[0].evidence == ("artifact:accept-AC1-1.md",)
+    assert acceptance_state(w.state()._core.tickets[uid], "AC1") == "accepted"

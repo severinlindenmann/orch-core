@@ -191,13 +191,46 @@ def test_activity_and_history_words(kind, data, words):
         "at": "2026-10-19T12:02:00Z",
         "summary": "old",
     }
-    assert sentence(row, lambda _: "Severin") == words
-    marker = event(row)["manual_acceptance"]
+    assert sentence(row, lambda _: "Severin", lambda _: True) == words
+    marker = event(row, can=lambda _: True)["manual_acceptance"]
     assert marker["kind"] == ("accepted" if kind == "artifact.added" else "withdrawn") and marker["ac"] == "AC2"
-    assert event(row)["summary"] == "old"  # the summary is the host's, never rewritten
+    assert event(row, can=lambda _: True)["summary"] == "old"  # the summary is the host's, never rewritten
     agent = event(row | {"actor": {"kind": "agent", "id": "x", "session": "s", "for": PERSON}})
     assert "manual_acceptance" not in agent
     spoof = event(row | {"summary": words, "actor": {"kind": "agent", "id": "x", "session": "s", "for": PERSON}})
     assert "manual_acceptance" not in spoof
     assert sentence(row | {"actor": {"kind": "agent"}}, lambda _: "agent") != words
     assert sentence(row | {"data": data | {"kind": "receipt"}}, lambda _: "Severin") != words
+
+
+@pytest.mark.parametrize(
+    "role,owner,reviewer,kind,allowed",
+    [
+        ("owner", False, False, "person", True),
+        ("maintainer", False, False, "person", True),
+        ("member", True, False, "person", True),
+        ("member", False, True, "person", True),
+        ("member", False, False, "person", False),
+        ("viewer", True, True, "person", False),
+        ("owner", True, True, "agent", False),
+    ],
+)
+def test_manual_marker_requires_authority(role, owner, reviewer, kind, allowed):
+    from orch_dashboard.adapters.activity import acceptance_authority, feed
+    from orch_dashboard.adapters.tickets import events
+
+    roster = {"members": [{"person": PERSON, "role": role, "name": "Severin"}]}
+    doc = {"owner": PERSON if owner else OTHER, "people": {"reviewers": [PERSON] if reviewer else []}}
+    row = {
+        "type": "artifact.added",
+        "data": {"kind": "feedback", "ac": "AC2", "label": "accepted AC2 " + "a" * 16},
+        "actor": {"kind": kind, "id": PERSON},
+        "seq": 1,
+        "id": "event1",
+        "at": "2026-10-19T12:02:00Z",
+        "summary": "file",
+    }
+    assert ("manual_acceptance" in events({"log": [row]}, acceptance_authority(roster, doc))[0]) == allowed
+    assert "manual_acceptance" not in event(row)
+    did = feed({"items": [row]}, roster)["items"][0]["did"]
+    assert (did == "accepted AC2 manually") == (kind == "person" and role in ("owner", "maintainer"))

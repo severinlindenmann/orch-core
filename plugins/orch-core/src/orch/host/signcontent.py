@@ -916,6 +916,17 @@ def _gate(
         _check_keys("gate artifact keys", a, _ARTIFACT_SHOWN)
         extra = "".join(f"; {k} {_s(a[k])}" for k in ("ac", "task") if a.get(k))
         _row(out, f"file {name}", f"{_s(a.get('kind'))}, digest {_short(a.get('digest'))}{extra}")
+    manual = material.get("manual_acceptances", [])
+    if not isinstance(manual, list) or (manual and gate_id != "verify"):
+        raise PlainUnavailable("manual acceptances require a verify gate list")
+    for a in manual:
+        if not isinstance(a, Mapping):
+            raise PlainUnavailable("malformed manual acceptance")
+        _check_keys("manual acceptance keys", a, frozenset({"ac", "name", "by"}))
+        if set(a) != {"ac", "name", "by"} or not all(isinstance(v, str) for v in a.values()):
+            raise PlainUnavailable("malformed manual acceptance")
+    for a in sorted(manual, key=lambda a: (a["ac"], a["name"], a["by"])):
+        _row(out, "accepted manually", f"{a['ac']} by {a['by']} (per host)")
     for tid, r in sorted((inp.get("receipts") or {}).items()):
         _check_keys("gate receipt keys", r, _RECEIPT_SHOWN)
         _row(

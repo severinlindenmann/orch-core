@@ -183,7 +183,7 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     if t.startswith("task."):
         detail = e["task"]
     elif t.startswith("artifact."):
-        from orch.model.accept import parse_label
+        from orch.model.accept import parse_label, parse_withdraw_label
 
         detail = e["name"]
         if e.get("kind") == "feedback" and a["kind"] == "person":
@@ -191,11 +191,9 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
             if parsed is not None and e.get("ac") == parsed[0]:
                 detail = f"accepted {parsed[0]} manually"
             elif t == "artifact.replaced" and "ac" not in e:
-                import re
-
-                withdrawn = re.fullmatch(r"withdrawn (AC[1-9][0-9]*)", e.get("label") or "")
+                withdrawn = parse_withdraw_label(e.get("label"))
                 if withdrawn:
-                    detail = f"withdrew the manual acceptance of {withdrawn[1]}"
+                    detail = f"withdrew the manual acceptance of {withdrawn}"
     elif t == "log.added":
         detail = short(e["text"], 40)
     elif t == "question.asked":

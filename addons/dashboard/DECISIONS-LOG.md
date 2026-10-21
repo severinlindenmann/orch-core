@@ -1942,3 +1942,10 @@ Revert: Remove the phone routes, host capability and dialog integration; keep th
 **Why:** A person's acceptance signs authority but is not an automated receipt. The current core SignContent acceptance builder emits only id, text and checked, so the ticket context supplies the reviewer warning before choosing a verdict; it is not substituted into host signing material. Task reads do not expose the completion actor, so completion without a receipt uses the plain fallback.
 
 **Revert:** Remove the three typed dashboard actions, manual controls and annotations; keep host receipt and coverage rules unchanged.
+
+
+## 2026-10-21 Manual acceptance authority in server event adapters
+
+- **Decision:** Ticket history checks membership and ticket authority before adding manual acceptance markers. The workspace feed only claims acceptance by workspace owners or maintainers.
+- **Why:** Feed items lack ticket owner/reviewer data; a generic file event avoids claiming unverified authority.
+- **Revert:** Remove the authority callback from the activity and ticket event adapters and the roster lookup in the ticket events route.

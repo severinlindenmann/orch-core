@@ -21,6 +21,11 @@ def parse_label(value: str | None) -> tuple[str, str] | None:
     return (match[1], match[2]) if match else None
 
 
+def parse_withdraw_label(value: str | None) -> str | None:
+    match = re.fullmatch(r"withdrawn (AC[1-9][0-9]*)", value) if isinstance(value, str) else None
+    return match[1] if match else None
+
+
 def withdraw_label(ac_id: str) -> str:
     return f"withdrawn {ac_id}"
 

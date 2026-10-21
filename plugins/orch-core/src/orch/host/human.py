@@ -678,7 +678,7 @@ class HumanOps:
             g = view.gates[gate]
             inp = thaw(g.input)
             texts = store.body_sections(view.uid)  # every section the gate binds, as the signer must show it (P1)
-            return {
+            material = {
                 "kind": "gate",
                 "gate": gate,
                 "input": inp,
@@ -686,6 +686,21 @@ class HumanOps:
                 "texts": {sid: texts.get(sid, "") for sid in sorted(inp.get("sections") or {})},
                 "ticket": ticket,
             }
+            if gate == "verify":
+                from orch.model.accept import criterion_hash, parse_label
+
+                t = store.state._core.tickets[view.uid]
+                criteria = {a["id"]: a["text"] for a in t.fields["acceptance"]}
+                material["manual_acceptances"] = [
+                    {"ac": a.ac, "name": a.name, "by": a.by}
+                    for a in sorted(t.artifacts.values(), key=lambda a: a.name)
+                    if a.kind == "feedback"
+                    and a.evidence_ok
+                    and a.by.startswith("p_")
+                    and a.ac in criteria
+                    and parse_label(a.label) == (a.ac, criterion_hash(a.ac, criteria[a.ac]))
+                ]
+            return material
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]
             question = next((thaw(q) for q in view.fields["questions"] if q["id"] == qid), None)

@@ -112,15 +112,19 @@ def repo_sentence(repos) -> str | None:
     return "; ".join(parts) or None
 
 
-def manual_acceptance(item: dict) -> dict | None:
-    """`{kind: accepted|withdrawn, ac}` for an artifact event that a PERSON signed with the label of a manual acceptance
-    (or of its withdrawal), else None. The only source of that wording: an agent's file, or a file of another kind with
-    the same words in its name or summary, is never shown as one."""
+def manual_acceptance(item: dict, can=None) -> dict | None:
+    """Manual acceptance or withdrawal only when a person passes the authority callback.
+
+    An agent's file, or a file of another kind with the same words in its name or
+    summary, is never shown as one. Missing authority information returns None.
+    """
     kind, data = item.get("type"), item.get("data") or {}
     if (
         kind not in ("artifact.added", "artifact.replaced")
         or data.get("kind") != "feedback"
         or (item.get("actor") or {}).get("kind") != "person"
+        or can is None
+        or not can((item.get("actor") or {}).get("id"))
     ):
         return None
     label = data.get("label")
@@ -133,10 +137,10 @@ def manual_acceptance(item: dict) -> dict | None:
     return None
 
 
-def sentence(item: dict, name_of) -> str:
+def sentence(item: dict, name_of, can=None) -> str:
     """What happened, in words, after the actor's name. Unknown types and unsafe fields get a general sentence."""
     kind, data = item["type"], item.get("data") or {}
-    manual = manual_acceptance(item)
+    manual = manual_acceptance(item, can)
     if manual is not None:
         return (
             f"accepted {manual['ac']} manually"
@@ -179,7 +183,7 @@ def sentence(item: dict, name_of) -> str:
     return SIMPLE.get(kind, "did something")
 
 
-def item(a: dict, names: dict[str, str]) -> dict:
+def item(a: dict, names: dict[str, str], can=None) -> dict:
     """One activity item as a row. `jpos`, `ws_seq`, `log`, `uid` and `data` never reach the browser."""
 
     def name_of(person):
@@ -193,7 +197,7 @@ def item(a: dict, names: dict[str, str]) -> dict:
     elif actor["kind"] == "agent":
         actor["for_name"] = names.get(actor.get("for")) or None
     out["actor"] = {k: v for k, v in actor.items() if k in ("kind", "id", "name", "for_name")}
-    out["did"] = sentence(a, name_of)
+    out["did"] = sentence(a, name_of, can)
     out["ticket"] = a.get("key") or ""
     title = a.get("title")
     out["title"] = display(title)
@@ -209,6 +213,12 @@ def item(a: dict, names: dict[str, str]) -> dict:
 
 
 def feed(data: dict, roster: dict) -> dict:
+    """Only workspace owners/maintainers get manual acceptance wording here.
+
+    Ticket owner/reviewer-only acceptances remain generic file events: this feed
+    has no ticket ownership or reviewer information.
+    """
+    can = acceptance_authority(roster)
     names = {}
     for m in roster["members"]:
         names[m["person"]] = safe_name(m)[0]
@@ -216,5 +226,15 @@ def feed(data: dict, roster: dict) -> dict:
     for a in data["items"]:
         if a["id"] not in seen:  # a page may repeat what the live tail already showed
             seen.add(a["id"])
-            items.append(item(a, names))
+            items.append(item(a, names, can))
     return {"available": True, "items": items, "next_page": data.get("next_page")}
+
+
+def acceptance_authority(roster: dict, doc: dict | None = None):
+    """Current non-viewer membership plus workspace or ticket authority."""
+    roles = {m["person"]: m["role"] for m in roster["members"]}
+    doc = doc or {}
+    reviewers = (doc.get("people") or {}).get("reviewers") or []
+    return lambda person: roles.get(person) in ("owner", "maintainer") or (
+        roles.get(person) == "member" and (person == doc.get("owner") or person in reviewers)
+    )

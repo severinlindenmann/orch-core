@@ -186,7 +186,7 @@ def ui_actor(actor: dict) -> dict:
     return out
 
 
-def event(e: dict, ident: str | None = None) -> dict:
+def event(e: dict, ident: str | None = None, can=None) -> dict:
     """A `LogItem` (or the same fields of an activity item) as an OrchEvent.
 
     `data` is nested in v1.4 and closed per type; its fields are flattened beside the core keys (a field never replaces
@@ -205,7 +205,7 @@ def event(e: dict, ident: str | None = None) -> dict:
     from .activity import manual_acceptance
 
     out.pop("manual_acceptance", None)  # only the line below sets it, never a payload field of the same name
-    if (manual := manual_acceptance(e)) is not None:  # an explicit marker, never a guess from the summary text
+    if (manual := manual_acceptance(e, can)) is not None:  # an explicit marker, never a guess from the summary text
         out["manual_acceptance"] = manual
     if e["type"] == "verdict.given" and "outcome" in data:
         out["result"] = data["outcome"]  # the mock's name for it
@@ -215,9 +215,9 @@ def event(e: dict, ident: str | None = None) -> dict:
     return out
 
 
-def events(data: dict) -> list[dict]:
+def events(data: dict, can=None) -> list[dict]:
     """`ticket.get` log items as OrchEvents. The summary is host text, shown as data."""
-    return [event(e) for e in data["log"]]
+    return [event(e, can=can) for e in data["log"]]
 
 
 def _sources(raw: list[dict] | None) -> list[dict]:

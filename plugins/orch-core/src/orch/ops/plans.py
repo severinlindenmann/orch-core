@@ -133,11 +133,35 @@ def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     return Out({"question": qid_n, "blocking": q["blocking"]}, ["orch wait" if q["blocking"] else "orch task next"])
 
 
+def _widgets_addon_on(c: Call) -> bool:
+    from orch.addons.install import as_addons
+
+    try:
+        a = as_addons(c.store.state.workspace.addons).get("widgets")
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return a is not None and a.enabled and not a.purged
+
+
+def check_widgets(c: Call, p: Projection, sid: str, text: str) -> None:
+    """Refuse a section whose ``orch`` widget blocks the strict validator (the dashboard's, ported) would not draw, so
+    the author learns it where it can fix it. Text without a fence is not even parsed."""
+    from orch.widgets import check
+
+    if not check.has_fence(text):
+        return
+    body = c.store.body_sections(p.view.uid)
+    problems = check.check_write(body, sid, text, templates_ok=_widgets_addon_on(c))
+    if problems:
+        raise OrchError("parse.text", check.message(problems, sid))
+
+
 def section_set(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     sid = args["section"]
     if sid not in SECTIONS_BY_TYPE[p.view.type]:
         raise OrchError("invalid.input", f"a {p.view.type} ticket has no section {sid}")
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=65536, what=f"section {sid}").strip("\n")
+    check_widgets(c, p, sid, text)
     p.add(
         {
             "type": "ticket.updated",
@@ -377,10 +401,26 @@ def artifact_event(c: Call, name: str, data: bytes, kind: str, **extra: Any) -> 
     return ev, {name: data}
 
 
+#: the files one ticket may hold (design r3 part C: a no-codebase ticket files its results as artifacts)
+TICKET_ARTIFACT_BUDGET = 512 << 20
+
+
+def _budget(p: Projection, added: int, replaced: int = 0) -> None:
+    """A ticket holds at most 512 MiB of file artifacts (replaced files count once, at their new size)."""
+    held = sum(a.bytes or 0 for a in p.last_view.artifacts if a.digest is not None)
+    if held - replaced + added > TICKET_ARTIFACT_BUDGET:
+        raise OrchError(
+            "invalid.input",
+            f"{p.view.key} holds {held >> 20} MiB of files and the limit is {TICKET_ARTIFACT_BUDGET >> 20} MiB: "
+            "keep large results in the work folder and add a smaller summary",
+        )
+
+
 def artifact_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if args.get("kind") == "receipt":
         raise OrchError("invalid.input", "a receipt is only made by task done --run")
     data = c.read_artifact(args["path"])
+    _budget(p, len(data))
     name = args.get("name") or os.path.basename(args["path"])
     label = c.text(args["label"], one_line=True, what="label") if args.get("label") else None
     ev, files = artifact_event(
@@ -398,6 +438,7 @@ def artifact_replace(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if old.kind == "receipt":
         raise OrchError("invalid.input", f"{name} is a receipt: only task done --run makes one, nothing replaces it")
     data = c.read_artifact(args["path"])
+    _budget(p, len(data), old.bytes or 0)
     ev, files = artifact_event(c, name, data, old.kind, ac=old.ac, task=old.task)
     ev["type"] = "artifact.replaced"
     ev["replaces"] = old.digest

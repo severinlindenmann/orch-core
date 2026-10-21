@@ -13,6 +13,8 @@ idem, expiry) is synced to disk, and before a signature leaves the signer the re
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 import time
@@ -113,12 +115,18 @@ class Approval:
     #: v1.6: prepared in deposit-only grant mode (D-P2-27); the hand-over's settled outcome once known
     deposit: bool = False
     deposit_result: dict[str, Any] | None = None
+    #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
+    images: dict[str, bytes] | None = None
+    image_digests: tuple[str, ...] = ()
 
 
 def _new_idem() -> str:
     from orch.host.control_client import new_idem
 
     return new_idem()
+
+
+SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class ClickSigner:
@@ -152,6 +160,8 @@ class ClickSigner:
         self.mono, self.wall = mono, wall
         self.budget = Budget(mono)
         self.approvals: dict[tuple[str, str], Approval] = {}
+        #: R3 part B: pasted screenshots uploaded by ``stash`` (workspace, digest) -> {buf, size, done, at}
+        self.stash_: dict[tuple[str, str], dict[str, Any]] = {}
         self.conns: dict[str, Any] = {}
         self.busy = False
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
@@ -359,8 +369,17 @@ class ClickSigner:
         if type(deposit) is not bool:
             raise ClickError("invalid.input", "deposit is true or false")
         seq = args.get("sequence")
+        images: dict[str, bytes] | None = None
+        send_files: dict[str, Any] | None = None
         if seq is not None:
             self._sequence_ok(entry, op, inner, seq, deposit, files)
+            images = self._images_for(entry, seq)
+            if images and op == "artifact.add":  # an edit whose first step adds a screenshot
+                first = images.get(str(inner.get("name")))
+                if first is None:
+                    raise ClickError("invalid.input", "the first step names a screenshot the review does not carry")
+                files = {"path": {"b64": base64.b64encode(first).decode()}}
+                send_files = self._host_files(entry, first)
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -377,7 +396,7 @@ class ClickSigner:
         body = {"op": op, "args": inner, "signer": {"device": device, "auth": "convenience"}}
         if seq is not None:
             body["sequence"] = seq
-        prepared = self._call(entry, "human.prepare", body, idem=idem, files=files or None)
+        prepared = self._call(entry, "human.prepare", body, idem=idem, files=send_files or files or None)
         prepared = canon.loads_strict(canon.dumps(prepared["data"]))
         request = prepared.get("request") or {}
         rid = request.get("id")
@@ -411,12 +430,133 @@ class ClickSigner:
                 expires_at=expires_at,
                 files=files or None,
                 deposit=deposit,
+                images=images or None,
+                image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
         approval = self.approvals[key]
         if approval.deposit != deposit:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
+
+    # -- pasted screenshots (R3 part B) --------------------------------------------------------------------------
+    STASH_FILES = 12
+    STASH_BYTES = 40 * 1024 * 1024
+    STASH_LIFETIME = 900.0  # seconds a pasted file waits for its prepare
+
+    def stash(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """One chunk of a pasted screenshot. The signer holds the bytes (it checks them against the digest the person
+        reviewed and against :mod:`orch.host.imagecheck`) so the host never decides what the person signs. Chunks arrive
+        in order from offset 0; a chunk already held is accepted without effect when identical."""
+        from orch.host import imagecheck
+        from orch.host.blobs import CHUNK_MAX
+
+        entry = self._entry(args.get("workspace_id"))
+        digest, size, offset, b64, last = (args.get(k) for k in ("sha256", "size", "offset", "b64", "last"))
+        if type(digest) is not str or not SHA.fullmatch(digest):
+            raise ClickError("invalid.input", "stash takes the sha256 of the picture")
+        if type(size) is not int or not 1 <= size <= imagecheck.IMAGE_MAX:
+            raise ClickError("invalid.input", "a screenshot is 1 byte to 5 MiB")
+        if type(offset) is not int or offset < 0 or type(last) is not bool or type(b64) is not str:
+            raise ClickError("invalid.input", "stash takes offset, b64 and last")
+        try:
+            chunk = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise ClickError("invalid.input", "a chunk is not base64") from None
+        if len(chunk) > CHUNK_MAX:
+            raise ClickError("invalid.input", "a chunk is at most 768 KiB")
+        now = self.mono()
+        self._sweep()  # an expired approval no longer holds pictures: the stash is the one place their bytes count
+        pinned = self._pinned()
+        for k, v in list(self.stash_.items()):
+            if k in pinned:
+                v["at"] = now  # a prepared review still names this file: it waits as long as the review does
+            elif now - v["at"] > self.STASH_LIFETIME:
+                del self.stash_[k]
+        key = (entry["workspace_id"], digest)
+        held = self.stash_.get(key)
+        if held is None:
+            if offset != 0:
+                raise ClickError("invalid.input", "a picture starts at offset 0")
+            if (
+                len(self.stash_) >= self.STASH_FILES
+                or sum(v["size"] for v in self.stash_.values()) + size > self.STASH_BYTES
+            ):
+                raise ClickError("rate.limited", "too many pictures are waiting to be signed", retryable=True)
+            held = self.stash_[key] = {"buf": bytearray(), "size": size, "done": False, "at": now}
+        if held["size"] != size:
+            raise ClickError("invalid.input", "the size of this picture changed")
+        if held["done"]:
+            return {"state": "complete"}
+        end = offset + len(chunk)
+        if offset < len(held["buf"]):  # a resend: only identical bytes are accepted, with no effect
+            if end > len(held["buf"]) or bytes(held["buf"][offset:end]) != chunk:
+                raise ClickError("invalid.input", "a chunk differs from the one held")
+        elif offset != len(held["buf"]) or end > size:
+            raise ClickError("invalid.input", "chunks arrive in order")
+        else:
+            held["buf"] += chunk
+        if last:
+            data = bytes(held["buf"])
+            if len(data) != size or canon.artifact_digest(data) != digest:
+                del self.stash_[key]
+                raise ClickError("invalid.input", "the picture does not match its digest")
+            try:
+                imagecheck.check(data)
+            except imagecheck.ImageRefused as exc:
+                del self.stash_[key]
+                raise ClickError("invalid.input", f"screenshot refused: {exc}") from None
+            held["done"] = True
+            held["data"] = data
+            held["buf"] = bytearray()  # the bytes live once, as ``data``
+            return {"state": "complete"}
+        return {"state": "partial", "held": len(held["buf"])}
+
+    def _pinned(self) -> set[tuple[str, str]]:
+        """The stash entries a live prepared approval still needs (their bytes count once, in the stash)."""
+        return {
+            (a.workspace_id, d)
+            for a in self.approvals.values()
+            if a.images and not self._expired(a)
+            for d in a.image_digests
+        }
+
+    def _images_for(self, entry: dict[str, Any], seq: Mapping[str, Any]) -> dict[str, bytes] | None:
+        """The bytes of the intent's screenshots by name, from the stash: each complete, checked and equal to the
+        digest and size of the intent. ``None`` for an intent without images."""
+        from orch.host import sequence
+
+        try:
+            intent = sequence.validate_intent(seq.get("intent"))
+        except sequence.SequenceInvalid as exc:
+            raise ClickError("invalid.input", f"sequence: {exc}") from None
+        wanted = intent.get("images") or ()
+        out: dict[str, bytes] = {}
+        for img in wanted:
+            held = self.stash_.get((entry["workspace_id"], img["sha256"]))
+            if held is None or not held["done"]:
+                raise ClickError("invalid.input", f"the screenshot {img['name']} was not uploaded to the signer")
+            data = held["data"]  # the one bytes object (no copy: the approval shares it with the stash)
+            if canon.artifact_digest(data) != img["sha256"] or len(data) != img["bytes"]:
+                raise ClickError("invalid.input", f"the screenshot {img['name']} is not the file in the review")
+            held["at"] = self.mono()
+            out[img["name"]] = data
+        return out or None
+
+    def _host_files(self, entry: dict[str, Any], data: bytes) -> dict[str, Any]:
+        """``files`` of one ``human.prepare``: inline up to 512 KiB, else a blob this signer uploads itself."""
+        from orch.host.blobs import INLINE_MAX
+        from orch.hostclient import upload
+
+        if len(data) <= INLINE_MAX:
+            return {"path": {"b64": base64.b64encode(data).decode()}}
+
+        class _Conn:
+            @staticmethod
+            def call(op: str, args: dict[str, Any], auth: Any = None) -> dict[str, Any]:
+                return self._call(entry, op, args)
+
+        return {"path": {"blob": upload(_Conn(), data, None)}}
 
     def _sequence_ok(
         self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
@@ -460,6 +600,8 @@ class ClickSigner:
         artifacts = None
         if any(e.get("type") in ("artifact.added", "artifact.replaced") for e in prepared["events"]):
             artifacts = "checked" if approval.files else "unseen"
+        elif approval.images:
+            artifacts = "checked"  # the pasted screenshots of a sequence: this signer holds the bytes and compared them
         return views.build(
             prepared,
             self._names(entry),
@@ -585,9 +727,12 @@ class ClickSigner:
         self._attempted.add((wid, approval.request_id))
         intent = sequence.validate_intent(stored["material"]["sequence"]["intent"])
 
-        def prepare(op: str, args: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+        def prepare(
+            op: str, args: dict[str, Any], meta: dict[str, Any], files: dict[str, bytes] | None = None
+        ) -> dict[str, Any]:
             body = {"op": op, "args": args, "signer": {"device": device, "auth": "convenience"}, "sequence": meta}
-            return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body)["data"]))
+            sent = self._host_files(entry, files["path"]) if files else None
+            return canon.loads_strict(canon.dumps(self._call(entry, "human.prepare", body, files=sent)["data"]))
 
         box: dict[str, Any] = {}
 
@@ -642,13 +787,27 @@ class ClickSigner:
             or approval.kind != kind
         ):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
-        driver = sequence.Driver(port, self.sessions, workspace_id=wid, person=person, intent=intent, now=self.wall)
+        driver = sequence.Driver(
+            port,
+            self.sessions,
+            workspace_id=wid,
+            person=person,
+            intent=intent,
+            now=self.wall,
+            images=approval.images,
+        )
         try:
             live = driver.resumable()
         except sequence.SessionError as exc:
             raise refused("record_unavailable", f"{exc}; nothing was signed") from None
         if live is not None:
             # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            if intent["kind"] == sequence.ADDON:  # no ticket
+                raise refused(
+                    "resumable",
+                    "Turning this add-on on was started from this review and is not finished. Finish it in your "
+                    "terminal (orch sign); nothing is signed here.",
+                )
             key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
             raise refused(
                 "resumable",
@@ -667,12 +826,21 @@ class ClickSigner:
                     held = None
                 name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
                 where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+                if intent["kind"] == sequence.ADDON:  # no ticket: the settings stay and the add-on stays off
+                    where = (
+                        f" {exc.landed} of {exc.total} signatures landed; the settings stay and the add-on stays off."
+                    )
             if exc.resumable:
                 unfinished = where.replace(" stays a draft", " is not finished")
+                if intent["kind"] == sequence.ADDON:  # the last answer was lost: whether it is on is not known
+                    unfinished = (
+                        f" {exc.landed} of {exc.total} signatures landed; whether the add-on is on is not known yet."
+                    )
+                page = "" if intent["kind"] == sequence.ADDON else " or on the ticket page"
                 raise refused(
                     "resumable",
                     f"The host did not confirm the last signature.{unfinished} "
-                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                    f"Finish it in your terminal (orch sign){page}; nothing more is signed here.",
                 ) from None
             raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:
@@ -1160,6 +1328,7 @@ class ClickSigner:
             "cancel": self.cancel,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
+            "stash": self.stash,
         }.get(op)
         if op == "status":
             return self.status(args)

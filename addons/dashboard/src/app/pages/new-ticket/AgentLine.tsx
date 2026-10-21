@@ -71,16 +71,11 @@ function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void 
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan, coreSaysSo = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** The signed review already says nothing here approves the requirements or the plan (agent access is in it). */ coreSaysSo?: boolean }) {
+export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean }) {
   const { choice } = plan
   return (
-    <section aria-label="Not signed: the agent start" data-testid="not-signed-start" className="space-y-1 border-t border-border pt-3 text-[13px] leading-relaxed">
-      <p className="font-medium text-text">Not signed: the agent start</p>
-      <p className="text-text-muted">
-        After the ticket exists, this page starts an agent with your agent access: {harnessName(choice.harness)}, {MODE_LABEL[choice.mode]}, model {modelText(plan)}, in the project folder.
-        The start is checked again first and only goes ahead if it is what you see here; otherwise you are asked.
-        {!coreSaysSo && ' Nothing here approves the requirements or the plan: the agent will ask you to.'}
-      </p>
-    </section>
+    <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
+      Not signed: the agent start ({harnessName(choice.harness)}, {MODE_LABEL[choice.mode]}, model {modelText(plan)}). It is checked again first.
+    </p>
   )
 }

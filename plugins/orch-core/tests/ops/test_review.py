@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from orch import fdwait
 from tests.ops.humans import make_ticket, to_testing
 from tests.ops.test_verdict import repo_ticket, verdicts
 
@@ -224,7 +225,6 @@ def run_review(*typed: bytes) -> str:
     prompt. Returns what the child printed: True or False."""
     import os
     import pty
-    import select
     import sys
     import time
 
@@ -242,8 +242,7 @@ def run_review(*typed: bytes) -> str:
     sent = 0
     end = time.time() + 20
     while time.time() < end:
-        ready, _, _ = select.select([tty], [], [], 0.2)
-        if ready:
+        if fdwait.readable(tty, 0.2):
             try:
                 chunk = os.read(tty, 4096)
             except OSError:
@@ -311,7 +310,6 @@ def test_text_cannot_pass_for_orchs_own_headings(hws, agent, me):
 def test_typeahead_before_the_review_confirms_nothing():
     import os
     import pty
-    import select
     import signal
     import sys
     import time
@@ -329,13 +327,13 @@ def test_typeahead_before_the_review_confirms_nothing():
     os.write(tty, b"DEMO-0001\n")  # typed (or queued) before anything is shown
     buf, end = b"", time.time() + 20
     while time.time() < end and b"anything else stops: " not in buf:
-        if select.select([tty], [], [], 0.2)[0]:
+        if fdwait.readable(tty, 0.2):
             buf += os.read(tty, 4096)
     time.sleep(0.3)
     os.write(tty, b"\x04")  # then end of input: with the typeahead gone, this is all the prompt gets
     out, end = "", time.time() + 10
     while time.time() < end:  # hard deadline; the child need not exit, its answer is on the pipe
-        ready, _w, _x = select.select([r, tty], [], [], 0.2)
+        ready = fdwait.ready([r, tty], 0.2)
         if r in ready:
             out = os.read(r, 4096).decode()
             break
@@ -345,6 +343,7 @@ def test_typeahead_before_the_review_confirms_nothing():
             except OSError:
                 pass
     os.kill(pid, signal.SIGKILL)
+    os.close(tty)  # macOS: a killed child blocks in exit until its pty output is drained or the master is closed
     os.waitpid(pid, 0)
     assert "RESULT False" in out, out
 

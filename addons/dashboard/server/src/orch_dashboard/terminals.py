@@ -166,7 +166,7 @@ def _digest(value: str) -> str:
 
 class Cwd(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal["workspace", "repo", "worktree"]
+    kind: Literal["workspace", "repo", "worktree", "workdir"]
     repo: Repo | None = None
     ticket: reads.Key | None = None
 

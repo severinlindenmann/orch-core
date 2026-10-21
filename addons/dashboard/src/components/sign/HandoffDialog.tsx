@@ -1,7 +1,9 @@
 import { api } from '@/api/client'
 import type { PhoneRequest } from '@/api/phone'
 import { usePhone } from './usePhone'
-import { OtherWays, PhoneWaiting, useSignMethods } from './SignMethods'
+import { PhoneWaiting, useSignMethods } from './SignMethods'
+import { SignMethodLine, WhatNext } from './SignAside'
+import { storyOf } from './story'
 import { methodLabel, type SignContent, type SignMethod } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
@@ -79,6 +81,8 @@ export interface HandoffDialogProps {
   action: HandoffAction | null
   /** Prepare as soon as the dialog opens (an action with nothing to fill in). The click that opened it is the intent. */
   autoStart?: boolean
+  /** The page starts an agent after this signature (with access already there or given by it): the steps say so. */
+  startsAgent?: boolean
   /** Button that starts the preparation when there is a form: the verb, in core's words. */
   confirmLabel?: string
   /** Why the button is off, shown beside it. */
@@ -116,6 +120,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     p.onSettled?.('done', state, request)
   })
   const methods = useSignMethods(p.ws)
+  const story = storyOf(p.action, { startsAgent: p.startsAgent })
   const [chosen, setChosen] = useState<SignMethod | null>(null)
   const phoneRun = usePhone(p.ws)
   useEffect(() => {
@@ -174,6 +179,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
       p.onSettled?.('failed', state, request)
     }, () => {})
   }, [click.phase, click.problem, click.prepared, p.ws, p.onSettled])
+  const phoneLink = canPhone && allowed?.includes('phone') && method !== 'phone' && p.action ? () => void selectMethod('phone') : undefined
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -318,6 +324,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
             onSign={(word) => void click.sign(word)}
             onCancel={() => void close()}
             waitUntil={waitUntil}
+            story={story}
+            onPhone={phoneLink}
+            phoneDisabled={switching || phoneRun.busy}
           />
         )}
 
@@ -393,9 +402,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
 
         {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
 
-        {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
-          <OtherWays phoneAvailable={canPhone} phonePhaseOne={!!p.phoneRequest} allowed={allowed} current={method} disabled={switching || phoneRun.busy || phoneRun.hint?.state === 'done' || !p.action} onSelect={m => void selectMethod(m)} />
-        )}
+        {phase === 'waiting' && story && <WhatNext story={story} />}
+        {phase === 'waiting' && <SignMethodLine text="Sign in Terminal on this computer" onPhone={phoneLink} phoneDisabled={switching || phoneRun.busy} />}
+        {phase === 'idle' && !clickOpen && !phone && phoneLink && <SignMethodLine text={method === 'click' ? 'Sign on this computer' : 'Sign in Terminal on this computer'} onPhone={phoneLink} phoneDisabled={switching || phoneRun.busy || !p.action} />}
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span aria-live="polite" className="text-[12px] text-text-muted">
             {phase === 'idle' && method !== 'phone' && p.hint}

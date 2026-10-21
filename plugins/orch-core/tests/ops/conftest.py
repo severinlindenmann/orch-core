@@ -11,6 +11,7 @@ def ws(tmp_path):
     yield w
     if w.store is not None:
         w.store.close()
+        w.store.fs.close()  # the root fd too: a worker runs hundreds of these (FD_SETSIZE)
 
 
 @pytest.fixture

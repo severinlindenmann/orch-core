@@ -119,3 +119,32 @@ def test_a_registered_legacy_store_is_unavailable_with_the_plain_message_not_a_c
         assert "Delete config.json" in (svc.cause or "") and "run orch setup again" in (svc.cause or "")
     finally:
         svc.executor.shutdown()
+
+
+@pytest.mark.parametrize("problem", ["ok", "directory_mode", "file_mode", "link", "nested", "owner", "dir_link"])
+def test_github_custody(tmp_path, problem):
+    project = _tree(tmp_path)
+    state = tmp_path / "state"
+    github = state / "hosts" / "ws" / "github"
+    github.mkdir(parents=True, mode=0o700)
+    item = github / "token"
+    item.write_text("synthetic")
+    item.chmod(0o600)
+    if problem == "directory_mode":
+        github.chmod(0o755)
+    elif problem == "file_mode":
+        item.chmod(0o644)
+    elif problem == "link":
+        item.unlink()
+        item.symlink_to(tmp_path / "absent")
+    elif problem == "nested":
+        (github / "nested").mkdir(mode=0o700)
+    elif problem == "dir_link":
+        github.rename(github.with_name("elsewhere"))
+        github.symlink_to(github.with_name("elsewhere"))
+    if problem == "ok":
+        custody.check_workspace_files(state, "ws", project, UID)
+    else:
+        with pytest.raises(HostError) as caught:
+            custody.check_workspace_files(state, "ws", project, UID + (problem == "owner"))
+        assert caught.value.code == "custody.unsafe_mode"

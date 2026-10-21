@@ -3,6 +3,10 @@
 export interface AddOnRow {
   /** The add-on's name: `start-agent`, `terminals`, `worktrees`, `publish`, `usage`, `model-routing`, or one that is always on (`dashboard`, `quick`). */
   id: string
+  /** The setting this add-on needs before it can be on (`publish`, `models`), or null. */
+  needs?: 'publish' | 'models' | null
+  /** Whether that setting is set; null when the host could not say (then nothing is claimed). */
+  set_up?: boolean | null
   title: string
   /** The plain one-line description, the same words as the setup wizard. */
   desc: string

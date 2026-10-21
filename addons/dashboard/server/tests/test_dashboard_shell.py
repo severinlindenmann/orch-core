@@ -39,6 +39,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/sign",
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
+        "/api/w/{ws}/click/images",  # R3 part B: pasted-screenshot chunks relayed to the signer (digest-checked)
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",
@@ -80,11 +81,15 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/terminals/preview",
         "/api/w/{ws}/terminals/open",
         "/api/w/{ws}/runs/{run}/stop",
+        "/api/w/{ws}/tickets/{key}/workdir",
+        "/api/w/{ws}/workdir/delete",
         "/api/w/{ws}/runs/{run}/attach",
         "/term",
         "/api/w/{ws}/agents/preview",
         "/api/w/{ws}/agents/start",
         "/api/w/{ws}/model-routing",
+        "/api/w/{ws}/widgets/catalog",  # Widgets add-on (#763): built-in template pins
+        "/widget-frame/{rest:path}",  # sandboxed widget frame, own CSP, exact-match only (#763, Opus Tier A+)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

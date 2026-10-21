@@ -31,11 +31,13 @@ TIMEOUT = {
     "view": 30.0,
     "sign": 60.0,
     "cancel": 30.0,
+    "stash": 30.0,
     "custody_on": 60.0,
     "custody_off": 60.0,
 }
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
+IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
@@ -168,6 +170,16 @@ class Signer:
             except HostError:
                 return False
             return SEQUENCE_FEATURE in self.features
+
+    def images(self) -> bool:
+        """Can the running signer hold a pasted screenshot (`stash`)? An older one would ignore `images` of the intent
+        and fail at prepare, so it is never asked. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return IMAGES_FEATURE in self.features
 
     def close(self) -> None:
         with self.lock:

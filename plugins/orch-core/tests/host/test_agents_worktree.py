@@ -63,6 +63,7 @@ def test_start_creates_the_worktree_and_the_agent_runs_in_it(w, tmp_path):  # no
     wait_for(lambda: (out / "codex.env").exists())
     env = dict(line.split("=", 1) for line in (out / "codex.env").read_text().splitlines() if "=" in line)
     assert env["ORCH_WORKTREE"] == str(path) and os.path.samefile(env["PWD"], path)
+    assert "ORCH_WORKDIR" not in env  # a ticket with a codebase has no work folder
     assert env["ORCH_GRANT"] == value
     # the worktree is outside the project: the walk finds nothing there, ORCH_WORKSPACE (named by the host) does
     from orch import discovery

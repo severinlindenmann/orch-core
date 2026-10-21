@@ -26,6 +26,7 @@ from . import (
     terminals,
     testrun,
     usage,
+    widget_frame,
     workdirs,
     worktrees,
 )
@@ -243,6 +244,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     usage.register(app, gateway)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
+    widget_frame.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")

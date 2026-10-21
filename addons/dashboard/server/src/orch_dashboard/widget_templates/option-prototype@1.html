@@ -1,0 +1,45 @@
+<style>
+.opts{display:grid;gap:6px}
+label.o{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;border:1px solid GrayText;border-radius:6px;padding:7px 9px;cursor:pointer}
+label.o:has(input:checked){border-color:Highlight;outline:1px solid Highlight}
+.meta{font-size:11px;color:GrayText}
+.rec{font-size:10px;border:1px solid Highlight;border-radius:99px;padding:0 6px}
+#out{margin-top:8px;padding:8px 10px;border-left:3px solid Highlight;font-size:12px}
+</style>
+<div class="opts" id="opts" role="radiogroup" aria-label="Options"></div>
+<div id="out" aria-live="polite"></div>
+<script>
+(function () {
+  var d = orch.data, box = document.getElementById('opts'), out = document.getElementById('out')
+  function show(o) {
+    out.textContent = ''
+    var b = document.createElement('strong')
+    b.textContent = o.title + ': '
+    out.appendChild(b)
+    out.appendChild(document.createTextNode(o.notes || 'No notes.'))
+  }
+  ;(d.options || []).forEach(function (o) {
+    var l = document.createElement('label'), i = document.createElement('input'), t = document.createElement('span'), m = document.createElement('span')
+    l.className = 'o'
+    i.type = 'radio'
+    i.name = 'opt'
+    i.value = o.id
+    t.textContent = o.title
+    m.className = 'meta'
+    m.textContent = [o.cost && 'cost ' + o.cost, o.risk && 'risk ' + o.risk].filter(Boolean).join(' · ')
+    l.appendChild(i)
+    l.appendChild(t)
+    l.appendChild(m)
+    if (d.pick === o.id) {
+      var r = document.createElement('span')
+      r.className = 'rec'
+      r.textContent = 'recommended'
+      t.appendChild(document.createTextNode(' '))
+      t.appendChild(r)
+    }
+    i.addEventListener('change', function () { show(o) })
+    box.appendChild(l)
+    if (d.pick === o.id) { i.checked = true; show(o) }
+  })
+})()
+</script>

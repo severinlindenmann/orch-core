@@ -321,3 +321,21 @@ def test_the_per_test_budget_is_a_hard_limit_and_keeps_an_outer_alarm(monkeypatc
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, outer)
+
+
+def test_supervisor_exits_cleanly_when_child_ends_with_stdin_open() -> None:
+    """The watcher thread is blocked on the pipe when the child ends: interpreter shutdown must not abort (it did, with
+    a buffered stdin read, on CPython 3.14: "could not acquire lock for <stdin> at interpreter shutdown")."""
+    sup = Path(harness.__file__).with_name("supervisor.py")
+    p = subprocess.Popen(
+        [sys.executable, str(sup), "true"], stdin=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+    )
+    try:
+        assert p.wait(timeout=20) == 0
+        assert b"Fatal Python error" not in (p.stderr.read() if p.stderr else b"")
+    finally:
+        if p.poll() is None:
+            p.kill()
+        for f in (p.stdin, p.stderr):
+            if f:
+                f.close()

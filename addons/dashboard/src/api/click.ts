@@ -12,9 +12,6 @@ export const CLICK_RISK = 'Convenience signing: agents running as you, or anythi
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
 export const ARM_MS = 1000
 
-/** A word op (grant, policy, members) signs once the person has held Sign down this long, instead of typing the word. */
-export const HOLD_MS = 1500
-
 /** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
 export interface ClickCard {
   risk_ack?: string | null

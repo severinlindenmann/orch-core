@@ -548,3 +548,26 @@ def test_record_real_host_goldens(world):
     DIRECTORY.mkdir(parents=True, exist_ok=True)
     (DIRECTORY / "raw.json").write_text(json.dumps(scrubbed, indent=1, sort_keys=True) + "\n")
     (DIRECTORY / "adapted.json").write_text(json.dumps(adapt(scrubbed), indent=1, sort_keys=True) + "\n")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "addon_enable", "name": "model-routing", "models": {"claude-code": {"work": "opus"}}},
+        {
+            "action": "addon_enable",
+            "name": "publish",
+            "publish": {"server": "https://files.example.test", "share": "https://links.example.test"},
+        },
+    ],
+)
+def test_turn_on_an_addon_with_its_settings_on_the_real_host(world, api, token, body):
+    """e2e run 4: "Turn on" for an add-on with settings answered 500 (`addon.preview` sent as a write). Prepared on the
+    real host: the request is prepared (the real host checked the intent and its grant body); nothing is signed."""
+    prepared, _ = api.handoff(body, sign=False)
+    assert prepared["state"] == "prepared" and prepared["op"] == "settings.set", prepared
+    assert api.get(f"/handoff/{prepared['id']}").json()["state"] == "prepared"
+    res = world.client.delete(
+        f"{api.base}/handoff/{prepared['id']}", headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN}
+    )
+    assert res.status_code == 200 and res.json()["state"] == "cancelled", res.text

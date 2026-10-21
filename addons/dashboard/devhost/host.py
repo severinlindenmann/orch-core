@@ -25,7 +25,7 @@ from .humanops import Requests
 from .reserved import HUMAN_OPS, OPS, WRITE_OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.
-READS = ("addon.list", "list")
+READS = ("addon.list", "addon.preview", "list")
 
 
 class HostWorkspace(Workspace):

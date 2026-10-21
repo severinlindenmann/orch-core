@@ -713,6 +713,7 @@ def command(
     timeout: float = GATE_SECONDS,
     env_extra: Mapping[str, str] | None = None,
     net: NetSpec | None = None,
+    git: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
     spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time; none of the person's configuration reaches
@@ -735,7 +736,13 @@ def command(
     entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
     argv = _argv(repo, args, spec.pins)
     env = {**isolated_env(own, entries), **extra}
+    if git is not None:  # a landing operation runs the pinned executable, not whatever ``PATH`` names (Codex on #762)
+        if op not in LAND_OPS or _SAFE_PATH.fullmatch(git) is None:
+            raise Unsafe("invalid git executable")
+        argv[0] = git
     if net is not None:
+        if git is not None and git != net.git:
+            raise Unsafe("invalid network specification")
         argv[0] = net.git
         env.update(_net_env(net))
     return argv, env
@@ -751,6 +758,10 @@ def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:
     bare = [v.strip().lower() for _s, k, v in local if k.lower() == "core.bare"]
     if not bare or bare[-1] not in ("true", "yes", "on", "1"):  # git's last value wins
         raise Unsafe("the landing repository is not bare")
+    if any(_split(k)[0] in ("remote", "url") for _s, k, _v in local):
+        # git resolves a URL operand that spells a configured remote's name through that remote (``remote.<url>.url``),
+        # so a repo that names a remote could redirect a network operation (Codex on #762); the host repository has none
+        raise Unsafe("the landing repository defines a remote")
     for rel in ("objects", "refs", "HEAD"):
         _check_path(os.path.join(repo, rel), f"landing {rel}", must_exist=True)
     for rel in (

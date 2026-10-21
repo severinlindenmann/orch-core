@@ -12,6 +12,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import traceback
@@ -645,3 +646,82 @@ def test_the_key_text_is_not_in_the_environment_or_command_line_of_anything(net)
     land(net)
     secret_line = net.key_path.read_text().splitlines()[1]
     assert secret_line not in net.log.read_text()
+
+
+# -- Codex on #762: named-remote redirect, PATH git, ACLs ---------------------------------------------------------------
+
+
+def test_a_remote_named_like_the_url_cannot_redirect_a_network_operation(bare):
+    """git resolves a URL operand that spells a configured remote's name through that remote."""
+    cfg = Path(bare, "config")
+    cfg.write_text(cfg.read_text() + f'[remote "{URL}"]\n\turl = ssh://git@evil.example/other\n')
+    with pytest.raises(gitsafe.Unsafe, match="remote"):
+        gitsafe.command(bare, "land_fetch", OWN, operand=(URL, REF, gitsafe.target_tracking_ref(REF)), net=SPEC)
+    with pytest.raises(gitsafe.Unsafe, match="remote"):
+        gitsafe.command(bare, "land_has", OWN, operand=OID)  # every landing operation, not only the network ones
+
+
+def test_git_comes_from_the_pinned_path_never_from_path(net, tmp_path, monkeypatch):
+    marker = tmp_path / "wrapper-ran"
+    wrapper = tmp_path / "evil" / "git"
+    wrapper.parent.mkdir()
+    wrapper.write_text(f"#!/bin/sh\ntouch '{marker}'\nexec {REAL_GIT} \"$@\"\n")
+    wrapper.chmod(0o755)
+    own = {**net.w.own, "PATH": f"{wrapper.parent}:/usr/bin:/bin"}
+    from orch.land.git import LandRepo
+
+    repo = LandRepo(net.w.host_path, own)
+    assert repo.git == REAL_GIT and repo.own["PATH"] == "/usr/bin:/bin"
+    t0 = fetch_target(repo, net.store, net.remote, "main")  # gate, ancestry reads and the fetch itself
+    assert repo.has(t0) and repo.is_ancestor(t0, t0)
+    assert not marker.exists()
+
+
+def test_a_landing_repo_refuses_an_untrusted_git(tmp_path, monkeypatch):
+    fake = tmp_path / "git"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(lk, "EXE_CANDIDATES", {"git": (str(fake),), "ssh": ()})
+    from orch.land.git import LandRepo
+
+    with pytest.raises(LandGitError) as e:
+        LandRepo(str(tmp_path / "x.git"))
+    assert e.value.code == "land.untrusted_exe"
+
+
+def test_a_command_with_a_git_path_must_be_a_landing_op_with_a_plain_path(bare):
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(bare, "land_has", OWN, operand=OID, git="/h/a b/git")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(bare, "staged_raw", OWN, git="/usr/bin/git")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(bare, "land_fetch", OWN, operand=(URL, REF, gitsafe.target_tracking_ref(REF)), net=SPEC,
+                        git="/usr/bin/other")  # fmt: skip
+    argv, _ = gitsafe.command(bare, "land_has", OWN, operand=OID, git="/usr/bin/git")
+    assert argv[0] == "/usr/bin/git"
+
+
+darwin = pytest.mark.skipif(sys.platform != "darwin", reason="macOS ACLs (chmod +a)")
+
+
+@darwin
+def test_an_acl_on_the_key_file_or_a_directory_is_refused(store, state):
+    store.generate()
+    ws = next((state / "land").iterdir())
+    for target in (ws / "key", ws):
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(target)], check=True)
+        with pytest.raises(LandKeyError) as e:
+            store.public_key()
+        assert e.value.code == "land.key_unsafe"
+        subprocess.run(["/bin/chmod", "-N", str(target)], check=True)
+    store.public_key()  # clean again
+
+
+@darwin
+def test_a_write_acl_on_an_executable_makes_it_untrusted(tmp_path):
+    exe = tmp_path / "x"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    assert lk._acl_ok(exe, {0}, empty=False) is True  # (user-owned: untrusted for the owner reason, not this one)
+    subprocess.run(["/bin/chmod", "+a", "everyone allow write", str(exe)], check=True)
+    assert lk._acl_ok(exe, {0}, empty=False) is False

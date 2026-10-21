@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from orch import gitsafe
 from orch.host import custody
+from orch.host._unix import UnsafePath, check_acl
 from orch.host.errors import HostError
 
 __all__ = ["KeyStore", "LandKeyError", "fingerprint", "pinned_exe", "remote_host", "scrub", "trusted_exe"]
@@ -71,10 +72,26 @@ def scrub(text: str) -> str:
 # -- pinned executables ------------------------------------------------------------------------------------------------
 
 
+def _acl_ok(path: str | os.PathLike[str], trusted: set[int], *, empty: bool) -> bool:
+    """Whether the inode has no extended ACL that grants another principal anything (``empty``: no ACL at all). Unix
+    mode bits alone miss macOS ACLs and Linux POSIX ACLs (Codex on #762); unsupported inspection fails closed."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return False
+    try:
+        check_acl(fd, trusted, empty=empty)
+        return True
+    except (UnsafePath, OSError):
+        return False
+    finally:
+        os.close(fd)
+
+
 def _chain_ok(path: str) -> bool:
     for p in (Path(path), *Path(path).parents):
         st = os.stat(p)
-        if st.st_uid != 0 or st.st_mode & 0o022:
+        if st.st_uid != 0 or st.st_mode & 0o022 or not _acl_ok(p, {0}, empty=False):
             return False
     return True
 
@@ -170,7 +187,10 @@ class KeyStore:
     def _dir(self, *, create: bool) -> Path:
         try:
             base = custody.ensure_private_dir(self._state / "land", self.host_uid, create=create)
-            return custody.ensure_private_dir(base / self._ws, self.host_uid, create=create)
+            out = custody.ensure_private_dir(base / self._ws, self.host_uid, create=create)
+            if not (_acl_ok(base, {self.host_uid}, empty=True) and _acl_ok(out, {self.host_uid}, empty=True)):
+                raise _unsafe()
+            return out
         except HostError as e:
             if e.code == "not_found":
                 raise LandKeyError("land.no_key", "this workspace has no landing key yet") from None
@@ -181,7 +201,10 @@ class KeyStore:
     def _pins_dir(self, *, create: bool) -> Path:
         base = self._dir(create=create)
         try:
-            return custody.ensure_private_dir(base / "known_hosts", self.host_uid, create=create)
+            out = custody.ensure_private_dir(base / "known_hosts", self.host_uid, create=create)
+            if not _acl_ok(out, {self.host_uid}, empty=True):
+                raise _unsafe()
+            return out
         except HostError:
             raise _unsafe() from None
 
@@ -198,6 +221,12 @@ class KeyStore:
             raise _unsafe() from None
         try:
             st = os.fstat(fd)
+            try:
+                check_acl(fd, {self.host_uid}, empty=True)  # an ACL could grant a read the mode bits do not show
+            except (UnsafePath, OSError):
+                raise LandKeyError(
+                    "land.key_unsafe", "the landing key file is not a private file of this user"
+                ) from None
         finally:
             os.close(fd)
         if (

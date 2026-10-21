@@ -100,8 +100,21 @@ def test_bad_cap_values(key, value):
 
 def test_grant_derivation_and_widening_oracle():
     child = f.derive_grant(ROOT, ticket_uid="ticket", grant_id="child", fired_at=10000, secret_hash="hash")
-    assert child == f.GrantTerms("child", "person", "ticket", ("read", "write"), 10000, 13600, "root")
-    assert not hasattr(child, "secret_hash")
+    assert child == f.GrantTerms(
+        "child", "person", "ticket", ("read", "write"), 10000, 13600, "root", secret_hash="hash"
+    )
+    for bad_scope in ("all", "workable", "", None):
+        with pytest.raises(ValueError):
+            f.derive_grant(ROOT, ticket_uid=bad_scope, grant_id="c", fired_at=0, secret_hash="h")
+    with pytest.raises(ValueError):
+        f.derive_grant(
+            replace(ROOT, scope="ticket_a"), ticket_uid="ticket_b", grant_id="c", fired_at=0, secret_hash="h"
+        )
+    assert f.derive_grant(
+        replace(ROOT, scope="ticket_a"), ticket_uid="ticket_a", grant_id="c", fired_at=0, secret_hash="h"
+    )
+    assert f.grant_widening(ROOT, replace(child, scope="all")) == ["scope"]
+    assert f.grant_widening(replace(ROOT, scope="a"), replace(child, scope="b")) == ["scope"]
     assert f.grant_widening(ROOT, child) == []
     assert f.grant_widening(ROOT, replace(child, person="other", verbs=("admin",), expires_at=100000)) == [
         "person",
@@ -163,12 +176,45 @@ def test_ancestors_and_chain_validation():
 
 @pytest.mark.parametrize(
     "at,outcome,expected",
-    ((-1, None, False), (0, None, True), (3599, None, True), (3600, None, False), (99, 100, True), (100, 100, False)),
+    (
+        (-1, False, False),
+        (0, False, True),
+        (3599, False, True),
+        (3600, False, False),
+        (99, True, False),
+        (0, True, False),
+    ),
 )
 def test_grant_use_boundaries(at, outcome, expected):
-    assert f.fgrant_usable(ROOT, at=at, outcome_at=outcome, chain=(ROOT,), root_person_active=True) is expected
-    assert not f.fgrant_usable(ROOT, at=at, outcome_at=outcome, chain=None, root_person_active=True)
-    assert not f.fgrant_usable(ROOT, at=at, outcome_at=outcome, chain=(ROOT,), root_person_active=False)
+    assert f.fgrant_usable(ROOT, at=at, outcome_recorded=outcome, chain=(ROOT,), root_person_active=True) is expected
+    assert not f.fgrant_usable(ROOT, at=at, outcome_recorded=outcome, chain=None, root_person_active=True)
+    assert not f.fgrant_usable(ROOT, at=at, outcome_recorded=outcome, chain=(ROOT,), root_person_active=False)
+    # an unrelated chain does not authorise this grant
+    other = replace(ROOT, id="other")
+    assert not f.fgrant_usable(ROOT, at=at, outcome_recorded=outcome, chain=(other,), root_person_active=True)
+
+
+def test_strict_flags_and_ints():
+    assert not f.chain_valid((ROOT,), root_person_active="false")
+    assert not f.chain_valid((replace(ROOT, revoked=None),), root_person_active=True)
+    denied(fire(fired=replace(FIRE, actor_is_host=1)), "not_host")
+    with pytest.raises(ValueError):
+        state([f.ChainSet(None)])
+    with pytest.raises(ValueError):
+        state([f.ChainSet(1)], now=False)
+
+
+def test_ceiling_counts_from_the_last_person_action():
+    day = 86400
+    caps = CAPS
+    s = f.chain_state([f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=29 * day, since=0)
+    assert not s.needs_person
+    assert f.chain_state(
+        [f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=31 * day, since=0
+    ).needs_person
+    assert not f.chain_state([f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=31 * day).needs_person
+    far = replace(REQ, at=29 * day, due=None, trigger="orch", deadline=29 * day + 5 * day)
+    assert f.set_state(s, far, caps) == "needs_person"
 
 
 SET_DENIALS = (
@@ -372,11 +418,15 @@ def test_derived_cancel_priority_and_terminal_states():
     st.integers(1),
     st.integers(),
     st.integers(1),
-    st.text(),
-    st.text(),
+    st.one_of(st.sampled_from(f.BROAD_SCOPES), st.text(min_size=1)),
+    st.text(min_size=1),
     st.text(),
 )
 def test_property_no_widening(verbs, duration, fired_at, hours, scope, ticket, person):
+    if ticket in f.BROAD_SCOPES:
+        ticket += "-t"
+    if scope not in f.BROAD_SCOPES:
+        ticket = scope  # a ticket-scoped parent reaches only its own ticket
     parent = replace(ROOT, person=person, scope=scope, verbs=tuple(sorted(verbs)), expires_at=duration)
     child = f.derive_grant(
         parent, ticket_uid=ticket, grant_id="child", fired_at=fired_at, secret_hash="h", run_hours=hours
@@ -505,3 +555,12 @@ def test_property_progress_only_original_tasks(raw, now, cap):
     assert state([*events, f.ChainDone(now + 1, "new")], now=now, caps=caps) == actual
     if actual.sets_total >= 10 or (actual.first_set_at is not None and now > actual.first_set_at + 30 * 86400):
         assert actual.needs_person
+
+
+@settings(max_examples=100, deadline=None)
+@given(st.text(min_size=1), st.text(min_size=1))
+def test_property_ticket_scoped_parent_never_reaches_another_ticket(own, other):
+    if own in f.BROAD_SCOPES or other == own:
+        return
+    with pytest.raises(ValueError):
+        f.derive_grant(replace(ROOT, scope=own), ticket_uid=other, grant_id="c", fired_at=0, secret_hash="h")

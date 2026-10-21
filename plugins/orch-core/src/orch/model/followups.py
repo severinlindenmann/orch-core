@@ -48,6 +48,7 @@ DERIVED_CANCEL_REASONS = (  # FU14 derived cancellation vocabulary.
     "addon_disabled",
     "chain_cap",
 )
+BROAD_SCOPES = ("all", "workable")  # person-grant scopes (D60); a follow-up grant is never one of these
 FALLBACK_REASONS = ("no_event", "no_ring", "addon_silent")  # FU8 orch, webhook, addon respectively.
 STATES = ("pending", "needs_person", "fired", *OUTCOMES, "cancelled")  # FU3 state vocabulary.
 DENIAL_CODES = (  # Local strings; the engine maps these to its public codes.
@@ -95,6 +96,7 @@ class GrantTerms:
     expires_at: int
     parent: str | None
     revoked: bool = False
+    secret_hash: str | None = None  # FU1: set by derive_grant from followup.fired; None on person-issued grants
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,18 +139,31 @@ def derive_grant(
     duration = min(parent.expires_at - parent.issued_at, run_hours * 3600, FU_RUN_HOURS * 3600)
     if duration <= 0:
         raise ValueError("grant duration must be positive")
+    if not isinstance(ticket_uid, str) or not ticket_uid or ticket_uid in BROAD_SCOPES:
+        raise ValueError("ticket_uid must name one ticket")
+    if parent.scope not in BROAD_SCOPES and parent.scope != ticket_uid:
+        raise ValueError("a ticket-scoped parent cannot reach another ticket")
     return GrantTerms(
-        grant_id, parent.person, ticket_uid, tuple(parent.verbs), fired_at, fired_at + duration, parent.id
+        grant_id,
+        parent.person,
+        ticket_uid,
+        tuple(parent.verbs),
+        fired_at,
+        fired_at + duration,
+        parent.id,
+        secret_hash=secret_hash,
     )
 
 
 def grant_widening(parent: GrantTerms, child: GrantTerms) -> list[str]:
-    """FU1 oracle: scope is checked against the ticket by the caller, not the parent."""
+    """FU1 oracle: person, verbs, scope (one ticket; never wider than a ticket-scoped parent) and duration."""
     fields = []
     if child.person != parent.person:
         fields.append("person")
     if not set(child.verbs).issubset(parent.verbs):
         fields.append("verbs")
+    if child.scope in BROAD_SCOPES or (parent.scope not in BROAD_SCOPES and child.scope != parent.scope):
+        fields.append("scope")
     if child.expires_at - child.issued_at > min(parent.expires_at - parent.issued_at, FU_RUN_HOURS * 3600):
         fields.append("duration")
     return fields
@@ -172,24 +187,29 @@ def ancestors(grants: Mapping[str, GrantTerms], grant_id: str) -> tuple[GrantTer
 
 def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool) -> bool:
     """FU4: expiry of every grant is intentionally ignored."""
-    if not chain or not root_person_active or chain[-1].parent is not None:
+    if not chain or root_person_active is not True or chain[-1].parent is not None:
         return False
     # Fail closed on a broken list: each grant must name the next one as its parent.
     linked = all(g.parent == nxt.id for g, nxt in zip(chain, chain[1:], strict=False))
-    return linked and all(not g.revoked for g in chain)
+    return linked and all(g.revoked is False for g in chain)
 
 
 def fgrant_usable(
     grant: GrantTerms,
     *,
     at: int,
-    outcome_at: int | None,
+    outcome_recorded: bool,
     chain: Sequence[GrantTerms] | None,
     root_person_active: bool,
 ) -> bool:
+    # FU3: a recorded outcome ends the grant by LEDGER POSITION (the caller knows it from replay state), never by
+    # comparing timestamps. The chain must start with this very grant (FU4), not an unrelated one.
     return (
-        grant.issued_at <= at < grant.expires_at
-        and (outcome_at is None or at < outcome_at)
+        outcome_recorded is False
+        and type(at) is int
+        and grant.issued_at <= at < grant.expires_at
+        and bool(chain)
+        and chain[0].id == grant.id
         and chain_valid(chain, root_person_active=root_person_active)
     )
 
@@ -279,6 +299,7 @@ class ChainState:
     last_progress_at: int | None
     needs_person: bool
     reason: str | None
+    ceiling_start_at: int | None = None  # the last person action when the caller gave it; else the first set is used
 
 
 def chain_state(
@@ -287,11 +308,20 @@ def chain_state(
     tasks_at_start: frozenset[str],
     caps: Caps,
     now: int,
+    since: int | None = None,
 ) -> ChainState:
-    """FU7: only original tasks reset the progress counter; absolute ceilings never reset."""
+    """FU7: only original tasks reset the progress counter; absolute ceilings never reset.
+
+    `since` is the time of the last person event on the ticket (the chain start, owner decision Q1: the ceiling counts
+    "since the last person action"); without it the first set stands in for it.
+    """
+    if type(now) is not int or (since is not None and type(since) is not int):
+        raise ValueError("now and since must be integer epoch seconds")
     total = without = 0
     first = progress = None
     for event in events:
+        if type(event.at) is not int:
+            raise ValueError("chain event times must be integer epoch seconds")
         if isinstance(event, ChainSet):
             total += 1
             without += 1
@@ -300,21 +330,21 @@ def chain_state(
         elif first is not None and event.at > first and event.task in tasks_at_start:
             without = 0
             progress = event.at
+    start = since if since is not None else first
     needs = (
         without >= caps.chain_max
         or total >= FU_CHAIN_CEILING_COUNT
-        or (first is not None and now - first > FU_CHAIN_CEILING_DAYS * 86400)
+        or (start is not None and now - start > FU_CHAIN_CEILING_DAYS * 86400)
     )
-    return ChainState(total, without, first, progress, needs, "chain_cap" if needs else None)
+    return ChainState(total, without, first, progress, needs, "chain_cap" if needs else None, since)
 
 
 def set_state(chain: ChainState, req: SetRequest, caps: Caps) -> Literal["pending", "needs_person"]:
     """FU7: use the state BEFORE this set; caps were already applied by chain_state."""
     deadline = effective_deadline(req)
+    start = chain.ceiling_start_at if chain.ceiling_start_at is not None else chain.first_set_at
     if chain.needs_person or (
-        chain.first_set_at is not None
-        and deadline is not None
-        and deadline > chain.first_set_at + FU_CHAIN_CEILING_DAYS * 86400
+        start is not None and deadline is not None and deadline > start + FU_CHAIN_CEILING_DAYS * 86400
     ):
         return "needs_person"
     return "pending"
@@ -360,7 +390,7 @@ def check_fired(
     root_person_active: bool,
 ) -> Denial | None:
     """FU8: host-only, single fire, bounded window and matching fallback."""
-    if not fired.actor_is_host:
+    if fired.actor_is_host is not True:
         return Denial("not_host", "only the workspace host may fire")
     if fu.state != "pending":
         return Denial("not_pending", "only pending follow-ups may fire")

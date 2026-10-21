@@ -76,8 +76,9 @@ A model-derived cancel writes no event; the engine derives it on replay with `de
 * **Progress** is a `task.done` of a task in `tasks_at_start`, after the first set. Tasks added later never count.
 * `without_progress` is the number of sets after the last progress; every set counts, including a replacing one.
 * The chain is `needs_person` (`chain_cap`) when `without_progress >= chain_max`, or the total reaches the ceiling
-  count, or more than the ceiling days passed since the first set. The ceilings are never reset by progress
+  count, or more than the ceiling days passed since the chain start (below). The ceilings are never reset by progress
   (*pending owner Q1*: 30 days, 10 follow-ups).
+* The ceilings count from the last person event on the ticket (`since`, the chain start); without it, from the first set.
 * A new set is `pending` unless the chain before it is already `needs_person`, or its times lie beyond the ceiling.
 
 ## 6. States and closed reason lists
@@ -98,7 +99,7 @@ A run that wrote nothing is `failed: no_writes`.
 session or unclaim does not cancel (it is how the follow-up works).
 
 **Fallback reasons** (trigger `deadline`): `no_event` (the `orch` event never came), `no_ring` (the webhook never
-rang), `addon_silent` (the add-on event never came). A time follow-up has no fallback: its deadline equals its due.
+rang), `addon_silent` (the add-on event never came). A time follow-up has no deadline fallback: it fires at its due, and a later deadline only widens its late window (FU8).
 
 **Late**: a follow-up fired after its due is shown `late by <duration>`; this is display, not a state.
 

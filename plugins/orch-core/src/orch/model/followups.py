@@ -91,7 +91,7 @@ class GrantTerms:
     id: str
     person: str
     scope: str
-    verbs: tuple[str, ...]
+    verbs: str | tuple[str, ...]  # the runner grant's verbs are the plain string "agent"; carried through as is
     issued_at: int
     expires_at: int
     parent: str | None
@@ -122,6 +122,19 @@ def effective_caps(settings: Mapping[str, object]) -> Caps:
     return Caps(*values)
 
 
+def _norm_verbs(verbs: object) -> str | tuple[str, ...]:
+    """The runner grant's verbs string ("agent") passes through unchanged; else a list or tuple of str; else refuse."""
+    if isinstance(verbs, str):
+        return verbs
+    if isinstance(verbs, (list, tuple)) and all(isinstance(v, str) for v in verbs):
+        return tuple(verbs)
+    raise ValueError("verbs must be a string or a list of strings")
+
+
+def _is_hash(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 def derive_grant(
     parent: GrantTerms,
     *,
@@ -132,8 +145,8 @@ def derive_grant(
     run_hours: int = FU_RUN_HOURS,
 ) -> GrantTerms:
     """FU1: derive rights and duration, never clamp to the parent's expiry instant."""
-    if not isinstance(secret_hash, str) or not secret_hash:
-        raise ValueError("secret_hash must be a non-empty string")
+    if not _is_hash(secret_hash):
+        raise ValueError("secret_hash must be 64 lowercase hex characters")
     if type(run_hours) is not int or type(fired_at) is not int:
         raise ValueError("run_hours and fired_at must be integers")
     duration = min(parent.expires_at - parent.issued_at, run_hours * 3600, FU_RUN_HOURS * 3600)
@@ -147,7 +160,7 @@ def derive_grant(
         grant_id,
         parent.person,
         ticket_uid,
-        tuple(parent.verbs),
+        _norm_verbs(parent.verbs),
         fired_at,
         fired_at + duration,
         parent.id,
@@ -160,7 +173,15 @@ def grant_widening(parent: GrantTerms, child: GrantTerms) -> list[str]:
     fields = []
     if child.person != parent.person:
         fields.append("person")
-    if not set(child.verbs).issubset(parent.verbs):
+    try:
+        pv, cv = _norm_verbs(parent.verbs), _norm_verbs(child.verbs)
+    except ValueError:
+        pv = cv = None
+    if pv is None or isinstance(pv, str) or isinstance(cv, str):
+        # a string is an opaque verb set: the child must carry exactly the parent's value
+        if pv is None or pv != cv:
+            fields.append("verbs")
+    elif not set(cv).issubset(pv):
         fields.append("verbs")
     if child.scope in BROAD_SCOPES or (parent.scope not in BROAD_SCOPES and child.scope != parent.scope):
         fields.append("scope")
@@ -191,7 +212,8 @@ def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool)
         return False
     # Fail closed on a broken list: each grant must name the next one as its parent.
     linked = all(g.parent == nxt.id for g, nxt in zip(chain, chain[1:], strict=False))
-    return linked and all(g.revoked is False for g in chain)
+    same_person = all(g.person == chain[-1].person for g in chain)  # one person all the way up
+    return linked and same_person and all(g.revoked is False for g in chain)
 
 
 def fgrant_usable(
@@ -209,7 +231,7 @@ def fgrant_usable(
         and type(at) is int
         and grant.issued_at <= at < grant.expires_at
         and bool(chain)
-        and chain[0].id == grant.id
+        and chain[0] == grant
         and chain_valid(chain, root_person_active=root_person_active)
     )
 
@@ -224,6 +246,7 @@ class SetContext:
     schedules_enabled: bool
     followups_enabled: bool
     pending_in_workspace: int
+    replaces_pending: bool = False  # True when this set replaces a pending one (it is in the count above)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,7 +298,10 @@ def check_set(ctx: SetContext, req: SetRequest, caps: Caps) -> Denial | None:
         or not req.brief.strip()
     ):
         return Denial("bad_brief", "brief must be non-empty clean text of at most 4096 UTF-8 bytes")
-    if type(ctx.pending_in_workspace) is not int or ctx.pending_in_workspace >= caps.pending_max:
+    if (
+        type(ctx.pending_in_workspace) is not int
+        or ctx.pending_in_workspace - (1 if ctx.replaces_pending is True else 0) >= caps.pending_max
+    ):
         return Denial("pending_cap", "workspace pending capacity is unavailable")
     return None
 
@@ -305,7 +331,7 @@ class ChainState:
 def chain_state(
     events: Sequence[ChainSet | ChainDone],
     *,
-    tasks_at_start: frozenset[str],
+    open_tasks_at_start: frozenset[str],
     caps: Caps,
     now: int,
     since: int | None = None,
@@ -319,6 +345,7 @@ def chain_state(
         raise ValueError("now and since must be integer epoch seconds")
     total = without = 0
     first = progress = None
+    credited: set[str] = set()  # a start task counts as progress once; done, reopen, done does not count again
     for event in events:
         if type(event.at) is not int:
             raise ValueError("chain event times must be integer epoch seconds")
@@ -327,7 +354,10 @@ def chain_state(
             without += 1
             if first is None:
                 first = event.at
-        elif first is not None and event.at > first and event.task in tasks_at_start:
+        elif (
+            first is not None and event.at > first and event.task in open_tasks_at_start and event.task not in credited
+        ):
+            credited.add(event.task)
             without = 0
             progress = event.at
     start = since if since is not None else first
@@ -396,8 +426,8 @@ def check_fired(
         return Denial("not_pending", "only pending follow-ups may fire")
     if fired.trigger not in FIRED_TRIGGERS or (fired.trigger != "deadline" and fired.trigger != fu.trigger):
         return Denial("bad_trigger", "firing trigger does not match")
-    if not isinstance(fired.secret_hash, str) or not fired.secret_hash:
-        return Denial("bad_secret_hash", "a non-empty secret hash is required")
+    if not _is_hash(fired.secret_hash):
+        return Denial("bad_secret_hash", "a 64-character lowercase hex secret hash is required")
     if not chain_valid(chain, root_person_active=root_person_active):
         return Denial("chain_invalid", "grant chain is not active")
     deadline = fu.due if fu.trigger == "time" and fu.deadline is None else fu.deadline
@@ -452,13 +482,13 @@ def derived_cancel_reason(
     if state not in ("pending", "needs_person"):
         return None
     for applies, reason in (
-        (replaced, "replaced"),
-        (member_removed, "member_removed"),
+        (replaced is not False, "replaced"),
+        (member_removed is not False, "member_removed"),
         (not chain_valid(chain, root_person_active=root_person_active), "grant_revoked"),
-        (not addon_enabled, "addon_disabled"),
+        (addon_enabled is not True, "addon_disabled"),
         (ticket_status != "in_progress", "ticket_left_in_progress"),
-        (claimed_by_other, "claimed_by_other"),
-        (state == "pending" and chain_needs_person, "chain_cap"),
+        (claimed_by_other is not False, "claimed_by_other"),
+        (state == "pending" and chain_needs_person is not False, "chain_cap"),
     ):
         if applies:
             return reason

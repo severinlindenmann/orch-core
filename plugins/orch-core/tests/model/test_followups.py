@@ -11,12 +11,13 @@ from hypothesis import strategies as st
 
 from orch.model import followups as f
 
+HASH = "ab" * 32
 CAPS = f.effective_caps({})
 ROOT = f.GrantTerms("root", "person", "all", ("read", "write"), 0, 3600, None)
 CTX = f.SetContext(True, True, False, True, "in_progress", True, True, 0)
 REQ = f.SetRequest(0, "time", 3600, None, "Check the task")
 FACTS = f.FollowupFacts("pending", "time", 0, 3600, None)
-FIRE = f.FiredRequest(3600, "time", None, True, "hash")
+FIRE = f.FiredRequest(3600, "time", None, True, HASH)
 
 
 def denied(result, code):
@@ -50,7 +51,7 @@ def cancel(**kwargs):
 
 
 def state(events=(), *, now=0, caps=CAPS):
-    return f.chain_state(events, tasks_at_start=frozenset({"old"}), caps=caps, now=now)
+    return f.chain_state(events, open_tasks_at_start=frozenset({"old"}), caps=caps, now=now)
 
 
 def test_constants_and_immutable_records():
@@ -99,19 +100,17 @@ def test_bad_cap_values(key, value):
 
 
 def test_grant_derivation_and_widening_oracle():
-    child = f.derive_grant(ROOT, ticket_uid="ticket", grant_id="child", fired_at=10000, secret_hash="hash")
-    assert child == f.GrantTerms(
-        "child", "person", "ticket", ("read", "write"), 10000, 13600, "root", secret_hash="hash"
-    )
+    child = f.derive_grant(ROOT, ticket_uid="ticket", grant_id="child", fired_at=10000, secret_hash=HASH)
+    assert child == f.GrantTerms("child", "person", "ticket", ("read", "write"), 10000, 13600, "root", secret_hash=HASH)
     for bad_scope in ("all", "workable", "", None):
         with pytest.raises(ValueError):
-            f.derive_grant(ROOT, ticket_uid=bad_scope, grant_id="c", fired_at=0, secret_hash="h")
+            f.derive_grant(ROOT, ticket_uid=bad_scope, grant_id="c", fired_at=0, secret_hash=HASH)
     with pytest.raises(ValueError):
         f.derive_grant(
-            replace(ROOT, scope="ticket_a"), ticket_uid="ticket_b", grant_id="c", fired_at=0, secret_hash="h"
+            replace(ROOT, scope="ticket_a"), ticket_uid="ticket_b", grant_id="c", fired_at=0, secret_hash=HASH
         )
     assert f.derive_grant(
-        replace(ROOT, scope="ticket_a"), ticket_uid="ticket_a", grant_id="c", fired_at=0, secret_hash="h"
+        replace(ROOT, scope="ticket_a"), ticket_uid="ticket_a", grant_id="c", fired_at=0, secret_hash=HASH
     )
     assert f.grant_widening(ROOT, replace(child, scope="all")) == ["scope"]
     assert f.grant_widening(replace(ROOT, scope="a"), replace(child, scope="b")) == ["scope"]
@@ -153,7 +152,7 @@ def test_bad_derivation(kwargs):
 @pytest.mark.parametrize("expiry", (0, -1))
 def test_nonpositive_parent_duration(expiry):
     with pytest.raises(ValueError):
-        f.derive_grant(replace(ROOT, expires_at=expiry), ticket_uid="t", grant_id="g", fired_at=0, secret_hash="h")
+        f.derive_grant(replace(ROOT, expires_at=expiry), ticket_uid="t", grant_id="g", fired_at=0, secret_hash=HASH)
 
 
 def test_ancestors_and_chain_validation():
@@ -207,12 +206,14 @@ def test_strict_flags_and_ints():
 def test_ceiling_counts_from_the_last_person_action():
     day = 86400
     caps = CAPS
-    s = f.chain_state([f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=29 * day, since=0)
+    s = f.chain_state([f.ChainSet(29 * day)], open_tasks_at_start=frozenset(), caps=caps, now=29 * day, since=0)
     assert not s.needs_person
     assert f.chain_state(
-        [f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=31 * day, since=0
+        [f.ChainSet(29 * day)], open_tasks_at_start=frozenset(), caps=caps, now=31 * day, since=0
     ).needs_person
-    assert not f.chain_state([f.ChainSet(29 * day)], tasks_at_start=frozenset(), caps=caps, now=31 * day).needs_person
+    assert not f.chain_state(
+        [f.ChainSet(29 * day)], open_tasks_at_start=frozenset(), caps=caps, now=31 * day
+    ).needs_person
     far = replace(REQ, at=29 * day, due=None, trigger="orch", deadline=29 * day + 5 * day)
     assert f.set_state(s, far, caps) == "needs_person"
 
@@ -307,10 +308,11 @@ def test_chain_progress_and_set_state():
     assert f.set_state(prior, replace(REQ, deadline=ceiling + 1), CAPS) == "needs_person"
     assert not state([f.ChainSet(0)], now=ceiling).needs_person
     assert state([f.ChainSet(0)], now=ceiling + 1).needs_person
-    progressing = [e for i in range(10) for e in (f.ChainSet(i * 2), f.ChainDone(i * 2 + 1, "old"))]
-    assert state(progressing).without_progress == 0
-    assert state(progressing).needs_person
-    assert state(progressing[:4], now=ceiling + 1).needs_person
+    progressing = [e for i in range(10) for e in (f.ChainSet(i * 2), f.ChainDone(i * 2 + 1, f"t{i}"))]
+    many = frozenset(f"t{i}" for i in range(10))
+    s = f.chain_state(progressing, open_tasks_at_start=many, caps=CAPS, now=0)
+    assert s.without_progress == 0 and s.needs_person  # the 10-set ceiling is never reset by progress
+    assert f.chain_state(progressing[:4], open_tasks_at_start=many, caps=CAPS, now=ceiling + 1).needs_person
 
 
 def test_state_machine_examples():
@@ -363,12 +365,12 @@ def test_firing_windows_and_fallback_matching(trigger, fallback):
         if trigger == "time" and actual == "deadline":
             continue
         for at in (lower, lower + 1, 7200 + 86400):
-            assert fire(fu, f.FiredRequest(at, actual, reason, True, "hash")) is None
+            assert fire(fu, f.FiredRequest(at, actual, reason, True, HASH)) is None
         for at in (lower - 1, 7200 + 86400 + 1):
-            denied(fire(fu, f.FiredRequest(at, actual, reason, True, "hash")), "out_of_window")
+            denied(fire(fu, f.FiredRequest(at, actual, reason, True, HASH)), "out_of_window")
         if actual == "deadline":
             for wrong in (None, "unknown", *(r for r in f.FALLBACK_REASONS if r != reason)):
-                denied(fire(fu, f.FiredRequest(7200, actual, wrong, True, "hash")), "bad_fallback")
+                denied(fire(fu, f.FiredRequest(7200, actual, wrong, True, HASH)), "bad_fallback")
     assert fire() is None  # Missing time deadline defaults to due.
 
 
@@ -429,7 +431,7 @@ def test_property_no_widening(verbs, duration, fired_at, hours, scope, ticket, p
         ticket = scope  # a ticket-scoped parent reaches only its own ticket
     parent = replace(ROOT, person=person, scope=scope, verbs=tuple(sorted(verbs)), expires_at=duration)
     child = f.derive_grant(
-        parent, ticket_uid=ticket, grant_id="child", fired_at=fired_at, secret_hash="h", run_hours=hours
+        parent, ticket_uid=ticket, grant_id="child", fired_at=fired_at, secret_hash=HASH, run_hours=hours
     )
     assert f.grant_widening(parent, child) == []
     assert child.scope == ticket and child.verbs == parent.verbs and child.person == person
@@ -525,11 +527,13 @@ def reference_chain(events, tasks, caps, now):
     # Independent loop: retain the sets since progress instead of maintaining a counter.
     sets, pending_sets = [], []
     last = None
+    done_once = set()
     for event in events:
         if isinstance(event, f.ChainSet):
             sets.append(event.at)
             pending_sets.append(event.at)
-        elif sets and event.task in tasks and event.at > sets[0]:
+        elif sets and event.task in tasks and event.task not in done_once and event.at > sets[0]:
+            done_once.add(event.task)
             pending_sets.clear()
             last = event.at
     first = sets[0] if sets else None
@@ -563,4 +567,91 @@ def test_property_ticket_scoped_parent_never_reaches_another_ticket(own, other):
     if own in f.BROAD_SCOPES or other == own:
         return
     with pytest.raises(ValueError):
-        f.derive_grant(replace(ROOT, scope=own), ticket_uid=other, grant_id="c", fired_at=0, secret_hash="h")
+        f.derive_grant(replace(ROOT, scope=own), ticket_uid=other, grant_id="c", fired_at=0, secret_hash=HASH)
+
+
+RUNNER = replace(ROOT, verbs="agent")
+
+
+def test_runner_grant_verbs_string_passes_through():
+    child = f.derive_grant(RUNNER, ticket_uid="t", grant_id="c", fired_at=0, secret_hash=HASH)
+    assert child.verbs == "agent"
+    assert f.grant_widening(RUNNER, child) == []
+    # a split string or a list is not the parent's value
+    assert f.grant_widening(RUNNER, replace(child, verbs=tuple("agent"))) == ["verbs"]
+    assert f.grant_widening(RUNNER, replace(child, verbs="agent2")) == ["verbs"]
+    assert f.grant_widening(ROOT, replace(child, verbs="agent")) == ["verbs"]
+    for bad in (None, 5, ["a", 1], {"agent"}):
+        with pytest.raises(ValueError):
+            f.derive_grant(replace(ROOT, verbs=bad), ticket_uid="t", grant_id="c", fired_at=0, secret_hash=HASH)
+    assert f.derive_grant(
+        replace(ROOT, verbs=["read"]), ticket_uid="t", grant_id="c", fired_at=0, secret_hash=HASH
+    ).verbs == ("read",)
+
+
+@pytest.mark.parametrize("bad", ("", "h", "AB" * 32, "ab" * 31, "zz" * 32, None))
+def test_secret_hash_format(bad):
+    with pytest.raises(ValueError):
+        f.derive_grant(ROOT, ticket_uid="t", grant_id="c", fired_at=0, secret_hash=bad)
+    denied(fire(fired=replace(FIRE, secret_hash=bad)), "bad_secret_hash")
+
+
+def test_replacing_set_at_pending_max_is_allowed():
+    full = replace(CTX, pending_in_workspace=CAPS.pending_max)
+    denied(f.check_set(full, REQ, CAPS), "pending_cap")
+    assert f.check_set(replace(full, replaces_pending=True), REQ, CAPS) is None
+
+
+def test_person_consistency_and_full_grant_equality():
+    child = replace(ROOT, id="child", parent="root", person="someone-else")
+    assert not f.chain_valid((child, ROOT), root_person_active=True)
+    own = replace(ROOT, id="g", parent="root", scope="t", issued_at=0, expires_at=10)
+    assert f.fgrant_usable(own, at=1, outcome_recorded=False, chain=(own, ROOT), root_person_active=True)
+    forged = replace(own, scope="other")
+    assert not f.fgrant_usable(own, at=1, outcome_recorded=False, chain=(forged, ROOT), root_person_active=True)
+
+
+def test_strict_cancel_flags():
+    assert cancel(addon_enabled="no") == "addon_disabled"
+    assert cancel(replaced="yes") == "replaced"
+    assert cancel(member_removed=1) == "member_removed"
+    assert cancel(claimed_by_other=1) == "claimed_by_other"
+    assert cancel(chain_needs_person=1) == "chain_cap"
+
+
+def test_reopen_loop_counts_once():
+    caps = replace(CAPS, chain_max=5)
+    ev = [f.ChainSet(10)]
+    for i in range(4):  # done, reopen (no event), done again, with a set between
+        ev += [f.ChainDone(20 + i, "old"), f.ChainSet(30 + i)]
+    s = f.chain_state(ev, open_tasks_at_start=frozenset({"old"}), caps=caps, now=100)
+    # only the first done counts: after it came 4 more sets... sets after first done = 1 + 3 = 4
+    assert s.without_progress == 4 and s.last_progress_at == 20
+    # a task that was not open at chain start never counts
+    s = f.chain_state(ev, open_tasks_at_start=frozenset(), caps=caps, now=100)
+    assert s.without_progress == 5 and s.last_progress_at is None
+
+
+@settings(max_examples=100, deadline=None)
+@given(st.lists(st.tuples(st.integers(1, 1000), st.sampled_from(("set", "old", "old2", "new"))), max_size=60))
+def test_property_each_start_task_credits_once(raw):
+    events = [f.ChainSet(at) if k == "set" else f.ChainDone(at, k) for at, k in raw]
+    s = f.chain_state(events, open_tasks_at_start=frozenset({"old", "old2"}), caps=CAPS, now=1000)
+    # never more than two progress resets, so at least (sets - sets-before-the-last-credit) remain
+    first = next((e.at for e in events if isinstance(e, f.ChainSet)), None)
+    credited, last = set(), None
+    seen_set = False
+    for i, e in enumerate(events):
+        seen_set = seen_set or isinstance(e, f.ChainSet)
+        if (
+            seen_set
+            and isinstance(e, f.ChainDone)
+            and e.task in ("old", "old2")
+            and e.task not in credited
+            and first is not None
+            and e.at > first
+        ):
+            credited.add(e.task)
+            last = i
+    expected = sum(isinstance(e, f.ChainSet) for e in events[(last + 1 if last is not None else 0) :])
+    assert s.without_progress == expected

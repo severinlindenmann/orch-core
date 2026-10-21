@@ -134,6 +134,13 @@ def _sections(
         meta += [f"title: {views.short(view.title, 200)}"]
         meta += [views.question_line(q, qs) for q in views.open_questions(view)]
         meta += [views.ac_line(a, 200) for a in view.acceptance] + [views.task_line(t, 200) for t in view.tasks]
+        from orch.ops.workdir import workdir_of
+
+        wd = workdir_of(c.store, view)  # a ticket without a codebase and with a work folder: say where it is
+        if wd is not None:
+            meta.append(
+                f"workdir: {wd.relative_to(c.store.layout.project)} (results: orch artifact add FILE --task Tn)"
+            )
         meta.append(
             f"labels: {','.join(view.fields['labels']) or '-'}  "
             f"links: {views.short(json.dumps(thaw(view.fields['links'])), 160)}"

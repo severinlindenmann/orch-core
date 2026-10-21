@@ -15,7 +15,9 @@ from orch.store import observe
 def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     """The linked repository a verify command belongs to: the one the working directory is in, else the only linked
     one; ``(None, None)`` when the ticket links none."""
-    linked = list(view.fields["links"]["repos"])
+    from orch.ops.workdir import has_codebase
+
+    linked = list(view.fields["links"]["repos"]) if has_codebase(c.store, view) else []
     paths = c.store.state.workspace.repos
     c.ws.require_root()
     layout = c.store.layout
@@ -34,11 +36,16 @@ def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     repo, path = _repo_for(c, view)
     env = c.ctx.caps.exec.child_env(c.ctx.env)
     secret = (c.ctx.grant or "").partition(".")[2]
+    cwd = path
+    if cwd is None:  # no codebase: the check runs in the ticket's work folder, not in the project root
+        from orch.ops.workdir import workdir_of
+
+        cwd = workdir_of(c.store, view, create=True)
     return runner.run_verify(
         cmd,
         repo=repo,
         path=path,
-        cwd=path if path is not None else c.ws.require_root(),
+        cwd=cwd if cwd is not None else c.ws.require_root(),
         env=env,
         caps=c.ctx.caps,
         grant_secret=secret,
@@ -68,7 +75,9 @@ def _client_receipt(
     if rc["exit"] != 0:
         raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
     repo, commit = rc.get("repo"), rc.get("commit")
-    linked = list(view.fields["links"]["repos"])
+    from orch.ops.workdir import has_codebase
+
+    linked = list(view.fields["links"]["repos"]) if has_codebase(c.store, view) else []
     if linked:  # F1 section 6: evidence follows the source sha, so the receipt names a linked repo and its commit
         if repo is None or repo not in linked:
             raise OrchError("invalid.input", f"receipt.repo must be one of the repos this ticket links: {linked}")

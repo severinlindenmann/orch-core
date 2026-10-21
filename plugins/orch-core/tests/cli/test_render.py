@@ -120,3 +120,11 @@ def test_redact_removes_secrets():
 def test_wait_result_examples_validate_and_exit_codes_are_the_results():
     schema.validate("wait-result", {"kind": "timeout", "key": "DEMO-0043", "cursor": 4, "next": "orch wait"})
     json.dumps(render.result_envelope(Result(data={"kind": "timeout"})))
+
+
+@pytest.mark.parametrize("prefix", ["github_pat_"] + ["gh" + kind + "_" for kind in "pousr"])
+def test_redact_removes_github_tokens(prefix):
+    token = prefix + "b" * 36
+    assert render.redact("before " + token + " after", []) == "before [redacted] after"
+    short = prefix + "b" * 19
+    assert render.redact(short, []) == short

@@ -98,11 +98,78 @@ def test_evidence_per_criterion_and_content(client, token, stub, rich):
     assert doc["artifacts"][0]["ac"] == "AC1"
     content = client.get(url(stub, "DEMO-0001/artifacts/out.log"), headers=headers(token)).json()
     assert content["text"] == data.decode() and content["verified"] is True and content["truncated"] is False
+    assert content["image"] is None  # a log is not a picture
     assert client.get(url(stub, "DEMO-0001/artifacts/missing.log"), headers=headers(token)).status_code == 404
     # A file that changed on disk after its digest was recorded is refused, never shown as evidence.
     (env.store_dir / "tickets" / ids["First"] / "artifacts" / "out.log").write_bytes(b"tampered")
     bad = client.get(url(stub, "DEMO-0001/artifacts/out.log"), headers=headers(token))
     assert bad.status_code == 409 and bad.json()["error"]["code"] == "artifact.mismatch"
+
+
+def _png(*extra):
+    import struct
+    import zlib
+
+    def chunk(kind, body=b""):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + ihdr
+        + b"".join(extra)
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+        + chunk(b"IEND")
+    )
+
+
+def test_a_screenshot_is_offered_as_bytes_only_when_core_accepts_it(client, token, stub, rich):
+    """R3 part B: a PNG with metadata, or a JPEG, is not offered as bytes (the page hashes what it gets)."""
+    import base64
+
+    env, ids = rich
+    good = _png()
+    pictures = {
+        "paste-20261019-101500-aaaaaaaa.png": good,
+        "paste-20261019-101502-cccccccc.png": _png(b"\x00\x00\x00\x04tEXtabcd\x00\x00\x00\x00"),
+        "exif.jpg": b"\xff\xd8\xff\xe1" + b"Exif\x00\x00GPS",
+    }
+    for name, data in pictures.items():
+        env.tick()
+        env.store.append(
+            env.person_event(
+                env.owner,
+                ids["First"],
+                "artifact.added",
+                name=name,
+                kind="screenshot",
+                sha256="sha256:" + hashlib.sha256(data).hexdigest(),
+                bytes=len(data),
+            ),
+            log=ids["First"],
+            artifacts={name: data},
+        )
+    got = client.get(url(stub, "DEMO-0001/artifacts/paste-20261019-101500-aaaaaaaa.png"), headers=headers(token)).json()
+    digest = "sha256:" + hashlib.sha256(good).hexdigest()
+    assert got["image"] == {"type": "png", "b64": base64.b64encode(good).decode(), "digest": digest}
+    # an agent's image (same bytes, not a person's paste) is never offered for inline drawing
+    agent_data = good
+    env.store.append(
+        {
+            "type": "artifact.added",
+            "actor": env.agent,
+            "name": "paste-20261019-101501-bbbbbbbb.png",
+            "kind": "screenshot",
+            "sha256": "sha256:" + hashlib.sha256(agent_data).hexdigest(),
+            "bytes": len(agent_data),
+        },
+        log=ids["First"],
+        artifacts={"paste-20261019-101501-bbbbbbbb.png": agent_data},
+    )
+    agent_got = client.get(url(stub, "DEMO-0001/artifacts/paste-20261019-101501-bbbbbbbb.png"), headers=headers(token))
+    assert agent_got.json()["image"] is None
+    for name in ("paste-20261019-101502-cccccccc.png", "exif.jpg"):
+        assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None
 
 
 def test_changes_are_bound_to_the_observed_source(client, token, stub, rich):
@@ -202,3 +269,30 @@ def test_a_diff_git_cannot_produce_reaches_the_page_as_diff_unavailable(client, 
     res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))
     assert res.status_code == 409 and res.json()["error"]["code"] == "observe.unavailable"
     assert "diff unavailable" in res.json()["error"]["message"]
+
+
+def test_the_person_check_is_bound_to_the_digest_the_ticket_names(client, token, stub, rich, monkeypatch):
+    """R3 part B: a verified file whose digest is not the one the signed artifact names is never offered as an image."""
+    from orch_dashboard import reads
+
+    env, ids = rich
+    data = _png()
+    name = "paste-20261019-101503-dddddddd.png"
+    env.tick()
+    env.store.append(
+        env.person_event(
+            env.owner,
+            ids["First"],
+            "artifact.added",
+            name=name,
+            kind="screenshot",
+            sha256="sha256:" + hashlib.sha256(data).hexdigest(),
+            bytes=len(data),
+        ),
+        log=ids["First"],
+        artifacts={name: data},
+    )
+    assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is not None
+    real = reads.pasted_by_person
+    monkeypatch.setattr(reads, "pasted_by_person", lambda g, w, k, n, d: real(g, w, k, n, "sha256:" + "0" * 64))
+    assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None

@@ -217,6 +217,27 @@ class QuickAgent(BaseModel):
     hours: Annotated[int, Field(ge=1, le=168)]
 
 
+class PastedImage(BaseModel):
+    """R3 part B: a screenshot pasted into a section. Only its description travels here: the bytes go to the signer
+    (`click/images`), which checks them against this digest; core `orch.host.sequence` refuses a name that does not
+    carry the first 8 characters of the digest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: Annotated[str, StringConstraints(pattern=r"^paste-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.(png|webp)$")]
+    sha256: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+    bytes: Annotated[int, Field(ge=1, le=5 * 1024 * 1024)]
+    alt: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+def _images_of(images: list["PastedImage"]) -> list[dict]:
+    from orch.canon.text import normalize_text
+
+    return [
+        {"name": i.name, "sha256": i.sha256, "bytes": i.bytes, "alt": normalize_text(i.alt, one_line=True)}
+        for i in sorted(images, key=lambda x: x.name)
+    ]
+
+
 class NewTicketSequence(Action):
     """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
@@ -236,6 +257,8 @@ class NewTicketSequence(Action):
     #: U4: "Create and start agent" without a usable runner grant: the agent access, signed LAST in the same review
     #: (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
     agent: QuickAgent | None = None
+    #: R3 part B: screenshots pasted into the sections (one signed file each, before the section that shows it)
+    images: list[PastedImage] = Field(default_factory=list, max_length=6)
 
     def intent(self) -> dict:
         """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
@@ -268,6 +291,8 @@ class NewTicketSequence(Action):
             people = _new_people(self.people)
             if people:
                 intent["people"] = people
+            if self.images:
+                intent["images"] = _images_of(self.images)
             if self.agent is not None:
                 intent["agent"] = {"hours": self.agent.hours, "scope": "workable"}
             return sequence.validate_intent(intent)
@@ -315,6 +340,7 @@ class EditTicket(Action):
     acceptance: EditAcceptance | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
     links: EditLinks | None = None
+    images: list[PastedImage] = Field(default_factory=list, max_length=6)  # R3 part B, as in a new ticket
 
     def intent(self, data: dict) -> dict:
         """`data` is the host's `ticket.get` of the ticket, read now."""
@@ -380,6 +406,8 @@ class EditTicket(Action):
                 }
                 if not intent["people"]:
                     del intent["people"]
+            if self.images:
+                intent["images"] = _images_of(self.images)
             return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid, KeyError, TypeError) as exc:
             raise fail("invalid.input", f"That edit can't be signed: {exc}", exit=1) from None
@@ -1473,6 +1501,13 @@ def register(app: FastAPI, gateway: Gateway):
             ):  # the host's path check, before any request exists (plain refusal in the dialog)
                 gateway.check_repo_path(ws, body.path)
             planned = plan(gateway, ws, body)
+            if planned.sequence and planned.sequence["intent"].get("images"):
+                raise fail(
+                    "invalid.input",
+                    "Pictures can only be signed with one click in the dashboard. Switch on click to sign "
+                    "(Settings) or take the pictures out of the text.",
+                    exit=1,
+                )
             op = planned.op
             # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
             # which needs `runner` so the signer sets label runner (the click path sets it itself).

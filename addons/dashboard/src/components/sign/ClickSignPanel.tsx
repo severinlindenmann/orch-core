@@ -1,3 +1,4 @@
+import { usePicturesOk } from './Pictures'
 import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
@@ -126,7 +127,8 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const word = view.confirm.kind === 'word' ? view.confirm.word : null
   const wordOk = word === null || typed === word
   const activation = useActivation(armed && wordOk) // a press that began before the word was typed never counts
-  const can = armed && !signing && !waiting && wordOk
+  const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
+  const can = armed && !signing && !waiting && wordOk && picturesOk
   const go = () => {
     if (!activation.take() || !can) return
     onSign(word ?? undefined)

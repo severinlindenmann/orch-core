@@ -47,7 +47,19 @@ from orch import gitsafe
 from orch.gitsafe import Unsafe
 from orch.layout import KEYS_FILE, STATE_DIR, STORE_DIR
 
-__all__ = ["OPS", "Result", "command", "parse_grep", "parse_log", "parse_names", "parse_show", "run", "spawn"]
+__all__ = [
+    "OPS",
+    "Result",
+    "command",
+    "parse_dir_log",
+    "parse_grep",
+    "parse_log",
+    "parse_names",
+    "parse_show",
+    "parse_tree",
+    "run",
+    "spawn",
+]
 
 _SLOT = re.compile(r"<(commit|file|num|pattern)>")
 
@@ -146,6 +158,15 @@ OPS: dict[str, Op] = {
     # symlink there is never followed), no submodule: `path NUL line NUL text LF`
     "grep": Op(("grep", "--cached", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>",
                 "--", ":(top)")),
+    # the direct entries of ONE folder at a commit, nothing below it and no content: `<mode> SP <type> SP <id> SP
+    # <size> TAB <name> NUL` per entry. A folder that is a link, a submodule or a file is not a tree: git refuses it.
+    # Reads the object database only (the Wiki add-on lists its pages with the modes git recorded)
+    "tree": Op(("ls-tree", "-z", "-l", "--end-of-options", "<commit>:./<file>")),
+    # the commits that touched anything below ONE folder, newest first, each followed by the paths it changed there:
+    # `NUL id NUL author NUL date NUL subject NUL LF path NUL path NUL ...` (see :func:`parse_dir_log`). A merge shows
+    # no paths of its own (its parents' commits do)
+    "dir_log": Op(("log", "--no-color", "--no-renames", f"--format={_COMMIT}", "--name-only", "-z",
+                   "--max-count=<num>", "--end-of-options", "<commit>", "--", ":(literal)<file>")),
 }  # fmt: skip
 _NUM = re.compile(r"[0-9]{1,6}")
 _BAD_CHAR = re.compile(r"[\x00-\x1f\x7f]")
@@ -330,6 +351,42 @@ def parse_log(out: bytes) -> list[tuple[str, str, str, str]]:
         sha, who, when, subject = (_text(p) for p in pieces[i : i + 4])
         if _SHA.fullmatch(sha):
             rows.append((sha, who, when, subject.rstrip("\n")))
+    return rows
+
+
+_TREE_ROW = re.compile(r"([0-7]{6}) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64}) +(-|[0-9]{1,12})\t([\s\S]*)")
+
+
+def parse_tree(out: bytes) -> list[tuple[str, str, str, int | None, str]]:
+    """``(mode, type, object id, size, name)`` per entry of ``tree`` (``ls-tree -z -l``); ``size`` is None for a tree or
+    a submodule. A malformed record is dropped. ``name`` is one path component (a folder lists nothing deeper)."""
+    rows = []
+    for chunk in out.split(b"\0"):
+        m = _TREE_ROW.fullmatch(_text(chunk))
+        if m:
+            rows.append((m[1], m[2], m[3], None if m[4] == "-" else int(m[4]), m[5]))
+    return rows
+
+
+def parse_dir_log(out: bytes) -> list[tuple[str, str, str, str, list[str]]]:
+    """``(sha, author, date, subject, [paths])`` per commit of ``dir_log``, newest first. Every path starts with the
+    folder asked for, so a token that is exactly a commit id (after the empty token that starts a record) is a record
+    start and never a path. A truncated last record is dropped."""
+    tokens = out.split(b"\0")
+    rows: list[tuple[str, str, str, str, list[str]]] = []
+    i, n = 0, len(tokens)
+    while i < n:
+        if i + 4 < n and not tokens[i] and _SHA.fullmatch(_text(tokens[i + 1])):
+            sha, who, when, subject = (_text(t) for t in tokens[i + 1 : i + 5])
+            i += 5
+            paths: list[str] = []
+            while i < n and not (not tokens[i] and i + 1 < n and _SHA.fullmatch(_text(tokens[i + 1]))):
+                if tokens[i]:
+                    paths.append(_text(tokens[i]).removeprefix("\n"))
+                i += 1
+            rows.append((sha, who, when, subject, paths))
+        else:
+            i += 1
     return rows
 
 

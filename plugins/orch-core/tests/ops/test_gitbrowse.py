@@ -171,7 +171,7 @@ def test_every_operation_has_fixed_arguments_with_end_of_options_and_separators(
             assert "--end-of-options" in args, name
         if "<file>" in "".join(args) and args[0] in ("log", "show", "diff"):
             assert args[args.index("--") + 1].startswith(":(literal)"), name
-        assert args[0] in {"log", "show", "diff", "cat-file", "grep", "rev-parse"}
+        assert args[0] in {"log", "show", "diff", "cat-file", "grep", "rev-parse", "ls-tree"}
 
 
 def test_a_hostile_global_config_starts_no_program(world):
@@ -406,3 +406,84 @@ def test_orch_local_state_is_on_the_deny_list_in_any_folder():
     assert gitbrowse.denied_name(".STATE") and gitbrowse.denied_name(".state")
     assert ":(exclude,glob,icase)**/.state" in gitbrowse.DENY_SPECS
     assert ":(exclude,glob,icase)**/.state/**" in gitbrowse.DENY_SPECS
+
+
+def _wiki(world):
+    """A `wiki/` folder with a page, a page changed later, a link, a nested folder, a denied name and an odd name."""
+    r = world.repo
+    (r / "wiki").mkdir()
+    (r / "wiki" / "alpha.md").write_text("# Alpha\n")
+    (r / "wiki" / "beta.md").write_text("# Beta\n")
+    (r / "wiki" / "link.md").symlink_to("/etc/passwd")
+    (r / "wiki" / "sub").mkdir()
+    (r / "wiki" / "sub" / "deep.md").write_text("deep\n")
+    (r / "wiki" / ".env").write_text("SECRET=1\n")
+    (r / "wiki" / "new\nline.md").write_text("x\n")
+    world.git(r, "add", "-A", "-f")
+    world.git(r, "commit", "-q", "-m", "wiki one", n=4)
+    (r / "wiki" / "alpha.md").write_text("# Alpha\nmore\n")
+    world.git(r, "commit", "-q", "-am", "wiki two", n=5)
+
+
+def test_tree_lists_the_direct_entries_of_a_folder_with_their_git_modes(world):
+    _wiki(world)
+    res = world.run("tree", "HEAD", "wiki")
+    assert res.code == 0
+    rows = {name: (mode, kind, size) for mode, kind, _oid, size, name in gitbrowse.parse_tree(res.out)}
+    assert rows["alpha.md"] == ("100644", "blob", 13) and rows["beta.md"][0] == "100644"
+    assert rows["link.md"][0] == "120000"  # a link is a blob of mode 120000: callers skip it, nothing follows it
+    assert rows["sub"][:2] == ("040000", "tree") and rows["new\nline.md"][1] == "blob"
+    assert ".env" in rows  # the operation lists names; the caller's guard decides what is shown
+    assert "deep.md" not in rows  # nothing below the folder
+
+
+def test_tree_of_a_link_a_file_or_a_missing_folder_is_refused_by_git(world):
+    _wiki(world)
+    world.git(world.repo, "rm", "-q", "-r", "--cached", "wiki")
+    assert world.run("tree", "HEAD", "a.txt").code != 0  # a file
+    assert world.run("tree", "HEAD", "nothere").code != 0
+    (world.repo / "ln").symlink_to("wiki")
+    world.git(world.repo, "add", "-f", "ln")
+    world.git(world.repo, "commit", "-q", "-m", "a link", n=6)
+    assert world.run("tree", "HEAD", "ln").code != 0  # a link to a folder is not a folder
+
+
+@pytest.mark.parametrize("folder", ["", "/wiki", "../x", "wiki/../..", "a\nb", "wiki//x"])
+def test_tree_takes_no_path_that_leaves_the_folder(world, folder):
+    with pytest.raises(gitsafe.Unsafe):
+        gitbrowse.command(str(world.repo), "tree", os.environ, operand=("HEAD", folder))
+
+
+def test_dir_log_gives_each_commit_with_the_paths_it_changed_below_the_folder(world):
+    _wiki(world)
+    res = world.run("dir_log", "50", "HEAD", "wiki")
+    rows = gitbrowse.parse_dir_log(res.out)
+    assert [r[3] for r in rows] == ["wiki two", "wiki one"]
+    assert rows[0][4] == ["wiki/alpha.md"] and rows[0][0] == world.git(world.repo, "rev-parse", "HEAD")
+    assert rows[0][1] == "Ann Author" and rows[0][2].startswith("2026-01-05")
+    assert "wiki/alpha.md" in rows[1][4] and "wiki/beta.md" in rows[1][4]
+    assert not any(".env" in p for p in rows[1][4])  # the deny list is excluded by pathspec on top
+    assert all(p.startswith("wiki/") for r in rows for p in r[4])
+    assert gitbrowse.parse_dir_log(world.run("dir_log", "1", "HEAD", "wiki").out)[0][3] == "wiki two"
+
+
+def test_parse_dir_log_is_total_on_cut_and_hostile_output():
+    sha = "a" * 40
+    ok = f"\0{sha}\0Ann\0d\0subj\0\nwiki/x.md\0"
+    assert gitbrowse.parse_dir_log(ok.encode())[0][4] == ["wiki/x.md"]
+    assert gitbrowse.parse_dir_log(f"\0{sha}\0Ann\0d".encode()) == []  # cut inside the header
+    assert gitbrowse.parse_dir_log(b"") == [] and gitbrowse.parse_dir_log(b"\0\0\0junk") == []
+    # an author or a subject that looks like a commit id is data inside its record, never a record start
+    twin = f"\0{sha}\0{'b' * 40}\0d\0{'c' * 40}\0\nwiki/y.md\0"
+    rows = gitbrowse.parse_dir_log(twin.encode())
+    assert len(rows) == 1 and rows[0][1] == "b" * 40 and rows[0][3] == "c" * 40
+
+
+def test_parse_tree_drops_malformed_records():
+    oid = "a" * 40
+    good = f"100644 blob {oid}      12\ta.md\x00040000 tree {oid}       -\tsub\x00".encode()
+    assert [(m, t, s, n) for m, t, _o, s, n in gitbrowse.parse_tree(good)] == [
+        ("100644", "blob", 12, "a.md"),
+        ("040000", "tree", None, "sub"),
+    ]
+    assert gitbrowse.parse_tree(b"garbage\0100644 blob xyz 1\tb\0") == []

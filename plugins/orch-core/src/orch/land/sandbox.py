@@ -11,6 +11,8 @@ keychain). So a check runs only under an OS sandbox that denies everything by de
 * Linux: ``bwrap --unshare-all`` (user, pid, net, ipc, uts, cgroup namespaces), ``--die-with-parent``,
   ``--new-session``, ``--cap-drop ALL``, ``--clearenv``; only the export (read-only, ``/work``), the output dir
   (``/out``), the private temp (``/tmp``, also ``HOME``) and the toolchain (read-only, same paths) are visible.
+  Network: the private network namespace has only its own loopback and no route, so sockets can be created but reach
+  only the check itself (host loopback services and the host's abstract unix sockets live in the host namespace).
 
 No usable backend means :class:`NoSandbox` (``land.no_sandbox``): a check never runs unsandboxed. A backend counts as
 usable only if a trivial command really runs under it (user namespaces can be switched off on a host). Executables are

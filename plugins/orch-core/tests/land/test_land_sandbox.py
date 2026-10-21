@@ -54,6 +54,10 @@ def udp(a):
     def f():
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b"x", tuple(a))
     return f
+def dns(name):
+    def f():
+        socket.getaddrinfo(name, 443)
+    return f
 for k, p in t["read"].items():
     attempt(k, rd(p))
 for k, p in t["list"].items():
@@ -64,6 +68,10 @@ for k, p in t["unix"].items():
     attempt(k, unix(p))
 attempt("tcp", tcp(t["tcp"]))
 attempt("udp", udp(t["udp"]))
+attempt("udp_out", udp(t["udp_out"]))  # a routable address outside the host: needs a route out of the check
+attempt("dns", dns(t["dns"]))
+if t.get("abstract"):  # Linux only: abstract unix sockets have no file a mount rule could hide
+    attempt("abstract_socket", unix("\0" + t["abstract"]))
 env = os.environ
 res["env"] = sorted(env)
 res["home"] = env.get("HOME")
@@ -135,6 +143,14 @@ class Layout:
         self.udp_srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_srv.bind(("127.0.0.1", 0))
         self.udp_srv.settimeout(0.3)
+        # Linux: an abstract unix socket on the host (D-Bus, X11, systemd use these); no path, so only the network
+        # namespace can keep the check away from it
+        self.abstract_name = f"orch-land-probe-{os.getpid()}-{id(self)}" if sys.platform.startswith("linux") else None
+        self.abstract_srv = None
+        if self.abstract_name:
+            self.abstract_srv = socket.socket(socket.AF_UNIX)
+            self.abstract_srv.bind("\0" + self.abstract_name)
+            self.abstract_srv.listen(8)
 
     def targets(self, backend: str = "sandbox-exec") -> dict:
         t = self._targets()
@@ -158,11 +174,15 @@ class Layout:
             "unix": {"agent_socket": self.sock_path},
             "tcp": list(self.tcp_srv.getsockname()),
             "udp": list(self.udp_srv.getsockname()),
+            "udp_out": ["192.0.2.1", 9],  # TEST-NET-1 (RFC 5737): routable syntax, never answered
+            "dns": "example.com",
+            "abstract": self.abstract_name,
         }  # fmt: skip
 
     def close(self) -> None:
-        for s in (self.unix_srv, self.tcp_srv, self.udp_srv):
-            s.close()
+        for s in (self.unix_srv, self.tcp_srv, self.udp_srv, self.abstract_srv):
+            if s is not None:
+                s.close()
         shutil.rmtree(self.short, ignore_errors=True)
 
 
@@ -193,14 +213,28 @@ def _probe(lay: Layout, backend: str, **kw) -> tuple[sbx.Result, dict]:
 
 @pytest.mark.parametrize("with_forbidden", [True, False], ids=["forbidden-listed", "default-deny-only"])
 def test_probes_all_fail(lay: Layout, backend: str, with_forbidden: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The invariant is "a check reaches nothing outside itself". Network: on macOS Seatbelt denies every socket call, so
+    each network probe fails inside the check. On Linux the boundary is bwrap's private network namespace
+    (``--unshare-all``): it holds only its own loopback and no route. A UDP ``sendto(127.0.0.1)`` there succeeds (a
+    datagram needs no peer) but lands in the check's own namespace, which no host process listens in; that is not
+    network access, so on bwrap the in-namespace ``udp`` result is not asserted. What IS asserted on both backends:
+    the host's loopback UDP/TCP servers and its unix socket see nothing, a routable outside address (``udp_out``) has
+    no route, name resolution fails, and (Linux) the host's abstract unix socket, which is scoped to the network
+    namespace, cannot be connected. Blocking socket() itself with seccomp was rejected: a raw per-arch BPF filter is
+    fragile, and toolchains need AF_UNIX/socketpair inside the check."""
     monkeypatch.setenv("SSH_AUTH_SOCK", lay.sock_path)
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_should_not_leak")
     kw = {"forbidden": lay.forbidden} if with_forbidden else {}
     res, got = _probe(lay, backend, **kw)
     assert res.returncode == 0 and not res.timed_out and res.backend == backend
     # every forbidden attempt failed ...
-    for name in ("ssh_key", "land_key", "state_file", "ssh_dir", "real_ssh_dir", "state_dir", "state_new", "home_new",
-                 "export_new", "agent_socket", "tcp", "udp"):  # fmt: skip
+    denied = ["ssh_key", "land_key", "state_file", "ssh_dir", "real_ssh_dir", "state_dir", "state_new", "home_new",
+              "export_new", "agent_socket", "tcp", "udp_out", "dns"]  # fmt: skip
+    if backend == "sandbox-exec":
+        denied.append("udp")  # Seatbelt denies the socket call itself; bwrap: see the docstring
+    if lay.abstract_name:
+        denied.append("abstract_socket")
+    for name in denied:
         assert got[name] == "DENIED", f"{name} was not denied under {backend}"
     # ... and the allowed ones worked, so the probe itself is sound
     for name in ("export_hello", "out_new", "tmp_new"):
@@ -214,6 +248,10 @@ def test_probes_all_fail(lay: Layout, backend: str, with_forbidden: bool, monkey
         lay.unix_srv.accept()
     with pytest.raises(OSError):
         lay.udp_srv.recvfrom(10)
+    if lay.abstract_srv is not None:
+        lay.abstract_srv.settimeout(0.2)
+        with pytest.raises(OSError):
+            lay.abstract_srv.accept()
     assert not (lay.state / "planted").exists() and not (lay.home / "planted").exists()
     assert not (lay.export / "planted").exists()
 

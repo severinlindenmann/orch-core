@@ -22,10 +22,14 @@ process exits, before the result is returned. Output is merged, capped at ``max_
 redacts it before it reaches a log).
 
 Known limits. macOS: Seatbelt cannot stop a same-UID process from reading other processes' arguments and environment
-(``sysctl KERN_PROCARGS2``; probed 21 Oct: allowed even under ``(deny sysctl*)``). So the process that calls
-:func:`run_check` must hold no secret in its argv or environment (the landing key is only ever a file path handed to
-the separate push process). macOS also has no pid namespace: a descendant that calls ``setsid`` leaves the process
-group and can outlive the check. It stays inside the sandbox (no network, no secrets); the Linux backend has none of it.
+(``sysctl KERN_PROCARGS2``; probed 21 Oct: allowed even under ``(deny sysctl*)``). Acceptable ONLY because checks have
+no network: check output stays host-local and redacted and is never shown to other members. It becomes a BLOCKER for
+open question N4 (network during checks) until #287 (separate user). The process calling :func:`run_check` must hold no
+secret in its argv or environment. ``process-info*`` of other processes and ``/bin/launchctl`` are denied.
+macOS has no pid namespace: a descendant that calls ``setsid`` leaves the process group and can outlive the check,
+still inside the sandbox. Callers therefore use a fresh, never-reused out/tmp per run, read results only through
+:func:`read_out_file`, and remove the trees fd-based. Follow-up: kill sandboxed same-UID processes that can still write
+this run's tmp (``sandbox_check``). The Linux backend has none of this.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,7 +73,12 @@ _MAC_SYSTEM_READ = (
     "/private/etc/passwd", "/private/etc/group", "/private/etc/resolv.conf", "/private/etc/hosts",
     "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/dtracehelper",
 )  # fmt: skip
-_MAC_DENY_EXEC = ("/usr/bin/security", "/usr/bin/ssh-add", "/usr/bin/ssh-agent")  # defence in depth; mach is denied too
+_MAC_DENY_EXEC = (
+    "/usr/bin/security",
+    "/usr/bin/ssh-add",
+    "/usr/bin/ssh-agent",
+    "/bin/launchctl",
+)  # defence in depth; mach is denied too
 
 
 class SandboxError(Exception):
@@ -113,12 +123,41 @@ class Result:
         return self.returncode == 0 and not self.timed_out and not self.tampered
 
 
+def _canon_existing(path: str) -> str:
+    """The kernel's own spelling of an existing path: on macOS ``F_GETPATH`` (on-disk case, no /System/Volumes/Data
+    firmlink prefix); elsewhere ``realpath``. Seatbelt matches ``subpath`` against that spelling."""
+    real = os.path.realpath(path)
+    if sys.platform != "darwin":
+        return real
+    import fcntl
+
+    fd = os.open(real, os.O_RDONLY | getattr(os, "O_SYMLINK", 0) | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        got = fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)
+    finally:
+        os.close(fd)
+    return os.fsdecode(got.split(b"\0", 1)[0])
+
+
 def _real(path: Path | str) -> Path:
-    return Path(os.path.realpath(path))
+    """Canonical path; for a missing path, the deepest existing parent canonicalised plus the remaining names."""
+    p = os.path.abspath(os.fspath(path))
+    rest: list[str] = []
+    while not os.path.lexists(p) and p != "/":
+        p, tail = os.path.split(p)
+        rest.append(tail)
+    return Path(_canon_existing(p), *reversed(rest))
+
+
+def _fold(p: Path) -> tuple[str, ...]:
+    return tuple(unicodedata.normalize("NFD", x).casefold() for x in p.parts)
 
 
 def _overlaps(a: Path, b: Path) -> bool:
-    return a == b or a in b.parents or b in a.parents
+    """Equal or one inside the other, comparing case-insensitively and NFD-normalised (APFS/HFS+ do)."""
+    fa, fb = _fold(a), _fold(b)
+    n = min(len(fa), len(fb))
+    return fa[:n] == fb[:n]
 
 
 def _account_home() -> Path:
@@ -312,6 +351,8 @@ def seatbelt_profile(export: Path, out: Path, tmp: Path, tool: Sequence[Path], f
         "(allow process-exec "
         + " ".join(f"(subpath {_sb(p)})" for p in (*tool, export, *map(Path, ("/usr", "/bin", "/sbin"))))
         + ")",
+        "(deny process-info*)",  # no proc_pidpath / ps of other processes
+        "(allow process-info* (target self))",
         "(deny process-exec " + " ".join(f"(literal {_sb(p)})" for p in _MAC_DENY_EXEC) + ")",
         "(deny network* (remote unix-socket) (local unix-socket))",
         # No hard links at all: a link into out/tmp to a file the check may only read (export, toolchain) would let it
@@ -428,6 +469,14 @@ def available_backend() -> str | None:
 # ----------------------------------------------------------------------------------------------- running
 
 
+def _exited(pid: int) -> bool:
+    """True once the child has exited, WITHOUT reaping it: the zombie keeps its pgid reserved until we kill the group."""
+    try:
+        return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    except ChildProcessError:
+        return True
+
+
 def _killpg(pgid: int) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pgid, signal.SIGKILL)
@@ -486,7 +535,7 @@ def _execute(backend: str, spec: Spec) -> Result:
                 break
             if fdwait.readable(fd, min(left, 0.2)):
                 open_ = pull()
-            elif proc.poll() is not None:
+            elif _exited(proc.pid):
                 break
         _killpg(pgid)  # on timeout, and on exit: nothing the check started survives the result
         proc.wait()
@@ -495,7 +544,8 @@ def _execute(backend: str, spec: Spec) -> Result:
         while open_ and time.monotonic() < end and fdwait.readable(fd, 0.2):
             open_ = pull()
     finally:
-        _killpg(pgid)
+        if proc.returncode is None:  # once reaped the pgid may be reused by an unrelated group
+            _killpg(pgid)
         proc.stdout.close()
         if proc.poll() is None:
             proc.kill()

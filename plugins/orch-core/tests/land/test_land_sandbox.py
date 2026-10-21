@@ -722,3 +722,74 @@ def test_untrusted_backend_binary_is_not_used(lay: Layout, monkeypatch: pytest.M
     monkeypatch.setattr(sbx, "BWRAP_CANDIDATES", (str(fake),))
     assert sbx._bwrap_path() is None
     assert not sbx._trusted_exe(str(fake))
+
+
+# ------------------------------------------------------------------------------------------------ Opus review 21 Oct
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="case-insensitive volume and firmlinks are macOS")
+def test_alias_spellings_of_a_forbidden_path_are_refused_or_denied(lay: Layout) -> None:
+    """Toolchain ``$H/tc`` with forbidden ``$H/TC/state`` (case variant) or ``/System/Volumes/Data$H/tc/state`` must
+    be seen as overlapping, and the canonical spelling is what reaches the profile."""
+    (lay.root / "tc" / "state").mkdir(parents=True)
+    (lay.root / "tc" / "state" / "key").write_text("K")
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    swapped = Path(str(lay.root / "TC" / "state"))
+    firm = Path("/System/Volumes/Data" + str(lay.root / "tc" / "state"))
+    for forb in (swapped, firm):
+        if not os.path.exists(forb):
+            continue
+        with pytest.raises(sbx.SandboxError):
+            sbx._validated(sbx.Spec(toolchain_ro=[lay.root / "tc"], forbidden=[forb], **base))
+    assert sbx._real(firm) == sbx._real(lay.root / "tc" / "state")
+    assert sbx._overlaps(Path("/A/b"), Path("/a/B/c")) and not sbx._overlaps(Path("/a/b"), Path("/a/bc"))
+
+
+def test_overlap_is_case_and_normalisation_insensitive() -> None:
+    assert sbx._overlaps(Path("/x/Café"), Path("/X/café/k"))
+    assert not sbx._overlaps(Path("/x/a"), Path("/x/b"))
+
+
+def test_missing_path_is_canonicalised_through_its_parent(lay: Layout) -> None:
+    assert sbx._real(lay.root / "nope" / "deeper") == sbx._real(lay.root) / "nope" / "deeper"
+
+
+def test_profile_has_process_info_and_launchctl_denies() -> None:
+    p = sbx.seatbelt_profile(Path("/w/e"), Path("/w/o"), Path("/w/t"), [], [])
+    assert "(deny process-info*)" in p and "(allow process-info* (target self))" in p
+    assert '"/bin/launchctl"' in p
+
+
+def test_check_cannot_inspect_other_processes_or_launchctl(lay: Layout) -> None:
+    if sys.platform != "darwin":
+        pytest.skip("macOS only")
+    reason = _usable("sandbox-exec")
+    if reason:
+        pytest.skip(reason)
+    code = (
+        "import ctypes,ctypes.util,os,sys\n"
+        "l=ctypes.CDLL(ctypes.util.find_library('proc'))\n"
+        "b=ctypes.create_string_buffer(4096)\n"
+        "n=l.proc_pidpath(int(sys.argv[1]),b,4096)\n"
+        "print('PIDPATH',n)\n"
+        "print('SELF',l.proc_pidpath(os.getpid(),b,4096)>0)\n"
+    )
+    spec = sbx.Spec(
+        argv=[os.path.realpath(sys.executable), "-I", "-c", code, str(os.getppid())], export_dir=lay.export,
+        out_dir=lay.out, tmp_dir=lay.tmp, toolchain_ro=_toolchain(), timeout=30,
+    )  # fmt: skip
+    res = sbx.run_check(spec, backend="sandbox-exec")
+    assert b"PIDPATH 0" in res.output or b"PIDPATH -1" in res.output, res.output
+    for argv in (["/bin/launchctl", "print", f"gui/{os.getuid()}"], ["/bin/ps", "-p", str(os.getppid())]):
+        r = sbx.run_check(
+            sbx.Spec(argv=argv, export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp, timeout=30),
+            backend="sandbox-exec",
+        )
+        assert r.returncode != 0 and b"PID" not in r.output and b"services" not in r.output, (argv, r.output[:200])
+
+
+def test_group_is_killed_after_the_leader_exits_without_reaping_early(lay: Layout, backend: str) -> None:
+    spec = sbx.Spec(
+        argv=["/bin/sh", "-c", "sleep 100 & exit 0"], export_dir=lay.export, out_dir=lay.out, tmp_dir=lay.tmp
+    )
+    assert sbx.run_check(spec, backend=backend).returncode == 0

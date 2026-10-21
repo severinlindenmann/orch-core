@@ -26,11 +26,8 @@ from . import (
     terminals,
     testrun,
     usage,
-<<<<<<< HEAD
     widget_frame,
-=======
     workdirs,
->>>>>>> origin/addon-widgets-core
     worktrees,
 )
 from .adapters.setup import SetupProxy

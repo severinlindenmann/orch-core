@@ -1,3 +1,4 @@
+import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
 // host's material, never this page's cached ticket. The old Touch ID simulation stays in SignDialog.tsx for the mock.
@@ -13,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { gateActionName } from './actions'
-import type { HumanAction } from './shared'
+import { useViewer, type HumanAction } from './shared'
 
 function titleOf(a: HumanAction): string {
   switch (a.kind) {
@@ -52,6 +53,7 @@ export function HandoffSignDialog({
   onOpenChanges?: () => void
   onPending?: (pending: boolean) => void
 }) {
+  const viewer = useViewer(ticket.key)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [text, setText] = useState('')
@@ -136,6 +138,7 @@ export function HandoffSignDialog({
               Open changes
             </Button>
           </p>
+          <ManualAcceptanceReview ticket={ticket} name={viewer.name} />
           <fieldset className="grid gap-2">
             <legend className="sr-only">Verdict</legend>
             {(

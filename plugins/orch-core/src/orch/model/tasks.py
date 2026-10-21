@@ -6,11 +6,13 @@ session that held its lease, or took it implicitly by finishing it. Evidence is 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from orch.canon import ARTIFACT_KINDS
 
 from . import addon_rules, claims, gates, generations, source
+from .accept import WORKABLE, criterion_hash, may_accept, parse_label, parse_withdraw_label
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -54,6 +56,14 @@ def task_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if a["kind"] == "agent" and lease is not None and lease.session != who and lease_active(ws, lease, at):
         return Refusal(Code.TASK_LEASED, f"{tid} is leased by {lease.session}")
     if typ == "task.done":
+        if a["kind"] == "person":  # R3: a receipt is a command's result that an agent or the host recorded
+            if "receipt" in e:
+                return Refusal(Code.TASK_BAD_RECEIPT, "a person's task.done carries no receipt")
+            if not may_accept(ws, t, a["id"]):
+                return Refusal(
+                    Code.ROLE_DENIED,
+                    "a task is marked done by a person only if they are the ticket owner, a reviewer or a maintainer",
+                )
         if (r := _receipt(t, tid, e)) is not None:
             return r
         if "log" in e and e["log"] not in t.artifacts:
@@ -96,7 +106,11 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
     """Per acceptance criterion, its evidence (§6): a file artifact from a person or a granted agent naming it in
     ``ac``, or a done task that ``proves`` it with an exit-0 receipt at the current source ``sha`` of its repo."""
     out: dict[str, list[str]] = {a["id"]: [] for a in t.fields["acceptance"]}
+    texts = {a["id"]: a["text"] for a in t.fields["acceptance"]}
     for name, art in sorted(t.artifacts.items()):
+        if art.kind == "feedback" and (art.label or "").startswith("accepted "):
+            if art.ac not in texts or parse_label(art.label) != (art.ac, criterion_hash(art.ac, texts[art.ac])):
+                continue
         if art.evidence_ok and art.ac in out:
             out[art.ac].append(f"artifact:{name}")
     for task in t.fields["tasks"]:
@@ -110,6 +124,29 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
             if ac in out:
                 out[ac].append(f"task:{task['id']}")
     return out
+
+
+def acceptance_state(t: TCore, ac_id: str) -> str | None:
+    """Current person feedback only; malformed labels never claim acceptance."""
+    ac = next((a for a in t.fields["acceptance"] if a["id"] == ac_id), None)
+    if ac is None:
+        return None
+    state = None
+    for art in t.artifacts.values():
+        parsed = parse_label(art.label)
+        if (
+            art.kind != "feedback"
+            or re.fullmatch(r"p_[0-9a-f]{32}", art.by) is None
+            or not art.evidence_ok
+            or art.ac != ac_id
+        ):
+            continue
+        if parsed is None or parsed[0] != ac_id:
+            continue
+        if parsed[1] == criterion_hash(ac_id, ac["text"]):
+            return "accepted"
+        state = "stale"
+    return state
 
 
 # --- artifacts --------------------------------------------------------------------------------------------------
@@ -147,6 +184,26 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         if not is_file or old.digest != e["replaces"]:
             return Refusal(Code.ARTIFACT_BAD_REPLACES, "`replaces` must be the current digest of this name")
     by = a["session"] if a["kind"] == "agent" else a["id"]
+    counts = is_file and not unattended
+    if (
+        e["kind"] == "feedback"
+        and (e.get("label") or "").startswith("accepted ")
+        and not (a["kind"] == "person" and may_accept(ws, t, a["id"]) and t.status in WORKABLE)
+    ):
+        counts = False  # R3: a manual acceptance of anyone else, or on a ticket not open for work, is never evidence
+    withdrawn = parse_withdraw_label(e.get("label"))
+    if (
+        typ == "artifact.replaced"
+        and e["kind"] == "feedback"
+        and "ac" not in e
+        and withdrawn in {x["id"] for x in t.fields["acceptance"]}
+        and a["kind"] == "person"
+        and may_accept(ws, t, a["id"])
+        and t.status in WORKABLE
+    ):
+        for art in t.artifacts.values():
+            if art.kind == "feedback" and art.ac == withdrawn and (art.label or "").startswith("accepted "):
+                art.evidence_ok = False
     t.artifacts[name] = ArtifactCore(
         name,
         e["kind"],
@@ -159,7 +216,7 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         e.get("ref"),
         e["id"],
         by,
-        is_file and not unattended,
+        counts,
     )
     generations.mark(t, "verify")
     for g in ("requirements", "plan"):

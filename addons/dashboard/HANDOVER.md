@@ -1249,3 +1249,9 @@ workspace membership, including viewers. Pages are regular flat markdown blobs i
 `wiki/` tree at HEAD. Empty repository states are returned by the list route; oversized pages have no content.
 Ticket links come from `addons.wiki.pages`, bounded and cached separately per person. No new events or writes.
 The mock frontend has not yet been switched to these endpoints.
+
+### Manual acceptance (R3, 2026-10-19)
+
+Existing handoff and click prepare endpoints accept `accept_criterion {key, ac, note?}` → `ac.accept {ref, ac, note?}`, `withdraw_acceptance {key, ac, reason}` → `ac.unaccept {ref, ac, reason}`, and `mark_task_done {key, task}` → `task.mark_done {ref, task}`. Notes/reasons are trimmed, bounded to 1000 characters; reasons are required. Prepared events must be one feedback artifact addition, one matching withdrawal replacement, or one matching task completion without a receipt key, respectively. Host authorization and statement verification remain authoritative.
+
+Criteria pass through host proof, accepted metadata and stale flags without changing coverage calculation. Verify forms display manual context from the ticket document. Optional host SignContent manual annotations are supported, but core currently emits only id/text/checked acceptance rows. Task completion reads lack an actor, so the dashboard says “Marked done, no receipt.” No new event types.

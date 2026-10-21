@@ -1935,6 +1935,29 @@ query results and a cache keyed by workspace and person. There is no dashboard w
 Why: keep repository content independent of staged edits and avoid sharing restricted ticket data between viewers.
 Revert: remove Wiki route registration and feature advertisement; repository pages remain ordinary files.
 
+## 2026-10-19 — Edit tasks and preview cancelled approvals
+
+**Decision:** Share one ticket edit dialog between the overview and row pencils. Task drafts carry only changed fields; done tasks retain their checks and criteria. Offer existing criteria only in task chips. Project the host's task snapshot before constructing the sequence, and include the acceptance snapshot whenever task changes remain. Show valid cancellation context with resolved names and an explicit “per host, not signed” note.
+
+**Why:** Core validates task proofs against the acceptance snapshot; an unchanged acceptance block is accepted and produces no steps. A done task's receipt stands for its check and criteria. Cancellation context explains the consequences without changing signed material.
+
+**Revert:** Remove task editing, row shortcuts and the cancellation context block together with their dashboard-only types and tests; retain the existing edit and signing checks.
+
+## 2026-10-19 — Manual acceptance and completion
+
+**Decision:** Route manual acceptance, withdrawal and task completion through the existing handoff/one-click signing surface. Preserve host proof and coverage independently. Show manual and stale acceptance in the ticket verdict form, and support an optional host `SignContent.acceptance[].manual` annotation.
+
+**Why:** A person's acceptance signs authority but is not an automated receipt. The current core SignContent acceptance builder emits only id, text and checked, so the ticket context supplies the reviewer warning before choosing a verdict; it is not substituted into host signing material. Task reads do not expose the completion actor, so completion without a receipt uses the plain fallback.
+
+**Revert:** Remove the three typed dashboard actions, manual controls and annotations; keep host receipt and coverage rules unchanged.
+
+
+## 2026-10-21 Manual acceptance authority in server event adapters
+
+- **Decision:** Ticket history checks membership and ticket authority before adding manual acceptance markers. The workspace feed only claims acceptance by workspace owners or maintainers.
+- **Why:** Feed items lack ticket owner/reviewer data; a generic file event avoids claiming unverified authority.
+- **Revert:** Remove the authority callback from the activity and ticket event adapters and the roster lookup in the ticket events route.
+
 ## 2026-10-21 Usage add-on: time-only page, no cost or tokens
 
 - **Decision:** The real Usage page reports only agent running time per ticket for 7 and 30 days ("Counted since..." and "runs still in progress" notes). Cost and token counts say "Not reported". No budget, alerts, budget bar, charts, By model/agent/person tabs, or Today "Agent spend" card.

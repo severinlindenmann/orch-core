@@ -10,6 +10,9 @@
 import { sha256Hex } from './sha256'
 
 export type HandoffAction =
+  | { action: 'accept_criterion'; key: string; ac: string; note?: string }
+  | { action: 'withdraw_acceptance'; key: string; ac: string; reason: string }
+  | { action: 'mark_task_done'; key: string; task: string }
   | { action: 'approve'; key: string; gate: 'requirements' | 'plan' | 'code' }
   | { action: 'request_changes'; key: string; gate: 'requirements' | 'plan' | 'verify' | 'code'; message: string }
   | { action: 'verdict'; key: string; outcome: 'pass' | 'fail'; message?: string }
@@ -32,7 +35,7 @@ export type HandoffAction =
    * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
-  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
+  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; tasks?: { edit: Record<string, { text?: string; verify?: string | null; proves?: string[] }>; add: { text: string; verify?: string; proves: string[] }[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   /** `via: 'estimate'`: the Estimate box (size only, 'none' = not estimated); the server refuses it while the add-on is off. */

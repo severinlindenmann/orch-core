@@ -1,9 +1,14 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
-import { buildEdit } from './EditTicket'
+import { buildEdit, canEditTicket, EditTicket, TicketEditProvider } from './EditTicket'
+import { AcceptanceTasks } from './AcceptanceTasks'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { handoffMode } from '@/api/features'
+import type { TicketDocument } from '@/api/types'
+import type { Viewer } from './shared'
 
-vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
+vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: vi.fn(() => true) }))
 // The signing dialog is its own feature (HandoffDialog tests); here it only shows the typed action it was given.
 vi.mock('@/components/sign/HandoffDialog', () => ({
   HandoffDialog: (p: { title: string; action: unknown; onSettled?: (phase: string) => void; onClose: () => void }) => (
@@ -16,7 +21,7 @@ vi.mock('@/components/sign/HandoffDialog', () => ({
 }))
 
 const T = { timeout: 5000 }
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks(); vi.mocked(handoffMode).mockReturnValue(true) })
 
 const ticket = {
   key: 'DEMO-0001',
@@ -177,4 +182,77 @@ describe('the repositories control in the edit dialog', () => {
     await user.click(within(region).getAllByRole('button', { name: /^Unlink / })[0])
     expect(within(region).queryAllByLabelText(/^Branch in /)).toHaveLength(before - 1)
   })
+})
+
+const task = { id: 'T1', text: 'Open it', verify: { cmd: 'check' }, proves: ['AC1'], state: 'todo' as const, lease: null, receipt: null, done_at: null }
+const withTask = { ...ticket, tasks_state: [task] }
+const draft = { text: 'Open it', verify: 'check', proves: ['AC1'] }
+describe('buildEdit tasks', () => {
+  it('sends only changed fields, including an explicit removal', () => {
+    expect(buildEdit(withTask, { ...none, tasks: { edit: { T1: draft }, add: [] } }, true)).toEqual({ nothing: true })
+    const made = buildEdit(withTask, { ...none, tasks: { edit: { T1: { ...draft, text: 'Open again', verify: '' } }, add: [] } }, true)
+    expect(made).toMatchObject({ steps: 1 })
+    expect('action' in made && made.action.tasks).toEqual({ edit: { T1: { text: 'Open again', verify: null } }, add: [] })
+  })
+  it('refuses changed checks or criteria on done tasks but allows text', () => {
+    const done = { ...withTask, tasks_state: [{ ...task, state: 'done' as const }] }
+    for (const change of [{ verify: '' }, { proves: [] }]) expect(buildEdit(done, { ...none, tasks: { edit: { T1: { ...draft, ...change } }, add: [] } }, true)).toMatchObject({ problem: expect.stringContaining('Reopen it first.') })
+    expect(buildEdit(done, { ...none, tasks: { edit: { T1: { ...draft, text: 'Clearer' } }, add: [] } }, true)).toMatchObject({ steps: 1 })
+  })
+  it('counts edits and additions toward the shared 16 step limit', () => {
+    const tasks = { edit: { T1: { ...draft, text: 'Clearer' } }, add: Array.from({ length: 15 }, () => draft) }
+    expect(buildEdit(withTask, { ...none, tasks }, true)).toMatchObject({ steps: 16 })
+    expect(buildEdit(withTask, { ...none, tasks, added: ['Another criterion'] }, true)).toHaveProperty('problem')
+  })
+  it('refuses empty and overlong task text and overlong checks', () => {
+    for (const change of [{ text: '' }, { text: 'a'.repeat(501) }, { verify: 'é'.repeat(2049) }]) expect(buildEdit(withTask, { ...none, tasks: { edit: {}, add: [{ ...draft, ...change }] } }, true)).toHaveProperty('problem')
+  })
+})
+
+it('adds a task from the Tasks block and builds the signing action', async () => {
+  const { user } = renderApp('/ticket/DEMO-0043')
+  await user.click(await screen.findByRole('button', { name: 'Edit text, checks, repositories and people' }, T))
+  const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+  await user.click(within(dialog).getByRole('button', { name: 'Add task' }))
+  await user.type(within(dialog).getByLabelText('Text of new task 1'), 'Check the header')
+  await user.type(within(dialog).getByLabelText('Check command of new task 1'), 'check-header')
+  await user.click(within(dialog).getByLabelText('new task 1 proves AC1'))
+  await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+  expect(JSON.parse((await screen.findByTestId('sent-action')).textContent!)).toMatchObject({ tasks: { edit: {}, add: [{ text: 'Check the header', verify: 'check-header', proves: ['AC1'] }] } })
+})
+
+it.each(['AC1', 'T1'])('opens the shared dialog from the %s pencil and focuses its text', async (id) => {
+  const { user } = renderApp('/ticket/DEMO-0043?tab=acceptance')
+  await user.click(await screen.findByRole('button', { name: `Edit ${id}` }, T))
+  const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+  await waitFor(() => expect(within(dialog).getByLabelText(`Text of ${id}`)).toHaveFocus())
+  if (id === 'T1') {
+    expect(within(dialog).getByLabelText('Text of T1')).toBeEnabled()
+    expect(within(dialog).getByLabelText('Check command of T1')).toBeDisabled()
+    expect(within(dialog).getByLabelText('T1 proves AC1')).toBeDisabled()
+  }
+})
+
+const displayTicket = { ...withTask, status: 'open', artifacts: [], gates: { verify: { state: 'waiting' } } } as unknown as TicketDocument
+const editViewer: Viewer = { person: 'p_a', role: 'member', members: [], name: id => id ?? '', ready: true }
+it.each([
+  { status: 'open', seq: 7, role: 'member', host: true, offered: true },
+  { status: 'done', seq: 7, role: 'member', host: true, offered: false },
+  { status: 'open', seq: 0, role: 'member', host: true, offered: false },
+  { status: 'open', seq: 7, role: 'viewer', host: true, offered: false },
+  { status: 'open', seq: 7, role: 'member', host: false, offered: false },
+] as const)('offers the overview and row buttons under the same rule: %j', ({ status, seq, role, host, offered }) => {
+  vi.mocked(handoffMode).mockReturnValue(host)
+  const current = { ...displayTicket, status, head: { ...displayTicket.head, seq } }
+  const viewer = { ...editViewer, role }
+  expect(canEditTicket(current, role, host)).toBe(offered)
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+  client.setQueryData(['workspaces'], [{ id: 'w_1', prefix: 'DEMO' }])
+  render(<QueryClientProvider client={client}><TicketEditProvider ticket={current} viewer={viewer}>
+    <EditTicket ticket={current} viewer={viewer} />
+    <AcceptanceTasks ticket={current} viewer={viewer} jump={() => undefined} sign={() => undefined} />
+  </TicketEditProvider></QueryClientProvider>)
+  for (const name of ['Edit text, checks, repositories and people', 'Edit AC1', 'Edit T1']) {
+    expect(screen.queryByRole('button', { name }) !== null).toBe(offered)
+  }
 })

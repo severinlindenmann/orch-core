@@ -110,6 +110,9 @@ CLICK_OPS = frozenset(
         "task.reopen",
         "task.skip",
         "task.start",
+        "ac.accept",  # R3: vouching for a criterion is as strong as an approval and shown as such ("one click")
+        "ac.unaccept",
+        "task.mark_done",
         "log",
         "ask",
         "claim",

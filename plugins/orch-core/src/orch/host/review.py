@@ -73,6 +73,9 @@ PERSON_AGENT_OPS = frozenset(
 #: one existing person-only F1 event; they are not registry (CLI) ops and not in the frozen grant-verb table
 #: ``EMITS_V1``: a person event is never covered by a grant verb, so no table version changes (H6b).
 HOST_PERSON_OPS: dict[str, frozenset[str]] = {
+    "ac.accept": frozenset({"artifact.added"}),
+    "ac.unaccept": frozenset({"artifact.replaced"}),
+    "task.mark_done": frozenset({"task.done"}),
     "move": frozenset({"ticket.moved"}),
     "policy.set": frozenset({"policy.changed"}),
     "settings.set": frozenset({"settings.changed"}),
@@ -186,6 +189,13 @@ def _sections(event: Mapping[str, Any], material: Mapping[str, Any]) -> dict[str
 def derived(event: Mapping[str, Any], material: Mapping[str, Any]) -> dict[str, Any]:
     """The per-type ``derived`` values of §0.8.1, computed from the event and the material only."""
     typ = event.get("type")
+    if typ in ("artifact.added", "artifact.replaced") and "statement" in material:
+        from . import acceptance
+
+        statement = material["statement"]
+        if not isinstance(statement, str) or not acceptance.matches(dict(event), statement):
+            raise ReviewError("the statement is not the one this event signs")
+        return {"statement": statement}
     if typ in _CERTS:
         return _cert(event, _CERTS[typ])
     if typ in _DECISIONS:

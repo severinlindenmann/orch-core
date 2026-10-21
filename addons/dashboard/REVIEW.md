@@ -659,3 +659,9 @@ search and backlinks endpoints as a viewer. Stage a different page body and conf
 appears. Turn Wiki off and confirm all four endpoints refuse. Compare backlinks as two people with different
 restricted-ticket visibility. The mock UI remains unchanged; frontend integration is a separate task.
 Server regression coverage is in `server/tests/test_wiki.py`; the driver runs it outside the restricted HOME.
+
+### Manual acceptance (2026-10-19)
+
+As a ticket owner/reviewer or workspace owner/maintainer on a live host, open Acceptance: accept a criterion with an optional note, review the host statement, then sign. Withdraw requires a reason. An earlier-wording acceptance offers Accept again. Mark done explains that no criterion is proved and warns when it ends an agent lease. Verify review lists current manual acceptance and stale wording. Check that viewers and unrelated members have no controls, progress follows host coverage, and History names acceptance/withdrawal plainly.
+
+Tests were added for the lead to run; this task does not run Vitest or pytest.

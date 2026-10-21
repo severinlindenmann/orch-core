@@ -2,6 +2,7 @@ import { QueryClientContext } from '@tanstack/react-query'
 import { useContext, type ReactNode } from 'react'
 import type { Workspace } from '@/api/types'
 import type { SignContent as Content } from '@/api/signing'
+import { GATE_LABEL } from '@/api/settings'
 import { Pictures } from './Pictures'
 import { Inline, Prose, Raw } from './visible'
 
@@ -120,11 +121,21 @@ function Shown({ value, members, empty = '—', plain = false }: { value: string
   if (plain && value !== null && !value.includes('\n')) return <Inline>{value}</Inline>
   return <Value>{value ?? empty}</Value>
 }
+/** Host context only. Malformed or unknown entries must never break the signing surface. */
+function cancellationRows(value: unknown): NonNullable<Content['cancels']> {
+  if (!Array.isArray(value) || !value.every(row => row && typeof row === 'object'
+    && Object.keys(row).length === 3 && typeof row.gate === 'string' && Object.hasOwn(GATE_LABEL, row.gate)
+    && typeof row.complete === 'boolean' && Array.isArray(row.people) && row.people.length > 0
+    && row.people.every((p: unknown) => typeof p === 'string' && /^p_[0-9a-f]{32}$/.test(p)))) return []
+  return value
+}
+
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
 export function SignContent({ content, ws, technical }: { content: Content; ws?: string; technical?: ReactNode }) {
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
+  const cancels = cancellationRows(content.cancels)
   const summary = content.summary
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
@@ -133,9 +144,16 @@ export function SignContent({ content, ws, technical }: { content: Content; ws?:
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
-    {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span></li>)}</ul></section>}
+    {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
     {!!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+    {cancels.length > 0 && <section aria-label="Signing cancels">
+      <h3 className="text-[13px] font-medium">Signing cancels:</h3>
+      <ul>{cancels.map((c, i) => <li key={i}>
+        {GATE_LABEL[c.gate as keyof typeof GATE_LABEL]} approval ({c.people.map((p, j) => <span key={j}>{j > 0 ? ', ' : ''}<Inline>{personLabel(p, members)?.name ?? 'Unknown person'}</Inline></span>)}){!c.complete && ' · not yet complete'}
+      </li>)}</ul>
+      <p className="text-[12px] text-text-muted">(per host, not signed)</p>
+    </section>}
     <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
     {(content.ticket || ids.length > 0 || technical) && <details className="space-y-3 text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details</summary>

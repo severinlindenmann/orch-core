@@ -38,6 +38,7 @@ from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
+from .wiki import routes as wiki_routes
 
 
 class LaunchCode(BaseModel):
@@ -244,6 +245,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     usage.register(app, gateway)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
+    wiki_routes.register(app, gateway)
     widget_frame.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 

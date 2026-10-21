@@ -220,3 +220,60 @@ def test_a_consumed_secret_is_still_redacted_in_logs(caplog):  # Codex challenge
     finally:
         caplog.handler.removeFilter(f)
     assert "Q" * 43 not in caplog.text
+
+
+# -- through the link command dispatch (spawn lookup) ---------------------------------------------------------------
+
+
+class _Sup:
+    _spawn_lock = __import__("threading").Lock()
+
+    def __init__(self):
+        self.spawned = []
+
+    def spawn(self, spec):
+        self.spawned.append(spec)
+        return {"pid": 1, "state": "running", "started_at": "x", "duplicate": False}
+
+
+def _link():
+    from pathlib import Path
+
+    from orch.runner.link import HostLink
+
+    link = HostLink(_Sup(), Path("/nonexistent/x.sock"), host_uid=0, gen="g" * 32)
+    link._current = lambda tag: True  # type: ignore[method-assign]
+    return link
+
+
+def _agent_args(grant, run=RUN):
+    from orch.host.launch import LOGIN_EXEC
+
+    return {"run": run, "workspace_id": WS, "kind": "agent", "person": ME, "session": "s_01J0000000000000000000000C",
+            "grant": grant, "argv": ["$SHELL", "-l", "-c", LOGIN_EXEC, "codex", "Run orch status."],
+            "env_names": ["PATH"], "env_fixed": {"ORCH_HARNESS": "codex"}, "cwd": {"path": "/tmp", "dev": 1, "ino": 2},
+            "cols": 80, "rows": 24, "login_shell": True}  # fmt: skip
+
+
+def test_link_dispatch_put_run_then_spawn_consumes_once():
+    from orch.runner.supervise import SpawnError
+
+    link = _link()
+    res = link._run("grant.put_run", {"run": RUN, "workspace_id": WS, "person": ME, "grant": FGID, "secret": FSECRET,
+                                      "until": later()}, 1)  # fmt: skip
+    assert res["run"] == RUN and "secret" not in res
+    assert link._run("spawn", _agent_args(FGID), 1)["state"] == "running"
+    assert link.sup.spawned[0].env["ORCH_GRANT"] == FSECRET
+    with pytest.raises(SpawnError) as e:
+        link._run("spawn", _agent_args(FGID), 1)
+    assert e.value.code == "launch.no_grant" and len(link.sup.spawned) == 1
+
+
+def test_link_person_grant_spawn_is_unchanged_and_ignores_run_slots():
+    link = _link()
+    put_person(link.grants)
+    link._run("grant.put_run", {"run": RUN, "workspace_id": WS, "person": ME, "grant": FGID, "secret": FSECRET,
+                                "until": later()}, 1)  # fmt: skip
+    link._run("spawn", _agent_args(GID), 1)
+    assert link.sup.spawned[0].env["ORCH_GRANT"] == SECRET
+    assert RUN in link.grants._run_slots  # the person spawn did not touch the run slot

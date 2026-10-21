@@ -21,11 +21,17 @@ STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
 ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig")
 TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer is not a request of this host
+#: kind -> (required keys, allowed keys): core signer `_MATERIAL_KEYS` for these kinds (a test keeps them equal)
 MATERIAL_KEYS = {
-    "gate": ({"kind", "gate", "input", "policy", "texts", "ticket", "review"},) * 2,
+    "gate": (
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
+    ),
     "question": ({"kind", "ticket", "question", "review"},) * 2,
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence", "statement"}),
 }
+#: the only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`)
+STATEMENT_OPS = ("ac.accept", "ac.unaccept")
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
 
 
@@ -67,10 +73,21 @@ def expires_ok(value, open_request: bool = True) -> bool:
     return time.time() - 60 < end < time.time() + MAX_LIFE
 
 
+def _manual_row_ok(row) -> bool:
+    return isinstance(row, dict) and set(row) == {"ac", "name", "by"} and all(isinstance(v, str) for v in row.values())
+
+
 def material_keys_ok(material: dict) -> bool:
     """Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1)."""
     keys = MATERIAL_KEYS.get(material.get("kind"))
-    return keys is not None and keys[0] <= set(material) <= keys[1]
+    if keys is None or not keys[0] <= set(material) <= keys[1]:
+        return False
+    if "manual_acceptances" in material:  # host-told rows of a verify gate, closed as the signer closes them
+        manual = material["manual_acceptances"]
+        return (
+            material.get("gate") == "verify" and isinstance(manual, list) and all(_manual_row_ok(row) for row in manual)
+        )
+    return True
 
 
 def review_matches(material: dict, events: list) -> bool:
@@ -113,6 +130,8 @@ def request(
             or not all(isinstance(e, dict) for e in events)
             or not isinstance(material, dict)
             or not material_keys_ok(material)
+            # a statement only on a manual acceptance whose action checks it against what was asked (expect_material)
+            or ("statement" in material and (prepared["op"] not in STATEMENT_OPS or expect_material is None))
             or not review_matches(material, events)
             or (expect_events is not None and not expect_events(events))
             or (expect_material is not None and not expect_material(material, events))

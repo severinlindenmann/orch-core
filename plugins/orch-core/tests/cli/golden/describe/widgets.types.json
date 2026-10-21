@@ -1,0 +1,70 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "widgets.types",
+    "name": "widgets.types",
+    "cli": "orch widgets types",
+    "summary": "List the widget types you may write in a ticket (charts, tables, checks) with a working example of each.",
+    "who": "read",
+    "usage": "orch widgets types",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "List the widget types you may write in a ticket (charts, tables, checks) with a working example of each.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok widgets.types {count}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "shows": {
+                  "type": "string"
+                },
+                "shape": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "shows",
+                "shape",
+                "example"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "count",
+          "types"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

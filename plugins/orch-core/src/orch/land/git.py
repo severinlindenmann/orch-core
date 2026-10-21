@@ -1,7 +1,7 @@
 """Landing's git layer (#596 task 2): the host-owned bare repository, the object import, the deterministic candidate.
 
-This module is the only code that decides **which commit a landing would push**. It never pushes or fetches (task 4's
-``land_push``/``land_fetch``) and never writes a ref an agent or a person owns.
+This module is the only code that decides **which commit a landing would push**. It never pushes or fetches (that is
+:mod:`orch.land.remote`, over ``land_push``/``land_fetch``) and never writes a ref an agent or a person owns.
 
 * **Host-owned bare repository (I6).** Every git process runs through :mod:`orch.gitsafe` (``land_*`` operations of
   :data:`orch.gitsafe.OPS`, a closed set: full object ids only, no free argv; the gate plus
@@ -277,10 +277,10 @@ class LandRepo:
 
     def _run(
         self, op: str, operand: str | tuple[str, ...] | None = None, *, stdin: bytes = b"",
-        env_extra: Mapping[str, str] | None = None, ok: tuple[int, ...] = (0,),
+        env_extra: Mapping[str, str] | None = None, ok: tuple[int, ...] = (0,), net: gitsafe.NetSpec | None = None,
     ) -> tuple[int, bytes]:  # fmt: skip
         try:
-            argv, env = gitsafe.command(self.path, op, self.own, operand=operand, env_extra=env_extra)
+            argv, env = gitsafe.command(self.path, op, self.own, operand=operand, env_extra=env_extra, net=net)
         except gitsafe.Unsafe as e:
             raise LandGitError("land.unsafe", e.reason) from None
         code, out = self._spawn(argv, env, stdin)

@@ -108,6 +108,7 @@ tool) and by ``orch check --staged`` (:mod:`orch.ops.health`). The records tool 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import re
 import signal
@@ -120,8 +121,8 @@ from orch.gitread.refs import branch_ok as _branch_ok  # #561's validator, moved
 
 __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
-    "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env", "land_check",
-    "land_init", "local_config",
+    "NetSpec", "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
+    "land_check", "land_init", "local_config", "target_tracking_ref",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -392,6 +393,9 @@ class Op:
     pins: tuple[str, ...] = ()
     #: the caller's variables this operation may be given on top of :func:`isolated_env` (never anything else)
     env: frozenset[str] = frozenset()
+    #: the operation talks to a remote (Landing's ``land_push``/``land_fetch``, the ONLY two): it needs a
+    #: :class:`NetSpec` and is the only kind that is given one
+    net: bool = False
 
     @property
     def operands(self) -> tuple[str, ...]:
@@ -399,7 +403,7 @@ class Op:
         return tuple(m for a in self.args for m in _SLOT.findall(a))
 
 
-_SLOT = re.compile(r"<(rev|path|context|oid|lref)>")
+_SLOT = re.compile(r"<(rev|path|context|oid|lref|ref|tref|url)>")
 
 #: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
 #: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
@@ -548,6 +552,33 @@ LAND_OPS: dict[str, Op] = {
               "-c", "repack.packKeptObjects=false", "-c", "pack.threads=1"),
     ),  # fmt: skip
     "land_update_ref": Op(("update-ref", "--no-deref", "<lref>", "<oid>")),
+    # what the last fetch left under ``refs/land/target/<sha256 of the full ref>`` (read only; exit 1 = none yet)
+    "land_ref": Op(("rev-parse", "--verify", "--quiet", "--end-of-options", "<tref>^{commit}")),
+    # -- the ONLY two operations with a network (task 4): ssh only, a pinned host key, a deploy key, no agent, no
+    # config (see :class:`NetSpec`). The remote and ref come from signed settings and are checked here, never taken
+    # from the repository's own configuration (``remote.<n>.url`` is not read: the URL is an operand after ``--``).
+    # Fetch brings exactly one branch into ``refs/land/target/...`` (a local ref only this code reads), objects checked
+    # by git's own fsck with the same messages as an import.
+    "land_fetch": Op(
+        ("fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--no-auto-gc",
+         "--no-auto-maintenance", "--no-show-forced-updates", "--no-prune", "--", "<url>", "+<ref>:<tref>"),
+        pins=("-c", "protocol.ssh.allow=always", "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+              "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false",
+              *(a for i in FSCK_ERRORS for a in ("-c", f"fsck.{i}=error"))),
+        net=True,
+    ),  # fmt: skip
+    # Push the candidate to the target branch. NO ``+`` and no ``--force``: ``--force-with-lease=<ref>:<expected>`` is
+    # the exact compare-and-swap on the remote value (Opus F2/#11), and because a lease lifts git's own fast-forward
+    # check, :func:`orch.land.remote.push` asserts ancestry (and :meth:`LandRepo.check_push_shape`) first. ``--atomic``
+    # so nothing else moves; the source is always a full object id (never an empty source, which would delete).
+    "land_push": Op(
+        ("push", "--atomic", "--porcelain", "--no-verify", "--no-signed", "--no-recurse-submodules",
+         "--force-with-lease=<ref>:<oid>", "--", "<url>", "<oid>:<ref>"),
+        pins=("-c", "protocol.ssh.allow=always", "-c", "push.default=nothing", "-c", "push.followTags=false",
+              "-c", "push.gpgSign=false", "-c", "push.negotiate=false", "-c", "push.recurseSubmodules=no",
+              "-c", "gc.auto=0", "-c", "maintenance.auto=false"),
+        net=True,
+    ),  # fmt: skip
 }  # fmt: skip
 
 
@@ -570,12 +601,95 @@ def _check(kind: str, value: object) -> str:
     elif kind == "oid":  # a full object id, never a name: no ref, no ``^``, no range
         if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
             raise Unsafe("invalid object id")
+    elif kind == "ref":  # a target branch: a full ``refs/heads/<name>``, ``<name>`` by git's own ref rules
+        m = re.fullmatch(r"refs/heads/(.+)", value, re.DOTALL)
+        if m is None or not _branch_ok(m.group(1)):
+            raise Unsafe("invalid branch ref")
+    elif kind == "tref":  # where a fetched target lands: ``refs/land/target/<sha256 hex of the full ref name>``
+        if not re.fullmatch(r"refs/land/target/[0-9a-f]{64}", value):
+            raise Unsafe("invalid landing target ref")
+    elif kind == "url":
+        _check_url(value)
     elif kind == "lref":  # the one namespace the landing code writes in its own repository: ``refs/land/<id>``
         if not re.fullmatch(r"refs/land/(?:[0-9a-f]{40}|[0-9a-f]{64})", value):
             raise Unsafe("invalid landing ref")
     elif value.startswith("/") or len(value) > 4096 or ".." in value.split("/"):  # relative to -C <repo>, below it
         raise Unsafe("invalid path")
     return value
+
+
+#: ``ssh://<user>@<host>[:<port>]/<absolute path>``: the one remote shape (an scp-like ``host:path``, ``file://``,
+#: ``http(s)``, ``ext::`` or a plain path never reaches git). No user-info password, no IPv6 literal, no ``..``, a host
+#: that cannot start like an ssh option or a dot.
+_URL = re.compile(
+    r"ssh://[A-Za-z_][A-Za-z0-9_.-]{0,31}@[A-Za-z0-9][A-Za-z0-9.-]{0,252}(?::[0-9]{1,5})?/[A-Za-z0-9._~+/-]{1,1024}"
+)  # fmt: skip
+
+
+def _check_url(value: str) -> None:
+    m = _URL.fullmatch(value)
+    if m is None or ".." in value.split("/") or "//" in value[len("ssh://") :]:
+        raise Unsafe("invalid remote url")
+    port = re.search(r":([0-9]{1,5})/", value.split("@", 1)[1])
+    if port is not None and not 0 < int(port.group(1)) < 65536:
+        raise Unsafe("invalid remote url")
+
+
+def target_tracking_ref(ref: str) -> str:
+    """Where :data:`LAND_OPS` ``land_fetch`` puts the remote branch ``ref`` (``refs/heads/<name>``): a name that is a
+    function of the full ref and never forms a path of its own (a branch name cannot collide, nest or escape)."""
+    _check("ref", ref)
+    return "refs/land/target/" + hashlib.sha256(ref.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+_SAFE_PATH = re.compile(r"/[A-Za-z0-9_./@+=,-]{1,4000}")
+
+
+@dataclass(frozen=True)
+class NetSpec:
+    """What a network operation (``land_fetch``/``land_push``) needs, built by :mod:`orch.land.key` after its custody
+    checks: ``git`` and ``ssh`` (absolute, root-owned executables, never found on a ``PATH``), the deploy ``key`` file
+    and the ``known_hosts`` pin of this one remote. Paths are plain (no space, quote or shell character: they are part
+    of an ssh command line)."""
+
+    git: str
+    ssh: str
+    key: str
+    known_hosts: str
+
+    def __post_init__(self) -> None:
+        for v in (self.git, self.ssh, self.key, self.known_hosts):
+            if not isinstance(v, str) or _SAFE_PATH.fullmatch(v) is None or ".." in v.split("/"):
+                raise Unsafe("invalid network specification")
+
+    def ssh_command(self) -> str:
+        """``GIT_SSH_COMMAND``: built here and nowhere else. ``-F /dev/null`` (no user or system ssh config: no
+        ``ProxyCommand``, ``Include``, ``Match exec``), only this key (``IdentitiesOnly``, no agent), only the pinned
+        host key (strict; no global file; no rewriting the pin; no IP entries), no prompt, no forwarding, no
+        multiplexing, no jump, no local command."""
+        opts = (
+            ("-i", self.key), ("-F", "/dev/null"),
+            ("-o", "IdentitiesOnly=yes"), ("-o", "IdentityAgent=none"),
+            ("-o", f"UserKnownHostsFile={self.known_hosts}"),
+            ("-o", "GlobalKnownHostsFile=/dev/null"), ("-o", "StrictHostKeyChecking=yes"),
+            ("-o", "UpdateHostKeys=no"), ("-o", "CheckHostIP=no"), ("-o", "VerifyHostKeyDNS=no"),
+            ("-o", "BatchMode=yes"), ("-o", "PasswordAuthentication=no"), ("-o", "KbdInteractiveAuthentication=no"),
+            ("-o", "ForwardAgent=no"), ("-o", "ForwardX11=no"), ("-o", "ClearAllForwardings=yes"),
+            ("-o", "ControlMaster=no"), ("-o", "ControlPath=none"), ("-o", "ProxyCommand=none"),
+            ("-o", "ProxyJump=none"), ("-o", "PermitLocalCommand=no"), ("-o", "LocalCommand=none"),
+            ("-o", "CanonicalizeHostname=no"), ("-o", "ConnectTimeout=20"), ("-o", "ServerAliveInterval=15"),
+            ("-o", "ServerAliveCountMax=3"), ("-o", "LogLevel=ERROR"),
+        )  # fmt: skip
+        return " ".join([self.ssh, *(a for pair in opts for a in pair)])
+
+
+def _net_env(net: NetSpec) -> dict[str, str]:
+    """The environment of a network operation on top of :func:`isolated_env`: ssh only, our own ssh command, and a
+    ``PATH`` of the system directories (git finds its helpers next to itself; nothing user-writable)."""
+    return {
+        "GIT_ALLOW_PROTOCOL": "ssh", "GIT_SSH_COMMAND": net.ssh_command(), "GIT_SSH_VARIANT": "ssh",
+        "PATH": "/usr/bin:/bin",
+    }  # fmt: skip
 
 
 def _fill(op: Op, operand: str | tuple[str, ...] | None) -> list[str]:
@@ -598,6 +712,7 @@ def command(
     operand: str | tuple[str, ...] | None = None,
     timeout: float = GATE_SECONDS,
     env_extra: Mapping[str, str] | None = None,
+    net: NetSpec | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
     spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time; none of the person's configuration reaches
@@ -606,6 +721,8 @@ def command(
     spec = OPS.get(op) or LAND_OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")
+    if spec.net != (net is not None):  # a network operation always has its spec, no other operation ever does
+        raise Unsafe("invalid network specification")
     args = _fill(spec, operand)
     extra = dict(env_extra or {})
     if not set(extra) <= spec.env or "GIT_DIR" in extra or any("\0" in v for v in extra.values()):
@@ -616,7 +733,12 @@ def command(
         _land_env_ok(repo, extra)
         extra["GIT_DIR"] = repo  # git never discovers a repository: this one, and no other, no ``.git`` redirection
     entries = _driver_pins(local) if spec.args[0] in ("diff", "diff-tree") else []
-    return _argv(repo, args, spec.pins), {**isolated_env(own, entries), **extra}
+    argv = _argv(repo, args, spec.pins)
+    env = {**isolated_env(own, entries), **extra}
+    if net is not None:
+        argv[0] = net.git
+        env.update(_net_env(net))
+    return argv, env
 
 
 def land_check(repo: str, local: Iterable[tuple[str, str, str]]) -> None:

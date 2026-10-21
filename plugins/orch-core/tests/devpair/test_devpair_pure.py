@@ -596,3 +596,17 @@ def test_down_reports_a_removal_error_instead_of_a_traceback(dp, scratch, monkey
     assert dp.down(str(sb.path), out=lines.append) == 1
     assert any("could not remove" in ln for ln in lines) and sb.path.exists()
     sb.close()
+
+
+@pytest.mark.parametrize(
+    ("prompt", "typed"),
+    [
+        ("Type 8cee1b06/GENESIS and Enter to continue; anything else stops: ", "8cee1b06/GENESIS"),  # genesis pin
+        ("Type ABCD-1234 to continue to the passphrase; anything else stops: ", "ABCD-1234"),
+        ("Type ABCD-1234 to continue (d = details): ", "ABCD-1234"),
+    ],
+)
+def test_review_prompts_are_answered(dp, prompt, typed):
+    ctx = SimpleNamespace(passphrase="pw")
+    typed_back = [r.fn(m) for r in dp.passphrase_responders(ctx) if (m := r.pattern.search(prompt))]
+    assert typed_back == [typed]

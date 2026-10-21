@@ -823,7 +823,10 @@ def passphrase_responders(ctx: Ctx) -> list[Responder]:
         Responder(re.compile(r"Repeat passphrase: "), lambda m: ctx.passphrase),
         Responder(re.compile(r"Passphrase: "), lambda m: ctx.passphrase),
         Responder(
-            re.compile(r"Type (\S+)(?: and Enter)? to continue(?: to the passphrase; anything else stops| \(d = details\)): "),
+            re.compile(
+                r"Type (\S+)(?: and Enter)? to continue"
+                r"(?:(?: to the passphrase)?; anything else stops| \(d = details\)): "
+            ),
             lambda m: (time.sleep(REVIEW_DELAY_S), m.group(1))[1],
         ),  # fmt: skip
     ]

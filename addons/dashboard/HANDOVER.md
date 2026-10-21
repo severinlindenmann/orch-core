@@ -1239,3 +1239,9 @@ The browser opens plain `/setup` and bypasses dashboard shared sessions. `POST /
 Transport is HTTP/1.1 over `<run>/setup.sock`; ownership, peer UID, private parent and socket mode 0600 are checked. Host is exactly `127.0.0.1:<port>` or `localhost:<port>` for setup, POST Origin must match, and only `X-Setup-Token` authorizes setup APIs. Launch/shutdown are never proxied. No events are authored by the dashboard. Both the contract fake and the actual core SetupServer test this boundary.
 
 Integration: `orch-dashboard open /setup` opens the plain path after port ownership verification. `finish` currently returns `{url:"/"}`; the wizard navigates there and forgets its setup token. This does not mint a normal dashboard session. Progress displays optional waiting text and state failures include the core message and a terminal next step. Runner grants are boolean; core supplies GRANT / AGENTS and the terminal fingerprint.
+
+### Manual acceptance (R3, 2026-10-19)
+
+Existing handoff and click prepare endpoints accept `accept_criterion {key, ac, note?}` → `ac.accept {ref, ac, note?}`, `withdraw_acceptance {key, ac, reason}` → `ac.unaccept {ref, ac, reason}`, and `mark_task_done {key, task}` → `task.mark_done {ref, task}`. Notes/reasons are trimmed, bounded to 1000 characters; reasons are required. Prepared events must be one feedback artifact addition, one matching withdrawal replacement, or one matching task completion without a receipt key, respectively. Host authorization and statement verification remain authoritative.
+
+Criteria pass through host proof, accepted metadata and stale flags without changing coverage calculation. Verify forms display manual context from the ticket document. Optional host SignContent manual annotations are supported, but core currently emits only id/text/checked acceptance rows. Task completion reads lack an actor, so the dashboard says “Marked done, no receipt.” No new event types.

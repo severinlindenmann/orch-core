@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
 import { BOARD_ORIGIN } from '../../shell/origin'
 import { toPublicPath } from '@/app/urls'
+import { TicketEditProvider } from './EditTicket'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
@@ -197,7 +198,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const provenCount = ticket.acceptance_state.filter((a) => a.state === 'proven').length
 
   return (
-    <div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
+    <TicketEditProvider ticket={ticket} viewer={viewer}><div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <GatesStrip ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
@@ -266,6 +267,6 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       </div>
 
       <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} onOpenChanges={() => jump({ tab: 'changes' })} onPending={setSignPending} />
-    </div>
+    </div></TicketEditProvider>
   )
 }

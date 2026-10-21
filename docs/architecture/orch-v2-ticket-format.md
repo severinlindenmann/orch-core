@@ -1371,6 +1371,42 @@ sha256, bytes, task, ac, label, actor). There is no separate manifest file that 
   source-list `sha` of its `repo` (or whose `repo` is `null`). Addon artifacts and unattended artifacts are never
   evidence (§12 O6). Both kinds of evidence are bound in the verify gate hash (§5.7).
 
+
+**Manual acceptance (v1).** Person-signed file feedback labelled `accepted AC<n> <hash16>` is manual
+acceptance. `hash16` is the first 16 lowercase hexadecimal digits of SHA-256 over UTF-8
+`"orch.accept.v1\n" + ac_id + "\n" + criterion_text`. A feedback label starting with `accepted ` counts as
+AC evidence only if the complete label parses and both its AC id and hash match the artifact's `ac` and the
+criterion's **current** text. Malformed or stale labels silently do not count. Such a feedback file also counts only
+if its person is a non-viewer member who is the ticket owner, a ticket reviewer, or a workspace owner or maintainer,
+and the ticket was open, in progress or in testing when it was written (the event is admitted, `evidence_ok` is false
+otherwise). A `task.done` of a person never carries a receipt (a bad receipt: receipts are recorded by an agent or the
+host) and is `role.denied` unless the same holds. Other evidence rules
+are unchanged.
+An agent's ordinary file with an acceptance-looking name remains asserted file evidence, never manual acceptance.
+
+The host chooses `accept-AC<n>-<k>.md`, the smallest integer `k >= 1` whose name is unused on the ticket.
+The UTF-8 statement has LF endings and exactly one final LF; each text line is prefixed with `| ` (including
+empty lines, preserving the criterion text verbatim):
+
+```text
+orch manual acceptance v1
+criterion: AC2
+hash: <hash16>
+text:
+| <criterion text line>
+note:
+| <note line>
+```
+
+Omit the entire `note:` block when absent. Notes are normalized under §11.3, 1–1000 characters, with no
+controls except LF. Withdrawal replaces the same artifact with kind `feedback`, label `withdrawn AC2`, no
+`ac`, and `replaces` equal to its current digest. Its statement starts `orch manual acceptance withdrawn v1`
+and uses a mandatory `reason:` block instead of `note:` (same text rules). Stale acceptances can also be
+withdrawn. The signer parses and rebuilds the statement byte for byte and verifies the file digest, byte count,
+exact payload keys, name, label and AC. The artifact event supplies person, time and signing auth; the file cannot
+supply those facts. Both addition and replacement advance verify generation. Editing the criterion invalidates
+its acceptance automatically; readers say “accepted for an earlier wording, no longer counts”.
+
 ## 7. The ticket document (`orch show --json`)
 
 What the dashboard, the relay and the phone read: `ticket.json` merged with state derived from events, and cached in

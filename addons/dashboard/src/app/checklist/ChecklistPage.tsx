@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent,
 import { ArrowLeft, Check, ClipboardCopy, Copy, ImagePlus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { addImage, imageProblem, imageUrl, loadRun, removeImage, saveStep, STATUSES, type StepNotes, type StepStatus, TestrunError, retryable } from '@/api/testrun'
+import { addImage, imageProblem, imageUrl, loadPrevious, loadRun, removeImage, saveStep, STATUSES, type PreviousRun, type StepNotes, type StepStatus, TestrunError, retryable } from '@/api/testrun'
 import { cn } from '@/lib/utils'
 import { copyText } from '../copyLink'
-import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, type ChecklistStep } from './run2'
+import { ALL_STEPS, RUN2_INTRO, RUN2_KNOWN_GAPS, RUN2_REPORT_HELP, RUN2_SECTIONS, RUN2_SUBTITLE, RUN2_TITLE, RUN_ID, RUN_NUMBER, type ChecklistStep } from './run2'
+import { carryFor, dayText, runLabel, stepHash, type Carry } from './carry'
 import { buildReport, emptyNotes, hasNoteOrFailure, isFailure, STATUS_LABEL } from './report'
 
 const SAVE_DELAY = 700
@@ -79,8 +80,10 @@ function StepCard(props: {
   onFlush: () => void
   onFiles: (files: File[]) => void
   onRemove: (name: string) => void
+  carry?: Carry | null
+  onRetest: () => void
 }) {
-  const { step, notes, imagesPath } = props
+  const { step, notes, imagesPath, carry } = props
   const file = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
   const pick = (list: FileList | File[] | null | undefined) => {
@@ -99,6 +102,18 @@ function StepCard(props: {
     setOver(false)
     pick(e.dataTransfer?.files)
   }
+  if (carry?.kind === 'done') {
+    const when = dayText(carry.date)
+    return (
+      <section id={`step-${step.id}`} aria-labelledby={`h-${step.id}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[10px] border border-success/40 bg-success-soft px-3 py-2">
+        <Check className="size-4 text-success" aria-hidden />
+        <span className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-xs text-text">{step.id}</span>
+        <h3 id={`h-${step.id}`} className="text-sm font-medium text-text">{step.title}</h3>
+        <span className="text-xs text-success">Done in {runLabel(carry.run)}{when ? ` (${when})` : ''}</span>
+        <Button type="button" variant="outline" size="xs" className="ml-auto" aria-label={`Test again: ${step.id} ${step.title}`} onClick={props.onRetest}>Test again</Button>
+      </section>
+    )
+  }
   return (
     <section id={`step-${step.id}`} aria-labelledby={`h-${step.id}`} className={cn('rounded-[10px] border bg-surface p-3 sm:p-4', isFailure(notes) ? 'border-danger/60' : 'border-border')}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -106,6 +121,12 @@ function StepCard(props: {
         <h3 id={`h-${step.id}`} className="text-[15px] font-medium text-text">{step.title}</h3>
         {step.optional && <span className="text-xs text-text-muted">(optional)</span>}
       </div>
+      {carry?.kind === 'changed' && (
+        <p role="note" className="mt-2 rounded-md bg-warning-soft px-2.5 py-1.5 text-sm text-text"><span className="font-medium text-warning">Changed since {runLabel(carry.run)}, please test again. </span>You passed an earlier version of this step.</p>
+      )}
+      {carry?.kind === 'context' && (
+        <p role="note" className="mt-2 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-text"><span className="font-medium text-text-muted">In {runLabel(carry.run)}: {STATUS_LABEL[carry.status]}. </span>{carry.note.trim() ? <span className="whitespace-pre-wrap break-words">{carry.note.trim()}</span> : 'No note.'}</p>
+      )}
       {step.text && <p className="mt-2 text-sm text-text">{step.text}</p>}
       {step.points && (
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-text">
@@ -187,6 +208,7 @@ export function ChecklistPage() {
   const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState<Record<string, Saving>>({})
   const [messages, setMessages] = useState<Record<string, string>>({})
+  const [previous, setPrevious] = useState<PreviousRun[]>([])
   const [onlyNotes, setOnlyNotes] = useState(false)
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
   const latest = useRef(notes)
@@ -218,6 +240,11 @@ export function ChecklistPage() {
         })
         setPaths({ path: s.path, images: s.images_path })
         setReady(true)
+        // Passes saved before the step fingerprint existed get it now, so a later run can tell if the step changed.
+        for (const step of ALL_STEPS) {
+          const n = s.notes[step.id]
+          if (n?.status === 'pass' && !n.hash) void saveStep(RUN_ID, step.id, { hash: stepHash(step) }).catch(() => undefined)
+        }
       },
       (e) => {
         if (!live) return
@@ -225,6 +252,7 @@ export function ChecklistPage() {
         setReady(true)
       },
     )
+    loadPrevious(RUN_ID).then((p) => live && setPrevious(p), () => undefined)
     return () => { live = false }
   }, [])
 
@@ -241,8 +269,12 @@ export function ChecklistPage() {
     // One request at a time: a later save of a step never overtakes an earlier one.
     chain.current = chain.current.then(async () => {
       const n = latest.current[id] ?? emptyNotes()
-      const patch: { status?: StepStatus; note?: string } = {}
-      if (fields.has('status')) patch.status = n.status
+      const patch: { status?: StepStatus; note?: string; hash?: string } = {}
+      if (fields.has('status')) {
+        patch.status = n.status
+        const step = ALL_STEPS.find((x) => x.id === id)
+        if (n.status === 'pass' && step) patch.hash = stepHash(step)
+      }
       if (fields.has('note')) patch.note = n.note
       try {
         await saveStep(RUN_ID, id, patch)
@@ -322,14 +354,32 @@ export function ChecklistPage() {
   }
 
   const get = (id: string) => notes[id] ?? emptyNotes()
+  const carries = useMemo(() => {
+    const out: Record<string, Carry> = {}
+    for (const s of ALL_STEPS) {
+      const c = carryFor(s, notes[s.id], previous)
+      if (c) out[s.id] = c
+    }
+    return out
+  }, [notes, previous])
+  const retest = async (id: string) => {
+    setNotes((m) => ({ ...m, [id]: { ...(m[id] ?? emptyNotes()), retest: true } }))
+    try {
+      await saveStep(RUN_ID, id, { retest: true })
+    } catch (e) {
+      setNotes((m) => ({ ...m, [id]: { ...(m[id] ?? emptyNotes()), retest: false } }))
+      setMessages((m) => ({ ...m, [id]: problemText(e) }))
+    }
+  }
   const counts = useMemo(() => {
     const c: Record<StepStatus, number> = { todo: 0, pass: 0, fail_blocking: 0, fail_non_blocking: 0, skipped: 0 }
-    for (const s of ALL_STEPS) c[get(s.id).status]++
+    for (const s of ALL_STEPS) c[carries[s.id]?.kind === 'done' ? 'pass' : get(s.id).status]++
     return c
-  }, [notes])
+  }, [notes, carries])
+  const carriedDone = Object.values(carries).filter((c) => c.kind === 'done').length
   const imagesPath = paths?.images ?? ''
   const copyReport = async () => {
-    setCopied((await copyText(buildReport(notes, imagesPath, paths?.path ?? '(unknown)'))) ? 'ok' : 'fail')
+    setCopied((await copyText(buildReport(notes, imagesPath, paths?.path ?? '(unknown)', carries))) ? 'ok' : 'fail')
     setTimeout(() => setCopied(null), 2500)
   }
 
@@ -364,7 +414,7 @@ export function ChecklistPage() {
         </div>
 
         <section aria-labelledby="gaps" className="mt-3 rounded-[10px] border border-warning/50 bg-warning-soft p-3">
-          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run 3 (expected, do not report as bugs)</h2>
+          <h2 id="gaps" className="text-sm font-semibold text-text">Known gaps in run {RUN_NUMBER} (expected, do not report as bugs)</h2>
           <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-text">
             {RUN2_KNOWN_GAPS.map((g) => <li key={g}>{g}</li>)}
           </ul>
@@ -379,7 +429,7 @@ export function ChecklistPage() {
             ))}
           </nav>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
-            <span>{counts.pass} pass, {counts.fail_blocking + counts.fail_non_blocking} failed, {counts.skipped} skipped, {counts.todo} not yet</span>
+            <span>{counts.pass} pass{carriedDone > 0 ? ` (${carriedDone} done earlier)` : ''}, {counts.fail_blocking + counts.fail_non_blocking} failed, {counts.skipped} skipped, {counts.todo} not yet</span>
             <label className="flex items-center gap-1.5 text-text">
               <input type="checkbox" checked={onlyNotes} onChange={(e) => setOnlyNotes(e.target.checked)} /> Only steps with notes or failures
             </label>
@@ -419,6 +469,8 @@ export function ChecklistPage() {
                       onFlush={() => flush(step.id)}
                       onFiles={(files) => void upload(step.id, files)}
                       onRemove={(name) => void remove(step.id, name)}
+                      carry={carries[step.id]}
+                      onRetest={() => void retest(step.id)}
                     />
                   </div>
                 ))}

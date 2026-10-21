@@ -653,7 +653,7 @@ def test_a_symlinked_workspace_root_says_declare_the_real_path(make_repo, tmp_pa
     os.symlink(tmp_path.resolve() / "real", link)  # like /var -> /private/var on macOS
     host = HostGitReader(ReaderPool(), PinStore())
     caps = Capabilities.host((str(tmp_path.resolve()),), git=host).with_principal("agent-1")
-    path = caps.git.repo_path(Layout.legacy_at(link), {"repo": {"path": "repo"}}, "repo")
+    path = caps.git.repo_path(Layout.new_at(link), {"repo": {"path": "repo"}}, "repo")
     assert str(path) == str(link / "repo")  # joined lexically, never resolved
     res = host.sync([path])
     assert "declare the real path" in res[str(path)]

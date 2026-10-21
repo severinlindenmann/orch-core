@@ -13,25 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from orch import layout as _layout
 from orch.host.registry import registry_path
 from tests.host.lifecycle_helpers import Lab
 from tests.host.test_bootstrap import fresh_root, ok, passphrases, recording, term  # noqa: F401  (fixtures)
 
 pytestmark = [
-    pytest.mark.new_layout,
     pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="Unix host"),
 ]
 
 
 @pytest.fixture
 def lab(tmp_path):
-    # the lab's own seed workspace is a legacy root store; the test itself runs with the shipped default
-    _layout.WRITE_NEW = False
-    try:
-        value = Lab(tmp_path)
-    finally:
-        _layout.WRITE_NEW = True
+    value = Lab(tmp_path)
     try:
         yield value
     finally:
@@ -72,13 +65,11 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
         assert ".orch/AGENTS.orch.md" in (root / "AGENTS.md").read_text()
         assert ".orch/" in (root / ".gitignore").read_text().split("\n")
         entry = h.host.registry.get(wid)
-        assert (
-            entry is not None and entry.store == ".orch" and entry.store_dir == Path(os.path.realpath(root)) / ".orch"
-        )
-        assert '"store":".orch"' in registry_path(lab.state).read_text()
+        assert entry is not None and entry.store_dir == Path(os.path.realpath(root)) / ".orch"
+        assert '"store"' not in registry_path(lab.state).read_text()  # the store is always <root>/.orch
         service = h.host.services[wid]
         assert service.state == "ok", service.cause
-        assert service.store is not None and not service.store.layout.legacy
+        assert service.store is not None and service.store.layout.store.name == ".orch"
         with h.client() as c:
             rows = ok(c.call("host.list"))["data"]["workspaces"]
         assert [(r["workspace_id"], r["state"]) for r in rows] == [(wid, "ok")]

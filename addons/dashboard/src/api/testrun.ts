@@ -10,6 +10,16 @@ export interface StepNotes {
   note: string
   images: string[]
   updated?: string
+  passed_at?: string
+  hash?: string
+  /** The person reopened a step carried over from an earlier run. */
+  retest?: boolean
+}
+
+/** One earlier run, read only: the notes as they were, pictures only counted. */
+export interface PreviousRun {
+  run: string
+  steps: Record<string, { status: StepStatus; note: string; images: number; updated: string | null; passed_at: string | null; hash: string | null }>
 }
 
 export interface TestrunState {
@@ -60,8 +70,13 @@ export async function loadRun(run: string): Promise<TestrunState> {
   return (await (await call('GET', base(run))).json()) as TestrunState
 }
 
+/** The notes of earlier runs (lower run numbers), read only. */
+export async function loadPrevious(run: string): Promise<PreviousRun[]> {
+  return ((await (await call('GET', `${base(run)}/previous`)).json()) as { runs: PreviousRun[] }).runs
+}
+
 /** Saves only the fields that changed; the server merges them into the step it holds (an absent field stays as it is). */
-export async function saveStep(run: string, step: string, patch: { status?: StepStatus; note?: string }): Promise<void> {
+export async function saveStep(run: string, step: string, patch: { status?: StepStatus; note?: string; hash?: string; retest?: boolean }): Promise<void> {
   await call('PUT', `${base(run)}/steps/${encodeURIComponent(step)}`, patch, true)
 }
 

@@ -52,7 +52,7 @@ def b64(obj):
 
 
 def edit_ticket_json(served, uid):
-    path = os.path.join(served.lab.root, "tickets", uid, "ticket.json")
+    path = os.path.join(served.lab.root, ".orch", "tickets", uid, "ticket.json")
     with open(path, "a") as f:
         f.write(" ")
 
@@ -210,7 +210,7 @@ def test_status_verbose_returns_no_host_path_and_handlers_have_only_the_root(ser
     res = ok(served.client().req("status", {"verbose": True}))
     assert str(served.service.state_dir) not in json.dumps(res) and "state_dir" not in res["data"]
     caps = served.service.caps
-    assert caps is not None and [str(r) for r in caps.files.roots] == [served.service.entry.root]
+    assert caps is not None and [str(r) for r in caps.files.roots] == [str(served.service.entry.store_dir)]
     assert "ORCH_STATE_DIR" not in caps.env and "ORCH_WORKSPACE" not in caps.env
     keys = served.service.state_dir / "hosts" / served.wid / "keys"
     with pytest.raises(OSError):
@@ -253,7 +253,7 @@ def test_hosted_doctor_and_check_with_several_ticket_checkpoints(served):
 
     uids = [served.ticket(f"t{i}")[0] for i in range(3)]
     served.restrict(uids[0], [served.lab.owner])
-    cdir = Path(served.lab.root) / ".state" / "checkpoints"
+    cdir = Path(served.lab.root) / ".orch" / ".state" / "checkpoints"
     named = [p for p in cdir.glob("ticket-*.json") if p.stem.removeprefix("ticket-") in uids]
     assert len(named) >= 3
     (cdir / f"ticket-{uids[0]}.json").write_text("{}")  # unreadable: checkpoint.bad

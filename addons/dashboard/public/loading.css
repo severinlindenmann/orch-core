@@ -7,3 +7,5 @@ html, body { margin: 0; background: #0e1014; color: #e8eaed; }
 .boot span { animation: boot-pulse 1.4s ease-in-out infinite; }
 @keyframes boot-pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .boot span { animation: none; } }
+.boot[role="alert"] span { animation: none; max-width: 420px; text-align: center; }
+.boot-retry { font: inherit; color: #e8eaed; background: #1a1d24; border: 1px solid #343944; border-radius: 6px; padding: 8px 14px; cursor: pointer; }

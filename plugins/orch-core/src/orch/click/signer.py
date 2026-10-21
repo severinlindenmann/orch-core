@@ -802,6 +802,12 @@ class ClickSigner:
             raise refused("record_unavailable", f"{exc}; nothing was signed") from None
         if live is not None:
             # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
+            if intent["kind"] == sequence.ADDON:  # no ticket
+                raise refused(
+                    "resumable",
+                    "Turning this add-on on was started from this review and is not finished. Finish it in your "
+                    "terminal (orch sign); nothing is signed here.",
+                )
             key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
             raise refused(
                 "resumable",
@@ -820,12 +826,21 @@ class ClickSigner:
                     held = None
                 name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
                 where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+                if intent["kind"] == sequence.ADDON:  # no ticket: the settings stay and the add-on stays off
+                    where = (
+                        f" {exc.landed} of {exc.total} signatures landed; the settings stay and the add-on stays off."
+                    )
             if exc.resumable:
                 unfinished = where.replace(" stays a draft", " is not finished")
+                if intent["kind"] == sequence.ADDON:  # the last answer was lost: whether it is on is not known
+                    unfinished = (
+                        f" {exc.landed} of {exc.total} signatures landed; whether the add-on is on is not known yet."
+                    )
+                page = "" if intent["kind"] == sequence.ADDON else " or on the ticket page"
                 raise refused(
                     "resumable",
                     f"The host did not confirm the last signature.{unfinished} "
-                    "Finish it in your terminal (orch sign) or on the ticket page; nothing more is signed here.",
+                    f"Finish it in your terminal (orch sign){page}; nothing more is signed here.",
                 ) from None
             raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:

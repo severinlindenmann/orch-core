@@ -108,3 +108,17 @@ def test_stamp_rev_reads_only_a_well_formed_first_line():
     assert stamp_rev("# orch in this project\norch v2.0 (instructions r2) · x") == 2  # r2 sits under the title
     assert stamp_rev("a\nb\nc\norch v2.0 (instructions r2)") is None
     assert stamp_rev("hello") is None and stamp_rev("") is None
+
+
+def test_agents_never_ask_for_a_gate_approval():
+    """R3-C4d: a finished gate reaches the person in Approvals; asking them to approve it is a duplicate."""
+    from orch.instructions.skills import builtin_skills
+
+    text = render_agents_md()
+    assert "Never ask to approve a gate" in text
+    for skill in builtin_skills():
+        body = skill.text.lower()
+        assert "ask the person to review" not in body and "say what and why with `orch ask`" not in body
+    bodies = {s.name: s.text for s in builtin_skills()}
+    assert "Never ask a question" in bodies["orch-refine-ticket"] and "orch wait" in bodies["orch-refine-ticket"]
+    assert "do not ask them to approve or review it" in bodies["orch-tickets"]

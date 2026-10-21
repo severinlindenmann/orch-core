@@ -1,0 +1,4 @@
+exit 3
+--- stdout
+--- stderr
+err transition.refused T1 is done: its verify command and criteria cannot change, because its receipt stands for them; reopen it first · retry:false · next: orch task reopen T1 · fix: orch show

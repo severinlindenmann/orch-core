@@ -60,13 +60,13 @@ def test_a_state_dir_replaced_between_two_lock_takes_never_gives_two_holders(env
     env.new_ticket()
     s.refresh()  # the cached .state fd is the old directory's
     old = tmp_path / "state-old"
-    shutil.copytree(env.root / ".state", old)
-    shutil.rmtree(env.root / ".state")
-    (env.root / ".state").mkdir()
+    shutil.copytree(env.store_dir / ".state", old)
+    shutil.rmtree(env.store_dir / ".state")
+    (env.store_dir / ".state").mkdir()
     for d in os.listdir(old):  # the same content in a new directory (another inode), lock file included
         src = old / d
-        (shutil.copytree if src.is_dir() else shutil.copy2)(src, env.root / ".state" / d)
-    holder = _hold(env.root / ".state" / "lock", tmp_path)  # another writer holds the lock of the new .state
+        (shutil.copytree if src.is_dir() else shutil.copy2)(src, env.store_dir / ".state" / d)
+    holder = _hold(env.store_dir / ".state" / "lock", tmp_path)  # another writer holds the lock of the new .state
     try:
         s._lock.timeout = 0.3
         with pytest.raises(LockTimeout):
@@ -160,7 +160,7 @@ def test_the_index_never_opens_a_sqlite_file(env):
     finally:
         index_mod.sqlite3.connect = real  # type: ignore[assignment]
     assert seen and set(seen) == {":memory:"}
-    names = os.listdir(env.root / ".state")
+    names = os.listdir(env.store_dir / ".state")
     assert "index.sqlite" in names and not [n for n in names if n.startswith("index.sqlite-")]
 
 
@@ -169,7 +169,7 @@ def test_a_symlinked_index_file_is_replaced_never_written_through(env, outside):
     env.new_ticket()
     victim = outside / "victim.db"
     victim.write_bytes(b"precious")
-    idx = env.root / ".state" / "index.sqlite"
+    idx = env.store_dir / ".state" / "index.sqlite"
     if idx.exists():
         idx.unlink()
     os.symlink(victim, idx)
@@ -189,9 +189,9 @@ def test_a_swapped_state_dir_gets_no_index_write_after_close_or_rebuild(env, out
     env.new_ticket()
     s.close()
     monkeypatch.setattr(store_mod, "check_state_dirs", lambda *a, **k: None)  # the swap lands after the check
-    shutil.copytree(env.root / ".state", outside / "state")
+    shutil.copytree(env.store_dir / ".state", outside / "state")
     before = snapshot(outside)
-    swap(env.root / ".state", outside / "state", tmp_path / "state-moved")
+    swap(env.store_dir / ".state", outside / "state", tmp_path / "state-moved")
     with watch(outside) as seen:
         for call in (lambda: s.index.query("SELECT uid FROM tickets"), s.rebuild_index, env.new_ticket):
             try:
@@ -207,7 +207,7 @@ def test_a_corrupt_index_file_is_rebuilt(env):
     s.rebuild_index()
     s.close()
     env.store = None
-    (env.root / ".state" / "index.sqlite").write_bytes(b"not a database")
+    (env.store_dir / ".state" / "index.sqlite").write_bytes(b"not a database")
     s = env.open()
     assert len(s.index.query("SELECT uid FROM tickets")) == 1
     s.close()
@@ -220,7 +220,7 @@ def test_a_corrupt_index_file_is_rebuilt(env):
 def test_a_fifo_at_the_lock_is_validation_path(env):
     env.bootstrap().close()
     env.store = None
-    lock = env.root / ".state" / "lock"
+    lock = env.store_dir / ".state" / "lock"
     lock.unlink()
     os.mkfifo(lock)
     with pytest.raises(StoreError) as e:

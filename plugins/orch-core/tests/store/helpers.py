@@ -31,6 +31,7 @@ class Env:
         self.tmp = tmp_path
         self.root = tmp_path / "workspace"
         self.root.mkdir(parents=True, exist_ok=True)  # Store.open makes no project directory for a reader
+        self.store_dir = self.root / ".orch"
         self.host_state = tmp_path / "host-state"
         self.clock = [clock_start]
         self.host_backend = FileBackend(tmp_path / "wsk")
@@ -48,6 +49,7 @@ class Env:
         kw.setdefault("clock", lambda: self.clock[0])
         kw.setdefault("workspace_name", "Acme")
         kw.setdefault("load", "all")  # the tests of the lazy path say load="lazy"
+        kw.setdefault("create", not self.store_dir.exists())  # a new workspace makes its .orch
         self.store = Store.open(self.root, expected_workspace_id=self.ws_id, **kw)
         return self.store
 
@@ -248,10 +250,10 @@ class Env:
 
     # -- files
     def path(self, uid: str, name: str) -> Path:
-        return self.root / "tickets" / uid / name
+        return self.store_dir / "tickets" / uid / name
 
     def read_events(self, log: str) -> list[dict[str, Any]]:
-        p = self.root / ("events/workspace.jsonl" if log == "workspace" else f"tickets/{log}/events.jsonl")
+        p = self.store_dir / ("events/workspace.jsonl" if log == "workspace" else f"tickets/{log}/events.jsonl")
         return [canon.parse_event_line(line + b"\n") for line in p.read_bytes().splitlines()]
 
 

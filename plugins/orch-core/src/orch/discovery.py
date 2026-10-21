@@ -14,9 +14,10 @@ the paths in a result only name the fds.
 What a candidate is:
 
 * **v2**: ``config.json`` with ``"schema": "orch.workspace/2"`` and a ``workspace`` object with a string ``id``,
-  in the project root (legacy layout) or in ``<project>/.orch/`` (new layout; :mod:`orch.layout`). Both, or a ``.orch``
-  that is not a real directory, is :class:`~orch.layout.LayoutError`, never a fall-through. ``Found.path`` is the
-  project; ``Found.store`` the directory holding the config.
+  in ``<project>/.orch/`` (:mod:`orch.layout`). A config in the project root is a store from an older version: it is
+  found (so the person is told to delete it, the open that follows refuses) but never read as a store. Both, or a
+  ``.orch`` that is not a real directory, is :class:`~orch.layout.LayoutError`, never a fall-through. ``Found.path``
+  is the project; ``Found.store`` the directory holding the config.
 * **v1** (the importer's layout, :func:`orch.importer.v1.find_v1`): a ``tickets/`` directory (by ``lstat`` below the
   fd) and ``config.json`` with ``"schema": 1`` (not a bool) and an ``id`` object. Detected, never opened.
 
@@ -27,7 +28,7 @@ opens something else under the root first checks it is still that directory (:fu
 **Ownership boundary (orch-52), for the implicit walk only** (no ``ORCH_WORKSPACE``), enforced in :func:`_walk` and
 :func:`_level` by ``fstat`` on the exact fds that are then read (never a path lookup between check and read):
 
-* A candidate counts only if its directory (the level itself for a legacy workspace there, its ``.orch/``, or for
+* A candidate counts only if its directory (the level itself for an old-version store there, its ``.orch/``, or for
   v1 its ``orchestrator/``) and its ``config.json`` are owned by the current uid (:func:`_owner`) and are not
   group- or other-writable. A workspace another user planted, or one anyone else could rewrite,
   is not a candidate: the walk goes on past it.
@@ -80,7 +81,8 @@ class Found:
     config: dict[str, Any]
     raw: bytes = b""
     ident: tuple[int, int] | None = None
-    #: v2 found by its fds: project and store (``None``: the legacy layout at ``path``, or found through host ``Files``)
+    #: v2 found by its fds: project and store (``None``: a store from an older version in the root at ``path``, which
+    #: the open that follows refuses, or found through host ``Files``)
     layout: Layout | None = None
     #: v2 found by its fds: what the open that follows must find again (``.orch``'s identity; see :class:`StorePin`)
     store_pin: StorePin | None = None
@@ -92,8 +94,8 @@ class Found:
 
     @property
     def store(self) -> Path:
-        """The directory holding ``config.json``, ``tickets/``, ``.state/`` (legacy: the project itself)."""
-        return self.layout.store if self.layout is not None else self.path
+        """The directory holding ``config.json``, ``tickets/``, ``.state/``."""
+        return self.layout.store if self.layout is not None else self.path / _layout.STORE_DIR
 
 
 def _open_trusted(path: Path) -> int | None:
@@ -187,7 +189,7 @@ def _probe(fd: int, path: Path, *, v2: bool, v1: bool, owned: bool) -> tuple[Fou
     cfg = v2_config(doc) if v2 else None
     ident = (st.st_dev, st.st_ino)
     return (
-        Found(path, False, cfg, raw, ident, None, StorePin(None, owned)) if cfg is not None else None,
+        Found(path, False, cfg, raw, ident) if cfg is not None else None,
         Found(path, True, doc or {}, raw, ident) if v1 and _is_v1(fd, doc) else None,
     )
 
@@ -217,11 +219,13 @@ def _store_probe(fd: int, d: Path, *, owned: bool, start: bool = True) -> Found 
 
 
 def _level(fd: int, d: Path, *, v1_sub: bool, v1: bool, owned: bool, start: bool = True) -> Found | None:
-    """The directory open at ``fd`` (named ``d``): v2 first (the legacy root config or ``.orch/``; both is
+    """The directory open at ``fd`` (named ``d``): v2 first (the old-version root config or ``.orch/``; both is
     :class:`LayoutError`), then v1 (here, else in its ``orchestrator/``, ``O_NOFOLLOW`` from ``fd``). ``owned`` (the
     implicit walk): the candidate rule of the ownership boundary, every check by ``fstat`` on the exact fd that is then
     read (the one place it is enforced, with the stop in :func:`_walk`)."""
-    here2, here1 = _probe(fd, d, v2=True, v1=v1, owned=owned)
+    # a ``config.json`` inside a folder named ``.orch`` is the store of the project above it, never an old-version root
+    # store: the walk goes on up and finds it there (through :func:`_store_probe`, with every check of that path)
+    here2, here1 = _probe(fd, d, v2=d.name != _layout.STORE_DIR, v1=v1, owned=owned)
     # a link/file ``.orch`` next to a legacy config is the double-store case: strict there, as at the start
     new2 = _store_probe(fd, d, owned=owned, start=start or here2 is not None)
     _layout.check_single_store(legacy=here2 is not None, new=new2 is not None)
@@ -323,20 +327,17 @@ def read_config(root: str | os.PathLike[str]) -> dict[str, Any] | None:
     try:
         try:
             found = _layout.resolve(fd, root)
-        except LayoutError:
+        except LayoutError:  # two stores, a linked .orch, a store from an older version: refused by name elsewhere
             return None
         if found is None:
             return None
-        if found.legacy:
-            got = _config_at(fd)
-        else:
-            sfd = _layout.open_store_dir(fd)
-            if sfd is None:
-                return None
-            try:
-                got = _config_at(sfd)
-            finally:
-                os.close(sfd)
+        sfd = _layout.open_store_dir(fd)
+        if sfd is None:
+            return None
+        try:
+            got = _config_at(sfd)
+        finally:
+            os.close(sfd)
         return v2_config(got[0] if got is not None else None)
     except LayoutError:
         return None

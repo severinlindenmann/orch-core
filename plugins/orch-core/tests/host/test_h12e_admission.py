@@ -519,9 +519,9 @@ def test_device_standing_follows_the_f1_log(env, phone):
 
 def _rollback(env: Env, backup: Any) -> None:
     for name in ("events", "tickets", "config.json", "keys.jsonl"):  # logs back, ``.state`` kept
-        target = env.root / name
+        target = env.store_dir / name
         shutil.rmtree(target) if target.is_dir() else target.unlink(missing_ok=True)
-        src = backup / name
+        src = backup / ".orch" / name
         shutil.copytree(src, target) if src.is_dir() else shutil.copy(src, target)
 
 

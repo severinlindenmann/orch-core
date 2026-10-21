@@ -125,7 +125,7 @@ class Ws(Env):
         return self.view(ref).uid
 
     def ticket_json(self, ref: str) -> dict[str, Any]:
-        return json.loads((self.root / "tickets" / self.uid(ref) / "ticket.json").read_text())
+        return json.loads((self.store_dir / "tickets" / self.uid(ref) / "ticket.json").read_text())
 
     def events(self, ref: str) -> list[dict[str, Any]]:
         return self.read_events(self.uid(ref))

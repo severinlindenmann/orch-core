@@ -131,6 +131,10 @@ _SET = {
 }
 
 
+#: the schema of ``settings.set``'s ``set`` (the add-on sequence validates its settings with it)
+SET_SCHEMA = _SET
+
+
 class _PersonCall(Call):
     """A :class:`~orch.ops.runtime.Call` for an op that is not in the registry: the declared error codes come from
     :data:`OPS`, not from ``orch.ops.get`` (these ops are deliberately not CLI commands)."""
@@ -203,18 +207,35 @@ def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
 
 
 def _routing_on(h: Human) -> bool:
-    from orch.addons.install import as_addons
+    from orch.addons import settings_needs
 
-    found = as_addons(h.store.state.workspace.addons).get("model-routing")
-    return found is not None and found.enabled and not found.purged
+    return settings_needs.is_on(h.store.state.workspace.addons, "model-routing")
+
+
+def _enabling_routing(ctx: Context) -> bool:
+    """Is this the first step of the signer's ``addon_enable`` sequence for Model routing? Then the table is set before
+    the add-on is turned on (the sequence's next step); ``check_meta`` made the op and args the intent's."""
+    seq = getattr(ctx.prepare, "sequence", None)
+    return (
+        isinstance(seq, dict)
+        and seq.get("step") == 0
+        and isinstance(seq.get("intent"), dict)
+        and seq["intent"].get("kind") == "addon_enable"
+        and seq["intent"].get("name") == "model-routing"
+    )
 
 
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
+    from orch.addons import settings_needs
+
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
-    if changes.get("models") is not None and not _routing_on(h):
+    if changes.get("models") is not None and not _routing_on(h) and not _enabling_routing(ctx):
         raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
+    refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings
+    if refusal is not None:
+        raise OrchError("invalid.input", refusal)
     for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
         if spec is not None:
             try:

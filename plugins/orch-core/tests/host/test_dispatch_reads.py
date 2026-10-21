@@ -118,6 +118,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"ref": ref, "timeout": 1}
     if op in DASHBOARD_READS:  # H6b: not registry ops, so no registry schema to read the arguments from
         return DASHBOARD_READS[op](ref)
+    if op == "addon.preview":  # names an add-on, never a ticket (a built-in one, so that every call answers)
+        return {"name": "usage"}
     if op == "diff":  # through Viewer.ticket, then Viewer.linked_repo
         return {"ref": ref}
     if op == "artifact.get":  # H4a2: through Viewer.ticket, then Viewer.artifact
@@ -126,6 +128,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"offset": 0, "b64": "", "last": False, "size": 1, "upload_key": "a_01J9ZP0000000000000000000B"}
     if op == "blob.drop":
         return {"blob": "b_" + "A" * 26}
+    if op == "workdir.get":  # r3 part C: names a ticket by `ticket`
+        return {"ticket": ref}
     if op in RECORDS_ARGS:  # H11e: the records ops name no ticket
         return RECORDS_ARGS[op]
     if op == "grant.deposit_status":  # H11c: names a deposit, never a ticket

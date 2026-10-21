@@ -12,7 +12,7 @@ def claimed(cli):
 
 
 def stored(ws, name):
-    return (ws.root / "tickets" / ws.uid("1") / "artifacts" / name).read_bytes()
+    return (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / name).read_bytes()
 
 
 def test_artifact_add_stores_the_file_and_is_evidence_for_its_criterion(ws, cli, tmp_path):

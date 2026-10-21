@@ -34,8 +34,12 @@ class _Unlocked:
 
 def labels_for(intent: Mapping[str, Any]) -> tuple[bytes, ...]:
     """The domain labels the reviewed intent's steps need, and no more: a ticket event's label for every step on the
-    ticket, the workspace event's label only when a step is the grant (``grant.issued`` is a workspace event)."""
-    names = ["sig_ws_event" if s["kind"] == "grant" else "sig_ticket_event" for s in sequence.steps(intent)]
+    ticket, the workspace event's label only when a step is on the workspace log: the grant (``grant.issued``) or a step
+    that names ``log: "workspace"`` (the settings and add-on events of ``addon_enable``)."""
+    names = [
+        "sig_ws_event" if s["kind"] == "grant" or s.get("log") == "workspace" else "sig_ticket_event"
+        for s in sequence.steps(intent)
+    ]
     return tuple(canon.LABELS[n].encode("ascii") for n in dict.fromkeys(names))
 
 
@@ -104,11 +108,14 @@ def sign_sequence(
         review = signer.plain(prepared, workspace, prefix=prefix, members=signer.members_of(call))
         if resumed is not None:
             n = sum(1 for s in resumed["steps"] if s["state"] == "landed")
-            note = (
-                f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
-                f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
-                f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
-            )
+            if resumed["ticket"] is None:  # a sequence on the workspace log (turning on an add-on): no ticket
+                note = f"RESUMING: {n} of {driver.total} signatures of this exact review are already signed.\n\n"
+            else:
+                note = (
+                    f"RESUMING: {n} of {driver.total} signatures of this exact review are already in the ticket "
+                    f"{signer._clean(resumed['ticket']['key'])} (key per host; signed id "
+                    f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
+                )
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):
             signer._refuse("not confirmed")
@@ -121,7 +128,7 @@ def sign_sequence(
     box: dict[str, Any] = {}
     fields = (
         ("signatures", str(driver.total)),
-        ("ticket title", sequence.label_of(intent)),
+        ("add-on" if intent["kind"] == sequence.ADDON else "ticket title", sequence.label_of(intent)),
         ("workspace", workspace_id),
     )
     with unlocked_backend(

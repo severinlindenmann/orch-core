@@ -4,7 +4,10 @@
 
 import { ADDON_SECTIONS } from './addons'
 
+// FLIP AT THE NEXT PIN: change this one value to 'run4' (the whole page, the server path and "Done in run N" follow it).
+// Steps passed in earlier runs are then carried over (see carry.ts); the step texts below may stay or be edited.
 export const RUN_ID = 'run3'
+export const RUN_NUMBER = Number(RUN_ID.slice(3))
 
 export interface ChecklistStep {
   id: string

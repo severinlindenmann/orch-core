@@ -160,7 +160,7 @@ def test_the_agents_git_environment_does_not_choose_the_repository(ws, cli, tmp_
     r = cli("task", "done", "T1", "--run", GIT_DIR=str(other / ".git"), GIT_WORK_TREE=str(other), GIT_INDEX_FILE="/x")
     assert r.code == 0, r.err
     assert ws.events("1")[-1]["receipt"]["commit"] == head
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
     assert "[]" in log  # the verify command saw no GIT_* variable
 
 
@@ -188,7 +188,7 @@ def test_the_verify_environment_is_an_allow_list(ws, cli, monkeypatch):
     )
     r = cli("task", "done", "T1", "--run", ORCH_STATE_DIR=str(ws.host_state))
     assert r.code == 0, r.err
-    log = (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
+    log = (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text()
     assert log.strip() == "[]"  # no ORCH_*, no SSH_AUTH_SOCK, DATABASE_URL, tokens, keys; LC_* and PATH only
 
 
@@ -201,7 +201,7 @@ def test_only_task_done_run_makes_a_receipt(ws, cli, tmp_path):
     assert cli.j("artifact", "add", str(f), "--kind", "receipt").err_code == "usage"  # not a kind of `add`
     r = cli.j("artifact", "replace", "T1-receipt.log", str(f))
     assert (r.code, r.err_code) == (5, "invalid.input") and "receipt" in r.doc["error"]["message"]
-    assert (ws.root / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip() == "1"
+    assert (ws.store_dir / "tickets" / ws.uid("1") / "artifacts" / "T1-receipt.log").read_text().strip() == "1"
 
 
 def test_the_model_refuses_a_receipt_that_is_replaced_or_has_no_task(ws, cli):

@@ -261,3 +261,73 @@ def test_a_symlinked_state_dir_still_saves_but_a_symlinked_testrun_is_refused(tm
     (real / "dashboard" / "testrun").symlink_to(real / "dashboard" / "moved")
     with pytest.raises(Exception):  # noqa: B017, PT011  (HostError invalid.input)
         store.load("run2")
+
+
+H16 = "0123456789abcdef"
+
+
+def test_previous_runs_are_read_only_and_lower_numbers_only(client, h, gateway):
+    assert put(client, h, step="A1", status="pass", note="ok", run="run3").status_code == 200
+    assert client.put("/api/testrun/run3/steps/A1", json={"hash": H16}, headers=h).status_code == 200
+    put(client, h, step="A2", status="fail_blocking", note="broke", run="run3")
+    put(client, h, step="A1", status="pass", note="newer", run="run5")
+    before = sorted(str(p) for p in (gateway.state / "dashboard" / "testrun").rglob("*"))
+    out = client.get("/api/testrun/run4/previous", headers=h).json()
+    assert [r["run"] for r in out["runs"]] == ["run3"]
+    a1 = out["runs"][0]["steps"]["A1"]
+    assert a1["status"] == "pass" and a1["hash"] == H16 and a1["passed_at"] and a1["note"] == "ok"
+    assert out["runs"][0]["steps"]["A2"]["status"] == "fail_blocking"
+    assert before == sorted(str(p) for p in (gateway.state / "dashboard" / "testrun").rglob("*"))
+    assert not (gateway.state / "dashboard" / "testrun" / "run4").exists()
+    assert client.get("/api/testrun/run3/previous", headers=h).json() == {"runs": []}
+
+
+def test_previous_needs_a_session_and_a_valid_run(client, h):
+    assert client.get("/api/testrun/run4/previous", headers={"Origin": ORIGIN}).status_code == 401
+    for run in ("run", "run1234", "../x", "RUN3", "run3x"):
+        assert client.get(f"/api/testrun/{run}/previous", headers=h).status_code in (400, 404, 422)
+
+
+def test_previous_ignores_odd_directories_symlinks_and_corrupt_runs(client, h, gateway, tmp_path):
+    put(client, h, step="A1", status="pass", run="run1")
+    root = gateway.state / "dashboard" / "testrun"
+    (root / "run2").mkdir()
+    (root / "run2" / "notes.json").write_text("{not json")
+    (root / "notes-run").mkdir()
+    (root / "run0x").mkdir()
+    (root / "run0x" / "notes.json").write_text(json.dumps({"steps": {"A1": {"status": "pass"}}}))
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "notes.json").write_text(json.dumps({"steps": {"A1": {"status": "pass", "note": "secret"}}}))
+    os.symlink(outside, root / "run3")
+    out = client.get("/api/testrun/run9/previous", headers=h).json()
+    assert [r["run"] for r in out["runs"]] == ["run1"]
+
+
+def test_previous_drops_malformed_rows_and_bad_hashes(client, h, gateway):
+    put(client, h, step="A1", status="pass", run="run1")
+    path = gateway.state / "dashboard" / "testrun" / "run1" / "notes.json"
+    doc = json.loads(path.read_text())
+    doc["steps"]["A1"]["hash"] = "<script>"
+    doc["steps"]["bad id"] = {"status": "pass"}
+    doc["steps"]["A2"] = {"status": "weird"}
+    doc["steps"]["A3"] = "text"
+    path.write_text(json.dumps(doc))
+    steps = client.get("/api/testrun/run2/previous", headers=h).json()["runs"][0]["steps"]
+    assert list(steps) == ["A1"] and steps["A1"]["hash"] is None
+
+
+def test_pass_date_is_kept_and_cleared_when_no_longer_pass(client, h):
+    put(client, h, step="A1", status="pass", run="run3")
+    first = client.get("/api/testrun/run4/previous", headers=h).json()["runs"][0]["steps"]["A1"]["passed_at"]
+    put(client, h, step="A1", status="pass", note="more", run="run3")
+    assert client.get("/api/testrun/run4/previous", headers=h).json()["runs"][0]["steps"]["A1"]["passed_at"] == first
+    put(client, h, step="A1", status="fail_blocking", run="run3")
+    assert client.get("/api/testrun/run4/previous", headers=h).json()["runs"][0]["steps"]["A1"]["passed_at"] is None
+
+
+def test_hash_retest_only_bodies_and_bad_hash(client, h):
+    assert client.put("/api/testrun/run4/steps/A1", json={"retest": True}, headers=h).status_code == 200
+    assert client.get("/api/testrun/run4", headers=h).json()["notes"]["A1"]["retest"] is True
+    for bad in ({"hash": "XYZ"}, {"hash": "0123456789ABCDEF"}, {"retest": "yes"}, {}):
+        assert client.put("/api/testrun/run4/steps/A1", json=bad, headers=h).status_code in (400, 422)

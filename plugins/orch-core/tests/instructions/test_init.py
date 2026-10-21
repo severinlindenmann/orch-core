@@ -36,7 +36,7 @@ def tree(root: Path) -> set[str]:
 
 
 def config(where) -> dict:
-    return json.loads((where["root"] / "config.json").read_text())
+    return json.loads((where["root"] / ".orch" / "config.json").read_text())
 
 
 def workspace_id(where) -> str:
@@ -55,15 +55,15 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
     assert cfg["schema"] == "orch.workspace/2" and cfg["workspace"]["prefix"] == "DEMO"
     assert cfg["workspace"]["name"] == "work" and cfg["members"][0]["name"] == "Severin"
     assert cfg["members"][0]["role"] == "owner"
-    assert (root / "keys.jsonl").read_bytes() == b""
-    assert (root / "events" / "workspace.jsonl").read_bytes().count(b"\n") == 1
+    assert (root / ".orch" / "keys.jsonl").read_bytes() == b""
+    assert (root / ".orch" / "events" / "workspace.jsonl").read_bytes().count(b"\n") == 1
     # the pin and the keys are in the state dir, the keys are private
     assert (sd / "hosts" / wid / "genesis").read_text().startswith("sha256:")
     assert (sd / "hosts" / wid / "keys" / "wsk.filekey.json").stat().st_mode & 0o077 == 0
     assert (sd / "hosts" / wid / "person" / "dk.key.json").stat().st_mode & 0o077 == 0
     # the instruction files
     for rel in (
-        "AGENTS.orch.md",
+        ".orch/AGENTS.orch.md",
         "AGENTS.md",
         "CLAUDE.md",
         ".gitignore",
@@ -76,7 +76,7 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
         assert (root / rel).is_file(), rel
     assert "@AGENTS.md" in (root / "CLAUDE.md").read_text().split("\n")
     assert "<!-- orch:begin -->" in (root / "AGENTS.md").read_text().split("\n")
-    assert ".state/" in (root / ".gitignore").read_text().split("\n")
+    assert ".orch/" in (root / ".gitignore").read_text().split("\n")
     assert res.hints and res.hints[0].startswith("orch grant")
 
 
@@ -119,7 +119,7 @@ def test_a_passphrase_of_the_persons_own_is_asked_twice_and_checked(where, term,
     term.final = OWN
     run_init(where)
     assert "Not accepted" in term.text and term.asked.count("Repeat your passphrase: ") == 1
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
 
 
 def test_a_passphrase_that_differs_the_second_time_is_not_taken(where, term, passphrases):
@@ -292,13 +292,6 @@ def test_refuses_when_a_workspace_exists_here_or_above(where, term, passphrases)
     assert {p: p.read_bytes() for p in where["root"].rglob("*") if p.is_file()} == snapshot
 
 
-def test_refuses_a_directory_with_workspace_leftovers(where, term, passphrases):
-    (where["root"] / "events").mkdir()
-    with pytest.raises(OrchError) as e:
-        run_init(where)
-    assert e.value.code == "invalid.input" and not where["state"].exists()
-
-
 def test_refuses_a_state_directory_inside_the_workspace(where, term, passphrases):
     with pytest.raises(OrchError) as e:
         run_init(where, ORCH_STATE_DIR=str(where["root"] / "keys-here"))
@@ -325,7 +318,7 @@ def test_a_failed_genesis_leaves_no_files_and_a_second_try_works(where, term, pa
     assert tree(where["root"]) == set()
     assert not (where["state"] / "hosts").exists() or not list((where["state"] / "hosts").iterdir())
     run_init(where)
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
 
 
 def test_existing_agents_and_claude_files_are_extended_not_replaced(where, term, passphrases):
@@ -334,9 +327,9 @@ def test_existing_agents_and_claude_files_are_extended_not_replaced(where, term,
     (where["root"] / ".gitignore").write_text("node_modules/\n")
     run_init(where)
     a = (where["root"] / "AGENTS.md").read_text()
-    assert a.startswith("# Repo rules\nBe kind.\n") and "AGENTS.orch.md" in a
-    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n@AGENTS.orch.md\n"
-    assert (where["root"] / ".gitignore").read_text() == "node_modules/\n.state/\n"
+    assert a.startswith("# Repo rules\nBe kind.\n") and ".orch/AGENTS.orch.md" in a
+    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n"
+    assert (where["root"] / ".gitignore").read_text() == "node_modules/\n.orch/\n"
 
 
 def test_no_production_path_skips_the_prompts():
@@ -402,22 +395,10 @@ def test_a_second_init_in_the_same_directory_is_refused_and_deletes_nothing(wher
         os.close(fd)
 
 
-def test_init_names_a_project_file_under_a_store_name_and_writes_nothing(where, term, passphrases):
-    # finding B11-2: a project's own config.json is not "a workspace"; it is named, and nothing is written
-    (where["root"] / "config.json").write_text('{"name": "my-app"}')
-    (where["root"] / "events").mkdir()
-    with pytest.raises(OrchError) as e:
-        run_init(where)
-    assert e.value.code == "invalid.input" and "workspace already exists" not in e.value.message
-    assert "already has its own config.json, events/" in e.value.message and not term.shown
-    assert sorted(p.name for p in where["root"].iterdir()) == ["config.json", "events"]
-    assert (where["root"] / "config.json").read_text() == '{"name": "my-app"}'
-
-
 def test_a_stale_init_lock_does_not_block_init(where, term, passphrases):
     (where["root"] / wi.LOCK_DIR).write_text("")  # a crashed init's lock file: the flock decides, not the name
     run_init(where)
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
 
 
 def test_the_lock_is_released_after_success_and_after_failure(where, term, passphrases):
@@ -453,7 +434,7 @@ def test_a_killed_init_leaves_no_lock_that_blocks_the_next_one(where, term, pass
     time.sleep(0.1)
     assert (where["root"] / wi.LOCK_DIR).exists()  # the stale file is still there ...
     run_init(where)  # ... and blocks nothing
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
 
 
 def test_sigterm_is_turned_into_an_interrupt_during_init():
@@ -496,7 +477,7 @@ def test_a_failure_writing_the_instruction_files_keeps_the_workspace_and_says_so
     res = run_init(where)
     text = "\n".join(res.lines)
     assert "WORKSPACE CREATED" in text and "read-only file system" in text and "orch instructions sync" in text
-    assert (where["root"] / "config.json").is_file() and res.seq == 1
+    assert (where["root"] / ".orch" / "config.json").is_file() and res.seq == 1
 
 
 def test_a_kept_workspace_skill_is_announced(where, term, passphrases):
@@ -521,7 +502,7 @@ def outside(tmp_path) -> Path:
     return p
 
 
-@pytest.mark.parametrize("name", ["AGENTS.md", "CLAUDE.md", ".gitignore", "AGENTS.orch.md"])
+@pytest.mark.parametrize("name", ["AGENTS.md", "CLAUDE.md", ".gitignore"])
 def test_init_refuses_a_symlinked_file_and_copies_nothing(where, term, passphrases, tmp_path, name):
     out = outside(tmp_path)
     (where["root"] / name).symlink_to(out / "secret.txt")
@@ -552,7 +533,7 @@ def test_a_planted_temp_name_is_never_followed(where, term, passphrases, tmp_pat
         (where["root"] / f".AGENTS.orch.md.tmp{pid}").symlink_to(out / "secret.txt")
     run_init(where)
     assert (out / "secret.txt").read_text() == "TOP SECRET\n"
-    assert not (where["root"] / "AGENTS.orch.md").is_symlink()
+    assert not (where["root"] / ".orch" / "AGENTS.orch.md").is_symlink()
 
 
 def test_sync_refuses_to_write_through_a_symlink(where, term, passphrases, tmp_path):
@@ -560,8 +541,8 @@ def test_sync_refuses_to_write_through_a_symlink(where, term, passphrases, tmp_p
 
     run_init(where)
     out = outside(tmp_path)
-    (where["root"] / "AGENTS.orch.md").unlink()
-    (where["root"] / "AGENTS.orch.md").symlink_to(out / "secret.txt")
+    (where["root"] / ".orch" / "AGENTS.orch.md").unlink()
+    (where["root"] / ".orch" / "AGENTS.orch.md").symlink_to(out / "secret.txt")
     e, o = io.StringIO(), io.StringIO()
     code = main(
         ["instructions", "sync"],
@@ -585,7 +566,7 @@ def test_init_through_main_with_the_cli_deciding_presence(where, term, passphras
     code = main(["init", "--prefix", "DEMO", "--name", "Severin"], env=env, stdout=out, stderr=err)
     assert code == 0 and out.getvalue().startswith("ok init DEMO seq=1"), out.getvalue() + err.getvalue()
     assert term.code not in out.getvalue() + err.getvalue()
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
     code = main(["init", "--prefix", "DEMO"], env=env, stdout=io.StringIO(), stderr=err)
     assert code == 5 and "already exists" in err.getvalue()
     env["ORCH_GRANT"] = "gr_01J9ZP0000000000000000000A." + "A" * 43
@@ -604,7 +585,7 @@ def test_a_huge_file_is_refused_not_truncated(where, term, passphrases, name):
     (where["root"] / name).write_text(big)
     res = run_init(where)
     assert (where["root"] / name).read_text() == big  # never rewritten from a partial read
-    assert "larger than 1 MiB" in "\n".join(res.lines) and (where["root"] / "config.json").is_file()
+    assert "larger than 1 MiB" in "\n".join(res.lines) and (where["root"] / ".orch" / "config.json").is_file()
 
 
 def test_a_relative_state_dir_is_made_absolute(tmp_path, monkeypatch):
@@ -682,7 +663,7 @@ def test_two_processes_one_killed_midway_then_a_second_runs(where, term, passphr
     child.wait()
     # SIGTERM rolled everything back; SIGKILL left the stale lock file: it blocks nothing
     run_init(where)
-    assert (where["root"] / "config.json").is_file()
+    assert (where["root"] / ".orch" / "config.json").is_file()
     assert not list(where["state"].glob("hosts/*/" + wi.MARKER))
     assert len(list((where["state"] / "hosts").iterdir())) == 1  # the dead init's keys were swept, ours remain
 

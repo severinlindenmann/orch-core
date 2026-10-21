@@ -42,7 +42,7 @@ def test_a_ref_that_names_no_object_is_reported_not_signed(ws, cli):
 
 def test_malformed_notes_never_crash_and_are_reported(ws, cli):
     claimed(cli)
-    p = next((ws.root / ".state" / "sessions").glob("*.notes.json"))
+    p = next((ws.store_dir / ".state" / "sessions").glob("*.notes.json"))
     doc = json.loads(p.read_text())
     uid = next(iter(doc["tickets"]))
     for bad in ({"decided": "x"}, {"cursor": [1]}, {"base": "no"}, {"decided": -4, "cursor": True}):
@@ -58,19 +58,20 @@ def test_malformed_notes_never_crash_and_are_reported(ws, cli):
 def test_notes_keep_claims_and_unread_decisions_past_the_limit(ws, cli):
     from orch.ops.runtime import Notes
 
-    n = Notes(ws.root / ".state" / "sessions", "s_01J9ZP0000000000000000000S", Files.direct())
+    n = Notes(ws.store_dir / ".state" / "sessions", "s_01J9ZP0000000000000000000S", Files.direct())
     n.add_claim("CLAIMED")
     n.update("CLAIMED", now=1)
     n.update("UNREAD", now=2, keep=True)
     for i in range(150):
         n.update(f"T{i}", now=10 + i)
-    doc = json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())
+    doc = json.loads(next((ws.store_dir / ".state" / "sessions").glob("*.notes.json")).read_text())
     assert "CLAIMED" in doc["tickets"] and "UNREAD" in doc["tickets"] and len(doc["tickets"]) <= Notes.KEEP
     n.update("UNREAD", now=3, decided=5, keep=False)
     for i in range(150):
         n.update(f"U{i}", now=500 + i)
     assert (
-        "UNREAD" not in json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())["tickets"]
+        "UNREAD"
+        not in json.loads(next((ws.store_dir / ".state" / "sessions").glob("*.notes.json")).read_text())["tickets"]
     )
 
 

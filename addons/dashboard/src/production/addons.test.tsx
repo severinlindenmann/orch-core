@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { AddOnRow, AddOnsData } from '@/api/addOnSwitches'
@@ -83,4 +83,15 @@ it('only an owner can change a switch', async () => {
   await open()
   expect(screen.getByRole('switch', { name: 'Worktrees' })).toBeDisabled()
   expect(screen.getAllByText('Only owners can change add-ons.').length).toBeGreaterThan(0)
+})
+
+it('an add-on with settings says what it needs while Off; the toggle still opens the normal review (no two-step flow yet)', async () => {
+  state.host.workspaces[0].addOns = data([row({ id: 'publish', title: 'Publish' }), row({ id: 'model-routing', title: 'Model routing' }), row({ id: 'worktrees', title: 'Worktrees' })])
+  await open()
+  expect(screen.getByTestId('addon-publish-needs')).toHaveTextContent('Needs a publish server address')
+  expect(screen.getByTestId('addon-model-routing-needs')).toHaveTextContent('Needs nothing')
+  expect(screen.queryByTestId('addon-worktrees-needs')).toBeNull() // a plain add-on has no settings line
+  expect(screen.queryByTestId('addon-publish-expand')).toBeNull() // nothing to open while Off
+  await userEvent.setup().click(screen.getByRole('switch', { name: 'Publish' }))
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)
 })

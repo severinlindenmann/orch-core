@@ -525,6 +525,8 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
+  // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
@@ -535,7 +537,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', profile)
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -762,15 +764,58 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
+                          // ticking Worktrees again asks the git question again
+                          ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
                     />
                   </label>
                   ),
                 )}
+              {offersGit && (
+                <div className="note" role="group" aria-label="Git repository">
+                  <p>
+                    <strong>This folder is not a git repository.</strong> Worktrees need one.
+                  </p>
+                  <label className="toggle">
+                    <span>
+                      <strong>Make it a git repository</strong>
+                      <small>
+                        Runs git init and keeps orch’s own folders out of git. None of your files is committed.
+                      </small>
+                    </span>
+                    <input
+                      type="radio"
+                      name="git"
+                      checked={profile.git_init === true}
+                      onChange={() => update({ git_init: true })}
+                    />
+                  </label>
+                  <label className="toggle">
+                    <span>
+                      <strong>Continue without worktrees</strong>
+                      <small>Each ticket gets its own work folder instead.</small>
+                    </span>
+                    <input
+                      type="radio"
+                      name="git"
+                      checked={profile.git_init === false}
+                      onChange={() =>
+                        update({ git_init: false, addons: profile.addons.filter((id) => id !== 'worktrees') })
+                      }
+                    />
+                  </label>
+                </div>
+              )}
               <footer>
                 <button onClick={() => setStep(1)}>Back</button>
-                {next(3)}
+                {offersGit && profile.git_init === undefined ? (
+                  <button className="primary" disabled>
+                    Choose above to continue →
+                  </button>
+                ) : (
+                  next(3)
+                )}
               </footer>
             </>
           )}

@@ -126,6 +126,9 @@ class FakePorts:
     def install_addon(self, root: Path, name: str, raw: bytes) -> None:
         self.log.append(("install_addon", name))
 
+    def git_init(self, root: Path) -> None:
+        self.log.append(("git_init", str(root)))
+
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None:
         self.log.append(("runner_enable", terminals))
         if self.fail_runner:

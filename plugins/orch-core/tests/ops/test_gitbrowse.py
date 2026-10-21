@@ -487,3 +487,21 @@ def test_parse_tree_drops_malformed_records():
         ("040000", "tree", None, "sub"),
     ]
     assert gitbrowse.parse_tree(b"garbage\0100644 blob xyz 1\tb\0") == []
+
+
+def test_tree_grep_searches_the_committed_files_below_the_folder_only(world):
+    _wiki(world)
+    (world.repo / "wiki" / "beta.md").write_text("# Beta\nstaged-only NEEDLE\n")
+    world.git(world.repo, "add", "wiki/beta.md")  # in the index, not committed
+    (world.repo / "wiki" / "alpha.md").write_text("# Alpha\nworktree-only NEEDLE\n")  # not even staged
+    (world.repo / "a.txt").write_text("outside NEEDLE\n")
+    world.git(world.repo, "commit", "-q", "-m", "outside", "a.txt", n=7)
+    (world.repo / "wiki" / "sub" / "deep.md").write_text("deep NEEDLE\n")
+    rows = gitbrowse.parse_grep(world.run("tree_grep", "more", "HEAD", "wiki").out)
+    assert [(p.partition(":")[2], n, t) for p, n, t in rows] == [("wiki/alpha.md", 2, "more")]
+    assert gitbrowse.parse_grep(world.run("tree_grep", "needle", "HEAD", "wiki").out) == []
+    hit = gitbrowse.parse_grep(world.run("tree_grep", "ALPHA", "HEAD", "wiki").out)
+    assert {p.partition(":")[2] for p, _n, _t in hit} == {"wiki/alpha.md"}  # case-insensitive, never below `.env`
+    assert not any("link.md" in p or ".env" in p for p, _n, _t in hit)
+    with pytest.raises(gitsafe.Unsafe):
+        gitbrowse.command(str(world.repo), "tree_grep", os.environ, operand=("a\nb", "HEAD", "wiki"))

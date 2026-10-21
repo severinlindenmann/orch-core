@@ -158,6 +158,10 @@ OPS: dict[str, Op] = {
     # symlink there is never followed), no submodule: `path NUL line NUL text LF`
     "grep": Op(("grep", "--cached", "-I", "-n", "-z", "--no-color", "-F", "--no-recurse-submodules", "-e", "<pattern>",
                 "--", ":(top)")),
+    # a literal, case-insensitive search of the files below ONE folder AS COMMITTED at a commit (not the index, not the
+    # work tree): `<commit>^{commit}:path NUL line NUL text LF`; the caller strips the `<commit>^{commit}:` prefix
+    "tree_grep": Op(("grep", "--no-color", "-I", "-n", "-z", "-i", "-F", "--no-recurse-submodules", "-e", "<pattern>",
+                     "--end-of-options", "<commit>", "--", ":(literal)<file>")),
     # the direct entries of ONE folder at a commit, nothing below it and no content: `<mode> SP <type> SP <id> SP
     # <size> TAB <name> NUL` per entry. A folder that is a link, a submodule or a file is not a tree: git refuses it.
     # Reads the object database only (the Wiki add-on lists its pages with the modes git recorded)

@@ -16,7 +16,6 @@ import errno
 import json
 import os
 import re
-import select
 import shutil
 import subprocess
 import sys
@@ -29,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from orch import crypto
+from orch import crypto, fdwait
 from orch.identity import recovery as rec
 from tests.relay.phone import DevPhone, HttpNet, PhoneError
 
@@ -115,7 +114,7 @@ def run_pty(
     status = None
     try:
         while True:
-            ready, _, _ = select.select([master, *watch], [], [], 0.2)
+            ready = fdwait.ready([master, *watch], 0.2)
             for fd in ready:
                 if fd == master:
                     try:
@@ -146,7 +145,7 @@ def run_pty(
             if rc is not None:
                 status = rc
                 with contextlib.suppress(OSError):
-                    while select.select([master], [], [], 0)[0]:
+                    while fdwait.readable(master, 0):
                         more = os.read(master, 4096)
                         if not more:
                             break

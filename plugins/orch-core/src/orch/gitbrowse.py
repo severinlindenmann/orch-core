@@ -36,14 +36,13 @@ from __future__ import annotations
 import contextlib
 import os
 import re
-import select
 import signal
 import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from orch import gitsafe
+from orch import fdwait, gitsafe
 from orch.gitsafe import Unsafe
 from orch.layout import KEYS_FILE, STATE_DIR, STORE_DIR
 
@@ -292,8 +291,7 @@ def spawn(
             if left <= 0:
                 cut = timed_out = True
                 break
-            ready, _, _ = select.select([fd], [], [], min(left, 0.5))
-            if not ready:
+            if not fdwait.readable(fd, min(left, 0.5)):
                 continue
             chunk = os.read(fd, 65536)
             if not chunk:

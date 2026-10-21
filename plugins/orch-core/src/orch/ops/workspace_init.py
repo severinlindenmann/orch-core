@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orch import canon, crypto
+from orch import canon, crypto, fdwait
 from orch import layout as layout_mod
 from orch.custody import Backend, CustodyError, FileBackend, NoPrompt, get_backend
 from orch.custody.strength import check_strength, generate_passphrase
@@ -159,7 +159,6 @@ class Terminal:
         """K2: wait up to ``timeout`` seconds for the person to press Enter on their own terminal; ``True`` once a line
         was read. ``flush`` first drops anything typed before (type-ahead is never an answer). Echo stays as the
         terminal has it; a terminal that cannot be opened or read is simply "not pressed"."""
-        import select
         import termios
 
         try:
@@ -171,7 +170,7 @@ class Terminal:
             if flush:
                 with contextlib.suppress(termios.error):
                     termios.tcflush(fd, termios.TCIFLUSH)
-            if not select.select([fd], [], [], timeout)[0]:
+            if not fdwait.readable(fd, timeout):
                 return False
             return bool(os.read(fd, 4096))
         except OSError:

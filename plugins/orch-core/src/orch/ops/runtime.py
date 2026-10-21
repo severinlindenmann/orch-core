@@ -261,6 +261,19 @@ class Workspace:
         ws._root, ws._looked, ws._store, ws.hosted = Path(root), True, store, True
         return ws
 
+    def close(self) -> None:
+        """Release every fd of the store this call opened (its databases, cached directory fds and root fd), now
+        rather than when the cyclic GC gets to it. The host's injected store (:meth:`hosted`) is the host's and stays
+        open. A later :attr:`store` opens a fresh one."""
+        store, self._store = self._store, None
+        if store is None or self.hosted:
+            self._store = store
+            return
+        try:
+            store.close()
+        finally:
+            store.fs.close()
+
     @property
     def state_dir(self) -> Path:
         if self.hosted:  # fail closed: the host never hands its state directory (keys, pins) to a handler

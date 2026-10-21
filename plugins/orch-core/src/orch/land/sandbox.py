@@ -470,7 +470,7 @@ def available_backend() -> str | None:
 
 
 def _exited(pid: int) -> bool:
-    """True once the child has exited, WITHOUT reaping it: the zombie keeps its pgid reserved until we kill the group."""
+    """True once the child has exited, WITHOUT reaping it (the zombie keeps its pgid reserved)."""
     try:
         return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
     except ChildProcessError:

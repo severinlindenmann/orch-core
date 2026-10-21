@@ -2,21 +2,21 @@
 
 A workspace has a **project** (the root: registry ``root``, the agents' and terminals' working directory, the base of
 relative ``settings.repos`` paths) and a **store** (the directory holding ``config.json``, ``keys.jsonl``,
-``AGENTS.orch.md``, ``events/``, ``tickets/``, ``addons/`` and ``.state/``). In the legacy layout they are the same
-directory; in the new layout the store is ``<project>/.orch``.
+``AGENTS.orch.md``, ``events/``, ``tickets/``, ``addons/`` and ``.state/``): ``<project>/.orch``. A store from an older
+version sits directly in the project root; it is detected (:func:`resolve` raises :class:`LegacyStoreError`) and
+refused with a message that says to delete it: there is no migration and no support for it.
 
 Nobody joins ``".orch"`` or a store name by hand: code that needs the store asks the :class:`Layout`. A CI test
 (``tests/test_layout_lint.py``) greps for such joins outside this module and ``orch/store/``; the files that still do
 are listed with exact counts in ``tests/layout_lint_allowlist.txt`` and the list only shrinks.
-
-``WRITE_NEW`` is the flip switch: while it is ``False`` nothing creates a ``.orch`` store; readers understand both
-layouts. The flip PR sets it ``True``.
 """
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,41 +25,38 @@ from typing import Any
 
 __all__ = [
     "CONFIG_SCHEMA",
-    "LEGACY_STORE_FOLDERS",
     "KEYS_FILE",
     "STORE_DIR",
-    "LEGACY_ALLOWED",
-    "WRITE_NEW",
+    "LegacyStoreError",
     "Layout",
     "LayoutError",
     "StorePin",
+    "WORK_DIR",
     "check_single_store",
+    "delete_workdir",
+    "ensure_workdir",
+    "workdir_stat",
+    "workdir_summary",
     "fresh",
-    "move_in_progress",
     "open_state_fd",
     "state_marker_present",
     "open_store_dir",
     "store_of",
     "resolve",
+    "legacy_refusal_at",
+    "STATE_DIR",
 ]
 
 STORE_DIR = ".orch"
 #: the file of a store that holds its keys (named here so a deny list elsewhere does not spell it)
 KEYS_FILE = "keys.jsonl"
-#: the folders of a store that, in the legacy layout, sit directly in the project folder
-LEGACY_STORE_FOLDERS = (".state", "events", "tickets", "addons", STORE_DIR)
+#: per-ticket work folders of tickets without a codebase: ``<project>/.orch-work/<KEY>/`` (beside the store)
+WORK_DIR = ".orch-work"
+_WORK_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
+#: orch's local state folder (never committed, never shown): ``<store>/.state``
+STATE_DIR = ".state"
 CONFIG_SCHEMA = "orch.workspace/2"
 _CONFIG_LIMIT = 1 << 20
-
-#: The flip switch (design §6): while ``False`` no code creates a ``.orch`` store (a new workspace is made in the
-#: legacy layout); readers understand both layouts either way. The flip PR sets it ``True``.
-WRITE_NEW = True
-
-#: Final state of the move (design step 12): a workspace whose store is still in the project root is refused wherever
-#: a store is opened, with one plain message (delete the old files, run ``orch setup`` again; owner decision 19 Oct:
-#: no migration). There is no switch for this in production. The test suite sets this module flag on its own legacy
-#: fixtures (``tests/conftest.py``; child processes through ``tests/_legacy_shim``).
-LEGACY_ALLOWED = False
 
 _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -74,32 +71,38 @@ class LayoutError(Exception):
         self.hint = hint
 
 
+class LegacyStoreError(LayoutError):
+    """The project holds a store from an older version in its root (not in ``.orch/``): refused, with the message that
+    says to delete it. ``str(exc)`` is :func:`legacy_refusal`."""
+
+
 @dataclass(frozen=True)
 class Layout:
-    """``project`` (the root) and ``store`` (where the store files are); ``legacy``: the store is the project itself."""
+    """``project`` (the root) and ``store`` (where the store files are: ``<project>/.orch``)."""
 
     project: Path
     store: Path
-    legacy: bool
-
-    @classmethod
-    def legacy_at(cls, project: str | os.PathLike[str]) -> Layout:
-        p = Path(project)
-        return cls(p, p, True)
 
     @classmethod
     def new_at(cls, project: str | os.PathLike[str]) -> Layout:
         p = Path(project)
-        return cls(p, p / STORE_DIR, False)
+        return cls(p, p / STORE_DIR)
+
+    def workdir(self, key: str) -> Path:
+        """``<project>/.orch-work/<KEY>``: the one constructor of a ticket's work folder. ``key`` must be a ticket key
+        (so it can never be ``..`` or hold a separator); anything else is :class:`LayoutError`."""
+        if not isinstance(key, str) or not _WORK_KEY.fullmatch(key):
+            raise LayoutError("not a ticket key")
+        return self.project / WORK_DIR / key
 
 
 @dataclass(frozen=True)
 class StorePin:
-    """What discovery saw of the store, for the open that follows: ``ident`` the ``(st_dev, st_ino)`` of ``.orch``
-    (``None``: the legacy layout, the store is the project), ``owned``: the walk was implicit, so the opened store
+    """What discovery saw of the store, for the open that follows: ``ident`` the ``(st_dev, st_ino)`` of ``.orch``,
+    ``owned``: the walk was implicit, so the opened store
     directory must again be the current user's and not group/other-writable (checked on the opened fd)."""
 
-    ident: tuple[int, int] | None
+    ident: tuple[int, int]
     owned: bool = False
 
 
@@ -165,6 +168,15 @@ def legacy_refusal(project_fd: int) -> str:
     return text
 
 
+def legacy_refusal_at(project: str | os.PathLike[str]) -> str:
+    """:func:`legacy_refusal` for the project folder at ``project`` (opened here, ``O_NOFOLLOW`` on the last part)."""
+    fd = os.open(project, _DIR)
+    try:
+        return legacy_refusal(fd)
+    finally:
+        os.close(fd)
+
+
 def is_private(st: os.stat_result) -> bool:
     """Owned by the current user and writable by no one else."""
     return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
@@ -181,8 +193,8 @@ def check_single_store(*, legacy: bool, new: bool) -> None:
 
 
 def fresh(project: str | os.PathLike[str]) -> Layout:
-    """The layout of a project that holds no store yet (a workspace being created): the switch decides."""
-    return Layout.new_at(project) if WRITE_NEW else Layout.legacy_at(project)
+    """The layout of a project that holds no store yet (a workspace being created)."""
+    return Layout.new_at(project)
 
 
 def _orch_config(fd: int) -> bool:
@@ -208,7 +220,8 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     """The layout of the project open at ``project_fd``, or ``None`` when it holds no orch store.
 
     Everything is looked at below the fd with ``O_NOFOLLOW`` (a symlinked ``.orch`` is not a store: ``None``). Both an
-    orch config in the root and one in ``.orch/`` is :class:`LayoutError` (:func:`check_single_store`)."""
+    orch config in the root and one in ``.orch/`` is :class:`LayoutError` (:func:`check_single_store`); one in the root
+    alone is :class:`LegacyStoreError` (a store from an older version: refused, never read)."""
     legacy = _orch_config(project_fd)
     new = False
     sfd = open_store_dir(project_fd)
@@ -220,7 +233,9 @@ def resolve(project_fd: int, project: str | os.PathLike[str]) -> Layout | None:
     check_single_store(legacy=legacy, new=new)
     if new:
         return Layout.new_at(project)
-    return Layout.legacy_at(project) if legacy else None
+    if legacy:
+        raise LegacyStoreError(legacy_refusal(project_fd))
+    return None
 
 
 def open_store_dir(
@@ -253,9 +268,9 @@ def open_store_dir(
 
 
 def open_state_fd(project: str | os.PathLike[str]) -> int | None:
-    """The fd of ``<store>/.state`` of the project, every step ``O_NOFOLLOW`` from the project fd (the store is the
-    project itself in the legacy layout, ``.orch`` in the new one); ``None`` when there is no store or no ``.state``.
-    :class:`LayoutError` when the layout is unusable (two stores, a linked ``.orch``)."""
+    """The fd of ``<store>/.state`` of the project, every step ``O_NOFOLLOW`` from the project fd;
+    ``None`` when there is no store or no ``.state``. :class:`LayoutError` when the layout is unusable (two stores, a
+    linked ``.orch``, a store from an older version)."""
     try:
         pfd = os.open(project, _DIR)
     except OSError:
@@ -264,7 +279,7 @@ def open_state_fd(project: str | os.PathLike[str]) -> int | None:
         found = resolve(pfd, project)
         if found is None:
             return None
-        sfd = pfd if found.legacy else open_store_dir(pfd)
+        sfd = open_store_dir(pfd)
         if sfd is None:
             return None
         try:
@@ -272,16 +287,15 @@ def open_state_fd(project: str | os.PathLike[str]) -> int | None:
         except OSError:
             return None
         finally:
-            if sfd != pfd:
-                os.close(sfd)
+            os.close(sfd)
     finally:
         os.close(pfd)
 
 
 def store_of(project: str | os.PathLike[str]) -> Path:
-    """The store directory of the project as it is on disk now (``.orch``, or the project itself: legacy, or no store
-    yet). Unusable layout: :class:`LayoutError`. A path, for reading names that carry no authority; anything that
-    must be pinned goes through an fd (:func:`open_state_fd`, ``Store.open``)."""
+    """The store directory of the project as it is on disk now (``.orch``, also when there is no store yet).
+    Unusable layout: :class:`LayoutError`. A path, for reading names that carry no authority; anything that must be
+    pinned goes through an fd (:func:`open_state_fd`, ``Store.open``)."""
     try:
         pfd = os.open(project, _DIR)
     except OSError:
@@ -339,11 +353,261 @@ def _marked_below(pfd: int, chain: tuple[str, ...], name: str) -> bool:
             os.close(item)
 
 
-def move_in_progress(path: str | os.PathLike[str]) -> bool:
-    """A store move is under way next to ``path`` (the project, or its ``.orch``): ``.orch-migrating`` exists there.
-    Writers that reach store files by PATH (instruction files, add-on manifests) refuse while it does, so they never
-    re-create a name in the project root that is moving into ``.orch``. A narrow guard, not a lock: the store lock and
-    ``owner.lock`` are what the migration holds; this only closes the window for writers that take neither."""
-    p = Path(path)
-    bases = [p, p.parent] if p.name == STORE_DIR else [p]
-    return any(os.path.lexists(b / ".orch-migrating") for b in bases)
+# -- ticket work folders (tickets without a codebase; design r3 part C) -------------------------------------------
+
+
+def _walk_workdir(layout: Layout, key: str, *, create: bool) -> tuple[int, str] | None:
+    """Open ``<project>/.orch-work/<KEY>`` one component at a time below the project fd with ``O_NOFOLLOW`` (a symlinked
+    ``.orch-work`` or ``<KEY>``, or a non-directory or foreign-owned one, is :class:`LayoutError`). Returns the fd of
+    the folder, or ``None`` when it is absent and ``create`` is false. ``create``: made 0700 where missing."""
+    layout.workdir(key)  # the key check
+    try:
+        pfd = os.open(layout.project, _DIR)
+    except OSError as exc:
+        raise LayoutError(f"the project folder cannot be opened ({exc.strerror})") from None
+    fd = pfd
+    try:
+        for part in (WORK_DIR, key):
+            try:
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if not create:
+                    return None
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                except OSError as exc:
+                    raise LayoutError(f"{part} cannot be created ({exc.strerror})") from None
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except OSError as exc:
+                raise LayoutError(f"{part} cannot be examined ({exc.strerror})") from None
+            if not stat.S_ISDIR(st.st_mode):
+                raise LayoutError(f"{part} is not a real directory (a link or a file); refusing to use it")
+            try:
+                nxt = os.open(part, _DIR, dir_fd=fd)
+            except OSError as exc:
+                raise LayoutError(f"{part} cannot be opened ({exc.strerror})") from None
+            if fd != pfd:
+                os.close(fd)
+            fd = nxt
+            ost = os.fstat(fd)
+            if (ost.st_dev, ost.st_ino) != (st.st_dev, st.st_ino) or ost.st_uid != os.getuid():
+                raise LayoutError(f"{part} changed or is not yours; refusing to use it")
+        out = fd
+        fd = -1
+        return out, key
+    finally:
+        if fd not in (-1, pfd):
+            os.close(fd)
+        os.close(pfd)
+
+
+def workdir_stat(layout: Layout, key: str) -> os.stat_result | None:
+    """The stat of the ticket's work folder, or ``None`` when it does not exist yet. :class:`LayoutError` for a link, a
+    file, a foreign owner. Reads only; a plan uses it, the start creates (:func:`ensure_workdir`)."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return None
+    try:
+        return os.fstat(got[0])
+    finally:
+        os.close(got[0])
+
+
+def ensure_workdir(layout: Layout, key: str) -> os.stat_result:
+    """Create the work folder (and ``.orch-work/`` with a ``.gitignore`` of ``*`` so no repository above sees it) where
+    missing, 0700, every step without following a link, and return its stat for the cwd pin."""
+    got = _walk_workdir(layout, key, create=True)
+    assert got is not None
+    try:
+        parent = os.open("..", _DIR, dir_fd=got[0])
+        try:
+            gi = os.open(
+                ".gitignore", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+            )
+        except FileExistsError:
+            pass
+        except OSError:
+            pass  # the ignore file is a convenience; the folder is still private
+        else:
+            with os.fdopen(gi, "wb") as f:
+                f.write(b"*\n")
+        finally:
+            os.close(parent)
+        return os.fstat(got[0])
+    finally:
+        os.close(got[0])
+
+
+#: how deep a work folder is looked into or deleted (one descriptor per level), and entries a delete takes
+WORKDIR_DEPTH = 64
+WORKDIR_DELETE_ENTRIES = 200_000
+
+
+def _child(dfd: int, name: str, listed: os.stat_result) -> int:
+    """The directory ``name`` below ``dfd`` (``O_NOFOLLOW``), which must still be the one that was listed."""
+    fd = os.open(name, _DIR, dir_fd=dfd)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise
+    if (st.st_dev, st.st_ino) != (listed.st_dev, listed.st_ino):
+        os.close(fd)
+        raise OSError(errno.ESTALE, "changed while it was read")
+    return fd
+
+
+def _same_disk(root: int) -> int:
+    """The device of the work folder, which must be that of ``.orch-work`` too (no mount at ``.orch-work/<KEY>``)."""
+    dev = os.fstat(root).st_dev
+    if os.stat("..", dir_fd=root).st_dev != dev:
+        raise LayoutError("the work folder is another disk or mount; refusing to use it")
+    return dev
+
+
+def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str, int] | None:
+    """``{files, bytes, truncated}`` of the work folder (links counted as nothing, not followed). ``truncated``: more
+    than ``limit`` entries, deeper than :data:`WORKDIR_DEPTH`, another disk, or a folder that could not be read. Each
+    directory is opened relative to its parent's descriptor (linear cost). :class:`LayoutError`: as workdir_stat."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return None
+    root = got[0]
+    tot = {"files": 0, "bytes": 0, "seen": 0, "truncated": 0}
+    try:
+        dev = _same_disk(root)
+
+        def walk(dfd: int, depth: int) -> None:
+            try:
+                with os.scandir(dfd) as it:
+                    for e in it:
+                        tot["seen"] += 1
+                        if tot["seen"] > limit:
+                            tot["truncated"] = 1
+                            return
+                        try:
+                            st = e.stat(follow_symlinks=False)
+                        except OSError:
+                            tot["truncated"] = 1
+                            continue
+                        if stat.S_ISREG(st.st_mode):
+                            tot["files"] += 1
+                            tot["bytes"] += st.st_size
+                        elif stat.S_ISDIR(st.st_mode):
+                            if st.st_dev != dev or depth >= WORKDIR_DEPTH:
+                                tot["truncated"] = 1
+                                continue
+                            try:
+                                sub = _child(dfd, e.name, st)
+                            except OSError:
+                                tot["truncated"] = 1
+                                continue
+                            try:
+                                walk(sub, depth + 1)
+                            finally:
+                                os.close(sub)
+                            if tot["truncated"] and tot["seen"] > limit:
+                                return
+            except OSError:
+                tot["truncated"] = 1
+
+        walk(root, 0)
+    finally:
+        os.close(root)
+    return {"files": tot["files"], "bytes": tot["bytes"], "truncated": tot["truncated"]}
+
+
+def _after_look() -> None:
+    """A seam between the scan and the delete (tests change the folder here)."""
+
+
+def delete_workdir(layout: Layout, key: str) -> bool:
+    """Delete exactly the ticket's work folder (and what is in it), never following a link. ``False``: there was none.
+    Nothing outside ``<project>/.orch-work/<KEY>`` is touched. A first pass only looks (another disk or mount, deeper
+    than :data:`WORKDIR_DEPTH`, more than :data:`WORKDIR_DELETE_ENTRIES` entries: :class:`LayoutError`, nothing
+    deleted); the second deletes, each directory opened relative to its parent and re-checked against what was listed.
+    Any failure is a plain :class:`LayoutError`."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return False
+    root = got[0]
+    try:
+        try:
+            dev = _same_disk(root)
+            count = [0]
+            seen: dict[tuple[str, ...], dict[str, tuple[int, int]]] = {}  # directory -> {name: (dev, ino)} as looked at
+
+            def look(dfd: int, depth: int, where: tuple[str, ...]) -> None:
+                with os.scandir(dfd) as it:
+                    entries = list(it)
+                count[0] += len(entries)
+                if count[0] > WORKDIR_DELETE_ENTRIES:
+                    raise LayoutError("the work folder holds too many files to delete here; delete it in Finder")
+                known = seen[where] = {}
+                for e in entries:
+                    st = e.stat(follow_symlinks=False)
+                    known[e.name] = (st.st_dev, st.st_ino)
+                    if not stat.S_ISDIR(st.st_mode):
+                        continue
+                    if st.st_dev != dev:
+                        raise LayoutError(f"{e.name} is another disk or mount inside the folder; nothing deleted")
+                    if depth >= WORKDIR_DEPTH:
+                        raise LayoutError("the work folder is nested too deeply to delete here; delete it in Finder")
+                    sub = _child(dfd, e.name, st)
+                    try:
+                        look(sub, depth + 1, (*where, e.name))
+                    finally:
+                        os.close(sub)
+
+            def remove(dfd: int, depth: int, where: tuple[str, ...]) -> None:
+                """Deletes only what ``look`` recorded, unchanged: anything else refuses."""
+                known = seen.get(where)
+                if known is None or depth > WORKDIR_DEPTH:
+                    raise LayoutError("the work folder changed while it was being deleted; nothing more was deleted")
+                with os.scandir(dfd) as it:
+                    entries = list(it)
+                for e in entries:
+                    st = e.stat(follow_symlinks=False)
+                    if known.get(e.name) != (st.st_dev, st.st_ino):
+                        raise LayoutError(
+                            "the work folder changed while it was being deleted; nothing more was deleted"
+                        )
+                    if stat.S_ISDIR(st.st_mode):
+                        if st.st_dev != dev:
+                            raise LayoutError(f"{e.name} is another disk or mount inside the folder; not deleted")
+                        sub = _child(dfd, e.name, st)
+                        try:
+                            if os.fstat(sub).st_dev != dev:
+                                raise LayoutError(f"{e.name} is another disk or mount inside the folder; not deleted")
+                            remove(sub, depth + 1, (*where, e.name))
+                        finally:
+                            os.close(sub)
+                        os.rmdir(e.name, dir_fd=dfd)
+                    else:
+                        os.unlink(e.name, dir_fd=dfd)
+
+            look(root, 0, ())
+            _after_look()
+            remove(root, 0, ())
+        except LayoutError:
+            raise
+        except RecursionError:
+            raise LayoutError("the work folder is nested too deeply to delete here") from None
+        except OSError as exc:
+            raise LayoutError(f"the work folder could not be emptied ({exc.strerror})") from None
+    finally:
+        os.close(root)
+    pfd = os.open(layout.project, _DIR)
+    try:
+        wfd = os.open(WORK_DIR, _DIR, dir_fd=pfd)
+        try:
+            os.rmdir(key, dir_fd=wfd)
+        except OSError as exc:
+            raise LayoutError(f"the work folder could not be removed ({exc.strerror})") from None
+        finally:
+            os.close(wfd)
+    finally:
+        os.close(pfd)
+    return True

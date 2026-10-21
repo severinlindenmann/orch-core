@@ -118,3 +118,9 @@ def test_login_shell_is_its_own_notice_and_the_sentence_matches_core(worlds, own
     # the page matches the host's sentence exactly; this pins both copies together
     ts = (Path(__file__).parents[2] / "src" / "api" / "agents.ts").read_text(encoding="utf-8")
     assert f"'{LOGIN_NOTICE}'" in ts
+
+
+def test_grant_notice_is_its_own_key(worlds, owner):
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.post(url, {"notice": "grant"}).json() == {"acknowledged": {"grant": True}}

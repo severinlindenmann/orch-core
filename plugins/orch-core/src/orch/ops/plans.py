@@ -294,6 +294,46 @@ def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     return Out({"task": tid})
 
 
+def task_edit(c: Call, p: Projection, args: dict[str, Any]) -> Out:
+    """``task.edit``: the text, the verify command and the ``proves`` list of one task. Changing the verify command or
+    the criteria of a task that is done is refused: its receipt would then stand for another command or criterion
+    (reopen the task first). The text of a done task may change."""
+    tid = args["task"].rpartition("/")[2]
+    t = _task(p, tid)
+    tasks = [dict(thaw(x)) for x in p.last_view.fields["tasks"]]
+    old = next(x for x in tasks if x["id"] == tid)
+    new = dict(old)
+    if args.get("text") is not None:
+        new["text"] = c.text(args["text"], what="task")
+    if args.get("verify") is not None:
+        cmd = c.text(args["verify"], one_line=True, what="verify command") if args["verify"] != "" else None
+        new["verify"] = {"cmd": cmd} if cmd else None
+    if args.get("proves") is not None:
+        proves = sorted(set(args["proves"]), key=lambda x: int(x[2:]))
+        known = {a["id"] for a in p.last_view.fields["acceptance"]}
+        for ac in proves:
+            if ac not in known:
+                raise OrchError("not_found", f"{p.view.key} has no criterion {ac}", hint="orch ac add TEXT")
+        new["proves"] = proves
+    if new == old:
+        raise OrchError("invalid.input", f"{tid} would not change")
+    if t.state == "done" and (new.get("verify") != old.get("verify") or new.get("proves") != old.get("proves")):
+        raise OrchError(
+            "transition.refused",
+            f"{tid} is done: its verify command and criteria cannot change, because its receipt stands for them; "
+            "reopen it first",
+            hint=f"orch task reopen {tid}",
+        )
+    p.add(
+        {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.tasks": p.base("ticket.tasks")},
+            "set": {"ticket.tasks": [new if x["id"] == tid else x for x in tasks]},
+        }
+    )
+    return Out({"task": tid})
+
+
 # ----------------------------------------------------------------------------------------------------- tasks
 
 
@@ -337,10 +377,26 @@ def artifact_event(c: Call, name: str, data: bytes, kind: str, **extra: Any) -> 
     return ev, {name: data}
 
 
+#: the files one ticket may hold (design r3 part C: a no-codebase ticket files its results as artifacts)
+TICKET_ARTIFACT_BUDGET = 512 << 20
+
+
+def _budget(p: Projection, added: int, replaced: int = 0) -> None:
+    """A ticket holds at most 512 MiB of file artifacts (replaced files count once, at their new size)."""
+    held = sum(a.bytes or 0 for a in p.last_view.artifacts if a.digest is not None)
+    if held - replaced + added > TICKET_ARTIFACT_BUDGET:
+        raise OrchError(
+            "invalid.input",
+            f"{p.view.key} holds {held >> 20} MiB of files and the limit is {TICKET_ARTIFACT_BUDGET >> 20} MiB: "
+            "keep large results in the work folder and add a smaller summary",
+        )
+
+
 def artifact_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if args.get("kind") == "receipt":
         raise OrchError("invalid.input", "a receipt is only made by task done --run")
     data = c.read_artifact(args["path"])
+    _budget(p, len(data))
     name = args.get("name") or os.path.basename(args["path"])
     label = c.text(args["label"], one_line=True, what="label") if args.get("label") else None
     ev, files = artifact_event(
@@ -358,6 +414,7 @@ def artifact_replace(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if old.kind == "receipt":
         raise OrchError("invalid.input", f"{name} is a receipt: only task done --run makes one, nothing replaces it")
     data = c.read_artifact(args["path"])
+    _budget(p, len(data), old.bytes or 0)
     ev, files = artifact_event(c, name, data, old.kind, ac=old.ac, task=old.task)
     ev["type"] = "artifact.replaced"
     ev["replaces"] = old.digest
@@ -378,6 +435,7 @@ def batch_ops() -> dict[str, tuple[str, Builder]]:
         "ac.add": ("", ac_add),
         "ac.edit": ("", ac_edit),
         "task.add": ("", task_add),
+        "task.edit": ("", task_edit),
         "task.start": ("task.started", lambda c, p, a: task_state(c, p, a, "task.started")),
         "task.skip": ("task.skipped", lambda c, p, a: task_state(c, p, a, "task.skipped")),
         "task.block": ("task.blocked", lambda c, p, a: task_state(c, p, a, "task.blocked")),

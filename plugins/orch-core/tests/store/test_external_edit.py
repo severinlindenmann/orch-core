@@ -186,18 +186,18 @@ def test_a_forged_state_body_copy_is_ignored(ready):
     env, s, uid = ready
     env.close(uid)
     forged = body(env, uid).read_bytes().replace(b"req", b"EVIL")
-    (env.root / ".state" / "body" / f"{uid}.md").write_bytes(forged)  # the copy an attacker prepared ...
+    (env.store_dir / ".state" / "body" / f"{uid}.md").write_bytes(forged)  # the copy an attacker prepared ...
     body(env, uid).write_bytes(forged)  # ... and the same text in body.md
     assert s.scan() == []  # the log has no way to accept it, and the copy can't be used to "revert" to it
     codes = [r.code for r in s.reports]
     assert codes == ["store.torn_write"] and "no valid copy" in s.reports[0].detail
     assert s.state.tickets[uid].sections["requirements"]["hash"] == canon.section_hash("req")
-    assert (env.root / ".state" / "body" / f"{uid}.md").read_bytes() == forged  # never promoted to anything
+    assert (env.store_dir / ".state" / "body" / f"{uid}.md").read_bytes() == forged  # never promoted to anything
 
 
 def test_a_forged_state_body_copy_is_not_used_on_an_open_ticket_either(ready):
     env, s, uid = ready
-    (env.root / ".state" / "body" / f"{uid}.md").write_bytes(b"## Context\n\nforged copy\n")
+    (env.store_dir / ".state" / "body" / f"{uid}.md").write_bytes(b"## Context\n\nforged copy\n")
     body(env, uid).write_bytes(b"## Hacked\n\nx\n")  # not a body: would be reverted from the (forged) copy
     assert s.scan() == []
     assert s.reports and s.reports[0].code == "store.torn_write"
@@ -220,22 +220,22 @@ def test_edits_are_found_when_the_store_opens(ready):
 
 def test_keys_jsonl_is_repaired_and_never_makes_a_key_reusable(ready):
     env, s, uid = ready
-    (env.root / "keys.jsonl").write_bytes(b"")
+    (env.store_dir / "keys.jsonl").write_bytes(b"")
     (ev,) = s.scan()
     assert ev["type"] == "projection.repaired" and ev["path"] == "keys.jsonl" and ev["cause"] == "keys_mismatch"
-    assert (env.root / "keys.jsonl").read_bytes().count(b"\n") == 1
+    assert (env.store_dir / "keys.jsonl").read_bytes().count(b"\n") == 1
     assert next_key(s) == "DEMO-0002"
 
 
 def test_config_json_follows_the_events_but_keeps_its_unsigned_name(ready):
     env, s, uid = ready
-    cfg = json.loads((env.root / "config.json").read_text())
+    cfg = json.loads((env.store_dir / "config.json").read_text())
     cfg["workspace"]["name"] = "Renamed by hand"
     cfg["members"][0]["role"] = "viewer"
-    (env.root / "config.json").write_text(json.dumps(cfg))
+    (env.store_dir / "config.json").write_text(json.dumps(cfg))
     (ev,) = s.scan()
     assert ev["type"] == "projection.repaired" and ev["path"] == "config.json"
-    again = json.loads((env.root / "config.json").read_text())
+    again = json.loads((env.store_dir / "config.json").read_text())
     assert again["members"][0]["role"] == "owner" and again["workspace"]["name"] == "Renamed by hand"
 
 

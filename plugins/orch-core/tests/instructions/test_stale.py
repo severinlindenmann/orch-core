@@ -99,7 +99,7 @@ def test_orch_check_reports_stale_instructions_and_sync_fixes_them(ws):
     assert "AGENTS.orch.md: missing" in out and out.splitlines()[-1] == "next: orch instructions sync"
     code, out, err = cli(ws, "instructions", "sync", grant=False)  # no grant needed, no event
     assert code == 0 and out.splitlines()[0] == f"ok instructions.sync r{INSTRUCTIONS_REV}", out + err
-    assert (ws.root / "AGENTS.orch.md").is_file()
+    assert (ws.store_dir / "AGENTS.orch.md").is_file()
     code, out, _ = cli(ws, "check")
     assert code == 0 and out.splitlines()[0] == "ok check 0"
     code, out, err = cli(ws, "instructions", "sync")
@@ -123,7 +123,7 @@ def test_outside_a_workspace_sync_and_check_say_so(tmp_path, monkeypatch):
 
 def test_sync_dry_run_writes_nothing_and_force_is_needed_for_a_hand_edited_skill(ws):
     code, out, _ = cli(ws, "instructions", "sync", "--dry-run")
-    assert code == 0 and "would write AGENTS.orch.md" in out and not (ws.root / "AGENTS.orch.md").exists()
+    assert code == 0 and "would write .orch/AGENTS.orch.md" in out and not (ws.store_dir / "AGENTS.orch.md").exists()
     cli(ws, "instructions", "sync")
     skill = ws.root / ".agents/skills/orch-tickets/SKILL.md"
     skill.write_text(skill.read_text() + "- my own rule\n")
@@ -152,7 +152,7 @@ def test_stale_check_does_not_follow_a_symlink(root, tmp_path):
     assert "symbolic link" in where(stale_findings(root))["AGENTS.orch.md"]
 
 
-def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
+def test_an_r1_workspace_is_stale_and_sync_brings_it_up_to_date(ws):
     """A workspace written by r1: skills in .claude/skills, a one-line AGENTS.md pointer, old CLAUDE.md import."""
     root = ws.root
     cli(ws, "instructions", "sync")
@@ -167,7 +167,7 @@ def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
     shutil.rmtree(root / ".agents")
     (root / "AGENTS.md").write_text("mine\nBefore working on tickets, read AGENTS.orch.md (orch).\n")
     (root / "CLAUDE.md").write_text("@AGENTS.orch.md\n")
-    p = root / "AGENTS.orch.md"
+    p = ws.store_dir / "AGENTS.orch.md"
     p.write_text(p.read_text().replace(f"(instructions r{INSTRUCTIONS_REV})", "(instructions r1)"))
     code, out, _ = cli(ws, "check")
     assert (
@@ -177,7 +177,7 @@ def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
     )
     code, out, err = cli(ws, "instructions", "sync")
     assert code == 0, out + err
-    assert (root / "CLAUDE.md").read_text() == "@AGENTS.md\n@AGENTS.orch.md\n"
+    assert (root / "CLAUDE.md").read_text() == "@AGENTS.md\n"
     assert (root / "AGENTS.md").read_text().startswith("mine\n<!-- orch:begin -->\n")
     assert (root / ".agents/skills/orch-tickets/SKILL.md").is_file()
     assert cli(ws, "check")[0] == 0

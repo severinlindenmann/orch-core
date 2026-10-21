@@ -64,6 +64,8 @@ _CWD = {
         {"type": "object", "properties": {"kind": {"const": "worktree"}, "repo": {"type": "string", "maxLength": 64},
                                           "ticket": _KEY}, "required": ["kind", "repo", "ticket"],
          "additionalProperties": False},
+        {"type": "object", "properties": {"kind": {"const": "workdir"}, "ticket": _KEY},
+         "required": ["kind", "ticket"], "additionalProperties": False},
     ]
 }  # fmt: skip
 
@@ -287,6 +289,11 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
               "harness": data.get("harness", "shell"), "mode": data.get("mode"), "model": data.get("model"),
               "label": data.get("label"), "as_person": True,
               "cwd": data.get("cwd") or {"kind": "workspace"}}  # fmt: skip
+    if launch.get("mkdir"):
+        from .agents import make_workdir
+
+        where = data.get("cwd") or {}
+        launch["cwd"] = make_workdir(call, where.get("ticket") or launch["ticket"] or "", None)
     payload = {"kind": "shell", "argv": launch["argv"], "env_names": launch["env_names"],
                "env_fixed": launch["env_fixed"], "cwd": launch["cwd"], "cols": data["cols"], "rows": data["rows"],
                "login_shell": launch["login_shell"], "grant": None, "session": None}  # fmt: skip

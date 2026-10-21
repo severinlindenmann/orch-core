@@ -19,7 +19,7 @@ def test_files_come_in_with_their_digest_and_never_as_evidence(imported, hws):
     assert sorted(a) == ["after.png", "sub_out.log", "v1-import.json"]  # sub/out.log is flattened, gone.csv is missing
     uid = hws.uid("DEMO-0003")
     for name, art in a.items():
-        data = (hws.root / "tickets" / uid / "artifacts" / name).read_bytes()
+        data = (hws.store_dir / "tickets" / uid / "artifacts" / name).read_bytes()
         assert art.digest == canon.artifact_digest(data)
         assert art.ac is None and art.task is None  # v1's ac/task links are not carried
     assert all(not ac.evidence for ac in hws.view("DEMO-0003").acceptance)  # so no criterion has evidence
@@ -34,7 +34,7 @@ def test_labels_keep_what_v1_said(imported, hws):
 
 
 def test_references_follow_renames_and_dangling_ones_are_neutralised(imported, hws):
-    body = (hws.root / "tickets" / hws.uid("DEMO-0003") / "body.md").read_text()
+    body = (hws.store_dir / "tickets" / hws.uid("DEMO-0003") / "body.md").read_text()
     assert "(artifact:after.png)" in body
     assert "(missing-artifact:gone.csv)" in body and "(artifact:gone.csv)" not in body
     assert "```text\n## not a heading\n```" in body  # a heading inside a fence is text
@@ -49,7 +49,7 @@ def test_missing_and_changed_files_are_reported_not_imported(hws, me, v1):  # no
     assert "after.png" not in a and "sub_out.log" in a
     import json
 
-    m = json.loads((hws.root / "tickets" / hws.uid("DEMO-0003") / "artifacts" / "v1-import.json").read_bytes())
+    m = json.loads((hws.store_dir / "tickets" / hws.uid("DEMO-0003") / "artifacts" / "v1-import.json").read_bytes())
     why = {x["name"]: x["why"] for x in m["artifacts"] if not x["imported"]}
     assert why == {"after.png": "sha256 differs from v1's record", "gone.csv": "missing or unsafe"}
 

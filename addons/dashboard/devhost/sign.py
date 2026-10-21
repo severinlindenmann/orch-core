@@ -248,7 +248,7 @@ def run(
         return 1
     try:
         person = link.welcome["peer"]["person"]
-        config = canon.loads_strict((root / "config.json").read_bytes())["workspace"]
+        config = canon.loads_strict((root / ".orch" / "config.json").read_bytes())["workspace"]
         backend = open_backend(keys_dir(state, workspace_id))
         device = device_ref(backend.public_key(KEY_ID))
         prepared = link.call(

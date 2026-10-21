@@ -117,7 +117,7 @@ def test_a_workspace_log_from_another_workspace_is_not_trusted(env, tmp_path):
     other = Env(tmp_path / "other")
     other.bootstrap()
     other.store.close()
-    shutil.copy(other.root / "events" / "workspace.jsonl", env.root / "events" / "workspace.jsonl")
+    shutil.copy(other.store_dir / "events" / "workspace.jsonl", env.store_dir / "events" / "workspace.jsonl")
     with pytest.raises(StoreError) as ex:
         env.open()
     assert ex.value.code == "trust.genesis_mismatch"

@@ -25,8 +25,11 @@ V1_FIXTURE = Path(__file__).parents[1] / "importer" / "fixtures" / "v1"
 
 
 def _v2(dest: Path, ws) -> Path:
+    """A v2 store at ``dest`` (a folder named ``.orch``); any other name is a project: its ``.orch`` is returned."""
+    if dest.name != ".orch":
+        dest = dest / ".orch"
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "config.json").write_text((ws.root / "config.json").read_text())
+    (dest / "config.json").write_text((ws.store_dir / "config.json").read_text())
     return dest
 
 
@@ -50,8 +53,8 @@ def _check(cwd: Path, env: dict[str, str], monkeypatch) -> tuple[int, str]:
 @pytest.mark.parametrize("layout", ["v2-here", "v2-sub", "v1"])
 def test_a_workspace_planted_in_a_sticky_shared_directory_is_ignored(ws, tmp_path, monkeypatch, layout):
     shared = _sticky(tmp_path / "shared")
-    if layout == "v2-here":
-        _v2(shared, ws)
+    if layout == "v2-here":  # an old-version root store planted in the shared folder: not a candidate either
+        shared.joinpath("config.json").write_text((ws.store_dir / "config.json").read_text())
     elif layout == "v2-sub":
         _v2(shared / ".orch", ws)
     else:
@@ -88,7 +91,7 @@ def test_a_workspace_owned_by_another_uid_is_ignored(ws, tmp_path, monkeypatch):
     v2 = _v2(tmp_path / "a" / ".orch", ws)
     v1 = _v1(tmp_path / "b")
     here = _v2(tmp_path / "c", ws)
-    for found, cwd, is_v1 in ((v2.parent, v2.parent, False), (v1, v1.parent, True), (here, here, False)):
+    for found, cwd, is_v1 in ((v2.parent, v2.parent, False), (v1, v1.parent, True), (here.parent, here.parent, False)):
         assert runtime.locate_workspace({}, str(cwd), FILES) == (found, is_v1)
     monkeypatch.setattr(discovery, "_owner", lambda: os.getuid() + 1)
     for cwd in (v2.parent, v2, v1.parent, v1 / "tickets", here):
@@ -97,7 +100,7 @@ def test_a_workspace_owned_by_another_uid_is_ignored(ws, tmp_path, monkeypatch):
     assert code == 2 and "no orch workspace here" in err
     # another uid's workspace is walked past, not a stop: our own further up is found
     monkeypatch.undo()
-    mine = _v2(tmp_path / "mine", ws)
+    mine = _v2(tmp_path / "mine", ws).parent
     theirs = _v2(mine / "theirs" / ".orch", ws)
     real_fstat = os.fstat
 
@@ -126,7 +129,7 @@ def test_a_group_or_other_writable_workspace_is_ignored(ws, tmp_path, target, bi
 
 
 def test_an_explicit_orch_workspace_skips_the_ownership_rule(ws, tmp_path, monkeypatch):
-    os.chmod(ws.root / "config.json", 0o666)
+    os.chmod(ws.store_dir / "config.json", 0o666)
     assert runtime.find_workspace({}, str(ws.root), FILES) is None
     assert runtime.find_workspace({"ORCH_WORKSPACE": str(ws.root)}, None, FILES) == ws.root
     monkeypatch.setattr(discovery, "_owner", lambda: os.getuid() + 1)
@@ -139,7 +142,7 @@ def test_an_explicit_orch_workspace_skips_the_ownership_rule(ws, tmp_path, monke
     # still O_NOFOLLOW inside an explicit path
     lnk = tmp_path / "lnk"
     lnk.mkdir()
-    (lnk / "config.json").symlink_to(ws.root / "config.json")
+    (lnk / "config.json").symlink_to(ws.store_dir / "config.json")
     assert runtime.find_workspace({"ORCH_WORKSPACE": str(lnk)}, None, FILES) is None
 
 
@@ -197,7 +200,7 @@ def test_an_ancestor_swapped_for_a_symlink_after_the_resolve_is_never_entered(ws
     assert swapped and (tmp_path / "a" / "b").is_symlink()
     assert found is None
     # the same layout without the race: by the symlink the start resolves into evil's tree and that is found
-    assert runtime.find_workspace({}, str(tmp_path / "a" / "b"), FILES) == evil
+    assert runtime.find_workspace({}, str(tmp_path / "a" / "b"), FILES) == evil.parent
 
 
 @pytest.mark.parametrize("mode", [0o1111, 0o111])
@@ -289,11 +292,11 @@ def _swap_config_at_the_identity_check(ws, monkeypatch, m):
     def same_root(root, ident):
         ok = real(root, ident)
         if not swapped:
-            doc = json.loads((ws.root / "config.json").read_text())
+            doc = json.loads((ws.store_dir / "config.json").read_text())
             doc["workspace"]["id"] = "f" * 32
             tmp = ws.root / "swap.json"
             tmp.write_text(json.dumps(doc))
-            os.replace(tmp, ws.root / "config.json")
+            os.replace(tmp, ws.store_dir / "config.json")
             swapped.append(True)
             _no_path_open_of_config(m)
         return ok

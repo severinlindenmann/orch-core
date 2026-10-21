@@ -192,6 +192,7 @@ class SetupFlow:
             "click_available": bool(click_ok),
             "click_reason": click_reason,
             "agent_hours": list(AGENT_HOURS),
+            "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
@@ -249,6 +250,9 @@ class SetupFlow:
                 raise SetupError(
                     "invalid.input", str(getattr(exc, "message", "prefix refused"))[:200], 400, field="prefix"
                 ) from None
+        if p["git_init"] and (self.mode != "new" or not self.dir or facts_mod.git_state(Path(self.dir))["repo"]):
+            raise SetupError("invalid.input", "git init is offered for a new workspace in a folder without git", 400,
+                             field="git_init")  # fmt: skip
         prior = self.profile
         self.profile, self.review = p, None  # a new profile voids every earlier review_id
         if self.mode == "finish":
@@ -334,6 +338,8 @@ class SetupFlow:
 
     def _step_ids(self, plan: review_mod.Plan) -> list[str]:
         ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]
+        if any(f["id"] == "git" for f in plan.flags):
+            ids.append("git")
         if any(f["id"] == "runner" for f in plan.flags):
             ids.append("runner")
         ids += [i.id for i in plan.items if i.id != "runner_grant"]

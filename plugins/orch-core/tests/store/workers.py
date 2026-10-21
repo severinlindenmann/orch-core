@@ -64,7 +64,7 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
 
         def half(m, d, check=None):
             f0 = m["files"][0]
-            dest = Path(root) / f0["to"]
+            dest = Path(root) / ".orch" / f0["to"]
             os.replace(d / str(f0["n"]), dest)
             die()
             return real(m, d)
@@ -96,7 +96,7 @@ def crash_update(
 
     def half(m, d, check=None):
         f0 = m["files"][0]
-        dest = Path(root) / f0["to"]
+        dest = Path(root) / ".orch" / f0["to"]
         os.replace(d / str(f0["n"]), dest)
         os._exit(7)
         return real(m, d)
@@ -122,7 +122,7 @@ def hold_lock(root: str, marker: str, seconds: float) -> None:
     """Hold the workspace lock of ``root`` for ``seconds`` (a stuck writer); ``marker`` appears once it is held."""
     from orch.store.lock import FileLock
 
-    with FileLock(Path(root) / ".state" / "lock"):
+    with FileLock(Path(root) / ".orch" / ".state" / "lock"):
         Path(marker).write_text("held")
         time.sleep(seconds)
 

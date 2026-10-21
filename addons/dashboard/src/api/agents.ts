@@ -45,7 +45,7 @@ export interface AgentPreview {
   model?: string | null
   model_source?: 'chosen' | 'workspace' | 'default' | null
   display_hidden: boolean
-  cwd: { kind: 'workspace' | 'repo' | 'worktree' | null; repo?: string; ticket?: string }
+  cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null
   cwd_path_hidden: boolean
   will_create_worktree: boolean
@@ -71,8 +71,8 @@ export const agentsApi = {
     call<{ deposit: DepositOutcome | 'none'; reason?: DepositReason }>('GET', `${w(ws)}/runner/deposits/${encodeURIComponent(depositId)}`),
   forget: (ws: string, grant: string, idem: string) => call<{ forgotten: boolean }>('POST', `${w(ws)}/runner/forget`, { grant, idem }),
   /** Which risk notices this person already read (kept by the dashboard server, per person and workspace). */
-  riskNotices: (ws: string) => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('GET', `${w(ws)}/me/risk_notices`),
-  acknowledge: (ws: string, notice: 'start_agent' | 'login_shell') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
+  riskNotices: (ws: string) => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('GET', `${w(ws)}/me/risk_notices`),
+  acknowledge: (ws: string, notice: 'start_agent' | 'login_shell' | 'grant') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
 }
 
 export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws) })
@@ -134,6 +134,7 @@ export function cwdText(p: AgentPreview): string {
   const { kind, repo, ticket } = p.cwd
   if (kind === 'worktree') return p.will_create_worktree ? 'a new worktree' : `the worktree for ${ticket ?? p.ticket ?? 'the ticket'} in ${repo ?? 'its repository'}`
   if (kind === 'repo') return SHARED_COPY
+  if (kind === 'workdir') return `the work folder of ${ticket ?? p.ticket ?? 'the ticket'}`
   if (kind === 'workspace') return 'the workspace root'
   return 'not shown'
 }

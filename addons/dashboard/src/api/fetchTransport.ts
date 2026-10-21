@@ -4,7 +4,7 @@ import type { Transport } from './transport'
 export function createFetchTransport(baseUrl: string, token: () => string | null = () => null): Transport {
   const base = baseUrl.replace(/\/$/, '')
   return {
-    async request(method, path, body) {
+    async request(method, path, body, signal) {
       if (base && new URL(base, window.location.origin).origin !== window.location.origin) throw new Error('Transport must be same-origin')
       if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\')) throw new Error('Invalid API path')
       const headers: Record<string, string> = {}
@@ -17,6 +17,7 @@ export function createFetchTransport(baseUrl: string, token: () => string | null
         credentials: 'omit',
         redirect: 'error',
         cache: 'no-store',
+        signal,
         body: body === undefined ? undefined : JSON.stringify(body),
       })
       const text = await res.text()

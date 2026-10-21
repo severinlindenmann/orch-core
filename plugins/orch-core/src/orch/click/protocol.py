@@ -102,6 +102,7 @@ CLICK_OPS = frozenset(
         "ac.add",
         "ac.edit",
         "task.add",
+        "task.edit",
         "task.block",
         "task.done",
         "task.reopen",

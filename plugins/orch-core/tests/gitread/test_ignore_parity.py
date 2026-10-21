@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,7 @@ from orch.gitread.errors import Unavailable
 from orch.gitread.local import READER
 from orch.gitread.wildmatch import compile_glob
 
-from .conftest import GIT
+from .conftest import GIT, assert_linear, cpu_budget
 
 CASES = [
     ("[", ["[", "x"]),
@@ -75,18 +74,15 @@ def test_an_ignore_pattern_ignores_exactly_what_git_ignores(make_repo, pattern, 
     r.commit("ignore")
     for f in files:
         r.write(f, "x\n")
-    started = time.monotonic()
-    mine = _mine(r)
-    assert time.monotonic() - started < 2  # no backtracking: the "*a*a*...*ab" line took 21 s before (M1)
+    with cpu_budget(5):  # no backtracking: the "*a*a*...*ab" line took 21 s before (M1)
+        mine = _mine(r)
     theirs = _status(r)
     assert mine == theirs, (pattern, sorted(mine), sorted(theirs))
 
 
 def test_the_matcher_is_linear_on_the_old_redos_line():
     glob = compile_glob(b"*a" * 12 + b"b")
-    started = time.monotonic()
-    assert not glob.match(b"a" * 4000)
-    assert time.monotonic() - started < 2
+    assert_linear(lambda n: glob.match(b"a" * n), sizes=(1000, 2000, 4000))  # backtracking would be n**12
 
 
 def test_a_tree_check_past_its_budget_is_unknown_never_clean(make_repo, monkeypatch):

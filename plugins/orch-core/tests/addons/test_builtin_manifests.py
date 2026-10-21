@@ -34,8 +34,9 @@ def test_cli_prints_and_writes(tmp_path):
     assert main(["addon", "manifest", "terminals"], env={}, stdout=out, stderr=err) == 0
     assert json.loads(out.getvalue())["name"] == "terminals"
     out = io.StringIO()
+    (tmp_path / ".orch").mkdir()  # --write names the project; the manifest goes into its store
     assert main(["addon", "manifest", "worktrees", "--write", str(tmp_path)], env={}, stdout=out, stderr=err) == 0
-    written = tmp_path / "addons" / "worktrees" / "orch-addon.json"
+    written = tmp_path / ".orch" / "addons" / "worktrees" / "orch-addon.json"
     assert written.read_bytes() == builtin.manifest_bytes("worktrees") and out.getvalue().strip() == str(written)
     # idempotent; a differing file needs --force
     assert (

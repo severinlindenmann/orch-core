@@ -28,16 +28,24 @@ def test_print(data, monkeypatch, capsys):
 
 
 def test_write_and_identical(data, tmp_path, monkeypatch):
+    (tmp_path / ".orch").mkdir()
     invoke(monkeypatch, "--write", tmp_path)
-    target = tmp_path / "addons/dashboard/orch-addon.json"
+    target = tmp_path / ".orch/addons/dashboard/orch-addon.json"
     assert target.read_bytes() == data
     invoke(monkeypatch, "--write", tmp_path)
     assert target.read_bytes() == data
+
+
+def test_without_a_store_nothing_is_created(data, tmp_path, monkeypatch, capsys):
+    with pytest.raises(SystemExit, match="2"):
+        invoke(monkeypatch, "--write", tmp_path)
+    assert "no orch store" in capsys.readouterr().err and not list(tmp_path.iterdir())
 
 
 def test_refuse_and_force(data, tmp_path, monkeypatch, capsys):
+    (tmp_path / ".orch").mkdir()
     invoke(monkeypatch, "--write", tmp_path)
-    target = tmp_path / "addons/dashboard/orch-addon.json"
+    target = tmp_path / ".orch/addons/dashboard/orch-addon.json"
     target.write_bytes(b"different")
     with pytest.raises(SystemExit, match="2"):
         invoke(monkeypatch, "--write", tmp_path)
@@ -47,18 +55,19 @@ def test_refuse_and_force(data, tmp_path, monkeypatch, capsys):
     assert target.read_bytes() == data
 
 
-@pytest.mark.parametrize("part", ["workspace", "addons", "dashboard", "manifest"])
+@pytest.mark.parametrize("part", ["workspace", "store", "addons", "dashboard", "manifest"])
 @pytest.mark.parametrize("force", [False, True])
 def test_symlink_refusal(data, tmp_path, monkeypatch, part, force):
     workspace = tmp_path / "workspace"
-    (workspace / "addons/dashboard").mkdir(parents=True)
+    (workspace / ".orch/addons/dashboard").mkdir(parents=True)
     other = tmp_path / "other"
     other.mkdir()
     target = {
         "workspace": workspace,
-        "addons": workspace / "addons",
-        "dashboard": workspace / "addons/dashboard",
-        "manifest": workspace / "addons/dashboard/orch-addon.json",
+        "store": workspace / ".orch",
+        "addons": workspace / ".orch/addons",
+        "dashboard": workspace / ".orch/addons/dashboard",
+        "manifest": workspace / ".orch/addons/dashboard/orch-addon.json",
     }[part]
     if target.is_dir():
         # Rename the original so the link target also looks like a valid workspace subtree.

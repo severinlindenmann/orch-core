@@ -229,7 +229,7 @@ class Files:
         """A client-named regular file, opened ``O_NONBLOCK`` (a FIFO cannot hang the call)."""
         if not self.client_paths:
             raise CapabilityDenied("a path named by the client: send the bytes instead")
-        fd = self._open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = self._open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))  # never a link
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             os.close(fd)

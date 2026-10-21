@@ -81,7 +81,7 @@ def test_a_symlinked_ticket_directory_is_not_followed(env, tmp_path):
     s = env.bootstrap()
     uid = env.new_ticket()
     s.close()
-    real = env.root / "tickets" / uid
+    real = env.store_dir / "tickets" / uid
     moved = tmp_path / "moved"
     real.rename(moved)
     os.symlink(moved, real)
@@ -129,7 +129,7 @@ def test_a_hostile_pending_manifest_cannot_write_outside_the_files_the_store_own
     s.close()
     victim = tmp_path / "victim.txt"
     victim.write_text("precious")
-    pdir = env.root / ".state" / "pending" / "01J9ZP0000000000000000EVIL"
+    pdir = env.store_dir / ".state" / "pending" / "01J9ZP0000000000000000EVIL"
     pdir.mkdir(parents=True)
     (pdir / "0").write_bytes(b"pwned")
     line = canon.event_line({"hash_v": 1})
@@ -160,4 +160,4 @@ def test_artifact_names_cannot_leave_the_artifacts_directory(env):
                  "sha256": canon.artifact_digest(data), "bytes": 1},
                 log=uid, artifacts={bad: data},
             )  # fmt: skip
-    assert not (env.root / "tickets" / "ticket.json").exists()
+    assert not (env.store_dir / "tickets" / "ticket.json").exists()

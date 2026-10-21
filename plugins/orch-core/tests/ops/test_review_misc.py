@@ -185,7 +185,7 @@ def test_unknown_batch_item_keys_and_the_set_schema_ref(ws, cli):
 @pytest.mark.parametrize("n", [0])
 def test_the_scripted_session_notes_hold_claims_and_decisions(ws, cli, n):
     claimed(cli)
-    doc = json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())
+    doc = json.loads(next((ws.store_dir / ".state" / "sessions").glob("*.notes.json")).read_text())
     assert doc["claims"] == [ws.uid("1")] and "decided" in next(iter(doc["tickets"].values()))
 
 

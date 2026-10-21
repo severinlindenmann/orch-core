@@ -1,0 +1,22 @@
+ok describe task.edit
+Change a task's text, its verify command or the criteria it proves. A task that is done keeps its verify command and its criteria.
+usage: orch task edit TASK [--text TEXT] [--verify CMD] [--proves AC1,AC2] [--ref REF] [--dry-run]
+who: agent · emits: ticket.updated
+pre: ticket_exists ticket_open_for_work task_exists acceptance_exists base_rev_tracked grant_valid text_clean
+args:
+  TASK  task id (T3 or DEMO-0043/T3)
+  --text TEXT  the new text of the task
+  --verify CMD  the new verify command; an empty value removes it
+  --proves AC1,AC2  the criteria it proves, comma separated (through the host API an empty list proves none)
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show REF | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.text (exit 6): orch describe task.edit
+  conflict.field (exit 8 retry): orch show, then redo the edit | fix: orch show
+out: ok {key} ticket.updated {task} seq={seq} / next: {next}

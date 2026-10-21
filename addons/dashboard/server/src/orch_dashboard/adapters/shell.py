@@ -29,10 +29,36 @@ class Workspace(BaseModel):
     members: list[Member] = []
     needs_you: int | None = None
     host_state: str = "ok"
+    # Why the host cannot serve this workspace, in the host's own plain words (a store from an older version: what to
+    # delete). Only for a workspace whose host_state is not ok; absent when the host said nothing usable.
+    host_message: str | None = None
     features: list[str] = []
     # What the signer says about this workspace (custody, enabled, available, problem); null: no signer answered.
     click: dict | None = None
     runner: dict | None = None
+
+
+_PREFIX = re.compile(r"[A-Z0-9]{1,16}")
+_CAUSE = re.compile(r"^(?:the workspace cannot be served: )?(?:[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+: )?")
+
+
+def pinned_prefix(row) -> str:
+    """The prefix of a workspace the host cannot serve, from the trusted registry row (the host cannot say it). Empty
+    when the row has none that is plain."""
+    prefix = row.get("prefix") if isinstance(row, dict) else None
+    return prefix if isinstance(prefix, str) and _PREFIX.fullmatch(prefix) else ""
+
+
+def unavailable_reason(error) -> str | None:
+    """The host's reason a workspace cannot be served, without the error codes in front of it; ``None`` when it is
+    missing, too long or has invisible characters (never repaired, never shown)."""
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str) or error.get("code") != "workspace.unavailable":
+        return None
+    text = _CAUSE.sub("", message, count=1).strip()
+    if not text or len(text) > 600 or hidden(text):
+        return None
+    return text
 
 
 def click_card(row):

@@ -66,7 +66,7 @@ def run_cli(r, *argv, confirm=True, timer=None, clock=None, link=None):
 def test_commit_push_is_one_child_run_and_status_follows(r):
     r.init()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     code, out = run_cli(r, "commit")
     assert code == 0 and out["pushed"] is False
     assert r.push(initial=True)["pushed"] is True
@@ -76,14 +76,14 @@ def test_commit_push_is_one_child_run_and_status_follows(r):
     assert code == 0 and out["pushed"] is True and out["url"] == url and len(out["commit"]) == 40
     code, out = run_cli(r, "status")
     status = out["detail"]["status"]
-    assert status["configured"] and status["last"]["commit"] == git(r.root, "rev-parse", "HEAD")
+    assert status["configured"] and status["last"]["commit"] == git(r.store, "rev-parse", "HEAD")
     assert status["last"]["pushed_at"] is not None and status["repo"] == {"state": "ok"}
     assert status["pending"]["events"] == 0
     assert status["remote"] == {"url": url, "private": False, "export": "ok", "current_url": url,
                                 "current_private": False, "matches_last": True}  # fmt: skip
     # the push URL changes: the dashboard's confirmation sees it before any push
     other = r.bare("other")
-    git(r.root, "remote", "set-url", "origin", other)
+    git(r.store, "remote", "set-url", "origin", other)
     remote = run_cli(r, "status")[1]["detail"]["status"]["remote"]
     assert remote["current_url"] == other and remote["matches_last"] is False and remote["url"] == url
 
@@ -97,15 +97,15 @@ def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
     assert r.link("records.status", {})["configured"] is True  # init reported the repo to the host
     r.commit()
     staged = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"x\n", capture_output=True, check=True,
+        ["git", "hash-object", "-w", "--stdin"], cwd=r.store, input=b"x\n", capture_output=True, check=True,
         env={"HOME": str(r.home), "PATH": os.environ["PATH"]},
     ).stdout.decode().strip()  # fmt: skip
-    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
+    git(r.store, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
     assert run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"] == {"state": "index_differs"}
     code, out = run_cli(r, "sync-index")
     assert code == 0 and out["detail"]["index"] == "synced"
     assert run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"] == {"state": "ok"}
-    git(r.root, "config", "--local", "credential.helper", "!evil")
+    git(r.store, "config", "--local", "credential.helper", "!evil")
     state = run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"]
     assert state["state"] == "unsafe" and "credential" in state["problem"]
 
@@ -167,7 +167,7 @@ def _auto(r, now, link=None):
 def test_the_auto_run_keeps_its_own_clock_and_commits_and_pushes(r):
     r.init()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     run_cli(r, "commit")
     r.push(initial=True)
     r.tips.set_auto(r.w.wid, {"on": True, "every_min": 5, "push": True})
@@ -193,7 +193,7 @@ def test_opus1_a_maintainers_note_never_steers_the_owners_timer_or_status(r, mon
 
     r.init()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     code, out = run_cli(r, "commit")
     real_commit = out["commit"]
     r.push(initial=True)
@@ -308,7 +308,7 @@ def test_every_run_is_logged_without_contents(r):
     assert [e["event"] for e in events] == ["start", "commit", "start", "refused"]
     assert events[-1]["code"] == "records.remote_missing" and events[1]["commit"]
     assert oct(os.stat(r.tips.path.parent / "person" / "records.jsonl").st_mode & 0o777) == "0o600"
-    config = (r.root / "config.json").read_text()
+    config = (r.store / "config.json").read_text()
     assert config[:40] not in "\n".join(log)
 
 
@@ -339,7 +339,7 @@ def test_a_replaced_file_stops_the_stream(r):
     r.init()
     repo = r.repo(None)
     manifest = rtool.fetch_manifest(r.link, r.w.wid)
-    (r.root / "config.json").write_bytes(b"x" * (r.root / "config.json").stat().st_size)
+    (r.store / "config.json").write_bytes(b"x" * (r.store / "config.json").stat().st_size)
     assert rtool.stream_blobs(repo, manifest) is None
 
 
@@ -363,7 +363,7 @@ def direct(tmp_path, home):  # noqa: F811
 def test_direct_mode_commits_and_pushes_with_the_same_rules(direct, tmp_path, home):  # noqa: F811
     ws, link, wid = direct
     env = {"HOME": str(home), "PATH": os.environ["PATH"]}
-    rtool.init_repo(ws.root, env=env)
+    rtool.init_repo(ws.store_dir, env=env)
     tips = rperson.PersonState(tmp_path / "pstate" / "records.json")
 
     def cli(*argv):
@@ -374,11 +374,11 @@ def test_direct_mode_commits_and_pushes_with_the_same_rules(direct, tmp_path, ho
 
     code, out = cli("commit")
     assert code == 0 and len(out["commit"]) == 40
-    tree = git(ws.root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    tree = git(ws.store_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
     assert "events/workspace.jsonl" in tree and not any(p.startswith(".state") for p in tree)
     bare = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
-    git(ws.root, "remote", "add", "origin", f"file://{bare}")
+    git(ws.store_dir, "remote", "add", "origin", f"file://{bare}")
     code, out = cli("push", "--initial")
     assert code == 0 and out["pushed"]
     status = cli("status")[1]["detail"]["status"]
@@ -472,7 +472,7 @@ def test_opus3_state_is_the_timers_own_option(r, tmp_path):
 def test_opus3_a_served_workspace_refuses_direct_mode_whatever_the_state_dir(w, tmp_path):  # noqa: F811
     from orch.host.service import SERVED_MARKER
 
-    assert (Path(w.lab.root) / ".state" / SERVED_MARKER).is_file()
+    assert (Path(w.lab.root) / ".orch" / ".state" / SERVED_MARKER).is_file()
     other = tmp_path / "empty-state"
     other.mkdir()
     link = DirectLink(Path(w.lab.root), w.wid, other)
@@ -488,7 +488,7 @@ def test_sonnet_b_a_confirmation_restarts_the_budget(r, monkeypatch):
     import orch.records as records_pkg
 
     r.init()
-    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.store, "remote", "add", "origin", r.bare())
     run_cli(r, "commit")
     clock = [100.0]
     monkeypatch.setattr(records_pkg, "MONOTONIC", lambda: clock[0])
@@ -509,7 +509,7 @@ def test_the_child_line_keeps_the_commit_when_the_push_fails(r):
     r.init()
     code, out = run_cli(r, "commit", "--push")  # no remote
     jsonschema.validate(out, rcli.CHILD_SCHEMA)
-    assert code == 3 and out["code"] == "records.remote_missing" and out["commit"] == git(r.root, "rev-parse", "HEAD")
+    assert code == 3 and out["code"] == "records.remote_missing" and out["commit"] == git(r.store, "rev-parse", "HEAD")
 
 
 def test_auto_on_fails_when_the_note_fails(r):
@@ -567,7 +567,7 @@ def test_direct_mode_audit_names_who_acted(direct):
 def test_the_served_marker_holds_no_path_or_uid(w):  # noqa: F811
     from orch.host.service import SERVED_MARKER
 
-    marker = Path(w.lab.root) / ".state" / SERVED_MARKER
+    marker = Path(w.lab.root) / ".orch" / ".state" / SERVED_MARKER
     assert json.loads(marker.read_text()) == {"v": 1} and marker.stat().st_mode & 0o777 == 0o600
     assert not [p for p in marker.parent.iterdir() if p.name.startswith(f".{SERVED_MARKER}.")]
 
@@ -591,18 +591,18 @@ def test_status_is_strictly_read_only(r):
     r.init()
     r.commit()
     url = r.bare()
-    git(r.root, "remote", "add", "origin", url)
+    git(r.store, "remote", "add", "origin", url)
     staged = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"y\n", capture_output=True, check=True,
+        ["git", "hash-object", "-w", "--stdin"], cwd=r.store, input=b"y\n", capture_output=True, check=True,
         env={"HOME": str(r.home), "PATH": os.environ["PATH"]},
     ).stdout.decode().strip()  # fmt: skip
-    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
+    git(r.store, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
 
     def snapshot():
-        objects = sorted(str(p) for p in (r.root / ".git" / "objects").rglob("*") if p.is_file())
+        objects = sorted(str(p) for p in (r.store / ".git" / "objects").rglob("*") if p.is_file())
         person = sorted(str(p) for p in (r.tips.path.parent / "person").rglob("*")) if (
             r.tips.path.parent / "person").exists() else []  # fmt: skip
-        return objects, person, (r.root / ".git" / "index").read_bytes()
+        return objects, person, (r.store / ".git" / "index").read_bytes()
 
     before = snapshot()
     code, out = run_cli(r, "status")

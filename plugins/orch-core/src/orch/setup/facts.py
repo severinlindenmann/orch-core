@@ -24,7 +24,9 @@ __all__ = [
     "catalog",
     "check_dir",
     "current",
+    "git_state",
     "label",
+    "repo_name",
     "missing_items",
     "read_facts",
 ]
@@ -62,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing", "github"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -111,6 +113,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "model-routing": (
             "Model routing",
             "Choose which AI model each kind of agent work starts on. You still see the model before every start.",
+            False,
+            False,
+        ),
+        "github": (
+            "GitHub",
+            "See pull requests, checks and issues of your repositories. Read only; orch never writes to GitHub.",
             False,
             False,
         ),
@@ -340,3 +348,26 @@ def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonIn
     if profile["method"] == "click" and not facts.convenience:
         out.append("custody")
     return out
+
+
+def git_state(directory: Path) -> dict[str, bool]:
+    """``{"repo": bool}``: the folder is, or lies inside, a git working copy. Looked for as a ``.git`` entry in the
+    folder and its parents (``lstat``, nothing followed, no git process: a repository's own configuration is never
+    run). Unreadable counts as a repository (nothing is offered; fail closed)."""
+    here = Path(os.path.realpath(directory))
+    for d in (here, *here.parents):
+        try:
+            os.lstat(d / ".git")
+            return {"repo": True}
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return {"repo": True}
+    return {"repo": False}
+
+
+def repo_name(directory: Path) -> str:
+    """The name a project folder is declared under in ``settings.repos``: its folder name, lower-cased and cut to the
+    allowed letters (``project`` when nothing is left)."""
+    name = re.sub(r"[^a-z0-9._-]+", "-", directory.name.lower()).strip("-._")[:64]
+    return name if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", name or "") else "project"

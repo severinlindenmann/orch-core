@@ -149,6 +149,13 @@ class FileRecords(MemoryRecords):
         else:
             self._flock = FileLock(self.directory / ".lock", opener=self._lock_open, verify=self._lock_same)
 
+    def close(self) -> None:
+        """Release the pinned root fd this object opened (a later use opens it again). The root passed in as an
+        object, not a callable, is the caller's own and stays open."""
+        fs, self._fs_obj = self._fs_obj, None
+        if fs is not None and callable(self._fs_src):
+            fs.close()
+
     def _fs(self) -> Any:
         if self._fs_obj is None and self._fs_src is not None:
             self._fs_obj = self._fs_src() if callable(self._fs_src) else self._fs_src

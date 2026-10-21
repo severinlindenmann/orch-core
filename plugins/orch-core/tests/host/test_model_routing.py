@@ -96,17 +96,25 @@ def test_routing_off_means_the_harness_default_and_a_changed_setting_changes_the
     assert err(start(c, ticket=key, harness="claude-code", mode="work", spec=pre["spec"])) == "launch.changed"
 
 
-def grant_routing(human):
-    human.run("addon.grant", {"name": "model-routing"})  # the built-in manifest installs like any other
+def grant_routing(human, tmp_path):
+    """Model routing on, with its settings, the only way there (AE4): the one-review sequence. The built-in manifest
+    installs like any other add-on's."""
+    from tests.host.test_sequence import Rig
+    from tests.host.test_sequence_addon import enable
+
+    rig = Rig(human, tmp_path, enable(human, "model-routing"))
+    rig.driver().run(rig.first())
 
 
-def test_the_setting_is_refused_while_the_add_on_is_off_and_signed_with_the_word_when_on(human, served):
+def test_the_setting_is_refused_while_the_add_on_is_off_and_signed_with_the_word_when_on(human, served, tmp_path):
     from orch.click import protocol
 
     args = {"set": {"models": {"claude-code": {"work": "sonnet"}}}}
     assert herr(human.prepare_res("settings.set", args)) == "invalid.input"
-    human.prepare("settings.set", {"set": {"models": None}})  # clearing is always allowed
-    grant_routing(human)
+    human.prepare("settings.set", {"set": {"models": None}})  # clearing is allowed while the add-on is off
+    grant_routing(human, tmp_path)
+    assert herr(human.prepare_res("settings.set", {"set": {"models": None}})) == "invalid.input"  # AE4: while on, not
+    assert herr(human.prepare_res("settings.set", {"set": {"models": {"codex": {}}}})) == "invalid.input"
     prepared, _, signed = human.run("settings.set", args)
     assert signed.events[0]["set"] == args["set"]
     assert protocol.op_class("settings.set", args=args) == "word"  # a model decides what runs: the typed word
@@ -119,13 +127,13 @@ def test_the_setting_is_refused_while_the_add_on_is_off_and_signed_with_the_word
     [{"claude-code": {"work": "gpt-5"}}, {"codex": {"work": "opus"}}, {"claude-code": {"work": "--yolo"}},
      {"shell": {"work": "opus"}}, {"claude-code": {"nap": "opus"}}, {}, {"claude-code": {"work": None}}],
 )  # fmt: skip
-def test_the_setting_takes_only_names_of_the_closed_list(human, served, models):
-    grant_routing(human)
+def test_the_setting_takes_only_names_of_the_closed_list(human, served, models, tmp_path):
+    grant_routing(human, tmp_path)
     assert herr(human.prepare_res("settings.set", {"set": {"models": models}})) == "invalid.input"
 
 
-def test_the_review_says_the_models_in_words_and_the_unset_ones_as_default(human, served):
-    grant_routing(human)
+def test_the_review_says_the_models_in_words_and_the_unset_ones_as_default(human, served, tmp_path):
+    grant_routing(human, tmp_path)
     human.run("settings.set", {"set": {"models": {"claude-code": {"work": "sonnet"}}}})
     p = human.prepare("settings.set", {"set": {"models": {"claude-code": {"work": "opus"}, "codex": {"fix": "o3"}}}})
     rows = {r["field"]: r for r in signcontent.build(p, verified=True)["fields_changed"]}

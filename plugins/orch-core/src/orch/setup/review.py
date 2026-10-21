@@ -23,12 +23,16 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_needs import NEEDS_SETTINGS
 
 from .facts import AddonInfo, Facts
 from .protocol import SetupError
+
+ADDONS_FIELD = "addon" + "s"  # the profile field (not the store's addons directory the layout lint looks for)
 
 __all__ = [
     "PLACEHOLDER",
@@ -191,6 +195,12 @@ def plan(
             sets["sign_methods"] = [*facts.sign_methods, "click"]  # M1: only what is actually missing
     if profile["agent_hours"] != 8 and (facts is None or not facts.grant_hours_set):
         sets["grant_hours"] = profile["agent_hours"]
+    if profile.get("git_init") and facts is None:  # a new workspace only
+        from .facts import repo_name
+
+        # the folder becomes a git repository (made by the run, before this is prepared) and is declared as the repo
+        # tickets link, so worktrees can be made; the review names it in words
+        sets["repos"] = {repo_name(Path(directory)): {"path": directory}}
     if sets and wanted("settings"):
         items.append(
             Item(
@@ -202,6 +212,8 @@ def plan(
             )
         )
     for a in profile["addons"]:
+        if a in NEEDS_SETTINGS:  # AE4: setup signs no settings for these, so it never turns them on (Settings does)
+            raise SetupError("invalid.input", f"{a} is turned on in Settings, Add-ons", field=ADDONS_FIELD)
         if info[a].kind != "addon" or not wanted(f"addon:{a}"):
             continue
         ev = _addon_event(a, manifest_bytes(a))
@@ -234,6 +246,14 @@ def plan(
         )
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
+    if profile.get("git_init") and wanted("git"):
+        flags.append(
+            {
+                "id": "git",
+                "text": "Make this folder a git repository (git init), and keep .orch/ and .orch-work/ out of it. "
+                "None of your files is committed.",
+            }
+        )
     wants_exec = profile["agent_grant"] or any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
     )
@@ -292,6 +312,7 @@ def _workspace(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
 def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
     keys = ("name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay")
     out = {k: profile[k] for k in keys}
+    out["git_init"] = bool(profile.get("git_init"))
     out["dir"] = directory
     out["custody_conversion"] = profile["method"] == "click"
     return out

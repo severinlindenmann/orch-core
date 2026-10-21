@@ -26,7 +26,11 @@ from . import (
     terminals,
     testrun,
     usage,
+<<<<<<< HEAD
     widget_frame,
+=======
+    workdirs,
+>>>>>>> origin/addon-widgets-core
     worktrees,
 )
 from .adapters.setup import SetupProxy
@@ -239,6 +243,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     agents.register(app, gateway)
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
+    workdirs.register(app, gateway)
     usage.register(app, gateway)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)

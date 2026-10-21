@@ -67,7 +67,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if "takeover" in event:
             data["takeover"] = True
         seq = done[-1].event["seq"] if done else p.last_seq
-        return c.result(p.last_view, data, seq=seq, hints=[views.next_hint(p.last_view, ctx.session)])
+        lines: list[str] = []
+        if done and not ctx.dry_run:
+            from orch.ops.workdir import workdir_of
+
+            wd = workdir_of(c.store, p.last_view, create=True)  # no codebase: the work folder, made if missing
+            if wd is not None:
+                lines.append(f"workdir: {wd} (write results here; orch artifact add FILE --task Tn --ac ACn)")
+        return c.result(p.last_view, data, seq=seq, hints=[views.next_hint(p.last_view, ctx.session)], lines=lines)
 
 
 OP = operation(

@@ -825,3 +825,19 @@ def test_symlinked_ssh_dir_is_forbidden_at_both_spellings(lay: Layout, monkeypat
     base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
     with pytest.raises(sbx.SandboxError):
         sbx._validated(sbx.Spec(toolchain_ro=[real], **base))
+
+
+def test_loop_in_a_middle_component_fails_closed(lay: Layout) -> None:
+    (lay.root / "loopdir").symlink_to(lay.root / "loopdir")
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    with pytest.raises(sbx.SandboxError):
+        sbx._validated(sbx.Spec(forbidden=[lay.root / "loopdir" / "x"], **base))
+
+
+def test_dangling_link_in_a_middle_component_fails_closed(lay: Layout) -> None:
+    (lay.root / "dang").symlink_to(lay.root / "nowhere")
+    base = {"argv": ["/bin/echo"], "export_dir": lay.export, "out_dir": lay.out, "tmp_dir": lay.tmp}
+    for kw in ({"forbidden": [lay.root / "dang" / "sub"]}, {"toolchain_ro": [lay.root / "dang" / "sub"]}):
+        with pytest.raises(sbx.SandboxError):
+            sbx._validated(sbx.Spec(**kw, **base))
+    assert sbx._real(lay.root / "missing" / "tail") == sbx._real(lay.root) / "missing" / "tail"

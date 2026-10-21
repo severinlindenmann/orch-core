@@ -30,6 +30,8 @@ macOS has no pid namespace: a descendant that calls ``setsid`` leaves the proces
 still inside the sandbox. Callers therefore use a fresh, never-reused out/tmp per run, read results only through
 :func:`read_out_file`, and remove the trees fd-based. Follow-up: kill sandboxed same-UID processes that can still write
 this run's tmp (``sandbox_check``). The Linux backend has none of this.
+Residual (same UID): a path validated here can be retargeted through a symlink the same user controls between
+:func:`_validated` and launch; closing it needs descriptor-pinned paths or a separate user (#287).
 """
 
 from __future__ import annotations
@@ -140,16 +142,37 @@ def _canon_existing(path: str) -> str:
 
 
 def _real(path: Path | str) -> Path:
-    """Canonical path; for a missing path, the deepest existing parent canonicalised plus the remaining names."""
+    """Canonical path. Components are resolved one by one (symlinks before ``..``). A component that exists but cannot
+    be resolved (a loop, a dangling link in the middle or at the end) is refused: fail closed. Only a genuinely missing
+    tail (``lstat`` says ENOENT on a non-link) is appended to the canonical spelling of what exists."""
     raw = os.fspath(path)
-    if os.path.islink(raw) and not os.path.exists(raw):
-        raise SandboxError("a path is a dangling symlink")
-    p = os.path.realpath(raw)  # symlinks first, then ``..`` (never a lexical collapse)
-    rest: list[str] = []
-    while not os.path.lexists(p) and p != "/":
-        p, tail = os.path.split(p)
-        rest.append(tail)
-    return Path(_canon_existing(p), *reversed(rest))
+    cur = "/"
+    parts = [x for x in raw.split("/") if x]
+    if not raw.startswith("/"):
+        cur = os.getcwd()
+    for i, comp in enumerate(parts):
+        if comp == ".":
+            continue
+        if comp == "..":
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, comp)
+        try:
+            st = os.lstat(nxt)
+        except FileNotFoundError:
+            tail = [c for c in parts[i:] if c not in (".",)]
+            if ".." in tail:
+                raise SandboxError("a path has '..' after a missing component") from None
+            return Path(_canon_existing(cur), *tail)
+        except OSError as e:
+            raise SandboxError("a path component cannot be examined") from e
+        if stat.S_ISLNK(st.st_mode):
+            try:
+                nxt = os.path.realpath(nxt, strict=True)
+            except OSError as e:
+                raise SandboxError("a path has a loop or dangling symlink") from e
+        cur = nxt
+    return Path(_canon_existing(cur))
 
 
 def _fold(p: Path) -> tuple[str, ...]:

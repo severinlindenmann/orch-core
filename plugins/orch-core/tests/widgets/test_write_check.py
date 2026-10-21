@@ -89,3 +89,24 @@ def test_hostile_inputs_stay_fast():
         parse_block(kv)
     check.check_section_text({}, "context", "```orch\n" + "[" * 60000 + "\n```")
     assert time.monotonic() - t < 3
+
+
+def test_a_huge_key_is_not_echoed_back():
+    big = "k" * 65000
+    for block in (
+        json.dumps({"type": "callout", "role": "info", "text": "x", big: 1}),
+        f'{{"type":"callout","role":"info","text":"x","{big}":1,"{big}":2}}',
+        json.dumps({"type": big}),
+        json.dumps({"type": "bars", "data": {"a": 1}, "highlight": big}),
+        json.dumps(
+            {
+                "type": "series",
+                "x": ["a", "b"],
+                "series": [{"name": big, "values": [1, 2]}, {"name": big, "values": [1, 2]}],
+            }
+        ),
+    ):
+        r = parse_block(block[:65000] if len(block) > 65536 else block)
+        assert r.reason is not None and len(r.reason) < 400, (len(r.reason or ""), block[:40])
+    ps = check.check_write({}, "context", "```orch\n" + json.dumps({"type": big}) + "\n```")
+    assert len(check.message(ps, "context")) < 1000

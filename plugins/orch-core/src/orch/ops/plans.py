@@ -143,7 +143,7 @@ def _widgets_addon_on(c: Call) -> bool:
     return a is not None and a.enabled and not a.purged
 
 
-def _check_widgets(c: Call, p: Projection, sid: str, text: str) -> None:
+def check_widgets(c: Call, p: Projection, sid: str, text: str) -> None:
     """Refuse a section whose ``orch`` widget blocks the strict validator (the dashboard's, ported) would not draw, so
     the author learns it where it can fix it. Text without a fence is not even parsed."""
     from orch.widgets import check
@@ -161,7 +161,7 @@ def section_set(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if sid not in SECTIONS_BY_TYPE[p.view.type]:
         raise OrchError("invalid.input", f"a {p.view.type} ticket has no section {sid}")
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=65536, what=f"section {sid}").strip("\n")
-    _check_widgets(c, p, sid, text)
+    check_widgets(c, p, sid, text)
     p.add(
         {
             "type": "ticket.updated",

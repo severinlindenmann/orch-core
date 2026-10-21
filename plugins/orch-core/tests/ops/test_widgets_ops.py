@@ -35,3 +35,19 @@ def test_new_refuses_a_widget_block_in_the_summary(ws, cli):
     r = cli.j("new", "T", "--message", GOOD)
     assert r.err_code == "parse.text"
     assert cli("new", "T", "--message", "plain").code == 0
+
+
+def test_handoff_refuses_a_bad_widget_block(ws, cli):
+    cli("new", "A ticket")
+    cli("claim", "1")
+    assert cli.j("handoff", "-m", BAD).err_code == "parse.text"
+    r = cli("handoff", "-m", "done\n\n" + GOOD)
+    assert r.code == 0, r.out + r.err
+
+
+def test_widgets_check_normalises_and_limits_like_section_set(ws, cli, tmp_path):
+    f = tmp_path / "big.md"
+    f.write_text("x" * 65537)
+    assert cli.j("widgets", "check", str(f)).err_code in ("invalid.input", "parse.text")
+    f.write_text("a\x00b")
+    assert cli.j("widgets", "check", str(f)).err_code in ("invalid.input", "parse.text")

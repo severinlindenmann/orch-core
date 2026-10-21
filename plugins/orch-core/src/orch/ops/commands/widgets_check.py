@@ -13,7 +13,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.widgets import check
 
     c = Call.of(ctx, "widgets.check")
-    text = c.read_file_text(args["file"]).replace("\r\n", "\n")
+    text = c.text(c.read_file_text(args["file"]), limit=65536, what="file").strip("\n")  # as section set does
     section = args.get("section") or "context"
     if text.lstrip().startswith("{") and not check.has_fence(text):
         text = "```orch\n" + text.strip("\n") + "\n```"

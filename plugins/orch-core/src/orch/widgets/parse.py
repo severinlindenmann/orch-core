@@ -106,13 +106,31 @@ def long_string(v):
     return False
 
 
+MAX_TOKEN = 60
+MAX_REASON = 300
+_QUOTED = re.compile(r'"([^"]*)"')
+
+
+def clip_reason(reason: str) -> str:
+    """A reason fit to show: every quoted token (a key, a name, a type taken from the ticket text) is cut to 60
+    characters and the whole line to 300, so a refusal never echoes the content back. The dashboard keeps the full
+    reason; the parity fixtures compare after the same clip."""
+
+    def cut(m):
+        t = m[1]
+        return m[0] if len(t) <= MAX_TOKEN else '"' + t[: MAX_TOKEN - 3] + '..."'
+
+    out = _QUOTED.sub(cut, reason)
+    return out if len(out) <= MAX_REASON else out[: MAX_REASON - 3] + "..."
+
+
 def parse_block(raw: str) -> BlockResult:
     """Never raise for agent-authored input, including unexpected internal failures."""
     try:
         result = _check(raw)
         if result.reason is not None:
             # JSON.stringify preserves lone surrogates in diagnostic strings too.
-            result.reason = unicode_text(result.reason)
+            result.reason = clip_reason(unicode_text(result.reason))
         return result
     except Exception:
         return BlockResult(reason="block could not be read")

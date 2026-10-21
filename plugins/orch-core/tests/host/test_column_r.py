@@ -169,6 +169,10 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
 
     reads = {o.name for o in ops.all() if o.who == "read"}
     reads -= {"doctor", "instructions.sync", "instructions.hook", "wait"}
+    # widgets.check reads a file path and echoes content: over the relay it would be a remote file-read probe; both
+    # widgets ops are refused to R on purpose (agents' local helpers)
+    reads -= {"widgets.check", "widgets.types"}
+    assert not {"widgets.check", "widgets.types"} & columns.RELAY_OPS
     host = {
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",

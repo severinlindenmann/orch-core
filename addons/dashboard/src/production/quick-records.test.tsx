@@ -149,6 +149,8 @@ it('starting on a terminal workspace is ONE hand-off with the whole task: title,
   await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Fix the typo in CONTRIBUTING')
   await user.type(screen.getByLabelText('Details (optional)'), 'It says teh.')
   await user.type(screen.getByLabelText('Step 1'), 'The typo is gone')
+  expect(screen.queryByLabelText('Step 1 check')).toBeNull() // the command field is folded behind the button
+  await user.click(screen.getByRole('button', { name: 'Add a way to check' }))
   await user.type(screen.getByLabelText('Step 1 check'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
   await user.click(screen.getByRole('button', { name: 'Start task' }))
   const first = await screen.findByRole('dialog', {}, T)
@@ -190,6 +192,36 @@ it('adding where click-to-sign is on goes through the click routes, not a hand-o
   await within(first).findByRole('button', { name: /^Sign( |$)/ }, T)
   expect(state.host.posts()).toEqual([]) // no terminal hand-off was prepared
   expect(within(first).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+})
+
+it('the checklist is editable: steps can be added and removed, up to four, and the limit is explained', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Make a giraffe chart')
+  await user.type(screen.getByLabelText('Step 1'), 'Read the data')
+  for (let i = 0; i < 3; i++) await user.click(screen.getByRole('button', { name: 'Add a step' }))
+  expect(screen.getByLabelText('Step 4')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Add a step' })).toBeNull()
+  expect(screen.getByText(/up to 4 steps/)).toBeInTheDocument()
+  await user.type(screen.getByLabelText('Step 2'), 'Draw the chart')
+  await user.click(screen.getByRole('button', { name: 'Remove step 1' }))
+  expect(screen.queryByLabelText('Step 4')).toBeNull()
+  expect(screen.getByLabelText('Step 1')).toHaveValue('Draw the chart')
+  expect(screen.getByRole('button', { name: 'Add a step' })).toBeInTheDocument()
+  // what is signed is said in plain words below the button
+  expect(screen.getByTestId('quick-what-you-sign')).toHaveTextContent('Make a giraffe chart · 1 checklist step · no agent access')
+})
+
+it('what you sign names the agent access and the note shows the workspace maximum, not a fixed 7 days', async () => {
+  state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
+  expect(screen.getByText(/No agent access is asked for/)).toBeInTheDocument()
+  await user.click(screen.getByRole('checkbox', { name: /Let agents work on any ticket/ }))
+  expect(await screen.findByText(/allows agent access of up to 3 days/, {}, T)).toBeInTheDocument()
+  expect(screen.queryByText(/7 days/)).toBeNull()
+  expect(screen.getByTestId('quick-what-you-sign')).toHaveTextContent('agent access for 8 h')
 })
 
 it('a title that is empty or has a line break is never submitted', async () => {

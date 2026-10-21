@@ -49,7 +49,7 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   if (code) {
     clearSession(false)
     const response = await fetcher('/auth/session', {
-      method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store',
+      method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(20_000), // never a boot that waits for good
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }),
     })
     if (!response.ok) return null

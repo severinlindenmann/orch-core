@@ -91,6 +91,55 @@ PUBLISH_FEATURE_OPS = (
 )
 
 
+class NextFlight:
+    """At most one run of ``fn`` at a time, and at most one waiting behind it, however many callers ask.
+
+    A page load asks for the workspace list several times (the feature list, the viewer, the workspaces) and a page
+    the person reloads leaves its requests behind: the server cannot tell a closed page from an open one, so each
+    abandoned request still ran its full round of host calls, one after another on the same host connection. Ten
+    quick reloads made the next page wait for forty runs. Now a caller that arrives while a run is under way waits for
+    the NEXT run (one that starts after it asked, so it never reads older than a run of its own would), and every
+    caller that arrived meanwhile shares that one. A run's error reaches everyone who shared it.
+    """
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.cond = threading.Condition()
+        self.running = False
+        self.started = 0  # runs begun
+        self.finished = 0  # runs ended
+        self.outcome = (None, None)  # (value, error) of the last run
+
+    def __call__(self):
+        with self.cond:
+            target = self.started + 1  # the first run that starts after this call
+            while True:
+                if self.finished >= target:
+                    value, error = self.outcome
+                    break
+                if not self.running and self.started + 1 == target:
+                    self.running = True
+                    self.started = target
+                    self.cond.release()
+                    try:
+                        try:
+                            outcome = (self.fn(), None)
+                        except BaseException as exc:  # noqa: BLE001 - shared with the callers, then raised in each
+                            outcome = (None, exc)
+                    finally:
+                        self.cond.acquire()
+                    self.running = False
+                    self.finished = target
+                    self.outcome = outcome
+                    self.cond.notify_all()
+                    value, error = outcome
+                    break
+                self.cond.wait()
+        if error is not None:
+            raise error
+        return value
+
+
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
@@ -108,15 +157,15 @@ class Gateway:
             raise fail("host.unavailable", "Host registry unavailable") from None
 
     def workspace_folder(self, ws):
-        """``(project folder, store folder or None)`` of workspace ``ws`` from the trusted host registry (None store:
-        the legacy layout, where the store is the project folder itself). The File Explorer's root; browser input never
-        names it."""
+        """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the
+        project's ``.orch``). The File Explorer's root; browser input never names it."""
         row = self._pins().get(ws)
         if row is None or not isinstance(row.get("root"), str) or not row["root"].startswith("/"):
             raise fail("not_found", exit=2)
-        store = row.get("store")
         project = Path(row["root"])
-        return project, (project / store if isinstance(store, str) and store else None)
+        from orch.layout import STORE_DIR
+
+        return project, project / STORE_DIR
 
     def check_repo_path(self, ws, path):
         """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
@@ -128,9 +177,7 @@ class Gateway:
         row = self._pins().get(ws)
         if row is None or not isinstance(row.get("root"), str):
             return  # not known here: the host's own check still runs
-        store = row.get("store")
-        project = Path(row["root"])
-        layout = Layout(project, project / store, False) if isinstance(store, str) else Layout.legacy_at(project)
+        layout = Layout.new_at(row["root"])
         try:
             repopaths.check_declared(layout, path)
         except repopaths.RepoPathError as exc:
@@ -295,6 +342,13 @@ class Gateway:
         return isinstance(card, dict) and card.get("enabled") is True
 
     def workspaces(self):
+        """The workspaces this person may see, read from the host. Concurrent callers share runs (``NextFlight``)."""
+        flight = self.__dict__.get("_workspace_flight")
+        if flight is None:
+            flight = self.__dict__.setdefault("_workspace_flight", NextFlight(self._workspaces))
+        return flight()
+
+    def _workspaces(self):
         with self.lock:
             pins = self._pins()
             if self.control is None or self.control.sock.fileno() < 0:
@@ -344,7 +398,15 @@ class Gateway:
                 )
             except HostError as exc:
                 # No untrusted title or principal is fabricated when the host is unavailable.
-                result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
+                result.append(
+                    adapters.Workspace(
+                        id=ws,
+                        prefix=adapters.pinned_prefix(pins[ws]),
+                        name=ws,
+                        host_state=exc.error["code"],
+                        host_message=adapters.unavailable_reason(exc.error),
+                    )
+                )
         return result
 
     def host_info(self):

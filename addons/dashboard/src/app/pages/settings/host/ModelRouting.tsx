@@ -17,7 +17,7 @@ const DEFAULT = ''
 const wide = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 640px)').matches
 const same = (a: ModelTable, b: ModelTable) => JSON.stringify(cleanTable(a)) === JSON.stringify(cleanTable(b))
 
-export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner: boolean }) {
+export function ModelRouting({ workspace, owner, embedded = false }: { workspace: Workspace; owner: boolean; embedded?: boolean }) {
   const ws = workspace.id
   const choices = useQuery(routingQueries.choices(ws))
   const settings = useQuery({ ...queries.hostSettings(ws), retry: false })
@@ -25,17 +25,19 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
   const [draft, setDraft] = useState<ModelTable>(signed)
   useEffect(() => setDraft(settings.data?.models ?? {}), [settings.data?.models])
   const { ask, dialog } = useSettingsHandoff(ws, () => void settings.refetch())
+  const [custom, setCustom] = useState(false)
   const [openAgents, setOpenAgents] = useState<Record<string, boolean>>({})
-  if (choices.isError) return <Section title="Default models"><LoadFailed what="the model choices" onRetry={() => void choices.refetch()} /></Section>
-  if (!choices.data) return <Section title="Default models"><div data-testid="model-routing-loading" role="status" aria-label="Loading the model choices"><Skeleton className="h-24" /></div></Section>
+  if (choices.isError) return <Wrap embedded={embedded}><LoadFailed what="the model choices" onRetry={() => void choices.refetch()} /></Wrap>
+  if (!choices.data) return <Wrap embedded={embedded}><div data-testid="model-routing-loading" role="status" aria-label="Loading the model choices"><Skeleton className="h-24" /></div></Wrap>
   // Editing waits until the signed table has been read: a draft over an unread table could silently undo a setting.
   const ready = settings.isSuccess
   const canEdit = owner && ready
   const changed = !same(draft, signed)
+  const chosen = Object.values(cleanTable(signed)).reduce((n, m) => n + Object.keys(m as object).length, 0)
   const set = (harness: string, mode: string, model: string) =>
     setDraft((d) => ({ ...d, [harness]: { ...(d as Record<string, Record<string, string>>)[harness], [mode]: model } }))
   return (
-    <Section title="Default models">
+    <Wrap embedded={embedded}>
       <div className="space-y-3 text-[13px]" data-testid="model-routing">
         <p className="text-text-muted">
           Start agent begins each kind of work on the model you choose here. You see the model before every start and can pick another one then. Only an owner can change this, and you review and sign the change.
@@ -46,7 +48,19 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
           <p role="alert" className="text-danger">Your current choices could not be loaded, so they cannot be changed right now. <Button size="sm" variant="outline" onClick={() => void settings.refetch()}>Retry</Button></p>
         )}
         {settings.data && settings.data.available === false && <p className="text-text-muted">This host does not report its settings, so nothing is shown here.</p>}
-        {choices.data.harnesses.map((h, i) => (
+        {!custom && (
+          <div className="space-y-1.5" data-testid="routing-summary">
+            <p>
+              {chosen === 0
+                ? `Every agent uses its own default model. Available: ${choices.data.harnesses.map((h) => h.label).join(', ') || 'none found'}.`
+                : `${chosen} model choice${chosen === 1 ? '' : 's'} saved; the rest use the agent's own default.`}
+            </p>
+            {choices.data.harnesses.length === 0 && <p className="text-warning">No supported agent was found on this computer. Install one, then come back.</p>}
+            <Button size="sm" variant="secondary" aria-expanded={false} onClick={() => setCustom(true)}>Customize models</Button>
+          </div>
+        )}
+        {custom && <Button size="sm" variant="ghost" aria-expanded onClick={() => setCustom(false)} disabled={changed}>Hide model choices</Button>}
+        {custom && choices.data.harnesses.map((h, i) => (
           <details key={h.id} className="space-y-1 rounded-md border border-border px-3 py-2" data-testid={`routing-${h.id}`} open={openAgents[h.id] ?? (i === 0 || wide())} onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setOpenAgents((p) => (p[h.id] === o ? p : { ...p, [h.id]: o })) }}>
             <summary className="cursor-pointer font-medium">{h.label}</summary>
             <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] sm:items-center">
@@ -73,7 +87,7 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
             </dl>
           </details>
         ))}
-        {owner ? (
+        {!custom ? null : owner ? (
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={!canEdit || !changed} onClick={() => ask({ title: 'Choose the models for Start agent', action: { action: 'models_set', models: cleanTable(draft) }, autoStart: true })}>
               Review and sign
@@ -87,6 +101,10 @@ export function ModelRouting({ workspace, owner }: { workspace: Workspace; owner
         <p className="text-[12px] text-text-muted">If a check on a ticket is failing, Start agent suggests a stronger model. It only suggests: nothing changes until you start.</p>
       </div>
       {dialog}
-    </Section>
+    </Wrap>
   )
+}
+
+function Wrap({ embedded, children }: { embedded: boolean; children: React.ReactNode }) {
+  return embedded ? <div className="mt-2 rounded-md border border-border bg-bg/40 p-3">{children}</div> : <Section title="Default models">{children}</Section>
 }

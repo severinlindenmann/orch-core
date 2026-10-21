@@ -66,7 +66,7 @@ class StubHost:
         if os.environ.get("ORCH_DEV") != "1" or not (root / ".orch-dev").is_file():
             raise RuntimeError("stub requires ORCH_DEV=1 and an explicitly marked .orch-dev workspace")
         self.root, self.state, self.person = root, state, person
-        config = json.loads((root / "config.json").read_text())
+        config = json.loads((root / ".orch" / "config.json").read_text())
         self.ws = config["workspace"]["id"]
         self.name = config["workspace"].get("name", "Development workspace")
         self.prefix = config["workspace"]["prefix"]

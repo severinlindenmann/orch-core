@@ -182,7 +182,7 @@ def test_a_hook_never_pins_a_genesis(ws):
 
 
 def test_a_damaged_log_is_reported_instead_of_ok(ws):
-    log = ws.root / "events" / "workspace.jsonl"
+    log = ws.store_dir / "events" / "workspace.jsonl"
     log.write_bytes(log.read_bytes() + b"this is not an event\n")
     code, out, err = hook(ws, "session-start")
     assert code == 0 and "DAMAGED" in out  # exit 0: a harness shows a hook's stdout only then

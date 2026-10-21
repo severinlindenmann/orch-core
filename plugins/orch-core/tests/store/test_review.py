@@ -32,12 +32,12 @@ def revoke_grant(env: Env, store: Store | None = None):
 def test_a_forged_applied_cannot_hide_another_processes_revocation(env):
     a = env.bootstrap()
     uid = env.new_ticket()
-    old_applied = (env.root / ".state" / "applied").read_bytes()
+    old_applied = (env.store_dir / ".state" / "applied").read_bytes()
     b = env.other()
     env.tick()
     revoke_grant(env, b)
     b.close()
-    (env.root / ".state" / "applied").write_bytes(old_applied)  # the agent puts the old record back
+    (env.store_dir / ".state" / "applied").write_bytes(old_applied)  # the agent puts the old record back
     with pytest.raises(OrchError):
         hooks_for(a).grant_valid(Context(grant=f"{env.grant_id}.{crypto.b64u(GRANT_SECRET)}"))
     with pytest.raises(StoreError) as e:  # and the store does not sign an agent event with a stale ws_seq
@@ -58,7 +58,7 @@ def test_a_log_that_shrinks_or_is_replaced_under_a_long_lived_store_is_noticed(e
     os.replace(copy, log)  # same bytes, new inode
     assert not a._fresh()
     env.log(uid, "still fine after a reload")
-    ws = env.root / "events" / "workspace.jsonl"
+    ws = env.store_dir / "events" / "workspace.jsonl"
     lines = ws.read_bytes().splitlines(keepends=True)
     ws.write_bytes(b"".join(lines[:-1]))  # the last workspace event is gone
     with pytest.raises(StoreError) as e:
@@ -75,10 +75,10 @@ def rolled_back(env, tmp_path):
     env.tick()
     env.revoke_device(ref)
     s.close()
-    p = env.root / "events" / "workspace.jsonl"
+    p = env.store_dir / "events" / "workspace.jsonl"
     p.write_bytes(b"".join(p.read_bytes().splitlines(keepends=True)[:-1]))
-    (env.root / ".state" / "checkpoints" / "workspace.json").unlink()
-    (env.root / ".state" / "applied").unlink()
+    (env.store_dir / ".state" / "checkpoints" / "workspace.json").unlink()
+    (env.store_dir / ".state" / "applied").unlink()
     return ref
 
 
@@ -147,7 +147,7 @@ def test_a_forged_bound_section_of_a_closed_ticket_is_never_served_or_extended(c
     good = body.read_bytes()
     forged = good.replace(b"req", b"FORGED")
     body.write_bytes(forged)
-    (env.root / ".state" / "body" / f"{uid}.md").write_bytes(forged)
+    (env.store_dir / ".state" / "body" / f"{uid}.md").write_bytes(forged)
     assert s.scan() == [] and any(r.code == "store.torn_write" for r in s.reports)
     with pytest.raises(StoreError) as e:
         s.body_sections(uid)
@@ -177,7 +177,7 @@ def test_body_sections_raises_for_an_edit_nobody_answered_yet(env):
 
 
 def intent(env, idem, rec):
-    p = env.root / ".state" / "intents" / (hashlib.sha256(idem.encode()).hexdigest()[:40] + ".json")
+    p = env.store_dir / ".state" / "intents" / (hashlib.sha256(idem.encode()).hexdigest()[:40] + ".json")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(rec))
 
@@ -241,7 +241,7 @@ def test_a_writable_store_needs_host_state(env):
 
 def forge_manifest(env, uid, last_line, files, event=None):
     e = event or canon.parse_event_line(last_line)
-    d = env.root / ".state" / "pending" / "X"
+    d = env.store_dir / ".state" / "pending" / "X"
     d.mkdir(parents=True, exist_ok=True)
     out = []
     for n, (rel, data) in enumerate(files):
@@ -273,11 +273,11 @@ def test_a_forged_pending_manifest_for_the_real_last_event_installs_nothing(env)
     for applied in ("keep", "remove"):
         forge_manifest(env, uid, last, [(f"tickets/{uid}/body.md", forged)])
         if applied == "remove":
-            (env.root / ".state" / "applied").unlink()
+            (env.store_dir / ".state" / "applied").unlink()
         s = env.open()
         assert env.path(uid, "body.md").read_bytes() == good_body  # not installed ("keep": applied names the event)
-        assert (env.root / ".state" / "body" / f"{uid}.md").read_bytes() == good_body
-        assert not (env.root / ".state" / "pending" / "X").exists()
+        assert (env.store_dir / ".state" / "body" / f"{uid}.md").read_bytes() == good_body
+        assert not (env.store_dir / ".state" / "pending" / "X").exists()
         if applied == "remove":
             assert any(r.code == "store.torn_write" for r in s.reports)
         assert [e["type"] for e in env.read_events(uid)] == ["ticket.created", "ticket.updated"]
@@ -291,7 +291,7 @@ def test_a_forged_pending_manifest_for_the_real_last_event_installs_nothing(env)
 def test_a_symlinked_workspace_directory_is_refused(env, tmp_path, d):
     s = env.bootstrap()
     s.close()
-    target = env.root / d
+    target = env.store_dir / d
     outside = tmp_path / "outside"
     outside.mkdir()
     if target.exists():
@@ -320,7 +320,7 @@ def test_abandon_tail_never_overwrites_an_earlier_archive(env):
     s.abandon_tail(uid, 1)
     log.write_bytes(full.splitlines(keepends=True)[0] + b'{"different":1}\n')
     s.abandon_tail(uid, 1)
-    files = sorted((env.root / ".state" / "abandoned").glob(f"{uid}-2*.jsonl"))
+    files = sorted((env.store_dir / ".state" / "abandoned").glob(f"{uid}-2*.jsonl"))
     assert len(files) == 3 and len({p.read_bytes() for p in files}) == 2  # two distinct cuts, three archives kept
 
 
@@ -336,7 +336,7 @@ def test_an_unparseable_body_is_kept_in_state_rejected(env):
     p.write_bytes(mine)
     (ev,) = s.scan()
     assert ev["type"] == "projection.repaired" and b"human prose" not in p.read_bytes()
-    (kept,) = (env.root / ".state" / "rejected").glob(f"{uid}-*.md")
+    (kept,) = (env.store_dir / ".state" / "rejected").glob(f"{uid}-*.md")
     assert kept.read_bytes() == mine
     assert any(r.code == "store.rejected_body" and kept.name in r.detail for r in s.reports)
 
@@ -359,7 +359,7 @@ def test_a_forged_grant_issued_does_not_provide_a_secret_hash(env):
         "sig": crypto.b64u(b"\x01" * 64),
     }  # fmt: skip
     e["host_sig"] = crypto.b64u(env.signer.sign(canon.host_signing_bytes(WS, "workspace", e)))
-    with open(env.root / "events" / "workspace.jsonl", "ab") as f:
+    with open(env.store_dir / "events" / "workspace.jsonl", "ab") as f:
         f.write(canon.event_line(e))
     s = env.open()
     assert s.state.chain_errors and s.grant_secret_hash(other_grant) is None  # a bad sig breaks the chain: no hash

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import orch
-from orch import canon, crypto
+from orch import canon, crypto, fdwait
 from orch.crypto.labels import L
 from orch.custody import personkey
 from orch.custody.base import PERSON_KEY_LABELS, CustodyError, NoPrompt
@@ -92,13 +92,12 @@ class FakeTty:
         return self.slave, self.slave, close
 
     def _type(self):
-        import select
         import signal
 
         try:
             deadline = time.monotonic() + self.LIMIT
             while time.monotonic() < deadline and b"code: " not in self.out:
-                if select.select([self.master], [], [], 0.05)[0]:
+                if fdwait.readable(self.master, 0.05):
                     self.out += os.read(self.master, 4096)
             if b"code: " not in self.out:
                 raise AssertionError("the prompt never appeared")
@@ -114,9 +113,8 @@ class FakeTty:
                 pass
 
     def written(self) -> str:
-        import select
 
-        while select.select([self.master], [], [], 0.05)[0]:
+        while fdwait.readable(self.master, 0.05):
             try:
                 chunk = os.read(self.master, 4096)
             except OSError:

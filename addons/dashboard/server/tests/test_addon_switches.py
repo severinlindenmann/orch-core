@@ -162,3 +162,62 @@ def test_an_unrelated_event_of_the_same_name_is_not_the_head(gateway, stub, monk
     before = _plan(gateway, stub, link, monkeypatch, "addon_grant").idem(stub.ws)
     link.events.append({"id": "9.e", "type": "addon.purged", "data": {"name": "terminals"}})
     assert _plan(gateway, stub, link, monkeypatch, "addon_grant").idem(stub.ws) == before
+
+
+# ---- R3-A1: versions, read only ---------------------------------------------------------------------------
+class _VersionLink:
+    def __init__(self, release="0123456789ab", addons=None):
+        self.welcome = {"release": release, "ops": {"addon.grant": 1, "addon.disable": 1}}
+        self.addons = addons if addons is not None else []
+
+    def supports(self, op, cap):
+        return False
+
+    def call(self, op, args=None):
+        assert op == "addon.list"  # the only host read the add-ons list makes here
+        return {"addons": self.addons}
+
+
+def _get(client, token, stub, tail):
+    return client.get(f"/api/w/{stub.ws}/{tail}", headers={"Authorization": f"Bearer {token}"})
+
+
+def test_versions_need_a_session_and_report_package_version_and_release(client, token, stub, gateway, monkeypatch):
+    assert client.get(f"/api/w/{stub.ws}/versions").status_code == 401
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+    out = _get(client, token, stub, "versions").json()
+    assert out["core"]["release"] == "0123456789ab"
+    assert out["core"]["version"] and out["dashboard"]["version"]  # both packages are installed in the test env
+
+
+@pytest.mark.parametrize("release", [None, 7, "short", "0123456789AB", "0123456789ab\n", "<script>x</script>"])
+def test_an_odd_release_is_dropped_not_shown(client, token, stub, gateway, monkeypatch, release):
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink(release=release))
+    assert _get(client, token, stub, "versions").json()["core"]["release"] is None
+
+
+def test_each_addon_row_carries_the_manifest_version_and_odd_ones_are_dropped(
+    client, token, stub, gateway, monkeypatch
+):
+    listed = [
+        {"name": "worktrees", "state": "active", "version": "1.2.3"},
+        {"name": "publish", "state": "not_granted", "version": "<b>x</b>"},
+        {"name": "usage", "state": "active", "version": 7},
+    ]
+    link = _VersionLink(addons=listed)
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: {"runner": None} if op == "whoami" else {})
+    rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
+    assert rows["worktrees"]["version"] == "1.2.3"
+    assert rows["publish"]["version"] is None and rows["usage"]["version"] is None
+    assert rows["estimate"]["version"] is None  # not listed by the host
+    assert rows["dashboard"]["version"] and rows["quick"]["version"]  # the install's own packages
+
+
+def test_clean_version_accepts_versions_and_nothing_else():
+    from orch_dashboard.addon_switches import clean_version
+
+    for good in ("1.2.3", "0.1.0", "1.0.0+abc123", "2.0.0-rc1"):
+        assert clean_version(good) == good
+    for bad in ("", " 1.0", "1.0\n", "v" * 41, "1.0 <b>", None, 3, "‮1.0", "../x"):
+        assert clean_version(bad) is None

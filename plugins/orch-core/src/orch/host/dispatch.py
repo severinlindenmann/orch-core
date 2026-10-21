@@ -102,6 +102,9 @@ from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .terms import TERM_CAPS, TERM_OPS
 from .visibility import Viewer
+from .workdirs import CAPS as WORKDIR_CAPS
+from .workdirs import WORKDIR_OPS
+from .workdirs import WRITE_OPS as WORKDIR_WRITES
 from .workspace import deny_append, ok_result
 from .worktrees import WORKTREE_CAPS, WORKTREE_OPS
 
@@ -216,6 +219,7 @@ def served_ops() -> dict[str, int]:
     out.update(readerops.READER_HOST_OPS)  # H12d-2: reader.declare (reader.list is a read, cap reader/1)
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
+    out.update(WORKDIR_OPS)  # r3 part C: workdir.get, workdir.delete (P only)
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
@@ -245,6 +249,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
+    if name in WORKDIR_OPS:  # r3 part C: column P only; the role is checked by the op
+        return ("person_write", "write") if name in WORKDIR_WRITES else ("person_read", "read")
     if name == "agent.preview":  # H11c: P only, no side effects
         return ("person_read", "read")
     if name == "agent.start":  # H11c: P only
@@ -399,7 +405,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKTREE_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *WORKDIR_CAPS, *WORKTREE_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -615,6 +621,10 @@ class RegistryBackend:
                 result = reads.serve(call)
             elif op in records_ops.RECORDS_OPS:
                 result = records_ops.serve(call)
+            elif op in WORKDIR_OPS:
+                from . import workdirs
+
+                result = workdirs.serve(call)
             elif op in readerops.READER_HOST_OPS:
                 result = readerops.serve(call)
             elif op in phonehints.PHONE_WRITE_OPS:

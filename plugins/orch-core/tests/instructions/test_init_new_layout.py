@@ -12,8 +12,6 @@ from orch.ops.errors import OrchError
 from orch.store import Store
 from tests.instructions.test_init import ARGS, run_init, tree
 
-pytestmark = pytest.mark.new_layout
-
 
 def test_init_makes_dot_orch_and_only_the_pointer_files_beside_it(where, term, passphrases):
     res = run_init(where)
@@ -37,7 +35,7 @@ def test_init_makes_dot_orch_and_only_the_pointer_files_beside_it(where, term, p
     assert (root / ".agents/skills/orch-tickets/SKILL.md").is_file()
     s = Store.open(root, expected_workspace_id=cfg["workspace"]["id"], load="all")
     try:
-        assert not s.layout.legacy and s.state is not None
+        assert s.layout.store == root / ".orch" and s.state is not None
     finally:
         s.close()
 
@@ -65,17 +63,14 @@ def test_a_projects_own_dot_orch_is_refused_and_left_untouched(where, term, pass
     assert (root / ".orch" / "notes.txt").read_text() == "another tool's" and not where["state"].exists()
 
 
-def test_a_legacy_root_store_and_a_store_move_in_progress_are_refused(where, term, passphrases):
+def test_a_root_store_from_an_older_version_is_refused_with_the_delete_message(where, term, passphrases):
     root = where["root"]
     (root / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "w"}}))
     with pytest.raises(OrchError) as e:
         run_init(where)
-    assert "workspace already exists" in e.value.message
-    (root / "config.json").unlink()
-    (root / ".orch-migrating").mkdir()
-    with pytest.raises(OrchError) as e:
-        run_init(where)
-    assert "run orch setup again" in e.value.message
+    assert "Delete config.json" in e.value.message and "run orch setup again" in e.value.message
+    assert "workspace already exists" not in e.value.message
+    assert not (root / ".orch").exists() and not term.shown
 
 
 @pytest.mark.parametrize("at", ["Passphrase: ", "Press Enter"])

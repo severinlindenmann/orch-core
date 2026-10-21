@@ -66,7 +66,15 @@ ENV_FROM_RUNNER = frozenset(
     }
 )  # fmt: skip
 ENV_FIXED_NAMES = frozenset(
-    {"ORCH_TICKET", "ORCH_WORKSPACE", "ORCH_WORKTREE", "ORCH_WORKTREES", "ORCH_HARNESS", "CLAUDE_CODE_SUBAGENT_MODEL"}
+    {
+        "ORCH_TICKET",
+        "ORCH_WORKSPACE",
+        "ORCH_WORKTREE",
+        "ORCH_WORKTREES",
+        "ORCH_WORKDIR",
+        "ORCH_HARNESS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    }
 )
 #: the only script a login shell runs (:data:`orch.host.launch.LOGIN_EXEC`) and the registry's programs
 LOGIN_EXEC = 'exec "$0" "$@"'

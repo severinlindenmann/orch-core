@@ -600,6 +600,31 @@ it('Extend preserves the runner scope and posts its id with the selected length'
   expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'all', extend: GRANT })
 })
 
+describe('sheet risk notice', () => {
+  const mountSheet = () => render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard sheet ws={WS} runner={runner({ grant: null })} loading={false} blocked={null} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  it('first time: the full notice and I understand; saving folds it to a quiet line', async () => {
+    s.notices.mockResolvedValue({ acknowledged: {} })
+    const ack = s.acknowledge.mockResolvedValue({ acknowledged: { grant: true } })
+    mountSheet()
+    fireEvent.click(await screen.findByTestId('grant-risk-ack'))
+    expect(ack).toHaveBeenCalledWith(WS, 'grant')
+    const d = await screen.findByTestId('grant-risk-details')
+    expect(d).toHaveTextContent('Runs as you on this Mac')
+    expect(d).not.toHaveAttribute('open')
+    expect(d).toHaveTextContent('standing authority')
+  })
+  it('acknowledged: quiet line only; unreadable answer: full notice (fail closed)', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { grant: true } })
+    mountSheet()
+    expect(await screen.findByTestId('grant-risk-details')).toBeInTheDocument()
+    expect(screen.queryByTestId('grant-risk-ack')).toBeNull()
+    cleanup()
+    s.notices.mockRejectedValue(new Error('x'))
+    mountSheet()
+    expect(await screen.findByTestId('grant-risk-ack')).toBeInTheDocument()
+  })
+})
+
 it.each([4, 24, 500])('caps runner lengths at workspace hours %s and 168', async (limit) => {
   vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: limit }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
   s.preview.mockResolvedValue(noGrant())

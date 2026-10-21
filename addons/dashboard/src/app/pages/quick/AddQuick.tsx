@@ -60,12 +60,16 @@ export function AddQuick({ ws }: { ws: string }) {
   const [agents, setAgents] = useState(false)
   const [hours, setHours] = useState<number>(8)
   const [action, setAction] = useState<HandoffAction | null>(null)
+  const [checking, setChecking] = useState<number[]>([])
+  const [started, setStarted] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const title = oneLine(text)
   const tooLong = [...text.trim()].length > MAX_QUICK_TITLE
   const chosen = lengths.some(([h]) => h === hours) ? hours : (lengths[0]?.[0] ?? 8)
   const built = quickAction(text, details, steps, agents ? chosen : null)
   const done = () => {
+    setStarted(agents ? `An agent starts with access for ${accessLength(chosen)}.` : 'An agent picks it up when one has access.')
+    setChecking([])
     setAction(null)
     setText('')
     setDetails('')
@@ -75,10 +79,22 @@ export function AddQuick({ ws }: { ws: string }) {
     input.current?.focus()
   }
   const setStep = (i: number, patch: Partial<Step>) => setSteps((all) => all.map((s, n) => (n === i ? { ...s, ...patch } : s)))
+  const filled = steps.filter((s) => s.text.trim())
+  const withCheck = filled.filter((s) => s.cmd.trim()).length
+  const summary = [
+    title ?? 'No title yet',
+    filled.length ? `${filled.length} checklist ${filled.length === 1 ? 'step' : 'steps'}${withCheck ? ` (${withCheck} with a way to check)` : ''}` : 'no checklist steps',
+    agents ? `agent access for ${accessLength(chosen)}` : 'no agent access',
+  ].join(' · ')
   return (
-    <section aria-label="Add a quick task" className="space-y-3 rounded-lg border border-border bg-surface p-3">
+    <section aria-label="Add a quick task" className="min-w-0 space-y-4 rounded-lg border border-border bg-surface p-4">
+      {started && (
+        <p role="status" data-testid="quick-started" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text">
+          Task created and signed. {started} It is in the list below.
+        </p>
+      )}
       <form
-        className="space-y-3"
+        className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault()
           if (built) setAction(built)
@@ -86,43 +102,65 @@ export function AddQuick({ ws }: { ws: string }) {
       >
         <div className="space-y-1.5">
           <Label htmlFor="quick-title">Quick task (one line)</Label>
-          <Input id="quick-title" ref={input} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong ? true : undefined} placeholder="Fix the typo in CONTRIBUTING" autoComplete="off" />
+          <Input id="quick-title" ref={input} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong ? true : undefined} placeholder="Fix the typo in CONTRIBUTING" autoComplete="off" className="min-h-11" />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="quick-details">Details (optional)</Label>
-          <textarea id="quick-details" value={details} onChange={(e) => setDetails(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px]" placeholder="What is wrong, and what should be true afterwards" />
+          <textarea id="quick-details" value={details} onChange={(e) => setDetails(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px]" placeholder="What should be true when it is done?" />
         </div>
-        <fieldset className="space-y-2">
+        <fieldset className="min-w-0 space-y-3">
           <legend className="text-[13px] font-medium text-text">Steps (optional, up to {MAX_STEPS})</legend>
-          {steps.map((s, i) => (
-            <div key={i} className="grid gap-2 sm:grid-cols-2">
-              <Input aria-label={`Step ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to do" autoComplete="off" />
-              <Input aria-label={`Step ${i + 1} check`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it (optional)" autoComplete="off" className="font-mono" />
-            </div>
-          ))}
-          {steps.length < MAX_STEPS && (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setSteps((all) => [...all, { text: '', cmd: '' }])}>
+          <ol className="space-y-3">
+            {steps.map((s, i) => (
+              <li key={i} className="min-w-0 space-y-2 rounded-lg border border-border bg-bg p-3">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-medium text-text-muted">{i + 1}</span>
+                  <Input aria-label={`Step ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to do" autoComplete="off" className="min-h-11 w-auto min-w-0 flex-1" />
+                  <Button type="button" variant="ghost" size="sm" className="min-h-11 min-w-11 shrink-0 px-2 text-xs text-text-muted hover:text-text" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps((all) => (all.length > 1 ? all.filter((_, n) => n !== i) : [{ text: '', cmd: '' }]))}>
+                    Remove
+                  </Button>
+                </div>
+                {checking.includes(i) || s.cmd ? (
+                  <Input aria-label={`Step ${i + 1} check`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it" autoComplete="off" className="min-h-11 font-mono" />
+                ) : (
+                  <Button type="button" variant="ghost" size="sm" className="min-h-11 max-w-full whitespace-normal px-0 text-xs text-text-muted underline-offset-4 hover:bg-transparent hover:text-text hover:underline dark:hover:bg-transparent" onClick={() => setChecking((c) => [...c, i])}>
+                    Add a way to check
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ol>
+          {steps.length < MAX_STEPS ? (
+            <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => setSteps((all) => [...all, { text: '', cmd: '' }])}>
               Add a step
             </Button>
+          ) : (
+            <p className="text-[12px] text-text-muted">A quick task has up to {MAX_STEPS} steps. Make a ticket for anything bigger.</p>
           )}
         </fieldset>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-[13px] text-text">
-            <input type="checkbox" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
-            Let agents work on any ticket they are allowed to work on, not only this one, for
+        <div className="space-y-3 rounded-lg border border-warning/25 bg-warning/5 p-3">
+          <label className="flex items-start gap-2 text-[13px] text-text">
+            <input type="checkbox" className="mt-1 size-4 shrink-0" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
+            <span>Let agents work on any ticket they are allowed to work on, not only this one, for</span>
           </label>
-          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="rounded-md border border-border bg-bg px-2 py-1 text-[13px]">
+          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="block min-h-11 w-full min-w-0 rounded-md border border-border bg-bg px-3 text-[13px] text-text disabled:text-text-muted">
             {lengths.map(([h, label]) => (
               <option key={h} value={h}>
                 {label}
               </option>
             ))}
           </select>
+          <p className="text-[12px] text-text-muted">
+            {agents ? `This workspace allows agent access of up to ${accessLength(cap)} (Settings).` : 'No agent access is asked for. The task waits until an agent that already has access picks it up.'}
+          </p>
         </div>
-        {agents && <p className="text-[12px] text-text-muted">This workspace allows agent access of up to {accessLength(cap)} (Settings).</p>}
-        <Button type="submit" disabled={!title || !built || !!action}>
+        <Button type="submit" className="min-h-11 w-full" disabled={!title || !built || !!action}>
           Start task
         </Button>
+        <p data-testid="quick-what-you-sign" className="break-words border-t border-border pt-3 text-[12px] leading-relaxed text-text-muted">
+          <span className="font-medium">What you sign. </span>
+          {summary}
+        </p>
       </form>
       <p data-testid="quick-one-signature" className="text-[12px] text-text-muted">
         {ONE_SIGNATURE}

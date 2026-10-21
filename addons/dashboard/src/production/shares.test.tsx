@@ -28,23 +28,30 @@ const share = (over: Record<string, unknown> = {}) => ({
 let shares: unknown[] = []
 let staged: unknown[] = []
 let configured = true
+let live = true
+let listRefusal: { code: string } | null = null
 let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
+let serverUp = true
 const route = () => {
+  serverUp = true
   shares = [share(), share({ id: 'd'.repeat(32), kind: 'once', view_limit: 3, views: 1, state: 'revoked' })]
   staged = []
   configured = true
+  live = true
+  listRefusal = null
   sendRefusal = null
   registerRefusal = null
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
       return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
     if (!path.includes('/shares')) return undefined
+    if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
-      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: true, shares, staged })
+      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live && serverUp, shares: configured ? shares : [], staged })
     if (path.endsWith('/shares/prepare')) {
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
@@ -93,6 +100,36 @@ it('lists the shares: kind, end time, opens and state, with Stop sharing only on
   expect(revoked).toHaveTextContent('Stopped')
   expect(within(revoked).queryByRole('button', { name: /^Stop sharing/ })).toBeNull()
   expect(document.body.textContent).not.toContain(TOKEN)
+})
+
+it('Publish on but no server set up: the Shares page says what is missing and where to set it, not "Could not load"', async () => {
+  route()
+  configured = false
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-not-configured', {}, T)
+  expect(note).toHaveTextContent('Publish needs a publish server. Set it in Settings, Add-ons, Publish.')
+  expect(within(note).getByRole('link', { name: /Settings, Add-ons, Publish/ })).toHaveAttribute('href', expect.stringContaining('/settings/addons'))
+  expect(screen.queryByText(/Could not load/)).toBeNull()
+  expect(screen.queryByTestId('shares-empty')).toBeNull()
+})
+
+it('a server that is not running: the Shares page says so and how to start it', async () => {
+  route()
+  live = false
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-unreachable', {}, T)
+  expect(note).toHaveTextContent('not running or cannot be reached')
+  expect(note).toHaveTextContent('orch-publish dev')
+  expect(screen.getByRole('table', { name: 'Shares' })).toBeInTheDocument()
+})
+
+it('a failed load names the reason in plain words (here: no server set up), Settings keeps its Publish box', async () => {
+  route()
+  listRefusal = { code: 'publish.not_configured' }
+  show('/w/DEMO/shares')
+  const alert = await screen.findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent('No publish server is set up yet. Set one up in Settings, Add-ons.')
+  expect(alert).not.toHaveTextContent('Something went wrong')
 })
 
 it('Stop sharing asks in plain words, posts once with an idem, and the row says Stopped', async () => {
@@ -245,6 +282,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   registerRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByTestId('addon-publish-expand', {}, T))
   const box = await screen.findByTestId('publish-server', {}, T)
   expect(box).toHaveTextContent('http://127.0.0.1:8103')
   expect(box).toHaveTextContent('http://127.0.0.1:8104')
@@ -255,7 +293,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect((reg.textContent ?? '').match(/Ask the person who runs the server/g)).toHaveLength(1)
   expect(within(reg).getByText('Technical details').closest('details')).toHaveTextContent('orch-publish admin ws allow')
   // changing the addresses is a signed hand-off with both addresses
-  await user.click(within(box).getByRole('button', { name: 'Change addresses' }))
+  await user.click(within(box).getByRole('button', { name: 'Edit server' }))
   const dlg = await screen.findByRole('dialog', { name: 'Where shared files go' })
   await user.clear(within(dlg).getByLabelText('Files are sent to'))
   await user.type(within(dlg).getByLabelText('Files are sent to'), 'http://evil.example')
@@ -270,7 +308,42 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect(calls('/handoff')[0].body).toEqual({ action: 'publish_setup', server: 'https://pub.example.org', share: 'https://apps.example.org' })
 })
 
+it('Settings: the Publish row says what it needs; Check connection is a read-only probe with honest states; Open Shares links on', async () => {
+  route()
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/addons')
+  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
+  await waitFor(() => expect(needs).toHaveTextContent('Ready: a server is set up and answering'), T)
+  const box = await openPublish()
+  expect(within(box).getByText('Not checked.')).toBeInTheDocument()
+  serverUp = false
+  const before = state.host.calls.filter((c) => c.method !== 'GET').length
+  await user.click(within(box).getByRole('button', { name: 'Check connection' }))
+  await within(box).findByText(/Could not connect/, {}, T)
+  serverUp = true
+  await user.click(within(box).getByRole('button', { name: 'Check connection' }))
+  await within(box).findByText(/Connected\. The server answered/, {}, T)
+  expect(state.host.calls.filter((c) => c.method !== 'GET').length).toBe(before) // nothing was written
+  expect(within(box).getByRole('link', { name: 'Open Shares' })).toHaveAttribute('href', '/w/DEMO/shares')
+})
+
+it('Settings: an unconfigured Publish says it needs a server address', async () => {
+  route()
+  configured = false
+  show('/w/DEMO/settings/addons')
+  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
+  await waitFor(() => expect(needs).toHaveTextContent('Needs a publish server address'), T)
+  const box = await openPublish()
+  expect(within(box).getByRole('button', { name: 'Set up' })).toBeInTheDocument()
+})
+
 /** Share through to the signature on the ticket page; returns when the host has been told it is signed. */
+/** Publish's settings open in place under its row. */
+async function openPublish() {
+  await userEvent.setup().click(await screen.findByTestId('addon-publish-expand', {}, T))
+  return await screen.findByTestId('publish-server', {}, T)
+}
+
 async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   window.innerWidth = 1400
   show('/w/DEMO/ticket/DEMO-0001')
@@ -356,6 +429,6 @@ it('on the Shares page the link also stays until Done when the list then fails t
 it('PL: the link dialog has no dead X, announces a copy, and the Settings note says a local link is local', async () => {
   route()
   show('/w/DEMO/settings/addons')
-  const box = await screen.findByTestId('publish-server', {}, T)
+  const box = await openPublish()
   expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('opens only on this computer')
 })

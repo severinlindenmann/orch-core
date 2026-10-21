@@ -14,12 +14,12 @@ from orch.ops.workflows import WORKFLOWS
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
     "section set", "ac add", "ac edit",
-    *(f"task {v}" for v in "list next add start done skip block reopen".split()),
+    *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),
     *(f"artifact {v}" for v in "add replace list".split()),
     "log", "apply", "approve", "request-changes", "verdict", "answer", "close", "reopen",
     "grant", "grant revoke", "member add", "member remove", "member role",
     "init", "doctor", "check", "instructions sync", "instructions hook", "import v1",
-    *(f"addon {v}" for v in "list grant disable purge".split()),
+    *(f"addon {v}" for v in "list grant preview disable purge".split()),
     "quick list",  # H11f; `quick add` is a CLI composite (new, then set), not an operation
 ]  # fmt: skip
 

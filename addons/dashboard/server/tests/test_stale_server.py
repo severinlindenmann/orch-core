@@ -13,7 +13,15 @@ import pytest
 from orch_dashboard import __main__ as cli
 from orch_dashboard.hostlink import check_uid, encode, receive
 
-REAL = cli.code_digest()
+#: The release these tests run as. `cli.code_digest()` hashes the package files and is cached for the whole process;
+#: other tests clear that cache (and patch `__file__`), so reading it here, at import or in a test, made "same release"
+#: depend on test order and timing. The tests are about the reuse decision, not the hash: pin it.
+REAL = "same-release-0"
+
+
+@pytest.fixture(autouse=True)
+def pinned_release(monkeypatch):
+    monkeypatch.setattr(cli, "code_digest", lambda: REAL)
 
 
 @pytest.fixture

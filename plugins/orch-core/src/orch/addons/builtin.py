@@ -37,13 +37,6 @@ def manifest_bytes(name: str) -> bytes:
 
 def write_manifest(workspace: str, name: str, data: bytes, force: bool = False) -> Path:
     """Write ``<workspace>/addons/<name>/orch-addon.json`` walking every component with ``O_NOFOLLOW``."""
-    from orch.layout import move_in_progress
-
-    if move_in_progress(workspace):
-        raise OSError(
-            "an unfinished store move is in this folder (.orch-migrating); "
-            "delete the old store files and .orch-migrating, then run orch setup again"
-        )
     path = Path(os.path.abspath(workspace))
     with ExitStack() as stack:
 

@@ -12,7 +12,7 @@ export interface TransportResponse {
 export interface Transport {
   /** In-process Demo data only; absent on every real transport. */
   previewState?: (ws: string) => MandatesPreviewState
-  request(method: HttpMethod, path: string, body?: unknown): Promise<TransportResponse>
+  request(method: HttpMethod, path: string, body?: unknown, signal?: AbortSignal): Promise<TransportResponse>
 }
 
 /** In-process transport: no network, no service worker. Swap for createFetchTransport later. */

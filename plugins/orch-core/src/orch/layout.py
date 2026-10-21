@@ -611,4 +611,3 @@ def delete_workdir(layout: Layout, key: str) -> bool:
     finally:
         os.close(pfd)
     return True
-

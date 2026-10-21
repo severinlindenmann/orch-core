@@ -7,13 +7,13 @@
       {
         "name": "T1-receipt.log",
         "kind": "receipt",
-        "path": "tickets/ULID/artifacts/T1-receipt.log"
+        "path": ".orch/tickets/ULID/artifacts/T1-receipt.log"
       },
       {
         "name": "evidence.log",
         "kind": "other",
         "ac": "AC1",
-        "path": "tickets/ULID/artifacts/evidence.log"
+        "path": ".orch/tickets/ULID/artifacts/evidence.log"
       }
     ]
   },

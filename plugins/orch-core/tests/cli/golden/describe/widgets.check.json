@@ -1,0 +1,89 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "widgets.check",
+    "name": "widgets.check",
+    "cli": "orch widgets check",
+    "summary": "Check the widget blocks in a text file the way a section write does; nothing is stored.",
+    "who": "read",
+    "usage": "orch widgets check PATH [--section SECTION]",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Check the widget blocks in a text file the way a section write does; nothing is stored.",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "section": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "context",
+            "requirements",
+            "out_of_scope",
+            "plan",
+            "decisions",
+            "verification",
+            "findings",
+            "current_state"
+          ],
+          "description": "section the text is for (default context)",
+          "x-metavar": "SECTION"
+        }
+      },
+      "x-positional": [
+        "file"
+      ],
+      "required": [
+        "file"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok widgets.check {blocks}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "blocks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "blocks",
+          "problems"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe widgets.check",
+        "fix": [
+          "orch",
+          "describe",
+          "widgets.check"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

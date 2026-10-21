@@ -139,5 +139,6 @@ def packaged_manifest(tmp_path_factory):
         return result.stdout
 
 
+@pytest.mark.xdist_group("wheel-build")  # builds a wheel from the source tree (see pyproject addopts)
 def test_wheel_ui_and_manifest(packaged_manifest):
     assert packaged_manifest == (SERVER.parent / "orch-addon.json").read_bytes()

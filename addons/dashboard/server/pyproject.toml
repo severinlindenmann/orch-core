@@ -9,7 +9,7 @@ dependencies = ["fastapi==0.143.1", "starlette==1.8.0", "uvicorn==0.34.2", "webs
 orch-dashboard = "orch_dashboard.__main__:main"
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "httpx==0.28.1", "ruff==0.11.8"]
+dev = ["pytest==9.1.1", "httpx==0.28.1", "ruff==0.11.8", "pytest-xdist>=3.6"]
 
 [tool.uv.sources]
 orch-core = { path = "../../../plugins/orch-core", editable = true }
@@ -28,6 +28,9 @@ packages = ["src/orch_dashboard"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when it cannot start"]
+# `-n auto` in CI: tests marked xdist_group("wheel-build") share one worker, so two `uv build --wheel` runs never write the
+# UI assets in the source tree (src/orch_dashboard/static) at the same time.
+addopts = "--dist loadgroup"
 pythonpath = ["..", "../../../plugins/orch-core"]
 
 [tool.ruff]

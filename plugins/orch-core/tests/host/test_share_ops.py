@@ -502,6 +502,7 @@ def test_shareable_is_the_viewers_workspace_visible_tickets_only():
     assert shareops._shareable(state, "p_b") == {"u1": pub}  # noqa: SLF001
     assert shareops._shareable(state, None) == {"u1": pub}  # noqa: SLF001
 
+
 # --- l2-c14 adversarial (Opus security review of the C6 follow-ups, 22 Oct) -----------------------------------------
 
 
@@ -522,7 +523,7 @@ def test_l2_c6fu_1_a_ticket_restricted_after_the_confirmation_is_not_auto_sent(s
     assert "Merger with ACME, price 4.2M" not in sent_titles, sent_titles
 
 
-# --- c6fu2: restricted-after-confirm withdrawal, audit of automatic passes, share.sync needs the shown plan --------------
+# --- c6fu2: restricted-after-confirm withdrawal, audit of auto passes, share.sync needs the shown plan ---
 
 
 def _audit_lines(served, event):

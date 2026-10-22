@@ -159,6 +159,11 @@ export interface ClickProblem {
   stale?: boolean
 }
 
+/** The placeholder the sentences carry for the workspace prefix; `withPrefix` fills it in where the page knows the workspace. */
+export const PREFIX_PLACEHOLDER = '<prefix>'
+export const withPrefix = (text: string, prefix: string | undefined): string =>
+  text.split(PREFIX_PLACEHOLDER).join(prefix || '<your workspace prefix>')
+
 const OFF = ' Fix it, or sign in the terminal: turn convenience off with `orch host convenience off --workspace <prefix>`, then move the key back with `orch keys custody passphrase --workspace <prefix> --in-place`.'
 
 const REFUSED: Record<string, ClickProblem> = {

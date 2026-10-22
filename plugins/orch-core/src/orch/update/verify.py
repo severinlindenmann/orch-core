@@ -111,12 +111,14 @@ def verify_envelope(
     revocations_issued_at: str | None,
     files: Mapping[str, bytes] | None = None,
     roots: Mapping[str, bytes] | None = None,
+    allow_expired_manifest: bool = False,
 ) -> Verified:
     """Run CONTRACT.md §3 in order. Raises :class:`UpdateRefused` (``.reason``, ``.code``); returns :class:`Verified`.
 
     ``roots`` defaults to the embedded production roots; only tests pass anything else (or enter
     ``keys.enable_test_root_for_tests``). ``files`` (name to bytes) is step 7 and core-only: leave it out for
-    ``--check``.
+    ``--check``. ``allow_expired_manifest`` skips ONLY the payload ``expires_at`` check (step 6), for the release
+    refresh that re-signs a pointer to an expired manifest; every other check still runs in order. Default False.
     """
     if purpose not in PAYLOAD_DOMAIN:
         raise ValueError(f"unknown purpose {purpose!r}")
@@ -126,7 +128,9 @@ def verify_envelope(
         raise ValueError("now must be timezone aware")
     trusted = embedded_roots() if roots is None else roots
     try:
-        return _verify(envelope, purpose, channel, now, seq_seen, revocations_issued_at, files, trusted)
+        return _verify(
+            envelope, purpose, channel, now, seq_seen, revocations_issued_at, files, trusted, allow_expired_manifest
+        )
     except Malformed:
         raise _refuse(Reason.MALFORMED) from None
 
@@ -140,6 +144,7 @@ def _verify(
     stored_revocations_at: str | None,
     files: Mapping[str, bytes] | None,
     trusted: Mapping[str, bytes],
+    allow_expired_manifest: bool,
 ) -> Verified:
     # 1 outer envelope (all base64 and key-set rules are inside parse_envelope)
     env = parse_envelope(envelope)
@@ -189,7 +194,7 @@ def _verify(
     (check_manifest if purpose == "core" else check_catalog)(doc)
     if doc["channel"] != channel:
         raise _refuse(Reason.WRONG_CHANNEL)
-    if now >= parse_time(doc["expires_at"]):
+    if now >= parse_time(doc["expires_at"]) and not allow_expired_manifest:
         raise _refuse(Reason.EXPIRED)
     if seq_seen is not None and doc["seq"] < seq_seen:
         raise _refuse(Reason.ROLLBACK)

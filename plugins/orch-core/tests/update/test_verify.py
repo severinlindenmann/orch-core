@@ -40,7 +40,7 @@ def _test_root():
         yield
 
 
-def run(case: dict[str, Any], envelope: bytes | None = None) -> Any:
+def run(case: dict[str, Any], envelope: bytes | None = None, **extra: Any) -> Any:
     st = case["state"]
     roots = {k: v for k, v in keys_mod.embedded_roots().items() if k in st["trusted_roots"]}
     files = None
@@ -55,12 +55,13 @@ def run(case: dict[str, Any], envelope: bytes | None = None) -> Any:
         revocations_issued_at=st["revocations_issued_at"],
         files=files,
         roots=roots,
+        **extra,
     )
 
 
-def refusal(case: dict[str, Any], envelope: bytes | None = None) -> UpdateRefused | None:
+def refusal(case: dict[str, Any], envelope: bytes | None = None, **extra: Any) -> UpdateRefused | None:
     try:
-        run(case, envelope)
+        run(case, envelope, **extra)
     except UpdateRefused as e:
         return e
     return None
@@ -268,3 +269,70 @@ def test_bad_inputs_from_the_caller_raise_instead_of_passing():
         verify_envelope(raw, purpose="addon-catalog", files={}, **args)
     with pytest.raises(ValueError):
         verify_envelope(raw, purpose="core", **{**args, "now": datetime(2026, 10, 22, 8)})
+
+
+# --- allow_expired_manifest: skips the manifest expiry check and nothing else ----------------------------------
+
+EXPIRED = {"expires_at": "2026-10-22T07:59:59Z"}  # now is 08:00:00, issued_at stays before it
+
+
+def _expired_env(key_id="rk-3", *, channel="develop", **kw):
+    m = GEN.manifest(channel, 42, **EXPIRED)
+    return GEN.text(GEN.envelope(GEN.jcs(m), key_id, **kw)).encode()
+
+
+def test_allow_expired_manifest_defaults_to_false():
+    import inspect
+
+    assert inspect.signature(verify_envelope).parameters["allow_expired_manifest"].default is False
+
+
+def test_expired_vectors_are_ok_only_with_the_flag():
+    cases = [c for _, c in ALL if c["expect"]["reason"] == "expired"]
+    assert cases
+    for c in cases:
+        assert refusal(c).reason is Reason.EXPIRED
+        got = run(c, allow_expired_manifest=True)
+        assert got.seq == json.loads(base64.b64decode(json.loads(c["envelope"])["payload"]))["seq"]
+
+
+def test_expired_only_envelope():
+    env = _expired_env()
+    assert refusal(OK_CORE, env).reason is Reason.EXPIRED
+    assert refusal(OK_CORE, env, allow_expired_manifest=True) is None
+
+
+def test_flag_never_hides_another_failure():
+    flag = {"allow_expired_manifest": True}
+    # expired and bad signature
+    env = json.loads(_expired_env())
+    env["payload"] = base64.b64encode(GEN.jcs(GEN.manifest("develop", 42, **EXPIRED)) + b" ").decode()
+    assert refusal(OK_CORE, GEN.text(env).encode(), **flag).reason is Reason.BAD_SIG
+    # expired and revoked certificate
+    assert refusal(OK_CORE, _expired_env("rk-4"), **flag).reason is Reason.KEY_REVOKED
+    # expired and expired certificate
+    assert refusal(OK_CORE, _expired_env("rk-5"), **flag).reason is Reason.CERT_EXPIRED
+    # expired and wrong channel
+    wrong = {**OK_CORE, "channel": "main"}
+    assert refusal(wrong, _expired_env(), **flag).reason is Reason.WRONG_CHANNEL
+    # expired and rollback
+    older = {**OK_CORE, "state": {**OK_CORE["state"], "seq_seen": 50}}
+    assert refusal(older, _expired_env(), **flag).reason is Reason.ROLLBACK
+    # expired and wrong purpose
+    assert (
+        refusal(
+            {k: v for k, v in OK_CORE.items() if k != "files"} | {"purpose": "addon-catalog"}, _expired_env(), **flag
+        ).reason
+        is Reason.WRONG_PURPOSE
+    )
+    # expired and a bad file hash
+    bad = {**OK_CORE, "files": [{**f, "content_b64": base64.b64encode(b"x").decode()} for f in OK_CORE["files"]]}
+    assert refusal(bad, _expired_env(), **flag).reason is Reason.SIZE_MISMATCH
+
+
+def test_no_production_code_sets_the_flag():
+    import re
+
+    root = Path(__file__).resolve().parents[2] / "src"
+    hits = [p for p in root.rglob("*.py") if re.search(r"allow_expired_manifest\s*=\s*True", p.read_text())]
+    assert hits == []

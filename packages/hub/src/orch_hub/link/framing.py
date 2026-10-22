@@ -14,7 +14,9 @@ import time
 from ..contract.canon import CanonError, cj, loads_strict
 from .tls import LinkTimeout, TlsConn
 
-MAX_FRAME = 1 << 20  # 1 MiB
+# A route_out / route_in frame carries an envelope of up to 1 MiB (protocol-v2 §11.1) as base64url (x 4/3) plus the
+# signed wrapper; every other frame is far smaller and is bounded by its own checks.
+MAX_FRAME = 1_500_000
 HEADER = 4
 
 

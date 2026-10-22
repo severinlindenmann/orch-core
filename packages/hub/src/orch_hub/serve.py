@@ -22,8 +22,10 @@ from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .publish import HttpPublishSync, HubPublish, PublishConfig
+from .router import RouteQueue, Router
 
 REGISTRY_FILE = "registry.db"
+ROUTE_QUEUE_FILE = "route-queue.db"
 
 
 class FixedInvites:
@@ -73,6 +75,9 @@ def serve(
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
     access = Access(str(state / ACCESS_FILE))
+    queue_path = state / ROUTE_QUEUE_FILE
+    queue = RouteQueue(str(queue_path))
+    router = Router(registry, queue)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -82,6 +87,7 @@ def serve(
         invites=FixedInvites(invites),
         publish=fw,
         downstream=fw,
+        router=router,
         host=host,
         port=port,
     )
@@ -100,6 +106,7 @@ def serve(
         stop.wait()
     finally:
         server.close()
+        queue.close()
         registry.close()
         access.close()
     return 0

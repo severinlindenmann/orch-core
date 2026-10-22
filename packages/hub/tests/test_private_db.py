@@ -116,3 +116,13 @@ def test_access_and_registry_use_it(d):
     with pytest.raises(PrivateFileError):
         Registry(str(d / "registry.db"))
     Registry().close()  # :memory: still works
+
+
+def test_route_queue_uses_it(d):
+    from orch_hub.router.queue import RouteQueue
+
+    RouteQueue(str(d / "route-queue.db")).close()
+    assert mode(d / "route-queue.db") == 0o600
+    os.chmod(d / "route-queue.db", 0o644)
+    with pytest.raises(PrivateFileError):
+        RouteQueue(str(d / "route-queue.db"))

@@ -11,7 +11,9 @@ Output (``--json``)::
         "mode": "selective" | "full" | null,
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
         "snapshot": {"version": N, "roles": {"<user_id>": "read"|"edit"|"admin"}},   # last issued (0, {} if none yet)
-        "ops": {"<op>": {"accepted": N, "refused": N}, ...}   # always includes "wk_seal"
+        "ops": {"<op>": {"accepted": N, "refused": N}, ...},  # always includes "wk_seal", "route_out", "route_in"
+        "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
+                                      # envelopes the router took where this workspace is sender or recipient
     }},
      "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
 """
@@ -27,7 +29,8 @@ from typing import Any
 from .contract.canon import unb64u
 
 REGISTRY_FILE = "registry.db"
-ALWAYS_COUNTED = ("wk_seal",)
+ROUTE_QUEUE_FILE = "route-queue.db"
+ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
 class InspectError(Exception):
@@ -77,6 +80,22 @@ def _snapshots(state: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _routes(state: Path) -> list[dict[str, str]]:
+    """Ids and SHA-256 of the envelopes the router has taken (queued or delivered); never their bytes."""
+    path = state / ROUTE_QUEUE_FILE
+    if not path.is_file():
+        return []
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT env_id, from_ws, to_ws, digest FROM route_queue ORDER BY id").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        db.close()
+    return [{"id": i, "from": f, "to": t, "sha256": bytes(d).hex()} for i, f, t, d in rows]
+
+
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     card = _hub_card(state)
     if card.get("dev") is not True:
@@ -95,6 +114,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     finally:
         db.close()
     snaps = _snapshots(state)
+    routes = _routes(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
@@ -118,6 +138,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "binding": binding_view,
             "ops": ops,
             "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
+            "routes": [r for r in routes if ws in (r["from"], r["to"])],
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
     for cws, op, outcome, n in counts:

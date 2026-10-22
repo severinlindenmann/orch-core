@@ -3029,6 +3029,11 @@ per shared item (`ShareState.sent[...].item_hash`, C6-5). In full mode `item_has
    `not_granted`. So a question item's hash never admits a gate approval. In V3 a selective `question.answered`
    carries `text` only (no `option`; options are not shared).
 3. `chain.head` is the head of `chain.log` at `chain.seq` in the host's own log → else `view_fork`.
+4. **The values the person saw (hub addendum orch-hub#34; task 6).** The event carries exactly the shared item's
+   values: `hash`, `gate_gen`, `policy_hash` and (where present) `source_sha` equal the item's `f1` entry,
+   `based_on` equals `chain.head`, and `roster_v` equals `f1.roster_v` → else `event_changed` (the item moved; the
+   person may sign again). The hub reference takes `live_items {item_hash: {chain, f1}}` plus `log_heads`; the vectors
+   are `custodial_selective_value_*`. Admission only, like the rest of this section.
 
 This check is **not replayed**: shares are host state (C6), not log. What replay checks is the grant (the alias, in
 the log) and every F1 rule; the `item_hash` stays in the line as evidence of what the person was shown. A host is

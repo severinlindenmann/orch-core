@@ -412,7 +412,11 @@ sig = Sign(HK_op, "orch/v2/hub-api-origin|" || cj(o))
 under the card it just pinned (§6.1 rules: `revoked`, `bad_signature`, `other_hub`, `stale_op_cert`, dev marker;
 `issued_ms` not in the future, `cert_invalid`) and refuses with **`other_origin`** unless `origin` is exactly the link's
 API origin, **before it sends a password** (reference `verify_api_origin`, vectors `api_origin_*`). A phishing host can
-relay the object, but it names the real origin. The hub reissues it with every new `HK_op`. It is a separate object,
+relay the object, but it names the real origin. The hub reissues it with every new `HK_op`. **It has no expiry of its
+own: changing the API origin requires a new `HK_op` (a new op cert) and revoking the old op cert (§4.2)**, so an object
+naming the old origin dies with it. The hub signs `origin` from the same configuration value its web API takes its
+allowed origins from, never from a request. A paired phone keeps the origin it verified and refuses a link to another
+origin for the same `hub_id`. It is a separate object,
 not a card field, because orch-core, orch-publish and the relay check the card's exact field set. The pin comes out of
 band from the operator; the phone shows it as the fingerprint (`hub_id` in 8 groups of 4, reference `fingerprint`) and
 the admin console shows the same next to the QR. A later card follows §5 step 7 against the held one; another root is

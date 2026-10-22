@@ -263,3 +263,47 @@ def test_the_item_version_grows_with_every_change_and_revoke_twice_is_the_same_a
     first = ok(req(served, "share.revoke", {"ref": key}))["data"]
     again = ok(req(served, "share.revoke", {"ref": key}))["data"]  # idempotent: same answer, no error
     assert first["revoke"] == 1 and again["revoke"] == 0 and selective.count("share_revoke") == 1
+
+
+def test_c6r3_2_the_chain_head_and_the_ticket_snapshot_are_read_under_one_lock(served, selective, monkeypatch):
+    """The chain claim of an item is read with its content, inside one ``store.locked()``; the builder no longer
+    reads the log head later (a commit in between would have bound seq N content to head N+1)."""
+    import contextlib
+
+    from orch.host import shareops
+
+    uid, _ = labelled(served, "Public note", "public")
+    store = served.h.host.services[served.wid].store
+    depth, reads = [0], []
+    real_locked, real_seq, real_head = store.locked, store.log_seq, store.head_at
+
+    @contextlib.contextmanager
+    def locked():
+        depth[0] += 1
+        try:
+            with real_locked():
+                yield
+        finally:
+            depth[0] -= 1
+
+    def seq(log):
+        reads.append(("seq", depth[0] > 0))
+        return real_seq(log)
+
+    def head(log, n):
+        reads.append(("head", depth[0] > 0))
+        return real_head(log, n)
+
+    monkeypatch.setattr(store, "locked", locked)
+    monkeypatch.setattr(store, "log_seq", seq)
+    monkeypatch.setattr(store, "head_at", head)
+    facts = {t.uid: t for t in shareops.tickets_for(served.h.host.services[served.wid])}
+    assert reads and all(held for _, held in reads), reads
+    assert facts[uid].chain == (real_seq(uid), real_head(uid, real_seq(uid)))
+    monkeypatch.undo()
+    from orch.host import hubops
+
+    monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+    got = ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))["data"]
+    assert got["put"] == 1
+    assert selective.opened[0]["chain"]["seq"] == real_seq(uid)

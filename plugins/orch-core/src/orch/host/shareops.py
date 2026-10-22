@@ -179,26 +179,32 @@ def tickets_for(service: WorkspaceService) -> list[Any]:
     see are never offered). A question or need is "to me" when an owner of this workspace is an addressee."""
     from orch.hubclient.shares import NeedFact, QuestionFact, TicketFact
 
-    state = service.store.state
-    owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
-    seen: dict[str, Any] = {}
-    for o in owners:
-        seen.update(state.visible_to(o))
-    out = []
-    for uid, t in sorted(seen.items()):
-        texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
-        qs = tuple(
-            QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)))
-            for q in t.questions
-        )
-        needs = tuple(NeedFact(n.kind, n.ref, bool(set(n.who) & set(owners))) for n in t.needs)
-        due = t.fields.get("due")
-        out.append(
-            TicketFact(
-                uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
-                due if isinstance(due, str) else None, qs, needs,
+    store = service.store
+    # C6r3-2: the fields and each ticket's (seq, head) come from ONE locked read, so an item's chain claim always
+    # describes the content it carries (a writer cannot slip a commit in between)
+    with store.locked():
+        state = store.state
+        owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
+        seen: dict[str, Any] = {}
+        for o in owners:
+            seen.update(state.visible_to(o))
+        out = []
+        for uid, t in sorted(seen.items()):
+            texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
+            qs = tuple(
+                QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)))
+                for q in t.questions
             )
-        )  # fmt: skip
+            needs = tuple(NeedFact(n.kind, n.ref, bool(set(n.who) & set(owners))) for n in t.needs)
+            due = t.fields.get("due")
+            seq = store.log_seq(uid)
+            head = store.head_at(uid, seq) if seq else None
+            out.append(
+                TicketFact(
+                    uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
+                    due if isinstance(due, str) else None, qs, needs, (seq, head) if seq and head else None,
+                )
+            )  # fmt: skip
     return out
 
 
@@ -285,16 +291,9 @@ def _make_builder(service: WorkspaceService) -> Any:
     if state.hxk_pub is None:
         raise HubRefused("malformed")
     _pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
-    store = service.store
-
-    def chain_of(ticket_uid: str) -> tuple[int, str] | None:
-        seq = store.log_seq(ticket_uid)
-        head = store.head_at(ticket_uid, seq) if seq else None
-        return (seq, head) if seq and head else None
-
     return S.make_builder(
         hub_id=state.hub_id, workspace_id=service.workspace_id, hxk_pub=unb64u(state.hxk_pub, 65), sign=sign,
-        dev=bool(state.binding["o"]["dev"]), now_ms=lambda: int(service.clock() * 1000), chain_of=chain_of,
+        dev=bool(state.binding["o"]["dev"]), now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
 
 

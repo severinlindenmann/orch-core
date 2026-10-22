@@ -126,6 +126,9 @@ class TicketFact:
     due: str | None
     questions: tuple[QuestionFact, ...] = ()
     needs: tuple[NeedFact, ...] = ()
+    #: ``(seq, head)`` of the ticket's log, read in the same locked snapshot as the fields above (C6r3-2): the chain
+    #: claim of an item then always describes the content it carries. ``None``: not known (the builder refuses).
+    chain: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,7 @@ class ShareItem:
     ticket_key: str
     payload: dict[str, Any]  # the exact 10.2b content of this kind (shown to the owner; the builder signs and seals it)
     digest: str  # b64u SHA-256 of the canonical payload: a change re-sends
+    chain: tuple[int, str] | None = field(default=None, compare=False)  # the snapshot's (seq, head); not in the digest
 
     def line(self) -> str:
         """One line for the owner's review."""
@@ -175,7 +179,7 @@ def _item(logical: str, kind: str, t: TicketFact, payload: dict[str, Any]) -> Sh
         sharefmt.check_content(ITEM_KIND[kind], payload)
     except HubRefused:
         return None
-    return ShareItem(logical, kind, t.uid, t.key, payload, b64u(suite.sha256(wire.cj(payload))))
+    return ShareItem(logical, kind, t.uid, t.key, payload, b64u(suite.sha256(wire.cj(payload))), t.chain)
 
 
 def _valid_labels(labels: Iterable[str]) -> list[str]:
@@ -247,13 +251,15 @@ def make_builder(
     sign: Callable[[bytes], bytes],
     dev: bool,
     now_ms: Callable[[], int],
-    chain_of: Callable[[str], tuple[int, str] | None],
+    chain_of: Callable[[str], tuple[int, str] | None] | None = None,
 ) -> SealedItemBuilder:
-    """The 10.2b builder for one hub binding. ``chain_of(ticket_uid)`` is ``(seq, head)`` of that ticket's log now
-    (``None``: the log is unreadable or empty, which refuses: an item without its chain head is never sent)."""
+    """The 10.2b builder for one hub binding. The chain claim is the item's own ``chain``, read with its content in
+    one snapshot (C6r3-2). ``chain_of(ticket_uid)`` is only the fallback for an item without one (``(seq, head)`` of
+    that ticket's log now); with neither, or when it answers ``None`` (unreadable or empty log), the builder refuses:
+    an item without its chain head is never sent."""
 
     def build(item_id: str, item: ShareItem, version: int) -> tuple[str, str]:
-        head = chain_of(item.ticket_uid)
+        head = item.chain if item.chain is not None else (chain_of(item.ticket_uid) if chain_of else None)
         if head is None:
             raise HubRefused("malformed")
         signed = sharefmt.build_signed_item(

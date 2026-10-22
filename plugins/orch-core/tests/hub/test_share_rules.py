@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from orch.hubclient import shares as S
@@ -212,3 +214,18 @@ def test_a_put_the_hub_refuses_for_the_item_is_skipped_but_a_link_failure_still_
     link.fail_on = "share_put"
     with pytest.raises(HubRefused):  # hub_unreachable is not about the item: stop
         run(S.ShareState(rules=[{"kind": "tag", "tag": "public"}]), tickets, link)
+
+
+def test_c6r3_2_an_item_carries_the_chain_of_its_own_snapshot_not_a_later_read():
+    seen = []
+
+    def later(uid):  # a later read would see a newer head: it must not be used when the snapshot has one
+        seen.append(uid)
+        return (9, "sha256:" + "ee" * 32)
+
+    t = S.TicketFact("a", "K-1", "feature", "T", "open", ("public",), None, chain=(4, "sha256:" + "cd" * 32))
+    (item,) = S.select([{"kind": "tag", "tag": "public"}], [t])
+    assert item.chain == (4, "sha256:" + "cd" * 32)
+    other = dataclasses.replace(t, chain=(5, "x"))
+    assert item.digest == S.select([{"kind": "tag", "tag": "public"}], [other])[0].digest  # the chain is not content
+    assert seen == []

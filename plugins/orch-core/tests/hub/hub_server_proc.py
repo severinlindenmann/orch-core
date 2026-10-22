@@ -9,13 +9,14 @@ from pathlib import Path
 hub_src = Path(sys.argv[1])
 sys.path[:0] = [str(hub_src / "src"), str(hub_src / "tests")]
 
-from conftest import Invites  # noqa: E402
 from orch_hub.contract import hub as H  # noqa: E402
 from orch_hub.contract import vectorgen as G  # noqa: E402
 from orch_hub.contract.canon import b64u  # noqa: E402
 from orch_hub.keys import HubKeys  # noqa: E402
 from orch_hub.link import LinkServer, Registry  # noqa: E402
 from orch_hub.link.tls import TlsIdentity  # noqa: E402
+
+from conftest import Invites  # noqa: E402
 
 with tempfile.TemporaryDirectory() as d:
     keys = HubKeys.init(Path(d) / "hub")

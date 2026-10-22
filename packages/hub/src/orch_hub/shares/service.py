@@ -35,7 +35,7 @@ class ShareService:
         *,
         hub_id: str,
         hxk: Any,
-        dev_mode: bool = False,
+        dev_mode: bool,
         now_ms: Callable[[], int] | None = None,
         on_change: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:

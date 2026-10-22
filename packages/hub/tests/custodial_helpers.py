@@ -101,6 +101,7 @@ class Env:
             self.keys.hub_id,
             lambda: self.keys.op_cert()["o"]["cert_id"],
             op_cert_by_id=self.keys.op_cert_by_id,
+            dev_mode=True,
         )
         self.view, self.channels, self.delivered = StubView(), Channels(), []
         self.sessions = Sessions()
@@ -119,6 +120,7 @@ class Env:
             deliver=lambda ws, log, ev: self.delivered.append((ws, log, ev)),
             mode_of=lambda ws: self.mode,
             now_ms=lambda: self.clock[0],
+            dev_mode=True,
         )
 
     def new_channel(self, priv, factor: str = "se-unlocked", user: str | None = None) -> str:

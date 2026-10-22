@@ -34,6 +34,7 @@ def env(tmp_path):
         deliver=lambda ws, log, ev: e.delivered.append((ws, log, ev)),
         mode_of=lambda ws: e.mode,
         now_ms=lambda: e.clock[0],
+        dev_mode=True,
     )
     yield e
     e.vs.close()

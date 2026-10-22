@@ -20,14 +20,23 @@ from typing import TextIO
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
 from .audit import open_log
+from .channels import Channels
+from .channels.service import CHANNELS_FILE
+from .config import HubConfig
 from .contract.hub import Refused
+from .custodial import CustodialEngine
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
+from .reconcile import reconcile_full_only
+from .relay import PushNotifier, RelayClient, RelayError
+from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
+from .view import build_view_services
+from .webapi import SessionBridge, WebApi, WebDeps, WebServer
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
@@ -88,6 +97,12 @@ def serve(
     invites: list[str],
     *,
     api_host: str | None = None,
+    web_listen: str | None = None,
+    relay_url: str | None = None,
+    trusted_peers: frozenset[str] = frozenset(),
+    behind_edge: bool = False,
+    web_origins: frozenset[str] = frozenset(),
+    relay_transport: Transport | None = None,
     stop: threading.Event | None = None,
     out: TextIO | None = None,
 ) -> int:
@@ -97,6 +112,16 @@ def serve(
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
     keys = HubKeys.open(state)
+    # The one HubConfig of this process (orch-hub#30): the dev flag is the held card's, every service gets it below.
+    cfg = HubConfig.from_card(
+        keys.card(),
+        listen=listen,
+        web_listen=web_listen,
+        relay_url=relay_url,
+        trusted_peers=trusted_peers,
+        behind_edge=behind_edge,
+        allowed_origins=web_origins,
+    )
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
     access = Access(str(state / ACCESS_FILE))
@@ -104,7 +129,7 @@ def serve(
     queue = RouteQueue(str(queue_path))
     wk_seals = WkSeals(str(state / WK_SEAL_FILE), hub_id=keys.hub_id, hxk_pub=keys.hxk_pub, exchange=keys.hxk_exchange)
     router = Router(registry, queue, AccessAuthz(registry, access))
-    audit = open_log(state, keys)
+    audit = open_log(state, keys, dev_mode=cfg.dev)
     access.observer = audit.access_change  # D4: every grant and membership change is audited
     space_store = SpaceStore(str(state / SPACES_FILE))
     spaces = SpaceService(
@@ -114,6 +139,7 @@ def serve(
         keys.op_signer,
         keys.hub_id,
         lambda: keys.op_cert()["o"]["cert_id"],
+        dev_mode=cfg.dev,
         on_change=audit.space_change,
     )
     share_store = ShareStore(str(state / SHARES_FILE))
@@ -122,9 +148,55 @@ def serve(
         registry,
         hub_id=keys.hub_id,
         hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
-        dev_mode=True,  # dev serve only (loopback); ShareService itself defaults to the fail-closed False
+        dev_mode=cfg.dev,
         on_change=audit.share_change,
     )
+    views = build_view_services(state, wk_seals=wk_seals, registry=registry, access=access)
+    channels = Channels(keys, access, state / CHANNELS_FILE, audit=audit, dev_mode=cfg.dev)
+    notifier: PushNotifier | None = None
+    try:
+        client = RelayClient(keys, cfg.relay_url, dev=cfg.dev, transport=relay_transport)
+    except RelayError as e:
+        if cfg.relay_url is not None:  # a relay that was named but is unusable: refuse rather than run without push
+            raise ValueError(f"relay: {e.code}") from None
+        client = None  # no relay URL on the card or the command line: no push, everything else runs
+    if client is not None:
+        notifier = PushNotifier(client, channels)
+        channels.on_revoke = notifier.channel_revoked_async  # D10: a revoked channel's push target and mailbox go
+    engine = CustodialEngine(
+        keys=keys,
+        snapshots=AccessSnapshots(access, keys),
+        seals=wk_seals,
+        view=views.workspace_view,
+        channels=channels,
+        sessions=SessionBridge(channels),
+        audit=audit,
+        deliver=router.send_event,
+        mode_of=registry.mode,
+        dev_mode=cfg.dev,
+        notify=notifier.notify_async if notifier else None,
+    )
+    web: WebServer | None = None
+    if cfg.web_listen is not None:
+        api = WebApi(
+            WebDeps(
+                keys=keys,
+                access=access,
+                channels=channels,
+                registry=registry,
+                audit=audit,
+                engine=engine,
+                shares=shares,
+                view=views.reader,
+                allowed_origins=cfg.allowed_origins,
+                trusted_peers=cfg.trusted_peers,
+                behind_edge=cfg.behind_edge,
+                secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
+            )
+        )
+        web = WebServer.from_listen(api, cfg.web_listen)  # loopback only; the edge fronts it (no public listener)
+        if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
+            api.allow_origin(f"http://{web.address[0]}:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -139,21 +211,29 @@ def serve(
         spaces=spaces,
         audit=audit,
         wk_seals=wk_seals,
+        views=views.service,
         shares=shares,
         host=host,
         port=port,
+        dev_mode=cfg.dev,
     )
     try:
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
+        reconcile_full_only(registry, wk_seals, views.store)  # wraps and synced view of a non-full workspace go
         fw.restore(registry.binding_objects())
+        if notifier is not None:
+            notifier.restart_pass_async()  # a revoked channel's relay cleanup that a crash left undone
 
-        def _retry_shares() -> None:  # D9-1: a pending share purge is retried while the hub runs
+        def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
                 shares.retry_pending()
+                reconcile_full_only(registry, wk_seals, views.store)
 
-        threading.Thread(target=_retry_shares, name="share-purge-retry", daemon=True).start()
+        threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         server.start()
+        if web is not None:
+            web.start()
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGINT):
                 signal.signal(sig, lambda *_: stop.set())
@@ -163,9 +243,15 @@ def serve(
             file=out,
             flush=True,
         )
+        if web is not None:
+            print(f"orch-hub web port={web.address[1]}", file=out, flush=True)
         stop.wait()
     finally:
+        if web is not None:
+            web.close()
         server.close()
+        channels.close()
+        views.close()
         queue.close()
         space_store.close()
         share_store.close()

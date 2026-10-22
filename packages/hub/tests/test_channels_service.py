@@ -244,10 +244,10 @@ def test_private_db_file_modes(env, tmp_path):
     from orch_hub.channels import Channels
 
     with pytest.raises(ChannelError) as ei:
-        Channels(env.keys, env.acc, db)
+        Channels(env.keys, env.acc, db, dev_mode=True)
     assert "bad_private_file" in str(ei.value)
     db.chmod(0o600)
-    env.svc = Channels(env.keys, env.acc, db, now_ms=env.clock)
+    env.svc = Channels(env.keys, env.acc, db, now_ms=env.clock, dev_mode=True)
 
 
 def _race(n, fn):

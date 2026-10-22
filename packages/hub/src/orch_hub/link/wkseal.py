@@ -107,6 +107,11 @@ class WkSeals:
         except sqlite3.Error:
             raise Refused("internal") from None
 
+    def live_workspaces(self) -> list[str]:
+        """Workspaces that still hold a live (not retired) wrap: the startup reconcile checks them against the registry."""
+        with self.lock:
+            return [r[0] for r in self._db.execute("SELECT DISTINCT ws FROM wk_seal WHERE retired=0 ORDER BY ws")]
+
     def epochs(self, ws: str) -> list[int]:
         with self.lock:
             rows = self._db.execute("SELECT epoch FROM wk_seal WHERE ws=? AND retired=0 ORDER BY epoch", (ws,))

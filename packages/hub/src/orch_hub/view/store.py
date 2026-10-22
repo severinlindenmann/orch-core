@@ -50,6 +50,10 @@ class ViewStore:
             rows = self._db.execute("SELECT head FROM view_heads WHERE ws=? AND log=? ORDER BY seq", (ws, log))
             return [r[0] for r in rows.fetchall()]
 
+    def workspaces(self) -> list[str]:
+        with self.lock:
+            return [r[0] for r in self._db.execute("SELECT DISTINCT ws FROM view_heads ORDER BY ws")]
+
     def logs(self, ws: str) -> list[str]:
         with self.lock:
             rows = self._db.execute("SELECT DISTINCT log FROM view_heads WHERE ws=? ORDER BY log", (ws,))

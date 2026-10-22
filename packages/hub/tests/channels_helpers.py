@@ -31,8 +31,10 @@ class Env:
         self.clock = Clock()
         self.keys = HubKeys.init(tmp_path / "hub", now_ms=self.clock)
         self.acc = Access(str(tmp_path / "hub" / "access.db"), now_ms=self.clock)
-        self.audit = open_log(tmp_path / "hub", self.keys, now_ms=self.clock)
-        self.svc = Channels(self.keys, self.acc, tmp_path / "hub" / "channels.db", now_ms=self.clock, audit=self.audit)
+        self.audit = open_log(tmp_path / "hub", self.keys, now_ms=self.clock, dev_mode=True)
+        self.svc = Channels(
+            self.keys, self.acc, tmp_path / "hub" / "channels.db", now_ms=self.clock, audit=self.audit, dev_mode=True
+        )
         self.snaps = AccessSnapshots(self.acc, self.keys, self.clock)
         self.secrets: dict[str, bytes] = {}
 

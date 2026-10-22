@@ -105,6 +105,7 @@ class Web:
             deliver=lambda ws, log, ev: self.delivered.append((ws, log, ev)),
             mode_of=lambda ws: self.reg.mode(ws),
             now_ms=self.clock,
+            dev_mode=True,
         )
         self.api = WebApi(
             WebDeps(

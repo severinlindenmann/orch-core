@@ -1,10 +1,13 @@
-// The tester's checklist of e2e RUN 2 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
+// The tester's checklist of e2e RUN 4 (orch v2 from the beginning), as data. Source: the lead's owner-checklist-run2.md.
 // Step ids match the sections and numbers of that file (A1, B1.3, C5 ...); the server accepts ids of the form
 // [A-Z]<n>[.<n>] only (testrun.py). Nothing secret belongs here: no keys, codes, invites or passphrases.
 
 import { ADDON_SECTIONS } from './addons'
 
-export const RUN_ID = 'run2'
+// FLIP AT THE NEXT PIN: change this one value to 'run5' (the whole page, the server path and "Done in run N" follow it).
+// Steps passed in earlier runs are then carried over (see carry.ts); the step texts below may stay or be edited.
+export const RUN_ID = 'run4'
+export const RUN_NUMBER = Number(RUN_ID.slice(3))
 
 export interface ChecklistStep {
   id: string
@@ -34,20 +37,20 @@ export interface ChecklistSection {
   steps: ChecklistStep[]
 }
 
-export const RUN2_TITLE = 'Test checklist: end-to-end run 2'
-export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install from develop (updated 18 Oct 2026, after batches 11 and 12)'
+export const RUN2_TITLE = 'Test checklist: end-to-end run 4'
+export const RUN2_SUBTITLE = 'orch v2 from the beginning, with a real install of one tested build (updated 21 Oct 2026: core A to F, add-ons H to V, new checks W to T)'
 
 export const RUN2_INTRO = [
-  'You test on this Mac (Battlepad, user severin) with a real install from develop, in NEW empty test folders. Never your real projects.',
+  'You test on your Mac with a real install from develop, in NEW empty test folders. Never your real projects.',
   'Lens: you are not a developer. Note what is confusing, not only what breaks.',
   'Items marked with a warning could not be verified from code or docs. Each step shows a "next:" line when something is left; if it differs, follow it and report it.',
   'Never paste or photograph the secret words, recovery code, passphrase, QR or invite. (Test words you paste to the lead are fine.)',
-  'Run order: A, B, C, D, E, then F (phone), G (report). All times on screen are your local time.',
+  'Run order: A, B, C, D, E, then the add-ons H to V and the new checks W, X, Y, Z, S and T. F (phone) is optional and needs the iPhone ready. At the end press "Copy report" and send it to the lead. All times on screen are your local time.',
 ]
 
 export const RUN2_KNOWN_GAPS = [
   'Quick tasks do not close by themselves yet (auto-close comes after this run). Close them by hand.',
-  'The .orch folder move is coming later: a project that already has its own config.json or events/ is refused by setup.',
+  'A project folder that still has an orch store from an older version in its root (config.json, keys.jsonl, events/) is refused by setup, with a message saying what to delete. Nothing is converted.',
   'Phone pairing only works through the CLI (see F). Setup and Settings do not offer it.',
 ]
 
@@ -73,7 +76,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'A1',
         title: 'Install with the line from the lead',
-        text: 'The lead gives you the exact install line (it points to one tested version). Paste it in the Terminal. It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s.',
+        text: 'Use the install line the lead sent you (it names the exact version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s. If orch is already installed (the run 2 version), install over it, then run "orch host enable" and "orch dashboard restart" (the dashboard restart is needed once when coming from the run 2 version).',
         see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
@@ -81,8 +84,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'A2',
         title: 'Turn the host on',
         commands: ['orch host enable'],
-        text: 'It restarts the host and the dashboard by itself.',
-        see: 'Plain lines, no error. "orch host status" shows loaded=yes running=yes. You do not need any manual restart or "dashboard stop".',
+        text: 'It starts the host (and restarts it on the new release). It does not restart the dashboard: "orch dashboard open /checklist" or "orch dashboard restart" does.',
+        see: 'Plain lines, no error. "orch host status" shows loaded=yes running=yes. If you installed over an older version, run "orch dashboard restart" once.',
         points: ['Tip: after this, "orch dashboard open /checklist" brings you back to this page.'],
       },
     ],
@@ -92,14 +95,14 @@ const CORE_SECTIONS: ChecklistSection[] = [
     title: 'orch setup',
     where: 'Terminal + browser',
     intro:
-      'Make two folders first, and pick ONE existing project folder (a copy of a small repo; call it P). Setup refuses your home folder, "/", and projects that already have their own config.json or events/. Try "cd ~ && orch setup" once: the refusal must be clear and name the next step.',
-    introCommands: ['mkdir ~/orch-run2-a ~/orch-run2-b'],
+      'Make two folders first, and pick ONE existing project folder (a copy of a small repo; call it P). Setup refuses your home folder, "/", and project folders that still hold an orch store from an older version in their root (config.json, keys.jsonl, events/). Try "cd ~ && orch setup" once: the refusal must be clear and name the next step.',
+    introCommands: ['mkdir ~/orch-run4-a ~/orch-run4-b'],
     steps: [
       {
         id: 'B1.1',
         group: 'B1  Folder A, terminal approval, agents 3 days',
         title: 'Start setup in folder A',
-        commands: ['cd ~/orch-run2-a && orch setup'],
+        commands: ['cd ~/orch-run4-a && orch setup'],
         see: 'In Terminal: "orch setup: <folder> (new workspace)" and a copyable single-use link (valid 5 minutes). The browser opens by itself; if it does not, copy the link into your browser. The terminal stays running.',
       },
       {
@@ -109,7 +112,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Welcome: your folder is named; everything stays on this computer.',
           'You: name (e.g. Severin) and short name RA (the ticket prefix, e.g. RA-0001). Continue stays grey until both are filled.',
-          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Turn on all the others.',
+          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Start agents, Terminals and Worktrees are already ticked (leave them on), and agent access of 3 days is already selected; the others are your choice. Check that the review at the end lists them.',
           'How do you want to approve things: choose Terminal. Then "Let agents work for you for": choose 3 days. Runner access: on. (Warning: a "relay and phone" option should NOT appear, it is a later add-on. If you see it, tell the lead.)',
           'Secret words: the passphrase is shown once, plus 24 numbered recovery words. Write them down on paper. Tick "I saved ...". Type the 3 words asked and press Confirm. Try one wrong word first: it says how many tries are left (5 in all; do not use them all). A wrong word clears only that field. The page never asks for the passphrase itself.',
           'Review: it lists what will be created (workspace, short name, person, folder) and what you approve (add-ons, "Agents may work for 3 days", runner access). Plain sentences first, details in a fold-out.',
@@ -133,13 +136,13 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'B1.5',
         title: 'Run setup again in folder A',
-        commands: ['cd ~/orch-run2-a && orch setup'],
+        commands: ['cd ~/orch-run4-a && orch setup'],
         see: '"Setup is complete ... Nothing is missing" (or "Finish setup" with only the missing steps listed). No secret-words screen. If it offers to redo things already done: report.',
       },
       {
         id: 'B1.6',
         title: 'Refresh test in folder B',
-        commands: ['cd ~/orch-run2-b && orch setup'],
+        commands: ['cd ~/orch-run4-b && orch setup'],
         text: 'Go to the Review step, then refresh the browser page.',
         see: 'The page says the session ended, and the Terminal says the page was closed or reloaded. Press Enter in the Terminal for a fresh link. You get NEW secret words (the old ones are void). If the Terminal stays silent: report (non-blocking).',
       },
@@ -147,7 +150,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'B1.7',
         title: 'Ctrl-C test',
         text: 'In B, get to the Secret words screen, then press Ctrl-C in the Terminal.',
-        commands: ['ls -a ~/orch-run2-b'],
+        commands: ['ls -a ~/orch-run4-b'],
         see: 'The Terminal says cancelled, the browser says "Setup paused". The ls shows no orch files.',
         points: ['Then run "orch setup" again in B and finish it as in B1.2 to B1.4 (short name RB, Terminal approval, agents 1 day). You now have a second workspace.'],
       },
@@ -159,7 +162,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         see: 'The page names P as a new workspace. Your files stay untouched ("git status" in P: only new orch files such as an AGENTS.md block, .agents/skills, CLAUDE.md lines; nothing of yours deleted). Short name RP, terminal approval, no agents. Finish.',
         points: [
           'AGENTS.md has a clearly marked orch block and the rest is yours; CLAUDE.md imports AGENTS.md. If a file you wrote was overwritten: BLOCKING, report.',
-          'Also try a project that already has its own config.json or events/: setup must refuse clearly (expected; the .orch move comes later).',
+          'Also try a project folder that still has config.json, keys.jsonl or events/ in its root (an older orch store): setup must refuse clearly and say what to delete (expected).',
         ],
       },
       {
@@ -168,7 +171,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'One-click approval in folder C',
         optional: true,
         text: 'Skip it if you prefer not to use the macOS keychain. One-click stores its key in the macOS keychain; macOS may ask for permission.',
-        commands: ['mkdir ~/orch-run2-c && cd ~/orch-run2-c && orch setup'],
+        commands: ['mkdir ~/orch-run4-c && cd ~/orch-run4-c && orch setup'],
         points: ['Short name RC. At the approval step choose "One click on this computer". Agents 1 day, runner on.'],
         see: 'The passphrase is NOT shown on the secrets screen, only the recovery code. The review mentions one-click signing and shows a risk notice ONCE (the only full time you see it). Finish as in B1.3 and B1.4.',
         warn: 'If the page says one-click is unavailable ("dev_host"), tell the lead.',
@@ -248,7 +251,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
   {
     id: 'D',
     title: 'Core CLI',
-    where: 'Terminal, in ~/orch-run2-a; ticket prefix RA; use the passphrase from setup',
+    where: 'Terminal, in ~/orch-run4-a; ticket prefix RA; use the passphrase from setup',
     steps: [
       {
         id: 'D1',
@@ -259,43 +262,52 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'D2',
         title: 'Agent verbs need a grant for your shell',
-        text: 'Type the word and the passphrase. Copy the printed ORCH_GRANT= value (shown once) with "export ORCH_GRANT=<value>", then run the ORCH_SESSION line below. Never paste the value anywhere else, and never into a note.',
+        text: 'Type the word and the passphrase. Copy the printed ORCH_GRANT= value (shown once) with "export ORCH_GRANT=<value>", then run the ORCH_SESSION line below. Never paste the value anywhere else, and never into a note. You already have RA-0001 (C2) and RA-0002 (C5), so "orch new" makes the next number: RA-0003 in the lines below. If it prints another key, use that key instead of RA-0003 in D2, D3, D4 and D5.',
         commands: [
           'orch grant --days 1 --label cli',
           "export ORCH_SESSION=s_01$(python3 -c 'import secrets;print(secrets.token_hex(12).upper())')",
           'orch new "Owner CLI test" --type feature --priority high',
-          'orch ac add "It works" --ref RA-0001',
-          'orch section set requirements --ref RA-0001 -m "Do the thing"',
+          'orch ac add "It works" --ref RA-0003',
+          'orch section set requirements --ref RA-0003 -m "Do the thing"',
         ],
         points: ['New: --days 1..7 (--hours still works, up to 168). Do the same for the sections context and out_of_scope.'],
-        see: '"ok RA-0001 ticket.created" ...',
+        see: '"ok RA-0003 ticket.created" (or the next free number), then one "ok" line per command.',
       },
       {
         id: 'D3',
         title: 'Human approval (no grant)',
-        commands: ['unset ORCH_GRANT ORCH_SESSION', 'orch approve requirements --ref RA-0001'],
+        text: 'A person signs, so the grant must not be set for this command. "env -u" runs it without the grant and keeps your grant for D4.',
+        commands: ['env -u ORCH_GRANT -u ORCH_SESSION orch approve requirements --ref RA-0003'],
         points: [
-          'The NEW terminal view: first a headline ("Approve the requirements of RA-0001 . Owner CLI test"), then the text and checklist, then "Type RA-0001/XXXXXXXX to continue (d = details)".',
+          'The NEW terminal view: first a headline ("Approve the requirements of RA-0003 . Owner CLI test"), then the text and checklist, then "Type RA-0003/XXXXXXXX to continue (d = details)".',
           'Press d: the long technical dump appears (hashes etc.); the plain view must not contain raw JSON.',
           'Then the plain passphrase step (names what you sign; d = details). Host, runner and grant commands print plain lines, not raw JSON.',
         ],
-        see: '"ok RA-0001 gate.approved requirements"',
+        see: '"ok RA-0003 gate.approved requirements"',
       },
       {
         id: 'D4',
         title: 'Lifecycle as an agent, then as a human',
-        text: 'Agent (grant again): claim, plan, tasks, decisions, an artifact. Human: approve the plan. Agent: submit. Human: verdict pass.',
+        text: 'Needs the grant and ORCH_SESSION from D2 still set in this Terminal. Agent: claim, plan, verification, a task, evidence. Human: approve the plan (with "env -u", as in D3). Agent: submit. Human: verdict pass. Use your own key in place of RA-0003 if D2 printed another one.',
         commands: [
-          'orch claim',
-          'orch approve plan',
-          'orch submit',
-          'orch verdict pass -m ok',
+          'orch claim RA-0003',
+          'orch section set plan --ref RA-0003 -m "One step"',
+          'orch section set verification --ref RA-0003 -m "Run it and look at the result"',
+          'orch task add "Do the thing" --proves AC1 --ref RA-0003',
+          'orch task start T1',
+          'echo "it works" > ~/orch-run4-a/check.log',
+          'orch artifact add ~/orch-run4-a/check.log --kind log --ac AC1 --ref RA-0003',
+          'orch task done T1',
+          'env -u ORCH_GRANT -u ORCH_SESSION orch approve plan --ref RA-0003',
+          'orch submit RA-0003',
+          'env -u ORCH_GRANT -u ORCH_SESSION orch verdict pass --ref RA-0003 -m ok',
         ],
         points: [
-          'Agent commands: orch section set plan, orch task add / start / done, orch section set decisions, orch artifact add FILE --kind log --ac AC1.',
+          'The plan must be approved before "orch submit", and every acceptance criterion needs evidence (the artifact line) first.',
           'NEW: "verdict pass" now works for you as the only member, even though you claimed it (was blocking in run 1).',
-          'The code gate is off by default (no "approve code"). "orch request-changes" sends it back. --dry-run tests a write.',
+          'The code gate is off by default (no "approve code"). "orch request-changes --ref RA-0003" sends it back. --dry-run tests a write.',
         ],
+        see: '"ok RA-0003 claim.taken", "ok RA-0003 gate.approved plan", "ok RA-0003 ticket.submitted testing", then "verdict.given".',
         warn: 'If you still get "role.denied gate.not_eligible": BLOCKING.',
       },
       {
@@ -303,15 +315,17 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'Grant, close, reopen and the rest',
         commands: [
           'orch grant --days 3 --label x',
-          'orch close RA-0002 --resolution wont_do -m test',
-          'orch reopen',
+          'orch new "Second ticket"',
+          'orch close RA-0004 --resolution wont_do -m test',
           'orch inbox',
           'orch next',
           'orch search Owner',
-          'orch log',
+          'orch log "A note from the checklist" --ref RA-0001',
+          'unset ORCH_GRANT ORCH_SESSION',
+          'orch reopen RA-0004 -m test',
           'orch grant --days 8',
         ],
-        text: 'After "orch grant --days 3" the dashboard pill shows the soonest end (local time). Create RA-0002 first, to close it. "orch grant --days 8" must be refused (max 7 days).',
+        text: 'Run "orch grant --days 3 --label x", then copy the printed ORCH_GRANT= value into "export ORCH_GRANT=<value>" and run the ORCH_SESSION line from D2 again; the next five commands are agent commands and need both. "orch new" creates the next key, RA-0004 (so there is one to close; use the key it prints). The dashboard pill then shows the soonest end (local time). Reopening is a person\'s decision, so "unset" first: "orch reopen" asks for your passphrase. "orch grant --days 8" must be refused (max 7 days).',
       },
       {
         id: 'D6',
@@ -334,10 +348,11 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'E1',
         title: 'Make a repo to work in',
         commands: [
-          'mkdir ~/orch-run2-repo && cd ~/orch-run2-repo && git init && git commit --allow-empty -m init',
+          'mkdir ~/orch-run4-repo && cd ~/orch-run4-repo && git init && git commit --allow-empty -m init',
+          'orch show RA-0001 --full',
           `orch set RA-0001 links='{"repos":["repo"],"branches":{"repo":"feat/x"}}'`,
         ],
-        text: 'In Settings, General, Repositories, add it as a repo of RA (name repo; see section I). Link it to RA-0001 with the second command (with a grant).',
+        text: 'In Settings, General, Repositories, add it as a repo of RA (name repo; see section I). Then link it to RA-0001: the last two commands need a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2). "orch show RA-0001 --full" prints a lot: ignore it, it only has to be read first.',
         warn: 'The worktree steps follow D60 code; report what you see. The Claude plugin line above needs private repo access.',
       },
       {
@@ -349,8 +364,8 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'E3',
         title: 'Worktree',
-        commands: ['ls ~/orch-run2-repo.worktrees'],
-        see: 'A folder ~/orch-run2-repo.worktrees/<WS8>-RA-0001 appears. Without it the dashboard says "shared working copy". Report which.',
+        commands: ['ls ~/orch-run4-repo.worktrees'],
+        see: 'A folder ~/orch-run4-repo.worktrees/<WS8>-RA-0001 appears. Without it the dashboard says "shared working copy". Report which.',
       },
       {
         id: 'E4',
@@ -421,7 +436,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'F5',
         title: 'Answer a question on the phone',
-        text: 'Window 2, cd ~/orch-run2-a, grant for one hour, export ORCH_GRANT and ORCH_SESSION (as D2).',
+        text: 'Window 2, cd ~/orch-run4-a, grant for one hour, export ORCH_GRANT and ORCH_SESSION (as D2).',
         commands: ['orch grant --hours 1 --label phone', 'orch new "Phone test ticket"', 'orch ask "Pick one" --ref RA-000N --options yes,no --rec yes', 'orch show RA-000N'],
         see: 'Phone: open the question, choose, "Sign and send"; Face ID. Mac: "orch show RA-000N" shows question.answered.',
       },

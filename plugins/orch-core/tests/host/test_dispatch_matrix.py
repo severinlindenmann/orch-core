@@ -83,6 +83,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
+    host |= {"workdir.get", "workdir.delete"}  # r3 part C
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -96,7 +97,10 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "people.set",
         "relay.pair_device",
         "publish.share",
-    }  # H12c-e, B12D, P5
+        "ac.accept",
+        "ac.unaccept",
+        "task.mark_done",
+    }  # H12c-e, B12D, P5, R3
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -183,6 +187,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("person_write", "write")
         elif op in {"phone.request", "phone.cancel"}:  # B10 Part B: P only
             assert kind == ("person_write", "write")
+        elif op in {"workdir.get", "workdir.delete"}:  # r3 part C: P only
+            assert kind == (("person_read", "read") if op == "workdir.get" else ("person_write", "write"))
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}
             assert kind == (("person_write", "write") if write else ("person_read", "read"))

@@ -123,7 +123,14 @@ def test_the_first_request_is_one_review_of_every_step(human, tmp_path):
     assert titles == ["Context", "Summary"] or sorted(titles) == ["Context", "Summary"]
     assert content["headline"].startswith("Create DEMO-") and ": Add a sequence" in content["headline"]
     assert f"(key per host; signed id …{content['ticket']['uid_tail']})" in content["headline"]
-    assert content["subline"] == "and its text (2 sections)"
+    assert content["subline"] == "Includes its text (2 sections)"
+    # U3: a person reads "New ticket KEY: title"; the host-key / signed-id qualifier is in `ticket`, not the title
+    assert content["title"] == f"New ticket {first['material']['ticket']['key']}: Add a sequence"
+    assert "signed id" not in content["title"] and content["ticket"]["uid_tail"] and content["ticket"]["key_note"]
+    # nothing can be cancelled on a ticket this very review creates: no cancel note, but the one-confirmation note stays
+    assert not any(n.startswith(("This cancels", "An add-on field")) for n in content["notes"])
+    assert content["fields_title"] == "Details" and content["ticket"]["new"] is True
+    assert not any("signatures" in n for n in content["notes"])
     assert any("4 steps" in n for n in content["notes"])
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Line two" in text and "4 signatures, ONE confirmation" in text

@@ -1,10 +1,13 @@
-import { ChevronDown, ChevronRight, FileText, ListChecks } from 'lucide-react'
+import { ManualAcceptanceProvider, ManualButtons } from './ManualAcceptance'
+import { useTicketEdit } from './EditTicket'
+import { Button } from '@/components/ui/button'
+import { ChevronDown, ChevronRight, FileText, ListChecks, Pencil, UserCheck } from 'lucide-react'
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
 import { diffstat } from '@/api/gates'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { agentName, fmtDuration, Mono, Pill, Section, type Jump, type TabProps } from './shared'
+import { agentName, fmtDuration, fmtTime, Mono, Pill, Section, type Jump, type TabProps } from './shared'
 
 type AcState = 'open' | 'evidenced' | 'done'
 
@@ -34,9 +37,10 @@ function Inline({ text }: { text: string }) {
   )
 }
 
-type Proof = 'proven' | 'asserted' | 'pending'
+type Proof = 'proven' | 'asserted' | 'pending' | 'accepted'
 
 const PROOF_UI: Record<Proof, { glyph: string; label: string; cls: string }> = {
+  accepted: { glyph: '', label: 'Accepted manually', cls: 'text-success' },
   proven: { glyph: '✓', label: 'Proven by a receipt', cls: 'text-success' },
   asserted: { glyph: '◐', label: 'Agent-asserted', cls: 'text-warning' },
   pending: { glyph: '○', label: 'Pending', cls: 'text-text-muted' },
@@ -49,11 +53,13 @@ function evidenceVerified(ticket: TicketDocument, ev: AcceptanceStatus['evidence
 }
 
 function proofOf(ticket: TicketDocument, ac: AcceptanceStatus): Proof {
+  if (ac.proof) return ac.proof
   if (ac.evidence.length === 0) return 'pending'
   return ac.evidence.some((ev) => evidenceVerified(ticket, ev)) ? 'proven' : 'asserted'
 }
 
 export function ReceiptLine({ t }: { t: TaskStatus }) {
+  if (!t.receipt && t.state === 'done') return <span className="text-text-muted">Marked done, no receipt</span>
   if (!t.receipt) return <span className="text-text-faint">No receipt yet.</span>
   return (
     <span className="font-mono text-text-muted">
@@ -104,8 +110,9 @@ export function HowVerified({ t }: { t: TaskStatus }) {
 }
 
 /** One line per criterion: glyph, text, an Evidence link. The detail (what proves it) opens on demand. */
-function Criterion({ ac, ticket, jump }: { ac: AcceptanceStatus; ticket: TicketDocument; jump: (j: Jump) => void }) {
+function Criterion({ ac, ticket, jump, viewer }: { ac: AcceptanceStatus; ticket: TicketDocument; jump: (j: Jump) => void; viewer: TabProps['viewer'] }) {
   const [open, setOpen] = useState(false)
+  const edit = useTicketEdit()
   const proof = proofOf(ticket, ac)
   const ui = PROOF_UI[proof]
   const first = ac.evidence[0]
@@ -114,19 +121,28 @@ function Criterion({ ac, ticket, jump }: { ac: AcceptanceStatus; ticket: TicketD
     <>
       <div className="flex items-start gap-3">
         <span role="img" aria-label={ui.label} title={ui.label} className={`mt-px w-4 shrink-0 text-center text-[14px] leading-5 ${ui.cls}`}>
-          {ui.glyph}
+          {proof === 'accepted' ? <UserCheck className="size-4" /> : ui.glyph}
         </span>
         <Mono className="mt-0.5 w-8 shrink-0 text-text-muted">{ac.id}</Mono>
         <p className="min-w-0 flex-1 text-[13px] leading-relaxed">
           <Inline text={ac.text} />
         </p>
+        {edit && <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${ac.id}`} onClick={() => edit({ kind: 'ac', id: ac.id })}><Pencil className="size-3.5" /></Button>}
         {first ? (
           <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="shrink-0 text-[12px] text-brand underline-offset-2 hover:underline">
             Evidence
           </button>
         ) : (
-          <span className="shrink-0 text-[12px] text-text-faint">No evidence yet</span>
+          proof !== 'accepted' && <span className="shrink-0 text-[12px] text-text-faint">No evidence yet</span>
         )}
+      </div>
+      <div className="pl-[3.75rem] text-[12px] text-text-muted">
+        {ac.accepted_stale ? <p>Accepted for an earlier wording, no longer counts</p> : ac.accepted && <p>
+          Accepted manually by <Raw>{viewer.name(ac.accepted.by)}</Raw> · {fmtTime(ac.accepted.at)}
+          {ac.accepted.auth && <> · <Raw>{ac.accepted.auth === 'convenience' ? 'one click' : ac.accepted.auth}</Raw></>}
+          {ac.accepted.note && <> · “<Raw>{ac.accepted.note}</Raw>”</>}
+        </p>}
+        <ManualButtons ac={ac} />
       </div>
       {open && first && (
         <ul className="mt-2 space-y-1.5 pl-[3.75rem]" aria-label={`Proven by, ${ac.id}`}>
@@ -157,8 +173,9 @@ function leaseText(t: TaskStatus): string {
 }
 
 export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
+  const edit = useTicketEdit()
   return (
-    <div className="space-y-5">
+    <ManualAcceptanceProvider ticket={ticket} viewer={viewer}><div className="space-y-5">
       {ticket.status === 'testing' && (
         <p data-testid="evidence-changes" className="flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
           <span>
@@ -176,7 +193,7 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
           <ul className="divide-y divide-border">
             {ticket.acceptance_state.map((ac) => (
               <li key={ac.id} id={`ac-${ac.id}`} className="py-2.5 first:pt-0 last:pb-0" data-state={acState(ticket, ac)} data-proof={proofOf(ticket, ac)}>
-                <Criterion ac={ac} ticket={ticket} jump={jump} />
+                <Criterion ac={ac} ticket={ticket} jump={jump} viewer={viewer} />
               </li>
             ))}
           </ul>
@@ -205,6 +222,8 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
                   </TableCell>
                   <TableCell className="whitespace-normal text-[13px]">
                     <Inline text={t.text} />
+                    {edit && <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${t.id}`} onClick={() => edit({ kind: 'task', id: t.id })}><Pencil className="size-3.5" /></Button>}
+                    <ManualButtons task={t} />
                     <HowVerified t={t} />
                   </TableCell>
                   <TableCell>
@@ -238,6 +257,6 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
           </Table>
         )}
       </Section>
-    </div>
+    </div></ManualAcceptanceProvider>
   )
 }

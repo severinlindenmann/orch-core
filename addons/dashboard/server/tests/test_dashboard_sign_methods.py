@@ -89,3 +89,38 @@ def test_a_default_that_stopped_being_allowed_is_not_used(worlds, owner):
         log="workspace",
     )
     assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": ["terminal"]}
+
+
+def test_a_risk_notice_acknowledgement_is_per_person_and_workspace(worlds, owner):
+    from orch_dashboard import riskack
+
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.get(url).json() == {"acknowledged": {}}
+    assert world.post(url, {"notice": "anything"}).status_code in (400, 422)
+    assert world.post(url, {"notice": "start_agent"}).json() == {"acknowledged": {"start_agent": True}}
+    assert world.get(url).json() == {"acknowledged": {"start_agent": True}}
+    other = add_member(owner, "Tom", "member")
+    assert riskack.load(other.ref, world.stub.ws) == {}
+    assert riskack.load(owner.owner.ref, "w" * 32) == {}
+
+
+def test_login_shell_is_its_own_notice_and_the_sentence_matches_core(worlds, owner):
+    from pathlib import Path
+
+    from orch.host.launch import LOGIN_NOTICE
+
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.post(url, {"notice": "login_shell"}).json() == {"acknowledged": {"login_shell": True}}
+    both = world.post(url, {"notice": "start_agent"}).json()
+    assert both == {"acknowledged": {"login_shell": True, "start_agent": True}}
+    # the page matches the host's sentence exactly; this pins both copies together
+    ts = (Path(__file__).parents[2] / "src" / "api" / "agents.ts").read_text(encoding="utf-8")
+    assert f"'{LOGIN_NOTICE}'" in ts
+
+
+def test_grant_notice_is_its_own_key(worlds, owner):
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/risk_notices"
+    assert world.post(url, {"notice": "grant"}).json() == {"acknowledged": {"grant": True}}

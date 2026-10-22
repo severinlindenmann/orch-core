@@ -81,6 +81,11 @@ def test_hidden_text_is_withheld_never_repaired():
     assert row["actor"] == {"kind": "person", "id": "p_1", "name": "Ann"} and row["did"] == "wrote a note"
 
 
+def test_the_publish_approval_note_is_said_in_words_and_its_cut_text_is_not_shown():
+    row = adapt.item(raw("log.added", summary="Publish approval: share files outside t\u2026"), {"p_1": "Ann"})
+    assert row["did"] == "approved sharing files outside this computer" and "detail" not in row
+
+
 def test_sentences_use_names_and_fall_back_to_a_general_one():
     names = {"p_2": "Bo"}
     added = adapt.item(raw("member.added", {"person": "p_2", "role": "maintainer"}, key=None), names)
@@ -96,7 +101,12 @@ def test_repo_changes_name_the_repo_and_other_setting_changes_stay_general():
     def did(data):
         return adapt.sentence({"type": "settings.changed", "data": data}, lambda p: "x")
 
-    assert did({"keys": ["repos"], "repos": {"web": "set"}}) == "updated repo web"
-    assert did({"keys": ["repos"], "repos": {"api": "removed", "web": "set"}}) == "removed repo api; updated repo web"
+    assert did({"keys": ["repos"], "repos": {"web": "set"}}) == "updated the repository “web”"
+    assert (
+        did({"keys": ["repos"], "repos": {"api": "removed", "web": "set"}})
+        == "removed the repository “api”; updated the repository “web”"
+    )
     assert did({"keys": ["claim_ttl_min"]}) == "changed the workspace settings"
+    pushed = adapt.sentence({"type": "branch.pushed", "data": {"repo_name": "repo"}}, lambda p: "x")
+    assert pushed == "saw the ticket's branch in the repository “repo”" and "pushed" not in pushed
     assert did({"keys": ["repos"], "repos": {"a‮b": "set"}}) == "changed the workspace settings"

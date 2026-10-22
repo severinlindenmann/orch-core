@@ -77,6 +77,8 @@ export interface Workspace {
    * as "host not running" and has no name, members or pages (nothing is made up for a host that cannot answer).
    */
   host_state?: string
+  /** A real host only, with a `host_state` that is not ok: why the host cannot serve it, in the host's own plain words (e.g. a store from an older version: what to delete). */
+  host_message?: string
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
   /**
@@ -233,6 +235,9 @@ export interface TaskStatus extends TaskDef {
 }
 
 export interface AcceptanceStatus extends AcceptanceDef {
+  proof?: 'proven' | 'asserted' | 'pending' | 'accepted'
+  accepted?: { by: string; at: string; note?: string | null; auth?: string }
+  accepted_stale?: boolean
   state: 'unproven' | 'proven'
   evidence: { kind: 'artifact' | 'task'; ref: string }[]
 }
@@ -272,6 +277,8 @@ export interface Artifact {
   ac?: string
   label?: string
   added_by: string
+  /** The structured author kind from the signed event (not a display string). */
+  added_by_kind?: 'person' | 'agent' | 'host' | null
   at: string
   /** Inline content for logs, receipts, reports and datasets (mock only; the real host serves the file). */
   preview?: string

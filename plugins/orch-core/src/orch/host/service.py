@@ -10,7 +10,9 @@ Start-up, in order:
 Drain (``host.restart``, D-P2-4): new requests answer ``host.restarting`` with ``retry_after_ms``; writes in flight
 finish (no deadline inside a commit); parked ``wait``s answer ``host.restarting``; subscriptions end with
 ``end: "host.restarting"`` (:attr:`Host.subscriptions_end`, the bus of H6a); then the listeners close and
-:meth:`Host.run` returns, so the service manager starts the new release.
+:meth:`Host.run` returns, so the service manager starts the new release. ``orch host enable`` waits twice
+START_WAIT for the drain, then forces the restart through the service manager (``kickstart -k`` / ``systemctl
+restart``): crash-equivalent, a request in flight may be interrupted and is recovered at start.
 
 **Live updates (H6a).** Each workspace's worker keeps its subscription journal (:mod:`orch.host.journal`) and hands
 new entries to the host's :class:`~orch.host.bus.Bus` on the event loop. Every :data:`JOURNAL_CHECK_SECONDS` the host

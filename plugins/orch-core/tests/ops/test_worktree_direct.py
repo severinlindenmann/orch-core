@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -107,7 +109,7 @@ def test_the_branch_of_another_ticket_is_worktree_branch_in_use(d):
 
 
 def test_it_refuses_while_a_host_serves_the_workspace(d):
-    marker = d.ws.root / ".state"
+    marker = d.ws.store_dir / ".state"
     marker.mkdir(exist_ok=True)
     (marker / "host-served").write_text("")
     for argv in (("list",), ("create", d.key), ("remove", d.key)):
@@ -141,7 +143,7 @@ def test_direct_d58_reads_the_registered_worktree_not_the_declared_copy(d):
     path = doc(d.run("create", d.key))["data"]["path"]
     pins = PinStore(d.ws.host_state / "hosts" / _wid(d) / "git-pins.json")
     git = Git(enabled=True, worktrees=pins)
-    copy = git.ticket_copy(Layout.legacy_at(d.ws.root), {"proj": {"path": str(d.repo)}}, d.ws.uid(d.key), "proj")
+    copy = git.ticket_copy(Layout.new_at(d.ws.root), {"proj": {"path": str(d.repo)}}, d.ws.uid(d.key), "proj")
     assert copy.registered and str(copy.path) == path and copy.gen == 1 and copy.pin["path"] == path
 
 
@@ -176,10 +178,17 @@ def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
     assert d.run("list", "--check").code == 0
     open(os.path.join(path, "scratch.txt"), "w").write("x\n")
     assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
-    d.ws.git("config", "filter.x.clean", str(script))  # planted after create: remove and list --check refuse git
-    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"
+    # planted after create (#565): list --check and remove's clean check are orch's reader (no git process), so the
+    # filter never runs and the answer is the real one; git's remove itself is still gated, and refused
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
+    d.ws.git("config", "filter.x.clean", str(script))
+    assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
     listed = doc(d.run("list", "--check"))["data"][0]
-    assert listed["dirty"] is None and listed["head"] is None
+    assert listed["dirty"] == 2 and listed["head"], listed
+    os.remove(os.path.join(path, "scratch.txt"))
+    os.remove(os.path.join(path, ".gitattributes"))
+    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"  # clean: git's remove is next, the gate refuses
+    assert os.path.exists(path)
     d.ws.git("config", "--unset-all", "filter.x.clean")
     assert d.run("remove", d.key, "--force").code == 0
     assert not marker.exists()
@@ -283,7 +292,7 @@ def problems(d):
 
     uid = d.ws.uid(d.key)
     wid = _wid(d)
-    store = SimpleNamespace(root=d.ws.root, layout=Layout.legacy_at(d.ws.root), workspace_id=wid,
+    store = SimpleNamespace(root=d.ws.root, layout=Layout.new_at(d.ws.root), workspace_id=wid,
                             state=SimpleNamespace(
                                 workspace=SimpleNamespace(repos={"proj": {"path": str(d.repo)}})))  # fmt: skip
     h = Human.__new__(Human)
@@ -358,7 +367,7 @@ def test_bound_copy_fails_closed_on_every_branch(tmp_path):
         return SimpleNamespace(enabled=enabled, reader=reader, principal="p", ticket_copy=lambda *a: copy)
 
     store = SimpleNamespace(
-        root=tmp_path, layout=Layout.legacy_at(tmp_path), state=SimpleNamespace(workspace=SimpleNamespace(repos={}))
+        root=tmp_path, layout=Layout.new_at(tmp_path), state=SimpleNamespace(workspace=SimpleNamespace(repos={}))
     )
     declared = WorkingCopy(tmp_path / "r", 0, None, False, None)
     want = [declared.binding("u", "proj")]
@@ -401,12 +410,24 @@ def test_d58_direct_precommit_refuses_a_registration_changed_since_the_first_loo
     assert not any("working tree is on refs/heads/main" in p for p in got)  # never judged on the declared copy
 
 
-def test_d58_direct_refuses_a_registered_worktree_whose_config_names_a_program(problems):
+def test_d58_direct_runs_nothing_a_registered_worktrees_config_names(problems):
+    """#565: direct D58 reads the registered worktree with orch's reader (no git process): a clean filter its config
+    names never runs, and the tree's answer is the real one. Positive control: plain git status runs it."""
     path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
-    problems.d.ws.git("config", "filter.x.clean", "/bin/false")
+    marker = problems.d.ws.tmp / "d58-filter-ran"
+    script = problems.d.ws.tmp / "d58-filter.sh"
+    script.write_text(f"#!/bin/sh\necho x >> {marker}\ncat\n")
+    script.chmod(0o755)
+    problems.d.ws.git("config", "filter.x.clean", str(script))
+    with open(os.path.join(path, ".git"), "rb") as f:
+        assert f.read().startswith(b"gitdir: ")
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
     got = problems.run()
-    assert any("filter.x.clean" in p for p in got), got
-    assert path
+    assert any("uncommitted changes" in p for p in got), got  # .gitattributes is untracked: dirty, read without git
+    assert not any("cannot be read" in p for p in got), got
+    assert not marker.exists()
+    subprocess.run(["git", "-C", path, "add", "-A"], capture_output=True, check=False)  # control: git runs it
+    assert marker.exists()
 
 
 def test_forced_remove_keeps_observe_unavailable_from_a_gate_refusal(d):
@@ -443,7 +464,8 @@ def _submodule_in(path: str, tmp, marker) -> None:
 
 def test_a_populated_submodule_is_never_inspected_or_reported_clean(d):
     """Codex #439 High/Medium: direct ``list --check`` and ``remove`` never run a submodule's own filter and never call
-    a tree with a checked-out submodule clean (``dirty`` null: unknown)."""
+    a tree with a checked-out submodule clean (``dirty`` null: unknown; remove: ``observe.unavailable``, orch's reader
+    refuses it, #565)."""
     path = doc(d.run("create", d.key))["data"]["path"]
     marker = d.ws.tmp / "submodule-filter-ran"
     _submodule_in(path, d.ws.tmp, marker)
@@ -461,3 +483,152 @@ def test_d58_direct_refuses_a_registered_worktree_with_a_populated_submodule(pro
     got = problems.run()
     assert any("submodule" in p for p in got), got
     assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "gitconfig,xdg",
+    [("[include]\n\tpath = ~/.gc2\n", None), ('[includeIf "gitdir:/"]\n\tpath = ~/.gc2\n', None),
+     (None, "[core]\n\texcludesFile =\n")],
+    ids=["include", "includeIf", "empty"],
+)  # fmt: skip
+def test_remove_refuses_a_file_git_shows_whatever_the_persons_ignore_config(d, gitconfig, xdg):
+    """Opus M2 on #583: git's own remove runs --force since #565, so orch's clean check is the only guard. When the
+    person's config sets excludesFile through an include, or sets it empty, git does not use its default ignore file;
+    the reader must not either, or z.def (untracked to git) would be deleted with the worktree."""
+    home = Path(os.environ["HOME"])
+    (home / ".config" / "git").mkdir(parents=True, exist_ok=True)
+    (home / ".config" / "git" / "ignore").write_text("*.def\n")
+    (home / ".gc2").write_text(f"[core]\n\texcludesFile = {home / '.gi_other'}\n")
+    (home / ".gi_other").write_text("*.oth\n")
+    for p, text in ((home / ".gitconfig", gitconfig), (home / ".config" / "git" / "config", xdg)):
+        if text is not None:
+            p.write_text(text)
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "z.def"), "w").write("keep me\n")
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty", got
+    assert os.path.exists(os.path.join(path, "z.def"))
+    assert d.run("remove", d.key, "--force").code == 0  # the person's explicit force still removes it
+
+
+def test_d58_direct_reads_head_and_tree_in_one_read_of_the_registered_pins(problems, monkeypatch):
+    """Opus L4 on #583: direct D58 takes HEAD, its branch and the tree from ONE reader call on the registration's
+    pins (as host mode's tree.check), never from separate reads that find the repository by path again."""
+    from orch.gitread import local
+    from orch.ops.caps import Git
+
+    problems.d.run("create", problems.d.key)
+
+    def no(*a, **k):
+        raise AssertionError("a separate read")
+
+    monkeypatch.setattr(Git, "head", no)
+    monkeypatch.setattr(Git, "symbolic_head", no)
+    monkeypatch.setattr(Git, "dirty", no)
+    seen = []
+    real = local.LocalGitReader.tree_check
+
+    def tree_check(self, path, env=None, *, pins=None):
+        seen.append(pins)
+        return real(self, path, env, pins=pins)
+
+    monkeypatch.setattr(local.LocalGitReader, "tree_check", tree_check)
+    got = problems.run()
+    assert any("not recorded" in p for p in got), got  # judged (nothing is signed here), no "cannot be read"
+    assert not any("cannot be read" in p for p in got), got
+    assert len(seen) == 1 and seen[0] is not None  # one read, of the registered pins
+
+
+# -- #583 round 3 (orch-07): removal never depends on ignore rules
+
+
+def test_the_keep_log_probe_blocks_remove_whatever_the_ignore_rules_say(d):
+    """Opus delta M1 end to end: info/exclude ``*.log`` / ``!Keep.log``; git lists keep.log as untracked, a
+    case-sensitive match hid it, and remove deleted it. A removal applies no ignore rule: it blocks, names the file."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    info = d.repo / ".git" / "info"
+    info.mkdir(exist_ok=True)
+    (info / "exclude").write_text("*.log\n!Keep.log\n")
+    open(os.path.join(path, "keep.log"), "w").write("the person's notes\n")
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty" and "keep.log" in got["message"], got
+    assert "--discard-untracked" in got["message"]
+    assert os.path.exists(os.path.join(path, "keep.log"))
+
+
+def test_an_ignored_directory_blocks_with_its_size(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, ".gitignore"), "w").write("node_modules/\n")
+    os.makedirs(os.path.join(path, "node_modules", "pkg"))
+    for i in range(3):
+        open(os.path.join(path, "node_modules", "pkg", f"f{i}.js"), "w").write("x" * 1000)
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty" and "node_modules/ (3 files, 2.9 KB)" in got["message"], got
+
+
+def _token(d):
+    """The token the refusal prints (#723): a person reads the list, then passes its token."""
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty", got
+    m = re.search(r"--discard-untracked=([0-9a-f]{12})", got["message"])
+    assert m, got
+    return m.group(1)
+
+
+def test_discard_untracked_deletes_exactly_the_listed_set_and_prints_it_first(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    for name in ("a.tmp", "build/out.o"):
+        os.makedirs(os.path.dirname(os.path.join(path, name)), exist_ok=True)
+        open(os.path.join(path, name), "w").write("x\n")
+    r = d.run("remove", d.key, f"--discard-untracked={_token(d)}")
+    assert r.code == 0, r.out
+    printed = r.err
+    assert printed.startswith("discarding exactly these untracked files:"), printed
+    assert "a.tmp" in printed and "build/ (1 files" in printed
+    assert doc(r)["data"]["discarded"] == ["untracked: a.tmp", "untracked: build/ (1 files, 2 B)"]
+    assert not os.path.exists(path)
+
+
+def test_discard_untracked_without_a_token_deletes_nothing(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    got = doc(d.run("remove", d.key, "--discard-untracked"))
+    assert got["code"] == "worktree.dirty" and "--discard-untracked=" in got["message"], got
+    assert os.path.exists(os.path.join(path, "a.tmp"))
+
+
+def test_discard_untracked_with_a_stale_token_refuses_and_prints_the_new_list_and_token(d):
+    """#723: a file added after the person read the refusal is not deleted unseen."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    old = _token(d)
+    open(os.path.join(path, "late.txt"), "w").write("new\n")
+    r = d.run("remove", d.key, f"--discard-untracked={old}")
+    got = doc(r)
+    new = re.search(r"--discard-untracked=([0-9a-f]{12})", got["message"]).group(1)
+    assert r.code != 0 and got["code"] == "worktree.dirty" and "late.txt" in got["message"] and new != old, got
+    assert os.path.exists(os.path.join(path, "a.tmp")) and os.path.exists(os.path.join(path, "late.txt"))
+    assert doc(d.run("remove", d.key, "--discard-untracked=nonsense"))["code"] == "worktree.dirty"
+    assert d.run("remove", d.key, f"--discard-untracked={new}").code == 0  # the new token deletes the new list
+    assert not os.path.exists(path)
+
+
+def test_discard_untracked_refuses_when_a_file_appears_between_the_listing_and_the_delete(d, monkeypatch):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    token = _token(d)
+    monkeypatch.setattr(worktree_cli.Direct, "_between",
+                        lambda self: open(os.path.join(path, "late.txt"), "w").write("new\n"))  # fmt: skip
+    r = d.run("remove", d.key, f"--discard-untracked={token}")
+    got = doc(r)
+    assert r.code != 0 and got["code"] == "worktree.dirty" and "changed since they were listed" in got["message"]
+    assert os.path.exists(os.path.join(path, "a.tmp")) and os.path.exists(os.path.join(path, "late.txt"))
+
+
+def test_discard_untracked_never_discards_a_modified_tracked_file(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "impl.txt"), "a").write("edited\n")
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    got = doc(d.run("remove", d.key, "--discard-untracked"))
+    assert got["code"] == "worktree.dirty" and "impl.txt" in got["message"]
+    assert os.path.exists(os.path.join(path, "a.tmp"))

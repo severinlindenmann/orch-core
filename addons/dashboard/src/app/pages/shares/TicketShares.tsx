@@ -6,8 +6,9 @@ import { Share2 } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature, isRealHost } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { effectiveState, kindText, shareQueries, STATE_TEXT, type Share, type Staged } from '@/api/shares'
+import { effectiveState, kindText, shareQueries, STATE_TEXT, stopName, type Share, type Staged } from '@/api/shares'
 import type { TicketDocument } from '@/api/types'
+import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { fmtDateTime } from '@/lib/time'
 import { useRole } from '@/app/useRole'
@@ -36,7 +37,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
   if (!served || !ws || !list.data?.available) return <>{null}{flows}</>
   const data = list.data
   const mayChange = atLeast(role, 'member') && ticket.status !== 'done'
-  const live = data.shares.filter((s) => ['live', 'sending'].includes(effectiveState(s)))
+  const live = data.shares.filter((s) => ['live', 'sending', 'used'].includes(effectiveState(s)))
   return (
     <>
     <section aria-label="Shares" className="space-y-2 rounded-lg border border-border bg-surface p-3" data-testid="ticket-shares">
@@ -62,14 +63,20 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
               <Share2 className="mt-0.5 size-3.5 shrink-0 text-text-muted" aria-hidden />
               <span className="min-w-0 flex-1">
                 {kindText(s.kind, s.view_limit)}
+                {s.files.length > 0 && (
+                  <span className="block text-[12px] text-text-muted">
+                    {s.files.length} file{s.files.length === 1 ? '' : 's'}: <Inline>{s.files.slice(0, 3).join(', ')}</Inline>
+                    {s.files.length > 3 ? ' …' : ''}
+                  </span>
+                )}
                 <span className="block text-[12px] text-text-muted">
                   {s.expires_at ? `until ${fmtDateTime(s.expires_at)}` : ''}
                   {s.views !== null ? ` · opened ${s.views} time${s.views === 1 ? '' : 's'}` : ''} · {STATE_TEXT[effectiveState(s)]}
                 </span>
               </span>
-              {mayChange && (
-                <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Revoke the ${kindText(s.kind, s.view_limit)}`} onClick={() => setRevoking(s)}>
-                  Revoke
+              {mayChange && effectiveState(s) !== 'used' && (
+                <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={stopName(s, fmtDateTime)} onClick={() => setRevoking(s)}>
+                  Stop sharing
                 </Button>
               )}
             </li>

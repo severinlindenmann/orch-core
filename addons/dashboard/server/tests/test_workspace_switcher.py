@@ -37,7 +37,7 @@ def build(tmp: Path, monkeypatch, workspace_id: str, title: str):
         env.bootstrap()
         env.new_ticket(title)
         manifest = Path(__file__).parents[2] / "orch-addon.json"
-        directory = package_dir(env.root, "dashboard")
+        directory = package_dir(env.store_dir, "dashboard")
         directory.mkdir(parents=True)
         (directory / "orch-addon.json").write_bytes(manifest.read_bytes())
         event = grant_event(load_manifest(manifest.read_bytes()), read_package(directory))

@@ -23,7 +23,11 @@ asked: ``--no-terminals`` is a preference, it does not make agent execution safe
 
 **Working directory** (§12.4.4), in order: the ticket's registered worktree for its primary repo (the first of
 ``links.repos``; created by ``agent.start`` when ``worktree:true``, the ticket links a branch for it and the
-``worktrees`` addon is granted), the declared working copy (a warning says "shared working copy"), the workspace root.
+``worktrees`` addon is granted), the declared working copy (a warning says "shared working copy"). A ticket with no
+codebase (it links no repo, or none that is declared) gets its own **work folder** ``<project>/.orch-work/<KEY>/``
+(kind ``workdir``; this module is the one place that decides codebase or not): made 0700 by ``agent.start`` below the
+project fd without following a link, pinned, ``ORCH_WORKDIR`` names it, and it is in the spec digest. The workspace
+root remains for a ticketless shell.
 It is sent as a pin ``{path, dev, ino}``; the trampoline compares it before ``fchdir`` (``launch.cwd_changed``).
 ``ORCH_WORKTREE`` names the worktree cwd; ``ORCH_WORKTREES`` lists the ticket's other registered worktrees as
 ``repo=path`` pairs separated by ``:`` (a path containing ``:`` is left out and named in ``warnings``).
@@ -39,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from .errors import HostError
-from .launch import LOGIN_NOTICE, check_model, display, launch_argv
+from .launch import HARNESSES, LOGIN_NOTICE, check_model, display, launch_argv, routed_model
 from .visibility import Viewer
 
 if TYPE_CHECKING:
@@ -50,6 +54,8 @@ __all__ = ["AGENT_OPS", "ADDON", "complete", "plan", "serve"]
 
 AGENT_OPS: dict[str, int] = {"agent.preview": 1, "agent.start": 1}
 ADDON = "start-agent"
+#: Model routing: while this add-on is on, the workspace's signed ``settings.models`` picks a start's model
+ROUTING = "model-routing"
 #: §0.11 (v1.6): 8 agent runs per person per workspace, 16 per person, 64 per runner
 AGENTS_PER_WORKSPACE = 8
 AGENTS_PER_PERSON = 16
@@ -143,10 +149,11 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
     service = call.service
     store = service.store
     root = str(service.entry.root)
-    out: dict[str, Any] = {"cwd": {"kind": "workspace"}, "path": root, "pin": None, "create": None, "other": {}}
+    out: dict[str, Any] = {"cwd": {"kind": "workspace"}, "path": root, "pin": None, "create": None, "other": {},
+                           "mkdir": False}  # fmt: skip
 
     def at_root() -> dict[str, Any]:
-        out.update(cwd={"kind": "workspace"}, path=root, create=None)
+        out.update(cwd={"kind": "workspace"}, path=root, create=None, mkdir=False)
         try:
             out["pin"] = _pin(root)
         except OSError:
@@ -165,6 +172,21 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
         except OSError:
             out["pin"] = {"path": os.fspath(path), "dev": 0, "ino": 0}
             p.block("launch.cwd_changed", f"{repo}: the declared working copy cannot be read")
+        return out
+
+    def workdir(key: str) -> dict[str, Any]:
+        """No codebase: the ticket's work folder (absent: ``mkdir``, made by the start; present: pinned)."""
+        from orch.layout import LayoutError, workdir_stat
+
+        lay = store.layout
+        try:
+            st = workdir_stat(lay, key)
+            path = os.fspath(lay.workdir(key))
+        except LayoutError as exc:
+            p.block("launch.cwd_changed", f"{key}: the work folder cannot be used: {exc}"[:300])
+            return at_root()
+        out.update(cwd={"kind": "workdir", "ticket": key}, path=path, create=None, mkdir=st is None,
+                   pin=None if st is None else {"path": path, "dev": st.st_dev, "ino": st.st_ino})  # fmt: skip
         return out
 
     def registered(git: Any, uid: str, key: str, repo: str) -> bool:
@@ -187,6 +209,13 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
             p.block("not_found", f"no declared repo {cwd_arg['repo'][:64]}")
             return at_root()
         return out
+    if cwd_arg is not None and cwd_arg["kind"] == "workdir":  # "Open terminal here" of a no-codebase ticket
+        try:
+            wview = Viewer.of(call).ticket(store, cwd_arg["ticket"])
+        except HostError as exc:
+            p.block(exc.code, exc.message)
+            return at_root()
+        return workdir(wview.key)
     if cwd_arg is not None:  # a named worktree (term.preview "Open terminal here")
         git = _git(call)
         try:
@@ -203,9 +232,11 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
         return out
     if view is None:
         return at_root()
+    from orch.ops.workdir import has_codebase
+
     repos = list((view.fields.get("links") or {}).get("repos") or [])
-    if not repos:
-        return at_root()
+    if not has_codebase(store, view):  # the one rule, shared with the ops: no declared primary repo, no codebase
+        return workdir(view.key)
     git = _git(call)
     if git is None:
         p.block("observe.unavailable", "the ticket links a repo, and git cannot be read in this workspace now")
@@ -233,7 +264,8 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
             out.update(cwd={"kind": "worktree", "repo": primary, "ticket": view.key}, path=wplan["path"], pin=None,
                        create=wplan, gen=wplan["gen"])  # fmt: skip
             return out
-    if declared(primary) is None:
+    if declared(primary) is None:  # declared but not readable now: refuse, never a silent work folder
+        p.block("launch.cwd_changed", f"{primary}: the declared working copy cannot be read")
         return at_root()
     p.warnings.append(SHARED_COPY)
     return out
@@ -268,6 +300,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             p.block("runner.disabled", f"dashboard execution is not available here: {gone} missing", missing=gone)
         elif not hub.connected:
             p.block("runner.unavailable", "no runner is connected")
+        else:
+            try:
+                hub.require_current()
+            except HostError as exc:
+                p.block(exc.code, exc.message)
     if agent and view is not None and view.claim is not None and view.claim.live:
         p.block("launch.claimed", f"{view.key} is claimed by a live session; the agent could not claim it")
     try:
@@ -275,18 +312,26 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     except ConfigError as exc:
         config = RunnerConfig()
         p.block("launch.invalid", str(exc))
-    for name, value in (("model", model), ("subagent_model", sub)):
-        bad = check_model(name, value)
+    source = "chosen" if model is not None else "default"
+    if agent and model is None and mode is not None and harness in HARNESSES and _addon(service, ROUTING):
+        # the host chooses, from the owner's signed setting; the person's review binds it (it is in the spec digest)
+        model, problem = routed_model(service.store.state.workspace.settings, harness, mode)
+        if problem is not None:
+            p.block("launch.invalid", problem)
+        elif model is not None:
+            source = "workspace"
+    for name, value, of in (("model", model, harness), ("subagent_model", sub, "claude-code")):
+        bad = check_model(name, value, of)
         if bad:
             p.block("launch.invalid", bad)
     if sub is not None and harness != "claude-code":
         p.block("launch.invalid", "subagent_model is for claude-code only")
     if mode is not None and key is None and p.blocked is None:
         p.block("launch.invalid", f"mode {mode} needs a ticket")
+    argv_model = model if not check_model("model", model, harness) else None  # never an unchecked name in an argv
     argv, login, program = ["$SHELL", "-l"], False, None
     try:
-        argv, login, program = launch_argv(harness, mode, model if not check_model("model", model) else None, key,
-                                           config)  # fmt: skip
+        argv, login, program = launch_argv(harness, mode, argv_model, key, config)
     except HostError as exc:
         p.block(exc.code, exc.message)
     if login and not _shell_ok():
@@ -309,6 +354,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         env_fixed["ORCH_WORKSPACE"] = str(service.entry.root)
         if where["cwd"]["kind"] == "worktree":
             env_fixed["ORCH_WORKTREE"] = where["path"]
+        elif where["cwd"]["kind"] == "workdir":
+            env_fixed["ORCH_WORKDIR"] = where["path"]
         pairs = []
         for repo, path in sorted(where["other"].items()):
             if ":" in path:
@@ -317,7 +364,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             pairs.append(f"{repo}={path}")
         if pairs:
             env_fixed["ORCH_WORKTREES"] = ":".join(pairs)
-        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub):
+        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub, "claude-code"):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = sub
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
         # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
@@ -327,8 +374,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             lay = service.store.layout
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
             if at.isascii() and at.isprintable():
-                argv, login, program = launch_argv(harness, mode, model if not check_model("model", model) else None,
-                                                   key, config, instructions=at)  # fmt: skip
+                argv, login, program = launch_argv(harness, mode, argv_model, key, config, instructions=at)
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None
@@ -345,15 +391,21 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
                 p.block("launch.no_grant", f"your runner grant cannot start agents now ({reason})", reason=reason)
             else:
                 grant = {"id": cur["grant"], "until": cur["until"], "scope": cur["scope"]}
-    pin_view = where["pin"] if where["create"] is None else {
-        "create": True, "path": where["path"], "gen": where["create"]["gen"], "branch": where["create"]["branch"],
-        "base": where["create"].get("base_sha"),
-    }  # fmt: skip
+    if where.get("mkdir"):  # the work folder is made by the start: the digest binds where, and that it is new
+        pin_view = {"create_workdir": True, "path": where["path"]}
+    elif where["create"] is None:
+        pin_view = where["pin"]
+    else:
+        pin_view = {
+            "create": True, "path": where["path"], "gen": where["create"]["gen"],
+            "branch": where["create"]["branch"], "base": where["create"].get("base_sha"),
+        }  # fmt: skip
     digest = hashlib.sha256(
         json.dumps(
             {"v": 2, "kind": "agent" if agent else "shell", "harness": harness, "mode": mode, "model": model,
-             "subagent_model": sub, "argv": argv, "login_shell": login, "cwd": where["cwd"], "pin": pin_view,
-             "gen": where.get("gen"), "env_names": env_names, "env_fixed": env_fixed,
+             "model_source": source, "subagent_model": sub, "argv": argv, "login_shell": login,
+             "cwd": where["cwd"], "pin": pin_view, "gen": where.get("gen"), "env_names": env_names,
+             "env_fixed": env_fixed,
              "grant": grant["id"] if grant else None, "as_person": not agent},
             sort_keys=True, separators=(",", ":"),
         ).encode()
@@ -362,11 +414,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         {*env_names, *env_fixed, "TERM", "COLORTERM", *(("ORCH_GRANT", "ORCH_SESSION") if agent else ())}
     )
     out: dict[str, Any] = {
-        "spec": digest, "argv": argv, "display": display(argv), "login_shell": login, "program": program,
-        "cwd": where["cwd"], "cwd_path": where["path"], "env": shown_env, "blocked": p.blocked,
-        "warnings": p.warnings[:8],
+        "spec": digest, "model": model, "model_source": source, "argv": argv, "display": display(argv),
+        "login_shell": login, "program": program, "cwd": where["cwd"], "cwd_path": where["path"],
+        "env": shown_env, "blocked": p.blocked, "warnings": p.warnings[:8],
         "_launch": {"argv": argv, "env_names": env_names, "env_fixed": env_fixed, "cwd": where["pin"],
-                    "create": where["create"], "ticket": key, "login_shell": login,
+                    "create": where["create"], "mkdir": where["mkdir"], "ticket": key, "login_shell": login,
                     "grant": grant["id"] if grant else None},
     }  # fmt: skip
     if agent:
@@ -416,7 +468,7 @@ def serve(call: Call) -> dict[str, Any]:
         raise HostError("launch.changed", "what agent.start would start differs from the preview: preview again")
     return ok_result({
         "run": run, "idem": str(idem), "spec": found["spec"], "launch": found["_launch"], "person": person,
-        "harness": args["harness"], "mode": args["mode"], "model": args.get("model"),
+        "harness": args["harness"], "mode": args["mode"], "model": found["model"],
         "subagent_model": args.get("subagent_model"), "label": args.get("label"), "cwd": found["cwd"],
         "cols": args.get("cols", 120), "rows": args.get("rows", 40),
     })  # fmt: skip
@@ -481,6 +533,7 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         return runners.view(rec)
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
+    hub.require_current()
     launch = data["launch"]
     cur = hub.grants.current(wid, person)
     if cur is None or cur["grant"] != launch["grant"]:
@@ -526,6 +579,13 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
                "person": person}  # fmt: skip
     await hub.intent(wid, fields, payload, idem=data["idem"], spec=data["spec"])
     hub.grants.watch()
+    if launch.get("mkdir"):
+        try:
+            payload["cwd"] = make_workdir(call, launch["ticket"], launch["env_fixed"].get("ORCH_WORKDIR"))
+        except HostError as exc:
+            await hub.fail(run, exc.code)
+            hub._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
+            raise
     if launch["create"] is not None:
         try:
             payload["cwd"] = await _create_worktree(call, launch["create"])
@@ -537,6 +597,22 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
             await hub.fail(run, "launch.cwd_changed")
             raise HostError("launch.cwd_changed", "the created worktree is not where the preview said")
     return await hub.dispatch(run, payload, audit=True)
+
+
+def make_workdir(call: Call, key: str, expect: str | None) -> dict[str, Any]:
+    """Make the ticket's work folder (0700, no link followed) and return the cwd pin. ``expect`` is the path the
+    preview bound (``ORCH_WORKDIR`` when set): a different path is ``launch.cwd_changed``."""
+    from orch.layout import LayoutError, ensure_workdir
+
+    lay = call.service.store.layout
+    try:
+        path = os.fspath(lay.workdir(key))
+        st = ensure_workdir(lay, key)
+    except LayoutError as exc:
+        raise HostError("launch.cwd_changed", f"{key}: the work folder cannot be used: {exc}"[:300]) from None
+    if expect is not None and expect != path:
+        raise HostError("launch.cwd_changed", "the work folder is not where the preview said")
+    return {"path": path, "dev": st.st_dev, "ino": st.st_ino}
 
 
 async def _create_worktree(call: Call, wplan: dict[str, Any]) -> dict[str, Any]:

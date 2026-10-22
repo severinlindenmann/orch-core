@@ -737,6 +737,17 @@ SEQ = {
 }
 
 
+def test_pictures_are_never_a_terminal_hand_off(ready, host_calls):
+    """R3 part B: the signer holds the pasted files, so a terminal hand-off with pictures is refused before the host."""
+    client, token, stub, rich, signing = ready
+    digest = "ab" * 32
+    pic = {"name": f"paste-20261019-101500-{digest[:8]}.png", "sha256": f"sha256:{digest}", "bytes": 5, "alt": "x"}
+    body = {**SEQ, "sections": {"summary": f"![x](artifact:{pic['name']})"}, "images": [pic]}
+    res = post(client, token, stub, body)
+    assert res.status_code == 400 and "one click" in res.text
+    assert not [1 for op, _, _ in host_calls if op == "human.prepare" and "images" in repr(_)]
+
+
 def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, {**SEQ})
@@ -752,13 +763,30 @@ def test_a_new_ticket_with_its_text_is_one_request_one_review(ready, host_calls)
     # the one view carries the ticket AND its written text
     content = got["content"]
     assert sorted(s["id"] for s in content["sections"]) == ["context", "summary"]
-    assert content["headline"].startswith("Create DEMO-") and content["subline"] == "and its text (2 sections)"
+    assert content["headline"].startswith("Create DEMO-") and content["subline"] == "Includes its text (2 sections)"
     assert any("one confirmation" in n.lower() for n in content["notes"])
     # a second post of the same intent is the same request (the intent's idem covers the whole intent)
     again = post(client, token, stub, {**SEQ}).json()
     assert again["id"] == got["id"]
     other = post(client, token, stub, {**SEQ, "sections": {"summary": "Another text."}}).json()
     assert other["id"] != got["id"]
+
+
+def test_a_new_ticket_with_agent_access_adds_the_grant_as_the_last_step_only_when_asked(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    plain = post(client, token, stub, {**SEQ}).json()
+    assert "agent" not in plain["material"]["sequence"]["intent"]  # without `agent` the intent is exactly as before
+    res = post(client, token, stub, {**SEQ, "agent": {"hours": 72}})
+    assert res.status_code == 200, res.text
+    got = res.json()
+    sent = [kw_args for op, kw_args, _ in host_calls if op == "human.prepare"]
+    meta = sent[-1]["sequence"]
+    assert meta["of"] == 5  # new, set, two sections, then the agent access
+    assert meta["intent"]["agent"] == {"hours": 72, "scope": "workable"}
+    assert got["id"] != plain["id"] and got["material"]["sequence"]["digest"] != plain["material"]["sequence"]["digest"]
+    # the access is only ever the workable scope, 1..168 hours, and nothing else
+    for bad in ({"hours": 0}, {"hours": 169}, {"hours": 24, "scope": "all"}, {"hours": 24.5}):
+        assert post(client, token, stub, {**SEQ, "agent": bad}).status_code in (400, 422)
 
 
 @pytest.mark.parametrize(
@@ -1074,3 +1102,19 @@ def test_an_edit_refuses_a_bad_intent(ready, p1, change):
     client, token, stub, rich, signing = ready
     res = post(client, token, stub, _edit_body(p1, **change))
     assert res.status_code in (400, 409, 422), res.text
+
+
+def test_another_persons_burst_of_prepares_cannot_evict_my_intent():
+    """F-712-A: the sequence-intent display aid is kept per person, so a burst by someone else leaves mine alone."""
+    from orch_dashboard.handoff import INTENTS_PER_PERSON, Handoffs
+
+    h = Handoffs()
+    h.note_intent("alice", "r_mine", {"name": "mine"})
+    for i in range(INTENTS_PER_PERSON * 3):
+        h.note_intent("bob", f"r_{i}", {"n": i})
+    assert h.intent_of("alice", "r_mine") == {"name": "mine"}
+    assert h.intent_of("bob", "r_0") is None and h.intent_of("bob", f"r_{INTENTS_PER_PERSON * 3 - 1}") is not None
+    assert h.intent_of("bob", "r_mine") is None  # and a request id is never read across persons
+    for i in range(INTENTS_PER_PERSON):  # my own burst still evicts only my own oldest
+        h.note_intent("alice", f"a_{i}", {"n": i})
+    assert h.intent_of("alice", "r_mine") is None and h.intent_of("alice", "a_0") is not None

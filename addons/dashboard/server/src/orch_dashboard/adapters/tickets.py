@@ -186,7 +186,7 @@ def ui_actor(actor: dict) -> dict:
     return out
 
 
-def event(e: dict, ident: str | None = None) -> dict:
+def event(e: dict, ident: str | None = None, can=None) -> dict:
     """A `LogItem` (or the same fields of an activity item) as an OrchEvent.
 
     `data` is nested in v1.4 and closed per type; its fields are flattened beside the core keys (a field never replaces
@@ -202,6 +202,11 @@ def event(e: dict, ident: str | None = None) -> dict:
         "actor": ui_actor(e["actor"]),
         "summary": e["summary"],
     }
+    from .activity import manual_acceptance
+
+    out.pop("manual_acceptance", None)  # only the line below sets it, never a payload field of the same name
+    if (manual := manual_acceptance(e, can)) is not None:  # an explicit marker, never a guess from the summary text
+        out["manual_acceptance"] = manual
     if e["type"] == "verdict.given" and "outcome" in data:
         out["result"] = data["outcome"]  # the mock's name for it
     cut = sorted(k[: -len("_cut")] for k, v in data.items() if k.endswith("_cut") and v is True)
@@ -210,9 +215,9 @@ def event(e: dict, ident: str | None = None) -> dict:
     return out
 
 
-def events(data: dict) -> list[dict]:
+def events(data: dict, can=None) -> list[dict]:
     """`ticket.get` log items as OrchEvents. The summary is host text, shown as data."""
-    return [event(e) for e in data["log"]]
+    return [event(e, can=can) for e in data["log"]]
 
 
 def _sources(raw: list[dict] | None) -> list[dict]:
@@ -296,6 +301,17 @@ def _attested(value) -> str:
     return "agent" if value == "agent" else "unknown"
 
 
+def _manual_acceptance(row: dict) -> dict:
+    out = {k: row[k] for k in ("proof", "accepted_stale") if k in row}
+    if isinstance(row.get("accepted"), dict):
+        accepted = row["accepted"]
+        out["accepted"] = {k: accepted[k] for k in ("by", "at", "note", "auth") if k in accepted}
+        at = out["accepted"].get("at")
+        if hasattr(at, "isoformat"):
+            out["accepted"]["at"] = at.isoformat()
+    return out
+
+
 def _task(t: dict, host: dict | None, ext: bool) -> dict:
     """A task as the UI draws it. "doing" is `leased_by` (v1.4 tasks have no started state)."""
     state = TASK_STATE.get(t["state"], "todo")
@@ -336,6 +352,9 @@ def _artifact(a: dict) -> dict:
         "task": a.get("task") or None,
         "label": a.get("label") or None,
         "added_by": _actor_name(a.get("by")),
+        "added_by_kind": (a.get("by") or {}).get("kind")
+        if (a.get("by") or {}).get("kind") in ("person", "agent", "host")
+        else None,
         "at": a.get("at") or "",
         **({"addon": a["addon"], "ref": a["ref"]} if a.get("addon") else {}),
     }
@@ -514,6 +533,7 @@ def document(
                 or src["evidence"]
                 else "unproven",
                 "evidence": _evidence(src["evidence"]),
+                **_manual_acceptance(full.get(a["id"], {})),
             }
             for a, src in zip(acceptance, doc["acceptance"], strict=True)
         ],

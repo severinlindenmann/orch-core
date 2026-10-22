@@ -320,8 +320,8 @@ def test_the_budget_gives_null_counts_to_the_rows_that_do_not_get_their_turn(wor
     served, tickets = world
     c = served.client()
     ok(c.req("set", {"ref": tickets["bare"][1], "pairs": [LINKS]}, grant=served.grant, session=SESSION, idem=True))
-    monkeypatch.setattr(host_quick, "BUDGET_S", 0.3)
-    _slow_reader(monkeypatch, served, threading.Event(), threading.Event(), delay=0.6)
+    monkeypatch.setattr(host_quick, "BUDGET_S", 1.0)  # room for a loaded CI machine to reach the first read
+    _slow_reader(monkeypatch, served, threading.Event(), threading.Event(), delay=1.5)
     rows = ok(quick_list(served))["data"]["rows"]
     linked = [r for r in rows if r["key"] in (tickets["bare"][1], tickets["linked"][1])]
     assert [r["quick"]["commits"] is None for r in linked] == [

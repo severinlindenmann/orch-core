@@ -14,11 +14,13 @@ import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
+import { PreviewDialog } from '@/app/terminal/real/PreviewDialog'
+import { useOpenTerminal } from '@/app/terminal/real/useOpenTerminal'
 import { CreateWorktree, RemoveWorktree } from './Dialogs'
 
 const who = (w: Worktree) => (w.mine ? 'you' : w.by === 'agent' ? 'an agent' : w.by === 'person' ? 'a person' : 'unknown')
 
-function Row({ w, canRemove, onRemove }: { w: Worktree; canRemove: boolean; onRemove: () => void }) {
+function Row({ w, canRemove, onRemove, onTerminal }: { w: Worktree; canRemove: boolean; onRemove: () => void; onTerminal?: () => void }) {
   const s = STATE_TEXT[w.state]
   return (
     <li className="space-y-1 py-3 text-[13px]" data-ticket={w.ticket ?? ''}>
@@ -32,6 +34,7 @@ function Row({ w, canRemove, onRemove }: { w: Worktree; canRemove: boolean; onRe
         <span className={cn('rounded-full border px-2 py-px text-[11px]', s.usable ? 'border-border text-text-muted' : 'border-warning text-warning')} title={s.detail}>
           {s.label}
         </span>
+        {onTerminal && <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Open a terminal in the worktree of ${w.ticket}`} onClick={onTerminal}>Open terminal here</Button>}
         {canRemove && (
           <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Remove the worktree of ${w.ticket ?? 'this ticket'}`} onClick={onRemove}>
             Remove
@@ -60,6 +63,7 @@ export function WorktreesPage() {
   usePageHeader('Worktrees')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
+  const terminal = useOpenTerminal(ws ?? '')
   const role = useRole()
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<Worktree | null>(null)
@@ -103,10 +107,11 @@ export function WorktreesPage() {
       ) : (
         <ul aria-label="Worktrees" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {rows.map((w) => (
-            <Row key={`${w.ticket}/${w.repo}`} w={w} canRemove={mayChange} onRemove={() => setRemoving(w)} />
+            <Row key={`${w.ticket}/${w.repo}`} w={w} canRemove={mayChange} onRemove={() => setRemoving(w)} onTerminal={w.ticket && w.repo && STATE_TEXT[w.state].usable && mayChange && hasFeature('terminals_page', ws) ? () => void terminal.ask({ ticket: w.ticket!, cwd: { kind: 'worktree', repo: w.repo!, ticket: w.ticket! } }) : undefined} />
           ))}
         </ul>
       )}
+      <PreviewDialog {...terminal} />
       {adding && <CreateWorktree ws={ws} onClose={() => setAdding(false)} />}
       {removing && <RemoveWorktree ws={ws} row={removing} onClose={() => setRemoving(null)} />}
     </div>

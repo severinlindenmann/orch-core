@@ -139,6 +139,7 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "log.added": (TICKET, {"text": "looked at it"}),
+    "task.done": (TICKET, {"task": "T1"}),  # R3 task.mark_done: the signer allows only {task}
     "question.asked": (
         TICKET,
         {"question": {"id": "Q1", "to": "ticket_owner", "text": "ok?", "blocking": True}, "qid": "a" * 32, "hash": H1},
@@ -194,7 +195,7 @@ def test_every_person_event_type_has_a_case_and_the_table_is_complete():
     assert set(CASES) == set(EVENT_FIELDS)
     for etype, (_, fields) in CASES.items():
         assert set(fields) <= set(EVENT_FIELDS[etype]), etype
-    assert not set(EVENT_FIELDS) & {"task.done", "claim.taken", "edit.external", "branch.pushed", "status.changed"}
+    assert not set(EVENT_FIELDS) & {"claim.taken", "edit.external", "branch.pushed", "status.changed"}
 
 
 @pytest.mark.parametrize("etype", sorted(CASES))
@@ -270,7 +271,6 @@ def test_grant_issue_shows_scope_hours_verbs_and_expiry():
 
 def test_unhandled_or_unknown_event_types_refuse():
     for etype in (
-        "task.done",
         "claim.taken",
         "status.changed",
         "edit.external",
@@ -374,7 +374,7 @@ def test_backend_refuses_before_prompting_for_unhandled_types(tmp_path):
     b = pass_backend(tmp_path)
     b.create("dk")
     with pytest.raises(CustodyError, match="refusing to prompt"):
-        b.sign("dk", payload("task.done", TICKET, {"task": "T1"}), action="")
+        b.sign("dk", payload("claim.taken", TICKET, {"task": "T1"}), action="")
     assert not any(r.kind == "unlock" for r in b.seen)
     ok = payload("ticket.reopened", TICKET, {"text": "x"})
     assert crypto.verify(b.public_key("dk"), b.sign("dk", ok, action=""), ok)

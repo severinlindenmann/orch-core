@@ -1,7 +1,8 @@
-"""Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish), so they
-install without a clone: ``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a
-workspace, then ``orch addon grant <name>`` (B5b). The package copies in ``manifests/`` equal
-``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
+"""Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish, usage,
+explorer, estimate, model-routing, github, wiki), so they install without a clone:
+``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a workspace,
+then ``orch addon grant <name>`` (B5b).
+The package copies in ``manifests/`` equal ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
 
 from __future__ import annotations
 
@@ -14,7 +15,21 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TextIO
 
-NAMES = ("start-agent", "terminals", "worktrees", "dashboard", "publish")
+from orch.layout import LayoutError
+
+NAMES = (
+    "start-agent",
+    "terminals",
+    "worktrees",
+    "dashboard",
+    "publish",
+    "usage",
+    "estimate",
+    "explorer",
+    "model-routing",
+    "github",
+    "wiki",
+)
 
 
 def manifest_bytes(name: str) -> bytes:
@@ -90,10 +105,13 @@ def main(argv: list[str], *, out: TextIO, err: TextIO) -> int:
             raise argparse.ArgumentError(None, "--force requires --write")
         data = manifest_bytes(args.name)
         if args.write:
-            out.write(f"{write_manifest(args.write, args.name, data, args.force)}\n")
+            from orch.layout import store_of
+
+            # --write names the project folder: the manifest goes into its store (.orch/addons/ in the new layout)
+            out.write(f"{write_manifest(str(store_of(args.write)), args.name, data, args.force)}\n")
         else:
             out.write(data.decode("utf-8"))
-    except (argparse.ArgumentError, OSError, ValueError) as exc:
+    except (argparse.ArgumentError, OSError, ValueError, LayoutError) as exc:
         err.write(f"orch addon manifest: {exc}\n")
         return 2
     return 0

@@ -8,11 +8,12 @@ the run thread asks while the main thread waits), and the test reads what actual
 from __future__ import annotations
 
 import os
-import select
 import sys
 import time
 
 import pytest
+
+from orch import fdwait
 
 pty = pytest.importorskip("pty")
 
@@ -56,8 +57,7 @@ def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
     deadline = time.monotonic() + 20
     sent = False
     while time.monotonic() < deadline:
-        r, _, _ = select.select([fd], [], [], 0.2)
-        if r:
+        if fdwait.readable(fd, 0.2):
             try:
                 chunk = os.read(fd, 4096)
             except OSError:
@@ -76,6 +76,7 @@ def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
             break
     else:
         os.kill(pid, 9)
+        os.close(fd)  # macOS: a killed child blocks in exit until the pty master is closed
         os.waitpid(pid, 0)
         raise AssertionError(f"no confirmation prompt on the terminal: {seen!r}")
     if not done:

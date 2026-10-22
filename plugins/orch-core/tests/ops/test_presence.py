@@ -30,7 +30,7 @@ def binary(ws, *argv, env=None, stdin=None, session=True):
         input=stdin,
         capture_output=True,
         text=True,
-        cwd=ws.root / "tickets",
+        cwd=ws.store_dir / "tickets",
         env=e,
         timeout=60,
         start_new_session=True,

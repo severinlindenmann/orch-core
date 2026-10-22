@@ -166,6 +166,13 @@
         "summary": "Add a task, optionally with a verify command and the criteria it proves."
       },
       {
+        "name": "task.edit",
+        "cli": "task edit",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Change a task's text, its verify command or the criteria it proves. A task that is done keeps its verify command and its criteria."
+      },
+      {
         "name": "task.start",
         "cli": "task start",
         "group": "Edit",
@@ -369,6 +376,13 @@
         "summary": "Grant an addon its capabilities (owner only); also enables it."
       },
       {
+        "name": "addon.preview",
+        "cli": "addon preview",
+        "group": "Admin",
+        "who": "read",
+        "summary": "Show what turning an addon on would sign, without installing or granting it."
+      },
+      {
         "name": "addon.disable",
         "cli": "addon disable",
         "group": "Admin",
@@ -381,6 +395,20 @@
         "group": "Admin",
         "who": "human",
         "summary": "Delete an addon's data."
+      },
+      {
+        "name": "widgets.types",
+        "cli": "widgets types",
+        "group": "Context",
+        "who": "read",
+        "summary": "List the widget types you may write in a ticket (charts, tables, checks) with a working example of each."
+      },
+      {
+        "name": "widgets.check",
+        "cli": "widgets check",
+        "group": "Context",
+        "who": "read",
+        "summary": "Check the widget blocks in a text file the way a section write does; nothing is stored."
       }
     ]
   },

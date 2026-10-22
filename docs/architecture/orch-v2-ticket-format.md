@@ -52,6 +52,16 @@ orchestrator/
 └── .state/                  # git-ignored: index.sqlite (derived state), locks, sessions, checkpoints
 ```
 
+**As built (the `.orch/` store move).** The folder above is `<project>/.orch/`, a real directory (never a link) of the
+host UID, mode 0700 (0750 on Tier B). The project root keeps only what other tools read from there: `AGENTS.md` (the
+orch block, which names `.orch/AGENTS.orch.md`), `CLAUDE.md` (`@AGENTS.md` only), `.agents/skills/orch-*` and
+`.claude/skills/orch-*`, and a `.gitignore` line `.orch/`. Records travel through `orch records` (the records
+repository is `.orch/.git`). The marker of a workspace is `.orch/config.json` with `"schema": "orch.workspace/2"`; a
+config in the project root AND in `.orch/` is refused ("two orch stores"). A store from before the move (in the
+project root, "legacy") is refused with one plain message: delete the listed files and run `orch setup` again (owner
+decision 19 Oct: no migration, start fresh). Decisions and the migration are in
+`design-orch-subfolder` (state) and §10.7 "Decisions of the `.orch/` store move".
+
 `config.json` (excerpt; ids are shortened in all examples, the real forms are in §11.1):
 
 ```json
@@ -513,7 +523,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
 | `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. For an already revoked device, only lost/retired → compromised is accepted; same or weaker reasons give `device.exists`. `compromised` has the effects in §5.7. H may append a freshly received revocation independently of any restore. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
-| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `sign_methods?`: array of `terminal`, `click`, `phone` (1–3, unique, contains `terminal`; `touchid` is reserved and refused), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **B6** (`sign_methods`, owner decision F of 16 Oct 2026): the ways a signature may be made in this workspace; absent means not set: every way is allowed (the model judges none). The model enforces it for honest `auth` labels only (the label is the signer's own word); custody and host admission are the real control (HOST §0.8.6 B6 item 5). |
+| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `sign_methods?`: array of `terminal`, `click`, `phone` (1–3, unique, contains `terminal`; `touchid` is reserved and refused), `models?`: {`claude-code?`/`codex?`: {`work?`/`refine?`/`fix?`/`continue?`/`context?`: a model name of that harness's closed list} or null} (Model routing: the model a Start agent mode uses; unnamed = harness default; `null` clears; typed word, owner only), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **B6** (`sign_methods`, owner decision F of 16 Oct 2026): the ways a signature may be made in this workspace; absent means not set: every way is allowed (the model judges none). The model enforces it for honest `auth` labels only (the label is the signer's own word); custody and host admission are the real control (HOST §0.8.6 B6 item 5). |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
@@ -1361,6 +1371,42 @@ sha256, bytes, task, ac, label, actor). There is no separate manifest file that 
   source-list `sha` of its `repo` (or whose `repo` is `null`). Addon artifacts and unattended artifacts are never
   evidence (§12 O6). Both kinds of evidence are bound in the verify gate hash (§5.7).
 
+
+**Manual acceptance (v1).** Person-signed file feedback labelled `accepted AC<n> <hash16>` is manual
+acceptance. `hash16` is the first 16 lowercase hexadecimal digits of SHA-256 over UTF-8
+`"orch.accept.v1\n" + ac_id + "\n" + criterion_text`. A feedback label starting with `accepted ` counts as
+AC evidence only if the complete label parses and both its AC id and hash match the artifact's `ac` and the
+criterion's **current** text. Malformed or stale labels silently do not count. Such a feedback file also counts only
+if its person is a non-viewer member who is the ticket owner, a ticket reviewer, or a workspace owner or maintainer,
+and the ticket was open, in progress or in testing when it was written (the event is admitted, `evidence_ok` is false
+otherwise). A `task.done` of a person never carries a receipt (a bad receipt: receipts are recorded by an agent or the
+host) and is `role.denied` unless the same holds. Other evidence rules
+are unchanged.
+An agent's ordinary file with an acceptance-looking name remains asserted file evidence, never manual acceptance.
+
+The host chooses `accept-AC<n>-<k>.md`, the smallest integer `k >= 1` whose name is unused on the ticket.
+The UTF-8 statement has LF endings and exactly one final LF; each text line is prefixed with `| ` (including
+empty lines, preserving the criterion text verbatim):
+
+```text
+orch manual acceptance v1
+criterion: AC2
+hash: <hash16>
+text:
+| <criterion text line>
+note:
+| <note line>
+```
+
+Omit the entire `note:` block when absent. Notes are normalized under §11.3, 1–1000 characters, with no
+controls except LF. Withdrawal replaces the same artifact with kind `feedback`, label `withdrawn AC2`, no
+`ac`, and `replaces` equal to its current digest. Its statement starts `orch manual acceptance withdrawn v1`
+and uses a mandatory `reason:` block instead of `note:` (same text rules). Stale acceptances can also be
+withdrawn. The signer parses and rebuilds the statement byte for byte and verifies the file digest, byte count,
+exact payload keys, name, label and AC. The artifact event supplies person, time and signing auth; the file cannot
+supply those facts. Both addition and replacement advance verify generation. Editing the criterion invalidates
+its acceptance automatically; readers say “accepted for an earlier wording, no longer counts”.
+
 ## 7. The ticket document (`orch show --json`)
 
 What the dashboard, the relay and the phone read: `ticket.json` merged with state derived from events, and cached in
@@ -1921,6 +1967,9 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   **frozen, versioned constant of the format** (`orch.model.emits.EMITS_V1`, digest pinned by a test; a test also checks
   that the live registry equals it): replay never reads the registry. A change of any operation's `emits` adds
   `EMITS_V2` and bumps `CURRENT`; logs written under version 1 keep replaying under `EMITS_V1`.
+  R3: `EMITS_V3` adds the agent operation task edit (emitting a `ticket.updated`) as a **new key only**; no V1/V2 verdict changes
+  and the model keeps judging by V1, so a grant naming only that operation grants nothing (the verb task add or `agent` covers
+  every `ticket.updated`).
   **Before any `EMITS_V2` exists** (a rule of §10.1 too): the table version a grant is judged by must be readable from the
   log (a field on `grant.issued`, or the workspace format version at the time it was issued), never from the running
   release; replay that picked `CURRENT` would change the meaning of old logs.
@@ -1979,6 +2028,24 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
   and gives the question the next free `Q` id.
+
+**Decisions of the `.orch/` store move (B11).** `orch.layout` is the one place that knows the names: `STORE_DIR`,
+`Layout(project, store)`, `resolve`. There is no legacy support (owner decision 19 Oct): a store in the project root is
+detected and refused with one message that says to delete it; nothing reads, moves or migrates it. Rules the tests pin:
+
+- **Discovery** probes `.orch/config.json`, and the root config only to name an old-version store (found, then refused
+  by the open that follows: `LegacyStoreError`, "delete config.json ... run orch setup again"); the v2 `orchestrator/` probe is gone (v1 stays for
+  `import v1`). `ORCH_WORKSPACE` is the project root; `<project>/.orch` is accepted as an alias once it is a confirmed
+  store. A `.orch` that is a link or a file is refused (`LayoutError`), never read around; in the implicit walk another
+  tool's `.orch` away from the start directory is passed.
+- **Registry** entries carry `root` (the project); the store is always `<root>/.orch`. An earlier host's `"store": ".orch"`
+  key is tolerated on read (any other value is refused) and never written. The host serves and checks
+  (`check_workspace_files`: owner, mode 0o022, ACL) the store, and agents, terminals and worktrees keep using the
+  project. An entry whose root holds an old-version store is unavailable with the delete message.
+- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
+  `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
+  what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
+  layout under the guard and the lock, so a stale opener fails closed (in a running host the message says `restart the host: orch host restart`).
 
 **Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).

@@ -97,7 +97,7 @@ registerAddon({
       ],
     })
     const all = list(state).filter((w) => canSee(c, w))
-    const row = (w: Worktree) => ({ id: w.id, path: w.path, branch: w.branch, ticket: w.ticket, changes: plural(w.dirty), sync: `ahead ${w.ahead}, behind ${w.behind}`, by: w.created_by, remove_blocked: w.dirty ? 'Commit or stash the changes first' : '' })
+    const row = (w: Worktree) => ({ id: w.id, path: w.path, branch: w.branch, ticket: w.ticket, changes: plural(w.dirty), sync: `ahead ${w.ahead}, behind ${w.behind}`, by: w.created_by, remove_blocked: w.dirty ? 'Commit, stash or delete its files first (ignored files count too)' : '' })
     // The table's rowActions: "Open terminal here" is included only while terminals is active.
     const rowActions = [
       ...(terminalsActive ? [{ label: 'Open terminal here', action: 'open_terminal', args: { id: '$row.id' }, variant: 'secondary' as const }] : []),

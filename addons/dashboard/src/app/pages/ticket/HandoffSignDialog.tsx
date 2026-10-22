@@ -1,8 +1,11 @@
+import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
 // host's material, never this page's cached ticket. The old Touch ID simulation stays in SignDialog.tsx for the mock.
 import { useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { signedNow } from '@/api/signedDrop'
 import type { HandoffAction, HandoffRequest } from '@/api/handoff'
 import type { GateName, TicketDocument } from '@/api/types'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
@@ -11,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { gateActionName } from './actions'
-import type { HumanAction } from './shared'
+import { useViewer, type HumanAction } from './shared'
 
 function titleOf(a: HumanAction): string {
   switch (a.kind) {
@@ -50,7 +53,9 @@ export function HandoffSignDialog({
   onOpenChanges?: () => void
   onPending?: (pending: boolean) => void
 }) {
+  const viewer = useViewer(ticket.key)
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
   const radio = useRef<HTMLInputElement>(null)
@@ -115,6 +120,10 @@ export function HandoffSignDialog({
       hint={hint}
       warning={warning}
       onPending={onPending}
+      onSettled={(phase) => {
+        // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
+        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
+      }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}
       key={`${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}`}
@@ -129,6 +138,7 @@ export function HandoffSignDialog({
               Open changes
             </Button>
           </p>
+          <ManualAcceptanceReview ticket={ticket} name={viewer.name} />
           <fieldset className="grid gap-2">
             <legend className="sr-only">Verdict</legend>
             {(

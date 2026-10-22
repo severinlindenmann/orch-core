@@ -35,13 +35,14 @@ def test_a_ref_that_names_no_object_is_reported_not_signed(ws, cli):
     (repo / ".git" / "refs" / "heads" / "feat").mkdir(parents=True, exist_ok=True)
     (repo / ".git" / "refs" / "heads" / "feat" / "x").write_text("ab" * 20 + "\n")
     r = cli("show")
-    assert "observe: proj: refs/heads/feat/x names no commit object; nothing was recorded" in r.out
+    # #565: orch's reader (no git process) finds no object for the id: a problem line, never a recorded head
+    assert "observe: proj: " in r.out and "its code cannot be observed" in r.out, r.out
     assert "branch.pushed" not in types(ws)
 
 
 def test_malformed_notes_never_crash_and_are_reported(ws, cli):
     claimed(cli)
-    p = next((ws.root / ".state" / "sessions").glob("*.notes.json"))
+    p = next((ws.store_dir / ".state" / "sessions").glob("*.notes.json"))
     doc = json.loads(p.read_text())
     uid = next(iter(doc["tickets"]))
     for bad in ({"decided": "x"}, {"cursor": [1]}, {"base": "no"}, {"decided": -4, "cursor": True}):
@@ -57,19 +58,20 @@ def test_malformed_notes_never_crash_and_are_reported(ws, cli):
 def test_notes_keep_claims_and_unread_decisions_past_the_limit(ws, cli):
     from orch.ops.runtime import Notes
 
-    n = Notes(ws.root / ".state" / "sessions", "s_01J9ZP0000000000000000000S", Files.direct())
+    n = Notes(ws.store_dir / ".state" / "sessions", "s_01J9ZP0000000000000000000S", Files.direct())
     n.add_claim("CLAIMED")
     n.update("CLAIMED", now=1)
     n.update("UNREAD", now=2, keep=True)
     for i in range(150):
         n.update(f"T{i}", now=10 + i)
-    doc = json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())
+    doc = json.loads(next((ws.store_dir / ".state" / "sessions").glob("*.notes.json")).read_text())
     assert "CLAIMED" in doc["tickets"] and "UNREAD" in doc["tickets"] and len(doc["tickets"]) <= Notes.KEEP
     n.update("UNREAD", now=3, decided=5, keep=False)
     for i in range(150):
         n.update(f"U{i}", now=500 + i)
     assert (
-        "UNREAD" not in json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())["tickets"]
+        "UNREAD"
+        not in json.loads(next((ws.store_dir / ".state" / "sessions").glob("*.notes.json")).read_text())["tickets"]
     )
 
 
@@ -81,8 +83,8 @@ def test_submit_reads_git_before_it_takes_the_lock(ws, cli, monkeypatch):
     claimed(cli)
     cli("set", "1", LINKS)
     order = []
-    real_git = observe.git
-    monkeypatch.setattr(observe, "git", lambda *a, **k: order.append("git") or real_git(*a, **k))
+    real_look = observe._LOCAL.look  # the in-process reader (#565): no git process, still before the lock
+    monkeypatch.setattr(observe._LOCAL, "look", lambda *a, **k: order.append("git") or real_look(*a, **k))
     real_locked = Store.locked
     from contextlib import contextmanager
 

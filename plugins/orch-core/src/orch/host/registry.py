@@ -14,7 +14,6 @@ whose person is no longer a member with a valid ``decide`` device reads as ``per
 from __future__ import annotations
 
 import copy
-import dataclasses
 import re
 import threading
 from collections.abc import Callable, Mapping
@@ -82,14 +81,11 @@ class Entry:
     group: str
     peers: dict[str, dict[str, Any]]
     repos: dict[str, Any] = field(default_factory=dict)
-    #: ``".orch"``: the store is ``<root>/.orch``; ``None`` (key absent in the registry file): the legacy layout, the
-    #: store is ``root`` itself. Written only by migrate or after the flip; any other value is refused on read.
-    store: str | None = None
 
     @property
     def store_dir(self) -> Path:
         """The directory that holds this workspace's ``config.json``, ``events/``, ``tickets/``, ``.state/``."""
-        return Path(self.root) / self.store if self.store is not None else Path(self.root)
+        return Path(self.root) / STORE_DIR
 
     @property
     def tier(self) -> str:
@@ -106,17 +102,16 @@ class Entry:
             "peers": copy.deepcopy(self.peers),
             "repos": copy.deepcopy(self.repos),
         }
-        if self.store is not None:  # exact key set: the key exists only once the store has moved
-            doc["store"] = self.store
         return doc
 
     @classmethod
     def from_doc(cls, doc: Any) -> Entry:
         keys = {"workspace_id", "prefix", "root", "host_uid", "group", "peers", "repos"}
+        # a ``store`` key (``".orch"``) was written by earlier hosts and is no longer: tolerated on read when it names
+        # the one layout, never written, anything else refused
         if not isinstance(doc, dict) or set(doc) not in (keys, keys | {"store"}):
             raise unsafe("registry entry has an unexpected shape")
-        store = doc.get("store")
-        if "store" in doc and store != STORE_DIR:
+        if "store" in doc and doc["store"] != STORE_DIR:
             raise unsafe("registry entry has an unknown store layout")
         wid, root, peers = doc["workspace_id"], doc["root"], doc["peers"]
         if (
@@ -130,7 +125,7 @@ class Entry:
             raise unsafe("registry entry has bad peers")
         for key, spec in peers.items():
             _check_spec(key, spec)
-        return cls(wid, str(doc["prefix"]), root, doc["host_uid"], str(doc["group"]), peers, doc["repos"], store)
+        return cls(wid, str(doc["prefix"]), root, doc["host_uid"], str(doc["group"]), peers, doc["repos"])
 
 
 def group_name(workspace_id: str) -> str:
@@ -260,22 +255,6 @@ class Registry:
             entries = {**self._entries, entry.workspace_id: entry}
             self._save(entries, token=token)
             self._entries = entries
-
-    def set_store(self, workspace_id: str, store: str | None) -> bool:
-        """Record where the workspace's store lives (``".orch"``; ``None``: the project itself). Idempotent: ``True``
-        when the entry changed. Only migrate calls it, after its commit point (design B11-P2 section 3)."""
-        if store is not None and store != STORE_DIR:
-            raise HostError("internal", "unknown store layout")
-        with self._lock:
-            entry = self._entries.get(workspace_id)
-            if entry is None:
-                return False
-            if entry.store == store:
-                return False
-            entries = {**self._entries, workspace_id: dataclasses.replace(entry, store=store)}
-            self._save(entries)
-            self._entries = entries
-            return True
 
     def remove(self, workspace_id: str) -> bool:
         with self._lock:

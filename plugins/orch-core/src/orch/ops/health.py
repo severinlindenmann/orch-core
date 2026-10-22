@@ -26,7 +26,7 @@ from subprocess import DEVNULL, SubprocessError
 from typing import Any
 
 from orch import canon, gitsafe
-from orch.layout import StorePin
+from orch.layout import STORE_DIR, StorePin
 from orch.ops.caps import Capabilities, CapabilityDenied, Files
 from orch.store import Store, StoreError
 from orch.store import render as store_render
@@ -558,6 +558,11 @@ def _git(root: Path, op: str, *, caps: Capabilities, path: str | None = None) ->
     (host mode) nothing runs."""
     if not caps.exec.enabled:
         return None
+    # RACE NOTE (#565): gitsafe.command gates the repo's config and git starts afterwards, so a concurrent writer of
+    # .git/config could change it in between. Accepted here only: staged_raw compares the index with HEAD by object id
+    # and staged_blob prints a stored blob as stored, so no work-tree file is read and no clean/smudge filter,
+    # textconv or diff driver applies; and this runs inside the person's own `git commit` (the pre-commit hook), whose
+    # git has already read and acted on that same config as the person. Every other read is orch.gitread's.
     try:
         argv, env = gitsafe.command(os.path.abspath(root), op, caps.env, operand=path)
         done = caps.exec.run(
@@ -590,65 +595,76 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
         if len(meta) >= 5:
             entries.append((meta[4], meta[1], fields[i + 1]))
     guarded = re.compile(r"(?:tickets/|events/|\.state(?:/|$))|(?:config|keys)\.jsonl?$")
-    for status, mode, rel in sorted(entries, key=lambda e: e[2]):
-        folded = rel.casefold()
-        if folded == ".state" or folded.startswith(".state/"):
-            out.append(Finding("error", rel, "commit.state", ".state is local: never commit it"))
+    store = STORE_DIR + "/"
+    for status, mode, full in sorted(entries, key=lambda e: e[2]):
+        # The workspace's own store (``.orch/``) is checked against the log, relative to the store; ``full`` (the path
+        # in the repository) names the file in findings and for git. The project's other files are the project's:
+        # only the secret checks below apply to them.
+        folded_full = full.casefold()
+        if ".state" in folded_full.split("/"):  # local state, in any folder and spelling: never committed (as before)
+            out.append(Finding("error", full, "commit.state", ".state is local: never commit it"))
             continue
-        protected = folded.startswith(("tickets/", "events/")) or folded in (
-            "tickets",
-            "events",
-            "config.json",
-            "keys.jsonl",
-        )
-        known = rel in ("events/workspace.jsonl", "config.json", "keys.jsonl") or _TICKET_FILE.fullmatch(rel)
-        if protected and (not rel.isascii() or not known):
-            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
-            continue
+        rel: str | None = None
+        if folded_full == STORE_DIR.casefold() or folded_full.startswith(store.casefold()):
+            if not full.startswith(store):  # another spelling of the store folder (the same folder on a
+                out.append(Finding("error", full, "commit.unknown", "a file the workspace does not keep there"))
+                continue  # case-insensitive disk): never examined under another name, so refused
+            rel = full[len(store) :]
+        if rel is not None:
+            folded = rel.casefold()
+            protected = folded.startswith(("tickets/", "events/")) or folded in (
+                "tickets",
+                "events",
+                "config.json",
+                "keys.jsonl",
+            )
+            known = rel in ("events/workspace.jsonl", "config.json", "keys.jsonl") or _TICKET_FILE.fullmatch(rel)
+            if protected and (not rel.isascii() or not known):
+                out.append(Finding("error", full, "commit.unknown", "a file the workspace does not keep there"))
+                continue
         if status == "D":
+            if rel is None:
+                continue
             if rel.endswith(("events.jsonl", "workspace.jsonl", "ticket.json", "body.md", "config.json", "keys.jsonl")):
                 out.append(
-                    Finding("error", rel, "commit.deleted", "a log or a projection may not be deleted from history")
+                    Finding("error", full, "commit.deleted", "a log or a projection may not be deleted from history")
                 )
             elif _TICKET_FILE.fullmatch(rel):
-                out.append(Finding("error", rel, "commit.deleted", "an artifact may not be deleted from history"))
+                out.append(Finding("error", full, "commit.deleted", "an artifact may not be deleted from history"))
             continue
-        if mode in ("120000", "160000") and guarded.search(rel):
-            out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
+        if rel is not None and mode in ("120000", "160000") and guarded.search(rel):
+            out.append(Finding("error", full, "commit.link", "a symlink or submodule where the workspace keeps a file"))
             continue
-        blob = _git(root, "staged_blob", caps=caps, path=rel)
+        blob = _git(root, "staged_blob", caps=caps, path=full)
         if blob is None:
-            out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
+            out.append(Finding("error", full, "git.unavailable", "git cannot read the staged file"))
             continue
-        if rel.startswith(".state/") or rel == ".state":
-            out.append(
-                Finding("error", rel, "commit.state", ".state is local: sessions, intents and keys never go into git")
-            )
-            continue
-        if _SECRET_NAMES.search(rel):
-            out.append(Finding("error", rel, "commit.secret", "a key file is never committed"))
+        if _SECRET_NAMES.search(full):
+            out.append(Finding("error", full, "commit.secret", "a key file is never committed"))
             continue
         if _GRANT.search(blob.decode("utf-8", "replace")) or b"ORCH_GRANT=" in blob:
-            out.append(Finding("error", rel, "commit.secret", "the file holds a grant secret"))
+            out.append(Finding("error", full, "commit.secret", "the file holds a grant secret"))
+            continue
+        if rel is None:
             continue
         m = _TICKET_FILE.fullmatch(rel)
         if rel == "config.json":
             if blob != s._config_bytes(st):
-                out.append(Finding("error", rel, "commit.edited", "config.json is not what the log says (hand edit)"))
+                out.append(Finding("error", full, "commit.edited", "config.json is not what the log says (hand edit)"))
         elif rel == "keys.jsonl":
             if blob != s._keys_bytes():
-                out.append(Finding("error", rel, "commit.edited", "keys.jsonl is not what the log says (hand edit)"))
+                out.append(Finding("error", full, "commit.edited", "keys.jsonl is not what the log says (hand edit)"))
         elif rel == "events/workspace.jsonl":
-            out += _prefix(rel, blob, s.fs, "workspace")
+            out += _prefix(full, rel, blob, s.fs, "workspace")
         elif rel.startswith(("tickets/", "events/")) and not m:
-            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
+            out.append(Finding("error", full, "commit.unknown", "a file the workspace does not keep there"))
         elif m:
             uid, what = m.groups()
             view = st.tickets.get(uid)
             if view is None:
-                out.append(Finding("error", rel, "commit.unknown", "a ticket with no verified log"))
+                out.append(Finding("error", full, "commit.unknown", "a ticket with no verified log"))
             elif what == "ticket.json" and blob != s._ticket_bytes(uid):
-                out.append(Finding("error", rel, "commit.edited", f"{view.key}: ticket.json is not what the log says"))
+                out.append(Finding("error", full, "commit.edited", f"{view.key}: ticket.json is not what the log says"))
             elif what == "body.md":
                 try:
                     texts = store_render.parse_body(blob, view.type)
@@ -658,20 +674,20 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
                 have = {k: canon.section_hash(t) for k, t in (texts or {}).items() if canon.section_hash(t) != empty}
                 want = {k: v["hash"] for k, v in view.sections.items() if v["hash"] != empty}
                 if texts is None or have != want:
-                    out.append(Finding("error", rel, "commit.edited", f"{view.key}: body.md is not what the log says"))
+                    out.append(Finding("error", full, "commit.edited", f"{view.key}: body.md is not what the log says"))
             elif what == "events.jsonl":
-                out += _prefix(rel, blob, s.fs, view.key)
+                out += _prefix(full, rel, blob, s.fs, view.key)
             elif what.startswith("artifacts/"):
                 name = what[len("artifacts/") :]
                 a = next((x for x in view.artifacts if x.name == name), None)
                 if a is None or a.digest != canon.artifact_digest(blob):
                     out.append(
-                        Finding("error", rel, "commit.edited", f"{view.key}: {name} is not the artifact the log names")
+                        Finding("error", full, "commit.edited", f"{view.key}: {name} is not the artifact the log names")
                     )
     return out
 
 
-def _prefix(rel: str, blob: bytes, fs: RootFS, label: str) -> list[Finding]:
+def _prefix(full: str, rel: str, blob: bytes, fs: RootFS, label: str) -> list[Finding]:
     """A staged log must be the verified log or an earlier part of it, byte for byte (a forged or rewritten line is
     neither). The log on disk is read below the store's pinned root (#516)."""
     try:
@@ -679,5 +695,5 @@ def _prefix(rel: str, blob: bytes, fs: RootFS, label: str) -> list[Finding]:
     except (OSError, StoreError):
         cur = None
     if cur is None or not cur.startswith(blob):
-        return [Finding("error", rel, "commit.forged", f"{label}: the staged log is not a prefix of the verified log")]
+        return [Finding("error", full, "commit.forged", f"{label}: the staged log is not a prefix of the verified log")]
     return []

@@ -1,0 +1,12 @@
+"""Limits shared with the dashboard widget parser."""
+
+MAX_BLOCKS = 40
+MAX_BLOCK_BYTES = 64 * 1024
+MAX_DEPTH = 8
+MAX_STRING = 20_000
+MAX_LABEL = 200
+MAX_ROWS = 500
+MAX_COLUMNS = 50
+MAX_MAGNITUDE = 1e15
+MAX_SERIES = 4
+MAX_DIFF_LINES = 200

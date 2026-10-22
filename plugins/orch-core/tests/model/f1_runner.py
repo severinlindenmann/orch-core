@@ -124,6 +124,7 @@ def check_append_code(sc: dict[str, Any], st: Any, step: dict[str, Any], where: 
                 expected_workspace_id=sc["workspace_id"],
                 host=VectorSigner(),
                 host_state_dir=root / "host",
+                create=True,
             )
         ) as store:
             store._state = st

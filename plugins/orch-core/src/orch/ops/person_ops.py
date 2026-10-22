@@ -30,6 +30,7 @@ from orch import repopaths
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
+from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -73,6 +74,24 @@ _ORIGIN = {
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
 }
+_MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                harness: {
+                    "type": "object",
+                    "properties": {mode: {"enum": list(names)} for mode in ROUTE_MODES},
+                    "additionalProperties": False,
+                }
+                for harness, names in MODEL_CHOICES.items()
+            },
+            "minProperties": 1,
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
+}
 _SET = {
     "type": "object",
     "properties": {
@@ -98,6 +117,7 @@ _SET = {
                 {"type": "null"},
             ]
         },
+        "models": _MODELS,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -109,6 +129,10 @@ _SET = {
     "minProperties": 1,
     "additionalProperties": False,
 }
+
+
+#: the schema of ``settings.set``'s ``set`` (the add-on sequence validates its settings with it)
+SET_SCHEMA = _SET
 
 
 class _PersonCall(Call):
@@ -182,10 +206,36 @@ def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"gates": names}, "orch show")
 
 
+def _routing_on(h: Human) -> bool:
+    from orch.addons import settings_needs
+
+    return settings_needs.is_on(h.store.state.workspace.addons, "model-routing")
+
+
+def _enabling_routing(ctx: Context) -> bool:
+    """Is this the first step of the signer's ``addon_enable`` sequence for Model routing? Then the table is set before
+    the add-on is turned on (the sequence's next step); ``check_meta`` made the op and args the intent's."""
+    seq = getattr(ctx.prepare, "sequence", None)
+    return (
+        isinstance(seq, dict)
+        and seq.get("step") == 0
+        and isinstance(seq.get("intent"), dict)
+        and seq["intent"].get("kind") == "addon_enable"
+        and seq["intent"].get("name") == "model-routing"
+    )
+
+
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
+    from orch.addons import settings_needs
+
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
+    if changes.get("models") is not None and not _routing_on(h) and not _enabling_routing(ctx):
+        raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
+    refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings
+    if refusal is not None:
+        raise OrchError("invalid.input", refusal)
     for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
         if spec is not None:
             try:
@@ -369,8 +419,162 @@ PUBLISH_SHARE = operation(
     errors=(err("role.denied"), err("not_found")),
     handler=handle_publish_share,
 )
+
+
+def _manageable(h: Human, view: Any) -> Any:
+    core = h.store.state._core
+    t = core.tickets[view.uid]
+    member = core.ws.members.get(h.person)
+    if (
+        member is None
+        or member.role == "viewer"
+        or not (claims.may_manage(core.ws, t, h.person) or h.person in t.people["reviewers"])
+    ):
+        raise OrchError("role.denied", "only the ticket owner, reviewers, workspace owners and maintainers may do this")
+    if view.status not in ("open", "in_progress", "testing"):
+        raise OrchError("transition.refused", "the ticket is not open for work")
+    return t
+
+
+def handle_acceptance(ctx: Context, args: dict[str, Any], *, withdraw: bool = False) -> Result:
+    from orch.host import acceptance
+    from orch.model.accept import criterion_hash, label, parse_label, withdraw_label
+    from orch.ops.plans import artifact_event
+
+    op = "ac.unaccept" if withdraw else "ac.accept"
+    h = _Human(ctx, op)
+    with h.store.locked():
+        view = h.ticket(args["ref"])
+        t = _manageable(h, view)
+        ac_id = args["ac"]
+        ac = next((a for a in t.fields["acceptance"] if a["id"] == ac_id), None)
+        if ac is None:
+            raise OrchError("not_found", "no such acceptance criterion")
+        accepted = [
+            a
+            for a in t.artifacts.values()
+            if a.kind == "feedback"
+            and a.by.startswith("p_")
+            and a.ac == ac_id
+            and a.evidence_ok
+            and (p := parse_label(a.label)) is not None
+            and p[0] == ac_id
+            and acceptance.NAME.fullmatch(a.name)
+        ]
+        current = [a for a in accepted if parse_label(a.label) == (ac_id, criterion_hash(ac_id, ac["text"]))]
+        if not withdraw and current:
+            raise OrchError("invalid.input", "this criterion already has a current manual acceptance")
+        if withdraw and not accepted:
+            raise OrchError("not_found", "this criterion has no manual acceptance to withdraw")
+        try:
+            statement = (
+                acceptance.build_withdraw(ac_id, ac["text"], args["reason"])
+                if withdraw
+                else acceptance.build_accept(ac_id, ac["text"], args.get("note"))
+            )
+            k = 1
+            while acceptance.artifact_name(ac_id, k) in t.artifacts:
+                k += 1
+            old = sorted(current or accepted, key=lambda a: a.event)[-1] if withdraw else None
+            name = old.name if old else acceptance.artifact_name(ac_id, k)
+        except ValueError as exc:
+            raise OrchError("invalid.input", str(exc)) from None
+        event, files = artifact_event(
+            h.call,
+            name,
+            statement.encode("utf-8"),
+            "feedback",
+            label=withdraw_label(ac_id) if withdraw else label(ac_id, ac["text"]),
+        )
+        if old is not None:
+            event.update(type="artifact.replaced", replaces=old.digest)
+        else:
+            event["ac"] = ac_id
+        if ctx.prepare is not None:
+            ctx.prepare.statement = statement
+        done = h.run(event, view.uid, op, review=h.header(view, statement), artifacts=files)
+        return h.ticket_result(view, done, {"ac": ac_id, "name": name}, "orch show")
+
+
+def handle_unaccept(ctx: Context, args: dict[str, Any]) -> Result:
+    return handle_acceptance(ctx, args, withdraw=True)
+
+
+def handle_mark_done(ctx: Context, args: dict[str, Any]) -> Result:
+    h = _Human(ctx, "task.mark_done")
+    with h.store.locked():
+        view = h.ticket(args["ref"])
+        _manageable(h, view)
+        done = h.run(
+            {"type": "task.done", "task": args["task"]},
+            view.uid,
+            f"mark {args['task']} done without a receipt",
+            review=h.header(view),
+        )
+        return h.ticket_result(view, done, {"task": args["task"]}, "orch show")
+
+
+AC_ACCEPT = operation(
+    "ac.accept",
+    "Human only",
+    "Accept a criterion manually, bound to its current wording.",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "ac": S("criterion", pattern=r"^AC[1-9][0-9]*$"),
+        "note": S("note", minLength=1, maxLength=1000),
+    },
+    required=("ref", "ac"),
+    emits=("artifact.added",),
+    text="ok {key} accepted {ac} seq={seq}\nnext: {next}",
+    data=obj({"ac": STR, "name": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_acceptance,
+)
+AC_UNACCEPT = operation(
+    "ac.unaccept",
+    "Human only",
+    "Withdraw a manual acceptance, including an earlier wording.",
+    who="human",
+    props={
+        "ref": REF("ticket REF"),
+        "ac": S("criterion", pattern=r"^AC[1-9][0-9]*$"),
+        "reason": S("reason", minLength=1, maxLength=1000),
+    },
+    required=("ref", "ac", "reason"),
+    emits=("artifact.replaced",),
+    text="ok {key} withdrew {ac} seq={seq}\nnext: {next}",
+    data=obj({"ac": STR, "name": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_unaccept,
+)
+TASK_MARK_DONE = operation(
+    "task.mark_done",
+    "Human only",
+    "Mark a task done without a receipt or criterion evidence.",
+    who="human",
+    props={"ref": REF("ticket REF"), "task": S("task", pattern=r"^T[1-9][0-9]*$")},
+    required=("ref", "task"),
+    emits=("task.done",),
+    text="ok {key} task.done {task} seq={seq}\nnext: {next}",
+    data=obj({"task": STR}),
+    errors=(err("role.denied"), err("transition.refused"), err("not_found")),
+    handler=handle_mark_done,
+)
+
 OPS: dict[str, Operation] = {
-    op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PEOPLE_SET, PAIR_DEVICE, PUBLISH_SHARE)
+    op.name: op
+    for op in (
+        MOVE,
+        POLICY_SET,
+        SETTINGS_SET,
+        PEOPLE_SET,
+        PAIR_DEVICE,
+        PUBLISH_SHARE,
+        AC_ACCEPT,
+        AC_UNACCEPT,
+        TASK_MARK_DONE,
+    )
 }
 
 

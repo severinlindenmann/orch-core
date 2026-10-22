@@ -96,7 +96,7 @@ def test_a_runner_that_stops_reading_ends_the_stream_with_send_timeout_from_insi
     mine, theirs = _pair()
     runner = SlowRunner(theirs, stall_after=1)
     runner.start()
-    client = _client(mine, send_timeout=0.3)
+    client = _client(mine, send_timeout=1.5)  # > one frame's drain (~0.16 s): the stall is hit inside recv
     try:
         client.send_input(b"y" * (3 * CHUNK))
         started = time.monotonic()

@@ -10,7 +10,11 @@ const K = new Uint32Array([
 const rotr = (x: number, n: number) => (x >>> n) | (x << (32 - n))
 
 export function sha256Hex(text: string): string {
-  const bytes = new TextEncoder().encode(text)
+  return sha256HexBytes(new TextEncoder().encode(text))
+}
+
+/** The same digest over raw bytes (a pasted picture): synchronous and pure, so it needs no SubtleCrypto. */
+export function sha256HexBytes(bytes: Uint8Array): string {
   const total = Math.ceil((bytes.length + 9) / 64) * 64
   const buf = new Uint8Array(total)
   buf.set(bytes)

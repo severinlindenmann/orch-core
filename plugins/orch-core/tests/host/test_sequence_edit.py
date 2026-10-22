@@ -47,7 +47,7 @@ def test_the_review_shows_criteria_and_people_and_needs_the_typed_word(human, la
     content = signcontent.build(first, verified=True)
     assert [a["text"] for a in content["acceptance"]] == ["It opens"]
     assert any(f["field"] == "assignees: add" and f["after"] == quinn.ref for f in content["fields_changed"])
-    assert content["subline"] == "and its text (2 sections), 1 acceptance check, its people"
+    assert content["subline"] == "Includes its text (2 sections), 1 acceptance check, its people"
     assert sequence.confirm_kind(rig.intent) == "word"  # people.set decides who may act: the strongest step
     assert "It opens" in signer.render(first, lambda w: ("ws", "ORCH"))
 
@@ -488,3 +488,203 @@ def test_a_host_that_changes_the_links_step_aborts_before_the_signature(repo_lab
     with pytest.raises(Aborted):
         rig.driver().run(first)
     assert links_of(human, key)["repos"] == []
+
+
+def task_intent(**over):
+    return {
+        "v": 1,
+        "kind": sequence.EDIT,
+        "ticket": {"key": "DEMO-0001", "uid": "0" * 26},
+        "ticket_type": "feature",
+        "head": "sha256:" + "0" * 64,
+        "sections": {},
+        "acceptance": {"was": [{"id": "AC1", "text": "First"}], "edit": {}, "add": ["Second"]},
+        "tasks": {
+            "was": [{"id": "T3", "text": "Old", "verify": {"cmd": "old"}, "proves": ["AC1"]}],
+            "edit": {"T3": {"text": "New", "verify": None, "proves": ["AC1", "AC2"]}},
+            "add": [{"text": "Added", "verify": "check", "proves": ["AC2"]}],
+        },
+        **over,
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"edit": {"T4": {"text": "Unknown"}}},
+        {"edit": {"T3": {"text": "Old"}}},
+        {"edit": {"T3": {}}},
+        {"edit": {"T3": {"proves": ["AC3"]}}},
+        {"edit": {"T3": {"proves": ["AC2", "AC1"]}}},
+        {"edit": {"T3": {"proves": ["AC1", "AC1"]}}},
+        {"edit": {"T3": {"text": "x\ny"}}},
+        {"edit": {"T3": {"text": "x" * 501}}},
+        {"edit": {"T3": {"text": "e\u0301"}}},
+        {"edit": {"T3": {"verify": ""}}},
+        {"edit": {"T3": {"verify": "é" * 2049}}},
+        {"edit": {"T3": {"verify": "x\ny"}}},
+        {"edit": {"T3": {"assignee": "p_" + "1" * 32}}},
+        {"add": [{"text": "Added", "verify": None, "proves": []}]},
+        {"add": [{"text": "Added"}]},
+        {"was": [{"id": "T3", "text": "Old", "verify": {}, "proves": []}]},
+        {"was": [{"id": "T3", "text": "Old", "verify": None, "proves": [], "extra": 1}]},
+        {"extra": 1},
+    ],
+)
+def test_edit_tasks_refuse_malformed_changes(change):
+    intent = task_intent()
+    intent["tasks"].update(change)
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
+def test_edit_tasks_caps_and_duplicate_ids():
+    for count in (17, 33):  # joint step limit, then task change limit
+        intent = task_intent()
+        intent["tasks"]["add"] *= count
+        with pytest.raises(SequenceInvalid):
+            sequence.validate_intent(intent)
+    intent = task_intent()
+    intent["tasks"]["was"] *= 2
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+    intent = task_intent()
+    task = intent["tasks"]["was"][0]
+    intent["tasks"]["was"] = [{**task, "id": f"T{i}"} for i in range(65)]
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
+def test_edit_task_steps_and_payloads_bind_each_intermediate_list():
+    intent = task_intent()
+    intent["tasks"]["was"][0]["assignee"] = "p_" + "1" * 32
+    intent = sequence.validate_intent(intent)
+    assert [s["op"] for s in sequence.steps(intent)] == ["ac.add", "task.edit", "task.add"]
+    assert sequence.step_args(intent, 1, None) == (
+        "task.edit",
+        {"ref": "DEMO-0001", "task": "T3", "text": "New", "verify": "", "proves": ["AC1", "AC2"]},
+    )
+    was = intent["tasks"]["was"]
+    edited = [{**was[0], "text": "New", "verify": None, "proves": ["AC1", "AC2"]}]
+    added = [*edited, {"id": "T4", "text": "Added", "verify": {"cmd": "check"}, "proves": ["AC2"]}]
+    for k, before, after in ((1, was, edited), (2, edited, added)):
+        assert sequence.expected_payload(intent, k, "person") == {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.tasks": canon.value_hash(before)},
+            "set": {"ticket.tasks": after},
+        }
+    assert intent["tasks"]["was"][0]["text"] == "Old"
+    lines = sequence.intent_lines(intent, str)
+    assert "task T3 text: Old -> New" in lines
+    assert "task T3 verify: old -> none" in lines
+    assert "task T3 proves: AC1 -> AC1, AC2" in lines
+    assert "task added: Added (verify: check; proves: AC2)" in lines
+
+
+def test_task_edits_sort_numerically_before_links_and_people():
+    intent = task_intent()
+    task = intent["tasks"]["was"][0]
+    intent["tasks"]["was"] += [{**task, "id": "T10"}, {**task, "id": "T2"}]
+    intent["tasks"]["edit"] = {tid: {"text": "New"} for tid in ("T10", "T3", "T2")}
+    intent["links"] = {
+        "was": {"repos": [], "branches": {}, "prs": [], "external": []},
+        "repos": ["repo"],
+        "branches": {},
+    }
+    intent["people"] = {"owner": {"add": ["p_" + "1" * 32], "remove": []}}
+    plan = sequence.steps(sequence.validate_intent(intent))
+    assert [s["args"]["task"] for s in plan if s["op"] == "task.edit"] == ["T2", "T3", "T10"]
+    assert [s["kind"] for s in plan] == ["ac", "task", "task", "task", "task", "links", "people"]
+
+
+def test_task_check_step_refuses_one_byte_change():
+    import copy
+
+    intent = sequence.validate_intent(task_intent())
+    person = "p_" + "1" * 32
+    prepared = {
+        "op": "task.edit",
+        "log": intent["ticket"]["uid"],
+        "material": {"ticket": intent["ticket"]},
+        "events": [{**sequence.expected_payload(intent, 1, person), "based_on": intent["head"]}],
+    }
+    kwargs = {"person": person, "first": intent["ticket"], "prev_head": intent["head"]}
+    sequence.check_step(intent, 1, prepared, **kwargs)
+    altered = copy.deepcopy(prepared)
+    altered["events"][0]["set"]["ticket.tasks"][0]["text"] = "Nex"
+    with pytest.raises(Aborted):
+        sequence.check_step(intent, 1, altered, **kwargs)
+
+
+def test_task_edit_and_add_land_and_show_review(human, tmp_path):
+    key = made(human, tmp_path)
+    human.agent("show", {"ref": key, "full": True})  # the session reads the field before it sets it
+    human.agent("task.add", {"ref": key, "text": "Old", "verify": "old", "proves": ["AC1"]})
+    was = [{k: v for k, v in t.items() if k != "state"} for t in doc(human, key)["doc"]["tasks"]]  # the stored shape
+    intent = edit_intent(
+        human,
+        key,
+        acceptance={"was": [{"id": "AC1", "text": "First check"}], "edit": {}, "add": []},
+        tasks={
+            "was": was,
+            "edit": {"T1": {"text": "New", "verify": "check", "proves": []}},
+            "add": [{"text": "Added", "proves": ["AC1"]}],
+        },
+    )
+    rig = Rig(human, tmp_path / "edit", intent)
+    first = rig.first()
+    human.check(first)
+    content = signcontent.build(first, verified=True)
+    assert "Task T1: Old -> New" in content["notes"]
+    assert "Task T1 now verifies with: check" in content["notes"]
+    assert any(n.startswith("Task added: Added") for n in content["notes"])
+    out = rig.driver().run(first)
+    assert out["landed"] == 2
+    assert [{k: v for k, v in t.items() if k != "state"} for t in doc(human, key)["doc"]["tasks"]] == [
+        {"id": "T1", "text": "New", "verify": {"cmd": "check"}, "proves": []},
+        {"id": "T2", "text": "Added", "verify": None, "proves": ["AC1"]},
+    ]
+
+
+def test_task_edit_first_step_binds_reviewed_head_and_task_base():
+    intent = task_intent(acceptance={"was": [{"id": "AC1", "text": "First"}], "edit": {}, "add": []})
+    intent["tasks"]["edit"] = {"T3": {"proves": []}}
+    intent["tasks"]["add"] = []
+    intent = sequence.validate_intent(intent)
+    person = "p_" + "1" * 32
+    payload = sequence.expected_payload(intent, 0, person)
+    prepared = {
+        "op": "task.edit",
+        "log": intent["ticket"]["uid"],
+        "material": {"ticket": intent["ticket"]},
+        "events": [{**payload, "based_on": intent["head"]}],
+    }
+    kwargs = {"person": person, "first": None, "prev_head": None}
+    assert sequence.check_step(intent, 0, prepared, **kwargs) == intent["ticket"]
+    prepared["events"][0]["base_rev"]["ticket.tasks"] = canon.value_hash([])
+    with pytest.raises(Aborted):
+        sequence.check_step(intent, 0, prepared, **kwargs)
+
+
+def test_task_review_escapes_historical_control_characters():
+    intent = task_intent()
+    intent["tasks"]["was"][0]["text"] = "Old\x1b[31m\nspoof"
+    intent = sequence.validate_intent(intent)
+    from orch.host.signer import _clean
+
+    lines = sequence.intent_lines(intent, _clean)
+    assert all("\x1b" not in line and "\n" not in line for line in lines)
+
+
+def test_task_caps_accept_the_boundary_and_require_known_proves():
+    intent = task_intent()
+    intent["tasks"]["add"] *= sequence.MAX_STEPS - 2
+    assert len(sequence.steps(sequence.validate_intent(intent))) == sequence.MAX_STEPS
+    del intent["acceptance"]
+    with pytest.raises(SequenceInvalid):
+        sequence.validate_intent(intent)
+    tasks = {"was": [], "edit": {}, "add": [{"text": "Added", "proves": []}] * 32}
+    assert len(sequence._edit_tasks(tasks, {})["add"]) == 32
+    tasks["add"].append({"text": "Added", "proves": []})
+    with pytest.raises(SequenceInvalid):
+        sequence._edit_tasks(tasks, {})

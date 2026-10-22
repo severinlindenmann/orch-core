@@ -12,7 +12,8 @@ import { RealDock } from './RealDock'
 
 const WS = 'a'.repeat(32)
 vi.mock('../../workspace', () => ({ useWorkspace: () => ({ workspace: { id: WS } }) }))
-vi.mock('../dock/context', async (orig) => ({ ...(await orig<typeof import('../dock/context')>()), useDockTicket: () => undefined }))
+const dock = vi.hoisted(() => ({ ticket: undefined as string | undefined }))
+vi.mock('../dock/context', async (orig) => ({ ...(await orig<typeof import('../dock/context')>()), useDockTicket: () => dock.ticket }))
 // The terminal itself is covered in RealTerminal.test.tsx: here only which run it is mounted for, and how.
 // Like the real one, it reads `initial` once, when it mounts.
 vi.mock('./RealTerminal', async () => {
@@ -45,7 +46,7 @@ beforeEach(() => {
   list = { runs: [], runner: { connected: true, enabled: true, terminals: true }, truncated: false }
   vi.spyOn(runsApi, 'list').mockImplementation(async () => list)
 })
-afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null) })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null); dock.ticket = undefined })
 
 describe('the real dock', () => {
   it('New terminal shows the host preview as untrusted text, then opens with one idem and attaches with the lease', async () => {
@@ -140,28 +141,75 @@ describe('the real dock', () => {
     expect(screen.getByRole('tab', { name: /Live one/ })).toBeInTheDocument()
   })
 
+  it('U6: a start that never spawned leaves no tab behind (the dialog already showed the error)', async () => {
+    const failed = { state: 'exited' as const, replay_until: null, exit: { code: null, signal: null, at: '2026-01-01T00:00:00Z', reason: 'spawn_failed' as const, cleanup: null } }
+    list = { ...list, runs: [run('F1', { ...failed, ticket: 'RA-0009', kind: 'agent' }), run('R1', { label: 'Live one' })] }
+    mount()
+    await screen.findByRole('tab', { name: /Live one/ })
+    expect(screen.queryByRole('tab', { name: /RA-0009/ })).toBeNull()
+  })
+
+  it('MED-1: a spawn_failed run whose cleanup is in doubt keeps its tab and the warning', async () => {
+    const doubtful = { state: 'exited' as const, replay_until: '2099-01-01T00:00:00Z', exit: { code: null, signal: null, at: '2026-01-01T00:00:00Z', reason: 'spawn_failed' as const, cleanup: 'incomplete' as const } }
+    list = { ...list, runs: [run('F2', { ...doubtful, ticket: 'RA-0010', kind: 'agent' })] }
+    mount()
+    expect(await screen.findByRole('tab', { name: /RA-0010/ })).toBeInTheDocument()
+    expect(await screen.findByText(/Some processes may still be running/)).toBeInTheDocument()
+  })
+
   it('Start agent is not available when the host does not serve agent_start', async () => {
-    setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
+    setFeatures({ features: ['terminals', 'terminals_page'], workspaces: { [WS]: ['terminals', 'terminals_page'] } })
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     expect(await screen.findByRole('menuitem', { name: /Start agent/ })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('Start agent opens core\'s dialog when the host serves agent_start', async () => {
+  it('Start agent needs a ticket: outside a ticket page it is disabled and says so', async () => {
+    setFeatures({ features: ['terminals', 'terminals_page', 'agent_start'], workspaces: { [WS]: ['terminals', 'terminals_page', 'agent_start'] } })
+    mount()
+    await screen.findByText(/No terminal is open/)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    const item = await screen.findByRole('menuitem', { name: /Start agent/ })
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent('open a ticket first')
+  })
+
+  it('Start agent opens core\'s dialog on a ticket page when the host serves agent_start', async () => {
+    dock.ticket = 'DEMO-1'
     const { agentsApi } = await import('@/api/agents')
-    setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
+    setFeatures({ features: ['terminals', 'terminals_page', 'agent_start'], workspaces: { [WS]: ['terminals', 'terminals_page', 'agent_start'] } })
     const pre = vi.spyOn(agentsApi, 'preview').mockResolvedValue({ spec: 'f'.repeat(64), ticket: null, display: 'codex', display_hidden: false, cwd: { kind: 'workspace' },
       cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: null, blocked: null, warnings: [] })
     vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: true, grant: null } })
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
-    const item = await screen.findByRole('menuitem', { name: 'Start agent' })
+    const item = await screen.findByRole('menuitem', { name: 'Start agent on DEMO-1' })
     expect(item).not.toHaveAttribute('aria-disabled')
     fireEvent.click(item)
     expect(await screen.findByTestId('agent-preview')).toBeInTheDocument()
-    expect(pre).toHaveBeenCalled()
+    expect(pre).toHaveBeenCalledWith(WS, expect.objectContaining({ ticket: 'DEMO-1' }))
+  })
+
+  it('M-6: with the Terminals add-on off the dock lists no shells and does not offer a new one', async () => {
+    setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
+    list = { ...list, runs: [run('SH', { state: 'exited', exit: { code: 0, reason: 'exited', cleanup: 'complete' } as never })] }
+    mount()
+    expect(await screen.findByText(/Terminals are switched off in this workspace/)).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    expect(await screen.findByRole('menuitem', { name: /Shell in the workspace/ })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('a very long tab name stays on one line, with the full name as its tooltip', async () => {
+    const long = 'a-very-long-terminal-name '.repeat(8).trim()
+    list = { ...list, runs: [run('LN', { label: long })] }
+    mount()
+    const tab = await screen.findByRole('tab')
+    const name = tab.querySelector('span.truncate') as HTMLElement
+    expect(name.title).toBe(long)
+    expect(name.className).toContain('[&>bdi]:whitespace-nowrap')
   })
 
   it('an agent whose runner grant ended says so and keeps Stop', async () => {

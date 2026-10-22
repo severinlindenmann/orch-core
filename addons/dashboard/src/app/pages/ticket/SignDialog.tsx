@@ -1,3 +1,4 @@
+import { ManualAcceptanceReview } from './ManualAcceptance'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { useNavigate } from '@tanstack/react-router'
@@ -305,6 +306,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(shownBranch))}</p>
               <p className="mt-1 text-[12px] text-text-muted">A new commit on the branch after the verdict voids it; the ticket goes back to testing.</p>
             </section>
+            <ManualAcceptanceReview ticket={opened} name={personName} />
             <fieldset className="grid gap-2" disabled={busy}>
               <legend className="sr-only">Verdict</legend>
               {(

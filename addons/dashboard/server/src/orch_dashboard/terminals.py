@@ -68,7 +68,15 @@ CLOSE_TABLE = {
     1000: {"exited", "run.stopped", "cancelled"},
     4400: {"protocol", "invalid.input"},
     4401: {"session.ended", "ticket.refused"},
-    4403: {"person.removed", "not_visible", "ticket_invalid", "op.not_allowed", "not_found", "runner.disabled"},
+    4403: {
+        "person.removed",
+        "not_visible",
+        "ticket_invalid",
+        "op.not_allowed",
+        "not_found",
+        "runner.disabled",
+        "runner.stale",
+    },
     4409: {"writer_busy", "term.writer_busy"},
     4422: {"term.not_attachable"},
     4429: {"overflow", "rate.limited", "run.limit", "attach.limit", "quota.host"},
@@ -158,7 +166,7 @@ def _digest(value: str) -> str:
 
 class Cwd(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal["workspace", "repo", "worktree"]
+    kind: Literal["workspace", "repo", "worktree", "workdir"]
     repo: Repo | None = None
     ticket: reads.Key | None = None
 

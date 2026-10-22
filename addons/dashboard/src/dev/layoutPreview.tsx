@@ -24,13 +24,21 @@ import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
+import { TerminalsPage } from '@/app/pages/terminals'
 import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
+import { routingApi, type RoutingChoices } from '@/api/modelRouting'
+import { sharesApi } from '@/api/shares'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
+import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
-import { clickProblem, type ClickCard } from '@/api/click'
+import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { pastedIn } from '@/api/pasteImage'
+import { Section } from '@/app/pages/new-ticket/SectionsEditor'
+import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
+import { storyOf } from '@/components/sign/story'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
@@ -55,6 +63,9 @@ export const LAYOUT_SCENARIOS = [
   'runner-off',
   // M7a: the real-host terminal dock (RealDock with fixture runs and a fixture socket).
   'terminal-dock',
+  'terminal-colours',
+  'terminals-page',
+  'terminals-page-empty',
   'terminal-preview',
   'terminal-readonly',
   'terminal-take',
@@ -62,13 +73,22 @@ export const LAYOUT_SCENARIOS = [
   'terminal-stop',
   // M7b: core's Start agent dialog with fixture answers (preview, blocked reasons, the runner grant card, outcomes).
   'agent-dialog',
+  'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
   'agent-outcomes',
+  // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
+  'agent-model',
+  'addons-model-routing',
+  'addons-model-routing-open',
+  'addons-publish',
+  'addons-publish-open',
+  'addons-publish-unset',
   // B11-P1: the header pill (live, stopped) and the runner grant on a terminal-approval workspace.
   'agent-pill',
   'agent-pill-stopped',
   'agent-pill-off',
+  'setup-words',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -104,8 +124,15 @@ export const LAYOUT_SCENARIOS = [
   'drop-phone',
   // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
   'new-sequence',
+  // U4: the same form on a host that can start agents: with a usable agent access, and without one.
+  'new-sequence-start',
+  'new-sequence-start-nogrant',
   // B12D (N3): the ticket page's edit of text, criteria and people, and its ONE review.
   'edit-ticket',
+  // R3 part B: paste a screenshot into a section, and the sign dialog's picture check (match, and a swapped file).
+  'paste-sign',
+  // R3 variant B: the simpler sign dialog, one scenario per case.
+  'sign-b-new', 'sign-b-new-access', 'sign-b-requirements', 'sign-b-plan', 'sign-b-extend',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -255,18 +282,20 @@ function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
     gate_hash: null,
     headline,
     content: {
-      headline,
-      subline,
-      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      headline: `Create ${key} (key per host; signed id …${uid.slice(-8)}): ${String(action.title)}`,
+      title: headline.replace('Create ', 'New ticket '),
+      subline: subline?.replace(/^and /, 'Includes '),
+      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(criteria.length ? { acceptance: criteria.map((text, i) => ({ id: `AC${i + 1}`, text, checked: false })) } : {}),
+      fields_title: 'Details',
       fields_changed: [
         { field: 'type', before: null, after: String(action.type) },
         { field: 'owner', before: null, after: 'you' },
         ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
         ...peopleRows,
       ],
-      notes: [`One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was created stays a draft.`],
+      notes: [`One confirmation signs all ${of} steps. If the ticket changes meanwhile, signing stops and what is already signed stays.`],
     },
     material,
     events,
@@ -312,7 +341,7 @@ function quickRequest(action: Record<string, unknown>): HandoffRequest {
     content: {
       headline,
       subline: 'creates the task and approves its requirements and plan',
-      ticket: { key, title, uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      ticket: { key, title, uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: [
         { id: 'requirements', title: 'Requirements', text: description },
         { id: 'plan', title: 'Plan', text: plan },
@@ -378,7 +407,7 @@ function editRequest(action: Record<string, unknown>): HandoffRequest {
     content: {
       headline,
       subline: 'its text, acceptance checks, repositories and people, as shown below',
-      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
+      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
       sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
       ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
       fields_changed: [...linkRows, ...peopleRows],
@@ -444,6 +473,7 @@ const runList = (scenario: LayoutScenario): RunList => {
   const runner = { connected: true, enabled: true, terminals: true }
   if (scenario === 'terminal-exited')
     return { runner, truncated: false, runs: [fixtureRun('EX', { state: 'exited', replay_until: '2026-01-01T00:00:00Z', exit: ENDED, label: `Build ${LONG_WORD}` })] }
+  if (scenario === 'terminals-page-empty') return { runner, truncated: false, runs: [] }
   if (scenario === 'terminal-stop')
     return { runner, truncated: false, runs: [fixtureRun('ST', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: { ...ENDED, cleanup: 'incomplete' } })] }
   return {
@@ -458,23 +488,57 @@ const runList = (scenario: LayoutScenario): RunList => {
   }
 }
 const AGENT_GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const ROUTING_CHOICES: RoutingChoices = {
+  harnesses: [
+    { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
+    { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'gpt-5-codex', label: 'GPT-5 Codex' }, { id: 'gpt-5', label: 'GPT-5' }, { id: 'o3', label: 'o3' }] },
+  ],
+  modes: [
+    { id: 'work', label: 'Do the work' }, { id: 'refine', label: 'Write requirements and plan' }, { id: 'fix', label: 'Fix what was sent back' },
+    { id: 'continue', label: 'Continue' }, { id: 'context', label: 'Read and answer' },
+  ],
+}
 const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   const base: AgentPreview = {
     spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
     cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-0043' }, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing.worktrees/0a1b2c3d-DEMO-0043`, cwd_path_hidden: false,
     will_create_worktree: true, login_shell: true, env: ['TERM', 'COLORTERM', 'ORCH_GRANT', 'ORCH_SESSION', 'ORCH_TICKET', 'ORCH_HARNESS', 'CLAUDE_CODE_SUBAGENT_MODEL'],
-    grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
+    grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
+  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
   if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
+/** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
+const ESC = '\x1b['
+const COLOUR_SAMPLE = [
+  `${ESC}32msev${ESC}0m@${ESC}36mdemo${ESC}0m ${ESC}1;34m~/code/billing${ESC}0m ${ESC}35m(feat/DEMO-0043)${ESC}0m $ ls --color`,
+  `${ESC}1;34msrc${ESC}0m  ${ESC}1;34mtests${ESC}0m  README.md  ${ESC}1;32mrun.sh${ESC}0m  ${ESC}1;36mlatest -> v2${ESC}0m  ${ESC}31mbroken.tar.gz${ESC}0m`,
+  `$ git status -sb`,
+  `## feat/DEMO-0043...origin/feat/DEMO-0043 [ahead 2]`,
+  ` ${ESC}31mM${ESC}0m src/tariffs.py`,
+  `${ESC}32mA${ESC}0m  tests/test_tariffs.py`,
+  `${ESC}31m??${ESC}0m notes.txt`,
+  `$ git diff src/tariffs.py`,
+  `${ESC}1mdiff --git a/src/tariffs.py b/src/tariffs.py${ESC}0m`,
+  `${ESC}36m@@ -12,3 +12,4 @@ def load(path):${ESC}0m`,
+  `${ESC}31m-    rows = read(path)${ESC}0m`,
+  `${ESC}32m+    rows = read(path, strict=True)${ESC}0m`,
+  `$ pytest -q`,
+  `${ESC}32m..........${ESC}0m${ESC}31mF${ESC}0m${ESC}32m..${ESC}0m`,
+  `${ESC}1;31mFAILED${ESC}0m tests/test_tariffs.py::test_strict - ${ESC}33mAssertionError${ESC}0m: expected 3, got 4`,
+  `${ESC}2m(dim: 1 failed, 12 passed)${ESC}0m  ${ESC}4munderlined${ESC}0m  ${ESC}7minverse${ESC}0m`,
+  Array.from({ length: 8 }, (_, i) => `${ESC}${30 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  Array.from({ length: 8 }, (_, i) => `${ESC}${90 + i}m ${['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'][i].padEnd(7)}${ESC}0m`).join(''),
+  '',
+].join('\r\n')
 /** A fixture socket: `ready` at once (never the lease), then a screenful of output. Nothing leaves this page. */
 function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
   const timer = setTimeout(() => {
     h.ready({ start: 0, offset: 0, cols: 100, rows: 30, writer: false, state: current === 'terminal-stop' ? 'exited' : 'running' })
-    const text = Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
+    const text = current === 'terminal-colours' ? COLOUR_SAMPLE : Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
     h.output(0, new TextEncoder().encode(text))
     if (current === 'terminal-stop') h.exit(1, null)
   }, 50)
@@ -642,6 +706,8 @@ export function resetLayoutPreview() {
   for (const [name, fn] of originals) {
     if (name === 'runs.connect') termTransport.connect = fn as typeof termTransport.connect
     else if (name.startsWith('runs.')) r[name.slice(5)] = fn
+    else if (name === 'shares.list') (sharesApi as unknown as Record<string, unknown>).list = fn
+    else if (name === 'routing.choices') (routingApi as unknown as Record<string, unknown>).choices = fn
     else if (name.startsWith('agents.')) (agentsApi as unknown as Record<string, unknown>)[name.slice(7)] = fn
     else a[name] = fn
   }
@@ -691,9 +757,15 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
-  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
+  ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
+  ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
+  originals.set('shares.list', sharesApi.list)
+  ;(sharesApi as unknown as Record<string, unknown>).list = async () => ({ available: true, configured: current !== 'addons-publish-unset', server: current === 'addons-publish-unset' ? null : 'https://share.example.org', share: current === 'addons-publish-unset' ? null : 'https://view.example.org', workspace: 'w'.repeat(32), owner: 'p_owner', live: true, shares: [], staged: [] })
+  originals.set('routing.choices', routingApi.choices)
+  ;(routingApi as unknown as Record<string, unknown>).choices = async () => ROUTING_CHOICES
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' || current === 'agent-dialog-acked' || current === 'new-sequence-start' ? { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' } : current === 'agent-pill' ? { id: AGENT_GRANT, until: new Date(nowMs() + 6 * 3_600_000).toISOString(), scope: 'workable' } : null } })
   ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
   ag.depositStatus = async () => ({ deposit: 'unknown' })
   ag.forget = async () => ({ forgotten: true })
@@ -733,18 +805,21 @@ function install() {
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
       { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'model-routing', title: 'Model routing', desc: 'Choose which AI model each kind of agent work starts on. You still see the model before every start.', state: current.startsWith('addons-model-routing') ? 'on' : 'off', locked: null, blocked: null },
+      { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],
   }))
   set('getHostSettings', async () => ({
     available: true,
-    grant_hours: 8,
+    grant_hours: current.startsWith('new-sequence-start') ? 168 : 8,
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
     gates: {},
     repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
+    models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current.startsWith('addons-model-routing') ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))
@@ -781,9 +856,14 @@ export function LayoutPreview({ name }: { name: string }) {
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
+  if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario === 'new-sequence') return <NewSequencePreview />
+  if (scenario === 'new-sequence-start' || scenario === 'new-sequence-start-nogrant') return <NewSequencePreview start />
   if (scenario === 'edit-ticket') return <EditTicketPreview />
+  if (scenario === 'paste-sign') return <PasteSignPreview />
+  if (scenario.startsWith('sign-b-')) return <SignBPreview scenario={scenario} ws={workspace.id} />
+  if (scenario === 'setup-words') return <div className="setup max-w-xl p-4"><ConfirmWords words={['apple', 'river', 'cloud']} /></div>
   if (scenario === 'agent-pill' || scenario === 'agent-pill-stopped' || scenario === 'agent-pill-off')
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
@@ -843,6 +923,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return (
       <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostAddOns workspace={workspace} />
+        {scenario.endsWith('-open') && <OpenAddOnPanel customize={scenario === 'addons-model-routing-open'} />}
       </SettingsFrame>
     )
   if (scenario.startsWith('records-'))
@@ -883,9 +964,9 @@ function EditTicketPreview() {
 }
 
 /** The real New ticket form in hand-off mode (a real host): Create opens the one review with fixture answers. */
-function NewSequencePreview() {
+function NewSequencePreview({ start = false }: { start?: boolean }) {
   useEffect(() => {
-    setFeatures({ features: ['actions'] })
+    setFeatures({ features: start ? ['actions', 'agent_start', 'model_routing'] : ['actions'] })
     return () => setFeatures(null)
   }, [])
   const ready = useRef(false)
@@ -895,4 +976,85 @@ function NewSequencePreview() {
     setOn(true)
   }, [])
   return on ? <NewTicketPage /> : null
+}
+
+/** R3 part B: the real section editor (paste a picture into it) and the real sign panel with a View that names the pasted
+ * pictures: once as the signer would build it, once as a host that swapped the file would. Nothing here signs. */
+function PasteSignPreview() {
+  const [text, setText] = useState('The export button does nothing when I click it.')
+  const pics = pastedIn([text])
+  const view = (images: { name: string; sha256: string; bytes: number; alt: string }[]): ClickViewAnswer => ({
+    view_digest: 'sha256:' + 'a'.repeat(64),
+    view: {
+      risk: CLICK_RISK,
+      op: 'new',
+      workspace: { id: 'f'.repeat(32), name: 'Acme energy data', prefix: 'DEMO' },
+      fingerprint: 'abcdef012345',
+      lines: ['Create DEMO-0044'],
+      checks: [],
+      confirm: { kind: 'click' },
+      expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+      auth: 'convenience',
+      device: PLACEHOLDER_DEVICE,
+      artifacts: 'checked',
+      headline: 'Create DEMO-0044',
+      content: {
+        headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Export does nothing',
+        title: 'New ticket Export does nothing',
+        subline: 'Includes its text (1 section)',
+        ticket: { key: 'DEMO-0044', title: 'Export does nothing', uid_tail: '0000000A', new: true, key_note: 'key per host, not proven' },
+        sections: [{ id: 'context', title: 'Context', text }],
+        images,
+        notes: [`Adds ${images.length} screenshot${images.length === 1 ? '' : 's'}. The dashboard shows each one from the file you pasted and checks its digest against the one signed.`],
+      },
+    },
+  })
+  const swapped = pics.map((p) => ({ ...p, sha256: `sha256:${'0'.repeat(64)}` }))
+  return (
+    <div className="mx-auto max-w-2xl space-y-8 p-4">
+      <Section type="bug" name="context" value={text} onChange={setText} />
+      <section aria-label="What you sign" className="space-y-2">
+        <h2 className="text-[13px] font-medium">The sign dialog</h2>
+        <ClickSignPanel answer={view(pics)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+      <section aria-label="If the host swapped the file" className="space-y-2">
+        <h2 className="text-[13px] font-medium">If the host had swapped the file</h2>
+        <ClickSignPanel answer={view(swapped)} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} />
+      </section>
+    </div>
+  )
+}
+
+const SIGN_B_PERSON = 'p_2e954b7df6ad0c419ab05d2136b7e842'
+/** R3 variant B: the real panel with a fixture View, in the width of a dialog. */
+function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
+  const kind = scenario.slice('sign-b-'.length)
+  const fields = [{ field: 'type', before: null, after: 'feature' }, { field: 'owner', before: null, after: SIGN_B_PERSON }, { field: 'estimate', before: null, after: '3 points (size M)' }]
+  const content: import('@/api/signing').SignContent = kind === 'extend'
+    ? { headline: 'Extend agent access', title: 'Extend agent access', fields_changed: [{ field: 'who', before: null, after: 'Agents working for you (Claude Code)' }, { field: 'owner', before: null, after: SIGN_B_PERSON }, { field: 'computer', before: null, after: 'Sevi’s MacBook' }, { field: 'until', before: 'Thu 22 Oct, 16:34', after: 'Thu 22 Oct, 16:34 (replaced)' }] }
+    : { headline: kind === 'new' || kind === 'new-access' ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', title: kind.startsWith('new') ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', ticket: { key: 'TESTOR-0007', title: 'Export report as PDF', uid_tail: '9f3c1a', key_note: '', new: kind.startsWith('new') },
+      sections: [{ id: 'requirements', title: 'Requirements', text: 'Export button on the report page\nPDF has the company logo\nWorks for reports up to 200 rows' }, ...(kind === 'plan' ? [{ id: 'plan', title: 'Plan you are approving', text: '1. Add an Export button.\n2. Generate a PDF with the logo.\n3. Check a short and a 200-row report.' }] : [])], fields_changed: fields }
+  const word = kind === 'new-access' || kind === 'extend' ? 'GRANT' : null
+  const action = (kind === 'new' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {} }
+    : kind === 'new-access' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {}, agent: { hours: 168 } }
+    : kind === 'requirements' ? { action: 'approve', key: 'TESTOR-0007', gate: 'requirements' }
+    : kind === 'plan' ? { action: 'approve', key: 'TESTOR-0007', gate: 'plan' }
+    : { action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' }) as import('@/api/click').ClickAction
+  const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: word ? { kind: 'word', word } : { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
+  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} onPhone={kind === 'plan' ? () => {} : undefined} /></div>
+}
+
+/** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */
+function OpenAddOnPanel({ customize }: { customize: boolean }) {
+  useEffect(() => {
+    const t = setInterval(() => {
+      const expand = document.querySelector<HTMLButtonElement>('[data-testid$="-expand"][aria-expanded="false"]')
+      if (expand) return void expand.click()
+      const more = customize ? [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Customize models') : null
+      if (more) more.click()
+      else if (document.querySelector('[data-testid="publish-server"], [data-testid="model-routing"]')) clearInterval(t)
+    }, 100)
+    return () => clearInterval(t)
+  }, [customize])
+  return null
 }

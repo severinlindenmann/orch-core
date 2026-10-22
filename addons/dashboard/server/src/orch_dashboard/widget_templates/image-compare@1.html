@@ -1,0 +1,53 @@
+<style>
+.stage{position:relative;max-width:360px;border:1px solid GrayText;border-radius:6px;overflow:hidden;line-height:0}
+.stage img{display:block;width:100%;height:auto}
+.stage .top{position:absolute;inset:0;border-right:2px solid Highlight}
+.stage .top img{width:100%;height:100%;object-fit:fill}
+.side{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:640px}
+.side figure{margin:0}
+.side img{display:block;width:100%;border:1px solid GrayText;border-radius:6px}
+figcaption,.row{font-size:12px;color:GrayText}
+.row{display:flex;align-items:center;gap:8px;margin-top:8px;max-width:360px}
+.row input{flex:1}
+button{font:inherit;font-size:11px;color:CanvasText;background:Canvas;border:1px solid GrayText;border-radius:4px;padding:2px 8px;cursor:pointer}
+.err{padding:8px;border:1px dashed GrayText;border-radius:6px}
+</style>
+<div id="root"></div>
+<script>
+(function () {
+  var d = orch.data, root = document.getElementById('root')
+  var OK = ['data:image/png;base64,', 'data:image/jpeg;base64,', 'data:image/gif;base64,', 'data:image/webp;base64,']
+  function allowed(s) { return typeof s === 'string' && OK.some(function (p) { return s.indexOf(p) === 0 }) }
+  function el(n, cls, text) { var e = document.createElement(n); if (cls) e.className = cls; if (text != null) e.textContent = text; return e }
+  var b = d.before || {}, a = d.after || {}
+  if (!allowed(b.src) || !allowed(a.src)) { root.appendChild(el('p', 'err', 'Image not shown: only inline data: images are allowed.')); return }
+  var lb = b.label || 'Before', la = a.label || 'After'
+  function img(p, label) { var i = el('img'); i.alt = (d.alt ? d.alt + ' ' : '') + '(' + label + ')'; i.src = p.src; return i }
+  var mode = 'slider'
+  function draw() {
+    root.textContent = ''
+    if (mode === 'slider') {
+      var stage = el('div', 'stage'), top = el('div', 'top')
+      stage.appendChild(img(a, la))
+      top.appendChild(img(b, lb))
+      stage.appendChild(top)
+      root.appendChild(stage)
+      var row = el('div', 'row'), r = el('input')
+      r.type = 'range'; r.min = '0'; r.max = '100'; r.value = '50'
+      r.setAttribute('aria-label', 'Slide between ' + lb + ' and ' + la)
+      function set(v) { top.style.clipPath = 'inset(0 ' + (100 - v) + '% 0 0)' }
+      r.addEventListener('input', function () { set(Number(r.value)) })
+      set(50)
+      row.appendChild(el('span', '', lb)); row.appendChild(r); row.appendChild(el('span', '', la)); row.appendChild(toggle('Side by side'))
+      root.appendChild(row)
+    } else {
+      var side = el('div', 'side')
+      ;[[b, lb], [a, la]].forEach(function (p) { var f = el('figure'); f.appendChild(img(p[0], p[1])); f.appendChild(el('figcaption', '', p[1])); side.appendChild(f) })
+      root.appendChild(side)
+      var row2 = el('div', 'row'); row2.appendChild(toggle('Slider')); root.appendChild(row2)
+    }
+  }
+  function toggle(label) { var t = el('button', '', label); t.type = 'button'; t.addEventListener('click', function () { mode = mode === 'slider' ? 'side' : 'slider'; draw() }); return t }
+  draw()
+})()
+</script>

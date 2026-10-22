@@ -16,6 +16,7 @@ This process remembers nothing that the invariant depends on.
 
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -132,14 +133,20 @@ class Details(Action):
     action: Literal["details"]
     key: Key
     priority: Literal["low", "medium", "high", "urgent"] | None = None
-    size: Literal["xs", "s", "m", "l", "xl"] | None = None
+    #: "none" takes the size away (core `set size=none`); the Estimate add-on's "not estimated"
+    size: Literal["xs", "s", "m", "l", "xl", "none"] | None = None
     labels: list[Label] | None = Field(default=None, min_length=0, max_length=16)
     parent: Key | None = None
+    #: the Estimate box names itself: then the size is all this carries and the add-on must be ON (see `plan`).
+    #: Not signed and not sent to the host; the host sees an ordinary `set size=...`.
+    via: Literal["estimate"] | None = None
 
     @model_validator(mode="after")
     def something(self):
         if self.priority is None and self.size is None and self.labels is None and self.parent is None:
             raise ValueError("details change at least one field")
+        if self.via == "estimate" and (self.size is None or self.priority or self.labels is not None or self.parent):
+            raise ValueError("an estimate changes the size and nothing else")
         return self
 
 
@@ -206,6 +213,32 @@ def _new_people(people: "NewPeople | None") -> dict:
     return out
 
 
+class QuickAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hours: Annotated[int, Field(ge=1, le=168)]
+
+
+class PastedImage(BaseModel):
+    """R3 part B: a screenshot pasted into a section. Only its description travels here: the bytes go to the signer
+    (`click/images`), which checks them against this digest; core `orch.host.sequence` refuses a name that does not
+    carry the first 8 characters of the digest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: Annotated[str, StringConstraints(pattern=r"^paste-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.(png|webp)$")]
+    sha256: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+    bytes: Annotated[int, Field(ge=1, le=5 * 1024 * 1024)]
+    alt: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+def _images_of(images: list["PastedImage"]) -> list[dict]:
+    from orch.canon.text import normalize_text
+
+    return [
+        {"name": i.name, "sha256": i.sha256, "bytes": i.bytes, "alt": normalize_text(i.alt, one_line=True)}
+        for i in sorted(images, key=lambda x: x.name)
+    ]
+
+
 class NewTicketSequence(Action):
     """B11 (finding 9): a New ticket with its written text on ONE review and ONE confirmation. The signer signs
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
@@ -222,6 +255,11 @@ class NewTicketSequence(Action):
     #: B12D: acceptance criteria and people in the same review (N3)
     acceptance: list[Criterion] = Field(default_factory=list, max_length=8)
     people: NewPeople | None = None
+    #: U4: "Create and start agent" without a usable runner grant: the agent access, signed LAST in the same review
+    #: (the start itself is never signed; the page does it afterwards). Absent = the intent is exactly as before.
+    agent: QuickAgent | None = None
+    #: R3 part B: screenshots pasted into the sections (one signed file each, before the section that shows it)
+    images: list[PastedImage] = Field(default_factory=list, max_length=6)
 
     def intent(self) -> dict:
         """The canonical intent the signer reviews (core `orch.host.sequence`): texts normalised the way the host's
@@ -254,6 +292,10 @@ class NewTicketSequence(Action):
             people = _new_people(self.people)
             if people:
                 intent["people"] = people
+            if self.images:
+                intent["images"] = _images_of(self.images)
+            if self.agent is not None:
+                intent["agent"] = {"hours": self.agent.hours, "scope": "workable"}
             return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid) as exc:
             raise fail("invalid.input", f"That ticket can't be signed: {exc}", exit=1) from None
@@ -265,6 +307,38 @@ class EditAcceptance(BaseModel):
         default_factory=dict, max_length=8
     )
     add: list[Criterion] = Field(default_factory=list, max_length=8)
+
+
+TaskId = Annotated[str, StringConstraints(pattern=r"^T[1-9][0-9]*$")]
+AcId = Annotated[str, StringConstraints(pattern=r"^AC[1-9][0-9]*$")]
+TaskText = Annotated[str, StringConstraints(max_length=500)]
+TaskCommand = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
+class TaskEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText = ""
+    verify: TaskCommand | None = None
+    proves: list[AcId] = Field(default_factory=list, max_length=64)
+
+
+class TaskAdd(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: TaskText
+    verify: TaskCommand = ""
+    proves: list[AcId] = Field(max_length=64)
+
+
+class EditTasks(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    edit: dict[TaskId, TaskEdit] = Field(default_factory=dict, max_length=32)
+    add: list[TaskAdd] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def limit_changes(self):
+        if len(self.edit) + len(self.add) > 32:
+            raise ValueError("At most 32 tasks can be changed or added together.")
+        return self
 
 
 class PeopleChange(BaseModel):
@@ -297,8 +371,10 @@ class EditTicket(Action):
     head_seq: Annotated[int, Field(ge=1)]
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
     acceptance: EditAcceptance | None = None
+    tasks: EditTasks | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
     links: EditLinks | None = None
+    images: list[PastedImage] = Field(default_factory=list, max_length=6)  # R3 part B, as in a new ticket
 
     def intent(self, data: dict) -> dict:
         """`data` is the host's `ticket.get` of the ticket, read now."""
@@ -344,6 +420,55 @@ class EditTicket(Action):
                 }
                 if not intent["acceptance"]["edit"] and not intent["acceptance"]["add"]:
                     del intent["acceptance"]
+            if self.tasks is not None:
+                rows = doc.get("tasks") or []
+                was = [{k: row[k] for k in ("id", "text", "verify", "proves", "assignee") if k in row} for row in rows]
+                known = {row["id"]: row for row in was}
+                states = {row["id"]: row.get("state") for row in rows}
+                edits = {}
+                for tid, change in self.tasks.edit.items():
+                    if tid not in known:
+                        raise sequence.SequenceInvalid("it names a task the ticket does not have")
+                    previous = {**known[tid], "verify": known[tid]["verify"]["cmd"] if known[tid]["verify"] else None}
+                    fields = {}
+                    for name in change.model_fields_set:
+                        value = getattr(change, name)
+                        if isinstance(value, str):
+                            value = normalize_text(value, one_line=True)
+                        if name == "proves":  # the canonical form core requires: sorted, unique
+                            value = sorted(set(value), key=lambda a: int(a[2:]))
+                        if name == "text" and not value.strip():
+                            raise sequence.SequenceInvalid("Task text cannot be empty.")
+                        if value != previous[name]:
+                            fields[name] = value
+                    if states[tid] == "done" and ({"verify", "proves"} & fields.keys()):
+                        raise sequence.SequenceInvalid(
+                            "This task is done: reopen it before changing its check or criteria."
+                        )
+                    if fields:
+                        edits[tid] = fields
+                adds = []
+                for task in self.tasks.add:
+                    if not task.text.strip():
+                        continue
+                    item = {
+                        "text": normalize_text(task.text, one_line=True),
+                        "proves": sorted(set(task.proves), key=lambda a: int(a[2:])),
+                    }
+                    if "verify" in task.model_fields_set:
+                        item["verify"] = normalize_text(task.verify, one_line=True)
+                    adds.append(item)
+                if edits or adds:
+                    intent["tasks"] = {"was": was, "edit": edits, "add": adds}
+                    # Core resolves proves from this snapshot, even with no criterion changes.
+                    intent.setdefault(
+                        "acceptance",
+                        {
+                            "was": [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []],
+                            "edit": {},
+                            "add": [],
+                        },
+                    )
             if self.links is not None:
                 now = doc.get("links") or {"repos": [], "branches": {}, "prs": [], "external": []}
                 was = {
@@ -364,6 +489,8 @@ class EditTicket(Action):
                 }
                 if not intent["people"]:
                     del intent["people"]
+            if self.images:
+                intent["images"] = _images_of(self.images)
             return sequence.validate_intent(intent)
         except (TextError, sequence.SequenceInvalid, KeyError, TypeError) as exc:
             raise fail("invalid.input", f"That edit can't be signed: {exc}", exit=1) from None
@@ -373,11 +500,6 @@ class QuickCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     text: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     cmd: Annotated[str, StringConstraints(min_length=1, max_length=300)] | None = None
-
-
-class QuickAgent(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    hours: Annotated[int, Field(ge=1, le=168)]
 
 
 class QuickStart(Action):
@@ -460,6 +582,28 @@ class SettingsSet(Action):
             "terminal" not in self.sign_methods or len(set(self.sign_methods)) != len(self.sign_methods)
         ):
             raise ValueError("sign_methods always contains terminal, once each")
+        return self
+
+
+class ModelsSet(Action):
+    """`settings.set {set:{models}}` (Model routing): for each harness and Start agent mode, the model a start uses; a
+    mode that is not named uses the harness default; an empty table clears every choice (sent as `null`). Every name is
+    checked against core's closed per-harness list here, and again by the host. Signed with the typed word."""
+
+    action: Literal["models_set"]
+    models: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=2)
+
+    @model_validator(mode="after")
+    def closed(self):
+        from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
+
+        for harness, per in self.models.items():
+            if harness not in MODEL_CHOICES:
+                raise ValueError("models: an unknown agent")
+            for mode, name in per.items():
+                if mode not in ROUTE_MODES or name not in MODEL_CHOICES[harness]:
+                    raise ValueError("models: a mode or model that orch does not offer")
+        self.models = {h: dict(sorted(per.items())) for h, per in sorted(self.models.items()) if per}
         return self
 
 
@@ -586,7 +730,9 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish"]
+AddonName = Literal[
+    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing", "wiki"
+]
 
 
 class AddonGrant(Action):
@@ -631,6 +777,50 @@ class PublishSetup(Action):
         return self
 
 
+class PublishAddresses(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    server: Origin
+    share: Origin
+
+    @model_validator(mode="after")
+    def different(self):
+        PublishSetup(action="publish_setup", server=self.server, share=self.share)
+        return self
+
+
+class AddonEnable(Action):
+    action: Literal["addon_enable"]
+    name: Literal["publish", "model-routing"]
+    publish: PublishAddresses | None = None
+    models: dict[str, dict[str, str]] | None = None
+
+    @model_validator(mode="after")
+    def settings_match(self):
+        if self.name == "publish":
+            if self.publish is None or self.models is not None:
+                raise ValueError("Publish needs exactly publish settings")
+        else:
+            if self.models is None or self.publish is not None:
+                raise ValueError("Model routing needs exactly models settings")
+            self.models = ModelsSet(action="models_set", models=self.models).models
+            if not self.models:
+                raise ValueError("choose at least one model")
+        return self
+
+    def settings(self) -> dict:
+        return {"publish": self.publish.model_dump()} if self.publish is not None else {"models": self.models}
+
+    def intent(self, grant: dict) -> dict:
+        from orch.host import sequence
+
+        try:
+            return sequence.validate_intent(
+                {"v": 1, "kind": "addon_enable", "name": self.name, "settings": self.settings(), "grant": grant}
+            )
+        except sequence.SequenceInvalid as exc:
+            raise fail("invalid.input", f"That add-on can't be signed: {exc}", exit=1) from None
+
+
 class PublishShare(Action):
     """`publish.share {staged_id}` through `human.prepare`: a person's signature over the exact words the host builds
     from the staged copy (ticket, kind, days, server, every file with size and hash). The page then calls
@@ -658,6 +848,29 @@ class Move(Action):
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
+AcceptanceText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000), OneLine]
+
+
+class AcceptCriterion(Action):
+    action: Literal["accept_criterion"]
+    key: Key
+    ac: AcId
+    note: AcceptanceText | None = None
+
+
+class WithdrawAcceptance(Action):
+    action: Literal["withdraw_acceptance"]
+    key: Key
+    ac: AcId
+    reason: AcceptanceText
+
+
+class MarkTaskDone(Action):
+    action: Literal["mark_task_done"]
+    key: Key
+    task: TaskId
+
+
 class RunnerGrant(Action):
     """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
     server, never by the browser. The click path maps to the
@@ -681,6 +894,9 @@ PrepareBody = Annotated[
     | Close
     | Reopen
     | Move
+    | AcceptCriterion
+    | WithdrawAcceptance
+    | MarkTaskDone
     | NewTicket
     | NewTicketSequence
     | EditTicket
@@ -688,6 +904,7 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
+    | ModelsSet
     | RepoSet
     | RepoRemove
     | PolicySet
@@ -697,6 +914,7 @@ PrepareBody = Annotated[
     | AddonGrant
     | AddonDisable
     | PublishSetup
+    | AddonEnable
     | PublishShare
     | GrantRevoke
     | RunnerGrant,
@@ -810,6 +1028,12 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "close", args | ({"message": action.message} if action.message else {})
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
+        case AcceptCriterion():
+            return "ac.accept", {"ref": action.key, "ac": action.ac} | ({"note": action.note} if action.note else {})
+        case WithdrawAcceptance():
+            return "ac.unaccept", {"ref": action.key, "ac": action.ac, "reason": action.reason}
+        case MarkTaskDone():
+            return "task.mark_done", {"ref": action.key, "task": action.task}
         case Move():
             return "move", {"ref": action.key, "to": action.to} | ({"reason": action.reason} if action.reason else {})
         case NewTicket():
@@ -833,6 +1057,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+        case ModelsSet():
+            return "settings.set", {"set": {"models": action.models or None}}
+        case AddonEnable():
+            return "settings.set", {"set": action.settings()}
         case PublishSetup():
             return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
         case PublishShare():
@@ -886,6 +1114,43 @@ def host_files(action: Action) -> dict | None:
     return None
 
 
+def _acceptance_event_ok(ev: dict, person: str | None, payload: set[str]) -> bool:
+    """A prepared manual-acceptance event: only the envelope and the keys of its op, from a person (the caller when
+    known). The signer checks the same again; this refuses a host that prepared more or other than what was asked."""
+    actor = ev.get("actor")
+    return (
+        set(ev) <= set(adapters.handoff.ENVELOPE) | payload
+        and isinstance(actor, dict)
+        and actor.get("kind") == "person"
+        and (person is None or actor.get("id") == person)
+    )
+
+
+def expected_material(action: Action):
+    """What the host's prepared MATERIAL must say, for the actions whose words are not in the events: the statement
+    file of a manual acceptance (its note or reason is only there). `None` for every other action."""
+    from orch.host import acceptance
+
+    match action:
+        case AcceptCriterion() | WithdrawAcceptance():
+            withdraw = isinstance(action, WithdrawAcceptance)
+
+            def check(material: dict, events: list) -> bool:
+                statement = material.get("statement")
+                parsed = acceptance.parse(statement) if isinstance(statement, str) else None
+                return (
+                    parsed is not None
+                    and len(events) == 1
+                    and parsed["kind"] == ("withdraw" if withdraw else "accept")
+                    and parsed["ac"] == action.ac
+                    and parsed["reason" if withdraw else "note"] == (action.reason if withdraw else action.note)
+                    and acceptance.matches(events[0], statement)
+                )
+
+            return check
+    return None
+
+
 def expected(action: Action, person: str | None = None):
     """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
     anything else (another type, another person, other values) is refused before the person sees it. `person` is the
@@ -897,7 +1162,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | RepoSet() | RepoRemove() | PublishSetup():
+        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -915,12 +1180,26 @@ def expected(action: Action, person: str | None = None):
         case NewTicketSequence() | QuickStart():
             intent = action.intent()
             kind = intent.get("ticket_type", "chore")
-            return lambda ev: one(ev, "ticket.created", title=intent["title"], ticket_type=kind) and (
-                person is None or ev[0].get("owner") == person
+            return lambda ev: (
+                one(ev, "ticket.created", title=intent["title"], ticket_type=kind)
+                and (person is None or ev[0].get("owner") == person)
             )
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
             return lambda ev: len(ev) == 1 and ev[0].get("type") in ("ticket.updated", "people.changed")
+        case AcceptCriterion():
+            return lambda ev: (
+                one(ev, "artifact.added", kind="feedback", ac=action.ac)
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "ac", "label"})
+                and re.fullmatch(rf"accepted {action.ac} [0-9a-f]{{16}}", str(ev[0].get("label"))) is not None
+            )
+        case WithdrawAcceptance():
+            return lambda ev: (
+                one(ev, "artifact.replaced", kind="feedback", label=f"withdrawn {action.ac}")
+                and _acceptance_event_ok(ev[0], person, {"name", "kind", "sha256", "bytes", "label", "replaces"})
+            )
+        case MarkTaskDone():
+            return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1018,10 +1297,16 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
-    if isinstance(body, AddonDisable):
-        from .addon_switches import check_off
+    if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
+        raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
+    addon_base_ = None
+    if isinstance(body, AddonDisable | AddonGrant):
+        from .addon_switches import addon_base, check_off
 
-        check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        if isinstance(body, AddonDisable):
+            check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
+        # the latest switch of this add-on is part of the intent: on, off, on is three requests
+        addon_base_ = addon_base(link, body.name, isinstance(body, AddonGrant))
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
@@ -1036,6 +1321,8 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = gate_base(data, gate(body))
         elif isinstance(body, Answer):
             base = question_base(data, body.question)
+    if addon_base_ is not None:
+        base = addon_base_
     person = link.welcome["peer"]["person"]
     meta = None
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
@@ -1045,6 +1332,18 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": len(sequence.steps(intent)), "digest": digest, "intent": intent}
         base = {"sequence": digest}  # the whole intent is part of the intent's idem
+    if isinstance(body, AddonEnable):
+        from orch.host import sequence
+
+        from .addon_switches import addon_base
+
+        if link.welcome.get("ops", {}).get("addon.preview") != 1:
+            raise fail("op.unsupported", "This host does not serve addon.preview yet.", exit=1)
+        switch_base = addon_base(link, body.name, True)
+        intent = body.intent(gateway.call(ws, "addon.preview", {"name": body.name})["grant"])
+        digest = sequence.digest_of(ws, person, intent)
+        meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
+        base = {"sequence": digest, "addon": switch_base}
     return Plan(op, args, host_files(body), base, person, meta)
 
 
@@ -1148,6 +1447,10 @@ def read_done(human, ws: str, rid: str) -> HostError:
     return done_error(prepared, row)
 
 
+#: how many sequence intents (a display aid) are kept per person
+INTENTS_PER_PERSON = 64
+
+
 class Handoffs:
     """What this process remembers. **None of it is what holds "one intent, one request"**: the host's idem record does
     (`intent.py`). This is UI convenience and a quota:
@@ -1163,8 +1466,9 @@ class Handoffs:
 
     def __init__(self, clock=time.monotonic):
         #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
-        #: signer drives in the person's terminal). Not a guard of anything.
-        self.intents: dict[str, dict] = {}
+        #: signer drives in the person's terminal). Not a guard of anything. Kept per person, so
+        #: another person's burst of prepares cannot evict mine.
+        self.intents: dict[str, dict[str, dict]] = {}
         self.clock = clock
         self.lock = threading.Lock()
         self.owned: dict[tuple[str, str], dict[str, float]] = {}  # (person, workspace) -> request id -> deadline
@@ -1176,6 +1480,18 @@ class Handoffs:
         self.unknown: set[str] = set()  # request ids with a sign outcome nobody knows yet
 
     # -- ownership: per person and workspace -----------------------------------------------------------
+    def note_intent(self, person: str, request_id: str, intent: dict) -> None:
+        with self.lock:
+            mine = self.intents.setdefault(person, {})
+            mine.pop(request_id, None)
+            mine[request_id] = intent
+            while len(mine) > INTENTS_PER_PERSON:
+                mine.pop(next(iter(mine)))
+
+    def intent_of(self, person: str, request_id: str) -> dict | None:
+        with self.lock:
+            return self.intents.get(person, {}).get(request_id)
+
     def own(self, person: str, ws: str, request_id: str, ttl: float) -> None:
         with self.lock:
             mine = self.owned.setdefault((person, ws), {})
@@ -1309,6 +1625,31 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.person_of = person_of
 
+    checks_lock = threading.Lock()
+    checks: dict[str, list[float]] = {}  # per bearer token: times of its recent folder checks
+
+    @app.post("/api/w/{ws}/repos/check")
+    def check_repo(body: RepoSet, request: Request, ws: str = Depends(workspace)):
+        """The host's own look at a repository to add, asked from the form before it closes, so a refusal (home folder,
+        not a git folder, inside orch's data, missing, not an owner) stays next to the field. A dry run of the same
+        prepare the hand-off makes: nothing is stored, no request exists, nothing is signed. The same check runs again
+        when the change is really prepared."""
+        gateway.enabled(ws)
+        # At most 20 folder checks a minute per session: this route says what exists on this computer.
+        now = time.monotonic()
+        with checks_lock:  # read, check, append and clean up as one step: concurrent requests cannot overshoot
+            recent = [t for t in checks.get(request.state.token, []) if t > now - 60]
+            if len(recent) >= 20:
+                checks[request.state.token] = recent
+                raise fail("rate.limited")
+            checks[request.state.token] = [*recent, now]
+            for k in [k for k, v in checks.items() if not v or v[-1] <= now - 60]:
+                del checks[k]  # tokens with no recent check are dropped: the dict stays small
+        # The host decides first (it checks the role, then the folder); the local look is not run before it.
+        op, args = host_call(body)
+        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        return {"ok": True}
+
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
@@ -1325,6 +1666,13 @@ def register(app: FastAPI, gateway: Gateway):
             ):  # the host's path check, before any request exists (plain refusal in the dialog)
                 gateway.check_repo_path(ws, body.path)
             planned = plan(gateway, ws, body)
+            if planned.sequence and planned.sequence["intent"].get("images"):
+                raise fail(
+                    "invalid.input",
+                    "Pictures can only be signed with one click in the dashboard. Switch on click to sign "
+                    "(Settings) or take the pictures out of the text.",
+                    exit=1,
+                )
             op = planned.op
             # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
             # which needs `runner` so the signer sets label runner (the click path sets it itself).
@@ -1351,6 +1699,7 @@ def register(app: FastAPI, gateway: Gateway):
                 expect_op=op,
                 expect_key=getattr(body, "key", None),
                 expect_events=expected(body, planned.person),
+                expect_material=expected_material(body),
             )
         except BaseException:
             handoffs.release(token)
@@ -1360,9 +1709,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise read_done(human, ws, response["id"])
         handoffs.own(planned.person, ws, response["id"], TTL)
         if planned.sequence:
-            handoffs.intents[response["id"]] = planned.sequence["intent"]
-            while len(handoffs.intents) > 64:
-                handoffs.intents.pop(next(iter(handoffs.intents)))
+            handoffs.note_intent(planned.person, response["id"], planned.sequence["intent"])
         if response["state"] in ("prepared", "bound"):
             handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
         else:
@@ -1383,7 +1730,7 @@ def register(app: FastAPI, gateway: Gateway):
         if rows[0]["state"] not in ("prepared", "bound"):
             handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
         out = adapters.handoff.state(rows[0])
-        intent = handoffs.intents.get(request_id)
+        intent = handoffs.intent_of(app.state.person_of(ws), request_id)
         if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
             out["progress"] = sequence_progress(
                 gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")

@@ -56,8 +56,36 @@ function whoOf(e: OrchEvent): Who {
   return e.actor.kind
 }
 
-export function eventDetail(e: OrchEvent, v: Viewer): string {
+const INVALIDATED_GATE: Record<string, string> = { requirements: 'requirements', plan: 'plan', verify: 'verification', code: 'code review' }
+/** Why an approval was cancelled, from the event's own `cause` (core's closed set); null when the host did not send it. */
+const INVALIDATED_CAUSE: Record<string, string> = {
+  content_changed: 'the ticket changed after it was approved',
+  new_commits: 'new commits were added to the ticket\u2019s branch',
+  policy_changed: 'the workspace\u2019s approval rules changed',
+  member_changed: 'a person\u2019s role or access changed',
+  device_compromised: 'a device was marked as lost or compromised',
+  restored: 'the workspace was restored from a backup',
+  mandate_revoked: 'a standing approval was withdrawn',
+  no_token: 'the approval could no longer be checked',
+  no_visible_person: 'nobody who may approve can see this ticket',
+}
+export function invalidatedText(e: OrchEvent, changed?: string[]): string | null {
+  if (e.type !== 'gate.invalidated' || typeof e.cause !== 'string') return null
+  const gate = INVALIDATED_GATE[String(e.gate)] ?? 'an'
+  const why = INVALIDATED_CAUSE[e.cause] ?? 'something it depends on changed'
+  const what = e.cause === 'content_changed' && changed?.length ? ` (changed: ${changed.join(', ')})` : ''
+  return `The approval of the ${gate === 'an' ? 'step' : gate} was cancelled because ${why}${what}. It needs approving again.`
+}
+
+export function eventDetail(e: OrchEvent, v: Viewer, changed?: string[]): string {
+  const why = invalidatedText(e, changed)
+  if (why) return why
   // A real host serves each event with its one-line text and no payload fields: show that, never a guess from fields.
+  const manual = e.manual_acceptance as { kind?: unknown; ac?: unknown } | undefined
+  if (manual && e.actor.kind === 'person' && typeof manual.ac === 'string' && /^AC[1-9][0-9]*$/.test(manual.ac)) {
+    if (manual.kind === 'accepted') return `accepted ${manual.ac} manually`
+    if (manual.kind === 'withdrawn') return `withdrew the manual acceptance of ${manual.ac}`
+  }
   if (typeof e.summary === 'string') return e.summary ? `${e.type}: ${e.summary}` : e.type
   const s = (k: string) => String(e[k] ?? '')
   switch (e.type) {
@@ -74,6 +102,7 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
     case 'lease.taken':
       return `Lease on ${s('task')} (${e.actor.kind === 'agent' ? e.actor.session : ''})`
     case 'task.done': {
+      if (!e.receipt) return 'Marked done, no receipt'
       const r = e.receipt as { exit: number; ms: number; commit?: string }
       return `${s('task')} done, receipt exit ${r.exit} in ${r.ms} ms${r.commit ? ` at ${r.commit}` : ''}`
     }
@@ -159,6 +188,9 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
       ) : (
         <ol className="relative space-y-0 border-l border-border pl-5" aria-label="Events, newest first">
           {shown.map((e) => {
+            // The edit just before a cancelled approval says what changed (ticket.updated lists the fields it set).
+            const before = events.filter((x) => x.seq < e.seq).at(-1)
+            const changed = before?.type === 'ticket.updated' && Array.isArray(before.paths) ? (before.paths as unknown[]).map(String) : undefined
             const who = whoOf(e)
             const addon = addonOf(e)
             return (
@@ -174,7 +206,7 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
                   <SigStatus e={e} />
                 </div>
                 <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-text-muted">
-                  {eventDetail(e, viewer)}
+                  {eventDetail(e, viewer, changed)}
                   {/* A Snip is cut by the host at 1 KiB with nothing appended; the full text is not readable yet. */}
                   {Array.isArray(e.truncated) && e.truncated.length > 0 && <span className="text-text-faint"> (shortened by the host)</span>}
                 </p>

@@ -74,6 +74,7 @@ const CODE_TEXT: Record<string, string> = {
   'worktree.branch_in_use': 'That branch is already used by another ticket’s worktree.',
   'worktree.unpinned': 'The folder was made but orch could not take it over safely. Remove it and create it again.',
   'runner.disabled': 'Running commands from the dashboard is switched off for this workspace on this computer, or the Worktrees add-on is not switched on.',
+  'runner.stale': 'The helper that runs git is from an older orch version. Restart it in your terminal: orch host enable.',
   'runner.unavailable': 'The helper that runs git is not connected right now. Try again in a moment.',
   'rate.limited': 'Too many worktree changes in a minute. Wait a little and try again.',
   'lock.busy': 'Another worktree change is running on this repository. Try again in a moment.',

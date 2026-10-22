@@ -66,6 +66,8 @@ class Capture:
     #: batch 11 (finding 9): the checked ``sequence`` meta of ``human.prepare`` (one step of a signer's sequence)
     sequence: dict[str, Any] | None = None
 
+    statement: str | None = None
+
     @property
     def actor(self) -> dict[str, Any]:
         """The actor the model judges the unsigned events with."""

@@ -1,0 +1,6 @@
+ok describe widgets.types
+List the widget types you may write in a ticket (charts, tables, checks) with a working example of each.
+usage: orch widgets types
+who: read · emits: -
+errors:
+out: ok widgets.types {count} / next: {next}

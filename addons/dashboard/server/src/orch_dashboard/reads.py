@@ -6,6 +6,7 @@ model that forbids extras, and the host op and its arguments are fixed by the ro
 
 import base64
 import hashlib
+import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Query
@@ -25,7 +26,7 @@ MAX_PAGES = 30  # a page may hold fewer rows than asked (rows drop out between p
 RECENT = 6  # Today's "Recently" shows this many activity rows
 RECENT_PAGES = 5
 CHUNK = 786432
-MAX_ARTIFACT = 3 * CHUNK
+MAX_ARTIFACT = 7 * CHUNK  # 5.25 MiB: a pasted screenshot (at most 5 MiB) is read whole
 
 
 class TicketsQuery(BaseModel):
@@ -106,6 +107,38 @@ def recent_activity(gateway: Gateway, ws: str, want: int = RECENT):
     return items[:want]
 
 
+PASTE_NAME = re.compile(r"^paste-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.(png|webp)$")
+
+
+def pasted_by_person(gateway: Gateway, ws: str, key: str, name: str, digest: str) -> bool:
+    """R3 part B (lead decision): a picture is drawn inline only when a PERSON signed its `artifact.added` as a
+    screenshot with a paste name. An agent's image stays a placeholder with a link to the artifact."""
+    if not PASTE_NAME.fullmatch(name):
+        return False
+    data = gateway.call(ws, "ticket.get", {"ref": key})
+    art = next((a for a in data.get("artifacts") or [] if a.get("name") == name), None)
+    return bool(
+        art
+        and art.get("kind") == "screenshot"
+        and (art.get("by") or {}).get("kind") == "person"
+        and art.get("digest") == digest  # the bytes read are the ones the ticket names for THIS signed artifact
+    )
+
+
+def picture(data: bytes) -> dict | None:
+    from orch.host import imagecheck
+
+    try:
+        kind = imagecheck.check(data)
+    except imagecheck.ImageRefused:
+        return None
+    return {
+        "type": "png" if kind == "image/png" else "webp",
+        "b64": base64.b64encode(data).decode(),
+        "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+    }
+
+
 def register(app: FastAPI, gateway: Gateway):
     def viewer(ws):
         return gateway.link(ws).welcome["peer"]["person"]
@@ -154,7 +187,10 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/tickets/{key}/events")
     def ticket_events(key: Key, query: Annotated[EventsQuery, Query()], ws: str = Depends(workspace)):
         data = gateway.call(ws, "ticket.get", {"ref": key, "log_since": query.since, "log_limit": query.limit})
-        return adapters.events(data)
+        from .adapters.activity import acceptance_authority
+
+        roster = gateway.call(ws, "member.list")
+        return adapters.events(data, acceptance_authority(roster, data["doc"]))
 
     @app.get("/api/w/{ws}/tickets/{key}/changes")
     def ticket_changes(key: Key, query: Annotated[ChangesQuery, Query()], ws: str = Depends(workspace)):
@@ -195,4 +231,7 @@ def register(app: FastAPI, gateway: Gateway):
             "truncated": not complete,
             "binary": binary,
             "text": text,
+            # R3 part B: a screenshot pasted into the ticket. Only a complete, verified PNG/WebP that passes core's
+            # header check is offered; the page hashes the bytes itself before showing them, and only ever as an <img>.
+            "image": picture(data) if verified and pasted_by_person(gateway, ws, key, name, digest) else None,
         }

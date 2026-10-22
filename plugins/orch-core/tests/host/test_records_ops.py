@@ -76,7 +76,7 @@ def test_snapshot_names_every_record_and_never_state(w):
     assert not any(p.startswith(".state") for p in paths)
     entries = [rec.Entry(f["path"], f["size"], f["sha256"]) for f in files]
     assert data["manifest"] == rec.manifest_id(w.wid, data["ws_seq"], data["heads"], entries)
-    root = w.lab.root
+    root = os.path.join(w.lab.root, ".orch")  # record paths are relative to the store
     for f in files:
         with open(os.path.join(root, f["path"]), "rb") as fh:
             assert len(fh.read()) >= f["size"]
@@ -114,7 +114,7 @@ def test_snapshot_refuses_a_symlinked_record(w, tmp_path):
     w.ticket("one")
     target = tmp_path / "elsewhere"
     target.write_text("x")
-    os.symlink(target, os.path.join(w.lab.root, "AGENTS.orch.md"))
+    os.symlink(target, os.path.join(w.lab.root, ".orch", "AGENTS.orch.md"))
     assert err(w.client().req("records.snapshot", {})) == "records.unsafe_tree"
 
 

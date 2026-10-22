@@ -71,6 +71,7 @@ export interface TermPreview {
 }
 
 export interface TermArgs {
+  cwd?: { kind: 'workspace' | 'repo' | 'worktree'; repo?: string; ticket?: string }
   harness?: 'shell'
   ticket?: string
   label?: string
@@ -144,8 +145,49 @@ export function mergeRunItems(client: QueryClient, ws: string, items: RunItem[])
 /** "Output no longer kept": an ended run whose ring is gone (or was never kept). The dock does not try to attach. */
 export function outputGone(run: Run, now = Date.now()): boolean {
   if (run.state === 'running' || run.state === 'starting') return false
-  return run.replay_until === null || Date.parse(run.replay_until) <= now
+  return run.replay_until === null || Date.parse(run.replay_until) <= now || noReplay(run.run)
+}
+
+/**
+ * The host lists an ended run's output as kept for an hour, but the runner may not have it (it restarted, or the ring is
+ * gone). The first failed attach of an ended run is remembered for this browser tab, so no later page load asks again
+ * (every ask is a logged 503/4xx in the console).
+ */
+const NO_REPLAY = 'orch.noreplay.'
+export function noReplay(run: string): boolean {
+  try {
+    return sessionStorage.getItem(NO_REPLAY + run) === '1'
+  } catch {
+    return false
+  }
+}
+export function markNoReplay(run: string): void {
+  try {
+    sessionStorage.setItem(NO_REPLAY + run, '1')
+  } catch {
+    /* private window: the next page load asks once more */
+  }
 }
 
 /** "Some processes may still be running" after a stop whose cleanup was not complete. */
+/** M-5: why an ended run ended, in plain words (null while it runs or when the host gave nothing). */
+export function exitText(run: Pick<Run, 'state' | 'exit' | 'kind'>): string | null {
+  if (run.state === 'running' || run.state === 'starting') return null
+  const what = run.kind === 'agent' ? 'The agent' : 'The terminal'
+  const e = run.exit
+  if (!e) return run.state === 'lost' ? `${what} was lost: the runner no longer knows it.` : null
+  switch (e.reason) {
+    case 'spawn_failed': return `${what} could not be started. Is its program installed on this Mac?`
+    case 'stopped': return `${what} was stopped.`
+    case 'runner_restarted': return `${what} ended because the agent runner restarted.`
+    case 'lost': return `${what} was lost: the runner no longer knows it.`
+    default:
+      if (e.signal) return `${what} ended (${e.signal}).`
+      if (e.code === 0) return `${what} finished.`
+      if (e.code === 127) return `${what} ended at once: its program was not found on this Mac (code 127).`
+      if (e.code != null) return `${what} ended with an error (code ${e.code}).`
+      return `${what} ended.`
+  }
+}
+
 export const cleanupDoubt = (cleanup: RunExit['cleanup'] | undefined) => cleanup === 'incomplete' || cleanup === 'unknown'

@@ -9,6 +9,7 @@ def env(tmp_path):
     yield e
     if e.store is not None:
         e.store.close()
+        e.store.fs.close()  # the root fd too: a worker runs hundreds of these (FD_SETSIZE)
 
 
 @pytest.fixture

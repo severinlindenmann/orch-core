@@ -123,9 +123,13 @@ def _guard(open_store: Callable[[], Any]) -> Any | None:
 
 def workspace_records(workspace: Any, default: MemoryRecords) -> MemoryRecords:
     """``FileRecords`` in the workspace's ``.state/sessions``, or ``default`` (process memory) outside a workspace."""
+    from orch.ops.errors import OrchError
     from orch.ops.runtime import records_dir
 
-    layout = workspace.layout
+    try:
+        layout = workspace.layout
+    except OrchError:  # an unusable layout (two stores, an old root store): the command itself answers with the reason
+        return default
     if layout is None:
         return default
 

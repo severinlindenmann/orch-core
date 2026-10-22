@@ -111,7 +111,8 @@ def next_hint(view: Any, session: str | None = None) -> str:
         g = open_gate(view)
         if g is None:
             return "orch submit"
-        return fill_hint(view, g) or f'orch ask "approve the {g} gate?"'  # an incomplete gate cannot be approved yet
+        # an incomplete gate cannot be approved yet; a complete one is approved by the person in Approvals: no question
+        return fill_hint(view, g) or "orch wait"
     g = open_gate(view)
     if (
         g is not None
@@ -183,7 +184,17 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     if t.startswith("task."):
         detail = e["task"]
     elif t.startswith("artifact."):
+        from orch.model.accept import parse_label, parse_withdraw_label
+
         detail = e["name"]
+        if e.get("kind") == "feedback" and a["kind"] == "person":
+            parsed = parse_label(e.get("label"))
+            if parsed is not None and e.get("ac") == parsed[0]:
+                detail = f"accepted {parsed[0]} manually"
+            elif t == "artifact.replaced" and "ac" not in e:
+                withdrawn = parse_withdraw_label(e.get("label"))
+                if withdrawn:
+                    detail = f"withdrew the manual acceptance of {withdrawn}"
     elif t == "log.added":
         detail = short(e["text"], 40)
     elif t == "question.asked":

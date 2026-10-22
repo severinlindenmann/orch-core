@@ -29,9 +29,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "host.required": (3, False),
     "lock.busy": (9, True),
     "control.rolled_back": (9, True),
-    "migrate.refused": (3, False),
-    "migrate.stuck": (3, False),
-    "migrate.failed": (1, False),
     "outcome.unknown": (9, True),
     "outcome.unknown_idem": (2, False),
     "idem.required": (5, False),
@@ -77,6 +74,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     # H11a, the runner (addons design §9.2)
     "runner.unavailable": (9, True),
     "runner.disabled": (3, False),
+    "runner.stale": (3, False),  # the runner runs another release than the host: orch host enable restarts it
     "launch.cwd_changed": (3, False),
     "harness.not_found": (3, False),
     "run.spawn_failed": (1, False),

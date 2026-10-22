@@ -26,10 +26,12 @@ def ts(epoch: int) -> str:
 
 
 class Env:
-    def __init__(self, tmp_path: Path, *, clock_start: int = T0) -> None:
+    def __init__(self, tmp_path: Path, *, clock_start: int = T0, ws_id: str | None = None) -> None:
+        self.ws_id = ws_id or WS  # a second workspace in one test (the publish isolation e2e) needs another id
         self.tmp = tmp_path
         self.root = tmp_path / "workspace"
         self.root.mkdir(parents=True, exist_ok=True)  # Store.open makes no project directory for a reader
+        self.store_dir = self.root / ".orch"
         self.host_state = tmp_path / "host-state"
         self.clock = [clock_start]
         self.host_backend = FileBackend(tmp_path / "wsk")
@@ -47,7 +49,8 @@ class Env:
         kw.setdefault("clock", lambda: self.clock[0])
         kw.setdefault("workspace_name", "Acme")
         kw.setdefault("load", "all")  # the tests of the lazy path say load="lazy"
-        self.store = Store.open(self.root, expected_workspace_id=WS, **kw)
+        kw.setdefault("create", not self.store_dir.exists())  # a new workspace makes its .orch
+        self.store = Store.open(self.root, expected_workspace_id=self.ws_id, **kw)
         return self.store
 
     def other(self, **kw: Any) -> Store:
@@ -56,7 +59,7 @@ class Env:
         kw.setdefault("host_state_dir", self.host_state)
         kw.setdefault("clock", lambda: self.clock[0])
         kw.setdefault("load", "all")
-        return Store.open(self.root, expected_workspace_id=WS, **kw)
+        return Store.open(self.root, expected_workspace_id=self.ws_id, **kw)
 
     # -- person events
     def person_event(self, p: Person, log: str, typ: str, **payload: Any) -> dict[str, Any]:
@@ -73,13 +76,13 @@ class Env:
             "based_on": s.log_head(log),
             **payload,
         }
-        e["sig"] = crypto.b64u(p.dk_sign(canon.person_signing_bytes(WS, log, e)))
+        e["sig"] = crypto.b64u(p.dk_sign(canon.person_signing_bytes(self.ws_id, log, e)))
         return e
 
     def genesis(self) -> dict[str, Any]:
         o = self.owner
         deleg = certs.make_delegation(
-            o.pk_pub, o.pk_sign, workspace_id=WS, wsk_pub=self.wsk_pub, client_hosted=False, issued_ms=T0 * 1000
+            o.pk_pub, o.pk_sign, workspace_id=self.ws_id, wsk_pub=self.wsk_pub, client_hosted=False, issued_ms=T0 * 1000
         )
         e: dict[str, Any] = {
             "v": 2,
@@ -90,7 +93,7 @@ class Env:
             "hash_v": 1,
             "roster_v": 0,
             "based_on": None,
-            "workspace_id": WS,
+            "workspace_id": self.ws_id,
             "prefix": "DEMO",
             "host_id": "h_" + new_ulid(),
             "wsk_pub": crypto.b64u(self.wsk_pub),
@@ -98,7 +101,7 @@ class Env:
             "delegation": deleg,
             "device_cert": o.cert(created=T0 * 1000),
         }
-        e["sig"] = crypto.b64u(o.dk_sign(canon.person_signing_bytes(WS, "workspace", e)))
+        e["sig"] = crypto.b64u(o.dk_sign(canon.person_signing_bytes(self.ws_id, "workspace", e)))
         return e
 
     def grant_event(self, p: Person | None = None, hours: int = 8) -> dict[str, Any]:
@@ -247,10 +250,10 @@ class Env:
 
     # -- files
     def path(self, uid: str, name: str) -> Path:
-        return self.root / "tickets" / uid / name
+        return self.store_dir / "tickets" / uid / name
 
     def read_events(self, log: str) -> list[dict[str, Any]]:
-        p = self.root / ("events/workspace.jsonl" if log == "workspace" else f"tickets/{log}/events.jsonl")
+        p = self.store_dir / ("events/workspace.jsonl" if log == "workspace" else f"tickets/{log}/events.jsonl")
         return [canon.parse_event_line(line + b"\n") for line in p.read_bytes().splitlines()]
 
 

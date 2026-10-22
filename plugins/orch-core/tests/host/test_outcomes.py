@@ -57,7 +57,7 @@ class Served:
 
     def tickets(self):
         """The ticket logs in the workspace root (read from disk: independent of the host's store)."""
-        tickets = os.path.join(self.lab.root, "tickets")
+        tickets = os.path.join(self.lab.root, ".orch", "tickets")
         return sorted(os.listdir(tickets)) if os.path.isdir(tickets) else []
 
     def close(self):

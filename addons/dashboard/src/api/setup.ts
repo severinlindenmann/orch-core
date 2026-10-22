@@ -5,7 +5,7 @@ export interface SetupState {
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
-  suggested: { name: string; prefix: string }
+  suggested: { name: string; prefix: string; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string
     title: string
@@ -20,6 +20,8 @@ export interface SetupState {
   click_reason: string
   agent_hours: number[]
   relay: { available: boolean; enabled: boolean }
+  /** The folder is (or lies in) a git working copy; absent in older cores (nothing is offered then). */
+  git?: { repo: boolean }
   missing: string[]
   /** `missing` in words, same order (core's wording; the page shows these, never the ids) */
   missing_words?: string[]
@@ -46,6 +48,8 @@ export interface Profile {
   agent_hours: number
   agent_grant: boolean
   relay: boolean
+  /** Make the folder a git repository (only with Worktrees, only where there is none). */
+  git_init?: boolean
 }
 export interface Secrets {
   passphrase: string | null

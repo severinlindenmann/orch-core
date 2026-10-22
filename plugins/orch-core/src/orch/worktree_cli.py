@@ -3,33 +3,42 @@ for a workspace no host serves.
 
     orch worktree list   [TICKET] [--check] [--json]
     orch worktree create TICKET [--repo NAME] [--json]
-    orch worktree remove TICKET [--repo NAME] [--force] [--json]
+    orch worktree remove TICKET [--repo NAME] [--discard-untracked=TOKEN | --force] [--json]
 
 The same safety contract as the host: one worktree per (ticket, linked repo) at ``<repo path>.worktrees/<WS8>-<KEY>`` on
 the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one). git runs only through the runner's
-own helpers in :mod:`orch.runner.wtgit` (:func:`~orch.runner.wtgit.run_git` for add and remove,
-:func:`~orch.runner.wtgit.read_git` for rev-parse and status), each behind the gate of :mod:`orch.gitsafe`: orch never
+own helper :func:`~orch.runner.wtgit.run_git` (add and remove), behind the gate of :mod:`orch.gitsafe`: orch never
 runs git against a repository whose local/worktree config or attributes could make git execute a program or read
 config from elsewhere (such a repo is ``observe.unavailable``, git is not started); hooks, fsmonitor and network are
 off on every command, the environment is built from scratch, 30 s, no symlink followed under ``<repo>.worktrees``.
-Nothing here calls ``orch.store.observe``. The new worktree is pinned in process
+Revisions, ``HEAD`` and the clean check are read with orch's own reader (:data:`orch.gitread.local.READER`, #565: no
+git process), and git's ``worktree remove`` always runs ``--force`` after that check.
+The new worktree is pinned in process
 (:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW`` walks, git's layout checked exactly) and registered with a new
 generation in ``<state>/hosts/<ws>/git-pins.json``, the file a host reads when the workspace is registered later.
-A clean tree is required to remove (``--force`` skips it; in direct mode the person is at the terminal and could
-``rm -rf`` it anyway); the branch is never deleted.
+**Removal never depends on ignore rules** (#583 round 3): every file that is not tracked-and-unchanged blocks
+``remove``, ignored or not (``node_modules``, ``.venv``, build output), listed with paths and, for untracked
+directories, their file count and size. ``--discard-untracked=TOKEN`` deletes exactly that untracked set: the
+refusal prints the set with a token (a fingerprint of the set); the command deletes only when the set it finds now has
+that token, else it refuses and prints the new set with the new token (#723: what is deleted is what the person saw).
+It prints the set, checks the worktree again right before deleting and refuses when anything changed in between;
+modified tracked files still block it. ``--force`` skips the check (in direct mode the person is at the terminal and
+could ``rm -rf``
+it anyway); the branch is never deleted.
 
 The ownership lock is held **shared** for the whole command and the registration is checked under it, so the tool never
 works underneath a host (``host.required``), as the records tool (:mod:`orch.records.direct`). ``create`` and
 ``remove`` also hold an **exclusive** per-workspace ``flock`` (``<state>/hosts/<ws>/worktrees.lock``, 10 s, then
 ``lock.busy``) from loading the pin file through git and the write of the registration, so two direct commands never
 lose each other's registrations (Codex #439). ``list --check`` observes as the host does: the pins verified again
-(``moved``), ``HEAD`` read from the pinned gitdir (``stale_branch``), the tree through the gated reader. Windows answers
+(``moved``), ``HEAD`` read from the pinned gitdir (``stale_branch``), the tree through the reader. Windows answers
 ``unsupported.platform`` (exit 3): no reparse-point-safe resolution yet. A call under ``ORCH_GRANT`` is refused
 (``op.not_allowed``): agents ask the host's ``worktree.*`` ops, never this person-side tool.
 """
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -40,14 +49,15 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch import gitsafe
-from orch.runner.wtgit import read_git, tree_dirty
+from orch.gitread.errors import Unavailable
+from orch.gitread.local import READER
 
 __all__ = ["main"]
 
 LOCK_WAIT = 10.0
 _USAGE = (
     "usage: orch worktree {list [TICKET] [--check] | create TICKET [--repo NAME] | remove TICKET [--repo NAME] "
-    "[--force]} [--json]"
+    "[--discard-untracked=TOKEN | --force]} [--json]"
 )
 
 
@@ -65,7 +75,7 @@ def _parse(argv: Sequence[str]) -> tuple[str, dict[str, Any]]:
     if not argv or argv[0] not in ("list", "create", "remove"):
         raise WtError("invalid.input", _USAGE, 2)
     cmd, rest = argv[0], list(argv[1:])
-    a: dict[str, Any] = {"json": False, "check": False, "force": False, "repo": None, "ticket": None}
+    a: dict[str, Any] = {"json": False, "check": False, "force": False, "discard": None, "repo": None, "ticket": None}
     it = iter(rest)
     for tok in it:
         if tok == "--json":
@@ -74,6 +84,8 @@ def _parse(argv: Sequence[str]) -> tuple[str, dict[str, Any]]:
             a["check"] = True
         elif tok == "--force" and cmd == "remove":
             a["force"] = True
+        elif (tok == "--discard-untracked" or tok.startswith("--discard-untracked=")) and cmd == "remove":
+            a["discard"] = tok.partition("=")[2]  # "": asked without a token (refused with the list and its token)
         elif tok == "--repo" and cmd != "list":
             a["repo"] = next(it, None)
             if not a["repo"]:
@@ -238,9 +250,20 @@ class Direct:
         return {k: v for k, v in self.env.items() if k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME")}
 
     def _rev(self, repo: str, rev: str) -> str | None:
-        """A commit id through the hardened reader (never ``observe.git``: the repo's own config must run nothing)."""
-        got = read_git(repo, "commit", self._own(), rev=rev)
-        return got if got and len(got) in (40, 64) else None
+        """The commit ``rev`` (``HEAD`` or ``refs/heads/<name>``) names, ``None`` when there is none. Read with orch's
+        own reader (#565: no git process, so the repo's own config can run nothing); a repository the reader refuses
+        is ``observe.unavailable``, never "no such branch"."""
+        try:
+            return READER.head(repo)[1] if rev == "HEAD" else READER.commit(repo, rev)
+        except Unavailable as exc:
+            raise WtError("observe.unavailable", exc.reason[:300]) from None
+
+    def _dirty(self, repo: str) -> str | None:
+        """Uncommitted work in the worktree (``""``: clean), ``None`` when it cannot be told: the reader, never git."""
+        try:
+            return READER.dirty(repo, self.env)
+        except Unavailable:
+            return None
 
     def _git(self, args: dict[str, Any]) -> None:
         from orch.runner.supervise import SpawnError
@@ -279,7 +302,7 @@ class Direct:
     def _observe(self, view: Any, repo: str, slot: dict[str, Any]) -> dict[str, Any]:
         """One check, as the host's ``worktree.list {check}``: the pins verified again in process (a re-pointed ``.git``
         file or a swapped directory is ``moved``), ``HEAD`` read from the pinned gitdir without git (another branch, or
-        a relinked ticket, is ``stale_branch``), the tree through the gated reader."""
+        a relinked ticket, is ``stale_branch``), the tree through the reader (no git process, #565)."""
         from orch.gitread.errors import Unavailable
         from orch.gitread.fs import RepoPins, open_pin
         from orch.gitread.pinning import verify_worktree_pins
@@ -310,9 +333,9 @@ class Direct:
             out["state"] = "stale_branch"
         try:
             out["head"] = self._rev(reg["path"], "HEAD")
-            d = tree_dirty(reg["path"], self._own())
-        except gitsafe.Unsafe:
-            return out  # the repo's own config could run a program: git is not started, nothing is known
+        except WtError:
+            return out  # the reader refuses the repository: nothing is known
+        d = self._dirty(reg["path"])
         out["dirty"] = None if d is None else len([ln for ln in d.splitlines() if ln])
         return out
 
@@ -386,24 +409,95 @@ class Direct:
             raise WtError("worktree.unpinned", f"the worktree was created but could not be pinned: {reason}"[:400])
         return self.row(view, repo, pins.worktree(view.uid, repo))
 
-    def remove(self, ref: str, repo_arg: str | None, force: bool) -> dict[str, bool]:
+    def remove(
+        self, ref: str, repo_arg: str | None, force: bool, discard: str | None = None, say: Any = None
+    ) -> dict[str, Any]:
         self._gate()
         view = self._ticket(ref)
         repo = self._repo_of(view, repo_arg)
         with self.mutating():
-            return self._remove(view, repo, force)
+            return self._remove(view, repo, force, discard, say or (lambda text: None))
 
-    def _remove(self, view: Any, repo: str, force: bool) -> dict[str, bool]:
+    def _removal_check(self, reg: dict[str, Any]) -> dict[str, Any]:
+        """The removal check of a worktree (#583 round 3): the reader, NO ignore rule (an ignored file blocks too),
+        untracked directories whole with their sizes, and the fingerprint of the untracked set; the registered pins
+        when there are some. Unknown is ``observe.unavailable``, never clean."""
+        from orch.gitread.fs import RepoPins
+
+        try:
+            pins = RepoPins.from_json(reg["pins"]) if reg.get("pins") else None
+            return READER.tree_check(reg["path"], self.env, pins=pins, removal=True)
+        except Unavailable as exc:  # a checked-out submodule, an index it cannot read, its time limit, ...
+            raise WtError("observe.unavailable", f"the worktree cannot be checked: {exc.reason}"[:300]) from None
+
+    @staticmethod
+    def _entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        from orch.gitread.treejob import escape_path
+
+        sizes = {e["path_b64"]: (e["bytes"], e["files"]) for e in raw.get("sizes", [])}
+        out = []
+        for c in raw["changed"]:
+            e = {"why": c["why"], "path": escape_path(base64.b64decode(c["path_b64"]), c["cut"])}
+            if c["path_b64"] in sizes:
+                e["bytes"], e["files"] = sizes[c["path_b64"]]
+            out.append(e)
+        return out
+
+    @staticmethod
+    def _lines(entries: list[dict[str, Any]], limit: int = 50) -> list[str]:
+        from orch.gitread.treejob import render
+
+        return render({"changed": entries, "more": len(entries) > limit}, limit).splitlines()
+
+    def _token(self, raw: dict[str, Any]) -> str:
+        """The token of an untracked set (#723): a fingerprint of what the listing shows (paths, kinds, sizes) and of
+        the reader's fingerprint of the whole set; a person who passes it has read this set."""
+        import hashlib
+
+        doc = json.dumps([self._entries(raw), raw.get("fingerprint"), raw["changed"]], sort_keys=True)
+        return hashlib.sha256(doc.encode()).hexdigest()[:12]
+
+    def _between(self) -> None:
+        """Between the listing a discard prints and the re-check right before it deletes (a test hook)."""
+
+    def _remove(self, view: Any, repo: str, force: bool, discard: str | None, say: Any) -> dict[str, Any]:
         pins = self.pins()
         slot = pins.worktree(view.uid, repo)
         reg = slot["reg"]
         if reg is None:
             raise WtError("worktree.none", f"{view.key} has no worktree for {repo}")
+        discarded: list[str] = []
         if os.path.lexists(reg["path"]) and not force:
-            dirty = tree_dirty(reg["path"], self._own())
-            if dirty is None or dirty.strip():
-                raise WtError("worktree.dirty", "the worktree has uncommitted changes (or cannot be checked); "
-                              "commit them, or remove with --force")  # fmt: skip
+            # #583 round 3, orch-07: removal never depends on ignore rules. git's own remove always runs --force
+            # (its clean check would run the repo's clean filters, #565), so this check is the only guard: every file
+            # that is not tracked-and-unchanged blocks, ignored or not, listed with sizes.
+            first = self._removal_check(reg)
+            entries = self._entries(first)
+            tracked = [e for e in entries if e["why"] != "untracked"]
+            untracked = [e for e in entries if e["why"] == "untracked"]
+            token = self._token(first) if untracked else ""
+            if untracked and discard and not tracked and not first["more"] and discard != token:
+                raise WtError("worktree.dirty", ("the untracked files are not the ones that token was made for; "
+                              "nothing was deleted. They are now: " + "; ".join(self._lines(untracked, 20))
+                              + f". To delete exactly these, run `orch worktree remove {view.key} "
+                              f"--discard-untracked={token}`")[:2000])  # fmt: skip
+            if tracked or first["more"] or (untracked and not discard):
+                hint = "commit them" if tracked else "commit or delete them"
+                if untracked and not tracked and not first["more"]:
+                    hint += (
+                        f", or `orch worktree remove {view.key} --discard-untracked={token}` (deletes exactly these)"
+                    )
+                raise WtError("worktree.dirty", ("the worktree has files that are not committed (ignored files count "
+                              "too: a removal never depends on ignore rules): " + "; ".join(self._lines(entries, 20))
+                              + f". {hint[0].upper()}{hint[1:]}, or remove with --force")[:2000])  # fmt: skip
+            if untracked:  # --discard-untracked=TOKEN: print exactly the set, re-check right before deleting
+                discarded = [ln for ln in self._lines(untracked, len(untracked))]
+                say("discarding exactly these untracked files:\n" + "\n".join(f"  {ln}" for ln in discarded) + "\n")
+                self._between()
+                second = self._removal_check(reg)
+                if second["fingerprint"] != first["fingerprint"] or second["changed"] != first["changed"]:
+                    raise WtError("worktree.dirty", "the worktree's files changed since they were listed; nothing was "
+                                  "deleted. Look at the new list and run the command again")  # fmt: skip
         _declared, dpins = self._declared(repo)
         self._git({"op": "worktree.remove", "repo_pin": dpins.worktree.to_json(), "path": reg["path"],
                    "branch": reg["branch"], "base": None, "force": force, "generation": slot["gen"] + 1})  # fmt: skip
@@ -412,7 +506,7 @@ class Direct:
         except (ValueError, OSError) as exc:
             raise WtError("internal", f"the worktree was removed but its registration could not be dropped ({exc})",
                           1) from None  # fmt: skip
-        return {"removed": True}
+        return {"removed": True, **({"discarded": discarded} if discarded else {})}
 
 
 def _text(cmd: str, data: Any) -> str:
@@ -478,7 +572,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
             elif cmd == "create":
                 data = direct.create(a["ticket"], a["repo"])
             else:
-                data = direct.remove(a["ticket"], a["repo"], a["force"])
+                say = (err if err is not None else sys.stderr).write
+                data = direct.remove(a["ticket"], a["repo"], a["force"], a["discard"], say)
         out.write((json.dumps({"ok": True, "data": data}) if as_json else _text(cmd, data)) + "\n")
         return 0
     except WtError as exc:

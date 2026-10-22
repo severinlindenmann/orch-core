@@ -12,9 +12,6 @@ export const CLICK_RISK = 'Convenience signing: agents running as you, or anythi
 /** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
 export const ARM_MS = 1000
 
-/** A word op (grant, policy, members) signs once the person has held Sign down this long, instead of typing the word. */
-export const HOLD_MS = 1500
-
 /** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
 export interface ClickCard {
   risk_ack?: string | null
@@ -70,6 +67,14 @@ export interface ClickViewAnswer {
 /** Where a request stands at the host (read by the server through its own link). */
 export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown'
 
+/** `click/state`: where the request stands. For a stopped sequence also the ticket that exists and how far the run got. */
+export interface ClickState {
+  id: string
+  state: ClickHostState
+  key?: string
+  progress?: { done: number; of: number; last?: 'grant' }
+}
+
 export interface ClickSigned {
   state: 'submitted'
   duplicate: boolean
@@ -116,10 +121,12 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
+  'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable',
+  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable', 'addon_enable',
 ])
-export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
+// Publish decides where files go: terminal only, also when it is turned on together with its address
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant') && a.name === 'publish')
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */
@@ -144,6 +151,8 @@ export interface ClickProblem {
   /** `rate.limited`: how long to wait. */
   waitMs?: number
   signedAt?: string | null
+  /** Raw host text (ids, hashes) kept out of the sentence: shown folded under "Technical details". */
+  details?: string
   /** H12d-2: the device ids the refusal names (shown by label through `RefusalDevices`, never as ids). */
   devices?: string[]
 }
@@ -173,11 +182,15 @@ export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) 
 
 /** Only server-sourced record facts; never the current form's values. */
 export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>): string {
-  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op ? `${e.op} action` : 'action'
+  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op === 'addon.grant' || e.op === 'addon.disable' ? 'add-on change' : 'action'
   const at = e.signed_at ? Date.parse(e.signed_at) : NaN
   const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago` : '(signing time unavailable from this host)'
-  return `A similar ${thing} was signed ${when}. ${e.summary ?? 'Signed content unavailable from this host.'} Do it again only if you intend a second signature.`
+  // The host's record of what was signed is for the technical details (`alreadyDetails`), never for the sentence.
+  return `A similar ${thing} was signed ${when}. Do it again only if you intend a second signature.`
 }
+
+/** The host's record of the earlier signature, for a folded "Technical details" block only. */
+export const alreadyDetails = (e: Pick<ApiError, 'summary'>): string | undefined => e.summary || undefined
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
 export function clickProblem(e: unknown): ClickProblem {
@@ -196,7 +209,10 @@ export function clickProblem(e: unknown): ClickProblem {
     case DEV_REFUSED:
       return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
     case 'intent.done':
-      return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
+      return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
+    case 'addon.already':
+      // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".
+      return { title: 'Already done', body: e.message, next: 'open' }
     case 'intent.failed':
       return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
     case 'lock.busy':

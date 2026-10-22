@@ -78,10 +78,13 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "gates",
         "defaults",
         "sign_methods",
+        "models",
+        "publish",
         "settings_at",
         "policy_at",
         "sub_cursor",
     }
+    assert data["publish"] is None
     assert data["settings"] == {"grant_hours": 8, "claim_ttl_min": 120, "lease_ttl_min": 60, "repos": {}}
     assert data["defaults"] == ["grant_hours", "claim_ttl_min", "lease_ttl_min"]
     assert data["next_page"] is None and data["settings_at"] is None and data["policy_at"] is None
@@ -147,6 +150,15 @@ def test_an_owner_gets_path_and_remote_and_null_for_what_is_not_set(w):
         "remote": None,
     }
     assert got["proj"]["check"] == {"state": "missing", "branch": None}  # /srv/proj is not on this machine
+
+
+def test_an_owner_is_told_which_visible_tickets_link_a_repo(w):
+    seed_repos(w)
+    _, key = w.ticket("links proj")
+    c = w.client()
+    link(w, c, key, "proj")
+    got = ok(c.req("workspace.settings"))["settings"]["repos"]
+    assert got["proj"]["linked_by"] == [key] and "linked_by" not in got["bare"]
 
 
 def test_a_member_gets_only_the_name_and_default_branch(wq):
@@ -230,6 +242,7 @@ def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
             "gates",
             "defaults",
             "sign_methods",
+            "models",
             "sub_cursor",
         }  # no settings_at, policy_at
         assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only
@@ -378,3 +391,13 @@ def test_the_sub_cursor_of_the_snapshot_joins_sub_open_without_loss_or_repeat(w)
     assert [(i["type"], i["seq"]) for i in frame["items"]] == [("settings.changed", after["seq"])]  # not `before`
     assert before["seq"] < after["seq"]
     conn.quiet(sub["sub"], 0.3)
+
+
+def test_the_publish_server_is_read_by_a_person_and_not_by_an_agent(w):
+    """The dashboard asks whether Publish is set up (AE4): the addresses reach a person, never the no-person column."""
+    c = w.client()
+    value = {"server": "https://files.example.com", "share": "https://share.example.com"}
+    settings(w, publish=value)
+    assert ok(c.req("workspace.settings"))["publish"] == value
+    as_agent_class(w)
+    assert "publish" not in ok(c.req("workspace.settings"))

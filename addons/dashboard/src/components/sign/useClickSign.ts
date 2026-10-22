@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { STALE_HOPS } from './useHandoff'
 import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
@@ -31,7 +32,7 @@ export interface ClickRun {
   view: ClickViewAnswer | null
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction, retryFloor?: number) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number, freshIfEnded?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
@@ -58,7 +59,7 @@ const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'event
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
 export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state: HandoffState; request: HandoffRequest } {
-  const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: signed.key ?? null, expires_at: prepared.expires_at, event_ids: [], seq: signed.seq ?? null }
+  const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: signed.key ?? null, expires_at: prepared.expires_at, event_ids: [], seq: signed.seq ?? null, ...(signed.deposit ? { deposit: signed.deposit } : {}) }
   const request = { id: prepared.request_id, code: null, expires_at: prepared.expires_at, state: 'submitted', op: prepared.op, key: signed.key ?? null } as unknown as HandoffRequest
   return { state, request }
 }
@@ -116,7 +117,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction, retryFloor = 0) => {
+    async (action: ClickAction, retryFloor = 0, freshIfEnded = false) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -125,10 +126,22 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
       // An explicit change of signing method advances the shared action intent.
       attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
-      const { retry } = attempt.current
       attempt.current.lost = false
+      const current = attempt.current
       try {
-        const got = await api.prepareClick(ws, action, retry)
+        let got: ClickPrepared | undefined
+        // The person's own open of the dialog is a new intent: earlier attempts of this action that were cancelled or
+        // expired (the host says so by name, `intent.ended`) are not a reason to make them press "Start again" before
+        // seeing anything. Step past EVERY such attempt (an action cancelled twice must not need two presses), bounded;
+        // never past a signed, failed, open or unknown one.
+        for (let hops = 0; got === undefined; hops++) {
+          try {
+            got = await api.prepareClick(ws, action, current.retry)
+          } catch (e) {
+            if (!(freshIfEnded && hops < STALE_HOPS && e instanceof ApiError && e.code === 'intent.ended' && mounted.current && wsNow.current === ws)) throw e
+            current.retry += 1
+          }
+        }
         if (!mounted.current || wsNow.current !== ws) {
           void api.cancelClick(ws, got.request_id).catch(() => {}) // nobody will see this request
           if (mounted.current) {
@@ -151,6 +164,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         busy.current = false
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [ws, setPhase, read, fail],
   )
 

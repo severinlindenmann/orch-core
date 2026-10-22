@@ -32,4 +32,10 @@ describe('sidebar rail rule (N11)', () => {
     expect(railToggle(base)).toEqual({ which: 'pref', value: 'narrow' })
     expect(railToggle({ ...base, windowWidth: 1100 })).toEqual({ which: 'pref', value: 'wide' })
   })
+
+  it('M-4: on a phone-width window the rail wins over any remembered "wide" choice', () => {
+    expect(railCollapsed({ ...base, pref: 'wide', windowWidth: 390 })).toBe(true)
+    expect(railCollapsed({ ...base, pref: 'wide', dockPref: 'wide', windowWidth: 390, squeezed: true })).toBe(true)
+    expect(railCollapsed({ ...base, pref: 'wide', windowWidth: 700 })).toBe(false)
+  })
 })

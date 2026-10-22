@@ -45,6 +45,8 @@ export const SEQUENCE_STALL_MS = 11 * 60_000
 /** The agent access is the signer's very last step, signed right after the ticket's steps: if it does not follow, it stopped. */
 export const GRANT_STALL_MS = 45_000
 const MAX_FAILED_POLLS = 5
+/** How many earlier ended (cancelled, expired) attempts of the same action one press steps past to reach a fresh request. */
+export const STALE_HOPS = 16
 
 export interface HandoffRun {
   retry: number
@@ -72,8 +74,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
   const [pinned, setPinned] = useState<string | undefined>(undefined)
   // `retry` is the explicit "do it again" counter of this action; `lost` is a prepare whose answer may have been lost.
-  const attempt = useRef<{ sig: string; retry: number; lost: boolean; advanced?: boolean } | null>(null)
-  const prepareRef = useRef<((action: HandoffAction, retryFloor?: number) => Promise<void>) | null>(null)
+  const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -101,9 +102,23 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
       // An explicit change of signing method advances the shared action intent.
       attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
-      const { retry } = attempt.current
+      const current = attempt.current
       try {
-        const got = await api.prepareHandoff(ws, action, retry)
+        let got = await api.prepareHandoff(ws, action, current.retry)
+        // The host gave back a request this same action made earlier (the idem is derived from the action and `retry`),
+        // and that one ended unsigned (cancelled by a wrong word or Cancel in the terminal, or expired): nothing was signed
+        // and it can never be signed. Asking is the person's explicit new start, so step past EVERY such earlier attempt to
+        // a fresh request instead of showing a dead end (an action cancelled twice must not need "Try again" twice). Not
+        // when this click's own answer was lost (then the ended request IS its outcome); never past an open, signed or
+        // inconsistent one; bounded, so a host that only answers "ended" stops at Cancelled.
+        for (
+          let hops = 0;
+          hops < STALE_HOPS && !current.lost && (got.state === 'cancelled' || got.state === 'expired') && requestIsConsistent(got) && mounted.current && wsNow.current === ws;
+          hops++
+        ) {
+          current.retry += 1
+          got = await api.prepareHandoff(ws, action, current.retry)
+        }
         if (!mounted.current) {
           void api.cancelHandoff(ws, got.id).catch(() => {}) // closed while preparing: nobody will see this code
           return
@@ -119,16 +134,6 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           // The host's own hashes do not recompute here: do not show it, and ask the host to drop it.
           void api.cancelHandoff(ws, got.id).catch(() => {})
           setPhase('invalid')
-          return
-        }
-        if ((got.state === 'cancelled' || got.state === 'expired') && attempt.current && !attempt.current.advanced && live.current.phase === 'preparing') {
-          // The host gave back the request this same action made earlier, and that one ended unsigned (cancelled by a wrong word or
-          // Cancel in the terminal, or expired): nothing was signed and it can never be signed. Opening the action again is the
-          // person's explicit new start, so ask for a fresh request once instead of showing a dead end.
-          attempt.current.advanced = true
-          attempt.current.retry += 1
-          busy.current = false
-          await prepareRef.current?.(action, 0)
           return
         }
         live.current.request = got
@@ -185,7 +190,6 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     },
     [ws, setPhase, refetch],
   )
-  prepareRef.current = prepare
 
   const finish = useCallback(
     (next: HandoffPhase, got: HandoffState | null) => {
@@ -227,9 +231,21 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
             // Only the agent access is missing: the task is made and approved, and agents were NOT given access.
             const grantOnly = got.progress.last === 'grant' && got.progress.done === got.progress.of - 1
             if (Date.now() - progressed.at > (grantOnly ? GRANT_STALL_MS : SEQUENCE_STALL_MS)) {
+              // F-712-4: the last signature may be landing right now: ask once more before saying it has not arrived.
+              if (grantOnly) {
+                const last = await api.getHandoff(ws, request.id).catch(() => null)
+                if (stopped) return
+                if (last && last.id === request.id && (last.progress?.done !== got.progress.done || last.state !== 'submitted')) {
+                  progressed = { done: -1, at: Date.now() } // it moved (or finished): the next poll handles it from the top
+                  return
+                }
+              }
               stopped = true
-              const message = grantOnly
-                ? `${got.key ?? 'The task'} was created and approved; agent access was NOT given: signing stopped at the last signature (your terminal says why). Agents cannot work until you give them access from the agent access control.`
+              const newTicket = (request.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket'
+              const message = grantOnly && newTicket
+                ? `${got.key ?? 'The ticket'} was created. Agent access is not confirmed yet: the last signature has not arrived (your terminal may still be waiting for you, or it says why it stopped). No agent was started; if access does not appear, start one from the ticket to give it again.`
+                : grantOnly
+                ? `${got.key ?? 'The task'} was created and approved; agent access is not confirmed yet: the last signature has not arrived (your terminal may still be waiting for you, or it says why it stopped). Agents cannot work until access is given from the agent access control.`
                 : `Signing stopped after ${got.progress.done} of ${got.progress.of} signatures. ${got.key ?? 'The ticket'} was created and stays a draft with what was signed; ask again to continue.`
               setError(new ApiError(409, { code: grantOnly ? 'sequence.no_access' : 'intent.failed', message, retryable: false }))
               finish('failed', got)

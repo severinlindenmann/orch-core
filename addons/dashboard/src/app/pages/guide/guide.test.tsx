@@ -2,6 +2,8 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setFeatures } from '@/api/features'
+import { helpPageFor } from '@/api/guide'
+import { GUIDE_PAGES, GUIDE_ROUTES } from '@/api/guideContent'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
@@ -36,5 +38,12 @@ describe('guide on a real host', () => {
     await user.click(within(sheet).getByRole('link', { name: 'Open the guide' }))
     expect(await screen.findByRole('heading', { name: 'Today, Board and Tickets' }, T)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Guide'), T)
+  })
+  it('has pages for Repositories, Worktrees and Shares, and ? on those routes shows them (E-6)', () => {
+    const titleOf = (path: string) => GUIDE_PAGES.find((p) => p.slug === helpPageFor(GUIDE_ROUTES, path))?.title
+    expect(titleOf('/repos')).toBe('Repositories')
+    expect(titleOf('/worktrees')).toBe('Worktrees')
+    expect(titleOf('/shares')).toBe('Shares and Publish')
+    for (const r of GUIDE_ROUTES) expect(GUIDE_PAGES.some((p) => p.slug === r.page), r.page).toBe(true)
   })
 })

@@ -66,15 +66,30 @@ ENV_FROM_RUNNER = frozenset(
     }
 )  # fmt: skip
 ENV_FIXED_NAMES = frozenset(
-    {"ORCH_TICKET", "ORCH_WORKSPACE", "ORCH_WORKTREE", "ORCH_WORKTREES", "ORCH_HARNESS", "CLAUDE_CODE_SUBAGENT_MODEL"}
+    {
+        "ORCH_TICKET",
+        "ORCH_WORKSPACE",
+        "ORCH_WORKTREE",
+        "ORCH_WORKTREES",
+        "ORCH_WORKDIR",
+        "ORCH_HARNESS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    }
 )
 #: the only script a login shell runs (:data:`orch.host.launch.LOGIN_EXEC`) and the registry's programs
 LOGIN_EXEC = 'exec "$0" "$@"'
 REGISTRY_PROGRAMS = frozenset({"claude", "codex"})
+REGISTRY_PROGRAMS_BY_HARNESS = {"claude-code": "claude", "codex": "codex"}
 _SESSION = re.compile(r"s_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 FIXED = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 VERSION = "orch-runner/1"
+
+
+def _loaded_release() -> str:
+    from .service import current_release
+
+    return current_release()
 
 
 def build_env(
@@ -112,6 +127,15 @@ def resolve_shell(argv: list[Any], own: Mapping[str, str]) -> list[Any]:
     return [shell, *argv[1:]]
 
 
+def _model_ok(harness: str | None, rest: list[str]) -> bool:
+    """A ``--model`` in a registry launch comes first and names a model of that harness's closed list."""
+    from orch.modelchoices import MODEL_CHOICES
+
+    if "--model" not in rest:
+        return True
+    return harness in MODEL_CHOICES and rest[0] == "--model" and len(rest) >= 2 and rest[1] in MODEL_CHOICES[harness]
+
+
 def registry_argv(argv: Any, own: Mapping[str, str], config: RunnerConfig) -> list[str]:
     """The argv of a registry launch with ``$SHELL`` resolved; anything else is ``invalid.input`` (D-P2-28: the client
     chooses values, never a command, and the runner checks that again)."""
@@ -123,9 +147,15 @@ def registry_argv(argv: Any, own: Mapping[str, str], config: RunnerConfig) -> li
         if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] and argv[4] in REGISTRY_PROGRAMS:
             if not config.login_shell:
                 raise SpawnError("invalid.input", "spawn: runner.json turns the login shell off")
+            harness = next((h for h, prog in REGISTRY_PROGRAMS_BY_HARNESS.items() if prog == argv[4]), None)
+            if not _model_ok(harness, argv[5:]):
+                raise SpawnError("invalid.input", "spawn: --model names a model orch does not offer")
             return resolve_shell(argv, own)
         raise SpawnError("invalid.input", "spawn: argv is not a registry launch")
     if argv[0].startswith("/") and argv[0] in config.programs.values():
+        harness = next((h for h, prog in config.programs.items() if prog == argv[0]), None)
+        if not _model_ok(harness, argv[1:]):
+            raise SpawnError("invalid.input", "spawn: --model names a model orch does not offer")
         return list(argv)
     raise SpawnError("invalid.input", "spawn: argv[0] is neither $SHELL nor a program runner.json names")
 
@@ -179,8 +209,12 @@ class HostLink:
         backoff: tuple[float, float] = (0.5, 10.0),
         config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
         grants: GrantStore | None = None,
+        release: str | None = None,
     ) -> None:
         self.sup = sup
+        #: the release this process LOADED, taken now (never on the first hello): the host refuses spawns from a
+        #: runner of another release than its own (``runner.stale``)
+        self.release = release if release is not None else _loaded_release()
         self.socket_path = Path(socket_path)
         self.host_uid = host_uid
         self.gen = gen
@@ -276,8 +310,8 @@ class HostLink:
             conn = self._conn
             runs = self._runs()
         reported_running = {r["run"] for r in runs if r["state"] == "running"}
-        hello_args = {"version": VERSION, "gen": self.gen, "pid": os.getpid(), "term_socket": term_socket,
-                      "runs": runs, "grants": self.grants.report()}  # fmt: skip
+        hello_args = {"version": VERSION, "release": self.release, "gen": self.gen, "pid": os.getpid(),
+                      "term_socket": term_socket, "runs": runs, "grants": self.grants.report()}  # fmt: skip
         rid = self._send_req("runner.hello", hello_args)
         while not self._stop.is_set():
             data = recv(sock)

@@ -91,6 +91,55 @@ PUBLISH_FEATURE_OPS = (
 )
 
 
+class NextFlight:
+    """At most one run of ``fn`` at a time, and at most one waiting behind it, however many callers ask.
+
+    A page load asks for the workspace list several times (the feature list, the viewer, the workspaces) and a page
+    the person reloads leaves its requests behind: the server cannot tell a closed page from an open one, so each
+    abandoned request still ran its full round of host calls, one after another on the same host connection. Ten
+    quick reloads made the next page wait for forty runs. Now a caller that arrives while a run is under way waits for
+    the NEXT run (one that starts after it asked, so it never reads older than a run of its own would), and every
+    caller that arrived meanwhile shares that one. A run's error reaches everyone who shared it.
+    """
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.cond = threading.Condition()
+        self.running = False
+        self.started = 0  # runs begun
+        self.finished = 0  # runs ended
+        self.outcome = (None, None)  # (value, error) of the last run
+
+    def __call__(self):
+        with self.cond:
+            target = self.started + 1  # the first run that starts after this call
+            while True:
+                if self.finished >= target:
+                    value, error = self.outcome
+                    break
+                if not self.running and self.started + 1 == target:
+                    self.running = True
+                    self.started = target
+                    self.cond.release()
+                    try:
+                        try:
+                            outcome = (self.fn(), None)
+                        except BaseException as exc:  # noqa: BLE001 - shared with the callers, then raised in each
+                            outcome = (None, exc)
+                    finally:
+                        self.cond.acquire()
+                    self.running = False
+                    self.finished = target
+                    self.outcome = outcome
+                    self.cond.notify_all()
+                    value, error = outcome
+                    break
+                self.cond.wait()
+        if error is not None:
+            raise error
+        return value
+
+
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
@@ -107,6 +156,17 @@ class Gateway:
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
 
+    def workspace_folder(self, ws):
+        """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the
+        project's ``.orch``). The File Explorer's root; browser input never names it."""
+        row = self._pins().get(ws)
+        if row is None or not isinstance(row.get("root"), str) or not row["root"].startswith("/"):
+            raise fail("not_found", exit=2)
+        project = Path(row["root"])
+        from orch.layout import STORE_DIR
+
+        return project, project / STORE_DIR
+
     def check_repo_path(self, ws, path):
         """The host's own path check for a repository to add (home folder, not a git folder, inside orch's data), run
         before anything is prepared or signed: the person reads the plain refusal in the dialog. Raises HostError.
@@ -117,9 +177,7 @@ class Gateway:
         row = self._pins().get(ws)
         if row is None or not isinstance(row.get("root"), str):
             return  # not known here: the host's own check still runs
-        store = row.get("store")
-        project = Path(row["root"])
-        layout = Layout(project, project / store, False) if isinstance(store, str) else Layout.legacy_at(project)
+        layout = Layout.new_at(row["root"])
         try:
             repopaths.check_declared(layout, path)
         except repopaths.RepoPathError as exc:
@@ -252,6 +310,19 @@ class Gateway:
         if all(link.supports(op, "publish/1") for op in PUBLISH_FEATURE_OPS) and self.addon_on(link, "publish"):
             # Publish (P6): the page and the ticket's Shares box exist only while the add-on is ON for this workspace.
             features.append("publish")
+        if "terminals" in features and self.addon_on(link, "terminals"):
+            # The Terminals page (menu entry and route) exists only while the add-on is ON; the dock keeps its own gate.
+            features.append("terminals_page")
+        if "agent_start" in features and self.addon_on(link, "model-routing"):
+            features.append("model_routing")  # Model routing (add-on on): the Settings section and the model choice
+        if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
+            # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
+            features.append("usage")
+        if self.addon_on(link, "wiki"):
+            features.append("wiki")
+        if self.addon_on(link, "estimate"):
+            # Estimate: points on tickets (the ticket's size), shown and set only while the add-on is ON here.
+            features.append("estimate")
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         if link.has("read_ext/2"):
@@ -273,6 +344,13 @@ class Gateway:
         return isinstance(card, dict) and card.get("enabled") is True
 
     def workspaces(self):
+        """The workspaces this person may see, read from the host. Concurrent callers share runs (``NextFlight``)."""
+        flight = self.__dict__.get("_workspace_flight")
+        if flight is None:
+            flight = self.__dict__.setdefault("_workspace_flight", NextFlight(self._workspaces))
+        return flight()
+
+    def _workspaces(self):
         with self.lock:
             pins = self._pins()
             if self.control is None or self.control.sock.fileno() < 0:
@@ -295,6 +373,8 @@ class Gateway:
                     features.append("click")  # the sign panel is offered (the signer has a key and the flag is on)
                 who = link.welcome["peer"]["person"]
                 role = next((m.role for m in roster if m.person == who), "viewer")
+                if role == "owner" and self.addon_on(link, "explorer"):
+                    features.append("explorer")  # the File Explorer: owners only, and only while the add-on is ON
                 count = adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
                 if (
                     not isinstance(show.get("name"), str)
@@ -320,7 +400,15 @@ class Gateway:
                 )
             except HostError as exc:
                 # No untrusted title or principal is fabricated when the host is unavailable.
-                result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
+                result.append(
+                    adapters.Workspace(
+                        id=ws,
+                        prefix=adapters.pinned_prefix(pins[ws]),
+                        name=ws,
+                        host_state=exc.error["code"],
+                        host_message=adapters.unavailable_reason(exc.error),
+                    )
+                )
         return result
 
     def host_info(self):

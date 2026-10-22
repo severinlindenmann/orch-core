@@ -7,13 +7,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
-import { Inline, Prose, Raw } from '@/components/sign/visible'
+import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -25,18 +24,15 @@ import { ResizeHandle } from '../dock/ResizeHandle'
 import { RealTerminal } from './RealTerminal'
 
 import { EXECUTION_LINE } from './executionLine'
+import { PreviewDialog } from './PreviewDialog'
+import { runName } from './runName'
 import { StartAgentDialog } from './StartAgentDialog'
 
 export { EXECUTION_LINE }
 
-/** A run's name in the dock: its label (untrusted, shown through visible.tsx), else the harness and the ticket. */
-export function runName(run: Run): string {
-  if (run.label) return run.label
-  const what = run.harness === 'shell' ? 'Shell' : run.harness === 'claude-code' ? 'Claude' : run.harness === 'codex' ? 'Codex' : 'Terminal'
-  return run.ticket ? `${run.ticket} ${what}` : what
-}
+export { runName }
 
-export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
+export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview, request, requestDone }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const ticket = useDockTicket()
@@ -47,7 +43,11 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
   const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
-  const shown = runs.filter((r) => (r.kind === 'shell' || r.kind === 'agent') && !(dismissed.has(r.run) && ended(r)))
+  // A start whose process never started (spawn_failed) is no terminal: the dialog already told the person why, so it gets no tab (unless its cleanup is in doubt: then the tab and the warning stay).
+  const neverStarted = (r: Run) => r.state === 'exited' && r.exit?.reason === 'spawn_failed' && !cleanupDoubt(r.exit.cleanup)
+  // Terminals switched off for this workspace (the add-on): no shell appears here, same as on the Terminals page. Agent runs stay (they belong to Start agents).
+  const termsOn = !!ws && hasFeature('terminals_page', ws)
+  const shown = runs.filter((r) => (r.kind === 'agent' || (r.kind === 'shell' && termsOn)) && !neverStarted(r) && !(dismissed.has(r.run) && ended(r)))
   const endedShown = shown.filter(ended)
   const dismiss = (ids: string[]) => setDismissed((d) => new Set([...d, ...ids]))
   const [selected, setSelected] = useState<string | null>(null)
@@ -63,6 +63,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const region = useRef<HTMLElement>(null)
 
   useEffect(() => { setSelected(null) }, [ws])
+  // The Terminals page asked for this run (Open): select it, then say the request is done.
+  useEffect(() => { if (request) { setSelected(request); requestDone?.() } }, [request, requestDone])
   // The write attach after Open is one-shot (review M1): once that run's terminal has mounted with it, every later mount
   // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
   useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
@@ -126,10 +128,11 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="New terminal" disabled={!ws}><Plus />{!right && 'New terminal'}</Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => void ask(false)}>Shell in the workspace</DropdownMenuItem>
-            {ticket && <DropdownMenuItem onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
+            <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(false)}>Shell in the workspace{!termsOn && ' — Terminals are off'}</DropdownMenuItem>
+            {ticket && <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={!agents} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents && ' — not available on this host'}</DropdownMenuItem>
+            {/* agent.preview needs a ticket (contract §12.3): without one the host refuses "args is not valid" */}
+            <DropdownMenuItem disabled={!agents || !ticket} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents ? ' — not available on this host' : !ticket && ' — open a ticket first'}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         {current && current.state === 'running' && (
@@ -160,16 +163,18 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
-      {off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
+      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off in this workspace. Switch them on in Settings, under Add-ons.</p>}
+      {termsOn && off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
       )}
+      {current && !outputGone(current) && exitText(current) && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted" data-testid="run-exit">{exitText(current)}</p>}
       {current && (doubt[current.run] || (current.exit && cleanupDoubt(current.exit.cleanup))) && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-cleanup-doubt>Some processes may still be running.</p>
       )}
       <div className="min-h-0 min-w-0 flex-1">
         {list.isPending && ws ? <Skeleton className="m-3 h-24" />
-          : !current ? <p className="p-3 text-xs text-text-muted">No terminal is open. Start one with New terminal.</p>
+          : !current ? <p className="p-3 text-xs text-text-muted">{termsOn ? 'No terminal is open. Start one with New terminal.' : 'No terminal is open.'}</p>
           : outputGone(current) ? (
             <div className="p-3 text-xs text-text-muted" data-output-gone>
               <p className="font-medium text-text">Output no longer kept</p>
@@ -177,7 +182,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             </div>
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
-      {ws && agents && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
+      {ws && agents && ticket && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
       <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
     </section>
   )
@@ -193,58 +198,12 @@ function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; c
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>
           <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' ? 'bg-success' : 'bg-text-faint')} />
           <span className="tabular-nums text-text-faint">{i + 1}</span>
-          <span className="min-w-0 truncate">{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
+          <span className="min-w-0 truncate [&>bdi]:whitespace-nowrap" title={r.label || runName(r)}>{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
           <span className="sr-only">{r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
         </button>
         {r.state !== 'running' && r.state !== 'starting' && <button type="button" aria-label={`Clear ${runName(r)}`} title="Clear this ended terminal" onClick={() => onDismiss(r.run)} className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-text-faint hover:bg-surface-3 hover:text-text"><X className="size-3" aria-hidden /></button>}
         </span>
       ))}
     </div>
-  )
-}
-
-/** The host's preview, shown before anything starts: what runs, where, as whom. Every value is untrusted text. */
-function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data: TermPreview | null; error: string } | null; busy: boolean; onClose: () => void; onConfirm: () => void }) {
-  const data = preview?.data
-  return (
-    <Dialog open={!!preview} onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-w-lg gap-3 border-border bg-surface" data-term-preview>
-        <DialogHeader>
-          <DialogTitle>Open a terminal</DialogTitle>
-          <DialogDescription>{EXECUTION_LINE}</DialogDescription>
-        </DialogHeader>
-        {!data && !preview?.error && <Skeleton className="h-20" />}
-        {data && (
-          <div className="space-y-2 text-xs" data-testid="term-preview-lines">
-            <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-              <dt className="text-text-muted">In</dt>
-              <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
-              <dt className="text-text-muted">As</dt>
-              <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
-            </dl>
-            <details data-testid="term-details">
-              <summary className="cursor-pointer text-text-muted">Details</summary>
-              <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-                <dt className="text-text-muted">Runs</dt>
-                <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>
-                {data.login_shell && (<><dt className="text-text-muted">Started like</dt><dd>You would start it yourself in a terminal, so your own shell settings apply first and can change what runs.</dd></>)}
-                {data.env.length > 0 && (<><dt className="text-text-muted">Environment</dt><dd className="font-mono text-[11px]">{data.env.map((n) => <span key={n} className="mr-2 inline-block"><Inline>{n}</Inline></span>)}</dd></>)}
-              </dl>
-            </details>
-          </div>
-        )}
-        {data?.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-warning"><Prose inline>{w}</Prose></p>)}
-        {data?.blocked && (
-          <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">
-            Cannot open: {data.blocked.message ? <Prose inline>{data.blocked.message}</Prose> : 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}
-          </p>
-        )}
-        {preview?.error && <p role="alert" className="text-xs text-danger"><Inline>{preview.error}</Inline></p>}
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" disabled={!data || !!data.blocked || busy} onClick={onConfirm}>Open terminal</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

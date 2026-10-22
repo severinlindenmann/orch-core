@@ -48,11 +48,13 @@ DEPOSIT_RISK = (
 )
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
-OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off")
+OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
-FEATURES = ("custody", "sequence")
+#: ``images`` is ``stash`` (a pasted screenshot, in chunks, held by the signer) and ``prepare {sequence}`` naming it
+#: (R3 part B)
+FEATURES = ("custody", "sequence", "images")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -102,11 +104,15 @@ CLICK_OPS = frozenset(
         "ac.add",
         "ac.edit",
         "task.add",
+        "task.edit",
         "task.block",
         "task.done",
         "task.reopen",
         "task.skip",
         "task.start",
+        "ac.accept",  # R3: vouching for a criterion is as strong as an approval and shown as such ("one click")
+        "ac.unaccept",
+        "task.mark_done",
         "log",
         "ask",
         "claim",
@@ -141,7 +147,7 @@ WORD_OPS = frozenset(
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
 #: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", "models"})
 _RANK = {"click": 0, "word": 1, "terminal": 2}
 
 
@@ -162,6 +168,11 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str
     from the signed events when there are any (**the class at sign time, which wins**), else from the request's
     ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
     gives can only be raised by the sign-time check, never lowered."""
+    if op == "addon.grant":
+        # Publish decides where files go: turning it on is terminal only, however it is asked (args at prepare, the
+        # signed event at sign time, which wins)
+        names = [ev.get("name") for ev in events] if events is not None else [(args or {}).get("name")]
+        return "terminal" if "publish" in names else "word"
     if op in WORD_OPS:
         return "word"
     if op == "settings.set" and (events is not None or args is not None):

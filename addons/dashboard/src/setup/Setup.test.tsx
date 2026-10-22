@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { Setup, summarize } from './Setup'
+import { plainReason, Setup, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -85,12 +85,16 @@ function fake(
     typed?: boolean
     agents?: boolean
     waiting?: string
+    running?: boolean
     stateError?: boolean
     failure?: boolean
     done?: boolean
     click?: boolean
     relayUnavailable?: boolean
+    noGit?: boolean
     complete?: boolean
+    defaults?: boolean
+    suggested?: Record<string, unknown>
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -104,9 +108,17 @@ function fake(
         ...state,
         ...(options.stateError ? {phase: 'failed', error: {code: 'demo.failure', message: 'Runner could not connect'}} : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
+        ...(options.noGit ? { git: { repo: false } } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
+        ...(options.defaults
+          ? {
+              suggested: { name: 'Demo', prefix: 'TST', agent_hours: 72, agent_grant: true },
+              addons: state.addons.map((a) => (a.id === 'worktrees' ? { ...a, default: true } : a)),
+            }
+          : {}),
+        ...(options.suggested ? { suggested: { name: 'Demo', prefix: 'TST', ...options.suggested } } : {}),
         ...(options.finish ? { current } : {}),
       }
     if (path === 'secrets/reveal')
@@ -148,7 +160,7 @@ function fake(
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
-        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : 'todo' }],
+        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' }],
         done: !!options.done,
         waiting: options.waiting,
         error: options.failure
@@ -263,7 +275,7 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByText('This Mac’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
-  expect(screen.getByText(/the terminal that started setup shows three words/)).toHaveTextContent('demo not real, type yes there.')
+  expect(screen.getByText(/look at your terminal: orch asks you to confirm there/)).toHaveTextContent('demo not real, type yes there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
@@ -273,8 +285,12 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
-  expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeInTheDocument()
-  expect(screen.getByText(/Your terminal now asks you to confirm/)).toHaveTextContent('type yes there')
+  // three large tiles, in order; the browser draws no imitation of the terminal
+  expect(within(screen.getByRole('list', { name: 'Your three words' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['demo', 'not', 'real'])
+  expect(screen.getByText(/Continue in the setup window on this computer/)).toBeInTheDocument()
+  expect(screen.getByText(/type yes in that window and press Enter/)).toBeInTheDocument()
+  expect(screen.getByText('Waiting for you in the setup window…')).toBeInTheDocument()
+  expect(screen.getByText('The words don’t match').closest('details')).not.toHaveAttribute('open')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',
@@ -433,7 +449,7 @@ test.each(['waiting for terminal', 'waiting for runner'])('shows progress waitin
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByRole('status')).toHaveTextContent(
-    waiting === 'waiting for terminal' ? 'Confirm in your terminal' : 'Waiting for the agent runner to connect…')
+    waiting === 'waiting for terminal' ? 'Now look at your terminal: orch asks you to confirm there.' : 'Waiting for the agent runner to connect…')
 })
 
 function failing(status: number, code?: string) {
@@ -443,6 +459,12 @@ function failing(status: number, code?: string) {
   return new SetupAPI('tok', fetcher)
 }
 
+test('the cause is in plain words and the code sits under Technical details', () => {
+  expect(plainReason('session.required')).toMatch(/no longer has its link to your terminal/)
+  expect(plainReason('whatever')).toBe('Setup could not go on.')
+  for (const code of ['session.required', 'setup.ended', 'setup.token', 'http.502', 'client: Error: x']) expect(plainReason(code)).not.toMatch(/session\.|setup\.|http\./)
+})
+
 test.each([
   [410, 'setup.ended'],
   [401, 'setup.token'],
@@ -451,7 +473,8 @@ test.each([
   render(<Setup api={failing(status, code)} />)
   expect(await screen.findByText(`Reason: ${code}`)).toBeInTheDocument()
   expect(screen.getByText(/This session has ended/)).toBeInTheDocument()
-  expect(spy).toHaveBeenCalledWith('[orch setup]', code)
+  // An ended link is an ordinary outcome the page explains: nothing is written to the console.
+  expect(spy).not.toHaveBeenCalled()
   spy.mockRestore()
 })
 
@@ -882,4 +905,89 @@ test('F7: an unusual runner grant keeps its raw scope and verbs in the summary l
   expect(summarize(grant('workable', 'agent')).lines).toEqual(['This Mac’s agent runner may work on any ticket you can see, as you, for 3 days'])
   expect(summarize(grant('all', 'agent')).lines).toEqual(['This Mac’s agent runner gets agent access for 3 days (scope all, verbs agent)'])
   expect(summarize(grant('workable', 'task.done')).lines[0]).toContain('verbs task.done')
+})
+
+test('U1: a new setup starts with the main add-ons and agent access ticked, all still visible and untickable', async () => {
+  const f = fake({ defaults: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  const sw = screen.getByRole('switch', { name: /Worktrees/ })
+  expect(sw).toBeChecked()
+  expect(sw).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByLabelText(/Let this Mac’s agent runner/)).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
+    addons: expect.arrayContaining(['worktrees']),
+    agent_grant: true,
+    agent_hours: 72,
+  })
+})
+
+test.each([
+  ['hours without a grant', { agent_hours: 72, agent_grant: false }],
+  ['hours outside the offered list', { agent_hours: 48, agent_grant: true }],
+])('suggested %s: picker and profile agree on no agent access', async (_n, suggested) => {
+  const f = fake({ suggested })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
+})
+
+test('a folder without git offers to make one when Worktrees is on, and never commits anything', async () => {
+  const f = fake({ defaults: true, noGit: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByText(/This folder is not a git repository/)).toBeInTheDocument()
+  expect(screen.getByText(/None of your files is committed/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Choose above to continue/ })).toBeDisabled()
+  fireEvent.click(screen.getByLabelText(/Make it a git repository/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
+})
+
+test('choosing to continue without worktrees drops them and asks no git question', async () => {
+  const f = fake({ defaults: true, noGit: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByLabelText(/Continue without worktrees/))
+  expect(screen.queryByText(/This folder is not a git repository/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  const sent = f.calls.find((c) => c.path === 'profile')?.body as { addons: string[]; git_init: boolean }
+  expect(sent.addons).not.toContain('worktrees')
+  expect(sent.git_init).toBe(false)
+})
+
+test('after the terminal confirms, the words are replaced by a matched notice', async () => {
+  const f = fake({ typed: true, running: true })
+  render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  fireEvent.click(screen.getByLabelText(/Let this Mac’s agent runner/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  expect(await screen.findByText('The three words matched. Your choices are confirmed.')).toBeInTheDocument()
+  expect(screen.queryByRole('list', { name: 'Your three words' })).toBeNull()
 })

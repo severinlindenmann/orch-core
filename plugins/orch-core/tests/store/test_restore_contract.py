@@ -433,7 +433,7 @@ def test_a_host_without_checkpoint_evidence_starts_a_baseline(env, tmp_path):
 
     store = env.bootstrap()
     store.close()
-    shutil.rmtree(env.root / ".state" / "checkpoints")
+    shutil.rmtree(env.store_dir / ".state" / "checkpoints")
     env.host_state = tmp_path / "new-host-state"  # the host's state dir is gone
     store = env.open()
     store.append(env.grant_event(), log="workspace")
@@ -451,7 +451,7 @@ def test_a_host_with_checkpoint_evidence_refuses_without_a_checkpoint(env, evide
     (pins / "checkpoint.json").unlink()
     if evidence == "ancestry_only":
         (pins / "checkpoint-n").unlink()  # heads.sqlite rows from the earlier run remain
-    (env.root / ".state" / "checkpoints" / "workspace.json").unlink()
+    (env.store_dir / ".state" / "checkpoints" / "workspace.json").unlink()
     store = env.open()
     before = env.read_events("workspace")
     with pytest.raises(StoreError) as exc:
@@ -624,7 +624,7 @@ def test_malformed_checkpoint_pin_is_not_treated_as_missing(env):
 
 
 def _tail_with(env, uid, line: bytes):
-    path = env.root / "tickets" / uid / "events.jsonl"
+    path = env.store_dir / "tickets" / uid / "events.jsonl"
     with open(path, "ab") as fh:
         fh.write(line)
     return path
@@ -695,7 +695,7 @@ def test_a_legacy_cut_tail_counts_as_convenience_history(env):
     from orch.ops.readers import has_convenience_events
 
     store = env.bootstrap()
-    ab = env.root / ".state" / "abandoned"
+    ab = env.store_dir / ".state" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     (ab / "workspace-9.jsonl").write_bytes(b'{"auth":"passphrase"}\n')
     assert not has_convenience_events(store)

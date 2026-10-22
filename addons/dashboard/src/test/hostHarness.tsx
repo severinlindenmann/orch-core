@@ -36,6 +36,8 @@ export interface FakeWs {
   prefix: string
   name: string
   host_state: string
+  /** The host's reason it cannot serve this workspace (the dashboard server sends it with a non-ok host_state). */
+  host_message?: string
   features: string[]
   /** The signed-in person (this dashboard server's person) in this workspace. */
   me: string
@@ -55,6 +57,8 @@ export interface FakeWs {
   records?: unknown
   /** What `GET /add-ons` answers (R2-2). */
   addOns?: import('@/api/addOnSwitches').AddOnsData
+  /** What `GET /versions` answers (R3-A1); absent: the route is not served. */
+  versions?: unknown
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -187,6 +191,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
+    case 'models_set':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { models: Object.keys(body.models as object).length ? body.models : null } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':
@@ -244,7 +250,7 @@ export class FakeHost {
         this.workspaces.map((w) =>
           w.host_state === 'ok'
             ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features, click: w.click ?? null, ...(w.runner !== undefined ? { runner: w.runner } : {}) }
-            : { id: w.id, prefix: '', name: w.id, members: [], needs_you: null, host_state: w.host_state, features: [] },
+            : { id: w.id, prefix: w.host_message ? w.prefix : '', name: w.id, members: [], needs_you: null, host_state: w.host_state, ...(w.host_message ? { host_message: w.host_message } : {}), features: [] },
         ),
       )
     if (path === '/api/me') return json(this.running().map((w) => ({ person: w.me, name: w.roster.find((m) => m.person === w.me)?.name ?? 'Sev', role: w.role, tier: 'A', workspace: w.id })))
@@ -263,8 +269,14 @@ export class FakeHost {
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
+    if (rest === 'versions') return ws.versions === undefined ? missing() : json(ws.versions)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
+    if (rest === 'repos/check' && method === 'POST') {
+      return String(body?.path).startsWith('/refused')
+        ? json({ ok: false, error: { code: 'invalid.input', message: 'This folder is not a git repository.', retryable: false } }, 400)
+        : json({ ok: true })
+    }
     if (rest === 'handoff' && method === 'POST') {
       const request = prepare(body!)
       this.requests.set(request.id, request)

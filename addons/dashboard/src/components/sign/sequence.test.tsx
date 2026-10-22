@@ -35,9 +35,10 @@ function sequenceRequest(): HandoffRequest {
     gate_hash: null,
     headline: 'Create DEMO-0044: Plan the launch',
     content: {
-      headline: 'Create DEMO-0044: Plan the launch',
+      headline: 'Create DEMO-0044 (key per host; signed id …0000000A): Plan the launch',
+      title: 'New ticket DEMO-0044: Plan the launch',
       subline: 'and its text (2 sections)',
-      ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
+      ticket: { key: 'DEMO-0044', title: 'Plan the launch', uid_tail: '0000000A', new: true, key_note: 'key per host, not proven; the ticket’s signed id ends …0000000A' },
       sections: [
         { id: 'context', title: 'Context', text: 'Line one\nLine two' },
         { id: 'summary', title: 'Summary', text: 'Why this exists.' },
@@ -88,9 +89,12 @@ describe('a ticket and its text on one review (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare).toHaveBeenCalledTimes(1)
     expect(s.prepare.mock.calls[0][1]).toEqual(ACTION)
-    expect(within(dialog).getByRole('heading', { name: /Create DEMO-0044: Plan the launch/ })).toBeInTheDocument()
+    // U3: the dialog title is the plain one; the key qualifier and signed id are only under Technical details
+    expect(within(dialog).getByRole('heading', { name: 'New ticket DEMO-0044: Plan the launch' })).toBeInTheDocument()
+    expect(within(dialog).getAllByText('Technical details')).toHaveLength(1)
+    expect(within(dialog).getByText('Technical details').closest('details')).toHaveTextContent('signed id …0000000A')
     expect(dialog).toHaveTextContent('and its text (2 sections)')
-    expect(dialog).toHaveTextContent('The terminal shows the same code:')
+    expect(dialog).toHaveTextContent('Verification fingerprint:')
     expect(dialog).toHaveTextContent('Why this exists.')
     expect(dialog).toHaveTextContent('Line two')
     expect(dialog).toHaveTextContent('One confirmation signs all 4 steps')
@@ -130,9 +134,9 @@ describe('a ticket and its text on one review (terminal)', () => {
 })
 
 describe('a quick task with agent access (terminal)', () => {
-  const withAgent = (): HandoffRequest => {
+  const withAgent = (kind = 'new_ticket'): HandoffRequest => {
     const r = sequenceRequest()
-    const material = { ...r.material, sequence: { ...r.material.sequence!, intent: { ...INTENT, agent: { hours: 24, scope: 'workable' } } } }
+    const material = { ...r.material, sequence: { ...r.material.sequence!, intent: { ...INTENT, kind, agent: { hours: 24, scope: 'workable' } } } }
     const digest = reviewDigestOf(material)
     return { ...r, material, review_digest: digest, fingerprint: fingerprintOf(digest, r.events, 'new') }
   }
@@ -158,7 +162,7 @@ describe('a quick task with agent access (terminal)', () => {
     expect(dialog).toHaveTextContent('you type DEMO-0044/0000000A to continue')
   })
 
-  it('says in words that the task exists and the agent access was NOT given when the last signature never follows', async () => {
+  it('says in words that the TICKET exists (nothing was approved) and the agent access is not confirmed when the last signature never follows', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const request = withAgent()
     s.prepare.mockResolvedValue(request)
@@ -168,8 +172,48 @@ describe('a quick task with agent access (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
     await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 2)))
-    expect(await within(dialog).findByText(/Task created; agent access was NOT given/, {}, T)).toBeInTheDocument()
-    expect(dialog).toHaveTextContent('agent access was NOT given: signing stopped at the last signature')
+    expect(await within(dialog).findByText(/Ticket created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('DEMO-0044 was created. Agent access is not confirmed yet: the last signature has not arrived')
+    expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+  })
+
+  it('F-712-4: asks once more before saying the last signature has not arrived, and does not fail when it lands meanwhile', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const request = withAgent()
+    s.prepare.mockResolvedValue(request)
+    const stalled = state(request, { state: 'submitted', seq: 1, event_ids: ['x'], progress: { done: 3, of: 4, last: 'grant' } })
+    const landed = state(request, { state: 'submitted', seq: 2, event_ids: ['x', 'y'] })
+    let last = 0
+    s.get.mockImplementation(async () => {
+      const now = Date.now()
+      const back = now - last < 1000 && last !== 0 // two reads in the same poll: the stall check and its one re-check
+      const stallTime = now > t0 + GRANT_STALL_MS
+      last = now
+      return back && stallTime ? landed : stalled
+    })
+    const t0 = Date.now()
+    const { onSettled } = mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
+    await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 6)))
+    expect(dialog).not.toHaveTextContent(/not confirmed yet/)
+    expect(onSettled).not.toHaveBeenCalledWith('failed', expect.anything(), expect.anything())
+  })
+
+  it('for a quick task: says the task exists and is approved, and the agent access is not confirmed when the last signature never follows', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const request = withAgent('quick_task')
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValueOnce(state(request)).mockResolvedValue(state(request, { state: 'submitted', seq: 1, event_ids: ['x'], progress: { done: 3, of: 4, last: 'grant' } }))
+    const { onSettled } = mount()
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
+    await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 2)))
+    expect(await within(dialog).findByText(/Task created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('agent access is not confirmed yet: the last signature has not arrived')
     expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
     expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
   })

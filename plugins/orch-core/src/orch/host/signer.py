@@ -156,6 +156,7 @@ def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
     _shape(prepared, workspace_id=workspace_id, person=person, device=None, auth=None)
     _formats(prepared)
     _hashes(prepared, workspace_id)
+    _person_op(prepared)
     check_reviews(prepared["material"], events)
     _sequence(prepared, events, workspace_id, person)
     if prepared.get("review_digest") != review.review_digest(prepared["material"]):
@@ -222,15 +223,52 @@ _SET_FIELDS = frozenset(
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish"})
+_SETTINGS_KEYS = frozenset(
+    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models"}
+)
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
     """``move``, ``policy.set``, ``settings.set``: each event may change only what its op names, on the log its scope
     names (a ticket for ``move`` and a ticket ``policy.set``, the workspace log otherwise)."""
     op, log, ticket = prepared["op"], prepared.get("log"), prepared["material"].get("ticket")
-    for e in prepared["events"]:
-        if op == "move":
+    if "statement" in prepared["material"] and op not in ("ac.accept", "ac.unaccept"):
+        _refuse(f"{op} carries a manual acceptance statement")
+    events = prepared["events"]
+    for e in events:  # every event, before the op-specific dispatch below (which returns at its first unknown op)
+        label = e.get("label")
+        if (
+            e["type"] in ARTIFACT_TYPES
+            and isinstance(label, str)
+            and label.startswith(("accepted ", "withdrawn "))
+            and op not in ("ac.accept", "ac.unaccept")
+        ):
+            _refuse(f"{op} cannot sign a file labelled as a manual acceptance or its withdrawal")
+    for e in events:
+        if op in ("ac.accept", "ac.unaccept"):
+            from . import acceptance
+
+            statement = prepared["material"].get("statement")
+            parsed = acceptance.parse(statement)
+            ok = (
+                len(events) == 1
+                and log != "workspace"
+                and ticket is not None
+                and parsed is not None
+                and parsed["kind"] == ("accept" if op == "ac.accept" else "withdraw")
+                and acceptance.matches(e, statement)
+            )
+        elif op == "task.mark_done":
+            ok = (
+                len(events) == 1
+                and log != "workspace"
+                and ticket is not None
+                and e["type"] == "task.done"
+                and set(e) - review.ENVELOPE == {"task"}
+                and isinstance(e.get("task"), str)
+                and re.fullmatch(r"T[1-9][0-9]*", e["task"]) is not None
+            )
+        elif op == "move":
             ok = e["type"] == "ticket.moved" and e.get("to") in _MOVE_TO and log != "workspace" and ticket is not None
         elif op == "policy.set":
             gates = e.get("gates")
@@ -284,7 +322,7 @@ def _touches(prepared: Mapping[str, Any]) -> None:
             _refuse("base_rev does not name exactly the paths the edit touches")
         if op in ("ac.add", "ac.edit"):
             ok = set(sets) == {"ticket.acceptance"} and not sections
-        elif op == "task.add":
+        elif op in ("task.add", "task.edit"):
             ok = set(sets) == {"ticket.tasks"} and not sections
         elif op == "section.set":
             ok = not sets and len(sections) == 1
@@ -371,10 +409,10 @@ def _shape(
 _MATERIAL_KEYS = {
     "gate": (
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
-        {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence", "statement"}),
     # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
     pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
@@ -390,6 +428,17 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     keys = _MATERIAL_KEYS.get(kind)
     if keys is None or not keys[0] <= set(material) <= keys[1]:  # fail closed: a key outside the Material schema
         _refuse(f"material has keys outside the {kind!r} schema")
+    if "manual_acceptances" in material:
+        manual = material["manual_acceptances"]
+        if material.get("gate") != "verify" or not isinstance(manual, list):
+            _refuse("manual acceptances require a verify gate list")
+        for row in manual:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"ac", "name", "by"}
+                or not all(isinstance(value, str) for value in row.values())
+            ):
+                _refuse("malformed manual acceptance")
     ticket = material.get("ticket")
     if ticket is not None and (not isinstance(ticket, dict) or set(ticket) != {"key", "uid"}):
         _refuse("material.ticket is malformed")
@@ -540,6 +589,9 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
     prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
     seq = prepared["material"].get("sequence")
+    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("kind") == "addon_enable":
+        # turning on an add-on that needs settings: the add-on's word, as for addon.grant (not the SETTINGS word)
+        return f"{_clean(seq['intent'].get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
     if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("agent") is not None:
         return "GRANT"  # a sequence that gives agents access is confirmed with the grant's word (its strongest step)
     if op in ("policy.set", "settings.set") and ticket is None:
@@ -683,6 +735,11 @@ def render(
                 out.append(f"ticket_key: {_clean(value)} (ticket key per host)")
             elif key == "reader":
                 out.append(review.reader_line(int(value)))
+            elif key == "statement":
+                out.append("statement:")
+                out += ["| " + _clean(line) for line in value.split("\n")]
+                if prepared["op"] == "ac.accept":
+                    out.append("No automated check backs this: you vouch for it yourself.")
             elif key != "sections":
                 out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":
@@ -761,6 +818,10 @@ def plain(
         )
     except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
         return Review(prefix + full)
+    # The dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex it shows, on a
+    # labelled line under the headline (before the first blank line). The full review's `fingerprint:` line stays too.
+    fp = f"Verification fingerprint: {_clean(prepared['fingerprint'])}"
+    lines.insert(lines.index("") if "" in lines else len(lines), fp)
     if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
         lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]
     for c in prepared.get("checks") or []:
@@ -872,6 +933,9 @@ def check_uploads(prepared: Mapping[str, Any], files: Mapping[str, Any] | None) 
             _refuse("an uploaded file is not inline base64")
     sums = {(canon.artifact_digest(b), len(b)) for b in uploaded}
     for e in prepared["events"]:
+        if prepared.get("op") in ("ac.accept", "ac.unaccept"):
+            _person_op(prepared)  # generated bytes are independently rebuilt, never exempted without checking
+            continue
         if e["type"] in ("artifact.added", "artifact.replaced") and (e.get("sha256"), e.get("bytes")) not in sums:
             _refuse(f"{_clean(e.get('name'))}: the artifact is not the file you sent")
 

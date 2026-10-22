@@ -11,6 +11,8 @@ export const SIDEBAR_WIDE = 232
 export const SIDEBAR_RAIL = 56
 /** Below this window width the sidebar is the rail by default. */
 export const RAIL_WINDOW = 1280
+/** Below this window width the wide sidebar never fits beside the page (a phone): the rail wins over any remembered choice. */
+export const RAIL_PHONE = 640
 /** With the dock on the right, a page area (beside the wide sidebar) under this makes the sidebar the rail by default. */
 export const RAIL_SQUEEZE = 900
 
@@ -26,6 +28,7 @@ export interface RailInputs {
 
 /** Is the sidebar the icon rail? */
 export function railCollapsed({ pref, dockPref, windowWidth, squeezed }: RailInputs): boolean {
+  if (windowWidth < RAIL_PHONE) return true
   if (squeezed) return dockPref !== 'wide'
   return pref === 'auto' ? windowWidth < RAIL_WINDOW : pref === 'narrow'
 }

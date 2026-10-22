@@ -131,7 +131,9 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
     try:
         if platform == "darwin":
             res = run(["launchctl", "print", f"gui/{uid}/{LAUNCHD_LABEL}"])
-            found = re.search(r"^\s*pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            found = (
+                re.search(r"^(?:\t| {4})pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
+            )
         elif platform.startswith("linux"):
             res = run(["systemctl", "--user", "show", "-p", "MainPID", "--value", SYSTEMD_NAME])
             found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None
@@ -207,6 +209,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
     "runner.hello": _obj(
         {
             "version": {"type": "string", "minLength": 1, "maxLength": 64},
+            "release": {"type": "string", "minLength": 1, "maxLength": 64},
             "gen": _GEN,
             "pid": {"type": "integer", "minimum": 2},
             "term_socket": {"type": "string", "minLength": 1, "maxLength": 200},
@@ -399,6 +402,7 @@ class RunnerHub:
         self.uid: int | None = None
         self.generation: str | None = None  # the runner's gen (§12.3.2 Gen)
         self.pid: int | None = None
+        self.release: str | None = None  # the release the runner reported in its hello (``None``: an older runner)
         self.epoch = 0
         self.instance = secrets.token_hex(4)
         self.sub_id: str | None = None
@@ -430,23 +434,22 @@ class RunnerHub:
         self.grants = RunnerGrants(self)
         self._reported_grants: list[dict[str, Any]] = []
 
-    def running_work(self, workspace_id: str) -> dict[str, int]:
-        """Live runs (agent and runner sessions) of the workspace and the terminals attached to them, for the store
-        migration's refusal. A read of memory on the host's own loop state: no await."""
-        live = [
-            r["run"]
-            for r in list(self.store.records.values())
-            if r.get("workspace_id") == workspace_id and r.get("state") in LIVE
-        ]
-        terminals = sum(len((self.term_state.get(run) or {}).get("atts") or []) for run in live)
-        # a start in progress (the launch intent is not a record yet) counts too, whatever workspace it is for
-        unrecorded = [run for run in list(self.starting) if run not in self.store.records]
-        return {"runs": len(live) + len(unrecorded), "terminals": terminals}
-
     # -- state
     @property
     def connected(self) -> bool:
         return self.session is not None and not self.session.closed
+
+    def require_current(self) -> None:
+        """One rule for every start (agent, shell, spawn): the runner must run the same release as this host. A runner
+        from an older install would apply its old rules (and an old environment allow-list) to new requests. The
+        refusal is plain; no check is relaxed."""
+        from .service import _release_id
+
+        if self.release != _release_id():
+            raise HostError(
+                "runner.stale",
+                "the agent runner is from an older orch version; run `orch host enable` to restart it",
+            )
 
     @property
     def term_socket(self) -> Path:
@@ -557,6 +560,7 @@ class RunnerHub:
             raise HostError("invalid.input", "runner.hello: term_socket is not <run>/term/<uid>/term.sock")
         previous = self.generation
         self.session, self.uid, self.generation, self.pid = session, uid, args["gen"], args["pid"]
+        self.release = args.get("release")
         self.epoch += 1
         self._term_seq.clear()  # a new runner process counts its reports from 1 again
         self.sub_id = "sub_" + secrets.token_hex(8)
@@ -790,6 +794,7 @@ class RunnerHub:
         next ``runner.hello`` reconciles it; it is never spawned twice."""
         if not self.connected:
             raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
+        self.require_current()
         run = fields.get("run") or new_run_id()
         if run in self.store.records:
             return view(self.store.records[run])

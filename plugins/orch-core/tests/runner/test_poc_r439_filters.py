@@ -1,6 +1,7 @@
 """Regression (Opus review #439 F1, the reviewer's PoC inverted): a repo's OWN config (.git/config) defines a filter
 driver and an attribute selects it. Before the fix the runner's worktree.add checkout and the direct-mode read_git
-status ran it; now the orch.gitsafe gate refuses to run git there at all.
+status ran it; now the orch.gitsafe gate refuses to run git there at all, and since #565 the direct-mode status is
+orch's own reader (no git process).
 
 The invariant: orch never runs git against a repository whose local/worktree config or attributes could make git
 execute a program or read config from elsewhere."""
@@ -46,20 +47,28 @@ def test_worktree_add_refuses_a_repo_local_smudge_filter(world, committed):  # n
     assert not (Path(f"{repo}.worktrees") / NAME).exists()
 
 
-def test_read_git_status_refuses_a_repo_local_clean_filter(world):  # noqa: F811
+def test_the_direct_status_runs_no_repo_local_clean_filter(world):  # noqa: F811
+    """#565: the direct-mode status is orch's reader in-process; a repo-local clean filter never runs, and the
+    answer is the real one (the bytes changed: dirty)."""
+    from orch.gitread.local import READER
+
     root, repo, own, args = world
     marker = root / "cleaned"
     _plant(repo, marker)
     marker.unlink(missing_ok=True)
     time.sleep(1.1)
     (repo / "f").write_text("y")  # changed stat: status would hash it through the clean filter
-    with pytest.raises(gitsafe.Unsafe):
-        wtgit.tree_dirty(str(repo), own)
+    assert "modified: f" in READER.dirty(repo)
     assert not marker.exists(), "repo-local clean filter ran"
+    import subprocess
+
+    subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, check=False)
+    assert marker.exists(), "the control (plain git status) must run the filter"
 
 
 def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
-    """``git worktree remove`` runs status inside the worktree: its config.worktree is gated as well."""
+    """``git worktree remove`` reads the worktree's config too: its config.worktree is gated as well (defence in depth:
+    since #565 remove always runs ``--force``, so git's own status never runs there)."""
     root, repo, own, args = world
     assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
     wt = Path(f"{repo}.worktrees") / NAME

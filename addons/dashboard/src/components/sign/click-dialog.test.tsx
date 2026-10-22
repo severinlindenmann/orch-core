@@ -1,10 +1,11 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, clickProblem, HOLD_MS, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, clickProblem, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
 import { fakeRequest, mount, spies, state } from '@/test/handoffHarness'
+import { STALE_HOPS } from '@/components/sign/useHandoff'
 
 const T = { timeout: 5000 }
 const PLAN = { kind: 'approve', gate: 'plan' } as const
@@ -64,18 +65,16 @@ async function open(action: Parameters<typeof mount>[0] = PLAN) {
   flag(true)
   const m = await mount(action)
   const dialog = await screen.findByRole('dialog', {}, T)
-  await waitFor(() => expect(within(dialog).getAllByRole('button', { name: /^(Sign|Sign in Terminal)$/ }).find(el => !el.closest('details'))).toBeEnabled(), T)
   return { ...m, dialog }
 }
+/** The dialog prepares on open (the click that opened it is the intent): it goes straight to the review. */
 async function toPanel() {
   const m = await open()
-  const sign = await within(m.dialog).findByRole('button', { name: 'Sign' }, T)
-  fireEvent.click(sign)
   await within(m.dialog).findByTestId('click-panel', {}, T)
   return m
 }
 const armed = async (dialog: HTMLElement) => {
-  const b = within(dialog).getByRole('button', { name: 'Sign' })
+  const b = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
   await waitFor(() => expect(b).toBeEnabled(), { timeout: ARM_MS + 2000 })
   return b
 }
@@ -85,13 +84,61 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
-  it('offers only Sign (one signing path) and prepares nothing until it is pressed', async () => {
+  it('opens straight on the review: content first, Sign under it, never a Sign button before the content (WYSIWYS)', async () => {
     const { dialog } = await open()
-    expect(await within(dialog).findByRole('button', { name: 'Sign' }, T)).toBeEnabled()
+    // before the review is shown there is no Sign button at all
+    expect(within(dialog).queryByRole('button', { name: /^Sign/ })).toBeNull()
+    await within(dialog).findByTestId('click-panel', {}, T)
+    expect(within(dialog).getByText('Approve the plan of DEMO-0044')).toBeInTheDocument()
+    expect(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
-    expect(within(dialog).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+    expect(s.prepare).not.toHaveBeenCalled() // one click request, never also a terminal one
+  })
+
+  it('at no moment is a Sign button on screen before the content is (observed on every DOM change)', async () => {
+    const bad: string[] = []
+    const look = () => {
+      for (const d of document.querySelectorAll('[data-handoff-dialog]')) {
+        const signs = [...d.querySelectorAll('button')].filter((b) => /^Sign( in Terminal)?$/.test(b.textContent?.trim() ?? ''))
+        if (signs.length && !d.querySelector('[data-testid="click-panel"], [data-testid="handoff-command"]')) bad.push(d.textContent ?? '')
+      }
+    }
+    const obs = new MutationObserver(look)
+    obs.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true })
+    const { dialog } = await toPanel()
+    look()
+    obs.disconnect()
+    expect(within(dialog).getByRole('button', { name: /^Sign( |$)/ })).toBeInTheDocument()
+    expect(bad).toEqual([])
+  })
+
+  it('with a phone request possible, nothing is prepared until the phone query has answered', async () => {
+    flag(true)
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { HandoffDialog } = await import('./HandoffDialog')
+    const { render } = await import('@testing-library/react')
+    let answer!: (v: { phones: number }) => void
+    vi.spyOn(api, 'phoneAvailable').mockReturnValue(new Promise((r) => { answer = r }))
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
+    const ws = (await api.getWorkspaces())[0]!.id
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Approve plan" action={{ action: 'approve', key: 'DEMO-0044', gate: 'plan' }} phoneRequest={{ ref: 'DEMO-0044', gate: 'plan', gate_gen: 3 }} autoStart onClose={() => {}} /></QueryClientProvider>)
+    await new Promise((r) => setTimeout(r, 500))
     expect(c.prepare).not.toHaveBeenCalled()
-    expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
+    answer({ phones: 0 })
+    await screen.findByTestId('click-panel', {}, T)
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('a form dialog (request changes) with click is not labelled Sign before the review', async () => {
+    flag(true)
+    const m = await mount({ kind: 'request_changes', gate: 'plan' })
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByRole('button', { name: 'Request changes' }, T)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /^Sign$/ })).toBeNull()
+    void m
   })
 
   it('without the flag there is no Sign button and the hand-off starts as before', async () => {
@@ -101,7 +148,7 @@ describe('the action dialog with click-to-sign', () => {
     await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
     await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(within(dialog).queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: /^Sign( |$)/ })).toBeNull()
     expect(within(dialog).queryByTestId('click-risk')).toBeNull()
     expect(c.prepare).not.toHaveBeenCalled()
   })
@@ -131,7 +178,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(c.view).toHaveBeenCalledWith(ws, REQ)
     const panel = within(dialog).getByTestId('click-panel')
-    expect(within(panel).getByRole('button', { name: 'One-click' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
+    expect(within(panel).getAllByText('Technical details')).toHaveLength(1)
     expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
     expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
@@ -139,7 +187,7 @@ describe('the action dialog with click-to-sign', () => {
 
   it('signs with the digest of the View it shows, after the arming time, and says Signed', async () => {
     const { ws, dialog } = await toPanel()
-    const b = within(dialog).getByRole('button', { name: 'Sign' })
+    const b = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
     expect(b).toBeDisabled()
     press(b)
     expect(c.sign).not.toHaveBeenCalled()
@@ -147,6 +195,17 @@ describe('the action dialog with click-to-sign', () => {
     await within(dialog).findByText('Signed', {}, T)
     expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, undefined)
     expect(c.cancel.mock.calls).toEqual([])
+  })
+
+  it('a confirmed signature drops its item from Today at once and refreshes the queries', async () => {
+    const { ws, ticket, dialog, client } = await toPanel()
+    const item = { kind: 'approval', ticket: ticket.key, title: 't', text: 'x', since: '2026-10-19T10:00:00Z', ref: 'plan' }
+    client.setQueryData(['today', ws], { now: '', workspace: ws, needs_you: [item], read_only_open: [] })
+    client.setQueryData(['ticket', ws, ticket.key], ticket)
+    press(await armed(dialog))
+    await within(dialog).findByText('Signed', {}, T)
+    expect((client.getQueryData(['today', ws]) as { needs_you: unknown[] }).needs_you).toEqual([])
+    expect(client.getQueryState(['ticket', ws, ticket.key])?.isInvalidated).toBe(true)
   })
 
   it('Cancel cancels the request; closing it by Escape does too', async () => {
@@ -165,7 +224,7 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.cancel).not.toHaveBeenCalled()
     expect(within(dialog).getByTestId('click-panel')).toBeInTheDocument()
     c.sign.mockResolvedValueOnce({ state: 'submitted', duplicate: false })
-    press(within(dialog).getByRole('button', { name: 'Sign' }))
+    press(within(dialog).getByRole('button', { name: /^Sign( |$)/ }))
     await within(dialog).findByText('Signed', {}, T)
     expect(c.sign).toHaveBeenCalledTimes(2)
   })
@@ -180,25 +239,27 @@ describe('the action dialog with click-to-sign', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Read the review again' }))
     await within(dialog).findByText('A different review', {}, T)
     expect(c.view).toHaveBeenLastCalledWith(ws, REQ)
-    expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: /^Sign( |$)/ })).toBeDisabled()
   })
 
-  it('a word op shows the word and, after a full hold of Sign, sends the View’s word', async () => {
+  it('a word op asks for the word and, once typed, sends the View’s word on Sign', async () => {
     c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'policy.set', confirm: 'word' })
     c.view.mockResolvedValue(viewAnswer({ op: 'policy.set', confirm: { kind: 'word', word: 'DEMO~aaaaaaaa/POLICY' } }))
     const { ws, dialog } = await toPanel()
-    expect(within(dialog).getByTestId('click-hold-hint')).toHaveTextContent('Hold Sign to confirm DEMO~aaaaaaaa/POLICY')
-    const b = within(dialog).getByRole('button', { name: 'Hold to sign' })
-    await waitFor(() => expect(b).toBeEnabled(), { timeout: ARM_MS + 2000 })
-    fireEvent.pointerDown(b)
-    await waitFor(() => expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, 'DEMO~aaaaaaaa/POLICY'), { timeout: HOLD_MS + 2000 })
+    expect(within(dialog).getByTestId('typed-word')).toHaveTextContent('Type DEMO~aaaaaaaa/POLICY to confirm')
+    const b = within(dialog).getByRole('button', { name: /^Sign/ })
+    await new Promise(r => setTimeout(r, ARM_MS + 200))
+    expect(b).toBeDisabled() // armed, but the word is not typed
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'DEMO~aaaaaaaa/POLICY' } })
+    await waitFor(() => expect(b).toBeEnabled())
+    press(b)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, 'DEMO~aaaaaaaa/POLICY'), { timeout: 2000 })
     expect(c.sign).toHaveBeenCalledTimes(1)
   })
 
   it('the prepare failing shows the honest message and no terminal path, and nothing is open', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'sign.convenience_unavailable', message: 'other_member: x', retryable: false, reason: 'other_member' }))
     const { dialog } = await open()
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
     const problem = await within(dialog).findByTestId('click-problem', {}, T)
     expect(problem).toHaveTextContent('another member')
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
@@ -213,7 +274,7 @@ describe('the action dialog with click-to-sign', () => {
     press(await armed(dialog))
     const settling = await within(dialog).findByTestId('click-settling', {}, T)
     expect(settling).toHaveTextContent('settles by itself')
-    expect(within(dialog).queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: /^Sign( |$)/ })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: /Try again|Prepare again/ })).toBeNull()
     await waitFor(() => expect(stateSpy).toHaveBeenCalled(), T)
@@ -251,7 +312,6 @@ describe('the action dialog with click-to-sign', () => {
   it('Try again after the View could not be read cancels the open request first, then prepares anew', async () => {
     c.view.mockRejectedValueOnce(new ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }, 9))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     await within(m.dialog).findByTestId('click-problem', {}, T)
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Try again' }))
     await within(m.dialog).findByTestId('click-panel', {}, T)
@@ -264,14 +324,15 @@ describe('the action dialog with click-to-sign', () => {
   it('a View whose risk line is not the card text is not shown', async () => {
     c.view.mockResolvedValue(viewAnswer({ risk: 'Convenience signing is fine.' }))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     await within(m.dialog).findByTestId('click-problem', {}, T)
     expect(within(m.dialog).queryByTestId('click-panel')).toBeNull()
   })
 
   it('shows the custody and the device of the View', async () => {
     const { dialog } = await toPanel()
-    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase') // under Technical details, no orange line
+    expect(within(dialog).getByTestId('sign-method')).toHaveTextContent('Sign on this computer')
+    expect(within(dialog).queryByText('Other ways')).toBeNull()
     expect(within(dialog).getByText('d_x').closest('details')).not.toHaveAttribute('open')
   })
 
@@ -280,11 +341,11 @@ describe('the action dialog with click-to-sign', () => {
     c.sign.mockRejectedValueOnce(new ApiError(503, { code: 'rate.limited', message: 'x', retryable: true, retry_after_ms: 5000 }, 3))
     press(await armed(dialog))
     await within(dialog).findByText(/Try again in 5 s/, {}, T)
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled())
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: /^Sign( |$)/ })).toBeDisabled())
     // The clock jumps past the wait (only Date is faked); the panel's own ticker notices on its next tick.
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5600 })
     try {
-      await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), T)
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: /^Sign( |$)/ })).toBeEnabled(), T)
     } finally {
       vi.useRealTimers()
     }
@@ -311,11 +372,13 @@ describe('an unknown outcome never leads to a second signature', () => {
   it('an action that already landed is "Already done"; Do it again is an explicit click with the next retry', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'This is already done.', retryable: false, state: 'submitted', op: 'log', signed_at: new Date(Date.now() - 120_000).toISOString(), summary: 'HOST-SIGNED comment text' } as never, 5))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
     expect(m.dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(m.dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(within(m.dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', expect.stringMatching(/^202/))
+    // A-1: the host's record is never part of the sentence: it is folded under "Technical details"
+    expect(within(m.dialog).getByText(/A similar comment/).closest('p')).not.toHaveTextContent('HOST-SIGNED')
+    expect(within(m.dialog).getByTestId('technical-details')).not.toHaveAttribute('open')
     expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
@@ -324,10 +387,18 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
   })
 
+  it('an add-on that is already as asked says so in plain words: no raw JSON, no Do it again', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'addon.already', message: 'Terminals is already on.', retryable: false }, 1))
+    const m = await open()
+    expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(m.dialog).toHaveTextContent('Terminals is already on.')
+    expect(m.dialog).not.toHaveTextContent(/event_id|package_sha256|\{"/)
+    expect(within(m.dialog).queryByRole('button', { name: /Do it again|^Sign$|Try again/ })).toBeNull()
+  })
+
   it('a submitted failure needs an explicit Start again and advances retry', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.failed', message: 'The earlier attempt was submitted but did not land (gate.stale). It was not signed into the log.', retryable: false }))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     await within(m.dialog).findByText('The earlier attempt did not land', {}, T)
     expect(m.dialog).toHaveTextContent('not signed into the log')
     expect(m.dialog).not.toHaveTextContent('Already done')
@@ -351,25 +422,39 @@ describe('an unknown outcome never leads to a second signature', () => {
   it('a closed binding conflict offers an explicit Start again', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.blocked', message: 'No request is open. An earlier one may have been signed.', retryable: false }))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
     await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
   })
 
-  it('a cancelled or expired earlier attempt offers Start again (retry 1); an open attempt elsewhere offers nothing', async () => {
+  it('a cancelled or expired earlier attempt does not block a fresh open: it prepares anew once (retry 1) and shows the review', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
-    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    await within(m.dialog).findByTestId('click-panel', {}, T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+    expect(m.dialog).not.toHaveTextContent('The earlier attempt ended')
+  })
+
+  it('an action cancelled several times before opens straight to a fresh review (walks past every ended attempt)', async () => {
+    const ended = () => new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5)
+    c.prepare.mockRejectedValueOnce(ended()).mockRejectedValueOnce(ended()).mockRejectedValueOnce(ended())
+    const m = await open()
+    await within(m.dialog).findByTestId('click-panel', {}, T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1, 2, 3])
+    expect(m.dialog).not.toHaveTextContent('The earlier attempt ended')
+  })
+
+  it('a host that only answers "ended" is said after a bounded walk, with an explicit Start again (no endless loop)', async () => {
+    c.prepare.mockRejectedValue(new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(STALE_HOPS + 2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([...Array(STALE_HOPS + 2).keys()])
   })
 
   it('retention expiry waits for Start again before preparing with retry 1', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.expired', message: 'Start again to make a new one.', retryable: false }, 5))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     expect(await within(m.dialog).findByText('This attempt is too old; start again', {}, T)).toBeInTheDocument()
     expect(c.prepare).toHaveBeenCalledTimes(1)
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Start again' }))
@@ -380,7 +465,6 @@ describe('an unknown outcome never leads to a second signature', () => {
   it('an attempt that is open at the host (terminal, or before a restart) is named and nothing prepares again', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.open', message: 'x', retryable: false }, 5))
     const m = await open()
-    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     expect(await within(m.dialog).findByText('An attempt for this is already open', {}, T)).toBeInTheDocument()
     expect(within(m.dialog).queryByRole('button', { name: /Start again|Do it again|Try again|^Sign$|terminal instead/ })).toBeNull()
   })
@@ -484,37 +568,36 @@ it.each([null, ['terminal', 'click', 'phone']])('disables phone approval and use
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
   const { dialog } = await open()
-  fireEvent.click(within(dialog).getByText('Other ways'))
+  await within(dialog).findByTestId('handoff-command', {}, T)
   // No phone is paired and none was asked for: Phone is not offered at all (no "coming soon" button).
   expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
-  await within(dialog).findByTestId('handoff-command')
   expect(c.prepare).not.toHaveBeenCalled()
+  expect(s.prepare).toHaveBeenCalledTimes(1)
 })
 
-it('omits One click from Other ways when the signer is unavailable', async () => {
+it('without the signer the terminal request opens and there is no Other ways', async () => {
   flag('unavailable')
+  s.prepare.mockResolvedValue(fakeRequest())
+  s.get.mockResolvedValue(state(fakeRequest()))
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
   await mount(PLAN)
   const dialog = await screen.findByRole('dialog')
-  await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign in Terminal' })).toBeEnabled())
+  await within(dialog).findByTestId('handoff-command', {}, T)
   // Nothing usable is left: no click (signer unavailable), no phone (none paired), so no "Other ways" at all.
   expect(within(dialog).queryByText('Other ways')).toBeNull()
   expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
   expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
 })
 
-it('cancels the click review before switching to a fresh terminal intent', async () => {
+it('has no "Other ways": the method follows My settings, with the phone as the only quiet alternative', async () => {
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click'], is_default: false })
   s.prepare.mockResolvedValue(fakeRequest())
   s.get.mockResolvedValue(state(fakeRequest()))
-  const { dialog, ws, ticket } = await toPanel()
-  fireEvent.click(within(dialog).getByText('Other ways'))
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
-  await within(dialog).findByTestId('handoff-command')
-  expect(c.cancel).toHaveBeenCalledWith(ws, REQ)
-  expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 1)
-  expect(c.sign).not.toHaveBeenCalled()
+  const { dialog } = await toPanel()
+  expect(within(dialog).queryByText('Other ways')).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: 'Sign in Terminal' })).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
+  expect(s.prepare).not.toHaveBeenCalled()
 })

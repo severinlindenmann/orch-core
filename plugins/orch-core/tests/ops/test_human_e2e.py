@@ -12,7 +12,6 @@ import json
 import os
 import pty
 import re
-import select
 import subprocess
 import sys
 import termios
@@ -20,7 +19,7 @@ import time
 
 import pytest
 
-from orch import canon, crypto
+from orch import canon, crypto, fdwait
 from tests.ops.humans import PASSPHRASE
 from tests.ops.test_task_ac import py
 from tests.store.helpers import WS
@@ -30,14 +29,19 @@ SESSION = "s_01J9ZP0000000000000000000S"
 
 
 def agent_bin(ws, grant, *argv, stdin=None):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "ORCH_SESSION": SESSION}
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(ws.tmp),
+        "ORCH_STATE_DIR": str(ws.host_state),
+        "ORCH_SESSION": SESSION,
+    }
     env["ORCH_GRANT"] = grant
     p = subprocess.run(
         [sys.executable, "-m", "orch", *argv],
         input=stdin,
         capture_output=True,
         text=True,
-        cwd=ws.root / "tickets",
+        cwd=ws.store_dir / "tickets",
         env=env,
         timeout=60,
         start_new_session=True,
@@ -54,7 +58,12 @@ def key_of(argv):
 
 def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
     """Run ``orch`` as the person at a terminal. Returns ``(exit code, stdout, stderr, what the terminal showed)``."""
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "TERM": "dumb"}
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(ws.tmp),
+        "ORCH_STATE_DIR": str(ws.host_state),
+        "TERM": "dumb",
+    }
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
     pid, tty = pty.fork()
@@ -62,7 +71,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
         try:
             os.dup2(out_w, 1)
             os.dup2(err_w, 2)
-            os.chdir(ws.root / "tickets")
+            os.chdir(ws.store_dir / "tickets")
             os.execve(sys.executable, [sys.executable, "-m", "orch", *argv], env)
         finally:
             os._exit(127)
@@ -73,8 +82,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
     confirmed = False
     deadline = time.time() + 60
     while time.time() < deadline:  # until the terminal closes (the command ended) or the time is up
-        ready, _, _ = select.select([tty], [], [], 0.2)
-        if ready:
+        if fdwait.readable(tty, 0.2):
             try:
                 chunk = os.read(tty, 65536)
             except OSError:  # EIO: the other side of the terminal is gone
@@ -99,6 +107,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
                 typed = True
     else:
         os.kill(pid, 9)
+        os.close(tty)  # macOS: a killed child blocks in exit until the pty master is closed
         os.waitpid(pid, 0)
         raise AssertionError(f"the command did not finish; the terminal showed {shown!r}")
     _, status = os.waitpid(pid, 0)

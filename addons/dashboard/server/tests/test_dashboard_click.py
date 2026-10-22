@@ -70,6 +70,8 @@ class Script:
             if self.features is not None:
                 out["features"] = self.features
             return out
+        if op == "stash":
+            return {"state": "complete"}
         if op in ("custody_on", "custody_off"):
             self.enabled = self.available = op == "custody_on"
             row = {"workspace_id": self.ws, "custody": "convenience", "enabled": self.enabled}
@@ -138,6 +140,7 @@ class HostCheck:
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
+        self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
 
     def human(self, ws, op, args, **kw):
         if op == "human.prepare" and self.replay_error:
@@ -159,7 +162,12 @@ class HostCheck:
                 return {"requests": list(self.listing)}
             return {
                 "requests": [
-                    {"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound"), "seq": 7}
+                    {
+                        "id": args["request_id"],
+                        "state": self.pending.get(args["request_id"], "bound"),
+                        "seq": 7,
+                        **({"key": self.key, "created_at": "2026-10-19T08:00:00Z"} if self.key else {}),
+                    }
                 ]
             }
         raise AssertionError(op)
@@ -1867,6 +1875,12 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
     [
         {"action": "publish_setup", "server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"},
         {"action": "publish_share", "key": "DEMO-0001", "staged_id": "ps_" + "0" * 32},
+        {"action": "addon_grant", "name": "publish"},  # turning Publish on is terminal only, however it is asked
+        {
+            "action": "addon_enable",
+            "name": "publish",
+            "publish": {"server": "https://files.example.test", "share": "https://links.example.test"},
+        },
     ],
 )
 def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
@@ -1876,3 +1890,127 @@ def test_publish_setup_and_share_are_never_one_click(client, token, stub, script
     assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
     assert script.prepared == 0
     assert client.app.state.handoffs.active == {}
+
+
+def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
+    client, token, stub, script, host_check, rich, monkeypatch
+):
+    """U4: the server (never error text) says the ticket landed and only the access is missing."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    seen = {}
+
+    def progress(gateway, ws, key, intent, person=None, since=None):
+        seen.update(key=key, since=since, agent=intent.get("agent"))
+        return {"done": 3, "of": 4}
+
+    monkeypatch.setattr("orch_dashboard.click.sequence_progress", progress)
+    host_check.key = "DEMO-0044"
+    got = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert got["key"] == "DEMO-0044" and got["progress"] == {"done": 3, "of": 4, "last": "grant"}
+    assert seen == {"key": "DEMO-0044", "since": "2026-10-19T08:00:00Z", "agent": {"hours": 24, "scope": "workable"}}
+    # no key on the host's row yet (nothing created): nothing to report
+    host_check.key = None
+    plain = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
+    assert "key" not in plain and "progress" not in plain
+
+
+# --- R3 part B: pasted screenshots ---------------------------------------------------------------------------------
+DIGEST = "ab" * 32
+PIC = {
+    "name": f"paste-20261019-101500-{DIGEST[:8]}.png",
+    "sha256": f"sha256:{DIGEST}",
+    "bytes": 321,
+    "alt": "the broken page",
+}
+WITH_PIC = {
+    **SEQUENCE,
+    "sections": {"summary": "Why.", "context": f"Look: ![the broken page](artifact:{PIC['name']})"},
+    "images": [PIC],
+}
+
+
+def test_a_new_ticket_with_a_picture_sends_the_intent_with_its_digest_and_never_the_bytes(client, token, stub, script):
+    script.features = ["custody", "sequence", "images"]
+    res = prepare(client, token, stub, WITH_PIC)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    meta = args["sequence"]
+    assert meta["of"] == 5  # new, set, the picture, two sections
+    assert meta["intent"]["images"] == [PIC]
+    assert "files" not in args and "b64" not in repr(args)
+
+
+def test_a_signer_that_cannot_hold_pictures_is_never_asked_for_one(client, token, stub, script):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, WITH_PIC)
+    assert res.status_code >= 400 and "orch-core" in res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+def test_a_picture_no_section_shows_is_refused_before_the_signer(client, token, stub, script):
+    script.features = ["custody", "sequence", "images"]
+    res = prepare(client, token, stub, {**WITH_PIC, "sections": {"summary": "No picture here."}})
+    assert res.status_code == 400 and "shown by a written section" in res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+def test_a_picture_chunk_goes_to_the_signer_and_nowhere_else(client, token, stub, script):
+    script.features = ["custody", "sequence", "images"]
+    body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
+    res = client.post(url(stub, "images"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    (call,) = [c for cl in script.clients for c in cl.calls if c[0] == "stash"]
+    assert call[1]["workspace_id"] == script.ws and call[1]["b64"] == "AAEC" and call[1]["last"] is True
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"size": 5 * 1024 * 1024 + 1},
+        {"b64": "not base64!"},
+        {"b64": "A" * 720_004},
+        {"sha256": "sha256:short"},
+        {"extra": 1},
+    ],
+)
+def test_a_picture_chunk_is_a_closed_body(client, token, stub, script, bad):
+    script.features = ["custody", "sequence", "images"]
+    body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True, **bad}
+    res = client.post(url(stub, "images"), json=body, headers=hdr(token))
+    assert res.status_code in (400, 413, 422)
+    assert not [c for cl in script.clients for c in cl.calls if c[0] == "stash"]
+
+
+def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
+    script.features = ["custody", "sequence"]
+    body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
+    res = client.post(url(stub, "images"), json=body, headers=hdr(token))
+    assert res.status_code >= 400 and "orch-core" in res.text
+
+
+@pytest.mark.parametrize("supports_sequence", [False, True])
+def test_model_routing_enable_is_a_click_sequence(
+    client, token, stub, script, gateway, monkeypatch, tmp_path, supports_sequence
+):
+    from orch.addons.settings_needs import preview_grant
+    from test_addon_enable import MODELS, Link
+
+    link = Link()
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args: {"grant": preview_grant(tmp_path, "model-routing")})
+    body = {"action": "addon_enable", "name": "model-routing", "models": MODELS}
+    script.features = ["custody", "sequence"] if supports_sequence else ["custody"]
+    res = prepare(client, token, stub, body)
+    if not supports_sequence:
+        assert res.json()["error"]["code"] == "click.contract"
+        assert script.prepared == 0
+        return
+    assert res.status_code == 200, res.text
+    sent = [args for cl in script.clients for op, args in cl.calls if op == "prepare"][-1]
+    assert sent["op"] == "settings.set" and sent["args"] == {"set": {"models": MODELS}}
+    assert sent["sequence"]["of"] == 2
+    assert sent["sequence"]["intent"]["kind"] == "addon_enable"

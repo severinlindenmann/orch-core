@@ -76,6 +76,26 @@ describe('a request must be what it says it is', () => {
     expect(requestIsConsistent(rehash(missing))).toBe(false)
     expect(requestIsConsistent(rehash(base()))).toBe(true)
   })
+  it('#740: manual_acceptances only on a verify gate, closed rows; a statement only on ac.accept / ac.unaccept', () => {
+    const row = { ac: 'AC1', name: 'accept-AC1-1.md', by: 'p_' + '1'.repeat(32) }
+    const verify = (rows: unknown, gate = 'verify') => {
+      const r = base()
+      Object.assign(r.material, { gate, manual_acceptances: rows })
+      return rehash(r)
+    }
+    expect(requestIsConsistent(verify([]))).toBe(true)
+    expect(requestIsConsistent(verify([row]))).toBe(true)
+    expect(requestIsConsistent(verify([row], 'plan'))).toBe(false)
+    expect(requestIsConsistent(verify([{ ...row, extra: 'x' }]))).toBe(false)
+    expect(requestIsConsistent(verify([{ ac: 'AC1' }]))).toBe(false)
+    expect(requestIsConsistent(verify('AC1'))).toBe(false)
+    const payload = (op: string, statement: unknown) =>
+      rehash({ ...base(), op, events: [], material: { kind: 'payload', ticket: null, review: [], statement } } as unknown as HandoffRequest)
+    expect(requestIsConsistent(payload('ac.accept', 'statement'))).toBe(true)
+    expect(requestIsConsistent(payload('ac.unaccept', 'statement'))).toBe(true)
+    expect(requestIsConsistent(payload('log', 'statement'))).toBe(false)
+    expect(requestIsConsistent(payload('ac.accept', 5))).toBe(false)
+  })
   it('refuses an expires_at that is malformed or far away', () => {
     expect(requestIsConsistent({ ...base(), expires_at: 'soon' })).toBe(false)
     expect(requestIsConsistent({ ...base(), expires_at: '2099-01-01T00:00:00Z' })).toBe(false)
@@ -105,6 +125,8 @@ describe('workspace operations (M4)', () => {
     expect(workspaceConfirmWord({ op: 'member.add', events: ev({ person: 'p_new' }), material })).toBe('p_new')
     expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
     expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
+    // Extend / Start again / a runner grant: the terminal asks for GRANT
+    expect(workspaceConfirmWord({ op: 'grant', events: ev({}), material })).toBe('GRANT')
   })
   it('a sequence that gives agents access (Extend, Start again) shows GRANT, as the terminal asks', async () => {
     const { workspaceConfirmWord } = await import('./handoff')

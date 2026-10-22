@@ -376,3 +376,27 @@ body:has(> #root > .setup) {
   word-break: normal;
   overflow-wrap: normal;
 }
+
+.terminal-notice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin: 12px 0;
+  border: 2px solid var(--accent, currentColor);
+  border-radius: 10px;
+  font-size: 1.05em;
+}
+.terminal-notice small,
+.terminal-notice span { display: block; margin-top: 4px; }
+.terminal-notice svg { flex: none; }
+
+.confirm-words { min-width: 0; margin: 20px 0; }
+.confirm-words .word-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; padding: 0; list-style: none; counter-reset: tile; }
+.confirm-words .word-tiles li { counter-increment: tile; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 104px; padding: 16px 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: clamp(20px, 5vw, 30px); font-weight: 600; line-height: 1.25; text-align: center; overflow-wrap: anywhere; }
+.confirm-words .word-tiles li::before { content: counter(tile); font-size: 11px; font-weight: 400; line-height: 1; color: var(--text-muted); }
+.confirm-words .words-wait { display: block; margin: 6px 0 10px; }
+.confirm-words details { margin-top: 8px; }
+.confirm-words summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.words-confirmed { margin: 12px 0; font-weight: 600; }
+.confirm-words .word-tiles li bdi { max-width: 100%; font: inherit; }

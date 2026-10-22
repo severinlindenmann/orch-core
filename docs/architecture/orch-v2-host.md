@@ -225,6 +225,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
@@ -456,9 +457,6 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `host.busy` | 4 | no | stays | a second host on the same state or run directory (at start); `register` or `bootstrap` of a root or id that is already registered, has a genesis, or is being bootstrapped (N5) | — |
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
-| `migrate.refused` | 3 | no | stays | `host.store_migrate` was refused before anything moved (the directory is not a complete legacy store, two stores, a link or an odd entry, records are enabled); the message names it | — |
-| `migrate.stuck` | 3 | no | stays | `host.store_migrate` (or a host start) found a migration it cannot finish or roll back right now: files may be half way. Nothing is deleted or guessed; the journal `hosts/<ws>/migrate.json` keeps its step and the next `store_migrate` or host start continues from it | — |
-| `migrate.failed` | 1 | no | stays | `host.store_migrate` moved the store, the check after the move failed and everything was rolled back; nothing was lost, the legacy layout is as before | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
@@ -466,6 +464,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e; H12d-3: the pair gate of 11A.15.6 step 4, `reader.declare` in column R, a `pk_pin` pair declaration whose pin does not name the certificate's person key, reason `who`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2); a column-R refusal carries it as `reason` (H12d-3) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
+| `runner.stale` | 3 | no | stays | the connected runner runs another orch release than the host (its `runner.hello.release` differs or is missing); every start is refused until `orch host enable` restarts it | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
 | `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
 | `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
@@ -619,7 +618,6 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `host.wsk_create` | none |
 | `host.register` | `host.busy` (root already registered), `lock.busy`, `trust.genesis_mismatch`, `custody.unsafe_mode`, `op.not_allowed` (peers map) |
 | `host.unregister` | `not_found` |
-| `host.store_migrate` | `not_found`, `lock.busy` (owner lock or the workspace store lock), `migrate.refused`, `migrate.failed`, `migrate.stuck`, `trust.genesis_mismatch`, `custody.unsafe_mode` |
 | `host.bootstrap` | `host.busy` (id already has a genesis or a registration, N5), `not_found` (id not from `wsk_create`), `custody.unsafe_mode`, the genesis model codes |
 
 **As built in B5 (16 Oct 2026).** The "new empty directory" rule of `host.bootstrap` existed so that the rollback (`_clean_root`)
@@ -1322,10 +1320,27 @@ gen?:int}`; never a secret, a token, a link or relay bytes.
 
 **Human ops** (`human.*`, §0.8.1), **job ops** (§0.8.2), **control ops** (§0.8.3): below.
 
-**Person versions of agent ops (signed).** `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `log`, `ask`,
+**Person versions of agent ops (signed).** `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `log`, `ask`,
 `artifact.add` and `artifact.replace` run as a person through `human.prepare {op, args}`. The rule is exact: allowed
 when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
 signed person). Other agent ops answer `op.not_allowed`.
+
+**Manual acceptance and task completion.** These host person operations run only through
+`human.prepare` / `human.submit` (column P); plain requests, including grants, get `human_only`.
+They are not CLI registry operations and do not extend the frozen grant-verb table.
+
+| Operation | Arguments | Signed event |
+|---|---|---|
+| `ac.accept` | `{ref, ac, note?:str{1..1000}}` | One `artifact.added`, person feedback, exact statement and current wording hash (F1 §6). |
+| `ac.unaccept` | `{ref, ac, reason:str{1..1000}}` | One `artifact.replaced`, same name, withdrawal statement, no `ac`; stale acceptances may be withdrawn. |
+| `task.mark_done` | `{ref, task}` | One `task.done`, no receipt; proves no criterion. |
+
+The ticket must be open for work. Only its owner, its reviewers, workspace owners or maintainers may prepare
+these operations; viewers never may. Duplicate current manual acceptance is refused. Task completion retains
+the model's person rules, including ending an existing task lease. There is no task `note` argument because
+`task.done` has no note field. Acceptance review shows the full statement and “No automated check backs this:
+you vouch for it yourself.” alongside the existing auth label. File bytes are generated by the host, carried in
+capture, and independently rebuilt and hashed by the signer; missing or unknown statements have no plain view.
 
 **`move` (F1 `ticket.moved`).**
 
@@ -1627,7 +1642,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    the keys of `set` for `settings.changed`.
 6. Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
    `EMITS_V1` types otherwise. **The op is bound:** it is in the fingerprint input, shown in the header, and the signer
-   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `section.set`: one
+   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `task.add`/`task.edit`: `ticket.tasks` only; `section.set`: one
    section and no `set`; `set`: the fields of `set` only).
 7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the **last
    eight characters** of the ticket uid in the request's `log` (the log the signature names; the signer takes it from
@@ -1819,7 +1834,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
    starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
    (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
-   changed) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   changed; a running host of another release is drained with `host.restart`, and if it has not come back on the new release after 2 x START_WAIT (40 s) `enable` forces the restart with `kickstart -k` / `systemctl --user restart`: crash-equivalent, a request in flight may be interrupted and is recovered at start; result `forced: true`) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
    `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
    CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is
@@ -1911,6 +1926,9 @@ ticket (a draft with less text). The confirmation is the strongest of all steps.
 the batch (`orch sign CODE`), one-click checks and signs in the click signer's process (`status.features` lists `sequence`;
 an older signer is never asked), and the phone is excluded (it keeps separate signatures; a sequence is refused for any
 `signer.auth` other than `passphrase` or `convenience`).
+
+An `edit_ticket` intent optionally carries `tasks: {was, edit, add}` alongside acceptance edits; task steps follow
+criteria and precede links/people, with each full task list and its `base_rev` derived solely from the reviewed intent.
 
 #### 0.8.2 Job ops (worker socket, H10)
 
@@ -2031,6 +2049,7 @@ A client must not call an op or send an argument whose cap it did not see (§0.4
  gates:{Gate: Policy},
  defaults:["grant_hours"|"claim_ttl_min"|"lease_ttl_min"]{0..3},
  sign_methods:["terminal"|"click"|"phone"] | null,    // B6, additive: the signed setting; null: never set (every way allowed)
+ models:{Harness:{Mode:Model}} | null,                // Model routing, additive: the signed setting; null: none set (harness default)
  settings_at?:{seq:int, at:Time, by:Person} | null,
  policy_at?:{seq:int, at:Time, by:Person} | null,
  sub_cursor:Cursor}
@@ -2769,7 +2788,7 @@ to your orch runner on this machine and is never shown") only then, with the per
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
 | **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
 | **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
@@ -2789,13 +2808,13 @@ member, policy or addon operations.
 - **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
   shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
   prepares a separate hand-off request.
-- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (a badge with the line as its tooltip, B6); the checks with
+- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (the one-click custody line with a "What this means" toggle that holds the risk sentence); the checks with
   their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
   as "what you sign".
 - **Workspace card**: when `status` reports `custody:"convenience"`, the card shows "Convenience signing: agents running
   as you, or anything that takes over this dashboard, could sign." **Amended 16 Oct 2026 (owner decision F, "As built
   in B6"):** the line is required at enable time and in Settings, and is *not* repeated in every sign panel: a panel
-  shows a "One-click" badge whose tooltip carries the line. The View's `risk` field stays (same text, in `view_digest`);
+  shows its custody line ("One click on this computer, no fingerprint/passphrase") with a focusable "What this means" toggle that shows the line (U3, 19 Oct 2026; the earlier badge and tooltip were not reachable by touch or keyboard). The View's `risk` field stays (same text, in `view_digest`);
   the dashboard may render it as a badge with a tooltip instead of a banner.
 - **HTTP.** Bind only the intended loopback listener and validate the exact Host on every route. Require the bearer on
   every authenticated API and never accept it through cookies or URLs; keep it in tab memory or `sessionStorage`, never
@@ -4469,6 +4488,33 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
     names a number of hours. The signing views read lengths as days and hours.
 
+73a. **R3 part A1: `task.edit` and the "approvals this edit cancels" preview (19 Oct 2026; design-r3-manual-accept-and-images).**
+    - **`task.edit {task, text?, verify?, proves?, ref?}`** (agent op and person version, group Edit, class click): one
+      `ticket.updated` of `ticket.tasks`, built from the current list with exactly one task changed (`verify: ""`
+      removes the command; `proves: []` through the API proves none). Refused: an unknown task or criterion
+      (`not_found`), an edit that changes nothing (`invalid.input`), and **a change of the `verify` command or the
+      `proves` list of a task that is done** (`transition.refused`, "reopen it first"): a receipt must never stand for
+      another command or criterion. The text of a done task may change. The signer binds it like `task.add`
+      (`set == {ticket.tasks}`, no sections). No new error code; the CLI goldens (`describe`, `help`, `task-edit`,
+      `task-edit-done`) are declared per op. `EMITS_V3` = V2 + the new key `task.edit` (V1/V2 and every replay verdict
+      unchanged; the model keeps judging grant verbs by V1, where the name `task.edit` grants nothing: a grant that lets
+      an agent edit tasks names `task.add` or `agent`, which cover every `ticket.updated`).
+    - **WYSIWYS of the plan:** the plain review of a `ticket.tasks` change adds one `before -> after` row per added,
+      changed or removed task (`Task T2`: text, verify, proves). `before` is the plan the host read, checked against
+      the event's `base_rev` by the signer (`material.before`), so it is not labelled "per host".
+    - **`prepared.cancels`** (unsigned, beside `checks`; absent when the request writes no ticket field or section):
+      `[{gate, people: [person ids], complete}]`, the gates in order that lose at least one **counting** approval if the
+      write lands now. `host/cancels.py` runs the model's own `generations.mark_paths` and `settle` on a **scratch copy** of
+      the ticket (no second binding table) and compares `counting()` before and after, so the `applies` filter and the
+      cascade ("a raise of one gate raises every later gate") are exactly the model's. A section/criterion/task/link/field
+      request uses its events' paths; an `edit_ticket` sequence uses the paths of all its steps from the intent, at its
+      first step only (later steps carry none). `signcontent.build` checks the exact shape (gate known and in order, no
+      repeat, person ids well-formed, no extra keys; anything else is `PlainUnavailable`, so the full review is shown)
+      and adds `content.cancels`, one note ("Per the host (not signed): approvals that stand right now and are cancelled
+      by this: plan (2 people), ..." or "... no approval stands right now, so this cancels none.") and, in the terminal
+      text, a block with the names. The signed, deterministic note "This cancels any existing approval of: ..." stays
+      and is never replaced by the host's word.
+
 74. **B10 Part A: one click together with a phone (owner decision F of 16 Oct 2026; JUDGEMENT CALL reversing orch-52's N4):**
     `relay.pair_device` may be signed with the convenience device key; it is WORD class (`WORD_OPS`: the typed word is the
     last eight hex of the device id; a bare click never adds a device); the three `refuse_pair_device` sites and the
@@ -4486,6 +4532,43 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     for the rest), `gate.stale` as retry class `C-review`, the push kind `ticket.update` (a generic wake with the hint's id, no ticket text).
     No F1, hash or error-code change; the model judges the phone's decision as any person event (device validity and
     generation at the append).
+76. **Direct-mode git reads move to gitread: the gate-then-spawn race is closed (#565; §12.7 "Isolation"; the number may
+    be renumbered when a parallel change lands first):** `gitsafe.command` gated the repository's config and the caller
+    spawned git afterwards, so a concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file)
+    could add `filter.<x>.clean` in between, and `status` ran it. Every direct-mode read now goes through
+    `orch.gitread.local.READER` (`LocalGitReader`), orch's own reader in-process, as host mode's reader children always
+    did: discovery from a path, `HEAD` (a detached one too), refs, the identity, the clean check (`tree.check`'s reader
+    over the whole repository from its top, with the person's global ignore file read as data), `orch worktree`'s
+    checks, direct D58 and the dashboard dev host's diff. `gitsafe.OPS` keeps only `check --staged`'s `staged_raw` and
+    `staged_blob`; `observe.git`/`lookup`, `wtgit.read_git`/`tree_dirty`, `gitsafe.submodules` and `person_entries` are
+    gone. The git-process families left keep the gate and carry a race note at the call site (`gitbrowse`, the explorer's closed table of history-only reads, is the third: no work-tree command, so the window is harmless; §12.7): `wtgit.run_git`
+    (`worktree remove` now **always** runs `--force`, after orch's own clean check, so git's own `status` never runs;
+    `prune` checks out nothing; `add`'s checkout is the one open residual, tier A: an agent that commits a repo config
+    in its worktree, then a column-G `worktree.create` runs its smudge filter, once per checked-out file it selects; the
+    UID is the boundary in tier A (D-P2-31); fix tracked in #584) and `check --staged` (no work-tree contents, inside
+    the person's own `git commit`). gitread now skips git clone's `refs/remotes/<r>/HEAD` symref (never followed; any
+    other loose symref still refuses the repository, F7), and reads ref names as UTF-8, checked by #561's validator
+    (moved to `orch.gitread.refs.branch_ok`), so a non-ASCII branch reads in both modes. Hardening from the review of
+    #583: `.gitignore` globs are git's `wildmatch`, matched without backtracking (`gitread.wildmatch`: an unclosed `[`
+    and an unknown `[:class:]` match nothing, the twelve POSIX classes are supported; a 17-byte line had taken 21 s),
+    and a direct-mode tree check has a 30 s work budget that ends as unknown; the person's global ignore file fails
+    toward "nothing ignored" when their config has an include, an `includeIf`, an empty or unreadable value; a
+    `packed-refs` that claims `sorted` and is not, a name that differs from a loose ref only in case or Unicode
+    normalisation, and the skipped `refs/remotes/<r>/HEAD` are unknown, never a different answer; direct D58 reads
+    `HEAD` and the tree in one read of the registration's pins. Round 3 (orch-07, structural): removal never depends on
+    ignore rules (`orch worktree remove` lists every file that is not tracked-and-unchanged, ignored ones too, with
+    sizes; `--discard-untracked` deletes exactly that set after a re-check); status checks match ignore rules as git
+    does, `core.ignorecase` included (`gitread.ignorepolicy`, the one entry point; git's `WM_CASEFOLD` in
+    `gitread.wildmatch`; both case modes, ignored only if both ignore, where the value is not known, e.g. host mode
+    without a value in the repository's config); ignore bytes are capped at 256 KiB; a ref lookup the file system folds
+    but the listing does not name exactly is unknown. **Behaviour changes:** `orch worktree remove` blocks on ignored
+    files too (`--discard-untracked`); direct mode reads what the reader reads: a repository with an extension
+    it does not support (`worktreeConfig`, `refStorage`, `partialClone`, ...), a split or sparse index, objects only in
+    an alternate, or a ref name that is not UTF-8 or that git's rules refuse is "cannot be told" (`None`,
+    `observe.unavailable`, "diff unavailable"), never clean; a repository whose own config names a program is read (the
+    config is data), no longer refused; `core.autocrlf`/`core.eol` are not applied (the raw bytes are hashed: only ever
+    dirtier); dirty lines are `why: path` (`modified`, `untracked`, `deleted`, `type`, `flag`); the dev host's diff
+    shows a rename as a deletion and an addition. No op, code, wire, hash or schema change.
 
 ---
 
@@ -4535,6 +4618,10 @@ the D-P2-17 custody list) holds, per workspace:
  "peers":{"501":{"class":"person","person":"p_sev"},"502":{"class":"agent"},"503":{"class":"worker"}},
  "repos":{"acme-energy-dbt":{"gitdir":{"path":"…","dev":1,"ino":2},"commondir":{"path":"…","dev":1,"ino":3}}}}
 ```
+
+`root` is the project directory; the store is always `<root>/.orch/`. An earlier host also wrote `"store":".orch"`; it is
+tolerated when the registry is read (any other value is refused) and never written. A root that holds a store from an older
+version in the project root is served as unavailable with the message that says to delete it (there is no migration).
 
 - The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
 - **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
@@ -4890,9 +4977,13 @@ UID. P2 adds no keychain.**
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.
   - **Refs (F7).**
-    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`.
+    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`. Ref names are
+      UTF-8 and follow git's rules (#561's validator, `gitread.refs.branch_ok`; #583): a non-ASCII branch is read, a
+      name that is not UTF-8 or that the rules refuse is never resolved.
     - A loose ref that is itself a symref, a ref name differing only in case from another ref in either store, or an
-      unparsable `packed-refs` line makes the repo observe.unavailable.
+      unparsable `packed-refs` line makes the repo observe.unavailable. The one exception (#565): git clone's
+      `refs/remotes/<remote>/HEAD` naming a branch of the same remote is skipped, never followed (orch resolves only
+      `HEAD` and `refs/heads/*`).
   - **Bounds:** §0.11. Every object is checked against its id, so `diff` is computed from exactly the commits in
     `source_sha`. Gitlinks show as commit ids, and LFS files as their pointers.
 - **The D58 branch check** (HEAD is the symbolic ref `refs/heads/<branch>` at the bound sha) is done by the host
@@ -11869,7 +11960,7 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 (§12.6.2), `attach.end {att, reason}`, `grant.put {deposit_id, workspace_id, person, grant, secret, until}`,
 `grant.drop {grant}`, `git {op:"worktree.add"|"worktree.remove", repo_pin, path, branch, base, force, generation}`.
 
-- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_HARNESS`,
+- `env_fixed` holds only host-chosen values (`ORCH_TICKET`, `ORCH_WORKSPACE` (agents: the project root, so an agent in a worktree or linked repo finds its workspace), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `ORCH_HARNESS`,
   `CLAUDE_CODE_SUBAGENT_MODEL`); `grant` is an id the runner resolves in its own store. The host never sends a secret
   except once in `grant.put`.
 - The runner validates every command as defence in depth (registry program or `$SHELL`, pin, sizes). `runner.hello`
@@ -12085,7 +12176,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 | `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `ORCH_HOST_RUN_DIR` | if set | if set | the runner unit's (written by `orch runner enable` from the host unit's values) |
 | `ORCH_SESSION` | `s_<ULID>` drawn by the runner | never | runner |
 | `ORCH_GRANT` | the runner grant | **never** | the runner's grant store |
-| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
+| `ORCH_HARNESS`, `ORCH_TICKET`, `ORCH_WORKSPACE` (agents only), `ORCH_WORKTREE`, `ORCH_WORKTREES`, `ORCH_WORKDIR`, `CLAUDE_CODE_SUBAGENT_MODEL` | as given | `ORCH_TICKET` only | host (`env_fixed`) |
 | `pass_env` names from `<person state>/runner.json` | ✓ | ✓ | terminal-only config; values from the runner's environment |
 
 - `pass_env` refuses names matching `LD_*`, `DYLD_*`, `PYTHON*`, `GIT_*`, `ORCH_*`, `BASH_ENV`, `ENV`, `ZDOTDIR`,
@@ -12096,7 +12187,14 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 #### 12.4.4 Working directory
 
 In order: the ticket's registered worktree for its primary repo (created by `agent.start` when `worktree:true` and the
-ticket has a branch for it), the declared working copy (labelled "shared working copy"), the workspace root. Sent as a
+ticket has a branch for it), the declared working copy (labelled "shared working copy"). A ticket with **no
+codebase** (it links no repo, or none that is declared and readable) works in its **work folder**
+`<project>/.orch-work/<KEY>/` (cwd kind `workdir`, `ORCH_WORKDIR`; a sibling of `.orch/`, never inside it). Core decides
+this in `host/agents.py` and nowhere else. `agent.start` (or `term.open`) makes the folder mode 0700 below the project
+fd with `O_NOFOLLOW` at every step (a link, a file or a foreign owner is `launch.cwd_changed`); the preview binds
+"to be made" or the folder's `{dev, ino}` in the spec digest. The folder stays after the ticket closes until the person
+deletes it. Check commands of such a ticket run in it; its results are filed as ticket artifacts
+(`orch artifact add`, at most 64 MiB a file and 512 MiB a ticket). Without a ticket, the workspace root. Sent as a
 pin `{path, dev, ino}`; the trampoline opens it component-wise with `O_NOFOLLOW`, compares, and `fchdir`s
 (`launch.cwd_changed` on a mismatch). `ORCH_WORKTREES` lists the other repos' worktrees as `repo=path` pairs separated
 by `:` (a path containing `:` is left out and named in `warnings`).
@@ -12437,6 +12535,12 @@ Worktree = {ticket:Key, repo:RepoName, branch:str, path:str, generation:int, cre
 worktree.list   {ticket?:Ref, check?:bool = false} → {worktrees:[Worktree]{0..200}}
 worktree.create {ticket:Ref, repo?:RepoName, base?:"default"|"current" = "default"} + opts.idem? → {worktree}
 worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:true}
+workdir.get     {ticket:Ref} → {codebase:true, exists:false} | {codebase:false, exists:bool, folder?:".orch-work/<KEY>", files?:int, bytes?:int, truncated?:bool}
+                // column P; the folder is named below the project, never by its full path
+workdir.delete  {ticket:Ref} + opts.idem → {deleted:bool, folder}
+                // column P (a person-class owner or maintainer, the ticket's owner, an assignee); no log event; deletes exactly
+                // <project>/.orch-work/<KEY> through descriptors without following a link; a live run in it: worktree.in_use;
+                // a ticket with a codebase: invalid.input; gone already: deleted:false
 ```
 
 - `repo` defaults to the only linked repo (required with several). The branch is the current `links.branches.<repo>`
@@ -12452,7 +12556,31 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   and the clean-tree check read that worktree's pins; refs and objects still come from the common dir (`branch.pushed`,
   `diff`, `commit.list` unchanged). The prepared request, each binding and the precommit carry the generation; a
   changed generation, pin, or a HEAD not on the current branch is `observe.unavailable`, never a fallback.
-- **Remove:** `tree.check` first; dirty is `worktree.dirty` unless `force` (P only); a live run with that cwd is
+- **Ignore rules and removal (#583 round 3, orch-07's structural rule; owner decision B of 19 Oct 2026):** *removal
+  never depends on ignore rules; a status check applies a rule only as git would, and where it cannot tell which way
+  git matches it applies the rule only if git would in either case.* `orch.gitread.ignorepolicy` is the one place that
+  decides (and the only code that parses or applies a pattern):
+  - a **removal** check (host `worktree.remove`, `orch worktree remove`) applies no ignore rule: every file that is
+    not tracked-and-unchanged blocks it, ignored or not, listed with paths and, for an untracked directory, its file
+    count and size. Direct mode's `--discard-untracked` deletes exactly the listed untracked set: it prints it, checks
+    again right before deleting (a fingerprint of every untracked path, size, mtime and mode) and refuses when it
+    changed; modified tracked files still block. The host keeps `force` (P only);
+  - a **status** check applies git's sources in git's order (the person's `core.excludesFile`, `info/exclude`, the
+    `.gitignore` files), **on macOS and in host mode too**. Matching is git's `wildmatch`; with `core.ignorecase` true
+    (what `git init` writes on a case-insensitive file system) it is git's `WM_CASEFOLD` exactly, quirks included (an
+    escaped letter and a set member are not folded, `[!a]` excludes `A`). The value is read as git does: the
+    repository's config (last value), else the person's, else false. **Where it cannot be told** (the repository's
+    config has an `include`/`includeIf` or a value that is not a boolean; host mode with no value in the repository's
+    config; the person's configuration has an include, is unreadable, or is redirected by the environment) the path is
+    matched in both modes and counts as ignored only if both ignore it, so the answer is never cleaner than git's in
+    either case. The person's `excludesFile` (lowest) is applied only when the person's configuration is known and
+    the repository's config sets no `core.excludesFile`; otherwise it is dropped (only dirtier). Parsing is git's
+    (BOM skipped, `trim_trailing_spaces`, one CR dropped, escapes). A line the reader cannot be sure it reads as git
+    does (a negation with non-ASCII bytes, a control byte, bytes that are not UTF-8, text that is not NFC) drops its
+    file **with every source of lower precedence below it**. Every answer is dirtier than git's or equal;
+  - all ignore files of one check together are capped at 256 KiB (more: unknown), and the reader's 30 s budget reads
+    the clock per directory, per pattern and per ignore file; a bracket class compiles in O(members + 256).
+- **Remove:** `tree.check` first (the removal check above); dirty is `worktree.dirty`, listing the files, unless `force` (P only); a live run with that cwd is
   `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
   after the runner reports success, and the removal bumps the registration generation, so any request prepared against
   the removed worktree is invalidated (`observe.unavailable`).
@@ -12486,27 +12614,33 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   - **Isolation (#541, #546).** The invariant's second half: *no git invocation by orch reads configuration the
     person or a repo controls, except through an explicit allow-list.* The repo's half is the gate above. The person's
     half is one mechanism in `orch.gitsafe`: `isolated_env` (built from scratch, no `GIT_*` of the caller,
-    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (an operation's own allow-list of the
-    person's keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `command`
-    (a closed set of operations, `gitsafe.OPS`, each with fixed arguments and at most one validated operand: no
-    caller can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null`
-    and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`). Every invocation
-    site:
+    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (configuration passed as command-scope
+    entries; no operation keeps any of the person's) and `command` (a closed set of operations, `gitsafe.OPS`, since
+    #565 only `staged_raw` and `staged_blob`, each with fixed arguments and at most one validated operand: no caller
+    can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null` and
+    `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`).
+  - **The gate-then-spawn race (#565).** The gate lists the config and git reads it again when it starts; a
+    concurrent writer of `.git/config` (or `config.worktree`, or a swapped `.git` file) can add, for example,
+    `filter.x.clean=<program>` in between, and `status` ran it (reproduced). Filters cannot be switched off by
+    command-scope config. So no direct-mode read runs git: repository discovery, `HEAD`, refs, the identity, the
+    clean check, `orch worktree`'s checks, direct D58 and the dashboard dev host's diff are orch's own reader
+    in-process (`orch.gitread.local.READER`), which reads the config as data (three keys) and never reads an
+    attribute, filter, hook or fsmonitor. What it cannot read is unknown, never clean. The git processes left keep
+    the gate and carry a written race note at the call site saying why the window is acceptable there. Every
+    invocation site:
 
     | Site | Isolation |
     |---|---|
     | `gitsafe` gate's own reads | its fixed reads, `isolated_env`, no person keys |
-    | `gitsafe.person_entries` (`config --list --show-scope --includes -z`, no repository) | reads the person's system and global config as data, keeps only the operation's allow-list, executes nothing |
     | `gitsafe.git_version` (`git --version`) | `isolated_env`; once per `PATH`; the gate refuses git older than 2.32 |
-    | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=dirty` for `status`; `index_flags` over the whole repository; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
-    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
-    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_tree`, `index_flags` |
-    | dashboard dev host `devhost/reads.diff` (through `store/observe.git`) | `gitsafe.command`: `commit`, `ref`, `merge_base`, `parent`, `diff_numstat`, `diff_names`, `diff_patch` |
+    | `store/observe` (`head`, `symbolic_head`, `toplevel`, `dirty`, `refusal`, `repo_identity`, `observe`; `ops/caps.Git`, `hostclient` and D58 in direct mode), `worktree_cli` revisions and clean checks, dashboard dev host `devhost/reads.diff` | **no git process** (#565): `orch.gitread.local.READER` in-process; the config read as data (three keys); status checks apply ignore rules as git does (`gitread.ignorepolicy`: `core.ignorecase` honoured, the person's global ignore file read as data when their config is certain), removal checks apply none (rule A); `ops/caps.Git.run` (free argv) is removed (#546) |
+    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546). **Race note (#565):** no work-tree file is read (index against `HEAD` by id, a stored blob as stored), so no filter, textconv or diff driver applies; it runs inside the person's own `git commit` |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |
-    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would |
-    | `gitread/*` | no git process |
+    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would. **Race note (#565):** `remove` always runs `--force`, after orch's own clean check (the host's `tree.check`, or `LocalGitReader` in direct mode; only a person's force skips it), so git's own `status` never runs; `prune` checks out nothing; **`add`'s checkout is the open residual (tier A):** an agent that commits a repo config in its worktree, then a column-G `worktree.create` runs its smudge filter, once per checked-out file the filter's attribute selects, on every `add` that hits the window; the UID is the boundary in tier A (D-P2-31); fix tracked in #584. **What `--force` costs:** host mode no longer has git's own second clean check at remove time (a non-forced remove ran `status` again). Accepted: that check is exactly the `status` that runs the repository's clean filters (the #565 race), orch's reader check is the one that decides, and what can change between the two is data the worktree's own agent (or the person) writes, not code that runs; such a file is deleted with the worktree. Since #583 the reader's ignore rules fail toward "nothing ignored" (an include or empty `excludesFile` in the person's config, an unclosed `[`), so a file git shows is never one it misses |
+    | `gitbrowse.run` (the explorer: `dashboard/server/explorer/git.py` and `search.py`; `gitbrowse.py` `command`/`run`) | `gitbrowse.OPS` is its own closed table over `gitsafe.gate`, `isolated_env`, `_argv` (`--no-ext-diff --no-textconv`, diff pins) and a layout confirmed by `layout`. **Race note (#565):** only history commands (`log`, `show`, `diff` between two commits, `cat-file`, `rev-parse`) and `grep --cached` (it reads the index as it is: no refresh, no filters, no work-tree file opened), no other work-tree or index command: no `status`, no clean/smudge filter, no checkout, which is what the #565 race needed. A key written into the config between the gate and the spawn cannot name a program one of these commands runs (`--no-ext-diff`, `--no-textconv`, `--no-pager`, hooks are not run by read commands); so the window is harmless here. Not moved to gitread (it needs `log`/`show` formats the reader does not produce) |
+    | `gitread/*` (host mode's reader children) | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
     itself checks only the directory's owner.
@@ -12533,19 +12667,20 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
       never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too
       (`gitsafe.BUILTIN_DRIVERS`: git's userdiff set as of git 2.54, 27 drivers; a built-in a newer git adds stays
       unpinned until it is listed, which is harmless: its regex is git's, and the stripping below is the backstop);
-      the text it would choose after a hunk header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
-      strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
+      since #565 the only diff operation left is `staged_raw` (`--raw`: no hunk at all), and the dashboard dev host's
+      diff is the reader's, whose hunk headers the dev host still cuts after the second `@@`;
     - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
 
     An empty driver name (`[diff ""]`, which an empty `diff=` attribute selects) is never read as a top-level key:
     it is refused, and every diff passes `--diff-algorithm=default`. A diff git cannot produce (it fails, is refused
-    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch; so
-    is a revision lookup (head, default branch, merge base, parent) git gives no answer to (`observe.lookup` tells
-    git's honest "no result" from no answer).
+    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch.
+    Since #565 the dashboard dev host's diff is orch's reader (tree to tree, no renames: a rename is a deletion and an
+    addition); anything it cannot produce (a refused repository, a missing object, a base it cannot establish, a
+    limit) is that same "diff unavailable" (409).
     Any other `diff.*` key is refused, naming it: "this repo sets diff.X, which orch doesn't support yet; remove it
     or tell us". A key a future git adds is therefore refused by default. No other operation reads diff config, and
     the runner's `worktree add`/`remove` run no diff. A test sets every tolerated key to a hostile value and gets
-    byte-identical output to a clean repository from every operation. The shared allow-list (`exec_risk`, which the
+    byte-identical output to a clean repository from every operation and from the reader's reads. The shared allow-list (`exec_risk`, which the
     records tool also applies) still refuses the program-running `diff` keys.
   - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
     `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
@@ -12553,7 +12688,8 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   - **Why.** A working copy with a **populated** submodule (a gitlink in the index whose directory is not empty)
     contains a second repository with its own config. The gate does not list that config. `git status` would run the
     submodule's filters, and `--ignore-submodules` would instead hide its changes.
-  - **What is refused.** Every cleanliness verdict refuses such a tree (`gitsafe.submodules`):
+  - **What is refused.** Every cleanliness verdict refuses such a tree (since #565 orch's reader does, in both modes;
+    `gitsafe.submodules` is gone):
     - direct-mode D58 on a registered worktree gives `observe.unavailable`;
     - direct `list --check` gives `dirty: null` (unknown, never `0`);
     - direct `remove` without `--force` gives `observe.unavailable`.
@@ -12575,7 +12711,8 @@ Where the code differs from or adds to §12.7, the code is this:
   `HostGitReader.verify_worktree`, which pins the path again from the commondir's root and compares worktree, gitdir and
   commondir (device and inode): a re-pointed file, a swapped or moved directory is `observe.unavailable` (`moved` in the list).
 - **Runner `git`** (`orch.runner.wtgit`): the `orch.gitsafe` gate on the repo (and, on remove, on the worktree, whose
-  status git runs) before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
+  config git reads; `remove` always runs `--force` after orch's own clean check, so git's own status never runs, #565)
+  before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
   environment, 30 s, own process group. A gate refusal is the runner code `observe.unavailable`. **Confinement:** the
   path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); every directory from `/` to `<repo>.worktrees`
   is opened with `O_NOFOLLOW|O_DIRECTORY` per component and must be owned by root or the runner's effective UID and not
@@ -12594,14 +12731,15 @@ Where the code differs from or adds to §12.7, the code is this:
   ownership lock is held shared for the whole command; a served workspace is `host.required`; `ORCH_GRANT` is
   `op.not_allowed`; Windows is `unsupported.platform`. `create` and `remove` hold an exclusive per-workspace `flock`
   (`<state>/hosts/<ws>/worktrees.lock`, 10 s, then `lock.busy`) from loading `git-pins.json` through git and the write,
-  so concurrent direct commands never lose a registration. Git runs through the same gated, confined `run_git` and
-  `read_git`; `create` refuses a path that is a declared repository (as the host); the new worktree is pinned in
+  so concurrent direct commands never lose a registration. Git runs only through the same gated, confined `run_git`
+  (revisions and clean checks are orch's reader in-process, #565); `create` refuses a path that is a declared repository (as the host); the new worktree is pinned in
   process (`pin_repo`) and registered in the same pin file, which direct-mode D58 (`orch verdict`, `approve code`)
   reads. `list --check` observes as the host: the pins verified again (`moved`), `HEAD` read from the pinned gitdir
   without git and the ticket's current branch (`stale_branch`). `remove` refuses a dirty tree without `--force` (the
   person is at the terminal); the branch is never deleted. `remove` (host and direct) checks cleanliness through the
-  registration's path without re-verifying the pins first; git's own non-`--force` remove refuses a dirty or untracked
-  tree as the backstop, and G can never force.
+  registration's path without re-verifying the pins first, and G can never force. Since #565 git's own remove always
+  runs `--force` (its built-in clean check would run `status`, and so the repository's clean filters), so orch's
+  reader check is the only one; a file written between that check and the remove is deleted with the worktree.
 - **Fail closed.** `bound_copy` refuses (`observe.unavailable`) with no reader, a missing or mismatched binding, generation,
   registration or pin, and an unpinned registration. Host mode checks the bindings (`check_bindings`: `bound_copy` for
   every linked repo plus the ticket's **current** `links.branches`, loaded fresh, against the bound ref) on every

@@ -11,6 +11,8 @@ import pytest
 from test_wtgit_confine import NAME, _git, world  # noqa: F401
 
 from orch import gitsafe
+from orch.gitread.errors import Unavailable
+from orch.gitread.local import READER
 from orch.runner import wtgit
 from orch.runner.supervise import SpawnError
 
@@ -80,7 +82,8 @@ def test_a_real_clone_with_tracking_passes_the_gate(world):  # noqa: F811
     _git(clone, "config", "user.email", "p@example.com")
     _git(clone, "config", "core.hooksPath", ".husky")
     gitsafe.gate(str(clone), own)
-    gitsafe.submodules(str(clone), own)
+    got = READER.dirty(clone)
+    assert got == "", got  # and orch's reader reads it, clean (#565)
 
 
 def test_an_unknown_section_is_refused_by_the_gate_named_never_valued(world):  # noqa: F811
@@ -178,7 +181,10 @@ def _populated_submodule(repo: Path, marker: Path) -> Path:
     _git(repo, "add", "sub")
     _git(repo, "commit", "-qm", "gitlink")
     _git(sub, "config", "filter.m.clean", f"touch {marker}; cat")
-    (sub / "a").write_text("a\nchanged\n")
+    # Same size as the committed "a\n": git then has to read (and so filter) the file to see the change. A different
+    # size is reported as modified from the stat data alone, and whether the filter also ran depended on whether the
+    # index entry was still "racy" (written in the same clock tick), which made the control below flaky.
+    (sub / "a").write_text("b\n")
     return sub
 
 
@@ -194,11 +200,9 @@ def test_a_submodule_clean_filter_never_runs_and_its_state_is_never_clean(world)
     assert marker.exists(), "the control must run the submodule's filter"
     marker.unlink()
     gitsafe.gate(str(repo), own)  # the parent's own config is fine
-    with pytest.raises(gitsafe.Unsafe) as e:
-        gitsafe.submodules(str(repo), own)
+    with pytest.raises(Unavailable) as e:  # orch's reader (#565): never "" (clean), never opens the submodule
+        READER.dirty(repo)
     assert "submodule" in e.value.reason
-    with pytest.raises(gitsafe.Unsafe):
-        wtgit.tree_dirty(str(repo), own)  # never "" (clean), never a status that hid the submodule
     assert not marker.exists()
 
 
@@ -209,8 +213,7 @@ def test_an_empty_gitlink_directory_is_not_a_populated_submodule(world):  # noqa
 
     shutil.rmtree(repo / "sub")
     (repo / "sub").mkdir()  # as after a clone without --recurse-submodules
-    gitsafe.submodules(str(repo), own)
-    assert wtgit.tree_dirty(str(repo), own) == ""
+    assert READER.dirty(repo) == ""
 
 
 # -- Opus D2: every directory from / to <repo>.worktrees ------------------------------------------------------------
@@ -262,7 +265,7 @@ def test_a_staged_gitlink_change_with_an_empty_submodule_directory_is_dirty(worl
     shutil.rmtree(repo / "sub")
     (repo / "sub").mkdir()
     _git(repo, "update-index", "--cacheinfo", f"160000,{new},sub")  # staged: index differs from HEAD
-    assert wtgit.tree_dirty(str(repo), own).strip() != ""
+    assert "modified: sub" in READER.dirty(repo)
 
 
 @pytest.mark.parametrize("key", ["rebase.instructionFormat", "rebase.instructionformat", "sequence.editor"])
@@ -278,7 +281,7 @@ def test_plain_rebase_switches_pass(key):
 def test_no_lazy_fetch_in_every_scrubbed_environment():
     assert gitsafe.gate_env({})["GIT_NO_LAZY_FETCH"] == "1"
     assert wtgit.git_env({})["GIT_NO_LAZY_FETCH"] == "1"
-    # store/observe.git, ops/health._git and wtgit.read_git share orch.gitsafe's isolation (#546)
+    # ops/health._git (the only isolated operations left since #565) and the gate share orch.gitsafe's isolation
     assert gitsafe.isolated_env({})["GIT_NO_LAZY_FETCH"] == "1"
     assert "protocol.allow=never" in gitsafe._argv("/", ["status"])
 

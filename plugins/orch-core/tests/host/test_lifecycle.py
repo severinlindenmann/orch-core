@@ -321,9 +321,9 @@ def test_bootstrap_refusals(lab, tmp_path):
         created = ok(c.call("host.wsk_create"))["data"]
         args = bootstrap_args(lab, created, root, owner)
         assert err(c.call("host.bootstrap", {**args, "workspace_id": "e" * 32}, idem=new_idem())) == "not_found"
-        (root / "tickets").write_text("x")
+        (root / ".orch").write_text("x")  # a project's own .orch
         assert err(c.call("host.bootstrap", args, idem=new_idem())) == "invalid.input"
-        (root / "tickets").unlink()
+        (root / ".orch").unlink()
         other = Person()
         bad_peer = {**args, "peers": {str(UID): {"class": "person", "person": other.ref}}}
         assert err(c.call("host.bootstrap", bad_peer, idem=new_idem())) == "op.not_allowed"

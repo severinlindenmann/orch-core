@@ -185,6 +185,7 @@ class Host:
         self.control = ControlOps(self)
         self.services: dict[str, WorkspaceService] = {}
         self.servers: dict[str, tuple[Server, asyncio.Task[None]]] = {}
+        self._serving: set[str] = set()  # workspace ids with a serve() begun (one server and one lock per workspace)
         self.draining = False
         self.started_at = time.monotonic()
         self.bus = Bus(self)
@@ -416,6 +417,17 @@ class Host:
 
     async def serve(self, entry: Entry) -> None:
         """Open the workspace on its worker thread and start its socket. A failure leaves it ``unavailable``."""
+        wid = entry.workspace_id
+        if wid in self._serving:  # a register that landed during start-up is also in start()'s walk: serve once
+            return
+        self._serving.add(wid)
+        try:
+            await self._serve(entry)
+        except BaseException:
+            self._serving.discard(wid)
+            raise
+
+    async def _serve(self, entry: Entry) -> None:
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         service.cursors = self.cursors
@@ -469,6 +481,7 @@ class Host:
             gone = HostError("workspace.unavailable", "the workspace was unregistered")
             await self._settle([pair[0]], lambda: gone)
             await self._flush([pair[0]])
+        self._serving.discard(workspace_id)
         pair = self.servers.pop(workspace_id, None)
         if pair is not None:
             pair[1].cancel()

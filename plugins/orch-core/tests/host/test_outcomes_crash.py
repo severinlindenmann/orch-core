@@ -240,3 +240,19 @@ def test_recovery_leaves_a_root_whose_workspace_log_starts_with_another_genesis(
     with lab.host() as h:
         assert h.host.recovered == [("host.bootstrap", "failed")]
     assert (root / ".orch" / "events" / "workspace.jsonl").read_text() == line  # not ours: left alone
+
+
+def test_serving_a_workspace_twice_keeps_the_first_server_and_does_not_mark_it_unavailable(lab):
+    """#1019: a ``host.register`` that lands while ``start()`` is still walking the registry is served by the request
+    *and* by the start-up loop. The second ``serve`` used to fail on the socket lock (EAGAIN), replace the working
+    service by an ``unavailable`` one, and answer every write ``workspace.unavailable``. A workspace is served once."""
+    with restarted(lab) as h:
+        with h.client() as c:
+            wid = ok(lab.register(c))["data"]["workspace_id"]
+        service, server = h.host.services[wid], h.host.servers[wid]
+        h.run(h.host.serve(h.host.registry.entries()[0]))
+        assert h.host.services[wid] is service and h.host.servers[wid] is server
+        assert service.state == "ok", service.cause
+        ws = WsClient(lab.run / wid / "host.sock", wid, UID)
+        assert ok(ws.call("new", {"title": "twice"}, opts={"idem": IDEM}))["duplicate"] is False
+        ws.close()

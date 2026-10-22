@@ -158,7 +158,7 @@ def test_inspect_shows_share_counts_only(make_hub, state):
 
     store = ShareStore(str(state / "shares.db"))
     reg = Registry(str(state / "registry.db"))
-    hub = make_hub(registry=reg, shares=ShareService(store, reg, hub_id=G.HUB_ID, hxk=G.K.priv["hxk"]))
+    hub = make_hub(registry=reg, shares=ShareService(store, reg, hub_id=G.HUB_ID, hxk=G.K.priv["hxk"], dev_mode=True))
     c = joined(hub)
     from orch_hub.contract import vectorgen_p4 as V4
 

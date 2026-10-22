@@ -122,6 +122,7 @@ def serve(
         registry,
         hub_id=keys.hub_id,
         hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
+        dev_mode=True,  # dev serve only (loopback); ShareService itself defaults to the fail-closed False
         on_change=audit.share_change,
     )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
@@ -146,6 +147,12 @@ def serve(
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         fw.restore(registry.binding_objects())
+
+        def _retry_shares() -> None:  # D9-1: a pending share purge is retried while the hub runs
+            while not stop.wait(30):
+                shares.retry_pending()
+
+        threading.Thread(target=_retry_shares, name="share-purge-retry", daemon=True).start()
         server.start()
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGINT):

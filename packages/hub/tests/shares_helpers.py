@@ -42,6 +42,7 @@ class ShHub(Hub):
             reg,
             hub_id=G.HUB_ID,
             hxk=G.K.priv["hxk"],
+            dev_mode=True,
             now_ms=lambda: NOW,
             on_change=on_change,
         )

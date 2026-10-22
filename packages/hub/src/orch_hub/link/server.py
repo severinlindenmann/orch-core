@@ -21,6 +21,7 @@ type-checked, there is no replay store.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import socket
@@ -315,6 +316,11 @@ class LinkServer:
             if o["op"] not in ("join", "binding_put"):
                 st = self._reg.binding_state(ws)
                 if st is not None and st["status"] != "bound":
+                    if self._shares is not None:
+                        with contextlib.suppress(
+                            Exception
+                        ):  # D9-1: best effort; purge stale share items if the sink is back
+                            self._shares.retry_pending()
                     raise Refused("not_bound")  # after hub.unbound only join and binding_put are served
             ctx = ops.OpContext(
                 hub_id=self.hub_id,

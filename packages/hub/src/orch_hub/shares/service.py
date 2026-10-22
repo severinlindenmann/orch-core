@@ -35,7 +35,7 @@ class ShareService:
         *,
         hub_id: str,
         hxk: Any,
-        dev_mode: bool = True,
+        dev_mode: bool = False,
         now_ms: Callable[[], int] | None = None,
         on_change: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
@@ -53,13 +53,38 @@ class ShareService:
         """The caller holds the registry lock."""
         if self._reg.pin(ws) is None:
             raise Refused("unknown_workspace")
-        if ws in self.store.pending():
-            raise Refused("not_bound")  # stale items of an earlier binding are still there: fail closed until purged
+        if self._is_pending(ws):
+            self._retry(ws)  # D9-1: heal here when the sink is back; a rebound workspace must not stay refused
+            if self._is_pending(ws):
+                raise Refused("not_bound")  # stale items of an earlier binding are still there: fail closed
         st = self._reg.binding_state(ws)
         if st is None or st["status"] != "bound":
             raise Refused("not_bound")
         if self._reg.mode(ws) != "selective":
             raise Refused("wrong_mode")
+
+    def _is_pending(self, ws: str) -> bool:
+        return ws in self._pending or ws in self.store.pending()
+
+    def _mark(self, ws: str) -> None:
+        """Remember that ``ws`` has stale items. The in-memory mark cannot fail, so it holds even when the durable one
+        does (D9-2): the workspace is then refused until a purge succeeds or, after a restart, ``reconcile``."""
+        self._pending.add(ws)
+        try:
+            self.store.mark_pending(ws)
+        except Exception:  # noqa: BLE001
+            _log.exception("could not persist the share_pending mark; held in memory")
+
+    def _clear(self, ws: str) -> None:
+        self.store.clear_pending(ws)
+        self._pending.discard(ws)
+
+    def _retry(self, ws: str) -> None:
+        try:
+            self.purge(ws)
+            self._clear(ws)
+        except Exception:  # noqa: BLE001  still failing (sink or store down): stays pending
+            _log.warning("share purge retry failed; still pending")
 
     def _wsk(self, ws: str) -> bytes:
         pin = self._reg.pin(ws)
@@ -147,21 +172,27 @@ class ShareService:
         workspace for a retry (here, at the next sync or reconcile) and lets the other unbind steps go on; until the
         retry succeeds the workspace serves and accepts nothing."""
         try:
-            if ws in self.store.pending():
+            if self._is_pending(ws):
                 self.purge(ws)  # the items are those of an earlier binding, whatever the state is now
-                self.store.clear_pending(ws)
+                self._clear(ws)
             st = self._reg.binding_state(ws)
             if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
                 self.purge(ws)
         except Exception:  # noqa: BLE001  any sink failure must leave the other unbind steps running
-            self.store.mark_pending(ws)
+            self._mark(ws)
             _log.exception("share purge failed; items kept, retry at the next sync")
 
     def reconcile(self) -> None:
         """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash).
         A failure of one workspace is logged and retried later; it never stops the startup."""
         with self._reg.lock:
-            for ws in sorted(set(self.store.workspaces()) | self.store.pending()):
+            for ws in sorted(set(self.store.workspaces()) | self.store.pending() | self._pending):
+                self.sync(ws)
+
+    def retry_pending(self) -> None:
+        """Timer tick (D9-1): retry the purge of every workspace still pending, so stale items do not outlive the sink."""
+        with self._reg.lock:
+            for ws in sorted(self._pending | self.store.pending()):
                 self.sync(ws)
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------

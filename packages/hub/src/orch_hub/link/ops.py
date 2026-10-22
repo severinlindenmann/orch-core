@@ -9,6 +9,7 @@ h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:m
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -142,7 +143,10 @@ def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
 def _sync_shares(c: OpContext, state: dict[str, Any]) -> None:
     """Shared items belong to a live SELECTIVE binding only: any other state deletes them (caller holds the lock)."""
     if c.shares is not None:
-        c.shares.sync(c.workspace_id)
+        try:
+            c.shares.sync(c.workspace_id)
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("share sync failed; unbind goes on")
 
 
 def join(c: OpContext) -> dict[str, Any]:
@@ -212,6 +216,10 @@ def card_put(c: OpContext) -> dict[str, Any]:
 
 
 def binding_put(c: OpContext) -> dict[str, Any]:
+    # INVARIANT: once the registry has committed a binding state, the binding-side steps (downstream.binding,
+    # spaces.on_unbind) run whatever the share store does. The share step is _sync_shares, which cannot raise, and
+    # the post-lock steps below sit in try/finally as a second guard. A share failure only leaves the workspace
+    # pending (refused by the share store) until a purge succeeds.
     obj = c.body["object"]
     o = obj.get("o") if type(obj) is dict else None
     kind = o.get("kind") if type(o) is dict else None
@@ -235,11 +243,13 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         c.registry.set_binding_state(c.workspace_id, state, obj)
         _sync_wk_seals(c, state)
         _sync_shares(c, state)
-    c.downstream.binding(c.workspace_id, obj)
-    if c.spaces is not None and (
-        kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
-    ):
-        c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
+    try:
+        c.downstream.binding(c.workspace_id, obj)
+    finally:
+        if c.spaces is not None and (
+            kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
+        ):
+            c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
     return {}
 
 

@@ -404,3 +404,20 @@ def test_a_duplicate_event_id_is_logged_not_silently_ignored(rig, caplog):
     with caplog.at_level(logging.WARNING):
         rig.q(WS, LOG, ev())
     assert "already queued" in caplog.text
+
+
+def test_router_send_event_returns_the_link_seq_the_queue_matches_on():
+    from orch_hub.link import Registry
+    from orch_hub.router import Router
+
+    r = Router(Registry())
+    port = Port()
+    r.attach(WS, port)
+    q = DeliveryQueue(now_ms=lambda: 1_000_000, sender=r.send_event)
+    q(WS, LOG, ev())
+    link = q.attach(WS, port)
+    q.pump()
+    assert port.sent[0][2] == 1 and link.inflight[1] == 1
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 1, "body": {}})
+    assert q.outcomes()[0]["state"] == "done"
+    q.close()

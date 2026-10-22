@@ -54,7 +54,7 @@ def test_all_pass_with_listen_and_publish(state, publish, capsys):
     keys = HubKeys.open(state)
     reg = Registry(str(state / REGISTRY_FILE))
     os.chmod(state / REGISTRY_FILE, 0o600)
-    srv = LinkServer.from_keys(keys, registry=reg, invites=FixedInvites([])).start()
+    srv = LinkServer.from_keys(keys, registry=reg, invites=FixedInvites([]), dev_mode=True).start()
     try:
         rc, out = doctor(capsys, state, "--listen", f"127.0.0.1:{srv.address[1]}", "--publish-url", publish["url"])
     finally:
@@ -100,7 +100,7 @@ def test_non_dev_card_fails(state, capsys, monkeypatch):
 def test_tls_pin_mismatch_fails(state, capsys):
     keys = HubKeys.open(state)
     reg = Registry()
-    srv = LinkServer.from_keys(keys, registry=reg, invites=FixedInvites([])).start()
+    srv = LinkServer.from_keys(keys, registry=reg, invites=FixedInvites([]), dev_mode=True).start()
     try:
         keys.reissue_card(tls_spki_sha256="A" * 43)  # the card now names another key than the server presents
         rc, out = doctor(capsys, state, "--listen", f"127.0.0.1:{srv.address[1]}")

@@ -73,7 +73,7 @@ class LinkServer:
         deliveries: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
-        dev_mode: bool = True,
+        dev_mode: bool,
         now_ms: Callable[[], int] = _now_ms,
         max_frame: int = framing.MAX_FRAME,
         handshake_timeout: float = 10.0,

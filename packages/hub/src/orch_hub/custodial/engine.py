@@ -146,7 +146,7 @@ class CustodialEngine:
         mode_of: Callable[[str], str | None],
         now_ms: Callable[[], int] | None = None,
         ttl_ms: int = TTL_MS,
-        dev_mode: bool = True,
+        dev_mode: bool,
         notify: Callable[[str, str, str | None], None] | None = None,
         shares: Any = None,
     ) -> None:

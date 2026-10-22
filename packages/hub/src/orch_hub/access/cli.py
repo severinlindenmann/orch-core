@@ -16,6 +16,7 @@ from pathlib import Path
 from ..channels import ChannelError
 from ..channels.cli import add_channels_parsers, add_users_parsers
 from ..channels.cli import dispatch as channels_dispatch
+from ..config import dev_of
 from ..keys import HubKeys, KeysError, default_state_dir
 from .store import Access, AccessError, check_name, require_state_owner, role_rank
 
@@ -95,7 +96,7 @@ def run(args: argparse.Namespace, out=None) -> int:
             if args.group in ("users", "groups", "grants"):  # D4: grant and membership changes go into the audit chain
                 from ..audit import open_log
 
-                log = open_log(state, HubKeys.open(state))
+                log = open_log(state, hk := HubKeys.open(state), dev_mode=dev_of(hk))
                 acc.observer = log.access_change
             res = _dispatch(args, state, acc)
         finally:

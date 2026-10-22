@@ -35,6 +35,7 @@ class Hub:
         self.registry = registry or Registry()
         self.invites = Invites(inv1=None, inv2=None, inv3=None, invB=G.WS_B)
         self.clients: list[LinkClient] = []
+        server_kw.setdefault("dev_mode", True)
         self.server = LinkServer(
             identity=self.identity,
             op_signer=self.op,

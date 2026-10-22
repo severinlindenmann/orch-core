@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .config import dev_of
 from .contract.canon import CanonError, unb64u
 from .contract.hub import FACTORS
 from .keys import HubKeys, KeysError, default_state_dir
@@ -40,6 +41,13 @@ def _parser() -> argparse.ArgumentParser:
     sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
+    sv.add_argument("--web-listen", help="loopback host:port of the web API (the edge fronts it); default: no web API")
+    sv.add_argument("--relay-url", help="the relay for push (https, or http on loopback); default: the card's")
+    sv.add_argument("--trusted-peer", action="append", default=[], help="edge address that may state the client (XFF)")
+    sv.add_argument(
+        "--behind-edge", action="store_true", help="the web API is served behind the edge (needs --trusted-peer)"
+    )
+    sv.add_argument("--web-origin", action="append", default=[], help="exact origin of the console (repeatable)")
     ins = sub.add_parser(
         "inspect", help="dev only: read-only JSON view of the registry (pins, mode, binding, op counts)"
     )
@@ -76,7 +84,7 @@ def _relay_register(args: argparse.Namespace) -> int:
 
     try:
         keys = HubKeys.open(Path(args.state) if args.state else default_state_dir())
-        print(dumps(RelayClient(keys, args.relay_url, dev=True).register()))  # the V3 hub is dev only
+        print(dumps(RelayClient(keys, args.relay_url, dev=dev_of(keys)).register()))
     except (KeysError, RelayError) as e:
         print(f"orch-hub: refused: {e}", file=sys.stderr)
         return 1
@@ -95,6 +103,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.publish_url,
                 args.invite,
                 api_host=args.api_host,
+                web_listen=args.web_listen,
+                relay_url=args.relay_url,
+                trusted_peers=frozenset(args.trusted_peer),
+                behind_edge=args.behind_edge,
+                web_origins=frozenset(args.web_origin),
             )
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)

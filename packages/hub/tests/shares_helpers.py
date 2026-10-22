@@ -31,6 +31,7 @@ class ShHub(Hub):
             lambda: G.OP_CERT_ID,
             op_cert_by_id=lambda i: G.op_cert() if i == G.OP_CERT_ID else None,
             now_ms=lambda: NOW,
+            dev_mode=True,
         )
 
         def on_change(ev):

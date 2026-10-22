@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from ..access.store import Access, AccessError, require_state_owner
+from ..audit import open_log
 from ..keys import HubKeys, KeysError, default_state_dir
 from .service import SpaceError, SpaceService
 from .store import SpaceStore
@@ -47,6 +48,7 @@ def run(args: argparse.Namespace, out=None) -> int:
 
     out = out or sys.stdout
     store = registry = acc = None
+    stores: list = []
     try:
         state = Path(args.state) if args.state else default_state_dir()
         require_state_owner(state)
@@ -54,7 +56,17 @@ def run(args: argparse.Namespace, out=None) -> int:
         registry = Registry(str(state / "registry.db"))
         acc = Access(str(state / "access.db"))
         store = SpaceStore(str(state / SPACES_FILE))
-        svc = SpaceService(store, registry, acc, keys.op_signer, keys.hub_id, lambda: keys.op_cert()["o"]["cert_id"])
+        log = open_log(state, keys)
+        stores.append(log.store)
+        svc = SpaceService(
+            store,
+            registry,
+            acc,
+            keys.op_signer,
+            keys.hub_id,
+            lambda: keys.op_cert()["o"]["cert_id"],
+            on_change=log.space_change,
+        )
         if args.cmd == "list":
             res: object = svc.list_all()
         elif args.cmd == "create":
@@ -71,7 +83,7 @@ def run(args: argparse.Namespace, out=None) -> int:
         print(f"orch-hub: refused: {e.code}", file=sys.stderr)
         return 1
     finally:
-        for x in (store, registry, acc):
+        for x in (store, registry, acc, *stores):
             if x is not None:
                 x.close()
     print(json.dumps(res, sort_keys=True), file=out)

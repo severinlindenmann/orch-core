@@ -20,6 +20,9 @@ Output (``--json``)::
                  "items": [{"item_id", "seq", "epoch", "workspace_id", "revoked", "sha256"}]}]}
         # shared spaces (D75): ids, epochs, members, item metadata and the SHA-256 of each sealed item; never SK_e, wraps
         # or sealed bytes
+     "audit": {"head": {"seq", "hash"} | null, "records": [{"record": <signed hub.audit>, "event": {...}}],
+               "acks": {"<workspace_id>": seq}}
+        # the hub audit chain (D4): the signed records, the events behind their hashes (the operator's view), the acks
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from .contract.canon import unb64u
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
 SPACES_FILE = "spaces.db"
+AUDIT_FILE = "audit.db"
 ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
@@ -132,6 +136,25 @@ def _spaces(state: Path) -> list[dict[str, Any]]:
         db.close()
 
 
+def _audit(state: Path) -> dict[str, Any]:
+    empty: dict[str, Any] = {"head": None, "records": [], "acks": {}}
+    path = state / AUDIT_FILE
+    if not path.is_file():
+        return empty
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT seq, chain_hash, signed, event FROM record ORDER BY seq").fetchall()
+        acks = dict(db.execute("SELECT workspace_id, seq FROM ack ORDER BY workspace_id").fetchall())
+        recs = [{"record": json.loads(sg), "event": json.loads(ev)} for _s, _h, sg, ev in rows]
+        head = None if not rows else {"seq": rows[-1][0], "hash": rows[-1][1]}
+        return {"head": head, "records": recs, "acks": acks}
+    except sqlite3.Error, ValueError, KeyError, TypeError:
+        return empty
+    finally:
+        db.close()
+
+
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     card = _hub_card(state)
     if card.get("dev") is not True:
@@ -186,4 +209,5 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
         "workspaces": out,
         "unjoined_ops": unjoined,
         "spaces": _spaces(state),
+        "audit": _audit(state),
     }

@@ -133,7 +133,16 @@ class SpaceService:
         return self._signer.sign_object(o)
 
     def _new_epoch(
-        self, space_id: str, epoch: int, old: list[str] | None, members: list[str], *, name: str | None = None
+        self,
+        space_id: str,
+        epoch: int,
+        old: list[str] | None,
+        members: list[str],
+        *,
+        change: str,
+        workspace_id: str | None,
+        actor: str | None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         members = sorted(set(members))
         sk = os.urandom(32)
@@ -164,8 +173,17 @@ class SpaceService:
                     ) from None
                 raise SpaceError(e.code) from None
         wraps = {w: self._wrap(space_id, epoch, w, sk) for w in members}
+        # audited BEFORE it commits: a failed commit leaves a record for a change that did not happen, never the reverse
+        self._changed(
+            {
+                "space_id": space_id,
+                "epoch": epoch,
+                "change": change,
+                "workspace_id": workspace_id,
+                "actor_user_id": actor,
+            }
+        )
         self.store.add_epoch(space_id, epoch, members, sk, rec, wraps, name=name)
-        self._changed({"space_id": space_id, "epoch": epoch, "workspace_id": None})
         return rec["o"]
 
     def _changed(self, ev: dict[str, Any]) -> None:
@@ -183,7 +201,9 @@ class SpaceService:
                     raise SpaceError("unknown_workspace", w)
             self._authorize(actor, members)
             space_id = os.urandom(16).hex()
-            return self._new_epoch(space_id, 1, None, members, name=name)
+            return self._new_epoch(
+                space_id, 1, None, members, name=name, change="create", workspace_id=None, actor=actor
+            )
 
     def _current(self, space_id: str) -> tuple[int, list[str]]:
         e = self.store.current_epoch(space_id)
@@ -200,7 +220,7 @@ class SpaceService:
             if ws in members:
                 raise SpaceError("already_member", ws)
             self._authorize(actor, [*members, ws])
-            return self._new_epoch(space_id, e + 1, members, [*members, ws])
+            return self._new_epoch(space_id, e + 1, members, [*members, ws], change="add", workspace_id=ws, actor=actor)
 
     def remove(self, space_id: str, ws: str, actor: str | None) -> dict[str, Any] | None:
         """Remove a member (the hub-admin may remove any, including a selective one). ``actor`` None = the hub itself
@@ -213,11 +233,14 @@ class SpaceService:
                 self._authorize(actor, members)
             rest = [m for m in members if m != ws]
             self.store.drop_accept(space_id, ws)
+            change = "remove" if actor is not None else "unbind"
             if not rest:
+                self._changed(
+                    {"space_id": space_id, "epoch": e, "change": "delete", "workspace_id": ws, "actor_user_id": actor}
+                )
                 self.store.delete_space(space_id)
-                self._changed({"space_id": space_id, "epoch": e, "workspace_id": ws, "deleted": True})
                 return None
-            return self._new_epoch(space_id, e + 1, members, rest)
+            return self._new_epoch(space_id, e + 1, members, rest, change=change, workspace_id=ws, actor=actor)
 
     def on_unbind(self, ws: str) -> None:
         """``hub.unbound`` of ``ws`` was accepted: it leaves every space it is in, one new epoch each, in the same

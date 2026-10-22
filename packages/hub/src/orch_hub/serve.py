@@ -19,6 +19,7 @@ from typing import TextIO
 
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
+from .audit import open_log
 from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
@@ -98,9 +99,17 @@ def serve(
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
     router = Router(registry, queue, AccessAuthz(registry, access))
+    audit = open_log(state, keys)
+    access.observer = audit.access_change  # D4: every grant and membership change is audited
     space_store = SpaceStore(str(state / SPACES_FILE))
     spaces = SpaceService(
-        space_store, registry, access, keys.op_signer, keys.hub_id, lambda: keys.op_cert()["o"]["cert_id"]
+        space_store,
+        registry,
+        access,
+        keys.op_signer,
+        keys.hub_id,
+        lambda: keys.op_cert()["o"]["cert_id"],
+        on_change=audit.space_change,
     )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
@@ -114,6 +123,7 @@ def serve(
         router=router,
         access=access,
         spaces=spaces,
+        audit=audit,
         host=host,
         port=port,
     )
@@ -135,6 +145,7 @@ def serve(
         server.close()
         queue.close()
         space_store.close()
+        audit.store.close()
         registry.close()
         access.close()
     return 0

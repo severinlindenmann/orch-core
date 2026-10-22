@@ -98,6 +98,10 @@ class Access:
     def __init__(self, path: str = ":memory:", *, now_ms: Callable[[], int] | None = None) -> None:
         self.lock = threading.RLock()
         self._now = now_ms or (lambda: int(time.time() * 1000))
+        #: called as ``observer(event)`` INSIDE the transaction of a grant / membership change, before it commits (D4:
+        #: the audit chain). If it raises, the change is rolled back; a failed commit after it leaves an audit record
+        #: for a change that did not happen, never the reverse.
+        self.observer: Callable[[dict], None] | None = None
         try:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
@@ -222,12 +226,19 @@ class Access:
                     db.execute("INSERT OR IGNORE INTO members VALUES (?,?)", (group, user_id))
                 else:
                     db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (group, user_id))
+                self._observe(
+                    {"kind": "membership", "group": group, "user_id": user_id, "added": add, "actor_user_id": actor}
+                )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
     # --- grants --------------------------------------------------------------------------------------------------
 
-    def grant(self, workspace_id: str, group: str, role: str) -> None:
+    def _observe(self, ev: dict) -> None:
+        if self.observer is not None:
+            self.observer(ev)
+
+    def grant(self, workspace_id: str, group: str, role: str, *, actor: str | None = None) -> None:
         """Set (or change) the role a group holds in a workspace. The hub-admin group is never a grantee."""
         _hex(workspace_id, "workspace_id")
         _grp(group)
@@ -243,17 +254,36 @@ class Access:
                     "INSERT INTO grants VALUES (?,?,?) ON CONFLICT(workspace_id, grp) DO UPDATE SET role=excluded.role",
                     (workspace_id, group, role),
                 )
+                self._observe(
+                    {
+                        "kind": "grant",
+                        "group": group,
+                        "workspace_id": workspace_id,
+                        "role": role,
+                        "actor_user_id": actor,
+                    }
+                )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
-    def revoke(self, workspace_id: str, group: str) -> None:
-        if (
-            self._w(
-                "DELETE FROM grants WHERE workspace_id=? AND grp=?", (_hex(workspace_id, "workspace_id"), _grp(group))
-            )
-            == 0
-        ):
-            raise AccessError("not_granted")
+    def revoke(self, workspace_id: str, group: str, *, actor: str | None = None) -> None:
+        _hex(workspace_id, "workspace_id")
+        _grp(group)
+        try:
+            with self.tx() as db:
+                if db.execute("DELETE FROM grants WHERE workspace_id=? AND grp=?", (workspace_id, group)).rowcount == 0:
+                    raise AccessError("not_granted")
+                self._observe(
+                    {
+                        "kind": "grant",
+                        "group": group,
+                        "workspace_id": workspace_id,
+                        "role": None,
+                        "actor_user_id": actor,
+                    }
+                )
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def grants_of_group(self, group: str) -> list[dict[str, str]]:
         return [

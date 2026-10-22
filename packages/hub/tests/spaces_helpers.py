@@ -7,6 +7,7 @@ import pytest
 from conftest import NOW, Hub
 
 from orch_hub.access import Access
+from orch_hub.audit import AuditLog, AuditStore
 from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import spaces as SP
@@ -28,6 +29,14 @@ class SHub(Hub):
         self.access = access or Access()
         self.store = SpaceStore(store_path)
         reg = registry or Registry()
+        self.audit = AuditLog(
+            AuditStore(),
+            KS.OpSigner(G.K.priv["hk_op"]),
+            G.HUB_ID,
+            lambda: G.OP_CERT_ID,
+            op_cert_by_id=lambda i: G.op_cert() if i == G.OP_CERT_ID else None,
+            now_ms=lambda: NOW,
+        )
         self.svc = SpaceService(
             self.store,
             reg,
@@ -36,10 +45,12 @@ class SHub(Hub):
             G.HUB_ID,
             lambda: G.OP_CERT_ID,
             now_ms=lambda: NOW,
+            on_change=self.audit.space_change,
         )
-        super().__init__(registry=reg, spaces=self.svc)
+        super().__init__(registry=reg, spaces=self.svc, audit=self.audit)
         self.access.add_user(ADMIN, "admin")
         self.access.add_member("hub-admin", ADMIN)
+        self.access.observer = self.audit.access_change  # after the test fixture's own setup
         self.joined: dict[str, object] = {}
 
     def join(self, ws: str, mode: str = "full"):
@@ -60,6 +71,7 @@ class SHub(Hub):
     def close(self):
         super().close()
         self.store.close()
+        self.audit.store.close()
         self.access.close()
 
 

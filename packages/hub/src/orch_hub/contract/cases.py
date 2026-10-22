@@ -302,6 +302,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             "revoked_op_certs": a.get("revoked_op_certs", []),
         }
         return H.check_admin_read(r, st, now_ms=now, dev_mode=dev)
+    if check == "admin_read_rows":
+        return {"rows": len(H.check_admin_rows(a["rows"], a["scope"]))}
     if check == "admin_read_row":
         H.check_admin_read_row(a["row"])
         return {"row": True}

@@ -616,7 +616,7 @@ def audit_chain(n: int = 4) -> list[dict[str, Any]]:
     return out
 
 
-ADMIN_TARGET = "/v1/admin/releases?workspace=" + WS_A + "&state=active"
+ADMIN_TARGET = "/v1/admin/releases?state=active"
 
 
 def admin_req(
@@ -2746,6 +2746,60 @@ def build() -> dict[str, Any]:
         {**ab, "request": admin_req(), "dev_mode": False, "bindings": {}},
         {"error": "unknown_hub"},
         3,
+    )
+    # canonical targets only (L2P-5): every spelling a router might resolve to an unbound workspace
+    for name, tgt, code in (
+        ("upper_case_id", f"/v1/ws/{WS_C.upper()}/releases", "malformed"),
+        ("empty_segment", f"//v1/ws/{WS_C}/releases", "malformed"),
+        ("dot_segment", f"/v1/./ws/{WS_C}/releases", "malformed"),
+        ("dot_dot_segment", f"/v1/x/../ws/{WS_C}/releases", "malformed"),
+        ("percent_encoded_id", f"/v1/ws/%{ord(WS_C[0]):02x}{WS_C[1:]}/releases", "malformed"),
+        ("trailing_slash", f"/v1/ws/{WS_C}/", "malformed"),
+        ("query_workspace_unbound", f"/v1/admin/releases?workspace={WS_C}", "not_bound"),
+        ("query_workspace_upper_case", f"/v1/admin/releases?workspace={WS_A.upper()}", "malformed"),
+        ("query_workspace_twice", f"/v1/admin/releases?workspace={WS_A}&workspace={WS_C}", "malformed"),
+        ("query_other_than_path", f"/v1/ws/{WS_A}/releases?workspace={WS_C}", "malformed"),
+        ("query_without_value", "/v1/admin/releases?state", "malformed"),
+        ("query_plus", "/v1/admin/releases?state=a+b", "malformed"),
+        ("fragment", "/v1/admin/releases?state=active#x", "malformed"),
+        ("short_workspace_id", "/v1/ws/abcd/releases", "malformed"),
+    ):
+        case(
+            f"admin_read_target_{name}",
+            "admin_read",
+            {**ab, "request": admin_req(target=tgt)},
+            {"error": code},
+            3,
+            "a router that normalises the target must not serve another workspace's metadata",
+        )
+    case(
+        "admin_read_query_workspace_in_scope",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/admin/releases?workspace={WS_A}&state=active")},
+        ok_ar,
+        3,
+    )
+    case(
+        "admin_read_path_and_query_agree",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/ws/{WS_A}/releases?workspace={WS_A}")},
+        ok_ar,
+        3,
+    )
+    case(
+        "admin_read_rows_in_scope",
+        "admin_read_rows",
+        {"rows": [ADMIN_ROW], "scope": [WS_A]},
+        {"ok": {"rows": 1}},
+        3,
+    )
+    case(
+        "admin_read_row_outside_scope_never_emitted",
+        "admin_read_rows",
+        {"rows": [ADMIN_ROW, {**ADMIN_ROW, "workspace_id": WS_C}], "scope": [WS_A]},
+        {"error": "not_bound"},
+        3,
+        "whatever the target resolved to, a row of another workspace is not returned",
     )
     case(
         "admin_read_workspace_not_bound",

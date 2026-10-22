@@ -805,12 +805,20 @@ query or method does not verify. The label keeps a publish transport signature (
 
 | # | Check | Refusal |
 |---|---|---|
-| 1 | header syntax (`Orch-Hub` hex16, `Orch-Hub-Ts` a decimal without leading zeros, `Orch-Hub-Signature` 64 bytes b64u), method `GET` or `HEAD`, target ASCII and starting with `/` | 400 `malformed` |
+| 1 | header syntax (`Orch-Hub` hex16, `Orch-Hub-Ts` a decimal without leading zeros, `Orch-Hub-Signature` 64 bytes b64u), method `GET` or `HEAD`; **the target is canonical** (below) | 400 `malformed` |
 | 2 | `\|now − ts\| ≤ 120 s` | 401 `stale_timestamp` (`server_ms`) |
 | 3 | the **held, current** hub card for `Orch-Hub`, **verified again for this request**: its op certificate valid, not expired, not revoked, `hub_id` of the root, dev marker | 401 `unknown_hub` |
 | 4 | `Orch-Hub-Signature` under that card's `HK_op` over the bytes above | 401 `bad_hub_signature` |
-| 5 | scope: only workspaces with a **current binding to this hub** (status `bound`, `hub_id` and `hk_root_pub` of the held card) whose `wsk_pub` equals the workspace card's current `WSK`; a target that names a workspace (`/v1/ws/<id>/…`) outside that set | 403 `not_bound` |
+| 5 | scope: only workspaces with a **current binding to this hub** (status `bound`, `hub_id` and `hk_root_pub` of the held card) whose `wsk_pub` equals the workspace card's current `WSK`; the workspace the target names (path `/v1/ws/<id>/…` or the one `workspace=` key), if any, must be in that set, **and so must the workspace of every row the data layer returns** (a row outside it is never emitted) | 403 `not_bound` |
 | 6 | data | — |
+
+**Canonical targets only (L2P-5).** The target is `malformed` unless it is ASCII, starts with `/`, contains no `%`
+(no percent-encoding at all) and has a path of non-empty lower-case segments `[a-z0-9][a-z0-9_-]*` (so no `//`, `.`,
+`..`, trailing `/` or upper case) and an optional query of unique `key=value` pairs, keys `[a-z][a-z_]*`, values
+`[a-z0-9][a-z0-9_-]*` (no `#`, `+`, `;`). A workspace id in the path or in the `workspace=` key is 32 lower-case hex digits;
+path and query must name the same one. The scope applies to that workspace, after routing, and to every row returned
+(`check_admin_rows`), so a router that normalises or decodes the target differently cannot reach a workspace outside the
+scope (vectors `admin_read_target_*`).
 
 **No nonce store, by design:** the request is idempotent metadata, so a replay inside the 120 s window returns what the
 original did, and the hub's key is online anyway. (If a state-changing admin route is ever added, it needs its own

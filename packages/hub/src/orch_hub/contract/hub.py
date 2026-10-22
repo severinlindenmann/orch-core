@@ -1230,7 +1230,11 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
 # --- hub admin read for orch-publish (F3, §10.6) ---------------------------------------------------------------------
 
 ADMIN_READ_WINDOW_MS = 120_000
-_WS_PATH = re.compile(r"/v1/ws/([0-9a-f]{32})(?:[/?]|$)")
+_SEG = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_QKEY = re.compile(r"[a-z][a-z_]*")
+_QVAL = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_HEX32 = re.compile(r"[0-9a-f]{32}")
+ADMIN_TARGET_MAX = 2048
 #: The metadata an admin read may return per release, and nothing else (never content or secrets).
 ADMIN_READ_ROW: dict[str, Check] = {
     "workspace_id": _hex16,
@@ -1243,6 +1247,48 @@ ADMIN_READ_ROW: dict[str, Check] = {
     "bytes": _int_min(0),
     "public_url": lambda x: x is None or (type(x) is str and x.isascii() and 0 < len(x) <= 2048),
 }
+
+
+def parse_admin_target(target: Any) -> str | None:
+    """The target of an admin read must be canonical or it is ``malformed`` (L2P-5): ASCII, starts with ``/``, no ``%``
+    (no percent-encoding at all), a path of non-empty lower-case segments ``[a-z0-9][a-z0-9_-]*`` (so no ``//``, ``.``,
+    ``..``, trailing slash or upper case), and an optional query of unique ``key=value`` pairs with lower-case keys and
+    values from the same segment alphabet (no ``#``, ``+``, ``;``). Returns the workspace the target names, from the
+    path (``/v1/ws/<id>/...``) or the single ``workspace=`` query key, which must be 32 lower-case hex digits and equal
+    when both are present; None when it names none. The scope check applies to that workspace."""
+    if type(target) is not str or not target.isascii() or not target.startswith("/") or len(target) > ADMIN_TARGET_MAX:
+        raise Refused("malformed")
+    path, sep, query = target.partition("?")
+    segs = path[1:].split("/")
+    if not all(_SEG.fullmatch(x) for x in segs):
+        raise Refused("malformed")
+    named: list[str] = []
+    if len(segs) >= 3 and segs[0] == "v1" and segs[1] == "ws":
+        named.append(segs[2])
+    if sep:
+        keys: set[str] = set()
+        for pair in query.split("&"):
+            k, eq, v = pair.partition("=")
+            if not eq or not _QKEY.fullmatch(k) or not _QVAL.fullmatch(v) or k in keys:
+                raise Refused("malformed")
+            keys.add(k)
+            if k == "workspace":
+                named.append(v)
+    if not all(_HEX32.fullmatch(x) for x in named) or len(set(named)) > 1:
+        raise Refused("malformed")
+    return named[0] if named else None
+
+
+def check_admin_rows(rows: list[Any], scope: list[str]) -> list[dict[str, Any]]:
+    """Every row the data layer returns is checked against the scope after routing: a row of a workspace outside it
+    is never emitted (``not_bound``), whatever the target resolved to (L2P-5)."""
+    out = []
+    for r in rows:
+        check_admin_read_row(r)
+        if r["workspace_id"] not in scope:
+            raise Refused("not_bound")
+        out.append(r)
+    return out
 
 
 def admin_read_bytes(hub_id_: str, ts_ms: int, method: str, target: str) -> bytes:
@@ -1277,8 +1323,9 @@ def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: i
             raise CanonError("ts")
         ts = int(h["orch-hub-ts"])
         sig = unb64u(h["orch-hub-signature"], 64)
-        if req["method"] not in ("GET", "HEAD") or not str(req["target"]).startswith("/"):
-            raise CanonError("method or target")
+        if req["method"] not in ("GET", "HEAD"):
+            raise CanonError("method")
+        named = parse_admin_target(req["target"])
         msg = admin_read_bytes(hub, ts, req["method"], req["target"])
     except KeyError, CanonError, Refused:
         raise Refused("malformed") from None
@@ -1305,8 +1352,7 @@ def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: i
         and ws in st["cards"]
         and b["binding"]["wsk_pub"] == st["cards"][ws]["wsk_pub"]
     )
-    m = _WS_PATH.match(req["target"])
-    if m is not None and m.group(1)[:32] not in scope:
+    if named is not None and named not in scope:
         raise Refused("not_bound")
     return {"hub": hub, "workspaces": scope}
 

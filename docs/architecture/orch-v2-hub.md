@@ -43,14 +43,14 @@ people sign in to it once, and admins work in it.
 | D71 | Hub admin | Members of the `hub-admin` group hold `admin` on every workspace of the hub and manage users and groups. For now there is no workspace-side veto. |
 | D72 | Custodial signing | The hub holds each user's signing key, bound to that user, and signs for them. Each signature needs a fresh proof from a strongly bound channel over the event digest (§5, §7); a session alone only shows and routes. The hub signs only payloads it builds itself. Workspace keys (`WSK`, `WXK`, `WK_e`) stay in the workspace host. Amends D41 and D49 in hub mode. |
 | D73 | Channels | People reach orch through channels that end at the hub: the iPhone app now, the browser, later Slack and others. The phone pairs **once with the hub** by QR; it never pairs with a workspace. Amends D6 in hub mode. |
-| D74 | Trusted hub | The hub is a member of every workspace it serves: each workspace seals its `WK_e` to the hub, so the hub can render content for channels and act for users. The hub is a **trusted operator**, like an identity provider; the edge relay stays blind. |
+| D74 | Trusted hub | The hub is a member of every **full-mode** workspace it serves (selective mode: D80): each workspace seals its `WK_e` to the hub, so the hub can render content for channels and act for users. The hub is a **trusted operator**, like an identity provider; the edge relay stays blind. |
 | D75 | Shared spaces | Shared spaces live on the hub, keyed `SK_e`, held by the hub. Workspaces put filtered slices into them under their share rules (option B of the draft). |
 | D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish requests stay `WSK`-signed by the workspace and are forwarded by the hub; orch-publish accepts them through a hub only while it holds that workspace's `WSK`-signed `hub.binding` (§8). Namespaces stay per workspace. Amends §6.1 and §10. |
 | D77 | Hub to hub | One hub per company. Companies, and subsidiaries of one group, link hub to hub through a relay. Only hub-to-hub objects cross (handoffs, shared spaces); nobody gets direct access to another hub's workspaces. |
-| D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. No human-only verb works while the hub is down, except the break-glass operations (§8). No second hub instance for now. |
+| D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. In a full-mode workspace no human-only verb works while the hub is down, except the break-glass operations (§8); local keys sign only break-glass there, so the hub's role gate cannot be bypassed locally. A selective workspace keeps local signing (§8a). D79's standalone guarantee is for a workspace that has not joined, or has left. No second hub instance for now. |
 | D79 | Standalone core | orch core always works as a standalone workspace with none of the hub, relay, publish or phone: tickets, agents, skills, Mission Control and local signing (D64). Everything in this document is an addition on top and never a dependency. orch core imports no hub code; the hub path lives behind the host↔hub link and a hub add-on. CI keeps a standalone suite and an e2e scenario that run with no hub configured, and every hub step (§10) must leave them green. |
-| D80 | Selective join | A workspace may join a hub in **selective** mode instead of full mode; meant for personal workspaces, open to any. The hub is then not a `WK_e` member: the workspace seals to `HXK` only the items its owner selects (§8a), and the hub, and every channel, sees only those. Full mode (D74) stays the default for team workspaces. Chosen per workspace at join and changeable later by its admin. |
-| D81 | Local Mission Control in hub mode | Local Mission Control holds no hub session that can sign. A click that needs a human signature hands off to a strongly bound channel (phone or passkey prompt, §7). One user, one key. |
+| D80 | Selective join | A workspace may join a hub in **selective** mode instead of full mode; meant for personal workspaces, open to any. The hub is then not a `WK_e` member: the workspace seals to `HXK` only the items its owner selects (§8a), and the hub, and every channel, sees only those. Full mode (D74) stays the default for team workspaces. Chosen at join. Switching selective → full is a human-only verb at the host terminal, signed by the owner's local key; D71 does not reach the mode switch or a selective workspace (§8a). |
+| D81 | Local Mission Control in hub mode | In a full-mode workspace, and for items the hub holds in a selective one, local Mission Control holds no hub session that can sign. A click that needs a human signature hands off to a strongly bound channel (phone or passkey prompt, §7). One user, one key. |
 
 Later, not now: **hub agents** over shared spaces (summaries, routing; needs its own scope and guard section); **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
 then); Slack and other channels after the phone and browser.
@@ -211,18 +211,25 @@ charter. Public access still needs a custodial human signature, carried in the r
 
 ## 8a. Selective join (D80)
 
-- **What is shared.** The workspace admin picks share rules: whole ticket types, single tickets, or tagged items, plus
+- **Who decides.** Only the workspace owner, with the local key at the host terminal. Hub groups and the hub-admin
+  group (D71) get no role in a selective workspace. It accepts `UK` signatures only from users it grants explicitly;
+  by default that is only the aliased owner.
+- **What is shared.** The owner picks share rules: whole ticket types, single tickets, or tagged items, plus
   "questions to me" and "needs-you" summaries. Nothing else leaves the host. The default for a selective join is
   nothing but needs-you summaries.
 - **How.** The host seals each selected item to `HXK` under a per-item key and sends it over the link (`share_put`,
-  `share_revoke`). These two link operations exist only in selective mode. The hub never receives `WK_e`, so the member
+  `share_revoke`). Each item carries its `WSK`-signed state and the host-chain head. A custodial digest binds the item
+  hash, and the host checks its own chain when the event comes back, so an altered item cannot collect a valid owner
+  signature. These two link operations exist only in selective mode. The hub never receives `WK_e`, so the member
   list gets no `hub` member and `wk_seal` is refused.
-- **Signing.** The hub builds custodial events only for items it holds (§5). A decision on anything else is made
-  locally, with the owner's local key (D64), in Mission Control or the terminal. D81 does not apply to items the hub
-  cannot see.
+- **Signing.** The host accepts the owner's local key (D64) for every verb, and `UK` only for shared items. The hub
+  builds custodial events only for items it holds (§5).
+- **Phone.** A needs-you summary holds only the item's type, a one-line title and its deadline, and the hub sees it.
+  Items that are not shared never reach the phone or any channel; they are handled locally (D69).
 - **Revoking a share** deletes the item on the hub and stops updates. It cannot take back what the hub already
   read; the UI says so.
-- **Switching mode.** Selective → full seals `WK_e` to the hub (the normal join, §8 step 3). Full → selective is a
+- **Switching mode.** Selective → full is a human-only verb at the host terminal, signed by the owner's local key;
+  it then seals `WK_e` to the hub (the normal join, §8 step 3). No hub admin can start it. Full → selective is a
   leave plus rotation plus a selective join, so the hub loses `WK_e` from the new epoch on.
 - **The card shows the mode:** "hub can read everything" (full) or "hub sees only what you share" (selective).
 
@@ -230,7 +237,7 @@ charter. Public access still needs a custodial human signature, carried in the r
 
 | Threat | Result | Mitigation |
 |---|---|---|
-| Hub server or key store taken over | Attacker can read every served workspace and sign as any user | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
+| Hub server or key store taken over | Attacker can read every full-mode workspace and the shared items of selective ones, and sign as any user there | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
 | Hostile or client-hosted workspace host | Could try to get events signed for other workspaces | The hub signs only payloads it builds itself; signatures are bound to `workspace_id`; the link has no signing request (§5, §8) |
 | Agent steals a hub session or cookie | Can show and route, cannot sign | Every signature needs a fresh channel-key proof (§7) |
 | Malicious or careless hub admin | Can grant themselves `admin` anywhere (D71) | Accepted for now; every grant and membership change is signed by the acting admin's `UK` and audited; a workspace-side veto is an open question |

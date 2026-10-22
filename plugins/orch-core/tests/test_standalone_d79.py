@@ -17,9 +17,10 @@ from pathlib import Path
 import pytest
 
 from tests.host import human_helpers
+from tests.host.dispatch_helpers import Served
 from tests.host.human_helpers import Human, ok
 
-lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
+lab = human_helpers.lab
 
 CORE = Path(__file__).resolve().parents[1]
 REPO = CORE.parents[1]
@@ -134,7 +135,24 @@ def offline(monkeypatch):
     return attempts
 
 
+@pytest.fixture
+def served(lab, offline):
+    """The host starts only after ``offline`` is active (it is a dependency), so a connect at startup is recorded."""
+    s = Served(lab)
+    s.offline_when_started = socket.socket.connect.__qualname__.endswith("<locals>.connect")  # the patched one
+    try:
+        yield s
+    finally:
+        s.close()
+
+
+@pytest.fixture
+def human(served):
+    return Human(served)
+
+
 def test_a_fresh_workspace_works_with_no_hub_relay_or_publish(human: Human, served, offline):
+    assert served.offline_when_started, "the network block must be active before the host starts"
     wid, svc = served.wid, served.service
     assert svc.relay is None and svc.relay_reason == "not_linked"  # no relay configured
     uid, key = human.ticket("standalone")

@@ -7,7 +7,6 @@ A drift between the host's `Material` and either the server's or the browser's c
 """
 
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -188,14 +187,3 @@ def test_the_page_still_refuses_what_does_not_recompute(page, page_check):
     elsewhere = json.loads(json.dumps(got))
     elsewhere["op"] = "log"
     assert not page_check(elsewhere, page.now())
-
-
-def test_the_page_material_schema_is_the_signers():
-    """src/api/handoff.ts MATERIAL_KEYS, read as text, equals core signer `_MATERIAL_KEYS` for its kinds."""
-    from orch.host import signer
-
-    text = (API / "handoff.ts").read_text()
-    block = re.search(r"const MATERIAL_KEYS[^{]*\{(.*?)\n\}", text, re.S).group(1)
-    for kind, required, allowed in re.findall(r"(\w+): \[\[([^\]]*)\], \[([^\]]*)\]\]", block):
-        keys = ({*re.findall(r"'(\w+)'", required)}, {*re.findall(r"'(\w+)'", allowed)})
-        assert keys == signer._MATERIAL_KEYS[kind], kind

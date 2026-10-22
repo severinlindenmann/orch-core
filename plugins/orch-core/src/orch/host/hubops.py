@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -384,8 +385,12 @@ def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any,
 class _Epochs:
     """:class:`orch.hubclient.EpochKeys` over the workspace's membership key store (R6a). ``WK_e`` never leaves it."""
 
-    def __init__(self, mk: Any, local_owner: str | None = None) -> None:
+    def __init__(
+        self, mk: Any, local_owner: str | None = None, sealed_epoch: Callable[[], int | None] | None = None
+    ) -> None:
         self._mk = mk
+        #: the epoch now sealed to the bound full hub (re-read each call); ``view_key`` answers for that one only
+        self._sealed_epoch = sealed_epoch
         #: a relay-less workspace makes its own epochs (``MembershipKeys.advance_local``); ``None``: the relay path
         #: (the publisher) makes them and a rotation is only requested through the gate
         self._local_owner = local_owner
@@ -407,6 +412,24 @@ class _Epochs:
         try:
             return bytes(self._mk.sealed_wk(epoch, hxk_pub, hub_id))
         except CustodyRefused:
+            raise HubRefused("no_epoch") from None
+
+    def view_key(self, epoch: int) -> bytes:
+        """``K_view(epoch)`` for ``log_sync`` (hub contract 10.7): derived inside the key store, so only the derived
+        key leaves it. Only the epoch now sealed to the bound full hub (L2-C14-2: never one the hub was not meant to
+        open, such as the epoch a rotation after a leave made); a missing, burned or unreadable key is ``no_epoch``."""
+        from orch.hubclient import HubRefused
+        from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe
+
+        try:
+            sealed = None if self._sealed_epoch is None else self._sealed_epoch()
+        except Exception:  # noqa: BLE001 - unreadable hub state: fail closed
+            sealed = None
+        if sealed is None or sealed != epoch:
+            raise HubRefused("no_epoch")
+        try:
+            return bytes(self._mk.view_key(epoch))
+        except (CustodyRefused, MembershipUnsafe):
             raise HubRefused("no_epoch") from None
 
     def rotate(self) -> None:
@@ -432,9 +455,18 @@ def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
         owner = None
         if not mk.previously_linked:  # fresh each call (the probe), never the answer cached at the first open
             owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
-        return _Epochs(mk, owner)
+        return _Epochs(mk, owner, lambda: _sealed_epoch(service))
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
         return None
+
+
+def _sealed_epoch(service: WorkspaceService) -> int | None:
+    """The epoch sealed to the bound full hub, else ``None`` (read from hub.json every time)."""
+    with _MU:
+        st = _load_state(service)
+    if st is None or st.status != "bound" or st.mode != "full" or st.sealed is None or st.rotate_after is not None:
+        return None
+    return int(st.sealed["epoch"])
 
 
 class _NoEpochs:
@@ -635,6 +667,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
+    _quiesce_logsync(service, plan)
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]
@@ -667,10 +700,21 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         raise _refused(exc.code) from None
 
 
+def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:
+    """The ONE rule (L2-C14-1): every hub op calls this before it sends. The log_sync sender is stopped, and waited for
+    (bounded), for everything that can change the hub, binding or mode it was started for: ``hub.unbind`` and every
+    ``hub.connect`` except a plain re-seal of the same binding. ``hub.refresh`` changes none of them."""
+    from . import logsyncops
+
+    if plan["op"] == "hub.unbind" or (plan["op"] == "hub.connect" and plan.get("kind") != "seal"):
+        logsyncops.stop(service, wait=logsyncops.STOP_WAIT_S)
+
+
 def _stop_peers(service: Any) -> None:
-    from . import peerops
+    from . import logsyncops, peerops
 
     peerops.stop(service)
+    logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
 def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:

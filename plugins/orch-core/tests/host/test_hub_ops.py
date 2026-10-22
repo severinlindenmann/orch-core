@@ -468,7 +468,11 @@ def keystore(monkeypatch, served, tmp_path):
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
     R6Gate(mk).install(lambda: r6kit.KitStore())
     r6kit.rotate(mk)
-    monkeypatch.setattr(hubops, "epochs_for", lambda service, create=False: hubops._Epochs(mk))
+    monkeypatch.setattr(
+        hubops,
+        "epochs_for",
+        lambda service, create=False: hubops._Epochs(mk, None, lambda: hubops._sealed_epoch(service)),
+    )
     yield mk
     mk.close()
 

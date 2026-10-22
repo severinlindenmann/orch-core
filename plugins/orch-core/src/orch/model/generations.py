@@ -188,9 +188,22 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap], *, raise_gates: bool =
 SETTLED = ("done", "closed")
 
 
+def live(t: TCore, gate: str) -> list[Decision]:
+    """Every live approve/pass at the gate's current generation, not just the one per person that counts. The void paths
+    (person, device) work on this list, so a second decision by the same person is never left counting."""
+    gc = t.gates[gate]
+    return [d for d in gc.decisions if d.kind in ("approve", "pass") and d.gen == gc.gen and not d.voided]
+
+
+def person_decisions(ws: WsCore, t: TCore, gate: str, person: str) -> list[Decision]:
+    """All live decisions of ``person`` (canonical identity, D59), under any of its ids."""
+    who = identity.canonical(ws, person)
+    return [d for d in live(t, gate) if identity.canonical(ws, d.person) == who]
+
+
 def _void_person_now(ws: WsCore, t: TCore, person: str) -> None:
     for g in GATES:
-        mine = [d for d in counting(t, g, ws) if identity.canonical(ws, d.person) == person]
+        mine = person_decisions(ws, t, g, person)
         if mine and not reached(ws, t, g):
             for d in mine:
                 d.voided = True
@@ -209,7 +222,7 @@ def void_person(ws: WsCore, t: TCore, person: str) -> None:
 
 def _void_device_now(t: TCore, device: str) -> None:
     for g in GATES:
-        mine = [d for d in counting(t, g) if d.device == device]
+        mine = [d for d in live(t, g) if d.device == device]
         for d in mine:
             d.voided = True
         if mine:
@@ -223,7 +236,7 @@ def void_device(ws: WsCore, t: TCore, device: str) -> None:
     if t.status in SETTLED:
         t.exempt_devices.add(device)
         for g in GATES:
-            t.gates[g].revoked_flag |= {d.id for d in counting(t, g) if d.device == device}
+            t.gates[g].revoked_flag |= {d.id for d in live(t, g) if d.device == device}
         return
     _void_device_now(t, device)
 

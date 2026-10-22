@@ -9,7 +9,7 @@ import pytest
 
 from orch.crypto import suite as S
 from orch.crypto.encoding import unb64u
-from orch.hubclient import HubRefused, HubState, flush_unbound, join_selective, leave, wire
+from orch.hubclient import HubRefused, HubState, flush_outbox, join_selective, leave, wire
 
 from . import contract as H
 from .fake import FakeHub
@@ -30,8 +30,10 @@ class Wire:
     def __init__(self, hub: FakeHub) -> None:
         self.hub, self.down, self.sent = hub, False, []
 
+    refuse_ops: set[str] = set()
+
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
-        if self.down:
+        if self.down or message["o"]["op"] in self.refuse_ops:
             raise ConnectionRefusedError
         self.sent.append(message)
         return self.hub.send(message)
@@ -42,6 +44,7 @@ class Host:
 
     def __init__(self, hub: FakeHub, **over: Any) -> None:
         self.hub, self.wire, self.state, self.log = hub, Wire(hub), None, []
+        self.routes: dict[str, Any] = {}  # hub_id -> the transport of THAT hub (default: the one wire)
         self.kw = dict(
             invite="invite-1", hub_card=V["objects"]["card"], v2_card=V["objects"]["v2_card_a"],
             pk_pub=pub("pk_alice"), workspace_id=WS, wsk_pub=pub("wsk_a"), sign_wsk=sign_wsk, dev_mode=True,
@@ -56,14 +59,17 @@ class Host:
         kw = {**self.kw, **over}
         r = join_selective(
             state=self.state, transport=self.wire, record_joined=lambda p: self.log.append(("hub.joined", p)),
-            save=self._save, **kw,
+            save=self._save, old_transport=self.tf, **kw,
         )  # fmt: skip
         return r
+
+    def tf(self, hub_id: str, entry: dict) -> Any:
+        return self.routes.get(hub_id, self.wire)
 
     def leave(self):
         return leave(
             state=self.state, workspace_id=WS, sign_wsk=sign_wsk, dev_mode=True, now_ms=lambda: NOW,
-            transport=self.wire, record_left=lambda p: self.log.append(("hub.left", p)), save=self._save,
+            transport_for=self.tf, record_left=lambda p: self.log.append(("hub.left", p)), save=self._save,
         )  # fmt: skip
 
 
@@ -183,7 +189,7 @@ def test_leave(host: Host, hub: FakeHub) -> None:
     r = host.leave()
     assert r.delivered and r.payload == {"hub_id": hub.hub_id, "binding_seq": 1}
     assert [t for t, _ in host.log] == ["hub.joined", "hub.left"]
-    assert host.state.status == "unbound" and host.state.pending_unbound is None
+    assert host.state.status == "unbound" and host.state.outbox == {}
     assert hub.workspaces[WS].binding["status"] == "unbound"
     u = r.unbound["o"]
     assert u["kind"] == "hub.unbound" and u["binding_seq"] == 1 and u["dev"] is True
@@ -210,15 +216,14 @@ def test_leave_with_hub_down(host: Host, hub: FakeHub) -> None:
     host.join()
     host.wire.down = True
     r = host.leave()
-    assert not r.delivered and host.state.status == "unbound" and host.state.pending_unbound is not None
+    assert not r.delivered and host.state.status == "unbound" and list(host.state.outbox) == [hub.hub_id]
     assert [t for t, _ in host.log] == ["hub.joined", "hub.left"]
     assert hub.workspaces[WS].binding["status"] == "bound"  # the hub has not heard yet
-    # the queue survives a save/load and is delivered when the hub is back
-    host.state = HubState.from_json(host.state.to_json())
+    host.state = HubState.from_json(host.state.to_json())  # the outbox survives a save/load
     host.wire.down = False
-    assert flush_unbound(state=host.state, workspace_id=WS, sign_wsk=sign_wsk, now_ms=lambda: NOW,
-                         transport=host.wire, save=host._save)  # fmt: skip
-    assert host.state.pending_unbound is None and hub.workspaces[WS].binding["status"] == "unbound"
+    assert flush_outbox(state=host.state, workspace_id=WS, sign_wsk=sign_wsk, now_ms=lambda: NOW,
+                        transport_for=host.tf, save=host._save) == [hub.hub_id]  # fmt: skip
+    assert host.state.outbox == {} and hub.workspaces[WS].binding["status"] == "unbound"
 
 
 def test_leave_without_join_refused(host: Host) -> None:
@@ -235,7 +240,7 @@ def test_leave_records_before_anything_is_sent(host: Host) -> None:
 
     with pytest.raises(RuntimeError):
         leave(state=host.state, workspace_id=WS, sign_wsk=sign_wsk, dev_mode=True, now_ms=lambda: NOW,
-              transport=host.wire, record_left=boom, save=host._save)  # fmt: skip
+              transport_for=host.tf, record_left=boom, save=host._save)  # fmt: skip
     assert len(host.wire.sent) == n and host.state.status == "bound"
 
 
@@ -244,7 +249,9 @@ def test_declined_join_sends_nothing(host: Host) -> None:
         raise RuntimeError("owner declined")
 
     with pytest.raises(RuntimeError):
-        join_selective(state=None, transport=host.wire, record_joined=boom, save=host._save, **host.kw)
+        join_selective(
+            state=None, transport=host.wire, record_joined=boom, save=host._save, old_transport=host.tf, **host.kw
+        )
     assert host.wire.sent == [] and host.state is None
 
 
@@ -294,21 +301,60 @@ def test_the_wire_labels_are_the_custody_labels_of_the_workspace_key():
         assert const == L[key] and const in HOST_LABELS and const not in PERSON_LABELS  # WSK only, never a person key
 
 
-def test_rejoin_another_hub_delivers_the_owed_unbound_to_the_old_hub(hub: FakeHub) -> None:
-    h = Host(hub)
-    h.join()
-    h.wire.down = True
-    h.leave()
-    old_wire = h.wire
-    other = FakeHub()
-    h.wire = Wire(other)
-    kw = dict(
-        state=h.state, transport=h.wire, record_joined=lambda p: h.log.append(("hub.joined", p)), save=h._save,
-        binding_seq=2, **h.kw,
-    )  # fmt: skip
-    assert code(lambda: join_selective(old_transport=lambda s: old_wire, **kw)) == "unbind_pending"  # old hub down
-    assert other.workspaces == {} and h.state.pending_unbound is not None
-    old_wire.down = False
-    join_selective(old_transport=lambda s: old_wire, **{**kw, "state": h.state})
-    assert hub.workspaces[WS].binding["status"] == "unbound" and other.workspaces[WS].binding["status"] == "bound"
-    assert h.state.pending_unbound is None and h.state.binding_seq == 2
+def test_rejoin_with_the_old_hub_dead_proceeds_and_the_unbound_stays_owed(host: Host, hub: FakeHub) -> None:
+    host.join()
+    host.wire.down = True
+    host.leave()
+    host.wire.down = False
+    host.wire.refuse_ops = {"binding_put"}  # the old hub is dead for the unbound only (same hub, so same wire)
+    host.join(binding_seq=2)  # the dead old hub (the same one, down) does not veto the rejoin
+    assert host.state.status == "bound" and host.state.binding_seq == 2
+    assert list(host.state.outbox) == [hub.hub_id]  # still owed, kept across the new binding
+
+
+def test_same_hub_rejoin_delivers_first_then_binds(host: Host, hub: FakeHub) -> None:
+    host.join()
+    host.wire.down = True
+    host.leave()
+    host.wire.down = False
+    host.join(binding_seq=2)
+    assert host.state.outbox == {} and host.state.binding_seq == 2
+    assert [c[1] for c in hub.calls if c[0] == WS] == ["join", "binding_put", "join"]
+
+
+class Dead:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    def send(self, message):
+        self.sent.append(message)
+        raise ConnectionRefusedError
+
+
+def test_an_unbound_owed_to_another_hub_never_reaches_the_new_hub(host: Host, hub: FakeHub) -> None:
+    host.join()
+    host.leave()
+    # pretend the first hub was another one, owed an unbound and down
+    old_id = "ab" * 16
+    host.state.outbox = {old_id: {**_owed(host), "hk_op_pub": host.state.hk_op_pub}}
+    dead = Dead()
+    host.routes[old_id] = dead
+    host.join(binding_seq=2)
+    assert host.state.status == "bound" and old_id in host.state.outbox  # the join went on; the entry stays
+    assert len(dead.sent) == 1 and dead.sent[0]["o"]["op"] == "binding_put"  # one try, over its own transport
+    assert [c[1] for c in hub.calls if c[0] == WS].count("binding_put") == 1  # only the leave's own, delivered then
+
+
+def _owed(host: Host) -> dict:
+    u = wire.build_unbound(workspace_id=WS, hub_id_="ab" * 16, binding_seq=1, unbound_ms=NOW, dev=True, sign=sign_wsk)
+    return {"unbound": u, "addr": None, "tls_spki": None, "mode": "selective"}
+
+
+def test_an_old_hub_that_refuses_keeps_its_entry_and_the_join_proceeds(host: Host, hub: FakeHub) -> None:
+    host.join()
+    host.leave()
+    old_id = "cd" * 16
+    host.state.outbox = {old_id: {**_owed(host), "hk_op_pub": host.state.hk_op_pub}}
+    host.routes[old_id] = Wire(FakeHub())  # a hub that does not know the workspace: it refuses
+    host.join(binding_seq=2)
+    assert host.state.status == "bound" and old_id in host.state.outbox

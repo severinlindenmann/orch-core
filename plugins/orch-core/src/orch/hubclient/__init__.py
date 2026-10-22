@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from .errors import HubRefused
 from .link import HubLink, HubTransport
-from .service import HubState, JoinResult, LeaveResult, flush_unbound, join_selective, leave
+from .service import HubState, JoinResult, LeaveResult, flush_outbox, join_selective, leave
 
 __all__ = [
     "HubLink",
@@ -18,7 +18,7 @@ __all__ = [
     "HubTransport",
     "JoinResult",
     "LeaveResult",
-    "flush_unbound",
+    "flush_outbox",
     "join_selective",
     "leave",
 ]

@@ -451,7 +451,6 @@ HUB_JOIN = operation(
         err("hub.refused"),
         err("hub.full_mode_later"),
         err("hub.already_joined"),
-        err("hub.unbind_pending"),
     ),
     handler=handle_hub_join,
 )

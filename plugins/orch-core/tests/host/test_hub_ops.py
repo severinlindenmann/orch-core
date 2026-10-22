@@ -348,9 +348,7 @@ def test_a_convenience_key_never_signs_a_hub_op(human, served):
     assert hub_state(served)[0] == {}
 
 
-def test_rejoin_after_a_leave_with_the_hub_down_delivers_the_old_unbound_first(human, served, stub, monkeypatch):
-    """B1: join, leave with the hub down, rejoin (higher seq): the owed unbound goes to the old hub first, or the
-    rejoin is refused; it is never lost."""
+def test_same_hub_rejoin_delivers_the_owed_unbound_first_then_binds(human, served, stub, monkeypatch):
     from tests.host.dispatch_helpers import ok
 
     c = served.client()
@@ -360,13 +358,12 @@ def test_rejoin_after_a_leave_with_the_hub_down_delivers_the_old_unbound_first(h
     human.run("hub.leave", {})
     assert not ok(c.req("hub.unbind", {}, idem=True))["data"]["delivered"]
     human.run("hub.join", join_args())  # binding 2
-    assert err(c.req("hub.connect", connect_args(), idem=True)) == "hub.unbind_pending"
-    assert stub.ops() == ["join"]  # no second join went out
     monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: stub)
     ok(c.req("hub.connect", connect_args(), idem=True))
     assert stub.ops() == ["join", "binding_put", "join"]
     assert stub.sent[1]["o"]["body"]["object"]["o"]["binding_seq"] == 1
     assert stub.sent[2]["o"]["body"]["binding"]["o"]["binding_seq"] == 2
+    assert ok(c.req("hub.status", {}, idem=False))["data"]["owed"] == []
 
 
 def test_unbind_flushes_an_owed_unbound_even_when_the_log_says_joined_again(human, served, stub, monkeypatch):
@@ -378,13 +375,14 @@ def test_unbind_flushes_an_owed_unbound_even_when_the_log_says_joined_again(huma
     monkeypatch.setattr(hubops, "TRANSPORT", None)
     human.run("hub.leave", {})
     ok(c.req("hub.unbind", {}, idem=True))
+    assert len(ok(c.req("hub.status", {}, idem=False))["data"]["owed"]) == 1
     human.run("hub.join", join_args())
     monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: stub)
     assert ok(c.req("hub.unbind", {}, idem=True))["data"]["delivered"]
     assert stub.ops() == ["join", "binding_put"]
 
 
-def test_a_crash_between_leave_and_unbind_says_to_finish_the_leave(human, served, stub):
+def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, served, stub):
     from tests.host.dispatch_helpers import ok
 
     c = served.client()
@@ -392,4 +390,6 @@ def test_a_crash_between_leave_and_unbind_says_to_finish_the_leave(human, served
     ok(c.req("hub.connect", connect_args(), idem=True))
     human.run("hub.leave", {})  # the host never ran hub.unbind
     human.run("hub.join", join_args())
-    assert err(c.req("hub.connect", connect_args(), idem=True)) == "hub.unbind_pending"
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    assert stub.ops() == ["join", "binding_put", "join"]
+    assert stub.sent[1]["o"]["body"]["object"]["o"]["binding_seq"] == 1

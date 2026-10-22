@@ -107,7 +107,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "hub.no_card": (3, False),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
-    "hub.unbind_pending": (3, False),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),

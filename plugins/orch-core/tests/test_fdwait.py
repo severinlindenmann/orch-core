@@ -134,11 +134,11 @@ def test_a_controlling_tty_can_be_waited_on():
             pytest.fail("the child did not finish")
         assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"child exit status {status}"
     finally:
+        os.close(master)  # macOS: close before waiting, a child blocks in exit while its pty master is open
         if not reaped:  # the parent raised before waitpid: do not leave the child behind
             with contextlib.suppress(OSError):
                 os.kill(pid, 9)
                 os.waitpid(pid, 0)
-        os.close(master)
 
 
 def test_a_tty_above_fd_setsize_is_never_reported_ready_at_once():
@@ -181,8 +181,8 @@ def test_a_tty_above_fd_setsize_is_never_reported_ready_at_once():
             pytest.skip("the fd limit is too low for an fd above 1024")
         assert os.WEXITSTATUS(status) == 0, f"child exit status {status}"
     finally:
+        os.close(master)  # macOS: close before waiting, a child blocks in exit while its pty master is open
         if not reaped:
             with contextlib.suppress(OSError):
                 os.kill(pid, 9)
                 os.waitpid(pid, 0)
-        os.close(master)

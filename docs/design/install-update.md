@@ -41,12 +41,31 @@ manifest. Add-on versions, the add-on catalog and the dashboard "Versions" view 
 
 > Workflow files can only be pushed with the owner's account. The implementer writes the file on the branch and checks
 > it with `actionlint`. The owner pushes it. No agent pushes anything under `.github/workflows/`.
+> Hardened after the Opus review of #810 (22 Oct). The owner's GitHub settings that the hardening depends on are in
+> §13.
 
-Triggers: `push` to `main` → channel `main`; `push` to `develop` → channel `develop`; `workflow_dispatch` with input
-`channel: test-*` (e2e); `schedule` weekly → **refresh** (re-sign the current channel manifests with a new
-`issued_at`/`expires_at`, nothing rebuilt). `concurrency: release-${channel}` with `cancel-in-progress: false`.
+**Triggers:** `push` to `main` → channel `main`; `push` to `develop` → channel `develop`; `workflow_dispatch` with
+input `channel: test-*` (e2e, ref `develop` only); `schedule` → **refresh** (re-sign the channel pointer with new
+`issued_at`/`expires_at`, nothing rebuilt; develop daily, main weekly). `concurrency: release-${channel}` with
+`cancel-in-progress: false`. There is no `pull_request` or `pull_request_target` trigger. Defaults are
+`permissions: {}` with minimal grants per job, actions are pinned by SHA, and checkouts use `persist-credentials: false`.
 
-Job `build` (ubuntu-latest, no secrets):
+**One environment and one key per channel:**
+
+| Environment | Deployment branches | Required reviewer | Secrets |
+|---|---|---|---|
+| `release-main` | `main` only | the owner (one click per main release and per main refresh) | `ORCH_RELEASE_KEY_MAIN` (cert `channels: ["main"]`), `CHANNELS_DEPLOY_KEY_MAIN` |
+| `release-develop` | `develop` only | none | `ORCH_RELEASE_KEY_DEVELOP` (cert `["develop"]`), `CHANNELS_DEPLOY_KEY_DEVELOP` |
+| `release-test` | `develop` only | none | `ORCH_RELEASE_KEY_TEST` (cert `["test-*"]`), `CHANNELS_DEPLOY_KEY_TEST` |
+
+Write access to develop can therefore never sign `main`: the develop key's cert does not list it, and the main key
+only runs from `main` after an owner click.
+
+**No caches anywhere near a key.** The build, publish and refresh jobs set `setup-uv` `enable-cache: false`, drop
+`cache: npm`, and use no `actions/cache`. uv is pinned with `version: <x.y.z>`. `hatchling` is pinned (`==`) in both
+build backends (orch-core gets `hatchling==1.27.0` like the dashboard).
+
+Job `build` (ubuntu-latest, no secrets, `contents: read`):
 1. Check out the pushed commit. Set up Node 24 and uv. Run `npm ci && npm run build` in `addons/dashboard`.
 2. `stamp.py 2.0.0.dev$RUN_NUMBER $CHANNEL $SHA`.
 3. `uv build --wheel plugins/orch-core` and `uv build --wheel addons/dashboard/server` with
@@ -58,21 +77,61 @@ Job `build` (ubuntu-latest, no secrets):
 5. Smoke test: `uv tool install` both wheels from local paths into a temp `UV_TOOL_DIR`, using a temp HOME, then
    `orch --version --json` must name V.
 6. `uv export --frozen --no-dev` for both packages → `constraints.txt`. This pins every dependency version (§5, step 8).
-7. Upload `dist/` as a workflow artifact.
+7. Changelog from the commit subjects, with C0, C1 and bidi controls stripped and capped at 4 KB. Clients sanitise
+   again on display.
+8. Upload `dist/` and the changelog as a workflow artifact.
 
-Job `publish` (needs `build`; `environment: release`, which holds the secret `ORCH_RELEASE_KEY`; deployment branches
-`main` and `develop` only):
-1. Download the artifact. Compute sha256 and size for each file.
-2. `scripts/release/manifest.py` writes the release manifest (§4.2). `scripts/release/sign.py` wraps it in a signed
-   envelope. The key is read from the environment and never written to disk.
-3. `gh release create v$V --prerelease --target $SHA` with assets: both wheels, `constraints.txt`, `release.json` (the
-   envelope for this exact version). Repo setting: **immutable releases** on, so the assets of a version tag cannot
-   change after publish.
-4. Channel pointer: the release tagged `channel-$CHANNEL` (one per channel, created once, the only mutable release)
-   gets `channel.json` replaced with `gh release upload --clobber`. `channel.json` has the same format as
-   `release.json` and points at the newest version. The fetch URL is fixed:
-   `https://github.com/severinlindenmann/orch-core/releases/download/channel-<ch>/channel.json`.
-   One file holds payload and signature together, so a reader never sees a new manifest with an old signature.
+Job `publish` (needs `build`; `environment: release-<ch>`):
+1. **Prepare the tools, with no key:** check out the same SHA, then
+   `uv sync --frozen --no-dev --no-install-project --project scripts/release`. `scripts/release/` is its own tiny
+   project whose `uv.lock` pins only `cryptography`. Download the build artifact. Nothing from the project under
+   release is installed or built in this job.
+2. **Sign** (the only step with `ORCH_RELEASE_KEY_<CH>` in its `env`):
+   `scripts/release/.venv/bin/python -I scripts/release/sign.py`. It writes the manifest (§4.2) and `release.json`.
+   The key is never written to disk.
+3. **Rollback check** (no key): `pointer_check.py`. It lists all `v*` tags. For each tag it fetches `release.json` and
+   keeps the ones that **verify at now**: signature, cert not revoked and within `not_after`, and the **signed**
+   `channel` equal to this channel. The manifest's own `expires_at` is ignored for this, because old versions are
+   expected to have expired. The highest seq among them is the **channel max**. A `v*` tag with no release behind it
+   is `Refused`. Release titles and bodies are never read, because write users can edit them. The new seq must be
+   greater than the channel max.
+4. `gh release create v$V --prerelease --target $SHA` with assets: both wheels, `constraints.txt`, `release.json`.
+   **Immutable releases** are on (§13), so neither the assets nor the tag can change afterwards.
+5. **Pointer** (only `CHANNELS_DEPLOY_KEY_<CH>` in env): commit `<ch>.json` to the pointer repo (below).
+
+Job `refresh` (schedule; `environment: release-<ch>`): the same tool preparation, then the rollback check. The pointer's
+seq must **equal** the channel max, otherwise the job is `Refused` and opens or updates the issue "channel pointer
+mismatch". It never re-signs an older envelope. After that it signs a fresh pointer for the channel max and commits
+it. Job `cert-check` opens or updates the expiry issue only on `schedule` or `push`, never on `workflow_dispatch`
+from a branch.
+
+**Pointer home: the public repo `severinlindenmann/orch-channels`.** It holds `main.json`, `develop.json` and
+`test-*.json`. Clients fetch `https://raw.githubusercontent.com/severinlindenmann/orch-channels/main/<ch>.json`.
+Pushes come only from the deploy keys held in the three environments. Its `main` branch has a ruleset: no force-push,
+no deletion, and no other pushers. The git history doubles as an audit log of every pointer change.
+
+Other options considered:
+- `gh release upload --clobber` on a `channel-*` release: breaks once immutable releases are on.
+- An immutable `channel-<ch>-<seq>` release per publish: clients would have to list releases through the rate-limited
+  API.
+- GitHub Pages in orch-core: any workflow with `pages: write` can deploy.
+
+A deploy key writes the whole repo, so the develop key could replace `main.json`. Trust never rests on the location,
+though. The client trusts only signature, cert channel, seq and expiry, so the worst a pointer writer can do is
+roll back or freeze within the limits below.
+
+**Client-side rollback probe** (install.sh and `orch update`, defence in depth): after verifying the pointer, list
+the `v*` tags newer than the pointer's seq through the tags API (one unauthenticated call). Fetch at most 5 of their
+`release.json` files, newest first. If one verifies for this channel at now, refuse with `update.stale`
+("a newer signed release exists than the channel pointer names"). Tags are created only by Actions and cannot be
+moved or deleted (§13). If the API cannot be reached, print a warning, not an error.
+
+**First-install exposure.** A fresh install trusts the newest pointer it can see. Someone who can write the pointer
+(a deploy key, or the owner account) can serve an older envelope that is still valid until its `expires_at`. The
+probe above catches that whenever the API answers. The pointer expiry is therefore **shortened per channel**:
+`develop` 7 days with a daily refresh, `main` 14 days with a weekly refresh. Every main release also resets the main
+expiry, so the owner's refresh click is needed only in a week without a main release. Version `release.json` files
+keep a 21-day expiry; it matters only for `--version` installs, which are explicit and shown before they run.
 
 ## 4. Signing and key custody
 
@@ -82,10 +141,13 @@ Job `publish` (needs `build`; `environment: release`, which holds the secret `OR
   vault "Agents", in its own item, which nothing but the certify script uses. It never exists as a file, on GitHub or
   on CI (ceremony: §4.5). Its public key is embedded in `orch/update/keys.py` and in `install.sh`, and its fingerprint
   is recorded in `release/keys/root-1.pub.json`.
-- **Release key** (Ed25519): the private key is the `ORCH_RELEASE_KEY` secret of the `release` environment. Its
-  **certificate** is signed by the root key:
-  `{"format":"orch.release-key/1","key_id","public_key","serial","purpose":"core","channels":["main","develop"],"not_after"}`.
-  It is valid for 180 days, and every envelope carries it.
+- **Release keys** (Ed25519, **one per channel**): `ORCH_RELEASE_KEY_MAIN` in `release-main`,
+  `ORCH_RELEASE_KEY_DEVELOP` in `release-develop`, and a test key in `release-test` (§3). Each **certificate** is
+  signed by the root key and binds a channel list:
+  `{"format":"orch.release-key/1","key_id","public_key","serial","purpose":"core","channels":["main"],"not_after"}`.
+  The develop cert lists `["develop"]` and the test cert `["test-*"]`. A cert is valid for 180 days, and every envelope
+  carries it. The add-on catalog keys (addon-platform §3) follow the same rule: one per channel, `purpose:
+  "addon-catalog"`.
 - **Why not Sigstore / GitHub attestations:** offline checking needs `sigstore-python` with a TUF trust root and Rekor
   data. That is a heavy dependency in core, and install.sh has no Python before uv. More important: its identity is
   "this workflow in this repo", so anyone who controls the GitHub account or CI produces valid attestations. The
@@ -109,16 +171,16 @@ The signature covers `b"orch-release/1\n" + payload` (domain separated). The cer
 The manifest bytes are signed as they are, so the verifier never canonicalises anything.
 
 Manifest (`orch.release/1`): `channel`, `version`, `seq` (= N), `commit` (40 hex), `issued_at`, `expires_at`
-(issued + 21 days; the weekly refresh keeps it fresh), `files: [{role: core|dashboard|constraints, name, sha256, size,
+(version `release.json`: issued + 21 days; the channel pointer: 7 days on develop, 14 on main, kept fresh by the refresh, §3), `files: [{role: core|dashboard|constraints, name, sha256, size,
 url}]`, `changelog` (plain text, at most 4 KB, from the merge titles since the previous release), `min_from` (the oldest
 version that may update straight to this one; older versions are told to rerun install.sh).
 
 ### 4.3 Verification rules (core `orch/update/verify.py` and install.sh share the test vectors)
 
 Every rule fails closed. Verification checks, in order: root key id known → cert signature → `purpose == "core"`,
-channel listed, `not_after` > now, `serial >= min_serial` and not in `revoked` → envelope signature → manifest
+channel listed (a `test-*` channel or the test cert is refused unless this build is a test build, §4.4), `not_after` > now, `serial >= min_serial` and not in `revoked` → envelope signature → manifest
 `channel` equals the requested channel → `expires_at` > now → `seq` ≥ the last `seq` seen for the channel (stored in
-the install record) → each downloaded file's sha256 and size. The revocation list is only accepted with a higher
+the install record) → the newer-tag probe (§3; a warning when it cannot run) → each downloaded file's sha256 and size. The revocation list is only accepted with a higher
 `issued_at` than the stored one (continuity).
 
 ### 4.4 Rotation, revocation, compromise
@@ -134,8 +196,10 @@ the install record) → each downloaded file's sha256 and size. The revocation l
   `expires_at` (21 days) and `not_after` (180 days).
 - **Root compromise:** there is no in-band recovery. Announce it and reinstall with a new install.sh. That is why the
   root key never touches CI and never exists as a file (§4.5).
-- **Test key:** a separate root-certified key with `channels: ["test-*"]` signs the e2e channels. Production installs
-  accept `test-*` only when the install record already names that test channel.
+- **Test key:** a separate root-certified key with `channels: ["test-*"]` signs the e2e channels. It runs only from
+  `develop` (`release-test`). **Production verifiers refuse every `test-*` channel and the test cert outright.** Only
+  a build whose `_build.json` has `test_build: true` accepts them; the stamp step sets that for test-channel builds
+  only. A leaked test key can therefore never reach a production install.
 
 ### 4.5 Root ceremony: no key on disk (owner decision 2, 22 Oct)
 
@@ -151,16 +215,20 @@ the install record) → each downloaded file's sha256 and size. The revocation l
   only the reference `RELEASE_ROOT_KEY=pass://Agents/orch release root key/note`. The script reads the variable,
   removes it from its environment, signs, and prints the certificate. `pass-cli run` masks the secret if it ever
   reaches output.
-- **New CI release key:** `rootkey.py release-key` generates it in memory and pipes the private key into
-  `gh secret set ORCH_RELEASE_KEY --env release` on stdin. Only the public key is printed, and then certified. A lost
-  release key is simply replaced.
+- **CI keys (three):** `rootkey.py release-key --channel main|develop|test` generates one key in memory. It pipes the
+  private key into `gh secret set ORCH_RELEASE_KEY_<CH> --env release-<ch>` on stdin, prints only the public key, and
+  then certifies it with the channel list `["main"]`, `["develop"]` or `["test-*"]`. The certs are committed as
+  `release/keys/rk-<ch>-<n>.cert.json`. A lost key is simply replaced. The pointer deploy keys are made the same way:
+  `ssh-keygen` into a temp file the script creates and deletes by its exact path, the public half added as a deploy key
+  of `orch-channels`, and the private half sent to `gh secret set CHANNELS_DEPLOY_KEY_<CH>` on stdin. (Implementation
+  note: `release-key` is not in #808 yet; it is added by U3b.)
 - **Reminder:** `release.yml` emits a warning and opens or updates the issue "release key expires on <date>" when
   `not_after` is less than 30 days away, and fails once it has passed. The lead's plan carries the date as a task.
 - **Trade-off:** the root now lives in the same trust domain as the agent machine (Proton Pass "Agents"), not with the
   owner. Anyone who controls this machine's Proton Pass session can certify a release key. Mitigations: a separate
   item read only by `rootkey.py certify`; certificates last 180 days and revocation goes through the root; every
   certify run is a commit (`release/keys/*.cert.json`), so an unexpected certificate is visible in git; the CI key
-  stays short-lived and is usable only from the `release` environment on main/develop. Moving the root to an
+  stays short-lived and is usable only from its own channel's environment and branch. Moving the root to an
   owner-held key later is a routine root rotation (§4.4).
 
 ## 5. install.sh
@@ -188,7 +256,7 @@ Flags: `--channel main|develop` (default main), `--version V`, `--no-start`, `--
    official installer `https://astral.sh/uv/<UV_VERSION>/install.sh`, check its sha256 (pinned in install.sh), and run
    it with `UV_NO_MODIFY_PATH=1`.
 4. **Python:** `uv python install 3.14` (core needs ≥ 3.14).
-5. **Fetch:** into `T=$(mktemp -d)` (removed at exit by its exact path), fetch `channel.json`, or `release.json` of
+5. **Fetch:** into `T=$(mktemp -d)` (removed at exit by its exact path), fetch the channel pointer `<ch>.json` from `orch-channels` (§3), or `release.json` of
    `v$V` when `--version` is given. Verify it with the embedded verifier, run as
    `uv run --no-project --isolated --python 3.14 python -I "$T/verify.py"`. The verifier and the root key are embedded
    in install.sh as a heredoc and use only the stdlib. A failure prints the reason and stops.
@@ -241,7 +309,7 @@ orch update core [--check] [--version V] [--yes]       core + dashboard only
 orch update --channel main|develop                     switch channel (asks, then updates)
 ```
 
-Flow: read the record → fetch `channel.json` (a 10 s timeout) → verify (§4.3) → compare. With `--check`, print the
+Flow: read the record → fetch the channel pointer (a 10 s timeout) → verify (§4.3) → compare. With `--check`, print the
 result and stop. Otherwise show the plan and ask (`--yes` skips the question but never the restart question when
 agents run):
 
@@ -291,11 +359,13 @@ boundaries only in tier B.
 
 | Threat | What stops it | What remains |
 |---|---|---|
-| Compromised GitHub account (owner's) | Releases need the release key, which is only usable by the `release` environment on main/develop. The account could push a workflow that uses it. | A signed malicious release within cert validity. Response: revocation (§4.4). install.sh itself comes from the account: first install trusts GitHub (TOFU). |
+| Compromised GitHub account (owner's) | Releases need the channel's release key, which is only usable by its `release-<ch>` environment and branch (main also needs the owner's click). The account could push a workflow that uses it. | A signed malicious release within cert validity. Response: revocation (§4.4). install.sh itself comes from the account: first install trusts GitHub (TOFU). |
 | Compromised CI / Actions secret | The root is not on CI (it is in Proton Pass), so the cert expires in at most 180 days and is revocable. | Releases signed until revocation. |
 | Compromised agent machine / its Proton Pass session | It can certify a release key (trade-off in §4.5). Every certificate is a visible commit, and revocation goes through the root. | The root must be rotated, through a new install.sh, if the vault item leaks. |
 | MITM / CDN tampering | TLS plus signature plus sha256 of each file. | None beyond TLS for the very first install.sh fetch. |
-| Rollback / freeze (stale `channel.json` served) | `expires_at` (21 d), `seq` ≥ last seen, the downgrade rule, revocation continuity. | A freeze of up to 21 days for a client that never saw a newer manifest. |
+| Rollback / freeze (an older signed envelope put in the pointer) | The refresh and publish rule pointer seq = channel max (from signed content only); pointer expiry 7 d (develop) or 14 d (main); the client's newer-tag probe; `seq` ≥ last seen; the downgrade rule. | A fresh install while the tags API is unreachable: up to 7 or 14 days old. |
+| Write access to develop used against main | Per-channel keys and certs; `release-main` only from `main` with an owner click; CODEOWNERS on release paths (§13). | None without the owner's click. |
+| Poisoned cache or unpinned build tool while a key is loaded | No caches in the build, publish and refresh jobs; uv and hatchling pinned; the tools are synced before the key step; the key only in the sign step's env. | |
 | TOCTOU between verify and install | Install only from the verified local path in a private temp or cache directory. A URL is never handed to uv. | None. |
 | Malicious dependency on PyPI | `constraints.txt` (signed in the manifest) pins exact versions. | Hash pinning: follow-up (uv tool install has no `--require-hashes`). |
 | Malicious agent on the machine | `human_only` refusal, the guard deny rules, prompts need a TTY. | Same UID in tier A: it could run uv itself. That is no worse than today, and it gets no signed release key. |
@@ -333,8 +403,14 @@ boundaries only in tier B.
 | U2 | Envelope and verifier (Tier S) | `orch/update/{envelope,verify,keys}.py` | `uv run pytest tests/update/test_verify.py -x -q` |
 | U3 | Release tooling: manifest, sign, certify, check_wheels | `scripts/release/{manifest,sign,rootkey,check_wheels}.py` | `uv run pytest tests/release -x -q` |
 | U4 | Dashboard hook: `ORCH_DASHBOARD_REQUIRE_PREBUILT`, train version pin | `addons/dashboard/server/hatch_build.py`, `pyproject.toml` | `cd addons/dashboard/server && uv run pytest tests/test_build_hook.py -x -q` |
-| U5 | `release.yml` written plus `actionlint` (the owner pushes it) | `.github/workflows/release.yml` | `actionlint .github/workflows/release.yml` |
-| U3b | Root ceremony in `rootkey.py` (`init` piped to `pass-cli` on stdin, `certify` from the env var, `release-key` to `gh secret set` on stdin), `release/keys/root.env`, the pinning test; run once by the lead (Tier S) | `scripts/release/rootkey.py`, `release/keys/` | `uv run pytest tests/release/test_rootkey.py -x -q` |
+| U5 | `release.yml` written plus `actionlint` (the owner pushes it) (#810) | `.github/workflows/release.yml` | `actionlint .github/workflows/release.yml` |
+| U5a | Rollback rule: `pointer_check.py` (channel max from signed content, at now, ignoring the manifest expiry; a tag without a release → `Refused`); publish requires new seq > max; refresh requires pointer seq == max, else an issue; the review's adversarial tests (`~/orch-dev/state/rev-release-tests/`) move into `tests/release` | `scripts/release/{pointer_check,refresh}.py`, `tests/release/` | `HOME=$(mktemp -d /tmp/hkXXXX) uv run pytest tests/release -k "refresh or pointer" -x -q` |
+| U5b | Workflow hardening: `release-main`/`release-develop`/`release-test` environments and per-channel secrets, tools synced before the key step, key only in the sign step's env, uv pinned, every cache off, `cert-check` issue writes only on schedule/push, changelog control-char strip, `__pycache__` removed and ignored (the owner pushes it) | `.github/workflows/release.yml`, `.gitignore`, `scripts/release/changelog.py` | `actionlint .github/workflows/release.yml && uv run pytest tests/release/test_changelog.py -x -q` |
+| U5c | Tool project `scripts/release/pyproject.toml` + `uv.lock` (only `cryptography`); `hatchling==1.27.0` in orch-core | `scripts/release/pyproject.toml`, `scripts/release/uv.lock`, `plugins/orch-core/pyproject.toml` (build-system line only) | `uv sync --frozen --no-dev --no-install-project --project scripts/release && uv run pytest tests/release -x -q` |
+| U5d | Pointer in `orch-channels`: deploy-key commit step, client fetch URL, newer-tag probe in `orch update` and install.sh (shared vectors) | `scripts/release/push_pointer.py`, `orch/update/{source,probe}.py` | `uv run pytest tests/update/test_probe.py tests/release/test_push_pointer.py -x -q` |
+| U5e | Test channels: the `test_build` stamp flag; production verifiers refuse `test-*` and the test cert | `scripts/release/stamp.py`, `orch/update/verify.py` | `uv run pytest tests/update/test_verify.py -k test_channel -x -q` |
+| U5f | CODEOWNERS (the owner pushes it, because it covers `.github/**`) | `.github/CODEOWNERS` | `gh api repos/severinlindenmann/orch-core/codeowners/errors` (empty) |
+| U3b | Root ceremony in `rootkey.py` (`init` piped to `pass-cli` on stdin, `certify` from the env var, `release-key --channel main\|develop\|test` to `gh secret set` on stdin, certs with channel lists `["main"]`, `["develop"]`, `["test-*"]`, deploy keys for `orch-channels`), `release/keys/root.env`, the pinning test; run once by the lead after the owner's settings (§13) (Tier S) | `scripts/release/rootkey.py`, `release/keys/` | `uv run pytest tests/release/test_rootkey.py -x -q` |
 | U6a | install.sh core plus macOS: args, uv, verifier, install, record, PATH, Rosetta | `install.sh`, `tests/install/test_install_sh.py` | `shellcheck -s sh install.sh && uv run pytest tests/install/test_install_sh.py -x -q` |
 | U6b | install.sh on Linux: platform and glibc check, systemd user bus/linger hint, bwrap probe, headless `--print-url` plus the ssh -L line | `install.sh` (platform functions only), `tests/install/test_install_linux.py` | `shellcheck -s sh install.sh && uv run pytest tests/install/test_install_linux.py -x -q` |
 | U7 | Install record, `--adopt`, `update --check`, the catalog codes and goldens | `orch/update/{record,check}.py`, `orch/ops/errors.py`, goldens | `uv run pytest tests/update/test_check.py tests/cli/test_golden.py -x -q` |
@@ -343,7 +419,8 @@ boundaries only in tier B.
 | U10a | Local e2e script (macOS, isolated HOME) | `e2e/install-update.sh` | `e2e/run.sh install-update` |
 | U10b | `e2e-install.yml` matrix: macOS, Ubuntu x86_64, Ubuntu arm64 (the owner pushes it) | `.github/workflows/e2e-install.yml` | `actionlint .github/workflows/e2e-install.yml` |
 
-Order: U0 → (U1, U3, U4 in parallel) → U2, U3b → U6a, U7 → U6b, U8, U9 → U5, U10a, U10b. Opus security review: U0, U2,
+Order: U0 → (U1, U3, U4 in parallel) → U2, U3b → U6a, U7 → U6b, U8, U9 → U5, U5a–U5f → U10a, U10b. U5a, U5c, U5d and
+U5e touch disjoint files and can run in parallel; U5b follows U5c. Opus security review: U0, U2, U5a, U5b, U5d, U5e,
 U3b, U6a, U6b, U7, U8, U9. U6a and U6b both edit install.sh, so they run in sequence, never in parallel.
 U7 adds catalog codes: run all of `tests/cli` and `tests/host/test_hostclient.py` before pushing.
 
@@ -359,3 +436,41 @@ U7 adds catalog codes: run all of `tests/cli` and `tests/host/test_hostclient.py
    Settings → Versions. A human-only signed setting turns the 6-hourly check on (addon-platform §8).
 
 No open questions.
+4. **Release hardening (Opus review of #810, 22 Oct; lead's decisions):**
+   - The pointer seq must equal the channel max, taken from signed content only.
+   - One key and cert per channel; `release-main` needs an owner click; CODEOWNERS on the release paths.
+   - The test key is refused by production builds.
+   - No caches and pinned tools wherever a key is loaded; the key is only in the sign step's env.
+   - The pointer moves to `orch-channels`.
+   - Pointer expiry: 7 days on develop, 14 on main.
+   - A client-side probe for newer tags (§3).
+
+## 13. Owner GitHub settings (needed before U3b runs and before immutable releases are turned on)
+
+The release chain's security claims depend on these. The lead checks each one with `gh api` and reports any that are
+missing. Only the owner can change them.
+
+1. **Environments in orch-core:**
+   - `release-main`: deployment branch `main` only, no tag patterns, the owner as required reviewer.
+   - `release-develop`: deployment branch `develop` only.
+   - `release-test`: deployment branch `develop` only.
+   - Secrets live only in these environments; there is no repository-level `ORCH_RELEASE_KEY*` or
+     `CHANNELS_DEPLOY_KEY*`.
+   - The default branch is `main`, and `schedule` runs there. The main refresh runs directly (`release-main`, with the
+     owner's click). The develop refresh is started by that scheduled run as `workflow_dispatch` with
+     `ref: develop` (`actions: write` only in that dispatch job), so it runs from develop under `release-develop`.
+2. **Branch rulesets (`main`, `develop`):** block force-push and deletion; require a PR plus green checks; require
+   code-owner review for `.github/**`, `scripts/release/**`, `release/keys/**`, `plugins/orch-core/src/orch/update/**`,
+   `tests/vectors/release/**`, `install.sh`, `plugins/orch-core/pyproject.toml` and `plugins/orch-core/uv.lock`. The
+   bot cannot bypass. Consequence: agents' develop PRs that touch these paths wait for the owner's review.
+3. **Tag ruleset on `v*`:** restrict update and deletion; creation only by GitHub Actions; no bypass for the bot.
+4. **Immutable releases:** turn them on **after** the pointer has moved to `orch-channels` (U5d).
+5. **Bot and agent tokens:** no `workflow` scope. Check that only the owner can push `.github/workflows/**`.
+6. **Actions settings:** default workflow permissions read-only; "Allow GitHub Actions to create and approve pull
+   requests" off; allowed actions limited to `actions/*` and `astral-sh/setup-uv`; SHA pinning required.
+7. **Never** set `ACTIONS_STEP_DEBUG` or `ACTIONS_RUNNER_DEBUG` as secrets or variables. Re-runs of key jobs stay
+   behind the environment rules.
+8. **New public repo `severinlindenmann/orch-channels`:** a ruleset on `main` (no force-push, no deletion, pushes only
+   by the three deploy keys); deploy keys with write access, one per environment; no Actions and no other
+   collaborators.
+

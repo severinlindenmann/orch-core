@@ -66,7 +66,7 @@ A separate envelope `addons.json`, the same envelope format as install-update §
 - **Releases:** each add-on is released on its own. A tag `addon-<name>-v<version>` holds an immutable release with a
   deterministic tar of the package directory. A workflow `addon-release.yml` (the owner pushes it) runs on a push to
   main/develop that changes `addons/<name>/**` or on `workflow_dispatch`. It builds the tar, checks it with
-  `read_package` and the schema, and re-signs the catalog in the fixed release `channel-<ch>` as asset `addons.json`.
+  `read_package` and the schema, and re-signs the catalog as `<ch>-addons.json` in `orch-channels` (install-update §3: same per-channel environments and keys, the same pointer rule and expiry).
   Add-ons stay in orch-core's `addons/` for now. A separate repo is possible later without a format change.
 - **Key: same root, a separate catalog key** (cert `purpose: "addon-catalog"`, its own environment
   `addon-release`). Core's verifier requires `purpose: "core"` for core releases and `"addon-catalog"` for the catalog.
@@ -181,7 +181,7 @@ callers by the host as well. The plugin guard denies these commands in Bash.
 - **Settings → Versions** (extends the About/versions block from T10). It shows orch core, dashboard and every add-on
   per workspace, each with installed, granted and latest version; an **Update available** badge; a **Needs approval**
   badge; and the changelog (data, capped).
-- **Data:** a host op `versions.get` (read-only). The **host** fetches `channel.json` and `addons.json` only when
+- **Data:** a host op `versions.get` (read-only). The **host** fetches the channel pointer and the add-on catalog only when
   asked: `orch update --check`, or **Check now** in Settings → Versions (host op `versions.check`, at most once a
   minute; it writes only the cache). The **background check is off by default** (owner decision 3). The signed
   setting `updates.auto_check` turns on a check every 6 hours. It goes through the usual `settings.set` review and is

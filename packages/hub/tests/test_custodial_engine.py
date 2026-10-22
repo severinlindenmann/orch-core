@@ -1,0 +1,284 @@
+"""The custodial signing engine (protocol.md §8): prepare -> channel proof over the digest -> recompute -> UK."""
+
+from __future__ import annotations
+
+import inspect
+import json
+from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
+from custodial_helpers import LOG, WK, WS, Env
+
+from orch_hub.contract import hub as H
+from orch_hub.contract import keystore as KS
+from orch_hub.contract import suite as S
+from orch_hub.contract.canon import unb64u
+from orch_hub.contract.hub import Refused
+from orch_hub.contract.labels import custodial_label
+from orch_hub.custodial import BuiltEvent, CustodialEngine, required_role
+
+VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+
+
+@pytest.fixture
+def env(tmp_path):
+    e = Env(tmp_path)
+    yield e
+    e.close()
+
+
+def code(fn, *a, **kw):
+    with pytest.raises(Refused) as r:
+        fn(*a, **kw)
+    return r.value.code
+
+
+def verify(env, ev):
+    held = env.keys.verify_card(env.keys.card())
+    snap = env.snaps.snapshot(WS, "full")
+    return H.verify_custodial(
+        ev, workspace_id=WS, log=LOG, held=held, snapshot=snap["o"], now_ms=env.clock[0], dev_mode=True
+    )
+
+
+def test_vector_digest_and_proof_bytes_match_the_contract():
+    c = VEC["custodial"]
+    e = {k: v for k, v in c["event"].items() if k not in ("sig", "channel_proof")}
+    assert H.event_digest(VEC["ids"]["workspace_a"], c["log"], e).hex() == c["digest_hex"]
+    assert H.channel_proof_bytes(bytes.fromhex(c["digest_hex"])).hex() == c["proof_signed_hex"]
+    assert c["uk_label"].encode() == custodial_label(c["event"]["type"])
+
+
+def test_happy_path_signs_audits_delivers(env):
+    p = env.prepare()
+    # the channel gets ctx(E), recomputes the digest itself (WYSIWYS, L2-5) and signs it
+    ev = p.ctx["event"]
+    assert ev["actor"] == {"kind": "person", "id": "u_" + env.user, "via": env.channel}
+    assert ev["auth"] == "hub" and ev["channel_factor"] == "se-unlocked" and ev["text"] == "hello"
+    assert H.event_digest(WS, LOG, ev) == p.digest == bytes.fromhex(p.public()["digest"])
+    signed = env.engine.sign(p.prepared_id, env.channel, env.proof(p.digest))
+    assert verify(env, signed)["user_id"] == env.user
+    assert env.delivered == [(WS, LOG, signed)]
+    recs = env.audit.store.after(0, 10)
+    assert len(recs) == 1
+    _, _, a = recs[0]
+    assert (a["workspace_id"], a["log"], a["verb"], a["user_id"], a["channel_id"]) == (
+        WS,
+        LOG,
+        "log.added",
+        env.user,
+        env.channel,
+    )
+    assert unb64u(a["digest"], 32) == p.digest
+
+
+def test_wk_is_opened_for_the_build_only_and_wiped(env):
+    env.prepare()
+    assert env.view.seen_wk_copy == WK
+    assert bytes(env.view.seen_wk) == bytes(32)  # zeroised after the build
+    assert not any(WK in v.encode() for v in map(str, env.prepare().ctx.values()))  # never in the context
+
+
+def test_proof_over_another_digest_is_refused_and_consumes_the_request(env):
+    p = env.prepare()
+    other = env.prepare({"do": "x"})
+    assert other.digest != p.digest or other.prepared_id != p.prepared_id
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(b"\x01" * 32)) == "bad_channel_proof"
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "unknown_prepared"  # single use
+    assert env.delivered == [] and env.audit.store.head() is None
+
+
+def test_proof_by_another_key_is_refused(env):
+    p = env.prepare()
+    other = ec.generate_private_key(ec.SECP256R1())
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest, other)) == "bad_channel_proof"
+    assert env.delivered == []
+
+
+@pytest.mark.parametrize("bad", ["", "AAAA", "!!", "A" * 86 + "=", 5])
+def test_malformed_proof_is_refused(env, bad):
+    p = env.prepare()
+    assert code(env.engine.sign, p.prepared_id, env.channel, bad) == "bad_channel_proof"
+
+
+def test_prepared_is_single_use(env):
+    p = env.prepare()
+    env.engine.sign(p.prepared_id, env.channel, env.proof(p.digest))
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "unknown_prepared"
+    assert len(env.delivered) == 1
+
+
+def test_prepared_expires(env):
+    p = env.prepare()
+    env.clock[0] += 120_001
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "prepared_expired"
+    assert env.delivered == []
+
+
+def test_unknown_prepared_and_wrong_channel(env):
+    assert code(env.engine.sign, "00" * 16, env.channel, "x") == "unknown_prepared"
+    p = env.prepare()
+    other = env.new_channel(ec.generate_private_key(ec.SECP256R1()))
+    assert code(env.engine.sign, p.prepared_id, other, env.proof(p.digest)) == "other_user"
+
+
+def test_no_role_refused(tmp_path):
+    e = Env(tmp_path, role=None)
+    try:
+        assert code(e.prepare) == "forbidden_role"
+        assert e.delivered == [] and e.audit.store.head() is None
+    finally:
+        e.close()
+
+
+def test_read_role_cannot_sign_and_edit_cannot_sign_admin_types(tmp_path, env):
+    r = Env(tmp_path / "r", role="read")
+    try:
+        assert code(r.prepare) == "forbidden_role"
+    finally:
+        r.close()
+    env.view.etype = "gate.approved"  # approvals need admin (D70)
+    assert code(env.prepare) == "forbidden_role"
+    assert required_role("unknown.thing") == "admin" and required_role("task.done") == "edit"
+
+
+def test_role_lost_between_prepare_and_sign(env):
+    p = env.prepare()
+    env.access.revoke(WS, "team")
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "forbidden_role"
+    assert env.delivered == []
+
+
+def test_channel_revoked_in_the_snapshot_is_refused(env):
+    env.access.revoke_channel(env.channel)
+    assert code(env.prepare) == "channel_revoked"
+
+
+def test_channel_revoked_between_prepare_and_sign(env):
+    p = env.prepare()
+    env.access.revoke_channel(env.channel)
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "channel_revoked"
+    assert env.delivered == [] and env.audit.store.head() is None
+
+
+def test_channel_deregistered_between_prepare_and_sign(env):
+    p = env.prepare()
+    env.channels.certs.clear()
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "channel_revoked"
+
+
+def test_channel_of_another_user_is_refused(env):
+    other_user = env.keys.issue_uk()["o"]["user_id"]
+    cid = env.new_channel(ec.generate_private_key(ec.SECP256R1()), user=other_user)
+    assert code(env.engine.prepare, WS, env.user, cid, {"do": "x"}) == "channel_revoked"  # not this user's: not active
+
+
+def test_selective_workspace_is_refused_without_opening_wk(env):
+    env.mode = "selective"
+    assert code(env.prepare) == "wrong_mode"
+    assert env.view.calls == 0
+
+
+def test_event_changed_between_prepare_and_sign(env):
+    p = env.prepare()
+    env.view.text = "tampered"
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "event_changed"
+    assert env.delivered == [] and env.audit.store.head() is None
+
+
+def test_snapshot_version_change_is_event_changed(env):
+    p = env.prepare()
+    env.access.add_group("other")
+    other = env.keys.issue_uk()["o"]["user_id"]
+    env.access.add_user(other, "bob")
+    env.access.add_member("other", other)
+    env.access.grant(WS, "other", "read")  # roles changed -> a new snapshot version
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "event_changed"
+
+
+def test_uk_signature_is_under_the_custodial_label_of_its_type_only(env):
+    p = env.prepare()
+    ev = env.engine.sign(p.prepared_id, env.channel, env.proof(p.digest))
+    pub = unb64u(env.keys.uk_cert(env.user)["o"]["uk_pub"], 65)
+    sig = unb64u(ev["sig"], 64)
+    signed_ctx = {k: v for k, v in ev.items() if k != "sig"}
+    good = H.custodial_bytes(WS, LOG, signed_ctx)
+    assert S.verify(pub, sig, good)
+    bad_type = H.custodial_bytes(WS, LOG, {**signed_ctx, "type": "gate.approved"})
+    assert not S.verify(pub, sig, bad_type)
+    assert not S.verify(pub, sig, H.L["sig_hub_snapshot"] + good[len(custodial_label("log.added")) :])
+
+
+def test_uk_signer_refuses_everything_but_custodial_events(env):
+    signer = env.keys.uk_signer(env.user)
+    for kind in ("hub.snapshot", "hub.uk_cert", "hub.audit"):  # no object kind is signable by a UK
+        with pytest.raises(KS.KeyUseError):
+            signer.sign_object({"kind": kind})
+    with pytest.raises(KS.KeyUseError):
+        signer.sign_event(WS, LOG, {"auth": "device", "type": "log.added"})
+    with pytest.raises(KS.KeyUseError):
+        signer.sign_event(WS, LOG, {"auth": "hub", "type": "not a type|x", "sig": "x"})
+    with pytest.raises(KS.KeyUseError):
+        signer.sign_event(WS, LOG, {"auth": "hub", "type": "bad type"})
+
+
+def test_no_entry_point_takes_event_bytes():
+    public = [n for n, f in inspect.getmembers(CustodialEngine, inspect.isfunction) if not n.startswith("_")]
+    assert sorted(public) == ["prepare", "sign"]
+    assert list(inspect.signature(CustodialEngine.sign).parameters)[1:] == ["prepared_id", "channel_id", "proof"]
+    assert list(inspect.signature(CustodialEngine.prepare).parameters)[1:] == [
+        "workspace_id",
+        "user_id",
+        "channel_id",
+        "action",
+    ]
+
+
+@pytest.mark.parametrize(
+    "field", ["actor", "auth", "channel", "sig", "channel_proof", "hub_id", "uk_cert", "id", "v", "seq"]
+)
+def test_view_cannot_set_engine_owned_fields(env, field):
+    env.view.extra = {field: "x"}
+    assert code(env.prepare) == "malformed"
+
+
+def test_view_must_supply_the_event_core_and_a_valid_type(env):
+    env.view.etype = "Not A Type"
+    assert code(env.prepare) == "malformed"
+
+
+def test_audit_failure_blocks_delivery(env):
+    p = env.prepare()
+
+    def boom(**kw):
+        raise RuntimeError("disk full")
+
+    env.audit.custodial = boom
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "unavailable"
+    assert env.delivered == []
+
+
+def test_malformed_ids_and_action_are_refused(env):
+    assert code(env.engine.prepare, "zz", env.user, env.channel, {}) == "malformed"
+    assert code(env.engine.prepare, WS, env.user, env.channel, "not a dict") == "malformed"
+
+
+def test_pending_requests_are_bounded(env):
+    from orch_hub.custodial import engine as E
+
+    for _ in range(E.MAX_PENDING):
+        env.prepare()
+    assert code(env.prepare) == "unavailable"
+    env.clock[0] += E.TTL_MS + 1
+    env.prepare()  # expired ones are collected
+
+
+def test_built_event_type_is_checked(env):
+    class Bad:
+        def build(self, *a):
+            return {"log": "x"}
+
+    env.engine._view = Bad()
+    assert code(env.prepare) == "malformed"
+    assert BuiltEvent("workspace", {}).log == "workspace"

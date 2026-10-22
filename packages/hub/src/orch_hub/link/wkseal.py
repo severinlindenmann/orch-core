@@ -59,6 +59,9 @@ class WkSeals:
 
     def _check_wrap(self, ws: str, epoch: int, wrap: bytes) -> None:
         """Opens the wrap with HXK to prove the binding (hub, workspace, epoch); the plaintext is dropped here."""
+        self._open_wrap(ws, epoch, wrap)
+
+    def _open_wrap(self, ws: str, epoch: int, wrap: bytes) -> bytes:
         if len(wrap) != WRAP_LEN:
             raise Refused("bad_wrap")
         eph, ct = wrap[: S.PUB_LEN], wrap[S.PUB_LEN :]
@@ -69,7 +72,7 @@ class WkSeals:
             info = f"{KDF_SEAL}|wk|{self._hub}".encode("ascii")
             key = HKDF(hashes.SHA256(), 32, eph + self._hxk, info).derive(ss)
             aad = AAD_SEAL + bytes([S.SUITE_ID, 2]) + b"wk" + bytes.fromhex(ws) + epoch.to_bytes(4, "big")
-            AESGCM(key).decrypt(bytes(12), ct, aad)
+            return AESGCM(key).decrypt(bytes(12), ct, aad)
         except InvalidTag, ValueError, Refused:
             raise Refused("bad_wrap") from None
         except Exception:  # noqa: BLE001 (any crypto failure is a bad wrap, never a crash that leaks detail)
@@ -108,3 +111,15 @@ class WkSeals:
         with self.lock:
             rows = self._db.execute("SELECT epoch FROM wk_seal WHERE ws=? AND retired=0 ORDER BY epoch", (ws,))
             return [r[0] for r in rows.fetchall()]
+
+    def open_current(self, ws: str) -> tuple[int, bytearray]:
+        """The newest live epoch and its ``WK_e``, opened with HXK for ONE in-memory use (the custodial engine's
+        build). The caller zeroises the bytearray when done; the key is never stored or logged. ``Refused`` if the
+        workspace has no live wrap."""
+        with self.lock:
+            row = self._db.execute(
+                "SELECT epoch, wrap FROM wk_seal WHERE ws=? AND retired=0 ORDER BY epoch DESC LIMIT 1", (ws,)
+            ).fetchone()
+        if row is None:
+            raise Refused("unavailable")
+        return row[0], bytearray(self._open_wrap(ws, row[0], bytes(row[1])))

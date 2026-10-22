@@ -31,6 +31,7 @@ KEY_NAMES = (
     "uk_bob",
     "channel_alice_phone",
     "channel_bob_browser",
+    "push_alice_phone",
     "wsk_a",
     "wsk_b",
     "wxk_a",
@@ -3358,6 +3359,10 @@ def build() -> dict[str, Any]:
     from .vectorgen_p4 import build_p4
 
     p4 = build_p4(case, sig_entry, with_card)
+    # ---- phase 4, B stream: §6.4 pairing link, channel sessions, push key; §10.8.4 channel mailbox read
+    from .vectorgen_b import build_b
+
+    p4["section"]["channel_api"] = build_b(case, sig_entry)
 
     # custodial: digest, proof, UK signature
     e_signed = {k: v for k, v in ev.items() if k != "sig"}

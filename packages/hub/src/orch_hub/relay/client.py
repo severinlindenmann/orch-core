@@ -200,7 +200,7 @@ class RelayClient:
             hub_id=self.hub_id,
             channel_id=channel_id,
             msg_id=mid,
-            channel_pub=channel_pub,
+            recipient_pub=channel_pub,  # TODO(H1, design-b-phone D-B2): the channel's registered push key
             eph_seed=secrets.token_bytes(32),
         )
         out = self._req(RR.push_send_request(self.hub_id, channel_id, mid, sealed, priority, ttl_s))

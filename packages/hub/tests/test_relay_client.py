@@ -90,17 +90,17 @@ def test_push_reaches_the_phone_path_sealed_to_the_channel_key(w):
     assert set(outer) == {"v", "hub", "ch", "id", "c"} and outer["hub"] == w.env.keys.hub_id and outer["ch"] == cid
     # what the relay and APNs hold is ciphertext only
     assert b"prepare" not in sent["outer"] and ref.encode() not in sent["outer"]
-    # the phone's NSE opens it with the channel key
-    got = RR.open_push(outer["c"], hub_id=outer["hub"], channel_id=cid, msg_id=outer["id"], channel_priv=signer)
+    # the phone's NSE opens it with the key the hub sealed to (today the channel key; H1: the push key, §6.4)
+    got = RR.open_push(outer["c"], hub_id=outer["hub"], channel_id=cid, msg_id=outer["id"], recipient_priv=signer)
     assert got["type"] == "prepare" and got["ref"] == ref and got["ts_ms"] == w.env.clock()
     # and only with that key, that hub, that channel, that message id
     other_priv = ec.generate_private_key(ec.SECP256R1())
     for kw in (
-        {"channel_priv": other_priv},
+        {"recipient_priv": other_priv},
         {"hub_id": "11" * 16},
         {"msg_id": "22" * 16},
     ):
-        args = {"hub_id": outer["hub"], "channel_id": cid, "msg_id": outer["id"], "channel_priv": signer} | kw
+        args = {"hub_id": outer["hub"], "channel_id": cid, "msg_id": outer["id"], "recipient_priv": signer} | kw
         with pytest.raises(H.Refused):
             RR.open_push(outer["c"], **args)
 

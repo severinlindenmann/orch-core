@@ -122,6 +122,11 @@ def _hub_state(service: WorkspaceService) -> Any:
         or state.binding_seq != model.get("binding_seq")
     ):
         raise HostError("hub.not_joined", "this workspace is not connected to a hub: orch hub status")
+    if state.mode != "full" or model.get("mode") != "full":
+        raise HostError(
+            "hub.not_joined",
+            "workspace-to-workspace needs full mode: this workspace is joined to the hub in selective mode",
+        )
     return state
 
 

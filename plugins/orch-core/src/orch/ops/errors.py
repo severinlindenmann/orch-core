@@ -545,15 +545,6 @@ _SPECS = [
         "The hub card or the join did not verify (hub contract section 14: bad signature, other hub, dev mismatch).",
     ),
     _e(
-        "hub.full_mode_later",
-        3,
-        False,
-        "a full join comes later",
-        "join in selective mode: the hub then sees only what you share",
-        ["orch", "status"],
-        "Only the selective mode exists in this version; the full mode, where the hub holds the key, is a later step.",
-    ),
-    _e(
         "hub.already_joined",
         3,
         False,

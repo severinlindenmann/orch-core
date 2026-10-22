@@ -13,6 +13,7 @@ from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, ok
 from tests.host.human_helpers import err
 from tests.host.test_hub_join_real import genesis, make_card, now_ms
+from tests.host.test_hub_ops import keystore  # noqa: F401
 from tests.hub.tlshub import TlsHub
 from tests.relay.corpus import IDS, priv, pub
 
@@ -55,22 +56,48 @@ def reply(h, o):
     return h.reply(o, body=body, ts_ms=o["ts_ms"])
 
 
-@pytest.fixture
-def joined(human, served):
+def _hub(served, human, mode):
     wsk = crypto.unb64u(genesis(served)["wsk_pub"], 65)
     hub = TlsHub(wsk_pub=wsk, on_request=reply)
     hub.workspace_id = served.wid
     hub.start()
+    card = make_card(hub, now_ms(served))
+    human.run("hub.join", {"hub_card": card, "mode": mode})
+    args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{hub.port}"}
+    assert ok(served.client().req("hub.connect", args, idem=True))["data"]["status"] == "bound"
+    return hub
+
+
+def _stop_all(served, hub):
+    for svc in list(served.h.host.services.values()) if hasattr(served.h.host, "services") else []:
+        peerops.stop(svc)
+    hub.close()
+
+
+@pytest.fixture
+def joined(human, served, keystore):  # noqa: F811
+    """Bound in FULL mode (the only mode peers route in)."""
+    hub = _hub(served, human, "full")
     try:
-        card = make_card(hub, now_ms(served))
-        human.run("hub.join", {"hub_card": card, "mode": "selective"})
-        args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{hub.port}"}
-        assert ok(served.client().req("hub.connect", args, idem=True))["data"]["status"] == "bound"
         yield hub
     finally:
-        for svc in list(served.h.host.services.values()) if hasattr(served.h.host, "services") else []:
-            peerops.stop(svc)
-        hub.close()
+        _stop_all(served, hub)
+
+
+@pytest.fixture
+def joined_selective(human, served):
+    hub = _hub(served, human, "selective")
+    try:
+        yield hub
+    finally:
+        _stop_all(served, hub)
+
+
+def test_selective_workspaces_do_not_route_ws_to_ws(served, joined_selective):
+    for op, args in (("peer.card", {}), ("peer.inbox", {}), ("peer.add", {"card": PEER_CARD})):
+        res = req(served, op, args)
+        assert err(res) == "hub.not_joined" and "needs full mode" in res["error"]["message"]
+    assert peerops._RUNTIMES == {} and [r for r in joined_selective.requests if r["o"]["op"] == "route_out"] == []
 
 
 def req(served, op, args=None, **kw):

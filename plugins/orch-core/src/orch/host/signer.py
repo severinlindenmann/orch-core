@@ -314,14 +314,15 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and isinstance(e.get("text"), str)
                 and e["text"].startswith(MARK + "\n")
             )
-        elif (
-            op == "hub.join"
-        ):  # V3 C2a: one hub.joined on the workspace log, selective mode, exactly the contract's members
+        elif op in ("hub.join", "hub.mode"):
+            # V3 C2a/C2b: one hub.joined on the workspace log, exactly the contract's members. hub.mode only ever
+            # signs a switch to full without new aliases; hub.join signs either mode (the review says which).
             ok = (
                 len(events) == 1
                 and log == "workspace"
                 and e["type"] == "hub.joined"
-                and e.get("mode") == "selective"
+                and e.get("mode") in (("full",) if op == "hub.mode" else ("selective", "full"))
+                and (op == "hub.join" or e.get("aliases") == [])
                 and set(e) - review.ENVELOPE == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}
             )
         elif op == "hub.leave":  # V3 C2a: one hub.left on the workspace log, naming the hub and the binding it ends
@@ -632,6 +633,8 @@ _PLAIN = {
     "relay.pair_device": "add the paired device {device} to your devices",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
     "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share and never gets the workspace key",
+    "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
+    "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
 }
 
@@ -701,7 +704,8 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     fields.setdefault("option", "none (text only)")
     fields["ticket"] = ticket_word(prepared) if ticket else "the workspace"
     try:
-        plain = _PLAIN.get(prepared["op"], "{op} on {ticket}").format_map(_Default({**fields, "op": prepared["op"]}))
+        key = "hub.join.full" if prepared["op"] == "hub.join" and fields.get("mode") == "full" else prepared["op"]
+        plain = _PLAIN.get(key, "{op} on {ticket}").format_map(_Default({**fields, "op": prepared["op"]}))
     except (KeyError, ValueError):
         plain = prepared["op"]
     o = prepared["origin"]

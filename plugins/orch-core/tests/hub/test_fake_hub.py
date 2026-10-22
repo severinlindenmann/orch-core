@@ -169,7 +169,11 @@ def test_share_ops_work_in_selective_only(joined: HostLink, hub: FakeHub):
 def test_full_mode_takes_wk_seal_and_audit_ack(joined: HostLink, hub: FakeHub):
     joined.call("binding_put", {"object": binding(2, "full")})
     assert hub.workspaces[WS].mode == "full"
-    assert joined.call("wk_seal", {"epoch": 1, "wrap": "AAAA"}) == {}
+    from orch import crypto
+
+    wrap = crypto.seal(pub("hxk"), bytes.fromhex(V["ids"]["hub"]), "wk", bytes.fromhex(WS), 1, bytes(32))
+    assert joined.call("wk_seal", {"epoch": 1, "wrap": b64u(wrap)}) == {}
+    assert hub.workspaces[WS].wk == {1: bytes(32)}  # the hub opened it with HXK
     assert joined.call("audit_ack", {"seq": 3, "head": b64u(bytes(32))}) == {}
     assert hub.workspaces[WS].wk_seals[0]["epoch"] == 1 and hub.workspaces[WS].audit[0]["seq"] == 3
 

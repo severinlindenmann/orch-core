@@ -90,9 +90,10 @@ def test_a_malformed_command_prints_the_usage_and_touches_nothing(offline, argv)
     assert code in (2, 5) and ("usage: orch hub" in out or "error invalid.input" in out)
 
 
-def test_full_mode_is_refused_before_any_host_or_key(offline, card_file):
-    code, out = run(["join", "inv", "--hub-card", card_file, "--mode", "full"], {})
-    assert code == 3 and out.startswith("error hub.full_mode_later") and "C2b" in out
+def test_an_agent_never_joins_in_full_mode(offline, card_file):
+    for argv in (["join", "inv", "--hub-card", card_file, "--mode", "full"], ["mode", "full", "--hub-card", card_file]):
+        code, out = run(argv, {"ORCH_GRANT": "g"})
+        assert code != 0 and out.startswith("error op.not_allowed")
 
 
 def test_join_signs_then_connects(host, card_file):
@@ -158,3 +159,50 @@ def test_orch_dispatches_the_hub_verb(monkeypatch):
     monkeypatch.setattr(hub, "main", lambda argv, **kw: seen.append(argv) or 0)
     assert orch_main(["hub", "status"], env={}, stdout=io.StringIO(), stderr=io.StringIO()) == 0
     assert seen == [["status"]]
+
+
+def test_join_full_warns_signs_full_and_connects(host, card_file):
+    host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 1, "mode": "full"}
+    code, out = run(["join", "inv-1", "--hub-card", card_file, "--mode", "full"], {})
+    assert code == 0 and "read everything in this workspace" in out
+    assert host.signed[0][0] == "hub.join" and host.signed[0][1]["mode"] == "full"
+    assert host.called[0][0] == "hub.connect" and host.called[0][1]["invite"] == "inv-1"
+
+
+def test_mode_full_signs_hub_mode_and_connects_without_an_invite(host, card_file):
+    host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 2, "mode": "full"}
+    code, out = run(["mode", "full", "--hub-card", card_file], {})
+    assert code == 0 and "read everything" in out
+    assert [o for o, _ in host.signed] == ["hub.mode"] and host.signed[0][1]["mode"] == "full"
+    assert host.called[0][0] == "hub.connect" and "invite" not in host.called[0][1]
+
+
+@pytest.mark.parametrize(
+    "argv", [["mode", "selective", "--hub-card", "x"], ["mode", "--hub-card", "x"], ["mode", "full"]]
+)
+def test_mode_takes_only_full_and_a_card(offline, argv):
+    code, out = run(argv, {})
+    assert code in (2, 5) and "error invalid.input" in out
+
+
+def test_status_json_carries_the_pinned_snapshot_and_refresh_asks_the_host_first(host):
+    snap = {"version": 3, "roles": {"11" * 16: "admin"}}
+    host.reply["hub.status"] = {"joined": True, "hub_id": V["ids"]["hub"], "mode": "selective", "link": "bound",
+                                "unbound_pending": False, "snapshot": snap}  # fmt: skip
+    code, out = run(["status", "--refresh"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"]["snapshot"] == snap
+    assert [op for op, _ in host.called] == ["hub.refresh", "hub.status"] and host.signed == []
+    assert host.called[0][1] == {}
+    assert "group snapshot v3 (1 roles)" in run(["status"], {})[1]
+
+
+def test_refresh_may_carry_a_newer_hub_card(host, card_file):
+    host.reply["hub.status"] = {"joined": True, "hub_id": V["ids"]["hub"], "mode": "selective"}
+    assert run(["status", "--refresh", "--hub-card", card_file], {})[0] == 0
+    assert host.called[0] == ("hub.refresh", {"hub_card": CARD})
+
+
+@pytest.mark.parametrize("argv", [["status", "--hub-card", "x"], ["leave", "--refresh"], ["unbind", "--refresh"]])
+def test_refresh_flags_belong_to_status(host, argv):
+    code, out = run(argv, {})
+    assert code == 2 and host.called == []

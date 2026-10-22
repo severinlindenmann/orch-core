@@ -433,24 +433,29 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
     return None
 
 
-# --- the hub (hub contract H0 section 9.1; C2a: selective mode only) -----------------------------------------------
+# --- the hub (hub contract H0 section 9.1; C2a selective, C2b full) -------------------------------------------------
 
-#: modes the model accepts: full mode (``WK_e`` sealed to the hub, a ``hub`` member) is C2b, phase 3
-HUB_MODES = ("selective",)
+#: modes the model accepts. Full mode (D74) makes the hub a member of kind ``hub``: ``ws.hub["member"]`` is set by a
+#: full ``hub.joined`` and gone with ``hub.left``; selective mode never has one (D80).
+HUB_MODES = ("selective", "full")
 
 
 def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. Never a ``hub`` member and never
-    ``WK_e``: this event adds nothing to the member list. ``binding_seq`` is strictly higher than any earlier one
-    (across joins, mode switches and rejoins, 9.2); an earlier join must have ended with ``hub.left``; aliases are
-    never re-pointed, in either direction (9.1)."""
+    """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. A selective one adds no member (D80);
+    a full one makes the hub a member of kind ``hub`` (D74). ``binding_seq`` is strictly higher than any earlier one
+    (across joins, mode switches and rejoins, 9.2); an earlier join must have ended with ``hub.left``, except the one
+    switch the contract allows while joined: selective to full, naming the same hub (9.1; full to selective is
+    ``hub.left`` and a new selective join, so the hub loses ``WK_e`` from the new epoch on). Aliases are never
+    re-pointed, in either direction (9.1)."""
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
     if e["mode"] not in HUB_MODES:
-        return Refusal(Code.HUB_INVALID, "only the selective mode is supported; the full mode comes later (C2b)")
+        return Refusal(Code.HUB_INVALID, "unknown hub mode")
     if h and h["status"] == "joined":
-        return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
+        switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
+        if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
+            return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
     if e["binding_seq"] <= h.get("binding_seq", 0):
         return Refusal(Code.HUB_INVALID, "binding_seq must be higher than every earlier binding of this workspace")
     aliases = dict(h.get("aliases", {}))
@@ -469,6 +474,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "binding_seq": e["binding_seq"],
         "status": "joined",
         "aliases": aliases,
+        **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None
 
@@ -483,5 +489,5 @@ def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
-    ws.hub = {**h, "status": "left"}
+    ws.hub = {**{k: v for k, v in h.items() if k != "member"}, "status": "left"}  # the hub member goes with the leave
     return None

@@ -139,7 +139,7 @@ def test_a_joined_workspace_publishes_through_the_hub(world, human, served):
     data = ok(res)["data"]
     share_id, token = LINK.fullmatch(data["link"]).groups()
     # the shares went over the hub link, each verified byte for byte by the hub-path bytes of the contract ...
-    assert w.hub.ops() == ["join", "publish_out", "publish_out", "publish_out"]
+    assert w.hub.ops() == ["join", "snapshot_get", "publish_out", "publish_out", "publish_out"]
     assert w.hub_server.bad_signatures == []
     assert kinds(w.hub_server) == [
         ("PUT", f"shares/{share_id}"),

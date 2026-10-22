@@ -183,6 +183,15 @@ def sentence(item: dict, name_of, can=None) -> str:
     return SIMPLE.get(kind, "did something")
 
 
+_FACTOR_WORDS = {"se-unlocked": "phone, unlocked", "password+totp": "browser, password + code", "passkey": "passkey"}
+
+
+def via_words(a: dict) -> str:
+    """``via hub · phone, unlocked`` for a hub-signed row (the raw factor label is never shown)."""
+    words = _FACTOR_WORDS.get(str(a.get("channel_factor")))
+    return "via hub" + (f" · {words}" if words else "")
+
+
 def item(a: dict, names: dict[str, str], can=None) -> dict:
     """One activity item as a row. `jpos`, `ws_seq`, `log`, `uid` and `data` never reach the browser."""
 
@@ -193,7 +202,11 @@ def item(a: dict, names: dict[str, str], can=None) -> dict:
     group = GROUP_OF.get(a["type"], "tickets" if a.get("key") else "workspace")
     out = {"id": a["id"], "at": a["at"], "type": a["type"], "group": group}
     if actor["kind"] == "person":
-        actor["name"] = names.get(actor["id"]) or "A former member"
+        raw = a["actor"]
+        if raw.get("via"):  # signed through a hub channel (ticket-format 15.4): the member it is, else "Hub user ..."
+            actor["name"] = (names.get(raw.get("person") or "") or f"Hub user {actor['id'][2:10]}") + " " + via_words(a)
+        else:
+            actor["name"] = names.get(actor["id"]) or "A former member"
     elif actor["kind"] == "agent":
         actor["for_name"] = names.get(actor.get("for")) or None
     out["actor"] = {k: v for k, v in actor.items() if k in ("kind", "id", "name", "for_name")}

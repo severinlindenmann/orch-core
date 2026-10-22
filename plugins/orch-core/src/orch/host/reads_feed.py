@@ -245,7 +245,7 @@ def derive(
             data = readmodel.data_of(log, e, grant_person=gp, devices=ws.devices)
         else:
             data = readmodel.data_of(log, e)
-        item = readmodel.activity_item(jpos, log, e, key=None, title=None, summary_text=text, data=data)
+        item = readmodel.activity_item(jpos, log, e, key=None, title=None, summary_text=text, data=data, ws=ws)
         out.append(Entry(log, typ, str(e.get("at")), item["actor"], gp, item, _size(item)))
         if keep is not None and len(out) > 2 * keep:
             del out[: len(out) - keep]

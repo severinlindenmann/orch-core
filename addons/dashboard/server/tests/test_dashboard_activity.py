@@ -110,3 +110,26 @@ def test_repo_changes_name_the_repo_and_other_setting_changes_stay_general():
     pushed = adapt.sentence({"type": "branch.pushed", "data": {"repo_name": "repo"}}, lambda p: "x")
     assert pushed == "saw the ticket's branch in the repository “repo”" and "pushed" not in pushed
     assert did({"keys": ["repos"], "repos": {"a‮b": "set"}}) == "changed the workspace settings"
+
+
+def hub_row(person=None):
+    actor = {"kind": "person", "id": "u_" + "a3" * 16, "via": "c" * 32, "auth": "hub"}
+    if person:
+        actor["person"] = person
+    return {
+        "id": "1.e", "at": "2026-10-23T10:00:00Z", "type": "log.added", "log": "t", "uid": "t", "key": "DEMO-0001",
+        "title": "A ticket", "seq": 3, "ws_seq": 2, "actor": actor, "summary": "hi", "data": {"text": "hi"},
+        "channel_factor": "se-unlocked", "hub_id": "d" * 32,
+    }  # fmt: skip
+
+
+def test_a_hub_signed_row_names_the_member_or_the_hub_user_and_the_way_it_was_signed():
+    """Ticket-format 15.4 views: the person (the member it is aliased to, else `Hub user <first 8>`), then `via hub`
+    and the factor in words; the raw factor label, the hub id and the channel id never reach the browser."""
+    mara = "p_" + "4c" * 16
+    named = adapt.item(hub_row(person=mara), {mara: "Mara"})
+    assert named["actor"]["name"] == "Mara via hub · phone, unlocked"
+    anon = adapt.item(hub_row(), {})
+    assert anon["actor"]["name"] == "Hub user a3a3a3a3 via hub · phone, unlocked"
+    flat = str(named)
+    assert "se-unlocked" not in flat and "d" * 32 not in flat and "c" * 32 not in flat

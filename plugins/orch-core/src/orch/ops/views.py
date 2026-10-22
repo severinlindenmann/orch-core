@@ -168,6 +168,16 @@ def _update_detail(e: dict[str, Any], state: dict[str, dict[str, Any]]) -> str:
     return ", ".join(parts)
 
 
+#: how a hub channel's factor reads to a person (15.4 views): never the raw label
+FACTOR_WORDS = {"se-unlocked": "phone, unlocked", "password+totp": "browser, password + code", "passkey": "passkey"}
+
+
+def via_hub(e: dict[str, Any]) -> str:
+    """``via hub · phone, unlocked`` for a hub-signed event, else ``""``."""
+    factor = FACTOR_WORDS.get(str(e.get("channel_factor")), "")
+    return "via hub" + (f" · {factor}" if factor else "") if e.get("auth") == "hub" else ""
+
+
 def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None) -> str:
     """One event as ``#seq type actor: detail``. The actor is ``agent`` (``agent (unattended)`` without a grant),
     ``person`` and the first characters of the person id, or ``host``. The detail is a task, a question, an artifact
@@ -175,6 +185,8 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     a = e["actor"]
     if a["kind"] == "agent":
         who = "agent (unattended)" if a.get("unattended") else "agent"
+    elif a["kind"] == "person" and "via" in a:  # a hub user: the alias's name needs the roster, the log line has none
+        who = f"hub user {a['id'][2:10]} {via_hub(e)}".rstrip()
     elif a["kind"] == "person":
         who = f"person {a['id'][:8]}"
     else:
@@ -195,6 +207,14 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
                 withdrawn = parse_withdraw_label(e.get("label"))
                 if withdrawn:
                     detail = f"withdrew the manual acceptance of {withdrawn}"
+    elif t == "hub.pinned":
+        o = e["object"]["o"]
+        detail = (
+            "hub key/roles updated ("
+            + o["kind"].removeprefix("hub.")
+            + (f" v{o['version']}" if "version" in o else "")
+            + ")"
+        )
     elif t == "log.added":
         detail = short(e["text"], 40)
     elif t == "question.asked":

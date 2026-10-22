@@ -32,6 +32,12 @@ PATHS: dict[tuple[str, str], tuple[int, str]] = {
         1,
         "exempt: orch import v1 builds a new workspace from v1 history, which has no convenience events",
     ),
+    ("host/hubdeliver.py", "StoreLanding.land"): (
+        2,
+        "exempt: a hub-signed event is a custodial type only (authz.HUB_TYPES: never member, role, device, grant or "
+        "settings) with auth hub, so it adds no reader and no convenience event; the other call is the host's own "
+        "hub.pinned ledger line",
+    ),
     ("ops/workspace_init.py", "_make_keys_and_genesis"): (1, "exempt: orch init's genesis; no history yet"),
 }
 

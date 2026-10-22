@@ -177,9 +177,10 @@ def _log(x: _Ticket, since: int, limit: int) -> tuple[list[dict[str, Any]], bool
             "seq": e["seq"],
             "type": e["type"],
             "at": e["at"],
-            "actor": readmodel.actor(e),
+            "actor": readmodel.actor(e, x.ws),
             "summary": readmodel.summary(e, state),
             "data": readmodel.log_data(e),
+            **readmodel.hub_row(e),
         }
         for e in tail
     ]

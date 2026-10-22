@@ -33,6 +33,7 @@ __all__ = [
     "activity_item",
     "actor",
     "data_of",
+    "hub_row",
     "log_data",
     "put_snip",
     "snip",
@@ -59,6 +60,7 @@ PERSON_TYPES = frozenset(
         "addon.granted",
         "addon.disabled",
         "addon.purged",
+        "hub.pinned",
         "restore",
         "invalid.acknowledged",
     }
@@ -92,13 +94,14 @@ def put_snip(out: dict[str, Any], name: str, value: Any) -> None:
 
 # --- Actor --------------------------------------------------------------------------------------------------------
 
-_ACTOR_KEYS = ("for", "session", "device", "auth", "grant", "unattended")
+_ACTOR_KEYS = ("for", "session", "device", "auth", "grant", "unattended", "via")
 
 
-def actor(event: Mapping[str, Any]) -> dict[str, Any]:
+def actor(event: Mapping[str, Any], ws: Any = None) -> dict[str, Any]:
     """The §0.1 ``Actor`` of a stored event: ``kind``, ``id`` (``None`` for the host) and the optional keys the event
     carries. ``auth`` is the event's custody label (F1 §5.3: a top-level field, metadata). Never ``sig`` or
-    ``host_sig``."""
+    ``host_sig``. A hub-signed event (ticket-format 15.4) also carries ``via`` (the channel id); with the workspace
+    ``ws`` an aliased hub user also carries ``person``: the member it is (derived from the log, never stored)."""
     a = event.get("actor") if isinstance(event.get("actor"), Mapping) else {}
     out: dict[str, Any] = {"kind": a.get("kind"), "id": a.get("id") if isinstance(a.get("id"), str) else None}
     for k in _ACTOR_KEYS:
@@ -110,7 +113,20 @@ def actor(event: Mapping[str, Any]) -> dict[str, Any]:
         out["auth"] = auth
     if out["kind"] == "host":
         out["id"] = None
+    if ws is not None and "via" in out and isinstance(out["id"], str):
+        from orch.model.identity import canonical
+
+        person = canonical(ws, out["id"])
+        if person != out["id"]:
+            out["person"] = person
     return out
+
+
+def hub_row(event: Mapping[str, Any]) -> dict[str, Any]:
+    """``channel_factor`` and ``hub_id`` of a hub-signed event row (15.4 views); ``{}`` for any other event."""
+    if event.get("auth") != "hub":
+        return {}
+    return {k: event[k] for k in ("channel_factor", "hub_id") if isinstance(event.get(k), str)}
 
 
 # --- LogItem.data (ticket log) ------------------------------------------------------------------------------------
@@ -301,6 +317,10 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         return {"name": e.get("name"), "version": e.get("version")}
     if t in ("addon.disabled", "addon.purged"):
         return {"name": e.get("name")}
+    if t == "hub.pinned":  # "hub key/roles updated": the kind and, for a snapshot, its version
+        obj = e.get("object") if isinstance(e.get("object"), Mapping) else {}
+        o = obj.get("o") if isinstance(obj.get("o"), Mapping) else {}
+        return {"hub_id": e.get("hub_id"), "kind": o.get("kind"), "version": o.get("version")}
     if t == "restore":
         return {"from_seq": e.get("from_seq")}
     if t == "invalid.acknowledged":
@@ -363,6 +383,7 @@ def activity_item(
     title: str | None,
     summary_text: str,
     data: Mapping[str, Any],
+    ws: Any = None,
 ) -> dict[str, Any]:
     """The §0.8 ``ActivityItem``: the §0.9 event ``Item`` plus ``actor`` in full, ``title``, ``summary``, ``data``."""
     seq = int(e["seq"])
@@ -378,7 +399,8 @@ def activity_item(
         "ws_seq": seq if workspace else int(e["ws_seq"]),
         "type": str(e.get("type")),
         "at": str(e.get("at")),
-        "actor": actor(e),
+        "actor": actor(e, ws),
         "summary": summary_text,
         "data": dict(data),
+        **hub_row(e),
     }

@@ -276,6 +276,5 @@ Every step keeps the standalone suite and the standalone e2e scenario green (D79
 Decided 22 Oct 2026: local Mission Control hands signing to a channel (D81); personal workspaces may join
 selectively (D80); hub agents later; the review additions (channel proof, break-glass, `repin` needs `PK`) kept.
 
-
 1. **Workspace-side veto on admin grants** (D71), to revisit before the first real company.
 2. **Hub hosting for one person or a small team.** Same machine as the workspaces, or always a separate host?

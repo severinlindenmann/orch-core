@@ -68,7 +68,13 @@ def _snapshots(state: Path) -> dict[str, dict[str, Any]]:
         return {}
     finally:
         db.close()
-    return {ws: {"version": v, "roles": json.loads(sg)["o"]["roles"]} for ws, v, sg in rows}
+    out = {}
+    for ws, v, sg in rows:
+        try:
+            out[ws] = {"version": int(v), "roles": dict(json.loads(sg)["o"]["roles"])}
+        except ValueError, KeyError, TypeError:
+            continue  # a corrupt row is left out, never a crash
+    return out
 
 
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
@@ -93,8 +99,12 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
             continue
-        st = json.loads(bstate)
-        b = st.get("binding")
+        try:
+            st = json.loads(bstate)
+            b = st.get("binding")
+            binding_view = {"state": st["status"], "binding_seq": st["binding_seq"]}
+        except ValueError, KeyError, TypeError, AttributeError:
+            st, b, binding_view = {}, None, {"state": "corrupt", "binding_seq": None}
         ops: dict[str, dict[str, int]] = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
         for cws, op, outcome, n in counts:
             if cws == ws:
@@ -105,7 +115,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "wsk_pub": wsk_pub,
             "wsk_fingerprint": hashlib.sha256(unb64u(wsk_pub, 65)).hexdigest(),
             "mode": b.get("mode") if type(b) is dict else None,
-            "binding": {"state": st["status"], "binding_seq": st["binding_seq"]},
+            "binding": binding_view,
             "ops": ops,
             "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
         }

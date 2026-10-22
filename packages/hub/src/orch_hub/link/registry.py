@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..contract.canon import cj
+from ..fsutil import open_private_db
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspace (
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS op_counts (
 class Registry:
     def __init__(self, path: str = ":memory:") -> None:
         self.lock = threading.RLock()
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db = open_private_db(path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         if "binding_obj" not in {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}:
             self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11

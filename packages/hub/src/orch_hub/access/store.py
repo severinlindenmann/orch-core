@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from ..contract.hub import ROLES
+from ..fsutil import PrivateFileError, open_private_db
 
 ADMIN_GROUP = "hub-admin"
 _HEX16 = re.compile(r"[0-9a-f]{32}")
@@ -68,14 +70,22 @@ def require_state_owner(state: Path) -> None:
         st = os.lstat(state)
     except OSError:
         raise AccessError("state_unreadable", state.name) from None
-    if not os.path.isdir(state) or os.path.islink(state) or st.st_uid != os.geteuid():
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():  # lstat: a symlink is not a directory here
         raise AccessError("not_state_owner", state.name)
+    if st.st_mode & 0o022:
+        raise AccessError("state_dir_writable", state.name)
 
 
 def _hex(x: object, what: str) -> str:
     if type(x) is not str or not _HEX16.fullmatch(x):
         raise AccessError("malformed", f"{what} must be 32 lower-case hex characters")
     return x
+
+
+def check_name(name: object) -> str:
+    if type(name) is not str or not name or len(name) > 80 or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        raise AccessError("malformed", "name: 1-80 printable characters")
+    return name
 
 
 def _grp(x: object) -> str:
@@ -89,11 +99,11 @@ class Access:
         self.lock = threading.RLock()
         self._now = now_ms or (lambda: int(time.time() * 1000))
         try:
-            self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+            self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
             self._db.execute("INSERT OR IGNORE INTO groups(name, created_ms) VALUES (?,?)", (ADMIN_GROUP, self._now()))
-            if path != ":memory:":
-                os.chmod(path, 0o600)
+        except PrivateFileError as e:
+            raise AccessError("bad_private_file", str(e)) from None
         except (sqlite3.Error, OSError) as e:
             raise AccessError("store_error", type(e).__name__) from None
 
@@ -123,8 +133,7 @@ class Access:
 
     def add_user(self, user_id: str, name: str) -> None:
         _hex(user_id, "user_id")
-        if type(name) is not str or not name or len(name) > 80 or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
-            raise AccessError("malformed", "name: 1-80 printable characters")
+        check_name(name)
         try:
             with self.tx() as db:
                 if db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone():

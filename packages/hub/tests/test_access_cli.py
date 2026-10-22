@@ -151,3 +151,12 @@ def test_scenario_forms_and_access_check(tmp_path, capsys, up):
     assert check(bob, "read")[0] == 0
     assert check(bob, "route") == (3, {"allowed": False, "role": "read", "reason": "forbidden_role"})
     assert check("ee" * 16, "read") == (3, {"allowed": False, "role": None, "reason": "not_granted"})
+
+
+def test_state_dir_writable_and_bad_name_refused_before_uk(tmp_path, capsys):
+    st = tmp_path / "hub"
+    keys = HubKeys.init(st)
+    assert "malformed" in run(st, capsys, "users", "add", "bad\nname", code=1)
+    assert keys.users() == []  # no UK was issued for the refused name
+    st.chmod(0o770)
+    assert "state_dir_writable" in run(st, capsys, "groups", "list", code=1)

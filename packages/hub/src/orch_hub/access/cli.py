@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..keys import HubKeys, KeysError, default_state_dir
-from .store import Access, AccessError, require_state_owner, role_rank
+from .store import Access, AccessError, check_name, require_state_owner, role_rank
 
 ACCESS_FILE = "access.db"
 
@@ -133,7 +133,7 @@ def _dispatch(args: argparse.Namespace, state: Path, acc: Access):
         return check(acc, state, args.user, args.workspace, args.action)
     if g == "users":
         if c == "add":
-            name = _name(args)
+            name = check_name(_name(args))  # before a UK is issued
             user_id = HubKeys.open(state).issue_uk(None)["o"]["user_id"]
             acc.add_user(user_id, name)
             return {"user_id": user_id, "name": name}

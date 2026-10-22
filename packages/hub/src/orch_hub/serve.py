@@ -9,7 +9,6 @@ orch-publish after a restart. One ready line is printed on stdout once the port 
 from __future__ import annotations
 
 import ipaddress
-import os
 import signal
 import sys
 import threading
@@ -73,7 +72,6 @@ def serve(
     keys = HubKeys.open(state)
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
-    os.chmod(reg_path, 0o600)
     access = Access(str(state / ACCESS_FILE))
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()

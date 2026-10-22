@@ -130,6 +130,7 @@ def test_persists_and_fails_closed(tmp_path):
     assert e.value.code == "store_error"
     bad = tmp_path / "junk.db"
     bad.write_bytes(b"not a database" * 100)
+    bad.chmod(0o600)
     with pytest.raises(AccessError) as e:
         Access(str(bad))
     assert e.value.code == "store_error"

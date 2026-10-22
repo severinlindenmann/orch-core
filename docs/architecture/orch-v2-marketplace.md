@@ -380,11 +380,20 @@ With a hub joined, the workspace host MUST ask the hub's policy before any marke
 the enforcement in core is G7 (#928); this section fixes only what the policy looks like so the vectors and the order of
 checks are stable.
 
+The policy object is **`orch.hub-policy/1`**, strict: exactly these three keys, no others.
+
 ```
-{ "allow":   [<marketplace URL>, …],     // normalized source URLs
-  "block":   [<marketplace URL>, …],
-  "ceiling": [<capability>, …] | null }   // null = no ceiling
+{ "allow":   [<canonical marketplace URL>, …],
+  "block":   [<canonical marketplace URL>, …],
+  "ceiling": [<capability>, …] | null }          // null = no ceiling
 ```
+
+`allow` and `block` are lists of canonical URLs (§4.1) and membership is equality of a URL with a list element: never a
+substring test, never a prefix. A missing key, a wrong type, an unknown key, a non-canonical URL or an unknown
+capability makes the **whole policy malformed**, and a malformed policy is an empty allow list (`market.not_allowed`).
+The same policy also gates `market add` and `market refresh`: no network access to a blocked or unlisted marketplace.
+"A hub is joined" is read from the workspace's signed log, not from a local file: a workspace whose log says it joined a
+hub but whose hub record is missing or unreadable is *not* standalone; it refuses (fail closed).
 
 | Rule | |
 |---|---|
@@ -482,6 +491,7 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.host_not_allowed` | the entry's git host is neither the marketplace's host nor on the host allow list | 6 |
 | `market.reserved_id` | a non-official marketplace claims a built-in id | 6 |
 | `market.origin_changed` | the installed add-on came from a different marketplace | 6 |
+| `market.version_reused` | the entry has the installed version number but other bytes | 6 |
 | `market.official_unsigned` | an official entry without a valid publisher entry for the pinned key | 7 |
 | `market.bad_signature` | the publisher signature does not verify | 7 |
 | `market.publisher_key_changed` | the key differs from, or is missing against, the remembered one | 7 |

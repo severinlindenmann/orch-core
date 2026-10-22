@@ -145,8 +145,9 @@ def test_l2m2_official_entry_cannot_shadow_a_builtin_id():
     Only ids core lists as moved to the marketplace (G6) may appear there."""
     f = mk.files_for("dashboard")
     e = mk.entry("dashboard", f, signer="official", market=OFFICIAL)
+    # signed index (L2M-1): an unsigned official index is refused at step 2, before the entry is looked at
     res = install(
-        mk.index(OFFICIAL, [e], name="orch-marketplace"), f, "dashboard", market_repo=OFFICIAL, isolation=False
+        mk.oindex(OFFICIAL, [e], name="orch-marketplace"), f, "dashboard", market_repo=OFFICIAL, isolation=False
     )
     assert res == {"refuse": "market.reserved_id"}
 

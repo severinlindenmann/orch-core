@@ -1027,6 +1027,29 @@ def build() -> None:
     other_signed["version"] = 8
     add("install_other_index_with_bad_signature", "install", inst(other_signed), refuse("index_unsigned"))
 
+    # ---- L2M-9: the hub policy is a strict object; L2M-10: one version, one digest
+    for nm, hub in (
+        ("allow_is_a_string", {"allow": OTHER + "-mirror", "block": [], "ceiling": None}),
+        ("allow_substring_url", {"allow": [OTHER + "-mirror"], "block": [], "ceiling": None}),
+        ("missing_keys", {"allow": [OTHER]}),
+        ("block_is_null", {"allow": [OTHER], "block": None, "ceiling": None}),
+        ("ceiling_is_a_string", {"allow": [OTHER], "block": [], "ceiling": "network"}),
+        ("ceiling_unknown_capability", {"allow": [OTHER], "block": [], "ceiling": ["root"]}),
+        ("unknown_key", {"allow": [OTHER], "block": [], "ceiling": None, "widen": ["pty"]}),
+        ("non_canonical_allow_url", {"allow": [OTHER + ".git"], "block": [], "ceiling": None}),
+        ("not_an_object", ["allow"]),
+    ):
+        add("install_hub_policy_malformed_" + nm, "install", inst(hub=hub), refuse("not_allowed"))
+    same = {"standup": {"origin": OTHER, "version": "1.0.0", "package_sha256": e["package_sha256"]}}
+    add(
+        "install_reinstall_same_version_same_digest_ok",
+        "install",
+        inst(installed=same),
+        ok(id="standup", version="1.0.0", package_sha256=e["package_sha256"], **{"class": "other"}, tofu="unsigned"),
+    )
+    reused = {"standup": {"origin": OTHER, "version": "1.0.0", "package_sha256": "sha256:" + "0" * 64}}
+    add("install_same_version_other_bytes", "install", inst(installed=reused), refuse("version_reused"))
+
 
 if __name__ == "__main__":
     build()

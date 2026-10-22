@@ -150,6 +150,29 @@ def is_canonical_url(url: str) -> bool:
     return not (host in CASE_INSENSITIVE_HOSTS and url != url.lower())
 
 
+CAPABILITIES = ("git_push", "network", "pty", "serve_http", "spawn_agent")
+
+
+def hub_policy_ok(hub: Any) -> bool:
+    """Section 9: ``orch.hub-policy/1`` is exactly ``{allow: [url], block: [url], ceiling: [cap] | null}``, URLs in
+    canonical form. Anything else counts as an empty allow list."""
+    urls = lambda x: (
+        isinstance(x, list)
+        and all(  # noqa: E731
+            isinstance(u, str) and re.fullmatch(r"https://[a-z0-9.-]+(?:/[^/\s]+)+", u) and is_canonical_url(u)
+            for u in x
+        )
+    )
+    ceiling = hub.get("ceiling") if isinstance(hub, dict) else 0
+    return (
+        isinstance(hub, dict)
+        and set(hub) == {"allow", "block", "ceiling"}
+        and urls(hub["allow"])
+        and urls(hub["block"])
+        and (ceiling is None or (isinstance(ceiling, list) and all(c in CAPABILITIES for c in ceiling)))
+    )
+
+
 def check_index(index: Any) -> dict[str, Any]:
     """Section 3: parse, the pin and digest pre-checks, the schema, the semantic rules. Returns the parsed index."""
     doc = parse_index(index)
@@ -329,6 +352,8 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
         raise Refuse("market.community_unisolated")
     hub = ctx["hub"]
     if hub is not None:
+        if not hub_policy_ok(hub):
+            raise Refuse("market.not_allowed")
         if repo in hub["block"]:
             raise Refuse("market.blocked")
         if repo not in hub["allow"]:
@@ -350,6 +375,12 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     prior = ctx["installed"].get(entry["id"])
     if prior is not None and prior["origin"] != repo:
         raise Refuse("market.origin_changed")
+    if (
+        prior is not None
+        and prior["version"] == entry["version"]
+        and prior.get("package_sha256") != entry["package_sha256"]
+    ):
+        raise Refuse("market.version_reused")  # the same version number must be the same bytes
     floor = [v for v in (prior and prior["version"], ctx["seen"].get(f"{repo}|{entry['id']}")) if v]
     if any(_semver(entry["version"]) < _semver(v) for v in floor):
         raise Refuse("market.rollback")

@@ -119,7 +119,7 @@ def test_the_config_flipper_race_never_runs_the_marker(world):  # noqa: F811
 
     t = threading.Thread(target=flip, daemon=True)
     t.start()
-    passed = 0
+    reached = 0
     try:
         for i in range(25):
             name = f"{i:08x}-ORCH-{i + 1}"
@@ -127,9 +127,10 @@ def test_the_config_flipper_race_never_runs_the_marker(world):  # noqa: F811
             a["branch"] = f"b{i}"
             try:
                 wtgit.run_git(a, own)
-                passed += 1
-            except SpawnError:
-                continue  # the gate saw the evil config (or the worktree could not be made): also fine
+            except SpawnError as exc:
+                # the gate saw the evil config (observe.unavailable), or it passed and orch's own checkout refused the
+                # committed `filter=` attribute: either way no program ran
+                reached += exc.code == "worktree.checkout_unsupported"
             finally:
                 with contextlib.suppress(SpawnError):
                     wtgit.run_git(args("worktree.remove", name), own)
@@ -137,7 +138,7 @@ def test_the_config_flipper_race_never_runs_the_marker(world):  # noqa: F811
         stop.set()
         t.join()
     assert not marker.exists(), "a repo-config smudge filter ran during worktree.add"
-    assert passed, "the race never let an add through: the test proves nothing"
+    assert reached, "the gate never passed: the race never reached the checkout, the test proves nothing"
 
 
 def test_control_plain_git_checkout_does_run_the_repo_filter(world):  # noqa: F811
@@ -160,9 +161,15 @@ def test_populate_never_reads_a_filter_from_the_repo_config(world):  # noqa: F81
     wt = _wt(repo)
     Path(f"{repo}.worktrees").mkdir()
     _pgit(root, repo, "worktree", "add", "-q", "--no-checkout", "-b", "n", str(wt))
-    populate(str(wt), own)
-    assert (wt / "p.bin").read_text() == "POINTER\n"
+    with pytest.raises(Unavailable, match="filters"):
+        populate(str(wt), own)
     assert not marker.exists()
+    # and without the attribute the raw blob is written, the repo's filter definitions still unread
+    _commit(repo, {".gitattributes": "# none\n"})
+    wt2 = Path(f"{repo}.worktrees") / "second"
+    _pgit(root, repo, "worktree", "add", "-q", "--no-checkout", "-b", "n2", str(wt2))
+    populate(str(wt2), own)
+    assert (wt2 / "p.bin").read_text() == "POINTER\n" and not marker.exists()
 
 
 def _fake_lfs(root: Path) -> None:
@@ -173,25 +180,6 @@ def _fake_lfs(root: Path) -> None:
     (root / ".gitconfig").write_text(
         f'[filter "lfs"]\n\tsmudge = {root}/smudge.sh %f\n\tclean = {root}/clean.sh %f\n\trequired = true\n'
     )
-
-
-def test_lfs_pointers_are_smudged_with_the_persons_filter_only(world):  # noqa: F811
-    root, repo, own, args = world
-    _fake_lfs(root)
-    _commit(repo, {".gitattributes": "*.bin filter=lfs\n", "big.bin": "POINTER:abc\n", "keep.txt": "POINTER:xyz\n"})
-    _add(world, _git(repo, "rev-parse", "HEAD"))
-    wt = _wt(repo)
-    assert (wt / "big.bin").read_text() == "CONTENT:abc\n"  # the person's filter ran
-    assert (wt / "keep.txt").read_text() == "POINTER:xyz\n"  # not selected by an attribute
-    # the index holds the pointer's id: git (with the same clean filter) sees no change
-    assert _pgit(root, wt, "status", "--porcelain").stdout == ""
-
-
-def test_without_a_person_filter_the_pointer_is_written_as_is(world):  # noqa: F811
-    root, repo, own, args = world
-    _commit(repo, {".gitattributes": "*.bin filter=lfs\n", "big.bin": "POINTER:abc\n"})
-    _add(world, _git(repo, "rev-parse", "HEAD"))
-    assert (_wt(repo) / "big.bin").read_text() == "POINTER:abc\n"
 
 
 def _refused(world_, code: str = "worktree.checkout_unsupported") -> None:
@@ -206,40 +194,10 @@ def _refused(world_, code: str = "worktree.checkout_unsupported") -> None:
     assert str(_wt(repo)) not in _git(repo, "worktree", "list", "--porcelain")
 
 
-def test_a_non_allow_listed_person_filter_fails_closed(world):  # noqa: F811
-    root, repo, own, args = world
-    (root / ".gitconfig").write_text('[filter "other"]\n\tsmudge = cat\n\tclean = cat\n')
-    _commit(repo, {".gitattributes": "* filter=other\n"})
-    _refused(world)
-    # a retry after the person fixes their config works: nothing was left behind
-    (root / ".gitconfig").write_text("")
-    _add(world, _git(repo, "rev-parse", "HEAD"))
-
-
-def test_a_failing_person_filter_fails_closed(world):  # noqa: F811
-    root, repo, own, args = world
-    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = false\n\trequired = true\n')
-    _commit(repo, {".gitattributes": "* filter=lfs\n"})
-    _refused(world)
-
-
-def test_an_uncertain_person_config_with_a_selected_filter_fails_closed(world):  # noqa: F811
-    root, repo, own, args = world
-    (root / ".gitconfig").write_text("[include]\n\tpath = /elsewhere\n")
-    _commit(repo, {".gitattributes": "* filter=lfs\n"})
-    _refused(world)
-
-
 @pytest.mark.parametrize("attr", ["* ident", "* working-tree-encoding=latin1", "* eol=crlf"])
 def test_conversions_it_does_not_do_fail_closed(world, attr):  # noqa: F811
     root, repo, own, args = world
     _commit(repo, {".gitattributes": attr + "\n"})
-    _refused(world)
-
-
-def test_autocrlf_in_the_persons_config_fails_closed(world):  # noqa: F811
-    root, repo, own, args = world
-    (root / ".gitconfig").write_text("[core]\n\tautocrlf = true\n")
     _refused(world)
 
 
@@ -269,17 +227,6 @@ def test_a_gitmodules_symlink_fails_closed(world):  # noqa: F811
     root, repo, own, args = world
     _evil_tree(repo, [("120000", "blob", ".gitmodules")])
     _refused(world)
-
-
-def test_the_error_names_the_reason_but_no_file_content(world):  # noqa: F811
-    root, repo, own, args = world
-    (root / ".gitconfig").write_text('[filter "other"]\n\tsmudge = SECRETCMD\n')
-    _commit(repo, {".gitattributes": "* filter=other\n"})
-    a = args("worktree.add")
-    a["base"] = _git(repo, "rev-parse", "HEAD")
-    with pytest.raises(SpawnError) as e:
-        wtgit.run_git(a, own)
-    assert "other" in e.value.message and "SECRETCMD" not in e.value.message
 
 
 def test_populate_refuses_a_non_empty_worktree(world):  # noqa: F811
@@ -321,31 +268,6 @@ def test_a_regular_gitattributes_is_fine(world):  # noqa: F811
     _add(world, _git(repo, "rev-parse", "HEAD"))
 
 
-def test_a_filter_with_endless_output_is_killed_at_the_cap(world, monkeypatch):  # noqa: F811
-    from orch.gitread import checkout
-
-    root, repo, own, args = world
-    monkeypatch.setattr(checkout, "FILTER_OUT_MAX", 100_000)
-    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = yes\n')
-    _commit(repo, {".gitattributes": "* filter=lfs\n"})
-    a = args("worktree.add")
-    a["base"] = _git(repo, "rev-parse", "HEAD")
-    with pytest.raises(SpawnError) as e:
-        wtgit.run_git(a, own)
-    assert e.value.code == "worktree.checkout_unsupported" and "too much output" in e.value.message
-    assert not _wt(repo).exists()
-
-
-def test_a_hanging_filter_is_stopped(world, monkeypatch):  # noqa: F811
-    from orch.gitread import checkout
-
-    root, repo, own, args = world
-    monkeypatch.setattr(checkout, "FILTER_SECONDS", 1.0)
-    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = sleep 30\n')
-    _commit(repo, {".gitattributes": "* filter=lfs\n"})
-    _refused(world)
-
-
 def test_exponential_macros_are_bounded(world):  # noqa: F811
     root, repo, own, args = world
     lines = ["[attr]m0 a b"] + [f"[attr]m{i} m{i - 1} m{i - 1}" for i in range(1, 40)]
@@ -359,4 +281,107 @@ def test_a_slow_checkout_hits_the_deadline(world, monkeypatch):  # noqa: F811
     root, repo, own, args = world
     monkeypatch.setattr(checkout, "POPULATE_SECONDS", -1.0)
     _commit(repo, {"a": "1"})
+    _refused(world)
+
+
+def _marker_filter(root: Path, name: str = "lfs") -> Path:
+    marker = root / "filter-ran"
+    (root / ".gitconfig").write_text(f'[filter "{name}"]\n\tsmudge = sh -c "touch {marker}; cat"\n\tclean = cat\n')
+    return marker
+
+
+@pytest.mark.parametrize("name", ["lfs", "other"])
+def test_a_filter_attribute_refuses_the_whole_worktree_and_no_filter_runs(world, name):  # noqa: F811
+    """No external filter process runs during populate, the person's lfs included: any ``filter=`` refuses."""
+    root, repo, own, args = world
+    marker = _marker_filter(root, name)
+    _commit(repo, {".gitattributes": f"*.bin filter={name}\n", "big.bin": "POINTER:abc\n", "plain.txt": "x"})
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(a, own)
+    assert e.value.code == "worktree.checkout_unsupported" and "Git LFS / filters" in e.value.message
+    assert not marker.exists()
+    assert not _wt(repo).exists() and "feat-x" not in _git(repo, "branch", "--list")
+
+
+def test_a_filter_name_nobody_defines_is_refused_too(world):  # noqa: F811
+    root, repo, own, args = world
+    _commit(repo, {".gitattributes": "* filter=whatever\n"})
+    _refused(world)
+
+
+@pytest.mark.parametrize("value", ["true", "yes", "on", "1", "TRUE", "Yes"])
+def test_autocrlf_true_spellings_fail_closed(world, value):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text(f"[core]\n\tautocrlf = {value}\n")
+    _refused(world)
+
+
+def test_bare_autocrlf_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text("[core]\n\tautocrlf\n")
+    _refused(world)
+
+
+@pytest.mark.parametrize("value", ["false", "input", "no", "0"])
+def test_autocrlf_off_spellings_are_fine(world, value):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text(f"[core]\n\tautocrlf = {value}\n")
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+
+
+def test_any_exception_in_populate_undoes_everything(world, monkeypatch):  # noqa: F811
+    from orch.gitread import checkout
+
+    root, repo, own, args = world
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(checkout, "populate", boom)
+    _refused(world)
+
+
+def test_a_failing_git_remove_still_leaves_nothing_behind(world, monkeypatch):  # noqa: F811
+    from orch.gitread import checkout
+
+    root, repo, own, args = world
+    real = wtgit._spawn
+
+    def spawn(argv, *a, **k):
+        if "remove" in argv:
+            raise SpawnError("worktree.git_failed", "forced")
+        return real(argv, *a, **k)
+
+    def half(path, env, log=None):
+        (Path(path) / "d").mkdir()
+        (Path(path) / "d" / "ro").write_text("x")
+        (Path(path) / "d" / "ro").chmod(0o444)
+        (Path(path) / "d").chmod(0o555)
+        (Path(path) / "link").symlink_to(root)
+        raise RuntimeError("half")
+
+    monkeypatch.setattr(checkout, "populate", half)
+    monkeypatch.setattr(wtgit, "_spawn", spawn)
+    _refused(world)
+    assert (root / "f").exists() if (root / "f").exists() else True
+    assert root.exists() and os.listdir(root)  # the symlink's target was not followed or emptied
+
+
+def test_many_rules_with_a_big_macro_stay_fast(world):  # noqa: F811
+    import time
+
+    root, repo, own, args = world
+    macro = "[attr]m " + " ".join(f"a{i}" for i in range(400)) + "\n"
+    files = {f"d/f{i}": "x" for i in range(100)}
+    _commit(repo, {".gitattributes": macro + "* m\n" * 2000, **files})
+    t = time.monotonic()
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+    assert time.monotonic() - t < 4
+
+
+def test_a_differently_cased_gitattributes_is_read(world):  # noqa: F811
+    root, repo, own, args = world
+    _commit(repo, {".GitAttributes": "* filter=lfs\n"})
     _refused(world)

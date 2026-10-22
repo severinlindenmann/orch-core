@@ -75,7 +75,7 @@ prune``)                                                (and the worktree) plus 
                                                         after orch's own clean check (git's ``status`` never runs);
                                                         ``prune`` checks out nothing; ``add`` is ``--no-checkout`` and
                                                         orch writes the tree itself (#584, ``gitread.checkout``):
-                                                        no filter of the repo's config; only the person's ``lfs``
+                                                        no process at all; a ``filter=`` attribute refuses
 ``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
                                                         records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
                                                         on top of :func:`exec_risk` (#541); out of #565's scope

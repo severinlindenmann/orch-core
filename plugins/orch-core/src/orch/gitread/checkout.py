@@ -9,22 +9,16 @@ worktree) followed by a column-G ``worktree.create`` could make a program run as
   are written relative to a directory fd with ``O_CREAT|O_EXCL|O_NOFOLLOW`` (modes 100644 and 100755 from the
   umask as git does, symlinks, gitlinks as empty directories); then the index (version 2, stat data from what was
   written) is written under ``index.lock`` and renamed;
-* **filters.** The repository's config is never read for a filter. A blob whose ``filter`` attribute (from the
-  tree's ``.gitattributes``, ``info/attributes`` and the person's global attributes, which only *select* a name) names
-  an allow-listed filter, :data:`ALLOWED_FILTERS` (``lfs``), is passed through the command the **person's** system or
-  global config gives it (``filter.lfs.smudge``, run as git runs it, ``sh -c`` with ``%f`` quoted). A name the person
-  defines but that is not allow-listed, a filter with only a ``process`` driver, or a person config the reader cannot
-  be sure of, is refused. A name nobody in the person's config defines does nothing (git does nothing for it either);
-  the repo's own definition of it is ignored;
+* **filters: none.** No external process runs during the checkout, ever. A path whose ``filter`` attribute names any
+  filter (git-lfs included; the attribute comes from the tree's ``.gitattributes``, ``info/attributes`` or the person's
+  global attributes) refuses the whole worktree: "this repo uses Git LFS / filters; worktrees for it are not supported
+  yet". The repo's config is never read for a filter either. (Third time the class "repo-controlled config executes
+  code during worktree add" was found: #565, #584, git-lfs ``lfs.customtransfer.*`` through the person's smudge.)
 * **fail closed** (:class:`~orch.gitread.errors.Unavailable`, the caller removes the half-populated worktree): a name
   git's ``verify_path`` would refuse (``.git`` in any spelling, also as ``git~1`` or with ignorable code points), a
   ``.gitmodules`` symlink, an object the reader cannot read (including one over :data:`limits.OBJECT_MAX`), a name that
   collides on this file system, a path git would convert (``ident``, ``working-tree-encoding``, ``eol=crlf``,
   the person's ``core.autocrlf=true`` or ``core.eol=crlf``), a ``.gitattributes`` it cannot parse with certainty.
-
-Residual (tier A): the person-configured filter command itself (git-lfs) reads the repository's config as it does when
-the person runs it (e.g. ``lfs.customtransfer.*``). That is the person's own tool; the repository's own filter
-definitions are never used.
 """
 
 from __future__ import annotations
@@ -33,12 +27,8 @@ import contextlib
 import hashlib
 import os
 import re
-import selectors
-import signal
 import stat
 import struct
-import subprocess
-import threading
 import time
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -54,13 +44,8 @@ from .refs import read_head_any
 from .repo import Repo
 from .wildmatch import Glob, compile_glob
 
-__all__ = ["ALLOWED_FILTERS", "populate"]
+__all__ = ["populate"]
 
-#: the only filters the person's config may supply to a checkout (everything else is refused when defined)
-ALLOWED_FILTERS = frozenset({"lfs"})
-FILTER_SECONDS = 30.0
-FILTER_OUT_MAX = 256 * limits.MiB
-FILTER_ERR_MAX = 8192
 ATTRS_MAX = 1000
 POPULATE_SECONDS = 600.0
 ATTR_FILE_MAX = limits.MiB
@@ -113,7 +98,7 @@ def _person(env: Mapping[str, str]) -> _Person:
                 p.filters.setdefault(sub.lower(), {})[key] = value
             elif section == "core" and sub is None:
                 if key == "autocrlf":
-                    p.autocrlf = (value or "").lower() if value is not None else "true"
+                    p.autocrlf = "true" if value is None else value.strip().lower()
                 elif key == "eol":
                     p.eol = (value or "").lower()
                 elif key == "attributesfile":
@@ -197,7 +182,9 @@ class _AttrFile:
                 continue  # git never matches a file with these
             slash = "/" in pat
             glob = compile_glob(pat.lstrip("/").encode("utf-8"))
-            self.rules.append(_Rule(glob, slash, _expand(_tokens(rest), macros)))
+            expanded = [t for t in _expand(_tokens(rest), macros) if t[0] in _WANT]  # only what a checkout acts on
+            if expanded:
+                self.rules.append(_Rule(glob, slash, expanded))
 
 
 class _Attrs:
@@ -207,9 +194,6 @@ class _Attrs:
 
     def __init__(self, info: _AttrFile | None, global_: _AttrFile | None, macros: dict) -> None:
         self.info, self.global_, self.macros = info, global_, macros
-
-    def _flatten(self, attrs: list[tuple[str, str, str | None]]) -> list[tuple[str, str, str | None]]:
-        return _expand(attrs, self.macros)
 
     def query(self, stack: list[_AttrFile], rel: bytes) -> dict[str, tuple[str, str | None]]:
         sources = [self.info, *reversed(stack), self.global_]
@@ -224,7 +208,7 @@ class _Attrs:
                     continue
                 if not rule.glob.match(sub if rule.slash else base_name):
                     continue
-                for name, state, val in reversed(self._flatten(rule.attrs)):
+                for name, state, val in reversed(rule.attrs):
                     if name in _WANT and name not in result:
                         result[name] = (state, val)
         return result
@@ -264,10 +248,6 @@ def _bad_name(raw: bytes) -> bool:
     return s == ".git" or (s.startswith("git~") and s[4:].isdigit())
 
 
-def _shell_quote(s: str) -> str:
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
 @dataclass
 class _Entry:
     path: bytes
@@ -305,7 +285,7 @@ class _Writer:
             if _bad_name(e.name):
                 raise Unavailable("the tree has a path git itself refuses (a .git component or a bad name)")
         for e in items:
-            if e.name == b".gitattributes" and e.mode in (0o100644, 0o100755):
+            if _fold(e.name) == ".gitattributes" and e.mode in (0o100644, 0o100755):
                 blob = self.repo.blob(e.oid)
                 if len(blob) > ATTR_FILE_MAX:
                     raise Unavailable("a .gitattributes file is larger than 1 MiB")
@@ -365,104 +345,10 @@ class _Writer:
         flt = q.get("filter", ("unspec", None))
         if flt[0] != "val" or not flt[1]:
             return data
-        name = flt[1].lower()
-        if not self.person.known:
-            raise Unavailable(f"the person's git config is not certain ({self.person.why}); filter {name} not applied")
-        defined = self.person.filters.get(name)
-        if not defined or not any(defined.get(k) for k in ("smudge", "process", "clean")):
-            return data  # nothing in the person's config: git does nothing either (the repo's definition is ignored)
-        if name not in ALLOWED_FILTERS:
-            raise Unavailable(f"the person's filter {name} is not on the allow-list for a worktree checkout")
-        cmd = defined.get("smudge")
-        if not cmd:
-            raise Unavailable(f"the person's filter {name} has no smudge command (only a process driver)")
-        return self._smudge(cmd, path, data)
-
-    def _smudge(self, cmd: str, path: bytes, data: bytes) -> bytes:
-        rel = path.decode("utf-8", "surrogateescape")
-        argv = ["sh", "-c", cmd.replace("%f", _shell_quote(rel))]
-        env = {
-            k: self.env[k] for k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "XDG_CONFIG_HOME") if k in self.env
-        }
-        env.update(LANG="C", LC_ALL="C", GIT_TERMINAL_PROMPT="0", GIT_ALLOW_PROTOCOL="")
-        try:
-            proc = subprocess.Popen(  # noqa: S603 - the PERSON's configured command, as git would run it
-                argv,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                cwd=self.cwd,
-                start_new_session=True,
-                close_fds=True,
-            )
-        except OSError as exc:
-            raise Unavailable(f"the person's filter could not start ({type(exc).__name__})") from None
-        out, err = _stream(proc, data)
-        if proc.returncode != 0:
-            if self.log is not None:
-                self.log(f"checkout filter failed ({proc.returncode}): {err.decode('utf-8', 'replace')[-500:]}")
-            raise Unavailable(f"the person's filter failed (exit {proc.returncode})")
-        return out
-
-
-def _kill(proc: subprocess.Popen[bytes]) -> None:
-    with contextlib.suppress(OSError):
-        os.killpg(proc.pid, signal.SIGKILL)  # the group this checkout created for this filter, nothing else
-    with contextlib.suppress(Exception):
-        proc.wait(timeout=5)
-
-
-def _stream(proc: subprocess.Popen[bytes], data: bytes) -> tuple[bytes, bytes]:
-    """Feed ``data`` to the filter and read its output incrementally: the process group is killed the moment stdout
-    passes :data:`FILTER_OUT_MAX` (stderr keeps only :data:`FILTER_ERR_MAX`) or :data:`FILTER_SECONDS` pass."""
-    assert proc.stdin and proc.stdout and proc.stderr
-
-    def feed() -> None:
-        with contextlib.suppress(OSError):
-            try:
-                proc.stdin.write(data)  # type: ignore[union-attr]
-            finally:
-                proc.stdin.close()  # type: ignore[union-attr]
-
-    writer = threading.Thread(target=feed, daemon=True)
-    writer.start()
-    deadline = time.monotonic() + FILTER_SECONDS
-    sel = selectors.DefaultSelector()
-    sel.register(proc.stdout, selectors.EVENT_READ, "out")
-    sel.register(proc.stderr, selectors.EVENT_READ, "err")
-    out: list[bytes] = []
-    err = b""
-    got = 0
-    try:
-        while sel.get_map():
-            left = deadline - time.monotonic()
-            if left <= 0:
-                _kill(proc)
-                raise Unavailable("the person's filter took too long and was stopped")
-            for key, _ in sel.select(min(left, 1.0)):
-                chunk = os.read(key.fileobj.fileno(), 65536)  # type: ignore[union-attr]
-                if not chunk:
-                    sel.unregister(key.fileobj)
-                elif key.data == "out":
-                    got += len(chunk)
-                    if got > FILTER_OUT_MAX:
-                        _kill(proc)
-                        raise Unavailable("the person's filter produced too much output and was stopped")
-                    out.append(chunk)
-                else:
-                    err = (err + chunk)[-FILTER_ERR_MAX:]
-        try:
-            proc.wait(timeout=max(0.1, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            _kill(proc)
-            raise Unavailable("the person's filter took too long and was stopped") from None
-    finally:
-        sel.close()
-        proc.stdout.close()
-        proc.stderr.close()
-        writer.join(timeout=1)
-    return b"".join(out), err
+        raise Unavailable(
+            "this repo uses Git LFS / filters; worktrees for it are not supported yet "
+            f"(a path selects the filter {flt[1]!r})"
+        )
 
 
 def _index_bytes(entries: list[_Entry], algo: str) -> bytes:
@@ -475,7 +361,7 @@ def _index_bytes(entries: list[_Entry], algo: str) -> bytes:
             ">10I",
             u(int(st.st_ctime)), u(st.st_ctime_ns % 1_000_000_000), u(int(st.st_mtime)),
             u(st.st_mtime_ns % 1_000_000_000), u(st.st_dev), u(st.st_ino), e.mode, u(st.st_uid), u(st.st_gid),
-            u(st.st_size) if stat.S_ISREG(st.st_mode) else 0,
+            u(st.st_size) if stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode) else 0,
         )  # fmt: skip
         raw = bytes.fromhex(e.oid)
         flags = struct.pack(">H", min(len(e.path), 0xFFF))
@@ -519,7 +405,7 @@ def populate(path: str, env: Mapping[str, str], *, log: Callable[[str], None] | 
     """
     pins = pin_repo(path, None)
     person = _person(env)
-    if person.autocrlf == "true" or person.eol == "crlf":
+    if person.autocrlf not in (None, "", "false", "no", "off", "0", "input") or person.eol == "crlf":
         raise Unavailable("the person's core.autocrlf/core.eol would convert line endings; not supported here")
     with Repo(pins) as repo:
         ref, detached = read_head_any(repo.gitdir, repo.hexlen)
@@ -531,12 +417,12 @@ def populate(path: str, env: Mapping[str, str], *, log: Callable[[str], None] | 
         gattr = None
         if person.attributes_file:
             gp = person.attributes_file
-            gp = os.path.join(env["HOME"], gp[2:]) if gp.startswith("~/") else gp
+            gp = os.path.join(env.get("HOME", ""), gp[2:]) if gp.startswith("~/") else gp
             if not gp.startswith("/"):
                 raise Unavailable("core.attributesFile is not an absolute path")
             gattr = _load_attr_file(gp, macros)
         else:
-            xdg = env.get("XDG_CONFIG_HOME") or os.path.join(env["HOME"], ".config")
+            xdg = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
             gattr = _load_attr_file(os.path.join(xdg, "git", "attributes"), macros)
         raw_info = (
             repo.commondir.read_optional("info/attributes", ATTR_FILE_MAX)

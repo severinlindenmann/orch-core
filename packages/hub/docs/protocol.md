@@ -476,7 +476,7 @@ for. **At join the host hands the hub its v2 directory card** (v2 §7.1: the own
 `WSK` once, and the `WSK`-signed card) and the owner's `pk_pub`, in the link op `join` (§10), together with the
 binding. The hub checks, in order:
 
-1. card and `pk_pub` present → `unknown_workspace` (vector `hub_join_binding_without_card`);
+1. card and `pk_pub` present → `unknown_workspace` (vector `hub_join_binding_without_card`). **On the link** a `join` body without `card` or `pk_pub` never gets here: it fails the exact field check of §10.2 step 6 first and is `malformed`, before any registry lookup; `unknown_workspace` is the code of the object check itself;
 2. the card (v2 §7.1): members and field sets → `malformed`; suite → `wrong_suite`; `person_id(pk_pub) ==
    delegation.owner_person_id` → `other_person`; the delegation under `PK` with `orch/v2/sig/ws-delegation|` →
    `bad_signature`; `workspace_id`, `wsk_pub` and `owner_person_id` of card and delegation equal →
@@ -561,6 +561,13 @@ carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in p
 5. `|now − ts_ms| ≤ 120 s` → `stale_timestamp`;
 6. the request body has exactly the table's fields with their types → `malformed`;
 7. (L7) `seq` greater than the last accepted in this direction.
+
+Reply rules:
+
+- A reply echoes `op` only if it is in the closed op list above; otherwise `op` is the fixed literal `"error"`. A sender never gets a signature over a string it chose; the requester correlates by `re`.
+- A refusal at steps 1–6 is not a reply: the hub sends an unsigned `{"t":"error","error":code}` frame and drops the link, never a signed reply. This holds above all for a peer that has not authenticated, whose input must not be answered with anything signed.
+- After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
+- After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -709,6 +716,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `alias_repointed` | `hub.joined` | §9.1 |
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
+| `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish | §11.2 |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |

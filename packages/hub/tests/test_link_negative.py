@@ -398,3 +398,18 @@ def test_unjoined_link_has_a_short_idle_timeout(make_hub):
     c = h.open(first=True)
     with pytest.raises(tls.LinkClosed):
         framing.read_frame(c._c, first_timeout=5, rest_timeout=5)
+
+
+def test_any_op_after_leave_is_not_bound_except_join_and_binding_put(hub):
+    c = joined(hub)
+    c.request("binding_put", {"object": G.unbound()})
+    refused(c, "card_put", {"card": G.v2_card(), "pk_pub": ALICE_PK}, "not_bound")
+    refused(c, "snapshot_get", {}, "not_bound")
+    refused(c, "binding_put", {"object": G.binding()}, "unbound")  # served, and the store refuses
+
+
+def test_join_without_card_is_malformed_before_any_lookup(hub):
+    c = hub.open(first=True)
+    body = hub.join_body()
+    del body["card"]
+    expect_link_refusal(c, c.build("join", body), "malformed")

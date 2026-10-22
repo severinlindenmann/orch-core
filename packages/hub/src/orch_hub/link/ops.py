@@ -113,7 +113,7 @@ def _require_bound(c: OpContext) -> None:
     if st is None:
         raise Refused("unknown_workspace")
     if st["status"] != "bound":
-        raise Refused("unbound")
+        raise Refused("not_bound")
 
 
 def join(c: OpContext) -> dict[str, Any]:

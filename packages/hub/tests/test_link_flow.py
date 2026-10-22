@@ -51,7 +51,7 @@ def test_join_card_binding_snapshot_leave(hub):
         assert e.value.code == "unbound"
     with pytest.raises(LinkError) as e:
         c.request("snapshot_get", {})
-    assert e.value.code == "unbound"
+    assert e.value.code == "not_bound"
 
 
 NOW_ = G.NOW
@@ -91,7 +91,7 @@ def test_publish_out_goes_to_forwarder(make_hub):
     c.request("binding_put", {"object": G.unbound()})
     with pytest.raises(LinkError) as e:
         c.request("publish_out", {"request": req})
-    assert e.value.code == "unbound"
+    assert e.value.code == "not_bound"
 
 
 def test_publish_out_without_forwarder_is_unavailable(hub):

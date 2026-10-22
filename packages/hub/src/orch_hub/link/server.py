@@ -233,7 +233,7 @@ class LinkServer:
                 "dir": "h2w",
                 "seq": seq,
                 "ts_ms": now,
-                "op": o["op"],
+                "op": o["op"] if o["op"] in H.LINK_OPS else "error",  # never sign a peer-chosen string
                 "re": o["seq"],
                 "body": body,
             }
@@ -246,6 +246,10 @@ class LinkServer:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:
                 raise Refused("unknown_workspace")  # an unjoined link may only join
+            if o["op"] not in ("join", "binding_put"):
+                st = self._reg.binding_state(ws)
+                if st is not None and st["status"] != "bound":
+                    raise Refused("not_bound")  # after hub.unbound only join and binding_put are served
             ctx = ops.OpContext(
                 hub_id=self.hub_id,
                 workspace_id=ws,

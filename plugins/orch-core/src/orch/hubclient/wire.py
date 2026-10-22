@@ -25,12 +25,16 @@ SIG_OP_CERT = b"orch/v2/hub-op-cert|"
 SIG_CARD = b"orch/v2/hub-card|"
 SIG_OP_REVOKED = b"orch/v2/hub-op-revoked|"
 SIG_SNAPSHOT = b"orch/v2/hub-snapshot|"
+SIG_UK_CERT = b"orch/v2/hub-uk-cert|"
+SIG_CHANNEL_CERT = b"orch/v2/hub-channel-cert|"
 SIG_BINDING = b"orch/v2/sig/hub-binding|"
 SIG_UNBOUND = b"orch/v2/sig/hub-unbound|"
 SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 _H_HUB_ID = b"orch/v2/id/hub|"
 _H_PERSON_ID = b"orch/v2/id/person|"
+_H_CHANNEL_ID = b"orch/v2/id/channel|"
+FACTORS = ("se-unlocked", "passkey", "password+totp")
 
 Sign = Callable[[bytes], bytes]
 
@@ -108,6 +112,26 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "hub_id": hex16,
         "cert_id": hex16,
         "revoked_ms": _int_min(0),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.uk_cert": {
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "user_id": hex16,
+        "uk_pub": is_pub,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.channel_cert": {
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "channel_id": hex16,
+        "user_id": hex16,
+        "key_pub": is_pub,
+        "factor": lambda x: type(x) is str and x in FACTORS,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
         "dev": lambda x: type(x) is bool,
     },
     "hub.snapshot": {
@@ -281,6 +305,56 @@ def verify_card(
             if o["card_seq"] == held["card"]["card_seq"] and cj(card) != cj(held["signed"]):
                 raise HubRefused("stale_card")
     return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
+
+
+def channel_id(key_pub: bytes) -> str:
+    return _key_hash(_H_CHANNEL_ID, key_pub)[:16].hex()
+
+
+def _under_card(
+    signed: Any, kind: str, label: bytes, held: Mapping[str, Any], dev_mode: bool, revoked_op_certs: frozenset[str]
+) -> dict[str, Any]:
+    """Section 6.1: an object signed by ``HK_op``, verified under the op key of a card the verifier already verified
+    (``held`` is the result of :func:`verify_card`). Only the card's current op cert counts, and it is checked against
+    the CURRENT revoked set at every use (L2-1)."""
+    if held["op_cert"]["cert_id"] in revoked_op_certs:
+        raise HubRefused("revoked")
+    o = _envelope(signed, kind)
+    _signature(signed, label, held["hk_op_pub"])
+    _fields(o, kind)
+    if o["hub_id"] != held["card"]["hub_id"]:
+        raise HubRefused("other_hub")
+    if o["op_cert_id"] != held["op_cert"]["cert_id"]:
+        raise HubRefused("stale_op_cert")
+    check_dev(o["dev"], dev_mode)
+    return o
+
+
+def _cert_time(o: Mapping[str, Any], now_ms: int) -> None:
+    if o["expires_ms"] <= o["issued_ms"] or o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
+        raise HubRefused("cert_invalid")
+    if now_ms >= o["expires_ms"]:
+        raise HubRefused("cert_expired")
+
+
+def verify_uk_cert(
+    signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool, revoked_op_certs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Section 6.1: the user's ``UK`` certificate under the held card."""
+    o = _under_card(signed, "hub.uk_cert", SIG_UK_CERT, held, dev_mode, revoked_op_certs)
+    _cert_time(o, now_ms)
+    return o
+
+
+def verify_channel_cert(
+    signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool, revoked_op_certs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Section 6.2: a channel certificate under the held card; ``channel_id`` is derived from ``key_pub``."""
+    o = _under_card(signed, "hub.channel_cert", SIG_CHANNEL_CERT, held, dev_mode, revoked_op_certs)
+    if o["channel_id"] != channel_id(unb64u(o["key_pub"], 65)):
+        raise HubRefused("cert_invalid")
+    _cert_time(o, now_ms)
+    return o
 
 
 def verify_op_revoked(signed: Any, hk_root_pub: bytes) -> dict[str, Any]:

@@ -106,6 +106,8 @@ def ctx(**kw: Any) -> dict[str, Any]:
         "git_hosts": ["github.com", "gitlab.com"],
         "seen": {},
         "builtin": ["wiki", "terminals", "dashboard"],
+        "official_ids": ["github", "landing"],
+        "moved": [],
         "installed": {},
         "known_keys": {},
         "last_version": None,
@@ -910,6 +912,37 @@ def build() -> None:
         "install",
         inst(market_repo="https://github.com/ACME/orch-market"),
         refuse("malformed"),
+    )
+
+    # ---- L2M-2: reserved ids
+    for rid in ("github", "landing"):
+        rf = files_for(rid, caps=["network"])
+        add(
+            f"install_other_marketplace_claims_official_id_{rid}",
+            "install",
+            inst(index(OTHER, [entry(rid, rf, caps=["network"])]), rf, rid),
+            refuse("reserved_id"),
+        )
+    df = files_for("dashboard")
+    de = entry("dashboard", df, signer="official", market=OFFICIAL)
+    add(
+        "install_official_entry_shadows_builtin_id",
+        "install",
+        inst(index(OFFICIAL, [de], name="orch-marketplace"), df, "dashboard", market_repo=OFFICIAL, isolation=False),
+        refuse("reserved_id"),
+    )
+    add(
+        "install_official_entry_with_a_moved_builtin_id_ok",
+        "install",
+        inst(
+            index(OFFICIAL, [de], name="orch-marketplace"),
+            df,
+            "dashboard",
+            market_repo=OFFICIAL,
+            isolation=False,
+            moved=["dashboard"],
+        ),
+        ok(id="dashboard", version="1.0.0", package_sha256=de["package_sha256"], **{"class": "official"}, tofu="new"),
     )
 
 

@@ -34,8 +34,13 @@ to a specific outside product, or encodes one team's workflow, comes from a mark
 A marketplace **never runs anything and is never trusted for what it names**. It tells orch where a package is and which
 bytes to expect. What runs is decided by the owner's signature over the digest of the bytes orch read itself.
 
-**Reserved ids.** An id on the built-in list, and every id in the official marketplace, cannot be claimed by another
-marketplace (`market.reserved_id`). Core ships the built-in list; the official id list is the official index itself.
+**Reserved ids.** An id is reserved when it is a built-in id or an official id. No non-official marketplace may publish
+one (`market.reserved_id`). The reserved set is **shipped in the core release** (built-in ids plus the official ids at
+release time) and only *added to* by a verified official index (§3.1). So the rule holds offline, on a first run, and
+whatever the official repo or an unverified copy of its index says: with no usable official index the shipped set is
+used, never an empty one (fail closed). The other direction holds too: an official entry may carry a built-in id only
+if core lists that id as *moved to the marketplace* (G6 moves `github` and `landing`); otherwise it is
+`market.reserved_id`, so the official shelf can never install a second package under the name of a built-in.
 
 ## 2. Vocabulary
 

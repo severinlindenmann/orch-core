@@ -290,7 +290,11 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     host = lambda u: u.split("/")[2]  # noqa: E731  (schema guarantees https://host/…)
     if host(entry["source"]["git"]) != host(repo) and host(entry["source"]["git"]) not in ctx["git_hosts"]:
         raise Refuse("market.host_not_allowed")
-    if not official and entry["id"] in ctx["builtin"]:
+    # reserved: core ships the built-in ids and the official ids, so the rule holds with no cached official index.
+    # An official entry may use a built-in id only if core lists it as moved to the marketplace (G6).
+    taken = official and entry["id"] in ctx["builtin"] and entry["id"] not in ctx["moved"]
+    claimed = not official and (entry["id"] in ctx["builtin"] or entry["id"] in ctx["official_ids"])
+    if taken or claimed:
         raise Refuse("market.reserved_id")
     prior = ctx["installed"].get(entry["id"])
     if prior is not None and prior["origin"] != repo:

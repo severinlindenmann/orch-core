@@ -17,6 +17,10 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspace (
   workspace_id TEXT PRIMARY KEY, owner_person_id TEXT NOT NULL, wsk_pub TEXT NOT NULL, pk_pub TEXT NOT NULL,
   card TEXT NOT NULL, binding_state TEXT NOT NULL, binding_obj TEXT
+);
+CREATE TABLE IF NOT EXISTS op_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ws TEXT NOT NULL, op TEXT NOT NULL, ts INTEGER NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','refused'))
 )
 """
 
@@ -25,7 +29,7 @@ class Registry:
     def __init__(self, path: str = ":memory:") -> None:
         self.lock = threading.RLock()
         self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.execute(_SCHEMA)
+        self._db.executescript(_SCHEMA)
         if "binding_obj" not in {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}:
             self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11
         self._db.commit()
@@ -33,6 +37,18 @@ class Registry:
     def close(self) -> None:
         with self.lock:
             self._db.close()
+
+    def log_op(self, ws: str, op: str, ts_ms: int, accepted: bool) -> None:
+        """Append-only record of one op seen on a link (name and outcome only: no body, no key). Read by
+        ``orch-hub inspect`` (dev). Never raises into the link."""
+        try:
+            with self.lock, self._db:
+                self._db.execute(
+                    "INSERT INTO op_log(ws, op, ts, outcome) VALUES (?,?,?,?)",
+                    (ws, op, ts_ms, "accepted" if accepted else "refused"),
+                )
+        except sqlite3.Error:
+            pass
 
     def _row(self, ws: str) -> sqlite3.Row | tuple | None:
         return self._db.execute(

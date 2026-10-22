@@ -240,6 +240,7 @@ class LinkServer:
                     signed, direction="w2h", hub_id_=self.hub_id, workspace_id=ws, mode=mode, pub=wsk, now_ms=now
                 )
             except Refused as e:
+                self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
                 return
             seq += 1
@@ -260,7 +261,20 @@ class LinkServer:
             }
             self._send(conn, self._signer.sign_object(reply))
 
+    def _log_refused(self, ws: str, signed: Any, code: str, now: int) -> None:
+        """Record a refused attempt of a known op (e.g. ``wk_seal`` in selective mode) for ``orch-hub inspect``.
+        Not when the signature failed: that is not the workspace speaking."""
+        o = signed.get("o") if type(signed) is dict else None
+        op = o.get("op") if type(o) is dict else None
+        if code not in ("bad_signature", "wrong_suite") and type(op) is str and op in H.LINK_OPS:
+            self._reg.log_op(ws, op, now, False)
+
     def _dispatch(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:
+        body = self._run(ws, wsk, o, now)
+        self._reg.log_op(ws, o["op"], now, "error" not in body)
+        return body
+
+    def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:
         handler = ops.HANDLERS.get(o["op"])
         try:
             if handler is None:

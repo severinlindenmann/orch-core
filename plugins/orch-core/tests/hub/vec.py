@@ -38,6 +38,8 @@ RUN_CHECKS = frozenset(
         "space_wrap",
         "space_item",
         "host_put",
+        "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
+        "share_revoke",
         "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py)
     }
 )
@@ -45,20 +47,18 @@ SKIPPED_CHECKS = {
     "custodial": "phase 4: custodial events are verified by C3, not before",
     "publish": "orch-publish verifies section 11.2; core only builds the request",
     "space_flow": "the hub's put / revoke / get rules over a space: hub side (orch_hub), core sees only the replies",
+    "action": "phase 4: what a channel may ask the hub to build; hub side (C3 custodial)",
+    "channel_register": "phase 4: channel registration at the hub, hub side",
+    "relay_request": "phase 4: hub -> relay requests, orch-relay (E1)",
+    "space_proposal": "phase 4: HK_op-signed space proposals (C13 follow-up), not part of the share format",
+    "prepared": "phase 4: what a channel shows and signs, hub side (C3)",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
-    "action": "phase 4: custodial actions are the hub's and the channels' (D6/D7); core verifies the event (C3)",
-    "share_item": "phase 4: selective share items (C6)",
-    "share_revoke": "phase 4: selective share items (C6)",
-    "relay_request": "phase 4: hub -> relay requests are the hub's and orch-relay's (E1)",
-    "channel_register": "phase 4: channel registration is the hub's (D7)",
-    "space_proposal": "phase 4: space proposals (C13 follow-up)",
-    "prepared": "phase 4: what a channel shows and signs is the hub's and the apps' (D6/D7)",
-    "built": "phase 4: the hub builds custodial events (D6)",
-    "render": "phase 4: channel rendering (D7)",
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
+    "built": "phase 4: what the hub builds for a channel decision, hub side (C3 custodial)",
+    "render": "phase 4: how a channel shows a view text, hub side (C3 custodial)",
 }
 
 
@@ -178,9 +178,27 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check in ("space", "space_wrap", "space_item", "host_put"):
         return _run_space(check, a)
+    if check in ("share_item", "share_revoke"):
+        return _run_share(check, a)
     if check == "log_sync":
         return _run_log_sync(a)
     raise ValueError(f"check {check} is not replayed by core")
+
+
+def _run_share(check: str, a: dict[str, Any]) -> dict[str, Any]:
+    from . import share_open as SO
+
+    if check == "share_revoke":
+        SO.check_share_revoke(a["body"])
+        return {}
+    seed = bytes.fromhex(a["hxk_seed"])
+    o = SO.open_share_item(
+        a["body"], hub_id=a["hub_id"], workspace_id=a["workspace_id"],
+        hxk_priv=S.private_key_from_scalar(int.from_bytes(seed, "big") % (S.P256_N - 1) + 1),
+        wsk_pub=unb64u(a["wsk_pub"], 65), held=a.get("held"), live_items=a.get("live_items", 0),
+        dev_mode=a.get("dev_mode", True),
+    )  # fmt: skip
+    return {"hash": o["hash"], "item_version": o["item"]["item_version"], "new": o["new"]}
 
 
 def _held_prod(a: dict[str, Any]) -> dict[str, Any]:

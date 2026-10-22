@@ -99,6 +99,10 @@ PLANNED_LABELS: dict[str, str] = {
     "h_space_members": "orch/v2/hub-space-members|",
     "h_sk_commit": "orch/v2/hub-sk-commit|",
     "aad_space": "orch/v2/space-aad|",
+    # V3 C6 (hub contract 10.2b, selective share_put): what the WSK signs (a share.item), its content AAD and its hash.
+    "sig_share_item": "orch/v2/sig/share-item|",
+    "aad_hub_share": "orch/v2/hub-share-aad|",
+    "h_share_item": "orch/v2/hub-share-item|",
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}

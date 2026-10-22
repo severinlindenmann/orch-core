@@ -49926,6 +49926,794 @@
   },
   {
    "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "ok": {
+     "origin": "https://hub.dev.orch.example"
+    }
+   },
+   "name": "api_origin_valid",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub-login.attacker.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "other_origin"
+   },
+   "name": "api_origin_phishing_link",
+   "note": "a link to another host with the real hub_id: the relayed object names the real origin, so no password is sent",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example:8443",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "other_origin"
+   },
+   "name": "api_origin_other_port",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "R_4qkSYOAnXxm1WuAZmvEiuMY5FzcAmxJ9G97gMzK6VOah7mAVYeKLbcwP4wvOLJ3ai9K-Fo06zQQQXGbZh83A"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "api_origin_signed_by_rogue_op",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "jvi7id2pK0iBKsXhxVOD9S5ZmMfibzylE5dFOfjVSnHwWXRkad5T7pfloIciH5Dn24CZpAivJ90l7N97e1bwWw"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "api_origin_under_card_label",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "1dbfd208a8b8fa614b0fd5566178200f",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "rUomWyoSAMmPasiSXW1p2-JZ-twKLIaZJ6OLEad4_u_p1eUR06WW0odTufpDA89UGlLQwNQVeYh2hcM46WWDCg"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "other_hub"
+   },
+   "name": "api_origin_other_hub",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "d051cbc1d5a129e573874d177f952752",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "rfMyOuIhOIamISQXjAS7mrjfOCgzOdEsqEECZ8eGYngku9YZtXbGiNS_7n2Ac0XJ8N1fbXAWRxDc9Bzz5BpcDw"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "stale_op_cert"
+   },
+   "name": "api_origin_stale_op_cert",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "revoked_later": [
+     "dd963f7365b19dba347a4ba580cc7c2b"
+    ],
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "revoked"
+   },
+   "name": "api_origin_revoked_op_cert",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1790000301000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "NfKMlgNEESfpGA4niMgsFI8QKTT7A3_st-u36Qkg7YRvp_4hXNYE4k4vBqHKydtWapTqeokdy18yyg78ps45EA"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "cert_invalid"
+   },
+   "name": "api_origin_future",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example/path",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ctOrXobouINUP7lndTGoSQmbjdOx6ICsMxqxMw4r7fdOFNDZmH-VnTWKR-uv3dDJj0splO8MClTO1u7zZ5F73A"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "api_origin_not_an_origin",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "http://127.0.0.1:8443",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "http://127.0.0.1:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "_1TJvBBAEhpKSbMq5jQpqb6ZAju_HNAPFnoEkUV9EJiyQZ4Drf9iG2JoHqPC51hdI_ToQvp1Vy3-EQxGlzzyBw"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "ok": {
+     "origin": "http://127.0.0.1:8443"
+    }
+   },
+   "name": "api_origin_http_loopback_dev",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": false,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": false,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "t4Xnp81C1UgYMiyIMnYvbIruGY-n9O_bPOV9M9U6rjNilrq0a0g_Wj8x5SmZsSqtW5MBP-uy28hJcxBV3dg_2w"
+     },
+     "sig": "xSkEobHMJyeB6e2LW23FSP-mAuH4NILa4HwzOHV3Z4OPoypjnb7YMCQnqUl-hN0L1ff3vS5OlpJ4hGEkxJdDgg"
+    },
+    "dev_mode": false,
+    "link_api": "http://127.0.0.1:8443",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "http://127.0.0.1:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "-3ltRO_A870oaEW0iCDHnneUCqQX27qLUHXU_yhsFkxE5xUE6e4ElJBLrrQfp0z1bGYK9YXgh6049dOvN94E7A"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "api_origin_http_at_real_verifier",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "link_api": "https://hub.dev.orch.example",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789913600000,
+      "kind": "hub.api_origin",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "origin": "https://hub.dev.orch.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "RfHceIpZ42_Gp8X_szXvgFCk8GWE9_jKnIDxLZ3eOd5sHxtEQ_4MoZiO7E0VrnwoiR-GKWeRODVqrt0JUzudmQ"
+    }
+   },
+   "check": "api_origin",
+   "expect": {
+    "error": "dev_mismatch"
+   },
+   "name": "api_origin_dev_false",
+   "phase": 4
+  },
+  {
+   "args": {
     "channels": {
      "a521208444bffafc2188fe6b5f1f286f": {
       "expires_ms": 1792592000000,
@@ -52457,6 +53245,65 @@
     "request": {
      "body_hex": "",
      "headers": {
+      "ORCH-CHANNEL-NONCE": "00000000000000000000000000000000",
+      "Orch-Channel-Cert": "eyJvIjp7ImNoYW5uZWxfaWQiOiJhNTIxMjA4NDQ0YmZmYWZjMjE4OGZlNmI1ZjFmMjg2ZiIsImRldiI6dHJ1ZSwiZXhwaXJlc19tcyI6MTc5MjU5MjAwMDAwMCwiZmFjdG9yIjoic2UtdW5sb2NrZWQiLCJodWJfaWQiOiIzOGQ4YWJlZDUyY2NmYjUzOGRhNDAxZmQ1NGU2NGJkYyIsImh2IjowLCJpc3N1ZWRfbXMiOjE3ODk5MTM2MDAwMDAsImtleV9wdWIiOiJCSnJfX0NxQlB6NGZiczBkV2dnOHlTNlRvb1NqYU1XTUl1U0wwUzVJdzctNkY2ZF9zRno5aWxOaEkwajRHbFg2RzhycFpaX1FZOUpudmFXTFhiMmNkWkEiLCJraW5kIjoiaHViLmNoYW5uZWxfY2VydCIsIm9wX2NlcnRfaWQiOiJkZDk2M2Y3MzY1YjE5ZGJhMzQ3YTRiYTU4MGNjN2MyYiIsInN1aXRlIjoyLCJ1c2VyX2lkIjoiYTM2OGJkMzgwNTg4ZTVkYWJlZTYyYTUxNjAzMWUyMWYiLCJ2IjoyfSwic2lnIjoibnFyMXFBLWU1eVhQbzl2U3ppYVhZTENGcVFQUXhjcl9Menc3M0x0T1Z4OHhGd3J4OENiaTJObHZiRjVNYjJacW04Rlk5eEhQS3hpN3ViWkpjeDVQYmcifQ",
+      "Orch-Channel-Nonce": "7b0614dc2be801c01dffbb4f0336a4e8",
+      "Orch-Channel-Signature": "8ftmOqiW0_7681XJTElPYWqcwJf4SqOXmJjq6BN46hoJmt1C4iwi_kvjPixzi4ayYxDpJJ4lYAxOcPdVO_zl2w",
+      "Orch-Channel-Ts": "1790000000000"
+     },
+     "method": "GET",
+     "target": "/v2/hub-channels/38d8abed52ccfb538da401fd54e64bdc/a521208444bffafc2188fe6b5f1f286f/mailbox"
+    }
+   },
+   "check": "channel_request",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "channel_request_duplicate_header",
+   "note": "L2B-9: two spellings of one header",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "now_ms": 1790000000000,
+    "request": {
+     "body_hex": "",
+     "headers": {
       "Orch-Channel-Cert": "eyJvIjp7ImNoYW5uZWxfaWQiOiJhNTIxMjA4NDQ0YmZmYWZjMjE4OGZlNmI1ZjFmMjg2ZiIsImRldiI6dHJ1ZSwiZXhwaXJlc19tcyI6MTc5MjU5MjAwMDAwMCwiZmFjdG9yIjoic2UtdW5sb2NrZWQiLCJodWJfaWQiOiIzOGQ4YWJlZDUyY2NmYjUzOGRhNDAxZmQ1NGU2NGJkYyIsImh2IjowLCJpc3N1ZWRfbXMiOjE3ODk5MTM2MDAwMDAsImtleV9wdWIiOiJCSnJfX0NxQlB6NGZiczBkV2dnOHlTNlRvb1NqYU1XTUl1U0wwUzVJdzctNkY2ZF9zRno5aWxOaEkwajRHbFg2RzhycFpaX1FZOUpudmFXTFhiMmNkWkEiLCJraW5kIjoiaHViLmNoYW5uZWxfY2VydCIsIm9wX2NlcnRfaWQiOiJkZDk2M2Y3MzY1YjE5ZGJhMzQ3YTRiYTU4MGNjN2MyYiIsInN1aXRlIjoyLCJ1c2VyX2lkIjoiYTM2OGJkMzgwNTg4ZTVkYWJlZTYyYTUxNjAzMWUyMWYiLCJ2IjoyfSwic2lnIjoibnFyMXFBLWU1eVhQbzl2U3ppYVhZTENGcVFQUXhjcl9Menc3M0x0T1Z4OHhGd3J4OENiaTJObHZiRjVNYjJacW04Rlk5eEhQS3hpN3ViWkpjeDVQYmcifQ",
       "Orch-Channel-Nonce": "7b0614dc2be801c01dffbb4f0336a4e8",
       "Orch-Channel-Signature": "AXVnh0bYjwyhno3pQOp8ta-s-tIEGCSTZO0InkyPnYt0U0GsWhfJtFCiAamXWVwX_fIKRGQ9nV4R54mCXv3Mug",
@@ -52982,6 +53829,7 @@
   "h_sk_commit": "orch/v2/hub-sk-commit|",
   "h_space_members": "orch/v2/hub-space-members|",
   "sig_hub_admin_read": "orch/v2/hub-admin-read|",
+  "sig_hub_api_origin": "orch/v2/hub-api-origin|",
   "sig_hub_audit": "orch/v2/hub-audit|",
   "sig_hub_binding": "orch/v2/sig/hub-binding|",
   "sig_hub_card": "orch/v2/hub-card|",
@@ -53369,6 +54217,20 @@
  },
  "phase4": {
   "channel_api": {
+   "api_origin": {
+    "o": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789913600000,
+     "kind": "hub.api_origin",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "origin": "https://hub.dev.orch.example",
+     "suite": 2,
+     "v": 2
+    },
+    "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg"
+   },
    "channel_auth": {
     "o": {
      "channel_id": "a521208444bffafc2188fe6b5f1f286f",
@@ -54059,6 +54921,14 @@
    "sig": "EmkqUPNJMqxzP6m4YEGJu_r67eG0w2q3YV6AkjhMQyQVj8CO2ebrgi52UT5f-BujXxMZn2dttuQgAqwuYJSmOA",
    "signed_hex": "6f7263682f76322f7369672f73686172652d6974656d7c7b22636861696e223a7b2268656164223a227368613235363a61376131313733383433343966386131666332353130613336653163643733386534646234373034353830363532653338633637346134376437316438376532222c226c6f67223a2230314a395a5030303030303030303030303030303030544b5431222c22736571223a327d2c22636f6e74656e74223a7b22646561646c696e65223a22323032362d31302d3330222c227469746c65223a22435356206f722041504920666f7220746172696666733f222c2274797065223a227175657374696f6e227d2c22646576223a747275652c226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c226876223a302c226973737565645f6d73223a313738393939393934303030302c226974656d5f6964223a223733363636306133313061393664333964643137306239316630623966316463222c226974656d5f6b696e64223a226e656564735f796f75222c226974656d5f76657273696f6e223a312c226b696e64223a2273686172652e6974656d222c227375697465223a322c2276223a322c22776f726b73706163655f6964223a223333366166643066643463333439663537356332656331353564373235386164227d",
    "signer": "wsk_a"
+  },
+  {
+   "canonical_hex": "7b22646576223a747275652c226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c226876223a302c226973737565645f6d73223a313738393931333630303030302c226b696e64223a226875622e6170695f6f726967696e222c226f705f636572745f6964223a226464393633663733363562313964626133343761346261353830636337633262222c226f726967696e223a2268747470733a2f2f6875622e6465762e6f7263682e6578616d706c65222c227375697465223a322c2276223a327d",
+   "label": "orch/v2/hub-api-origin|",
+   "name": "api_origin",
+   "sig": "aWMGQooONA3oEhIx3bbUYwV76yUrGQI4NlpVKU4FM8WBO9Xml-h6xxpja6qgLTVy0FtitwfeUAoUoeb_iCY6Wg",
+   "signed_hex": "6f7263682f76322f6875622d6170692d6f726967696e7c7b22646576223a747275652c226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c226876223a302c226973737565645f6d73223a313738393931333630303030302c226b696e64223a226875622e6170695f6f726967696e222c226f705f636572745f6964223a226464393633663733363562313964626133343761346261353830636337633262222c226f726967696e223a2268747470733a2f2f6875622e6465762e6f7263682e6578616d706c65222c227375697465223a322c2276223a327d",
+   "signer": "hk_op"
   },
   {
    "canonical_hex": "7b226368616e6e656c5f6964223a226135323132303834343462666661666332313838666536623566316632383666222c22646576223a747275652c226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c226876223a302c226b696e64223a226875622e6368616e6e656c5f61757468222c2273657373696f6e5f726566223a22553278744b7148457233696352347176734a374f6a77514445334259304c4e52494a66416376456570786b222c227375697465223a322c2274735f6d73223a313738393939393939383030302c22757365725f6964223a226133363862643338303538386535646162656536326135313630333165323166222c2276223a327d",

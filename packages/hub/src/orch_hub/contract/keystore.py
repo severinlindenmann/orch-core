@@ -85,6 +85,7 @@ class OpSigner(_Signer):
             "hub.space_wrap": "sig_hub_space_wrap",
             "hub.audit": "sig_hub_audit",
             "hub.space_proposal": "sig_hub_space_proposal",
+            "hub.api_origin": "sig_hub_api_origin",
         }
     )
     LINK_DIR = "h2w"

@@ -417,6 +417,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     # ---- B stream (§6.4, §10.8.4): the phone's pairing link, channel sessions, push key, mailbox read
     if check == "pair_link":
         return CA.parse_pair_link(a["link"], dev_mode=dev)
+    if check == "api_origin":
+        return CA.verify_api_origin(
+            a["signed"], _held(a), link_api=a["link_api"], now_ms=now, dev_mode=dev, revoked_op_certs=_later(a)
+        )
     if check == "channel_auth":
         return CA.verify_channel_auth(
             a["signed"],

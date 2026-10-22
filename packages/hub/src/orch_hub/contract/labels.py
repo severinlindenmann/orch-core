@@ -22,7 +22,8 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
     "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
     "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
-    "sig_hub_relay_request": "orch/v2/hub-relay-req|",  # p4 (E1): a hub -> relay request, bytes as admin read
+    "sig_hub_relay_request": "orch/v2/hub-relay-req|",
+    "sig_hub_api_origin": "orch/v2/hub-api-origin|",  # p4 (B, §6.4, L2B-1): the hub names its own public API origin  # p4 (E1): a hub -> relay request, bytes as admin read
     # signatures by a channel key
     "sig_hub_channel_proof": "orch/v2/hub-channel-proof|",
     "sig_hub_channel_register": "orch/v2/hub-channel-reg|",  # p4: proof of possession at channel registration

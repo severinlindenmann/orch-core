@@ -25,6 +25,7 @@ from .vectorgen import (
     channel_cert,
     fake16,
     hdr,
+    op_cert,
     resign,
     signed,
 )
@@ -36,6 +37,19 @@ SESSION = "FAKE-pairing-session-token-alice-0001"
 OTHER_SESSION = "FAKE-pairing-session-token-alice-0002"
 CH_NONCE = S.fake_seed("hub/channel_req_nonce")[:16]
 MID = fake16("mailbox_msg")
+
+
+def api_origin(key: str = "hk_op", label: str = "sig_hub_api_origin", **kw: Any) -> dict[str, Any]:
+    o = {
+        **hdr("hub.api_origin"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "origin": f"https://{API_HOST}",
+        "issued_ms": NOW - DAY,
+        "dev": True,
+        **kw,
+    }
+    return signed(key, label, o)
 
 
 def channel_auth(key: str = "channel_alice_phone", label: str = "sig_hub_channel_auth", **kw: Any) -> dict[str, Any]:
@@ -161,6 +175,44 @@ def build_b(
     }
     for n, link in bad.items():
         pl(f"pair_link_{n}", link, {"error": "malformed"})
+
+    # ---- §6.4 the hub's signed API origin (L2B-1): checked against the link before any password
+    ob = {**base, "card": card(), "link_api": f"https://{API_HOST}"}
+
+    def org(name: str, s: dict[str, Any], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "api_origin", {**ob, **kw, "signed": s}, expect, 4, note)
+
+    org("api_origin_valid", api_origin(), {"ok": {"origin": f"https://{API_HOST}"}})
+    org(
+        "api_origin_phishing_link",
+        api_origin(),
+        {"error": "other_origin"},
+        "a link to another host with the real hub_id: the relayed object names the real origin, so no password is sent",
+        link_api="https://hub-login.attacker.example",
+    )
+    org("api_origin_other_port", api_origin(), {"error": "other_origin"}, link_api=f"https://{API_HOST}:8443")
+    org("api_origin_signed_by_rogue_op", api_origin(key="hk_op_rogue"), {"error": "bad_signature"})
+    org("api_origin_under_card_label", api_origin(label="sig_hub_card"), {"error": "bad_signature"})
+    org("api_origin_other_hub", api_origin(hub_id=fake16("other_hub")), {"error": "other_hub"})
+    org("api_origin_stale_op_cert", api_origin(op_cert_id=OP_CERT_NEXT), {"error": "stale_op_cert"})
+    org("api_origin_revoked_op_cert", api_origin(), {"error": "revoked"}, revoked_later=[OP_CERT_ID])
+    org("api_origin_future", api_origin(issued_ms=NOW + 301_000), {"error": "cert_invalid"})
+    org("api_origin_not_an_origin", api_origin(origin=f"https://{API_HOST}/path"), {"error": "malformed"})
+    org(
+        "api_origin_http_loopback_dev",
+        api_origin(origin="http://127.0.0.1:8443"),
+        {"ok": {"origin": "http://127.0.0.1:8443"}},
+        link_api="http://127.0.0.1:8443",
+    )
+    org(
+        "api_origin_http_at_real_verifier",
+        api_origin(origin="http://127.0.0.1:8443", dev=False),
+        {"error": "malformed"},
+        card=card(op=op_cert(dev=False), dev=False),
+        dev_mode=False,
+        link_api="http://127.0.0.1:8443",
+    )
+    org("api_origin_dev_false", api_origin(dev=False), {"error": "dev_mismatch"})
 
     # ---- §6.4 channel session: the channel key binds a pairing session of its user to itself
     channels = {
@@ -369,6 +421,9 @@ def build_b(
         revoked_op_certs=[OP_CERT_ID],
     )
     cr("channel_request_post", channel_req("POST"), {"error": "malformed"})
+    dup = channel_req()
+    dup["headers"]["ORCH-CHANNEL-NONCE"] = "00" * 16
+    cr("channel_request_duplicate_header", dup, {"error": "malformed"}, "L2B-9: two spellings of one header")
     cr("channel_request_query", channel_req(target=mailbox_target() + "?after=1"), {"error": "malformed"})
     cr("channel_request_no_cert", channel_req(**{"Orch-Channel-Cert": None}), {"error": "malformed"})
     cr("channel_request_cert_not_b64u", channel_req(**{"Orch-Channel-Cert": "{}"}), {"error": "malformed"})
@@ -404,11 +459,13 @@ def build_b(
     ro("channel_route_body", "GET", mailbox_target(), {"error": "malformed"}, body=b"{}")
 
     # ---- signatures and the section
+    sig_entry("api_origin", "hk_op", "sig_hub_api_origin", api_origin())
     sig_entry("channel_auth_alice_phone", "channel_alice_phone", "sig_hub_channel_auth", channel_auth())
     sig_entry("channel_push_alice_phone", "channel_alice_phone", "sig_hub_channel_push", channel_push())
     req = channel_req()
     return {
         "pair_link": {"link": LINK, "parsed": ok_link, "fingerprint": CA.fingerprint(HUB_ID)},
+        "api_origin": api_origin(),
         "session_ref": {"token": SESSION, "session_ref": CA.session_ref(SESSION)},
         "channel_auth": channel_auth(),
         "channel_push": channel_push(),

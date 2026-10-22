@@ -23,12 +23,14 @@ from .hub import (
     _TS as TS_RE,
 )
 from .hub import (
+    CLOCK_SKEW_MS,
     Refused,
     _dev,
     _envelope,
     _fields,
     _lp16,
     _signature,
+    _under_card,
     verify_card,
     verify_channel_cert,
 )
@@ -76,6 +78,30 @@ def fingerprint(hub_id: str) -> str:
     """What the app shows at pairing and the admin console shows next to the QR: the hub id in 8 groups of 4."""
     unhex(hub_id, 16)
     return " ".join(hub_id[i : i + 4] for i in range(0, 32, 4))
+
+
+def verify_api_origin(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    link_api: str,
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The phone's check, before it sends a password (§6.4, L2B-1): ``hub.api_origin`` verifies under the card it holds
+    (pinned to the link's ``hub_id``; §6.1 rules: ``revoked``, ``bad_signature``, ``other_hub``, ``stale_op_cert``, dev
+    marker), ``issued_ms`` is not in the future (``cert_invalid``), a plain-http origin only at a dev verifier
+    (``malformed``), and ``origin`` is exactly the link's API origin → else ``other_origin``. A phishing host can relay
+    the object, but it names the real origin, so a link to another host fails here."""
+    o = _under_card(signed, "hub.api_origin", held, dev_mode, revoked_op_certs)
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
+        raise Refused("cert_invalid")
+    if o["origin"].startswith("http://") and dev_mode is not True:
+        raise Refused("malformed")
+    if o["origin"] != link_api:
+        raise Refused("other_origin")
+    return {"origin": o["origin"]}
 
 
 # --- §6.4 channel sessions -------------------------------------------------------------------------------------------
@@ -241,7 +267,11 @@ def check_channel_request(
     ``bad_channel_signature``; 6 the channel not revoked by its hub → ``channel_revoked`` (after the signature, so only
     the key holder learns it); 7 the nonce unseen for this (hub, channel) → ``replay``. Returns the hub, the channel
     and the nonce to record for :data:`CHANNEL_NONCE_RETENTION_MS`."""
-    h = {str(k).lower(): v for k, v in req["headers"].items()}
+    h: dict[str, Any] = {}
+    for k, v in req["headers"].items():
+        if str(k).lower() in h:  # L2B-9: one spelling of each header, never "the last one wins"
+            raise Refused("malformed")
+        h[str(k).lower()] = v
     try:
         raw_cert = h["orch-channel-cert"]
         if type(raw_cert) is not str or len(raw_cert) > CHANNEL_CERT_HEADER_MAX:
@@ -302,6 +332,7 @@ __all__ = [
     "fingerprint",
     "parse_pair_link",
     "session_ref",
+    "verify_api_origin",
     "verify_channel_auth",
     "verify_channel_push",
 ]

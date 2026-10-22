@@ -957,7 +957,11 @@ class HumanOps:
         idem = request_idem("human.submit", opts)  # dry_run is invalid.input; no idem is idem.required
         assert idem is not None
         outcomes = service.outcomes
-        begun = outcomes.begin(call.principal, idem, "human.submit", args, planned=(), deferred=True, session=None)
+        # the outcome record (written before verification, kept after a refusal) holds a digest of each signature,
+        # never the raw value: only request_id is read back from it (outcome_fields); the binding is over the digests
+        begun = outcomes.begin(
+            call.principal, idem, "human.submit", _sigs_digested(args), planned=(), deferred=True, session=None
+        )
         if isinstance(begun, dict):
             return begun  # §0.6 step 9: the stored answer of this idem
         try:
@@ -1678,3 +1682,18 @@ def recover(service: WorkspaceService) -> list[tuple[str, str]]:
             state = "failed"
         out.append((record["id"], state))
     return out
+
+
+def _sigs_digested(args: dict[str, Any]) -> dict[str, Any]:
+    """``args`` with every event's ``sig`` string replaced by ``sha256:<hex>`` of it (a copy; ``args`` is unchanged)."""
+    import hashlib
+
+    events = args.get("events")
+    if type(events) is not list:
+        return args
+    out = []
+    for e in events:
+        if isinstance(e, dict) and type(e.get("sig")) is str:
+            e = {**e, "sig": "sha256:" + hashlib.sha256(e["sig"].encode()).hexdigest()}
+        out.append(e)
+    return {**args, "events": out}

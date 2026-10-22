@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from orch import layout as layout_mod
 from orch.layout import LayoutError
 
-from . import frames
+from . import frames, shareauto
 from .auth import AuthView, Verified, build_auth, secret_in_request
 from .blobs import BlobStore
 from .columns import Column, OpKind, refusal, resolve
@@ -272,6 +272,7 @@ class WorkspaceService:
         from . import peerops
 
         peerops.maybe_start(self)  # V3 C12: the receive thread of a workspace that uses peers (never fails the open)
+        shareauto.maybe_start(self)  # V3 C6: the debounced share pass of a workspace that has share state
 
     # -- the relay worker (§11A.4 "The hook", R5)
     def _relay_open(self) -> None:
@@ -429,6 +430,7 @@ class WorkspaceService:
                 committed(log, event)
             finally:
                 self._relay_wake(event)
+                shareauto.touch(self)  # V3 C6: a debounced share pass (selective mode only; flag + wake, never raises)
 
         return hook
 
@@ -803,6 +805,7 @@ class WorkspaceService:
         from . import peerops
 
         peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
+        shareauto.stop(self)  # V3 C6: the share pass thread, before the store goes
         # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:

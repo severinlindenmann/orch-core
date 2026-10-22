@@ -272,3 +272,34 @@ def test_c6r3_1_a_refusal_ends_when_the_item_stops_matching_and_a_damaged_entry_
     with pytest.raises(HubRefused):
         S.ShareState.from_json(bad)
     assert S.ShareState.from_json({k: v for k, v in st.to_json().items() if k != "refused"}).refused == {}  # legacy
+
+
+def test_auto_wanted_is_the_confirmed_selection_only_and_shrinks_with_it():
+    st, link = S.ShareState(), FakeLink()
+    st.add_rule({"kind": "tag", "tag": "public"})
+    first = S.select(st.rules, [T("a", labels=["public"])])
+    st.confirm(first)  # what the host does at the owner's confirm
+    S.sync(st, first, link=link, build=fake_build, save=lambda s: None)
+    assert st.confirmed == ["ticket:a"]
+    both = [T("a", labels=["public"], title="Edited"), T("b", labels=["public"])]
+    wanted = st.auto_wanted(S.select(st.rules, both))
+    assert [i.logical for i in wanted] == ["ticket:a"]  # "b" starts matching later: it waits for a confirm
+    assert S.sync(st, wanted, link=link, build=fake_build, save=lambda s: None)["put"] == 1
+    assert [i.logical for i in st.auto_wanted(S.select(st.rules, [T("b", labels=["public"])]))] == []
+    assert st.confirmed == []  # "a" left; it needs a new confirm to come back
+    st.confirm(S.select(st.rules, both))
+    assert st.confirmed == ["ticket:a", "ticket:b"]
+    assert S.ShareState.from_json(st.to_json()).confirmed == st.confirmed
+
+
+def test_a_state_from_before_the_confirmed_field_confirms_what_it_already_sent():
+    st, link = S.ShareState(), FakeLink()
+    st.add_rule({"kind": "tag", "tag": "public"})
+    run(st, [T("a", labels=["public"])], link)
+    old = {k: v for k, v in st.to_json().items() if k != "confirmed"}
+    legacy = S.ShareState.from_json(old)
+    assert legacy.confirmed is None
+    got = legacy.auto_wanted(S.select(legacy.rules, [T("a", labels=["public"]), T("b", labels=["public"])]))
+    assert [i.logical for i in got] == ["ticket:a"]
+    with pytest.raises(HubRefused):
+        S.ShareState.from_json(old | {"confirmed": [1]})

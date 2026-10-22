@@ -307,3 +307,167 @@ def test_c6r3_2_the_chain_head_and_the_ticket_snapshot_are_read_under_one_lock(s
     got = ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))["data"]
     assert got["put"] == 1
     assert selective.opened[0]["chain"]["seq"] == real_seq(uid)
+
+
+# --- automatic sync on ticket change (C6 follow-up) -----------------------------------------------------------------
+
+
+@pytest.fixture
+def quick_auto(monkeypatch):
+    from orch.host import shareauto
+
+    monkeypatch.setattr(shareauto, "DEBOUNCE_S", 0.1)
+    monkeypatch.setattr(shareauto, "MAX_WAIT_S", 1.0)
+    monkeypatch.setattr(shareauto, "RETRY_MIN_S", 0.2)
+    return shareauto
+
+
+def settle(served, quick, *, need=1, timeout=10.0):
+    """Wait until the workspace's auto thread has finished ``need`` more passes (and is idle)."""
+    import time
+
+    svc = served.h.host.services[served.wid]
+    a = quick.state_of(svc)
+    assert a is not None, "the auto thread is not armed"
+    target = a.passes + need
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        with a.cv:
+            if a.passes >= target and a.dirty_since is None:
+                return a
+        time.sleep(0.02)
+    raise AssertionError(f"no auto pass finished (passes={a.passes}, wanted {target})")
+
+
+def test_an_edit_to_a_shared_ticket_goes_out_as_a_higher_version_without_a_sync(served, selective, quick_auto):
+    uid, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    assert [i["item_version"] for i in selective.opened] == [1]
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    settle(served, quick_auto)
+    assert [i["item_version"] for i in selective.opened] == [1, 2]
+    assert selective.opened[1]["content"]["title"] == "Renamed note"
+    assert selective.opened[0]["chain"]["seq"] < selective.opened[1]["chain"]["seq"]
+    assert selective.count("share_revoke") == 0
+
+
+def test_a_burst_of_edits_is_one_debounced_pass(served, selective, quick_auto, monkeypatch):
+    monkeypatch.setattr(quick_auto, "DEBOUNCE_S", 0.5)
+    _, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    for n in range(4):
+        ok(agent(served, "set", {"ref": key, "pairs": [f"title=Edit {n}"]}))
+    settle(served, quick_auto)
+    assert [i["item_version"] for i in selective.opened] == [1, 2]
+    assert selective.opened[1]["content"]["title"] == "Edit 3"
+
+
+def test_a_ticket_that_stops_matching_is_revoked(served, selective, quick_auto):
+    _, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=private"]}))
+    settle(served, quick_auto)
+    assert selective.count("share_revoke") == 1 and selective.count("share_put") == 1
+
+
+def test_a_ticket_that_starts_matching_after_the_confirmation_is_not_auto_shared(served, selective, quick_auto):
+    """The owner confirmed what the preview showed (C6-2). A later match waits for the owner's next confirm, however
+    it came about (a new ticket, a label an agent adds, a question an agent asks); an explicit sync then sends it."""
+    _, shared = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    _, plain = served.ticket("Plain note")
+    ok(agent(served, "set", {"ref": plain, "pairs": ["labels=public"]}))  # starts matching: an agent widens
+    labelled(served, "Brand new public", "public")  # a new ticket that matches
+    ok(agent(served, "ask", {"ref": plain, "text": "which bank?"}))  # a new needs-you summary (default rule)
+    ok(agent(served, "set", {"ref": shared, "pairs": ["title=Renamed"]}))  # the one thing the pass may send
+    settle(served, quick_auto)
+    assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed"]
+    assert selective.count("share_put") == 2
+    got = ok(req(served, "share.sync"))["data"]  # the owner's next confirm shares what matches now
+    assert got["put"] == 3 and selective.count("share_put") == 5
+    ok(agent(served, "set", {"ref": plain, "pairs": ["title=Plain, edited"]}))  # now confirmed: it follows
+    settle(served, quick_auto)
+    assert selective.opened[-1]["content"]["title"] == "Plain, edited"
+
+
+def test_an_item_that_left_and_comes_back_needs_a_new_confirm(served, selective, quick_auto):
+    _, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=private"]}))
+    settle(served, quick_auto)
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=public"]}))
+    settle(served, quick_auto)
+    assert selective.count("share_put") == 1 and selective.count("share_revoke") == 1
+
+
+def test_full_mode_never_sends_even_when_the_thread_runs(served, full, quick_auto):
+    from orch.host import shareauto
+
+    svc = served.h.host.services[served.wid]
+    _, key = labelled(served, "Public note", "public")
+    shareauto.arm(svc)  # as if a leftover share state armed it
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    a = settle(served, quick_auto)
+    assert a.parked and str(a.last).startswith("parked:") and full.ops == []
+
+
+def test_no_pass_before_a_selective_join(served, quick_auto):
+    from orch.host import shareauto
+
+    svc = served.h.host.services[served.wid]
+    _, key = labelled(served, "Public note", "public")
+    shareauto.arm(svc)
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    a = settle(served, quick_auto)
+    assert a.parked and "hub.not_joined" in str(a.last)
+
+
+def test_an_unreachable_hub_is_retried_and_the_edit_arrives_later(served, selective, quick_auto, monkeypatch):
+    from orch.host import hubops, shareops
+
+    _, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    real = shareops._link
+    monkeypatch.setattr(shareops, "_link", lambda service: _Down())
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    a = settle(served, quick_auto)
+    assert a.last["synced"] is False and selective.count("share_put") == 1
+    monkeypatch.setattr(shareops, "_link", real)
+    monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+    import time
+
+    end = time.monotonic() + 15
+    while len(selective.opened) < 2 and time.monotonic() < end:  # the retry, after its backoff
+        time.sleep(0.05)
+    assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed note"]
+
+
+def test_a_refused_update_is_visible_to_the_owner_and_marks_the_hub_copy_stale(
+    served, selective, quick_auto, monkeypatch
+):
+    from orch.host import shareops
+    from orch.hubclient.errors import HubRefused
+
+    _, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    real = shareops._link
+
+    class Refusing:
+        def __init__(self, service):
+            self.inner = real(service)
+
+        def call(self, op, body):
+            if op == "share_put":
+                raise HubRefused("too_large")
+            return self.inner.call(op, body)
+
+        def close(self):
+            self.inner.close()
+
+    monkeypatch.setattr(shareops, "_link", Refusing)
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    settle(served, quick_auto)
+    want = [{"item": f"ticket {key}: Renamed note", "code": "too_large", "stale": True}]
+    assert ok(req(served, "share.rules"))["data"]["refused_items"] == want  # shown to the owner, not only in --json
+    got = ok(req(served, "share.sync"))["data"]
+    assert got["refused_items"] == want and got["refused"] and selective.count("share_put") == 1

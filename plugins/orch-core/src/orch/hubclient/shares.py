@@ -275,6 +275,9 @@ def make_builder(
 # --- state ----------------------------------------------------------------------------------------------------------
 
 
+_STATE_KEYS = frozenset({"rules", "sent", "withdrawn", "refused", "confirmed"})
+
+
 @dataclass
 class ShareState:
     """``rules``: the owner's rules. ``sent``: logical id -> ``{"item_id", "digest", "version", "item_hash"}``
@@ -291,6 +294,27 @@ class ShareState:
     sent: dict[str, dict[str, Any]] = field(default_factory=dict)
     withdrawn: list[str] = field(default_factory=list)
     refused: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: logical ids of the selection the owner last confirmed (a rule change, ``share.sync``, ``share.revoke``): the
+    #: only items an automatic pass may send or update. ``None``: a state from before this field: its ``sent`` items.
+    confirmed: list[str] | None = None
+
+    def confirm(self, selected: Iterable[ShareItem]) -> None:
+        """The owner confirmed (or explicitly synced) this selection: remember it for the automatic passes."""
+        self.confirmed = sorted({i.logical for i in selected})
+
+    def auto_wanted(self, selected: Iterable[ShareItem]) -> list[ShareItem]:
+        """What an automatic pass may send: the confirmed items that still match, with their CURRENT content.
+
+        C6 follow-up rule: the owner confirmed the rules, not each content change, so a changed ticket that is already
+        in the confirmed selection is re-sent (a new version) and one that stops matching is revoked (it is missing
+        here, so :func:`sync` withdraws it). A ticket, question or need that starts matching AFTER the confirmation
+        is not in the confirmed set and is never sent by a pass: it waits for the owner's next confirm (what was shown
+        is what is sent, C6-2). The confirmed set also shrinks to what still matches, so an item that left and comes
+        back needs a new confirm. An agent changing tickets therefore cannot widen what the hub sees."""
+        known = set(self.sent) if self.confirmed is None else set(self.confirmed)
+        out = [i for i in selected if i.logical in known]
+        self.confirmed = sorted(i.logical for i in out)
+        return out
 
     def refused_items(self) -> list[dict[str, Any]]:
         """What the owner is told about refused items: ``{"item", "code", "stale"}``, sorted by logical id.
@@ -301,16 +325,16 @@ class ShareState:
         ]
 
     def to_json(self) -> dict[str, Any]:
-        return {"rules": self.rules, "sent": self.sent, "withdrawn": sorted(self.withdrawn), "refused": self.refused}
+        return {
+            "rules": self.rules,
+            "sent": self.sent,
+            "withdrawn": sorted(self.withdrawn),
+            "refused": self.refused,
+        } | ({} if self.confirmed is None else {"confirmed": sorted(self.confirmed)})
 
     @classmethod
     def from_json(cls, d: Any) -> ShareState:
-        if type(d) is not dict or not {"rules", "sent", "withdrawn"} <= set(d) <= {
-            "rules",
-            "sent",
-            "withdrawn",
-            "refused",
-        }:
+        if type(d) is not dict or not {"rules", "sent", "withdrawn"} <= set(d) <= _STATE_KEYS:
             raise HubRefused("malformed")
         if type(d["rules"]) is not list or type(d["sent"]) is not dict or type(d["withdrawn"]) is not list:
             raise HubRefused("malformed")
@@ -344,7 +368,10 @@ class ShareState:
             ):  # fmt: skip
                 raise HubRefused("malformed")
             refused[lg] = {"code": r["code"], "line": r["line"]}
-        return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]), refused=refused)
+        confirmed = d.get("confirmed")
+        if confirmed is not None and (type(confirmed) is not list or any(type(x) is not str for x in confirmed)):
+            raise HubRefused("malformed")
+        return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]), refused=refused, confirmed=confirmed)
 
     def add_rule(self, rule: Mapping[str, str]) -> bool:
         r = normalize_rule(dict(rule))

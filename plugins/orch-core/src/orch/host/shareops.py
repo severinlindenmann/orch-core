@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import shareauto
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -169,6 +170,7 @@ def _save(service: WorkspaceService, st: Any) -> None:
     for level in (d.parent, d):
         ensure_private_dir(level, service.host_uid)
     write_atomic(d / "shares.json", json.dumps(st.to_json(), sort_keys=True).encode(), mode=0o600)
+    shareauto.arm(service)  # the owner has used sharing: ticket changes now trigger a debounced pass
 
 
 # --- facts and selection ----------------------------------------------------------------------------------------------
@@ -339,7 +341,29 @@ def sync_now(service: WorkspaceService) -> dict[str, Any]:
 
     with _MU:
         st = _load(service)
-        return _sync_locked(service, st, S.select(st.rules, tickets_for(service)))
+        wanted = S.select(st.rules, tickets_for(service))
+        st.confirm(wanted)  # an explicit sync is the owner's own act: this selection is the confirmed one
+        return _sync_locked(service, st, wanted)
+
+
+def auto_sync(service: WorkspaceService) -> dict[str, Any] | None:
+    """One automatic pass (:mod:`orch.host.shareauto`, no caller, no person): re-send the confirmed items whose ticket
+    changed and withdraw those that stopped matching. It sends nothing the owner has not confirmed: an item that
+    starts matching after the confirmation waits for the owner's next confirm (``share.rule_add`` / ``share.sync``;
+    see :meth:`ShareState.auto_wanted`), so this pass can only narrow or refresh what the hub already has.
+
+    Raises :class:`HostError` where sharing does not apply (full mode, no bound hub: nothing is sent, ever);
+    returns ``None`` where it is not the time (closing, degraded, no store); otherwise the sync answer."""
+    from orch.hubclient import shares as S
+
+    if service.closing or service.store is None or service.state != "ok":
+        return None
+    with _MU:
+        _selective(service)  # inside the lock, from the files as they are now: full mode and no hub never send
+        st = _load(service)
+        service.store.refresh()
+        wanted = st.auto_wanted(S.select(st.rules, tickets_for(service)))
+        return _sync_locked(service, st, wanted)
 
 
 def _find(st: Any, ref: str, facts: list[Any]) -> str:
@@ -390,7 +414,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 note = "changed" if changed else "unchanged"
             # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
             # second selection that a ticket change in between could have altered)
-            got = _sync_locked(service, st, S.select(st.rules, facts))
+            selected = S.select(st.rules, facts)
+            st.confirm(selected)
+            got = _sync_locked(service, st, selected)
         hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
         return ok_result({"note": note} | got)
     except HubRefused as exc:

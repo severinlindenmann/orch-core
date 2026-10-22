@@ -1,0 +1,128 @@
+"""L2-4: one signer per key kind; every (key kind, foreign domain) pair raises, and every allowed signature verifies
+with the contract's verifiers."""
+
+from __future__ import annotations
+
+import pytest
+
+from orch_hub.contract import hub as H
+from orch_hub.contract import keystore as KS
+from orch_hub.contract import suite as S
+from orch_hub.contract import vectorgen as G
+from orch_hub.contract.canon import unb64u
+
+NOW = G.NOW
+SAMPLES = {
+    "hub.op_cert": G.op_cert()["o"],
+    "hub.op_revoked": {
+        **G.hdr("hub.op_revoked"),
+        "hub_id": G.HUB_ID,
+        "cert_id": G.OP_CERT_ID,
+        "revoked_ms": NOW,
+        "dev": True,
+    },
+    "hub.card": G.card()["o"],
+    "hub.uk_cert": G.uk_cert()["o"],
+    "hub.channel_cert": G.channel_cert()["o"],
+    "hub.snapshot": G.snapshot()["o"],
+    "hub.binding": G.binding()["o"],
+    "hub.unbound": G.unbound()["o"],
+    "hub.publish_approval": G.approval()["o"],
+    "link.w2h": G.link("snapshot_get", {})["o"],
+    "link.h2w": G.link("route_in", {"envelope": "eA"}, direction="h2w", key="hk_op")["o"],
+}
+ALLOWED = {
+    KS.RootSigner: {"hub.op_cert", "hub.op_revoked"},
+    KS.OpSigner: {"hub.card", "hub.uk_cert", "hub.channel_cert", "hub.snapshot", "link.h2w"},
+    KS.UkSigner: set(),
+    KS.ChannelSigner: set(),
+    KS.WskSigner: {"hub.binding", "hub.unbound", "link.w2h"},
+    KS.OwnerDeviceSigner: {"hub.publish_approval"},
+}
+KEY = {
+    KS.RootSigner: "hk_root",
+    KS.OpSigner: "hk_op",
+    KS.UkSigner: "uk_alice",
+    KS.ChannelSigner: "channel_alice_phone",
+    KS.WskSigner: "wsk_a",
+    KS.OwnerDeviceSigner: "dk_alice_mac.sig",
+}
+EVERY_LABEL = sorted(H.L.values())
+
+
+def signer(cls):
+    return cls(G.K.priv[KEY[cls]])
+
+
+@pytest.mark.parametrize("cls", KS.SIGNERS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("name", sorted(SAMPLES))
+def test_each_signer_signs_only_its_kinds(cls, name):
+    s, o = signer(cls), SAMPLES[name]
+    if name in ALLOWED[cls]:
+        out = s.sign_object(o)
+        label = H.link_label(o["dir"]) if o["kind"] == "hub.link" else H.L[H.LABEL_OF_KIND[o["kind"]]]
+        assert S.verify(s.public, unb64u(out["sig"], 64), label + H.cj(o))
+        others = [lab for lab in EVERY_LABEL if lab != label]
+        assert not any(S.verify(s.public, unb64u(out["sig"], 64), lab + H.cj(o)) for lab in others)
+    else:
+        with pytest.raises(KS.KeyUseError):
+            s.sign_object(o)
+
+
+def test_signers_have_no_generic_byte_signing():
+    for cls in KS.SIGNERS:
+        public = {n for n in dir(cls) if not n.startswith("_")}
+        assert not public & {"sign", "sign_bytes", "sign_raw", "key", "private_key"}, cls
+
+
+def test_uk_signs_only_custodial_events_and_they_verify():
+    ev = G.custodial()
+    e = {k: v for k, v in ev.items() if k != "sig"}
+    uk = KS.UkSigner(G.K.priv["uk_alice"])
+    sig = uk.sign_event(G.WS_A, G.TICKET, e)
+    assert S.verify(uk.public, sig, H.custodial_bytes(G.WS_A, G.TICKET, e))
+    with pytest.raises(KS.KeyUseError):
+        uk.sign_event(G.WS_A, G.TICKET, {**e, "auth": "passphrase"})
+    with pytest.raises(KS.KeyUseError):
+        uk.sign_event(G.WS_A, G.TICKET, {**e, "type": "gate|approved"})
+    with pytest.raises(KS.KeyUseError):
+        uk.sign_object(G.snapshot()["o"])
+
+
+def test_channel_signs_only_digests():
+    ch = KS.ChannelSigner(G.K.priv["channel_alice_phone"])
+    d = S.sha256(b"x")
+    assert S.verify(ch.public, ch.proof(d), H.channel_proof_bytes(d))
+    for bad in (b"x" * 31, b"x" * 33, "x" * 32, H.channel_proof_bytes(d)):
+        with pytest.raises(KS.KeyUseError):
+            ch.proof(bad)
+
+
+def test_op_publish_transport_only_over_hub_path_bytes():
+    op = KS.OpSigner(G.K.priv["hk_op"])
+    hb = H.hub_path_signed_bytes(
+        bytes.fromhex(G.WS_A), NOW, G.NONCE, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY, G.HUB_ID, None
+    )
+    assert S.verify(op.public, op.publish_transport(G.HUB_ID, hb), H.hub_publish_bytes(G.HUB_ID, hb))
+    direct = H.publish_signed_bytes(bytes.fromhex(G.WS_A), NOW, G.NONCE, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY)
+    with pytest.raises(KS.KeyUseError):
+        op.publish_transport(G.HUB_ID, direct)
+
+
+def test_card_and_approval_from_signers_pass_the_verifiers():
+    op, root = KS.OpSigner(G.K.priv["hk_op"]), KS.RootSigner(G.K.priv["hk_root"])
+    card = op.sign_card(G.card()["o"], root.sign_object(G.op_cert()["o"]))
+    assert H.verify_card(card, now_ms=NOW, dev_mode=True)["card"]["hub_id"] == G.HUB_ID
+    wsk = KS.WskSigner(G.K.priv["wsk_a"])
+    b = wsk.sign_object(G.binding()["o"])
+    assert H.verify_binding(b, workspace_id=G.WS_A, wsk_pub=wsk.public, now_ms=NOW, dev_mode=True)
+    owner = KS.OwnerDeviceSigner(G.K.priv["dk_alice_mac.sig"])
+    a = owner.sign_approval(G.approval()["o"], G.device_cert(), G.K.pub["pk_alice"])
+    assert a.keys() == G.approval().keys()
+
+
+def test_link_direction_is_bound_to_the_key():
+    with pytest.raises(KS.KeyUseError):
+        KS.WskSigner(G.K.priv["wsk_a"]).sign_object(SAMPLES["link.h2w"])
+    with pytest.raises(KS.KeyUseError):
+        KS.OpSigner(G.K.priv["hk_op"]).sign_object(SAMPLES["link.w2h"])

@@ -22,6 +22,9 @@ from typing import Any
 
 from ..contract import relayroutes as RR
 from ..contract.canon import CanonError, b64u, cj, loads_strict
+
+#: how long a hint's mailbox copy stays for the phone's catch-up (§10.8.1 bounds 60 s .. 7 d)
+MAILBOX_HINT_TTL_S = 86_400
 from ..contract.hub import Refused
 from ..contract.keystore import KeyUseError
 from ..publish.forwarder import _endpoint
@@ -184,7 +187,7 @@ class RelayClient:
     def send_push(
         self,
         channel_id: str,
-        channel_pub: bytes,
+        push_pub: bytes,
         kind: str,
         ref: str | None = None,
         *,
@@ -192,17 +195,20 @@ class RelayClient:
         priority: str = "high",
         ttl_s: int = 3600,
     ) -> bool:
-        """Seal a ``hub.push`` hint to the channel key (§10.8.2) and send it. ``msg_id`` fixes the id (a caller that
-        retries a send itself passes the same one, so the phone gets it once). True when the relay queued it."""
+        """Seal a ``hub.push`` hint to the channel's registered **push key** (§10.8.2, §6.4; never its signing key),
+        leave the same ``c`` under the same ``id`` in the channel's mailbox (§10.8.1, the phone's catch-up path), then
+        send it. ``msg_id`` fixes the id (a caller that retries passes the same one, so the phone handles it once).
+        True when the relay queued the push. A mailbox failure raises like a push failure (both are the relay's)."""
         mid = msg_id or secrets.token_hex(16)
         sealed = RR.seal_push(
             RR.push_payload(kind, self._now(), ref),
             hub_id=self.hub_id,
             channel_id=channel_id,
             msg_id=mid,
-            channel_pub=channel_pub,
+            recipient_pub=push_pub,
             eph_seed=secrets.token_bytes(32),
         )
+        self.mailbox_put(channel_id, mid, sealed, MAILBOX_HINT_TTL_S)
         out = self._req(RR.push_send_request(self.hub_id, channel_id, mid, sealed, priority, ttl_s))
         return out.get("accepted") == 1
 

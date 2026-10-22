@@ -155,6 +155,11 @@ literal `orch/v2/hub-…|` names.
 | custodial family | `orch/v2/hub-custodial\|<type>\|` | `UK` | a custodial event (`type` is the event type) | 8 |
 | `sig_hub_channel_proof` | `orch/v2/hub-channel-proof\|` | channel key | the event digest | 8 |
 | `sig_hub_channel_register` | `orch/v2/hub-channel-reg\|` | the new channel key | `cj(o)` of `hub.channel_register` (proof of possession) | 6.3 |
+| `sig_hub_api_origin` | `orch/v2/hub-api-origin\|` | `HK_op` | `cj(o)` of `hub.api_origin` (the hub's public API origin) | 6.4 |
+| `sig_hub_channel_auth` | `orch/v2/hub-channel-auth\|` | channel key | `cj(o)` of `hub.channel_auth` (binds a pairing session to the channel) | 6.4 |
+| `sig_hub_channel_push` | `orch/v2/hub-channel-push\|` | channel key | `cj(o)` of `hub.channel_push` (names the channel's push key) | 6.4 |
+| `sig_hub_channel_relay_req` | `orch/v2/hub-channel-relay-req\|` | channel key | the bytes of a channel → relay request | 10.8.4 |
+| `h_hub_session_ref` | `orch/v2/hub-session-ref\|` | hash | names a pairing session inside `hub.channel_auth` | 6.4 |
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
 | `aad_hub_view` | `orch/v2/hub-view-aad\|` | AAD | one sealed `log_sync` page | 10.7 |
@@ -186,8 +191,9 @@ HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label 
 `[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}` (so it never contains `|`; anything else is `malformed`). All
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
 `HK_root` under the two root labels, `HK_op` under the `hub-*` labels the table gives it (now including
-`hub-space-proposal|` and `hub-relay-req|`), `UK` under the custodial family, a channel
-key under `hub-channel-proof` and, once, `hub-channel-reg` (its own registration), `WSK` under its four `sig/hub-*` labels, `sig/share-item|`, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
+`hub-space-proposal|`, `hub-relay-req|` and `hub-api-origin|`), `UK` under the custodial family, a channel
+key under `hub-channel-proof`, once `hub-channel-reg` (its own registration), and (§6.4, §10.8.4) `hub-channel-auth`,
+`hub-channel-push` and `hub-channel-relay-req` for its own channel only, `WSK` under its four `sig/hub-*` labels, `sig/share-item|`, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
 device key under `sig/hub-publish-approval|`.
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
@@ -377,6 +383,94 @@ receives in hv 0 proves that: the pairing code proves only that **the operator a
   This binds the channel key to a genuine orch app instance; that the channel key itself is in the Secure Enclave
   stays the app's own guarantee (App Attest cannot attest an arbitrary key). DeviceCheck alone (two bits per device)
   is not enough and is not used. Until then a D66 policy that needs presence keeps requiring `passkey` (§8.3 step 8).
+
+### 6.4 The phone's hub session, push key and pairing link (phase 4, B stream, orch-core #861–#866)
+
+**Purpose.** What a phone channel needs from the hub beyond §6.3, fixed here so the hub (D13 web API) and orch-mobile
+build the same thing (design note `state/design-b-phone.md`). Reference `orch_hub.contract.channelapi`; vectors
+`pair_link_*`, `channel_auth_*`, `channel_push_*` and the section `phase4.channel_api`.
+
+**The pairing link (the operator's QR).** `orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>`, made at the hub's
+terminal by the state-dir owner for one user, with a fresh §6.3 pairing code (`xxxx-xxxx-xxxx`, 12 lower-case hex). The
+API origin is `https://<authority>`. A loopback host (`localhost`, `127.0.0.1`, `[::1]`) means plain `http://` and is
+accepted **only by a dev verifier**; a real build is https only and refuses it (`malformed`). Strict: ASCII, ≤ 512 bytes, lower-case
+host, port 1–65535 without a leading zero, no userinfo, path, query, percent-encoding or second `#`, exactly `h1` and
+lower-case hex; anything else is `malformed` (reference `parse_pair_link`; a dev verifier is a compile-time DEBUG
+build, never a value from the link or the card). **`hub_id` is the phone's pin:** the phone fetches the card and the
+hub's signed API origin (`GET /api/v1/hub/card`, no session) and verifies the card as a fresh holder (§5 steps 1–6)
+with `hub_id(hk_root_pub)` equal to the link's `hub_id` (`other_hub`).
+
+**The API origin (L2B-1).** The card is public and replayable, so a forged link naming a phishing host and the real
+`hub_id` would pass the pin alone. The hub therefore signs its own public API origin:
+
+```
+hub.api_origin {v, suite, kind: "hub.api_origin", hv, hub_id, op_cert_id, origin, issued_ms, dev}
+sig = Sign(HK_op, "orch/v2/hub-api-origin|" || cj(o))
+```
+
+`origin` is `https://<host>[:port]` (plain `http://` only for a loopback host at a dev verifier). The phone verifies it
+under the card it just pinned (§6.1 rules: `revoked`, `bad_signature`, `other_hub`, `stale_op_cert`, dev marker;
+`issued_ms` not in the future, `cert_invalid`) and refuses with **`other_origin`** unless `origin` is exactly the link's
+API origin, **before it sends a password** (reference `verify_api_origin`, vectors `api_origin_*`). A phishing host can
+relay the object, but it names the real origin. The hub reissues it with every new `HK_op`. **It has no expiry of its
+own: changing the API origin requires a new `HK_op` (a new op cert) and revoking the old op cert (§4.2)**, so an object
+naming the old origin dies with it. The hub signs `origin` from the same configuration value its web API takes its
+allowed origins from, never from a request. A paired phone keeps the origin it verified and refuses a link to another
+origin for the same `hub_id`. It is a separate object,
+not a card field, because orch-core, orch-publish and the relay check the card's exact field set. The pin comes out of
+band from the operator; the phone shows it as the fingerprint (`hub_id` in 8 groups of 4, reference `fingerprint`) and
+the admin console shows the same next to the QR. A later card follows §5 step 7 against the held one; another root is
+`other_hub` and the phone never re-pins (only leave and pair again).
+
+**Sessions (spec §7).** A password + TOTP sign-in with `client: "app"` gives a **pairing session** (15 min) that may only
+read the card, register a `phone` channel (§6.3, with the pairing code), bind, and sign out. The channel key then binds
+that session to itself:
+
+```
+hub.channel_auth {v, suite, kind: "hub.channel_auth", hv, hub_id, user_id, channel_id,
+                  session_ref: b64u(H("orch/v2/hub-session-ref|" || token)), ts_ms, dev}
+sig = Sign(channel_key, "orch/v2/hub-channel-auth|" || cj(o))
+```
+
+`token` is the pairing session's bearer token (ASCII), so the binding cannot be carried to another session and the token
+itself is never in a signed object. The hub checks, in order (reference `verify_channel_auth`): envelope and header;
+`channel_id` is a channel of the session's user (`unknown_channel`, also for another user's id); the signature under that
+channel's certificate key (`bad_signature`); the field set; `hub_id` (`other_hub`); `user_id` is the session's
+(`other_user`); the channel is a `phone` (`not_allowed`); `session_ref` (`challenge_invalid`); `|now − ts_ms| ≤ 120 s`
+(`stale_timestamp`); the dev marker; then, told only to the key holder, `channel_revoked` and `cert_expired`. On success
+the pairing session is consumed and a **channel session** issued: bound to that channel, expiring **12 h after the
+password sign-in** (`CHANNEL_SESSION_MS`), after which the person signs in again and binds again.
+
+**Channel session scope.** It may read the person's views (`/me/*`, items), `prepare`, read its own prepared requests
+and `sign` **for its own channel only**, register its push target, revoke its own channel, and sign out. It may not
+register any channel or use admin routes (`forbidden_role`). Every request re-checks the channel: a revoked channel
+answers `channel_revoked`, an expired certificate `cert_expired` (both final for the phone). So a stolen bearer token can
+show and route for at most 12 h and can never add a channel that signs.
+
+**The push key.** The phone's notification extension must open hints while the phone is locked, where the Secure
+Enclave channel key cannot be used, and one key never does both ECDSA and ECDH. So each phone channel names a separate
+P-256 **push key** that the hub seals every hint to (§10.8.2):
+
+```
+hub.channel_push {v, suite, kind: "hub.channel_push", hv, hub_id, channel_id, push_pub, issued_ms, dev}
+sig = Sign(channel_key, "orch/v2/hub-channel-push|" || cj(o))
+```
+
+Reference `verify_channel_push`, in order: envelope; the signature under the channel's certificate key; the field set;
+`hub_id` (`other_hub`); `channel_id` is the session's (`other_user`); `|now − issued_ms| ≤ 120 s` (`stale_timestamp`); the
+dev marker; `push_pub` is not the channel key (`malformed`); `issued_ms` newer than the held push key's (`replay`).
+
+**Hub web API additions** (`/api/v1`, same rules as D13: `X-Orch-Csrf` on writes, bearer for the phone, §14 codes):
+
+| Method | Path | Session | Body → answer |
+|---|---|---|---|
+| GET | `/hub/card` | none | → `{card, api_origin}` (the held, signed card and the signed `hub.api_origin`) |
+| POST | `/session/channel` | pairing | `{auth: <signed hub.channel_auth>}` → `{token, user_id, channel_id, expires_ms, channel_cert, card}` |
+| PUT | `/channels/{channel_id}/push` | channel (that channel) | `{env, topic, token, push_key: <signed hub.channel_push> \| null}` → `{registered: true}`; `null` keeps the held push key (an APNs token change needs no new key; without a held key it is `malformed`). The hub then registers the target at the relay (§10.8.1) |
+
+**Not here.** App Attest (SHORTCUT of §6.3 stays). Renewing a channel certificate for the same key before it expires (a
+hub task; until then an expired certificate means pairing again). Admin-floor custodial types from a phone (spec §7 wants
+a sign-in within 5 min for them; a V3 phone offers only the four decision types).
 
 ## 7. Group snapshot
 
@@ -1482,7 +1576,7 @@ of this subsection, as for v2 push (after authentication).
 | `PUT /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | `{v, c, ttl_s}` | `200 {id, stored: true, expires_ms}` |
 | `GET /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, c, expires_ms}`; `404 not_found` |
 | `DELETE /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, deleted: true}` (also when absent) |
-| `DELETE /v2/hubs/{hub}/mailbox/{ch}` | yes | empty | `200 {channel_id, deleted: n}` (all messages of the channel) |
+| `DELETE /v2/hubs/{hub}/mailbox/{ch}` | yes | empty | `200 {channel_id, deleted: n}` (all messages of the channel); **also marks the channel revoked for this hub, permanently** (§10.8.4) |
 
 **Push target** (`PUT .../push/{ch}`). `env` is `sandbox` or `production`; `topic` is the relay's configured APNs topic
 (`[A-Za-z0-9.-]{1,155}`, anything else is `malformed`; a topic or env the relay is not configured for is `malformed`, as
@@ -1505,13 +1599,15 @@ the relay's (the hub does not rely on a number).
 above), `ttl_s` 60 to 604 800. The relay holds the bytes and cannot read them. **Idempotent by `id`:** the same `c` under
 the same `id` again is `200` and changes nothing (the expiry stays); another `c` under a held `id` is
 `409 message_conflict`. At most 256 held messages and 4 MiB per `(hub, channel)` (`429 quota_exceeded`). An expired message
-is gone (`404 not_found`). **Open point O1 (not decided here):** the *channel's* own read of its mailbox (the phone fetching
-what the hub left) is a channel-authenticated request that belongs to the orch-mobile contract; nothing in this subsection
-gives a channel, or anyone but the signing hub, a read. Until it exists the mailbox is written and read by the hub only,
-and a push carries what the phone needs.
+is gone (`404 not_found`). **The channel's own read** (open point O1, closed by the B stream) is §10.8.4: a
+channel-signed request under its own prefix; nothing in this subsection gives a channel a read. **What the hub leaves
+there:** every hint it pushes (§10.8.2), under the same `id` and with the same `c`, so a phone without push (APNs down,
+the Simulator) catches up from the mailbox and handles each id once.
 
 **Revocation.** When the hub revokes a channel (§6.3, §7) it sends `DELETE .../push/{ch}` and
-`DELETE .../mailbox/{ch}` for that channel. Both are idempotent, so the hub repeats them until the relay answers `200`.
+`DELETE .../mailbox/{ch}` for that channel. The mailbox purge is the hub's signed revocation notice to the relay (B
+stream): the relay records `(hub, ch)` as revoked, permanently (like §6.2, a revoked channel id never comes back), and
+refuses that channel's own requests from then on (§10.8.4). The hub sends the purge only on revocation. Both are idempotent, so the hub repeats them until the relay answers `200`.
 The hub also stops sending to the channel at once (it asks its own revocation list, not the relay).
 
 **Retry rules for the hub.** Every attempt is a new request: new `ts_ms`, new nonce (a replay is `401 replay`). It retries
@@ -1522,24 +1618,65 @@ idempotent (`PUT`/`DELETE` by state, `send` and mailbox `PUT` by `id`).
 ### 10.8.2 The sealed push payload
 
 **Purpose.** The relay and APNs see ciphertext only; the phone's notification service extension opens the payload with the
-channel key. Construction: v2 §5.3 unchanged (`orch/v2/seal|`, `orch/v2/seal-aad|`) with
+channel's push key (§6.4). Construction: v2 §5.3 unchanged (`orch/v2/seal|`, `orch/v2/seal-aad|`) with
 
 | Part | Value |
 |---|---|
 | purpose | `hub-push` |
-| recipient | the channel key `key_pub` of the channel's certificate (§6.2); recipient id = `channel_id` |
+| recipient | the channel's registered push key `push_pub` (§6.4, B amendment; not the certificate's signing key); recipient id = `channel_id`. The hub sends no hint to a channel without a held push key |
 | object id | the message id `id` (16 bytes, the same as in `outer` and the mailbox path) |
 | epoch | `0` |
 | extra | `hub_id` (16 bytes) |
 | plaintext | `cj({v: 2, hv: 0, kind: "hub.push", type, ts_ms, ref})` |
 
 `sealed = b64u(eph_pub || AES-256-GCM(K, 0-nonce, plaintext, AAD))` with a fresh ephemeral key per seal (vector
-`phase4.relay_routes.push_seal`; `open_push` is the reference for the extension). `type` is one of `prepare` (a custodial
+`phase4.relay_routes.push_seal`, sealed to `push_alice_phone`; `open_push` is the reference for the extension). `type` is one of `prepare` (a custodial
 prepare is waiting for this user, §8.4) and `needs_you` (a change the user has to look at); `ref` is a 32-hex opaque id
 (the prepared id or ticket uid, so the app can open the right item) or `null`. **The payload is a hint, not an authority:**
-the seal is anonymous (anyone who knows a channel's public key can make one), so the extension shows generic text at most
+the seal is anonymous (anyone who knows a channel's push key can make one), so the extension shows generic text at most
 and the app acts only on what it fetches from the hub over its authenticated channel, never on this payload. The `id`,
-`ch` and `hub` in `outer` are not secret; the `type` and `ref` are.
+`ch` and `hub` in `outer` are not secret; the `type` and `ref` are. **The phone opens a hint only** when `outer.hub` and
+`outer.ch` are its own pairing's, the seal opens, `ts_ms` is within [now − 24 h, now + 300 s] and the `id` was not
+handled before (push and mailbox share one replay store) (L2 D10-3).
+
+### 10.8.4 A channel's own mailbox read (phase 4, B stream; closes O1)
+
+**Purpose.** The phone reads what its hub left in its mailbox (§10.8.1) without the hub in the path. The relay knows no
+channel keys, so the request carries the channel's certificate, which the relay verifies under the held card of the
+hub, exactly as a host does (§6.2).
+
+```
+signed bytes = "orch/v2/hub-channel-relay-req|" || suite (1) || hub_id (16) || channel_id (16) || u64(ts_ms)
+               || nonce (16) || lp16(METHOD) || lp16(target) || H(body)
+headers      = Orch-Channel-Cert: b64u(cj(<signed hub.channel_cert>)) (≤ 4096 chars), Orch-Channel-Ts: <ts_ms decimal>,
+               Orch-Channel-Nonce: <32 hex>, Orch-Channel-Signature: b64u(Sign(channel_key, signed bytes))
+```
+
+`hub_id` and `channel_id` are the target's segments. **Routes** (their own prefix: nothing under `/v2/hubs/` is ever
+channel-signed): `GET /v2/hub-channels/{hub}/{ch}/mailbox` → `200 {messages: [{id, expires_ms}]}` (every held message,
+at most 256, sorted by `id`); `GET …/mailbox/{id}` → `200 {id, c, expires_ms}` or `404 not_found`; `DELETE
+…/mailbox/{id}` → `200 {id, deleted: true}` (also when absent; the phone deletes after it handled the id). Bodies are
+empty. Emptying the whole mailbox stays the hub's (`DELETE` of the list is `404 not_found`).
+
+**What the relay checks, in order** (reference `check_channel_request` then `channel_route`, vectors
+`channel_request_*`, `channel_route_*`):
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | header syntax (as §10.8; each `Orch-Channel-*` header exactly once in any spelling, L2B-9; the certificate b64u of a strict JSON object), method `GET` or `DELETE`, the target canonical (§10.8 rules, no query) and under `/v2/hub-channels/<32 hex>/<32 hex>/` | 400 `malformed` |
+| 2 | `\|now − ts\| ≤ 120 s` | 401 `stale_timestamp` (`server_ms`) |
+| 3 | the held, current card of the target's hub, verified again for this request (§10.8 step 3) | 401 `unknown_hub` |
+| 4 | the certificate under that card (§6.2: signature, `hub_id`, the card's op cert, time, dev marker, `channel_id` of `key_pub`); it names the target's channel | 401 with its code (`bad_signature`, `other_hub`, `stale_op_cert`, `cert_invalid`, `cert_expired`, `dev_*`); 403 `other_user` |
+| 5 | the signature under the certificate's `key_pub` | 401 `bad_channel_signature` |
+| 6 | the channel is not revoked by its hub (the hub's signed mailbox purge, §10.8.1) | 403 `channel_revoked` |
+| 7 | the nonce is unseen for this `(hub, channel)`; then recorded for 240 s | 401 `replay` |
+| 8 | the route: another path or method `404 not_found`; a body `400 malformed` | — |
+
+**Revocation (DECIDED HERE).** The relay keeps, per hub, the channel ids the hub revoked: the hub's `HK_op`-signed
+`DELETE /v2/hubs/{hub}/mailbox/{ch}` (§10.8.1), which it sends on every revocation and repeats until `200` (and again
+at start for every revoked channel, L2 D10-6), records `ch` permanently. Step 6 then refuses the channel at once, not
+when its certificate expires (31 days). The check comes after the signature, so only the key holder learns it (the phone
+wipes on it, B6). A relay may rate-limit reads per `(hub, channel)`.
 
 ### 10.8.3 Cut-over of a workspace's direct relay path (phase 4, relay E3, orch-core #896)
 
@@ -1700,9 +1837,9 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
 |---|---|---|
 | Workspace host | card (pinned root), op revocations, snapshots, custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
 | orch-publish | bindings, unbounds, hub cards (by binding), forwarded requests, owner approvals | workspace cards (v2), binding store, hub cards, nonces |
-| orch-relay (phase 4) | hub cards, bindings, hub requests (§10.8) | hub accounts by card, op revocations, hub request nonces |
+| orch-relay (phase 4) | hub cards, bindings, hub requests (§10.8), channel requests and their certificates (§10.8.4) | hub accounts by card, op revocations, hub and channel request nonces |
 | orch hub | the v2 card and binding at join (§9.5), link auth, w2h link messages, bindings it forwards, channel registrations (§6.3), actions (§8.5), every `log_sync` line (§10.7), channel proofs before it signs | its keys, users, channels, snapshots, audit, the `workspace_id → (owner, WSK)` pins, the sealed views |
-| channel (phone, browser; p4) | the prepared context against its digest (§8.4) | its channel key |
+| channel (phone, browser; p4) | the prepared context against its digest (§8.4); the phone also the card against the pin of its pairing link and its own certificate under it (§6.4) | its channel key; the phone also its push key, pin and held card |
 
 ## 13. Threat notes for the reviewer
 
@@ -1777,6 +1914,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `cut_over` (403) (p4) | relay, §10.8.3 | the workspace's direct relay path is closed (cut over to a hub); also a workspace `pending` over a `cut_over` |
 | `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
+| `other_origin` (p4, B) | phone, local | §6.4: the hub's signed API origin is not the pairing link's; nothing is sent |
+| `bad_channel_signature` (401) (p4, B) | relay, §10.8.4 | a channel request whose signature does not verify under its certificate's key. Reused there: `malformed`, `stale_timestamp`, `unknown_hub`, the §6.2 certificate codes, `other_user`, `channel_revoked` (403, revoked by the hub's mailbox purge), `replay`, `not_found` |
 
 Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of these travel on the link):
 
@@ -1792,6 +1931,11 @@ Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of th
 | `unknown_user`, `unknown_group` | 404 | admin routes naming a user or group that does not exist |
 | `exists`, `channel_exists`, `reserved_group` | 409, 409, 400 | a user or group name taken; a channel key already registered; a built-in group name |
 | `bad_pairing_code` | 400 | phone registration: wrong, used or expired pairing code |
+
+B stream (§6.4) reuses: `unknown_channel` (404, a bind naming no channel of the session's user), `not_allowed` (403, a
+bind of a non-phone channel), `challenge_invalid` (400, `session_ref` of another session), `channel_revoked` and
+`cert_expired` (403, told only to a holder of the key or a channel session), `forbidden_role` (403, a channel session
+outside its scope), `replay` (409, an older push key).
 
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
 `other_person`, `stale_timestamp`, `unknown_workspace`, `replay`, `stale_card`. HTTP statuses for publish are in §11.2;
@@ -1815,7 +1959,8 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
-| `cases` | 756 cases (198 positive, 558 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
+| `cases` | 859 cases (214 positive, 645 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1825,7 +1970,9 @@ Every implementation runs the cases of the checks it implements: the hub all of 
 `snapshot`, `uk_cert`, `channel_cert`, `custodial`, `joined_payload`, `link` (h2w), and from phase 4 `space_proposal`
 and the host side of `log_sync` (it builds the pages the vectors open); orch-publish `binding_store`,
 `publish`, `card`, `v2_card`; orch-relay (p4) `card`, `op_*`, `relay_request`, `relay_route`; orch-mobile and the browser home (p4)
-`prepared`, `channel_register` (the object they sign). C3b addendum: orch-core runs `custodial` (now with
+`prepared`, `channel_register` (the object they sign); B stream: orch-mobile also `pair_link`, `api_origin`, `card`, `channel_cert`,
+`channel_request` (it builds them) and the `push_seal` / `render_*` vectors, the hub `channel_auth` and `channel_push`, the
+relay `channel_request` and `channel_route`. C3b addendum: orch-core runs `custodial` (now with
 `custodial_event_*`, the event-shaped vector per custodial type, for its step-1 exact-payload check), `user_hub`,
 `deliver_next` (the host's reading of its own replies) and `share_item` incl. `f1` (it builds them); the hub runs all,
 plus `selective_build`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
@@ -1876,6 +2023,7 @@ plus `selective_build`. The hub also runs `hub_join`. Each case carries its `pha
 | 40 | `log_sync` sender rules (C3b addendum, C14) | old pages kept across rotation; 1 MiB raw; no oversize line; resume probe instead of a head-read op; `reset` not tied to `restore`; one live link per workspace (§10.7) | orch-core #1027 |
 | 42 | Addendum review (l2-add) | L2-ADD-1: selective admission checks the target in the item's `f1` and the chain head (§8.3 step 7); L2-ADD-2: §10.8.3 carries the E3 fixes (fence, one gate with an allow-list, purge of hooks and Drop, `pending` TTL 24 h, registered `hub_id`, no state to anonymous callers); L2-ADD-3: a superseded item version is `event_changed`; L2-ADD-7: vector renamed | state/l2-review-p4.md "Addendum hub#34" |
 | 41 | Relay cut-over (E3) | workspace names the hub, the hub only confirms; `other_hub` for every workspace that did not name it; hub `PUT` body `{v: 2, state: "cut_over"}`; `cut_over` (403) (§10.8.3) | orch-relay #88 |
+| 43 | The phone side (B stream) | §6.4: operator pairing link pins `hub_id`, and the `HK_op`-signed `hub.api_origin` must equal the link's host before any password (L2B-1); pairing session → channel session by a channel-key-signed, session-bound `hub.channel_auth` (12 h from the password sign-in, scope without registration or admin); a separate software push key named by `hub.channel_push` (the NSE runs locked; one key, one use), §10.8.2 seals to it; §10.8.4 channel-signed mailbox read under `/v2/hub-channels/`, certificate in a header; the hub's signed mailbox purge marks the channel revoked at the relay (`channel_revoked`); a real build refuses loopback/http pairing links; hints also left in the mailbox | state/design-b-phone.md, orch-core #861–#866 |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no

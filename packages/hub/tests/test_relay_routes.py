@@ -38,16 +38,16 @@ def test_request_bytes_are_the_signed_bytes_of_the_vector(name):
     assert RR.route(e["method"], e["target"], HUB, bytes.fromhex(e["body_hex"]))["route"] == name
 
 
-def test_push_seal_vector_opens_with_the_channel_key_and_nothing_else():
+def test_push_seal_vector_opens_with_the_push_key_and_nothing_else():
     s = RRV["push_seal"]
-    priv = S.key_from_seed(bytes.fromhex(V["keys"][s["channel_key"]]["seed"]))
+    priv = S.key_from_seed(bytes.fromhex(V["keys"][s["push_key"]]["seed"]))
     args = {"hub_id": HUB, "channel_id": s["channel_id"], "msg_id": s["msg_id"]}
-    got = RR.open_push(s["sealed"], channel_priv=priv, **args)
+    got = RR.open_push(s["sealed"], recipient_priv=priv, **args)
     assert got == s["payload"] and cj(got).hex() == s["payload_cj_hex"]
     assert RR._aad(HUB, s["msg_id"]).hex() == s["aad_hex"]
     again = RR.seal_push(
         s["payload"],
-        channel_pub=S.public_bytes(priv),
+        recipient_pub=S.public_bytes(priv),
         eph_seed=bytes.fromhex(s["eph_seed_hex"]),
         **args,
     )
@@ -56,22 +56,24 @@ def test_push_seal_vector_opens_with_the_channel_key_and_nothing_else():
         {"hub_id": "11" * 16},
         {"channel_id": "22" * 16},
         {"msg_id": "33" * 16},
+        {"recipient_priv": S.key_from_seed(bytes.fromhex(V["keys"]["channel_alice_phone"]["seed"]))},
     ):
         with pytest.raises(H.Refused):
-            RR.open_push(s["sealed"], channel_priv=priv, **(args | bad))
+            RR.open_push(s["sealed"], **({"recipient_priv": priv} | args | bad))
 
 
-def test_seal_refuses_a_channel_id_that_is_not_the_keys():
+def test_seal_refuses_a_bad_recipient_or_channel_id():
     priv = S.key_from_seed(bytes(range(32)))
-    with pytest.raises(H.Refused):
-        RR.seal_push(
-            RR.push_payload("prepare", 1, None),
-            hub_id=HUB,
-            channel_id="aa" * 16,
-            msg_id="bb" * 16,
-            channel_pub=S.public_bytes(priv),
-            eph_seed=bytes(32),
-        )
+    for pub, ch in ((b"\x04" + bytes(64), "aa" * 16), (S.public_bytes(priv), "AA" * 16)):
+        with pytest.raises(H.Refused):
+            RR.seal_push(
+                RR.push_payload("prepare", 1, None),
+                hub_id=HUB,
+                channel_id=ch,
+                msg_id="bb" * 16,
+                recipient_pub=pub,
+                eph_seed=bytes(32),
+            )
 
 
 def test_payload_types_are_a_closed_list():

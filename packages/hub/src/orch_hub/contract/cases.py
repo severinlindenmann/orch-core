@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import audit as AU
+from . import channelapi as CA
 from . import hub as H
 from . import phase4 as P4
 from . import relayroutes as RR
@@ -421,6 +422,50 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return RR.cutover_hub(a["row"], a["hub_id"], r["route"])
     if check == "relay_route":
         return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
+    # ---- B stream (§6.4, §10.8.4): the phone's pairing link, channel sessions, push key, mailbox read
+    if check == "pair_link":
+        return CA.parse_pair_link(a["link"], dev_mode=dev)
+    if check == "api_origin":
+        return CA.verify_api_origin(
+            a["signed"], _held(a), link_api=a["link_api"], now_ms=now, dev_mode=dev, revoked_op_certs=_later(a)
+        )
+    if check == "channel_auth":
+        return CA.verify_channel_auth(
+            a["signed"],
+            hub_id=a["hub_id"],
+            session_user=a["session_user"],
+            session_token=a["session_token"],
+            channels=a["channels"],
+            now_ms=now,
+            dev_mode=dev,
+        )
+    if check == "channel_push":
+        return CA.verify_channel_push(
+            a["signed"],
+            hub_id=a["hub_id"],
+            channel_id=a["channel_id"],
+            key_pub=unb64u(a["key_pub"], 65),
+            now_ms=now,
+            dev_mode=dev,
+            held_issued_ms=a.get("held_issued_ms"),
+        )
+    if check == "channel_request":
+        r = a["request"]
+        st = {
+            "hub_cards": {a["hub_id"]: a["hub_card"]},
+            "revoked_op_certs": a.get("revoked_op_certs", []),
+            "revoked_channels": a.get("revoked_channels", {}),
+            "nonces": a.get("nonces", {}),
+        }
+        req = {
+            "method": r["method"],
+            "target": r["target"],
+            "headers": r["headers"],
+            "body": bytes.fromhex(r["body_hex"]),
+        }
+        return CA.check_channel_request(req, st, now_ms=now, dev_mode=dev)
+    if check == "channel_route":
+        return CA.channel_route(a["method"], a["target"], bytes.fromhex(a["body_hex"]))
     raise ValueError(f"unknown check {check}")
 
 

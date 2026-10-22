@@ -9,6 +9,7 @@ from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import suite as S
 from orch_hub.contract import vectorgen as G
+from orch_hub.contract import vectorgen_b as GB
 from orch_hub.contract import vectorgen_p4 as G4
 from orch_hub.contract.canon import unb64u
 
@@ -35,6 +36,9 @@ SAMPLES = {
     "hub.unbound": G.unbound()["o"],
     "hub.publish_approval": G.approval()["o"],
     "hub.channel_register": G4.register()["o"],
+    "hub.channel_auth": GB.channel_auth()["o"],
+    "hub.api_origin": GB.api_origin()["o"],
+    "hub.channel_push": GB.channel_push()["o"],
     "hub.space_proposal": G4.proposal()["o"],
     "share.item": G4.share_item()["o"],
     "link.w2h": G.link("snapshot_get", {})["o"],
@@ -51,10 +55,11 @@ ALLOWED = {
         "hub.space_wrap",
         "hub.audit",
         "hub.space_proposal",
+        "hub.api_origin",
         "link.h2w",
     },
     KS.UkSigner: set(),
-    KS.ChannelSigner: {"hub.channel_register"},
+    KS.ChannelSigner: {"hub.channel_register", "hub.channel_auth", "hub.channel_push"},
     KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "share.item", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
@@ -163,6 +168,30 @@ def test_channel_registers_only_its_own_key():
     ch = KS.ChannelSigner(G.K.priv["channel_alice_phone"])
     with pytest.raises(KS.KeyUseError):
         ch.sign_object(G4.register(key="channel_bob_browser")["o"])
+
+
+def test_channel_speaks_only_for_its_own_channel_and_mailbox():
+    from orch_hub.contract import channelapi as CA
+
+    ch = KS.ChannelSigner(G.K.priv["channel_alice_phone"])
+    for o in (
+        GB.channel_auth(key="channel_bob_browser", channel_id=G.CH_BOB)["o"],
+        GB.channel_push(channel_id=G.CH_BOB)["o"],
+        GB.channel_push(push_pub=G.K.b("channel_alice_phone"))["o"],  # never its own push key
+    ):
+        with pytest.raises(KS.KeyUseError):
+            ch.sign_object(o)
+    sig = ch.relay_request(G.HUB_ID, NOW, GB.CH_NONCE, "GET", GB.mailbox_target(), b"")
+    msg = CA.channel_request_bytes(G.HUB_ID, G.CH_ALICE, NOW, GB.CH_NONCE, "GET", GB.mailbox_target(), b"")
+    assert S.verify(ch.public, sig, msg)
+    for hub, target in (
+        (G.HUB_ID, GB.mailbox_target(ch=G.CH_BOB)),  # another channel's mailbox
+        ("ab" * 16, GB.mailbox_target()),  # the target's hub is not the one named
+        (G.HUB_ID, f"/v2/hubs/{G.HUB_ID}/mailbox/{G.CH_ALICE}"),  # the hub-signed prefix
+        (G.HUB_ID, GB.mailbox_target() + "?a=1"),
+    ):
+        with pytest.raises(KS.KeyUseError):
+            ch.relay_request(hub, NOW, GB.CH_NONCE, "GET", target, b"")
 
 
 def test_op_relay_request_signs_only_canonical_targets_of_its_hub():

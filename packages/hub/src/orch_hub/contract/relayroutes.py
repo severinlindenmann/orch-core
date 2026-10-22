@@ -255,34 +255,36 @@ def _aad(hub_id: str, msg_id: str) -> bytes:
 
 
 def seal_push(
-    payload: Mapping[str, Any], *, hub_id: str, channel_id: str, msg_id: str, channel_pub: bytes, eph_seed: bytes
+    payload: Mapping[str, Any], *, hub_id: str, channel_id: str, msg_id: str, recipient_pub: bytes, eph_seed: bytes
 ) -> str:
     """``sealed = b64u(eph_pub || AES-256-GCM(K, 0-nonce, cj(payload), AAD))``: v2 §5.3 with purpose ``hub-push``,
-    recipient id = ``channel_id``, object id = ``msg_id``, epoch 0, extra = ``hub_id``. ``eph_seed``: a fresh key per
-    seal. The channel id must be the one derived from ``channel_pub``."""
-    if not S.valid_public_key(channel_pub) or channel_id != _channel_id(channel_pub):
+    recipient id = ``channel_id``, object id = ``msg_id``, epoch 0, extra = ``hub_id``. ``recipient_pub`` is the
+    channel's registered push key ``push_pub`` (§6.4, B amendment), never its signing key; ``eph_seed``: a fresh key
+    per seal."""
+    if not S.valid_public_key(recipient_pub) or not _hex(channel_id):
         raise Refused("malformed")
     plaintext = cj(dict(payload))
     eph = S.key_from_seed(eph_seed)
     eph_pub = S.public_bytes(eph)
-    ss = eph.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), channel_pub))
-    key = _seal_key(ss, eph_pub, channel_pub, PURPOSE_HUB_PUSH, channel_id)
+    ss = eph.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), recipient_pub))
+    key = _seal_key(ss, eph_pub, recipient_pub, PURPOSE_HUB_PUSH, channel_id)
     return b64u(eph_pub + AESGCM(key).encrypt(bytes(12), plaintext, _aad(hub_id, msg_id)))
 
 
 def open_push(
-    sealed: str, *, hub_id: str, channel_id: str, msg_id: str, channel_priv: ec.EllipticCurvePrivateKey
+    sealed: str, *, hub_id: str, channel_id: str, msg_id: str, recipient_priv: ec.EllipticCurvePrivateKey
 ) -> dict[str, Any]:
-    """What the phone does (the reference for the NSE). Wrong key, hub, channel or message id: ``malformed``."""
+    """What the phone does (the reference for the NSE, with its push key). Wrong key, hub, channel or message id:
+    ``malformed``."""
     try:
         raw = unb64u(sealed)
         eph_pub, ct = raw[:65], raw[65:]
         if len(ct) < 16 or not S.valid_public_key(eph_pub):
             raise Refused("malformed")
-        ss = channel_priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pub))
+        ss = recipient_priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pub))
         if ss == bytes(32):
             raise Refused("malformed")
-        key = _seal_key(ss, eph_pub, S.public_bytes(channel_priv), PURPOSE_HUB_PUSH, channel_id)
+        key = _seal_key(ss, eph_pub, S.public_bytes(recipient_priv), PURPOSE_HUB_PUSH, channel_id)
         o = loads_strict(AESGCM(key).decrypt(bytes(12), ct, _aad(hub_id, msg_id)))
     except InvalidTag, CanonError, ValueError:
         raise Refused("malformed") from None
@@ -295,12 +297,6 @@ def open_push(
     ):
         raise Refused("malformed")
     return push_payload(o["type"], o["ts_ms"], o["ref"])
-
-
-def _channel_id(pub: bytes) -> str:
-    from .hub import channel_id
-
-    return channel_id(pub)
 
 
 __all__ = [

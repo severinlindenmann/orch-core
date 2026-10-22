@@ -70,15 +70,13 @@ class StoreViewReader:
 
     def _scan_open(self, ws: str, user_id: str, keys: Keyring) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         w = PR.project_workspace(self._svc.lines(ws, "workspace", keys))
-        me = {"u_" + user_id}
-        if w.owner_person and self._owner_alias(ws) == user_id:
-            me.add(w.owner_person)
+        me = PR.identities(w, user_id, self._owner_alias(ws))
         out = []
         for log in self._svc.logs(ws):
             if log == "workspace":
                 continue
             t = PR.project_ticket(self._svc.lines(ws, log, keys), ws, log)
-            if t.closed or not _visible(t, me):
+            if t.closed or not PR.visible_to(t, me):
                 continue
             for q in t.questions.values():
                 if q.answered or not _addressed(t, q.obj.get("to"), me):
@@ -102,20 +100,12 @@ class StoreViewReader:
                         {k: P4.render_text(v) for k, v in o.items() if type(v) is str}
                         for o in q.obj.get("options") or []
                     ],
-                    "recommended": q.obj.get("recommended"),
+                    "recommended": _recommended(q.obj),
                     "blocking": q.obj.get("blocking") is True,
                 }
                 out.append((row, content))
         out.sort(key=lambda rc: (rc[0]["key"], rc[0]["item_id"]))
         return out
-
-
-def _visible(t: PR.Ticket, me: set[str]) -> bool:
-    if t.visibility == "workspace":
-        return True
-    if type(t.visibility) is dict and type(t.visibility.get("restricted")) is list:
-        return bool(me & set(t.visibility["restricted"])) or bool(me & set(t.people["ticket_owner"]))
-    return False  # a value this projection does not know: show nothing
 
 
 def _addressed(t: PR.Ticket, to: Any, me: set[str]) -> bool:
@@ -124,3 +114,10 @@ def _addressed(t: PR.Ticket, to: Any, me: set[str]) -> bool:
     if to in PR.TICKET_ROLES:
         return bool(me & set(t.people[to]))
     return to in me
+
+
+def _recommended(q: dict[str, Any]) -> str | None:
+    """Only a string that is one of the question's own option keys (then rendered); anything else is None."""
+    r = q.get("recommended")
+    keys = {o.get("key") for o in q.get("options") or [] if type(o) is dict}
+    return P4.render_text(r) if type(r) is str and r in keys else None

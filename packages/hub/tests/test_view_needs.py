@@ -189,3 +189,43 @@ def test_reader_satisfies_d13_view_reader_shape(kit):
     """PR #29's ``webapi.api.ViewReader``: ``needs_you(ws, user)`` and ``item(ws, user, item_id)``."""
     r: ViewReader = kit.r
     assert r.needs_you(WS, USER) == [] and r.item(WS, USER, "00" * 16) is None
+
+
+def _strings(x):
+    if isinstance(x, str):
+        yield x
+    elif isinstance(x, dict):
+        for k, v in x.items():
+            yield from _strings(k)
+            yield from _strings(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _strings(v)
+
+
+def test_recommended_only_if_it_is_an_option_key(kit):
+    opts = [{"key": "csv", "label": "CSV"}]
+    for rec, want in (("csv", "csv"), ("api", None), (5, None), ({"x": 1}, None)):
+        q = {"id": "Q1", "to": OWNER, "text": "t", "blocking": True, "options": opts, "recommended": rec}
+        qid = PR.question_id(WS, LOG, "Q1")
+        h = PR.question_hash(qid, LOG, "t", opts)
+        kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=h, roster_v=1)
+        kit.push()
+        assert kit.r.item(WS, USER, qid)["content"]["recommended"] == want
+
+
+def test_every_string_that_leaves_the_view_is_render_text_safe(kit):
+    bad = f"a{RLO}b{NEL}c"
+    kit.host.append(LOG, "ticket.updated", base_rev={}, set={"ticket.title": bad}, roster_v=1)
+    opts = [{"key": "k", "label": bad, "cost": bad}]
+    q = {"id": "Q1", "to": OWNER, "text": bad, "why": bad, "blocking": True, "options": opts, "recommended": "k"}
+    qid = PR.question_id(WS, LOG, "Q1")
+    kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=PR.question_hash(qid, LOG, bad, opts), roster_v=1)
+    kit.push()
+    from orch_hub.contract import phase4 as P4
+
+    rows = kit.r.needs_you(WS, USER)
+    out = rows + [kit.r.item(WS, USER, rows[0]["item_id"])]
+    seen = list(_strings(out))
+    assert seen and all(s == P4.render_text(s) for s in seen)
+    assert any("<U+202E>" in s for s in seen)

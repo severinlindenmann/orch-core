@@ -42,7 +42,7 @@ def build_view_services(
     return ViewServices(
         store,
         service,
-        StoreWorkspaceView(service),
+        StoreWorkspaceView(service, registry.owner_alias),
         StoreViewReader(
             service,
             mode_of=mode_of or registry.mode,

@@ -13,7 +13,7 @@ not synced in hv 0) and the two that name the current status (``status.changed``
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..contract import suite as S
@@ -49,8 +49,8 @@ def new_ticket_uid(event_id: str) -> str:
 
 
 class StoreWorkspaceView:
-    def __init__(self, service: ViewService) -> None:
-        self._svc = service
+    def __init__(self, service: ViewService, owner_alias: Callable[[str], str | None] = lambda ws: None) -> None:
+        self._svc, self._owner_alias = service, owner_alias
 
     def build(
         self, wk_e: bytearray, epoch: int, workspace_id: str, user_id: str, event_id: str, action: Mapping[str, Any]
@@ -80,6 +80,8 @@ class StoreWorkspaceView:
         if self._svc.head(ws, log) is None:
             raise Refused("unknown_item")
         t = PR.project_ticket(self._svc.lines(ws, log, keys), ws, log)
+        if not PR.visible_to(t, PR.identities(w, user_id, self._owner_alias(ws))):
+            raise Refused("unknown_item")  # same answer as a ticket that does not exist: no probing
         core["based_on"] = self._svc.head(ws, log)
         if typ == "ticket.updated":
             core["set"] = dict(action["set"])

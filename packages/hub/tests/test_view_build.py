@@ -176,3 +176,14 @@ def test_keyring_zeroises_the_keys_it_opened(env):
     assert bytes(key) == WK
     k.close()
     assert bytes(key) == bytes(32)
+
+
+def test_restricted_ticket_cannot_be_built_on_by_a_user_not_on_the_list(env):
+    env.host.append(LOG, "visibility.changed", visibility={"restricted": ["p_" + "22" * 16]}, roster_v=2)
+    env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))
+    # the ticket owner is OWNER (a person the helper user is not aliased to): same answer as a missing ticket
+    a = {"type": "log.added", "log": LOG, "text": "probe"}
+    assert code(env.prepare, a) == code(env.prepare, {**a, "log": NEW_LOG}) == "unknown_item"
+    env.host.append(LOG, "visibility.changed", visibility={"restricted": ["u_" + env.user]}, roster_v=2)
+    env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 3))
+    assert env.prepare(a).ctx["event"]["text"] == "probe"

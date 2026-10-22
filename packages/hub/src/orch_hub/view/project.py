@@ -162,3 +162,22 @@ def project_ticket(lines: list[dict[str, Any]], workspace_id: str, uid: str) -> 
 def key_number(key: Any) -> tuple[str, int] | None:
     m = _KEY.fullmatch(key) if type(key) is str else None
     return (m[1], int(m[2])) if m else None
+
+
+def identities(w: Workspace, user_id: str, owner_alias: str | None) -> set[str]:
+    """The person ids this hub user answers to: their ``u_`` id, plus the workspace owner's person id when the hub
+    aliased the owner to this user (registry owner alias)."""
+    me = {"u_" + user_id}
+    if w.owner_person and owner_alias == user_id:
+        me.add(w.owner_person)
+    return me
+
+
+def visible_to(t: Ticket, me: set[str]) -> bool:
+    """The ONE visibility rule (needs-you AND build): a workspace-visible ticket is visible; a restricted one only to
+    listed persons or its owner; any other value is invisible (fail closed)."""
+    if t.visibility == "workspace":
+        return True
+    if type(t.visibility) is dict and type(t.visibility.get("restricted")) is list:
+        return bool(me & set(t.visibility["restricted"])) or bool(me & set(t.people["ticket_owner"]))
+    return False

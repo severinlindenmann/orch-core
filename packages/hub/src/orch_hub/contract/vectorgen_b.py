@@ -125,8 +125,8 @@ def build_b(
     base = {"now_ms": NOW, "dev_mode": True}
 
     # ---- §6.4 the pairing link (operator QR); the app parses it before anything else
-    def pl(name: str, link: Any, expect: dict[str, Any], note: str = "", dev_mode: bool = True) -> None:
-        case(name, "pair_link", {"link": link, "dev_mode": dev_mode}, expect, 4, note)
+    def pl(name: str, link: Any, expect: dict[str, Any], note: str = "", real: bool = False) -> None:
+        case(name, "pair_link", {"link": link, "dev_mode": not real}, expect, 4, note)
 
     ok_link = {"api": f"https://{API_HOST}", "hub_id": HUB_ID, "user_id": U_ALICE, "code": CODE}
     pl("pair_link_valid", LINK, {"ok": ok_link})
@@ -146,11 +146,11 @@ def build_b(
         LINK.replace(API_HOST, "127.0.0.1:8443"),
         {"error": "malformed"},
         "a real build is https only: no loopback, no plain http",
-        dev_mode=False,
+        real=True,
     )
     pl("pair_link_localhost_at_real_verifier", LINK.replace(API_HOST, "localhost:8443"), {"error": "malformed"},
-       dev_mode=False)  # fmt: skip
-    pl("pair_link_https_host_at_real_verifier", LINK, {"ok": ok_link}, dev_mode=False)
+       real=True)  # fmt: skip
+    pl("pair_link_https_host_at_real_verifier", LINK, {"ok": ok_link}, real=True)
     frag = f"#h1.{HUB_ID}.{U_ALICE}.{CODE}"
     bad = {
         "upper_case_hub_id": LINK.replace(HUB_ID, HUB_ID.upper()),

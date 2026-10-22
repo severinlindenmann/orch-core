@@ -70,20 +70,67 @@ TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
 MAX_LIST = 32
 
 
+#: Unicode version every text rule is evaluated under (§2.1, L2P4-3): category tables of Python's unicodedata.
+UNICODE_VERSION = "16.0.0"
+if unicodedata.unidata_version != UNICODE_VERSION:  # fail closed: another table would judge text differently
+    raise RuntimeError(f"text rule needs Unicode {UNICODE_VERSION}, runtime has {unicodedata.unidata_version}")
+#: Refused categories: controls, format, line/paragraph separators, surrogates, private use, unassigned.
+_BAD_CATS = frozenset({"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"})
+#: Default_Ignorable_Code_Point (Unicode 16.0 DerivedCoreProperties) — blank or invisible characters that are not Cf:
+#: U+3164 HANGUL FILLER, U+115F/1160, U+FFA0, U+034F, variation selectors, …
+_DEFAULT_IGNORABLE = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+
+
+def _default_ignorable(cp: int) -> bool:
+    return any(lo <= cp <= hi for lo, hi in _DEFAULT_IGNORABLE)
+
+
+def _char_ok(c: str) -> bool:
+    return unicodedata.category(c) not in _BAD_CATS and not _default_ignorable(ord(c))
+
+
+def text_ok(x: Any, n: int, *, multiline: bool = False) -> bool:
+    """The one text rule (§8.5, L2P4-3): 1..n UTF-8 bytes; no leading or trailing ``White_Space``; no character of
+    the categories Cc, Cf, Zl, Zp, Cs, Co, Cn (Unicode :data:`UNICODE_VERSION`) and no Default_Ignorable_Code_Point;
+    LF is the one exception, in multi-line text only. Never raises (a lone surrogate is a plain refusal)."""
+    if type(x) is not str or not x:
+        return False
+    try:
+        size = len(x.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    if size > n or x != x.strip():
+        return False
+    return all((c == "\n" and multiline) or _char_ok(c) for c in x)
+
+
 def _text(n: int, *, multiline: bool = False) -> Any:
-    """1..n UTF-8 bytes, no leading or trailing white space, and no character of the Unicode categories Cc, Cf, Zl or
-    Zp (controls incl. C1 such as U+0085, format characters such as the bidi overrides U+202A-202E, U+2066-2069, U+200E
-    and U+200B, line and paragraph separators U+2028/2029); LF is the one exception, in multi-line text only. One
-    rule for every title and text field the contract carries (display spoofing, §8.5)."""
+    return lambda x: text_ok(x, n, multiline=multiline)
 
-    def ok(x: Any) -> bool:
-        if type(x) is not str or not 0 < len(x.encode()) <= n or x != x.strip():
-            return False
-        return all(
-            (c == "\n" and multiline) or unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp", "Cs") for c in x
-        )
 
-    return ok
+def render_text(s: str) -> str:
+    """What a channel shows for a string that comes from the workspace's view (§8.4 step 3, L2P4-2d): every character
+    the text rule refuses (other than LF) is shown escaped as ``<U+XXXX>``, so an agent-written title cannot hide or
+    reorder what the person sees. Reference for channel conformance (vectors ``render_*``)."""
+    return "".join(c if c == "\n" or _char_ok(c) else f"<U+{ord(c):04X}>" for c in s)
 
 
 def _re(rx: re.Pattern[str]) -> Any:
@@ -268,6 +315,25 @@ def check_action(action: Any, *, role: Any) -> dict[str, Any]:
         if action["role"] == "owner" and (len(add) != 1 or rem):
             raise Refused("malformed")
     return action
+
+
+DECISION_TYPES = ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered")
+
+
+def check_built(action: Mapping[str, Any], log: str, event: Any) -> None:
+    """The hub's contract check of the event it built, before it asks the channel for a proof (§8.4 step 2,
+    L2P4-2b). Always runs: the type is the action's, the log is the action's (a new ticket's uid for
+    ``ticket.created``), and on the four decision types ``event.hash`` exists and is byte-equal to ``action.hash``
+    (the hash the person reviewed). A missing hash is ``malformed``; another one ``event_changed``."""
+    if type(event) is not dict or event.get("type") != action.get("type"):
+        raise Refused("event_changed")
+    if action.get("type") != "ticket.created" and log != action.get("log"):
+        raise Refused("event_changed")
+    if action.get("type") in DECISION_TYPES:
+        if type(event.get("hash")) is not str:
+            raise Refused("malformed")
+        if event["hash"] != action.get("hash"):
+            raise Refused("event_changed")
 
 
 def check_prepared(ctx: Any, digest_hex: Any) -> bytes:
@@ -471,6 +537,10 @@ def apply_view_page(
         raise Refused("malformed")
     if len(held) > len(out):  # an overlap that matched keeps the longer held view
         out = held
+    if log == "workspace" and body["reset"]:
+        # L2P4-9: a reset workspace log may be shorter than the ws_seq of held ticket lines; every ticket view is
+        # dropped and the host resends the ticket logs (§10.7).
+        return {"workspace": out}
     return {**views, log: out}
 
 
@@ -642,11 +712,21 @@ FACTOR_OF = {("phone", "pairing-code"): "se-unlocked", ("browser", "session"): "
 
 
 def verify_channel_register(
-    signed: Any, *, hub_id: str, challenge: Mapping[str, Any], now_ms: int, dev_mode: bool
+    signed: Any,
+    *,
+    hub_id: str,
+    challenge: Mapping[str, Any],
+    now_ms: int,
+    dev_mode: bool,
+    revoked_channels: Any = (),
+    registered: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The hub's check of a registration proof. ``challenge`` is what the hub stored when it opened the registration:
-    ``{user_id, nonce, expires_ms, gate}`` with ``gate`` the check it already passed (``pairing-code`` or
-    ``session``). Returns ``{channel_id, user_id, key_pub, factor}``; the factor comes from the gate."""
+    ``{user_id, key_pub, nonce, expires_ms, gate, session}`` with ``gate`` the check it already passed
+    (``pairing-code`` or ``session``) and ``session`` whether a live session of ``user_id`` opened it (required for
+    both gates, L2P4-D7a). ``revoked_channels``: every channel id ever revoked (permanent, L2P4-6); ``registered``:
+    channel id -> the user it is registered to. Returns ``{channel_id, user_id, key_pub, factor}``; the factor comes
+    from the gate."""
     o = _envelope(signed, "hub.channel_register")
     key = _key_field(o, "key_pub")
     _signature(signed, L["sig_hub_channel_register"], key)
@@ -655,17 +735,30 @@ def verify_channel_register(
         raise Refused("other_hub")
     if o["user_id"] != challenge["user_id"]:
         raise Refused("other_user")
-    if o["nonce"] != challenge["nonce"] or o["expires_ms"] != challenge["expires_ms"] or now_ms >= o["expires_ms"]:
+    if (
+        o["nonce"] != challenge["nonce"]
+        or o["key_pub"] != challenge["key_pub"]
+        or o["expires_ms"] != challenge["expires_ms"]
+        or now_ms >= o["expires_ms"]
+    ):
         raise Refused("challenge_invalid")
     factor = FACTOR_OF.get((o["channel_kind"], o["attestation"]))
     if factor is None:
         raise Refused("malformed")
     if o["attestation"] != challenge["gate"]:
         raise Refused("factor_mismatch")
+    if challenge.get("session") is not True:
+        raise Refused("no_session")
     _dev(o, dev_mode)
     from .hub import channel_id
 
-    return {"channel_id": channel_id(key), "user_id": o["user_id"], "key_pub": o["key_pub"], "factor": factor}
+    cid = channel_id(key)
+    if cid in set(revoked_channels):
+        raise Refused("channel_revoked")
+    owner = (registered or {}).get(cid)
+    if owner is not None and owner != o["user_id"]:
+        raise Refused("key_in_use")
+    return {"channel_id": cid, "user_id": o["user_id"], "key_pub": o["key_pub"], "factor": factor}
 
 
 # --- §10.4 the hub-signed space proposal (#1020) ----------------------------------------------------------------------
@@ -840,6 +933,7 @@ __all__ = [
     "accept_from_proposal",
     "apply_view_page",
     "check_action",
+    "check_built",
     "check_prepared",
     "check_relay_request",
     "event_head",
@@ -848,7 +942,9 @@ __all__ = [
     "open_view_page",
     "parse_relay_target",
     "relay_request_bytes",
+    "render_text",
     "seal_view_page",
+    "text_ok",
     "verify_channel_register",
     "verify_space_proposal",
     "view_aad",

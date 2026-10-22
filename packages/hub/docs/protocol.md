@@ -123,6 +123,12 @@ Every check uses the verifier's own clock. Certificates: `issued_ms ≤ now + 30
 `expires_ms > issued_ms` else `cert_invalid`; `now ≥ expires_ms` → `cert_expired`. Link messages and publish requests:
 `|now − ts| ≤ 120 s` → `stale_timestamp`.
 
+**Unicode.** Every text rule of this contract (§8.5) is evaluated under the Unicode **16.0.0** tables (General_Category
+and `Default_Ignorable_Code_Point`), whatever the platform's own Unicode version (L2P4-3): an implementation whose
+runtime tables are another version (Python builds, Swift, JS engines differ) uses a bundled 16.0.0 table, so hub,
+core, relay and phone refuse exactly the same strings, including what "unassigned" (`Cn`) means. The reference refuses
+to load under another version rather than judge differently.
+
 ## 3. Signing domains
 
 Every label is new, ends in `|`, and the union with every v2 label (v2 §3, ticket-format §5.6) is prefix-free
@@ -333,17 +339,26 @@ colliding inside a hash. A dedicated label keeps "one label, one meaning" (spec 
 table: a registration can never be presented as a custodial proof, nor the reverse (vector
 `channel_register_under_proof_label`). `ChannelSigner` signs `hub.channel_register` only when `key_pub` is its own key.
 
-**Flow.** (1) The hub opens a registration after a gate and stores the challenge `{user_id, nonce, expires_ms
-(≤ now + 120 s), gate}`: `gate = "session"` for a browser inside a live password + TOTP session, `gate =
-"pairing-code"` for a phone that presented a valid one-time operator pairing code (below). (2) The channel signs the
-object with exactly those values. (3) The hub checks, in order: envelope and header; `key_pub` is a valid key
-(`malformed`); the signature under `key_pub` (`bad_signature`); the field set (`malformed`); `hub_id` is this hub
-(`other_hub`); `user_id` is the challenge's (`other_user`); `nonce` and `expires_ms` are the challenge's and `now <
-expires_ms` (`challenge_invalid`); `(channel_kind, attestation)` is `(phone, pairing-code)` or `(browser, session)`
-(`malformed`); `attestation` equals the gate the hub checked (`factor_mismatch`); the dev marker. The challenge is
-consumed by the first attempt, good or bad. (4) The factor is **derived**: `pairing-code` → `se-unlocked`, `session`
+**Flow.** (1) The hub opens a registration for **one key** after a gate and stores the challenge `{user_id, key_pub,
+nonce, expires_ms (≤ now + 120 s), gate, session}`: `gate = "session"` for a browser inside a live password + TOTP
+session; `gate = "pairing-code"` for a phone that presented a valid one-time operator pairing code **and** has a live
+session of the same `user_id` (L2P4-D7a: the code alone is no bearer credential for `se-unlocked`); `session` records
+that a live session of `user_id` opened it, for both gates. (2) The channel signs the object with exactly those values.
+(3) The hub checks, in order: envelope and header; `key_pub` is a valid key (`malformed`); the signature under
+`key_pub` (`bad_signature`); the field set (`malformed`); `hub_id` is this hub (`other_hub`); `user_id` is the
+challenge's (`other_user`); `nonce`, `key_pub` and `expires_ms` are the challenge's and `now < expires_ms`
+(`challenge_invalid`: nobody who sees the nonce can race their own key into the gate); `(channel_kind, attestation)`
+is `(phone, pairing-code)` or `(browser, session)` (`malformed`); `attestation` equals the gate the hub checked
+(`factor_mismatch`); the challenge was opened inside a live session (`no_session`); the dev marker; the key's
+`channel_id` was never revoked (`channel_revoked`, permanent, L2P4-6) and is not registered to another user
+(`key_in_use`: one channel id, one user). The challenge is consumed by the first attempt, good or bad. (4) The factor is **derived**: `pairing-code` → `se-unlocked`, `session`
 → `password+totp` (reference `verify_channel_register`; vectors `channel_register_*`). Then the hub issues the
-certificate and writes a `channel` audit event (§10.5).
+certificate and writes a `channel` audit event (§10.5). Nothing is issued when the audit write fails (fail closed);
+on a contract surface that failure is `internal`, there is no `audit_failed` code.
+
+**Revoking.** A revocation names a `channel_id` this hub registered; an unknown id is refused (`unknown_channel`, a
+local refusal of the hub's CLI/API, L2P4-D7b): keys are fresh per channel, so pre-revoking has no use, and a
+revocation (permanent) is always on the chain as a `channel` event.
 
 **Phone key attestation (gap 5).** `se-unlocked` claims a Secure Enclave key on an unlocked phone. Nothing the hub
 receives in hv 0 proves that: the pairing code proves only that **the operator approved this pairing for this user**.
@@ -469,13 +484,16 @@ host↔hub link has no operation that asks the hub to sign (§10).
    it → else `forbidden_role` (which verbs each role may use is the role table of spec D70, applied after this);
    selective mode: the user is explicitly granted by the owner → else `not_granted`, and the item is shared (C6);
    7b. (p4) the event's `(type, log)` is in the custodial table of §8.5 → else `not_custodial`; the user's role
-   reaches the type's lowest role → else `forbidden_role` (a selective workspace's granted user counts as `admin`
-   for this step only; it still signs custodial types only);
+   reaches the type's lowest role → else `forbidden_role`. **Selective mode (L2P4-1):** there is no hub role; the
+   floor is the F1 member role of the user's canonical person (its alias to a member `p_`, §9.1) mapped `owner` →
+   `admin`, `maintainer`/`member` → `edit`, `viewer` → `read`; a granted user without an alias to a member is a
+   `viewer` and signs nothing (`H.MEMBER_ROLE_FLOOR`, vectors `custodial_selective_*`);
 8. D66 policy on `channel_factor`: a policy requiring `secure-enclave` (D41) is met only by `passkey`; a D49-level
    policy by `se-unlocked` or `passkey`; `password+totp` meets neither → `factor_too_weak`;
 9. then every ticket-format check of the event type, as for any person event (canonical identities: `u_x` and its
-   aliased `p_x` count as one person, §9.1). For "who may sign what" (ticket-format §5.4.2) the hub role stands for
-   the member role: `admin` → `owner`, `edit` → `member`, `read` → `viewer` (D70: `admin` is today's owner). In
+   aliased `p_x` count as one person, §9.1). For "who may sign what" (ticket-format §5.4.2), in full mode the hub role
+   stands for the member role: `admin` → `owner`, `edit` → `member`, `read` → `viewer` (D70: `admin` is today's
+   owner); in selective mode the canonical person's own member role applies (unaliased: `viewer`). In
    particular the F1 checks of `based_on`, `roster_v`, `gate_gen`, the gate `hash` and `policy_hash` run against the
    host's own log: an event the hub built from a stale or false view (§10.7) is refused there.
 
@@ -486,7 +504,9 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
 
 1. The channel sends an **action** (§8.5) for one workspace, never event bytes.
 2. The hub checks the action (`check_action`), builds `E` from its view (§10.7) and its own certificates and
-   snapshot, and replies `{"prepared_id", "ctx", "digest", "expires_ms"}` where `ctx = ctx(E without
+   snapshot, runs **`check_built(action, log, E)`, always** (L2P4-2b: same type, same log, and on the four decision
+   types `E.hash` present (`malformed`) and byte-equal to `action.hash` (`event_changed`); vectors `built_*`), and
+   replies `{"prepared_id", "ctx", "digest", "expires_ms"}` where `ctx = ctx(E without
    "channel_proof")` (§8.2) and `digest` its hex. `prepared_id` is single use and lives at most 120 s.
 3. **The channel recomputes** `digest = H("orch/v2/hub-event-digest|" || cj(ctx))` from the `ctx` it received and
    refuses (`event_changed`) when it differs from `digest`; `ctx` must have exactly `{contract: 1, suite: 2,
@@ -494,6 +514,13 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    `check_prepared`, vectors `prepared_*`). It renders **every** authority-bearing field of `ctx.event` (type,
    workspace, ticket, gate and hash, outcome, text, people, settings), and any field it does not know makes it fall back
    to the full field list (WYSIWYS). It signs only the digest it computed itself.
+   **View-derived text is escaped** (L2P4-2d): titles, question texts and option labels come from the workspace's
+   events, which agents write and which have no text rule in core; a channel renders every character the §8.5 text
+   rule refuses (other than LF) as `<U+XXXX>` (reference `render_text`, vectors `render_*`). **Content-bound
+   decisions** (L2P4-2c): body text and artifacts are not synced (§10.7), so a channel that offers `gate.approved`,
+   `gate.changes_requested` or `verdict.given` shows the decision's hash in short form next to a link to where the
+   content was reviewed, and Mission Control shows the same short hash; a channel that cannot do that does not offer
+   content-bound decisions.
 4. The hub's `sign` consumes `prepared_id`, rebuilds `E` from its **current** view and refuses with `event_changed`
    unless it is byte-identical to the prepared one (the view moved, a role or certificate changed), checks the proof,
    signs with `UK`, verifies its own output with §8.3, writes the `custodial` audit record, and only then delivers it
@@ -551,16 +578,19 @@ an exact schema, so no action can carry a reserved field or a field owned by ano
 `ticket.addons`, a reserved path, a nested object, a question with its own `id` or a `sig`, extra option or visibility
 keys, …).
 
-**One text rule for every title and text field of the contract** (actions, shared items, summaries): 1 to n UTF-8
-bytes, no leading or trailing white space, and **no character of the Unicode categories `Cc`, `Cf`, `Zl`, `Zp`**
-(controls including C1 such as U+0085 NEL; format characters such as the bidi overrides U+202A–202E and U+2066–2069,
-U+200E/200F and U+200B; the separators U+2028/2029) and no lone surrogates; LF is the one exception, in multi-line
-texts only. A one-line value (a title, a reason) never contains LF. Anything else is `malformed` (vectors
+**One text rule for every title and text field of the contract** (actions, shared items, summaries), evaluated under
+**Unicode 16.0.0** (L2P4-3): 1 to n UTF-8 bytes, no leading or trailing Unicode `White_Space`, **no character of the
+categories `Cc`, `Cf`, `Zl`, `Zp`, `Cs`, `Co`, `Cn`** (controls including C1 such as U+0085 NEL; format characters such
+as the bidi overrides U+202A–202E and U+2066–2069, U+200E/200F and U+200B; the separators U+2028/2029; lone surrogates;
+private use such as U+F8FF; unassigned code points, so verifiers on newer tables cannot diverge) and **no
+`Default_Ignorable_Code_Point`** (blank look-alikes such as U+3164, U+115F, U+FFA0, U+034F and the variation
+selectors); LF is the one exception, in multi-line texts only. A lone surrogate is a refusal, never a crash. A one-line value (a title, a reason) never contains LF. Anything else is `malformed` (vectors
 `action_text_*`, `share_item_title_*`): a phone or browser shows these texts next to a signature prompt, so a
 display-spoofing character could make one text look like another.
 
-**A decision names the hash the person reviewed** (`hash` on `gate.*`, `verdict.given`, `question.answered`): the hub
-refuses with `event_changed` when its view's current hash differs, so a decision never lands on content the person did
+**A decision names the hash the person reviewed** (`hash` on `gate.approved`, `gate.changes_requested`,
+`verdict.given`, `question.answered`; **`action.hash` becomes `event.hash`, byte-equal**, L2P4-2a): the hub refuses with
+`event_changed` when its view's current hash differs (and `check_built` checks the built event, §8.4), so a decision never lands on content the person did
 not see. **Everything else in the event is the hub's**: an action that carries any envelope, custodial or host field
 (`v`, `id`, `actor`, `based_on`, `roster_v`, `hash_v`, `gate_gen`, `policy_hash`, `source_sha`, `qid`, `base_rev`,
 `sections`, `auth`, `channel*`, `hub_id`, `snapshot_version`, `*_cert`, `sig`, `seq`, `at`, `prev`, `ws_seq`,
@@ -1028,9 +1058,13 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
   memberships and space changes and when they happened, not whose).
 - **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, nonce}` (the
-  custodial event digest of §8.2); `share` (p4) `{workspace_id, item_id, change: put | revoke, item_version,
-  item_hash | null, nonce}`, scoped to the workspace (D9's local `share_log` stays; the chain record is what other
-  parties can check); `channel` (p4) `{channel_id, user_id, change: register | revoke, factor,
+  custodial event digest of §8.2); `share` (p4) `{workspace_id, item_id | null, change: put | revoke | purge,
+  item_version | null, item_hash | null, count | null, nonce}`, scoped to the workspace (D9's local `share_log`
+  stays; the chain record is what other parties can check). Exact per change: `put` names the item, its version and
+  `item_hash`; `revoke` names the item and the **tombstoned** `item_version`, `item_hash` null (a revoke of an unknown or
+  already revoked id is the idempotent `{}` and writes **no** record); `purge` is one record per workspace at unbind or
+  at a mode switch, `item_id`, `item_version`, `item_hash` null and `count` = the live items purged; `count` is null
+  otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
   `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
@@ -1187,6 +1221,8 @@ view only gets events about its own workspace refused by itself, or shown to and
 host then resends the log from `seq` 1 with `reset: true`, which replaces the hub's view of that log. **SHORTCUT**
 `log_sync reset on the host's word`: the hub does not check that the log it held was abandoned by a valid `restore`;
 hardening ties `reset` to the `restore` event (its `abandoned` head must be on the hub's held chain) and audits it.
+**A reset of the workspace log drops every ticket view** (L2P4-9): held ticket lines may name a `ws_seq` beyond the
+shorter new workspace log; the host resends the ticket logs.
 
 **Not here:** the hub's projection code (F1 replay on the view) is the hub's; body text and artifact bytes are not
 synced in hv 0 (custodial `ticket.updated` is `set` only, §8.5), so the channel shows section hashes, not text, for
@@ -1231,8 +1267,17 @@ sent, a message queued), so a replay inside the window must not repeat them.
 **Canonical target.** ASCII, at most 2048 bytes; the path is `/v2/hubs/<hub_id>` or below it (32 lower-case hex for
 `hub_id`), every segment non-empty and made of unreserved characters `[A-Za-z0-9._~-]` only, never `.` or `..` (so no
 `%`, `+`, `#`, `;`, `//` or trailing `/`); an optional query of `&`-separated `key=value` pairs of unreserved characters
-with unique keys. Anything else is `malformed`; a target for another hub's account is `other_hub`. The route table
-under `/v2/hubs/{hub_id}/` is orch-relay's (E1+); every route there needs this signature.
+with unique keys; a target ending in a bare `?` (or an empty pair) is `malformed`. Anything else is `malformed`; a
+target for another hub's account is `other_hub`. The route table
+under `/v2/hubs/{hub_id}/` is orch-relay's (E1+); every route **below** it needs this signature. **Unsigned
+exceptions:** the self-authenticating registration `POST /v2/hubs`, the revocation route, and the **public card read
+`GET /v2/hubs/{hub_id}`**, which stays unsigned although it sits under the signed prefix (it returns only the public,
+root-signed card and the revoked flag).
+
+**HTTP status per path** (E1): on registration (`POST /v2/hubs`) and the public card read, a card that does not verify
+or is unknown is `400 malformed` / `404 unknown_hub`, and a lower op cert is `409 stale_op_cert` (§5 step 7, a state
+conflict); on a **signed request** (the table above) `unknown_hub` and `stale_op_cert` are `401` (authentication of the
+request failed).
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -1412,9 +1457,11 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `not_custodial` (p4) | action, custodial | §8.5: the type is not in the custodial table for that log |
 | `event_changed` (p4) | channel, hub `sign` | §8.4: the digest does not match the shown context, or the hub's view moved since `prepare` |
 | `stale_version`, `too_many_items` (p4) | selective `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
+| `no_session`, `key_in_use` (p4) | channel registration | §6.3: the challenge was not opened inside a live session of the user; the key is registered to another user. Reused: `channel_revoked` (a revoked key never registers again) |
+| `unknown_channel` (p4) | hub CLI/API, local | §6.3: a revocation of a channel id this hub never registered |
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
-| `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`) |
+| `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
@@ -1438,7 +1485,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the custodial type table; the `space.accept` built from the vector proposal |
-| `cases` | 546 cases (113 positive, 433 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 584 cases (120 positive, 464 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1488,12 +1535,28 @@ and the host side of `log_sync` (it builds the pages the vectors open); orch-pub
 | 31 | Prepare / WYSIWYS (gaps 1–2) | the channel recomputes the digest from the context it shows (`event_changed`) | L2-5, D81 |
 | 32 | Selective `share_put` content (C6, D9) | `share.item` WSK-signed with exact content per kind, `IK` sealed to `HXK` (new v2 §5.3 purpose `hub-share`), monotonic `item_version`, idempotent revoke with tombstone, 16 KiB / 1000 items | C6 orch-core#1022, D9 orch-hub#23, spec §8a |
 | 33 | Text fields | one rule: no `Cc`, `Cf`, `Zl`, `Zp`; LF only in multi-line texts | security review (display spoofing) |
+| 35 | Opus pass on orch-hub#22 (l2-review-p4, PASS, 0 P0) | P1s fixed in one follow-up: L2P4-1 selective role floor; L2P4-2 hash pinned on the 4 decision types, `check_built` always, view text escaped, content-bound decisions show the short hash; L2P4-3 text rule adds `Cs`, `Co`, `Cn`, Default_Ignorable, Unicode 16.0 pinned; L2P4-6 revoked key never registers (`channel_revoked`), `key_in_use`; D7: `key_pub` in the challenge, pairing code needs a live session (`no_session`), revoke of an unknown id refused (`unknown_channel`), no `audit_failed`; D9: `share` `purge`, revoke record pinned; L2P4-9 (P2) workspace reset drops ticket views | state/l2-review-p4.md |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no
 App Attest)` (§6.3, D7 → hardening: App Attest); `log_sync reset on the host's word` (§10.7, D6/C-side → hardening: tie
 to the `restore` event); `Custodial ticket.updated without body sections; no artifact custody` (§8.5 → a text/blob
 transport in the action).
+
+**Hardening from the phase-4 Opus pass (P2, not built; each a `hardening` row):**
+
+| Item | Where | Hardening |
+|---|---|---|
+| L2P4-4 core titles with refused characters make a share fail | C6 host | the host escapes or skips, never sends; test `share_item_from_bidi_title_is_escaped_by_host` |
+| L2P4-10 value grammars differ from core (`_TOKEN`, `_KEY`, `_PERSON`) | §8.5 | align with core's `token`, `ticketKey`, `personId` (liveness: the hub signs what the host refuses) |
+| L2P4-11 relay origin not in the §10.8 bytes | §10.8 | add `lp16(relay_origin)` (a request to relay A replayable to relay B within 120 s) |
+| L2P4-12 duplicate `Orch-Hub*` headers | §10.8, §10.6 | exactly one of each, else `malformed` |
+| L2P4-13 proposal vs held space | §10.4 | at `epoch == held + 1`, `prev_members == held.members` |
+| L2P4-14 `log_sync reset` on the host's word | §10.7 | SHORTCUT above: tie to the `restore` event, audit it |
+| L2P4-C2 core actor lookups not through `canonical` | C3 | route every actor lookup through `identity.canonical` plus the role mapping |
+| L2P4-C1 aliases not scoped to a hub (P1 for core) | §9.1, C4 | key aliases by `(hub_id, user_id)`; "never re-pointed **for the same hub**"; must land before C3 accepts `auth: "hub"` |
+| D9 tombstones unbounded | §10.2b | per-workspace monotonic `item_version` counter + prunable tombstones with a `version_floor`; until then a hard cap (`too_many_items`) |
+| D9 `hxk_exchange` raw ECDH oracle | hub keys | purpose-bound `open_seal(purpose ∈ {wk, hub-share}, …)`; the share service gets a `hub-share`-only handle |
 
 **Open points of the phase-4 extension (not decided here):**
 

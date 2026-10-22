@@ -130,7 +130,14 @@ def register(
     return signed(signer or key, label, o)
 
 
-CHALLENGE = {"user_id": U_ALICE, "nonce": REG_NONCE, "expires_ms": NOW + 60_000, "gate": "pairing-code"}
+CHALLENGE = {
+    "user_id": U_ALICE,
+    "key_pub": K.b("channel_alice_phone"),
+    "nonce": REG_NONCE,
+    "expires_ms": NOW + 60_000,
+    "gate": "pairing-code",
+    "session": True,
+}
 
 # --- §10.4 proposal -----------------------------------------------------------------------------------------------------
 
@@ -585,6 +592,59 @@ def build_p4(
     ctx = H.signed_context(WS_A, TICKET, e_unsigned)
     dg = H.event_digest(WS_A, TICKET, e_unsigned).hex()
     case("prepared_digest_matches", "prepared", {"ctx": ctx, "digest_hex": dg}, {"ok": {"digest_hex": dg}}, 4)
+    # L2P4-2b: the hub's contract check of what it built, always
+    h_g = ev["hash"]
+    a_g = {"type": "gate.approved", "log": TICKET, "gate": "requirements", "hash": h_g}
+    case(
+        "built_decision_hash_matches",
+        "built",
+        {"action": a_g, "log": TICKET, "event": e_unsigned},
+        {"ok": {"built": True}},
+        4,
+    )
+    case(
+        "built_decision_hash_other",
+        "built",
+        {"action": {**a_g, "hash": "sha256:" + "ab" * 32}, "log": TICKET, "event": e_unsigned},
+        {"error": "event_changed"},
+        4,
+        "action.hash becomes event.hash, byte-equal",
+    )
+    case(
+        "built_decision_without_hash_refused",
+        "built",
+        {"action": a_g, "log": TICKET, "event": {k: v for k, v in e_unsigned.items() if k != "hash"}},
+        {"error": "malformed"},
+        4,
+        "no skip when the built core lacks a hash",
+    )
+    case(
+        "built_other_type",
+        "built",
+        {"action": {**a_g, "type": "verdict.given"}, "log": TICKET, "event": e_unsigned},
+        {"error": "event_changed"},
+        4,
+    )
+    case(
+        "built_other_log", "built", {"action": a_g, "log": TICKET_2, "event": e_unsigned}, {"error": "event_changed"}, 4
+    )
+    # L2P4-2d: view-derived strings are rendered with refused characters escaped
+    case(
+        "render_escapes_bidi_from_view",
+        "render",
+        {"text": "Approve \u202epayroll\u202c now"},
+        {"ok": {"shown": "Approve <U+202E>payroll<U+202C> now"}},
+        4,
+        "channel conformance: an agent-written title cannot reorder what the person sees",
+    )
+    case("render_keeps_lf_and_plain_text", "render", {"text": "line 1\nline 2"}, {"ok": {"shown": "line 1\nline 2"}}, 4)
+    case(
+        "render_escapes_filler_and_private_use",
+        "render",
+        {"text": "\u3164\uf8ff"},
+        {"ok": {"shown": "<U+3164><U+F8FF>"}},
+        4,
+    )
     case(
         "prepared_digest_of_other_event",
         "prepared",
@@ -731,7 +791,7 @@ def build_p4(
         "channel_register",
         {
             **reg,
-            "challenge": {**CHALLENGE, "gate": "session"},
+            "challenge": {**CHALLENGE, "gate": "session", "key_pub": K.b("channel_bob_browser")},
             "signed": register("channel_bob_browser", "browser", "session"),
         },
         {"ok": {"channel_id": ch_b, "factor": "password+totp"}},
@@ -748,7 +808,11 @@ def build_p4(
     case(
         "channel_register_browser_claims_pairing",
         "channel_register",
-        {**reg, "signed": register("channel_bob_browser", "browser", "pairing-code")},
+        {
+            **reg,
+            "challenge": {**CHALLENGE, "key_pub": K.b("channel_bob_browser")},
+            "signed": register("channel_bob_browser", "browser", "pairing-code"),
+        },
         {"error": "malformed"},
         4,
     )
@@ -795,6 +859,48 @@ def build_p4(
         {**reg, "now_ms": NOW + 60_000, "signed": register()},
         {"error": "challenge_invalid"},
         4,
+    )
+    # L2P4-6, L2P4-D7a: a revoked key never registers again; one channel id, one user; the challenge names the key;
+    # a pairing code needs a live session of the same user too
+    case(
+        "channel_register_revoked_key",
+        "channel_register",
+        {**reg, "revoked_channels": [ch_a], "signed": register()},
+        {"error": "channel_revoked"},
+        4,
+        "§6.2: a channel revocation is permanent",
+    )
+    case(
+        "channel_register_key_of_other_user",
+        "channel_register",
+        {**reg, "registered": {ch_a: U_BOB}, "signed": register()},
+        {"error": "key_in_use"},
+        4,
+        "one channel id, one user",
+    )
+    case(
+        "channel_register_same_user_again",
+        "channel_register",
+        {**reg, "registered": {ch_a: U_ALICE}, "signed": register()},
+        {"ok": {"channel_id": ch_a, "factor": "se-unlocked"}},
+        4,
+        "re-registration by the same user (reissue)",
+    )
+    case(
+        "channel_register_key_not_the_challenged_one",
+        "channel_register",
+        {**reg, "challenge": {**CHALLENGE, "key_pub": K.b("channel_bob_browser")}, "signed": register()},
+        {"error": "challenge_invalid"},
+        4,
+        "nobody can race their own key into a gate the victim opened",
+    )
+    case(
+        "channel_register_pairing_without_session",
+        "channel_register",
+        {**reg, "challenge": {**CHALLENGE, "session": False}, "signed": register()},
+        {"error": "no_session"},
+        4,
+        "a pairing code alone is no bearer credential for se-unlocked",
     )
     case(
         "channel_register_dev_at_real_hub",
@@ -994,6 +1100,8 @@ def build_p4(
         ("upper_hub", f"/v2/hubs/{HUB_ID.upper()}/push"),
         ("repeated_key", f"/v2/hubs/{HUB_ID}/mailbox?a=1&a=2"),
         ("other_root", f"/v2/workspaces/{WS_A}/push"),
+        ("bare_question_mark", f"/v2/hubs/{HUB_ID}/push?"),
+        ("empty_query_pair", f"/v2/hubs/{HUB_ID}/mailbox?a=1&"),
     ):
         rel(
             f"relay_request_target_{tname}",
@@ -1166,6 +1274,13 @@ def build_p4(
         ("lrm_u200e", "\u200e"),
         ("zwsp_u200b", "\u200b"),
         ("para_sep_u2029", "\u2029"),
+        ("private_use_uf8ff", "\uf8ff"),
+        ("unassigned_u0378", "\u0378"),
+        ("hangul_filler_u3164", "\u3164"),
+        ("hangul_filler_u115f", "\u115f"),
+        ("halfwidth_filler_uffa0", "\uffa0"),
+        ("cgj_u034f", "\u034f"),
+        ("variation_selector_ufe0f", "\ufe0f"),
     ):
         shr(
             f"share_item_title_{cname}",
@@ -1199,6 +1314,7 @@ def build_p4(
         "change": "put",
         "item_version": 1,
         "item_hash": h1,
+        "count": None,
         "nonce": nonce32("share"),
     }
     rec_sh = audit_rec(1, AU.GENESIS_PREV, "share", sh_ev)
@@ -1212,12 +1328,46 @@ def build_p4(
     sh_rv = {**sh_ev, "change": "revoke", "item_hash": None, "nonce": nonce32("share_revoke")}
     rec_shr = audit_rec(1, AU.GENESIS_PREV, "share", sh_rv)
     case(
-        "audit_share_revoke",
+        "audit_share_revoke_fields",
         "audit",
         {**with_card, "signed": rec_shr, "event": sh_rv},
         {"ok": {"seq": 1, "hash": AU.chain_hash(rec_shr)}},
         4,
+        "revoke: item_version = the tombstoned version, item_hash null",
     )
+    sh_pg = {
+        **sh_ev,
+        "change": "purge",
+        "item_id": None,
+        "item_version": None,
+        "item_hash": None,
+        "count": 3,
+        "nonce": nonce32("share_purge"),
+    }
+    rec_pg = audit_rec(1, AU.GENESIS_PREV, "share", sh_pg)
+    case(
+        "audit_share_purge_on_unbind_recorded",
+        "audit",
+        {**with_card, "signed": rec_pg, "event": sh_pg},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_pg)}},
+        4,
+        "an unbind purge is on the chain, with its count",
+    )
+    for nm, bad in (
+        ("revoke_with_hash", {**sh_rv, "item_hash": h1}),
+        ("put_without_hash", {**sh_ev, "item_hash": None}),
+        ("purge_naming_an_item", {**sh_pg, "item_id": ITEM}),
+        ("purge_without_count", {**sh_pg, "count": None}),
+        ("put_with_count", {**sh_ev, "count": 1}),
+    ):
+        case(
+            f"audit_share_{nm}",
+            "audit",
+            {**with_card, "signed": audit_rec(1, AU.GENESIS_PREV, "share", bad), "event": bad},
+            {"error": "malformed"},
+            4,
+            "exact fields per share change",
+        )
 
     # ---- signatures and objects
     reg_o, prop_o = register(), proposal()

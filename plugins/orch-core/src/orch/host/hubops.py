@@ -46,7 +46,11 @@ CARD_SOURCE: Any = None
 _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.connect": {
         "type": "object",
-        "properties": {"invite": {"type": "string", "minLength": 1, "maxLength": 512}, "hub_card": {"type": "object"}},
+        "properties": {
+            "invite": {"type": "string", "minLength": 1, "maxLength": 512},
+            "hub_card": {"type": "object"},
+            "addr": {"type": "string", "minLength": 3, "maxLength": 300},
+        },
         "required": ["invite", "hub_card"],
         "additionalProperties": False,
     },
@@ -137,7 +141,8 @@ def _wsk_sign(service: WorkspaceService) -> Any:
 
 
 def workspace_card(service: WorkspaceService) -> dict[str, Any] | None:
-    """The workspace's newest v2 directory card (the relay card of the first link, R3/R6), or ``None``."""
+    """The workspace's v2 directory card (hub contract 9.5): the relay's card when the workspace is linked to one
+    (R3/R6), else its own relay-less card (:func:`local_card`). ``None`` only if neither can be had."""
     if CARD_SOURCE is not None:
         return CARD_SOURCE(service)  # type: ignore[no-any-return]
     try:
@@ -145,9 +150,70 @@ def workspace_card(service: WorkspaceService) -> dict[str, Any] | None:
 
         mk = relayr6.keys_for(service)
         seq = mk.head()["card"]["card_seq"]
-        return mk._read_card(seq) if seq else None  # noqa: SLF001 - the one reader of the stored card
-    except Exception:  # noqa: BLE001 - no relay state: no card
+        if seq:
+            return mk._read_card(seq)  # type: ignore[no-any-return]  # noqa: SLF001 - the one reader of the stored card
+    except Exception:  # noqa: BLE001 - no relay state: build our own
+        pass
+    try:
+        return local_card(service)
+    except (HostError, OSError, ValueError):
         return None
+
+
+def local_card(service: WorkspaceService) -> dict[str, Any]:
+    """The relay-less card: built once with the relay path's own builder (``card_o``, signed by ``WSK``), kept in
+    ``hub/card.json`` with its ``WXK``/``CK`` in ``hub/card-keys.json`` (0600, the host's own directory), and returned
+    unchanged on every later call. The relay path never sees these files, so a later relay link is unaffected."""
+    import json
+    import secrets
+
+    from orch import crypto
+    from orch.hubclient import localcard
+    from orch.identity import wscard
+    from orch.identity.errors import Refused
+    from orch.store.fsio import write_atomic
+
+    from . import relayr3
+    from .custody import ensure_private_dir, read_json
+
+    d = _dir(service)
+    pk = relayr3.owner_pk_pub(service)
+    with _MU:
+        stored = read_json(d / "card.json", service.host_uid, limit=1 << 20)
+        if stored is not None:
+            try:
+                wscard.verify_card(dict(stored), pk)
+            except (Refused, TypeError, ValueError):
+                raise HostError(
+                    "hub.state_mismatch", "hub/card.json does not verify: the host refuses to guess"
+                ) from None
+            return stored  # type: ignore[no-any-return]
+        genesis = service.store.genesis_event()
+        wsk_pub, sign = _wsk_sign(service)
+        keys = read_json(d / "card-keys.json", service.host_uid, limit=1 << 16)
+        if keys is None:
+            keys = {
+                "v": 1,
+                "wxk": crypto.b64u(crypto.private_scalar(crypto.generate_private_key())),
+                "ck": crypto.b64u(secrets.token_bytes(32)),
+            }
+            for level in (d.parent, d):
+                ensure_private_dir(level, service.host_uid)
+            write_atomic(d / "card-keys.json", json.dumps(keys, sort_keys=True).encode(), mode=0o600)
+        wxk = crypto.private_key_from_scalar(int.from_bytes(crypto.unb64u(keys["wxk"], 32), "big"))
+        card = localcard.build_card(
+            delegation=genesis["delegation"], owner_pk_pub=pk, workspace_id=service.workspace_id, wsk_pub=wsk_pub,
+            sign_wsk=sign, wxk_pub=crypto.public_bytes(wxk), wxk_version=1, ck=crypto.unb64u(keys["ck"], 32),
+            card_seq=1, issued_ms=int(service.clock() * 1000), part=wscard_part(service),
+        )  # fmt: skip
+        write_atomic(d / "card.json", json.dumps(card, sort_keys=True).encode(), mode=0o600)
+        return card
+
+
+def wscard_part(service: WorkspaceService) -> dict[str, Any]:
+    from orch.relay.r6.firstcard import default_part
+
+    return default_part(str(service.workspace_id)[:8])
 
 
 class _NoLink:
@@ -157,8 +223,27 @@ class _NoLink:
         raise ConnectionRefusedError("no hub link")
 
 
-def _transport(service: WorkspaceService, hub_id: str) -> Any:
-    return TRANSPORT(service, hub_id) if TRANSPORT is not None else _NoLink()
+def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | None = None) -> Any:
+    """The seam first (tests, C5's replacements); else a TLS link to ``link["addr"]`` pinned to the card's SPKI hash;
+    without an address or pin the hub is simply unreachable."""
+    if TRANSPORT is not None:
+        return TRANSPORT(service, hub_id)
+    if not link or not link.get("addr") or not link.get("spki"):
+        return _NoLink()
+    from orch.hubclient.tlsadapter import TlsTransport
+
+    return TlsTransport(
+        addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"],
+        now_ms=lambda: int(service.clock() * 1000),
+    )  # fmt: skip
+
+
+def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
+    """Where to dial: in a dev workspace ``ORCH_HUB_ADDR`` of the host process wins; else the ``addr`` of this call;
+    else the one kept in ``hub.json``. The address is not signed and not trusted: the card's TLS pin decides."""
+    env = os.environ.get("ORCH_HUB_ADDR") if dev else None
+    return env or args.get("addr") or (None if state is None else state.addr)
 
 
 # -- checks --------------------------------------------------------------------------------------------------------
@@ -202,6 +287,7 @@ def _audit(call: Call, event: str, **more: Any) -> None:
 def serve(call: Call) -> dict[str, Any]:
     from orch.crypto.encoding import b64u, unb64u
     from orch.hubclient import HubRefused, wire
+    from orch.hubclient.tlsadapter import parse_addr
 
     from .workspace import ok_result
 
@@ -242,12 +328,16 @@ def serve(call: Call) -> dict[str, Any]:
     dev = workspace_dev(service)
     now = int(service.clock() * 1000)
     try:
-        wire.verify_card(args["hub_card"], now_ms=now, dev_mode=dev, pinned_root=unb64u(model["hk_root_pub"], 65))
+        verified = wire.verify_card(
+            args["hub_card"], now_ms=now, dev_mode=dev, pinned_root=unb64u(model["hk_root_pub"], 65)
+        )
+        if "addr" in args:
+            parse_addr(args["addr"])
     except HubRefused as exc:
         raise _refused(exc.code) from None
     v2 = workspace_card(service)
     if v2 is None:
-        raise HostError("hub.no_card", "this workspace has no directory card yet (link a relay first)")
+        raise HostError("hub.no_card", "this workspace's directory card could not be had")
     from . import relayr3
 
     plan.update(
@@ -255,6 +345,9 @@ def serve(call: Call) -> dict[str, Any]:
         card=args["hub_card"],
         v2=v2,
         dev=dev,
+        addr=_addr(args, state, dev),
+        spki=verified["card"]["tls_spki_sha256"],
+        hk_op=verified["hk_op_pub"],
         pk_pub=b64u(relayr3.owner_pk_pub(service)),
     )
     return {"plan": plan}
@@ -270,8 +363,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
-    from orch.crypto.encoding import unb64u
-    from orch.hubclient import HubRefused, flush_unbound, join_selective, leave
+    from orch.hubclient import HubRefused, flush_unbound, leave
 
     from .workspace import ok_result
 
@@ -283,31 +375,75 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]
-            r = join_selective(
-                state=state, invite=plan["invite"], hub_card=plan["card"], v2_card=plan["v2"],
-                pk_pub=unb64u(plan["pk_pub"], 65), workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
-                dev_mode=plan["dev"], now_ms=now, transport=_transport(service, model["hub_id"]),
-                record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
-                save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
-            )  # fmt: skip
+            link = {
+                "addr": plan["addr"],
+                "spki": plan["spki"],
+                "hk_op": plan["hk_op"],
+                "wsk_pub": wsk_pub,
+                "sign": sign,
+            }
+            transport = _transport(service, model["hub_id"], link)
+            try:
+                r = _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
+            finally:
+                getattr(transport, "close", lambda: None)()
             _audit(call, "hub.connect", hub_id=r.state.hub_id, binding_seq=r.state.binding_seq)
             return ok_result({"hub_id": r.state.hub_id, "status": r.state.status, "binding_seq": r.state.binding_seq})
-        return ok_result(_unbind(call, plan, state, sign, now, save, leave, flush_unbound))
+        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_unbound))
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
 
 
+def _join(
+    state: Any,
+    plan: dict[str, Any],
+    model: dict[str, Any],
+    service: Any,
+    wsk_pub: bytes,
+    sign: Any,
+    now: Any,
+    save: Any,
+    transport: Any,
+    aliases: list[dict[str, str]],
+) -> Any:
+    from orch.crypto.encoding import unb64u
+    from orch.hubclient import join_selective
+
+    return join_selective(
+        state=state, invite=plan["invite"], hub_card=plan["card"], v2_card=plan["v2"],
+        pk_pub=unb64u(plan["pk_pub"], 65), workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
+        dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
+        record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
+        save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
+    )  # fmt: skip
+
+
 def _unbind(
-    call: Call, plan: dict[str, Any], state: Any, sign: Any, now: Any, save: Any, leave: Any, flush: Any
+    call: Call, plan: dict[str, Any], state: Any, sign: Any, wsk_pub: Any, now: Any, save: Any, leave: Any, flush: Any
 ) -> dict[str, Any]:
-    from orch.hubclient import HubRefused
 
     service, model = call.service, plan["model"]
     if state is None:  # never connected: there is no binding anywhere to end
         return {"hub_id": model["hub_id"], "unbound": False, "delivered": True, "reason": "never_connected"}
-    t = _transport(service, state.hub_id)
+    from orch.crypto.encoding import unb64u
+
     dev = bool(state.binding["o"]["dev"])  # the unbound keeps the binding's own dev marker
+    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": unb64u(state.hk_op_pub, 65),
+            "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
+    t = _transport(service, state.hub_id, link)
+    try:
+        return _unbind_over(call, plan, state, sign, now, save, leave, flush, dev, t)
+    finally:
+        getattr(t, "close", lambda: None)()
+
+
+def _unbind_over(
+    call: Call, plan: Any, state: Any, sign: Any, now: Any, save: Any, leave: Any, flush: Any, dev: bool, t: Any
+) -> dict[str, Any]:
+    from orch.hubclient import HubRefused
+
+    service = call.service
     try:
         r = leave(
             state=state, workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=dev, now_ms=now,

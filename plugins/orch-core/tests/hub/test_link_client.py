@@ -13,9 +13,9 @@ from OpenSSL import SSL
 from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
-from orch.hub.tlslink import client as C
-from orch.hub.tlslink.client import LinkClient, LinkError
-from orch.hub.tlslink.tls import LinkClosed, LinkTimeout, PinMismatch
+from orch.hubclient.tlslink import client as C
+from orch.hubclient.tlslink.client import LinkClient, LinkError
+from orch.hubclient.tlslink.tls import LinkClosed, LinkTimeout, PinMismatch
 
 from .tlshub import TlsHub
 

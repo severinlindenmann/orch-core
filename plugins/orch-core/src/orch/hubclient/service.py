@@ -37,6 +37,8 @@ class HubState:
     binding: dict[str, Any]  # the signed hub.binding of binding_seq
     aliases: dict[str, str] = field(default_factory=dict)  # person_id -> user_id, owner-signed at join only
     pending_unbound: dict[str, Any] | None = None  # a signed hub.unbound the hub has not acknowledged yet
+    addr: str | None = None  # host:port the host dials (not signed: the TLS pin of the card is the trust)
+    tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -49,13 +51,15 @@ class HubState:
             "binding": self.binding,
             "aliases": dict(self.aliases),
             "pending_unbound": self.pending_unbound,
+            "addr": self.addr,
+            "tls_spki": self.tls_spki,
         }
 
     @classmethod
     def from_json(cls, d: Any) -> HubState:
         """Strict: anything unreadable is ``malformed`` (fail closed)."""
         keys = {"hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases"}
-        if type(d) is not dict or set(d) - {"pending_unbound"} != keys:
+        if type(d) is not dict or set(d) - {"pending_unbound", "addr", "tls_spki"} != keys:
             raise HubRefused("malformed")
         ok = (
             wire.hex16(d["hub_id"])
@@ -69,6 +73,8 @@ class HubState:
             and type(d["aliases"]) is dict
             and all(wire.hex16(p) and wire.hex16(u) for p, u in d["aliases"].items())
             and (d.get("pending_unbound") is None or type(d["pending_unbound"]) is dict)
+            and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
+            and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -83,6 +89,8 @@ class HubState:
             binding=d["binding"],
             aliases=dict(d["aliases"]),
             pending_unbound=d.get("pending_unbound"),
+            addr=d.get("addr"),
+            tls_spki=d.get("tls_spki"),
         )
 
 
@@ -118,6 +126,7 @@ def join_selective(
     aliases: list[dict[str, str]] | None = None,
     mode: str = "selective",
     binding_seq: int | None = None,
+    addr: str | None = None,
 ) -> JoinResult:
     if mode != "selective":
         raise HubRefused("full_mode_later")
@@ -137,6 +146,7 @@ def join_selective(
             raise HubRefused("binding_conflict")
         binding, payload = state.binding, {}
         new = state
+        new.addr = addr or new.addr  # a retry may name the address the first try did not have
     else:
         prior = {} if state is None else state.aliases
         seq = binding_seq or (1 if state is None else state.binding_seq + 1)  # strictly increasing (9.2)
@@ -166,6 +176,8 @@ def join_selective(
             status="joining",
             binding=binding,
             aliases=merged,
+            addr=addr,
+            tls_spki=verified["card"]["tls_spki_sha256"],
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)

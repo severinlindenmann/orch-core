@@ -1,6 +1,7 @@
 """``orch hub``: join a hub in selective mode, and leave it (V3 C2a; hub contract 9.1, spec 8 and 8a).
 
-    orch hub join INVITE --hub-card FILE [--mode selective] [--owner-user-id HEX32]   a person: join (signed)
+    orch hub join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective] [--owner-user-id HEX32]
+                                                                                       a person: join (signed)
     orch hub leave                                                                       a person: leave (signed)
     orch hub connect INVITE --hub-card FILE   a person: finish a join the hub could not take yet
     orch hub unbind                           a person: tell the hub about a leave it has not heard yet
@@ -29,8 +30,8 @@ from orch.cli.publish import PubError, _call, _sign, _tty_ok
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch hub {join INVITE --hub-card FILE [--mode selective] [--owner-user-id HEX32] | leave | "
-    "connect INVITE --hub-card FILE | unbind | status} [--json]"
+    "usage: orch hub {join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective] [--owner-user-id HEX32] "
+    "| leave | connect INVITE --hub-card FILE [--hub-addr HOST:PORT] | unbind | status} [--json]"
 )
 _CARD_MAX = 64 * 1024
 
@@ -44,6 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("cmd", choices=("join", "leave", "connect", "unbind", "status"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--hub-card")
+    p.add_argument("--hub-addr")
     p.add_argument("--mode", default="selective")
     p.add_argument("--owner-user-id")
     p.add_argument("--json", action="store_true")
@@ -91,6 +93,14 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "join" and a.mode not in ("selective", "full"):
         raise PubError("invalid.input", f"--mode {a.mode[:20]!r}: use selective", 5)
+    if a.hub_addr is not None:
+        from orch.hubclient.errors import HubRefused
+        from orch.hubclient.tlsadapter import parse_addr
+
+        try:
+            parse_addr(a.hub_addr)
+        except HubRefused:
+            raise PubError("invalid.input", "--hub-addr is HOST:PORT", 5) from None
     if a.owner_user_id is not None and (a.cmd != "join" or re.fullmatch(r"[0-9a-f]{32}", a.owner_user_id) is None):
         raise PubError("invalid.input", "--owner-user-id is 32 lower-case hex digits and belongs to join", 5)
 
@@ -111,12 +121,17 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
     from orch.ops.errors import OrchError
 
     try:
-        got = _call(target, "hub.connect", {"invite": a.rest[0], "hub_card": _read_card(a.hub_card)}, env)
+        args: dict[str, Any] = {"invite": a.rest[0], "hub_card": _read_card(a.hub_card)}
+        if a.hub_addr:
+            args["addr"] = a.hub_addr
+        got = _call(target, "hub.connect", args, env)
     except OrchError as exc:
         if exc.code == "hub.unreachable":
             out.write(
                 "signed: your workspace has recorded the join, but the hub could not be reached or did not answer.\n"
-                f"finish it when the hub is up: orch hub connect {a.rest[0]} --hub-card {a.hub_card}\n"
+                f"finish it when the hub is up: orch hub connect {a.rest[0]} --hub-card {a.hub_card}"
+                + (f" --hub-addr {a.hub_addr}" if a.hub_addr else "")
+                + "\n"
                 "or leave: orch hub leave\n"
             )
             return 9

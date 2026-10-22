@@ -29,7 +29,7 @@ def test_custodial_hub_actor_refuses_a_verified_event_whose_user_is_aliased_unde
     admitted = []
     with pytest.raises(HubRefused) as e:
         C.accept_event_deliver(
-            _state(), {"log": LOG, "event": CASE["event"]}, ws=core(w).ws, now_ms=NOW, dev_mode=True,
+            _state(), {"log": LOG, "event": CASE["event"]}, ws=core(w).ws, now_ms=NOW, dev_mode=True, min_factor="password+totp",
             admit=lambda *a: admitted.append(a),
         )  # fmt: skip
     assert e.value.code == "other_user" and admitted == []
@@ -39,7 +39,7 @@ def test_custodial_hub_actor_resolves_the_actor_handed_to_admit(w):
     join(w, [alias(w, "mara", C_USER)])
     seen = []
     C.accept_event_deliver(
-        _state(), {"log": LOG, "event": CASE["event"]}, ws=core(w).ws, now_ms=NOW, dev_mode=True,
+        _state(), {"log": LOG, "event": CASE["event"]}, ws=core(w).ws, now_ms=NOW, dev_mode=True, min_factor="password+totp",
         admit=lambda actor, verified, log, event: seen.append((actor, verified["channel"], log)),
     )  # fmt: skip
     assert seen == [(w.people["mara"], CASE["event"]["channel"], LOG)]

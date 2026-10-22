@@ -26,6 +26,8 @@ HUB, OP_CERT = V["ids"]["hub"], V["ids"]["op_cert"]
 ALICE, BOB = V["ids"]["user_alice"], V["ids"]["user_bob"]
 PHONE = V["ids"]["channel_alice_phone"]
 SNAP = CASE["snapshot"]
+#: D66 floor that every factor meets, i.e. "no requirement": the argument is required, so a test says it out loud
+ANY_FACTOR = "password+totp"
 HELD = wire.verify_card(CASE["card"], now_ms=NOW, dev_mode=True)
 
 
@@ -57,6 +59,7 @@ def mint(
 def verify(event: Any, **kw: Any) -> dict[str, Any]:
     args: dict[str, Any] = {
         "workspace_id": WS, "log": LOG, "held": HELD, "snapshot": SNAP, "now_ms": NOW, "dev_mode": True,
+        "min_factor": ANY_FACTOR,
     }  # fmt: skip
     args.update(kw)
     return C.verify_custodial(event, **args)
@@ -309,32 +312,32 @@ def _state(*, mode: str = "full", snapshot: Any = "vec", revoked: tuple[str, ...
 
 
 def test_verify_hub_event_over_a_state_accepts_the_vector_event():
-    r = C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=True)
+    r = C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=True, min_factor=ANY_FACTOR)
     assert r["user_id"] == ALICE and r["channel"] == PHONE
 
 
 def test_verify_hub_event_fails_closed_without_a_snapshot_a_binding_or_with_a_revoked_op():
     for st, expect in ((_state(snapshot=None), "unknown_snapshot"), (_state(revoked=(OP_CERT,)), "revoked")):
         with pytest.raises(HubRefused) as e:
-            C.verify_hub_event(st, CASE["event"], log=LOG, now_ms=NOW, dev_mode=True)
+            C.verify_hub_event(st, CASE["event"], log=LOG, now_ms=NOW, dev_mode=True, min_factor=ANY_FACTOR)
         assert e.value.code == expect
     unbound = _state()
     unbound.status = "unbound"
     with pytest.raises(HubRefused) as e:
-        C.verify_hub_event(unbound, CASE["event"], log=LOG, now_ms=NOW, dev_mode=True)
+        C.verify_hub_event(unbound, CASE["event"], log=LOG, now_ms=NOW, dev_mode=True, min_factor=ANY_FACTOR)
     assert e.value.code == "not_bound"
 
 
 def test_a_real_workspace_refuses_a_dev_event_chain():
     with pytest.raises(HubRefused) as e:
-        C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=False)
+        C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=False, min_factor=ANY_FACTOR)
     assert e.value.code == "dev_refused"
 
 
 def test_event_deliver_needs_an_admit_path_and_full_mode():
     def go(state: HubState, body: Any, admit: Any = None) -> str:
         with pytest.raises(HubRefused) as e:
-            C.accept_event_deliver(state, body, ws=None, now_ms=NOW, dev_mode=True, admit=admit)
+            C.accept_event_deliver(state, body, ws=None, now_ms=NOW, dev_mode=True, admit=admit, min_factor=ANY_FACTOR)
         return e.value.code
 
     body = {"log": LOG, "event": CASE["event"]}
@@ -347,3 +350,20 @@ def test_event_deliver_needs_an_admit_path_and_full_mode():
         go(_state(), {"log": LOG, "event": mint({"hash": None}, resign=False)}, admit=lambda *a: None)
         == "bad_signature"
     )
+
+
+def test_min_factor_is_required_everywhere_so_step_8_cannot_be_skipped_by_forgetting_it():
+    """L2-C3-3: no default and no None. Omitting it is a TypeError; None and an unknown policy value refuse."""
+    kw = {"workspace_id": WS, "log": LOG, "held": HELD, "snapshot": SNAP, "now_ms": NOW, "dev_mode": True}
+    with pytest.raises(TypeError):
+        C.verify_custodial(CASE["event"], **kw)
+    with pytest.raises(TypeError):
+        C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=True)
+    with pytest.raises(TypeError):
+        C.accept_event_deliver(
+            _state(), {"log": LOG, "event": CASE["event"]}, ws=None, now_ms=NOW, dev_mode=True, admit=lambda *a: None
+        )
+    for bad in (None, "", "magic"):
+        assert code(CASE["event"], min_factor=bad) == "factor_too_weak"
+    assert code(CASE["event"], min_factor="passkey") == "factor_too_weak"  # the vector event is se-unlocked
+    assert verify(CASE["event"], min_factor="se-unlocked")["factor"] == "se-unlocked"

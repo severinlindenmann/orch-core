@@ -166,7 +166,7 @@ def verify_custodial(
     mode: str = "full",
     granted_users: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
-    min_factor: str | None = None,
+    min_factor: str,
     revoked_op_certs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Section 8.3 steps 1-8, in order. ``event`` is the event as delivered (``E`` plus ``sig``; no host fields).
@@ -260,9 +260,9 @@ def verify_custodial(
     # 7b. the closed list of custodial types and the lowest role per type
     check_custodial_role(typ, log, floor)
     # 8. D66 policy on the factor: secure-enclave policies are met by passkey only, D49 by se-unlocked or passkey
-    if min_factor is not None and (
-        min_factor not in _FACTOR_RANK or _FACTOR_RANK[event["channel_factor"]] < _FACTOR_RANK[min_factor]
-    ):
+    #    ``min_factor`` is required (L2-C3-3: no default, so no caller skips this step by forgetting it); the weakest
+    #    value, ``password+totp``, is "no requirement", and an unknown policy value refuses.
+    if min_factor not in _FACTOR_RANK or _FACTOR_RANK[event["channel_factor"]] < _FACTOR_RANK[min_factor]:
         raise HubRefused("factor_too_weak")
     _payload_shape(typ, event)
     return {
@@ -283,7 +283,7 @@ def verify_hub_event(
     dev_mode: bool,
     granted_users: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
-    min_factor: str | None = None,
+    min_factor: str,
 ) -> dict[str, Any]:
     """:func:`verify_custodial` for the hub this host is bound to. The card, the revoked set and the pinned snapshot
     are verified again NOW (fail closed: a missing snapshot, an expired or revoked op cert, or a card that no longer
@@ -320,7 +320,7 @@ def accept_event_deliver(
     dev_mode: bool,
     admit: Admit | None,
     granted_users: frozenset[str] = frozenset(),
-    min_factor: str | None = None,
+    min_factor: str,
 ) -> dict[str, Any]:
     """The host's answer to an h2w ``event_deliver`` (protocol 10.2): ``body`` is ``{"log", "event"}``. Verifies the
     custodial event fully (:func:`verify_hub_event`), resolves its actor through ``identity.hub_actor`` (a hub may not

@@ -226,7 +226,7 @@ def _run_custodial(a: dict[str, Any]) -> dict[str, Any]:
         mode=a.get("mode", "full"),
         granted_users=frozenset(a.get("granted_users", [])),
         member_roles=a.get("member_roles", {}),
-        min_factor=a.get("min_factor"),
+        min_factor=a.get("min_factor", "password+totp"),  # required by core; the weakest value is "no requirement"
         revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
     )
     return {"channel": r["channel"], "role": r["role"], "user_id": r["user_id"]}

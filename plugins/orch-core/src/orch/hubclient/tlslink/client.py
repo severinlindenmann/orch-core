@@ -46,6 +46,8 @@ SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_LINK_AUTH = b"orch/v2/sig/hub-link-auth|"
 HV = 0
+#: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
+MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
 MODES = ("selective", "full")
 #: the closed w2h op list: op -> the mode it exists in (None: both); and the shape of its reply body
@@ -278,6 +280,10 @@ class LinkClient:
             raise LinkError("malformed")
         if type(o["seq"]) is not int or o["seq"] <= self._last_in:
             raise LinkError("malformed")
+        if len(queue) >= MAX_QUEUED:
+            # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
+            # loses nothing; dropping the oldest would silently discard a request the hub still holds as undelivered.
+            raise LinkError("queue_full")
         self._last_in = o["seq"]
         queue.append(o)
         return True

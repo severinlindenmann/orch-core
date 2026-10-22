@@ -424,3 +424,42 @@ def test_event_deliver_must_be_signed_by_the_hub_op_key_and_fresh(make_hub, fiel
     with open_link(hub) as link, pytest.raises(LinkError) as e:
         link.request("snapshot_get", {}, sign=sign, seq=1)
     assert e.value.code == code
+
+
+def test_the_h2w_queues_are_bounded_and_a_full_one_closes_the_link_with_queue_full(make_hub) -> None:
+    """L2-C3-5: the host drains only route_in while the hub floods event_deliver. The 65th is refused (nothing is
+    dropped; the hub resends what it never got an ack for) and the link closes."""
+    from orch.hubclient.tlslink.client import MAX_QUEUED
+
+    def on_request(hub: TlsHub, o: dict):
+        for i in range(MAX_QUEUED + 1):
+            _push_event(hub, {"log": "workspace", "event": {"type": "x"}}, seq=100 + i)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        with pytest.raises(LinkError) as e:
+            link.request("snapshot_get", {}, sign=sign, seq=1)
+        assert e.value.code == "queue_full"
+        with pytest.raises(LinkClosed):
+            link.next_event_deliver(0)
+
+
+def test_a_queue_at_its_limit_still_hands_out_every_entry(make_hub) -> None:
+    from orch.hubclient.tlslink.client import MAX_QUEUED
+
+    def on_request(hub: TlsHub, o: dict):
+        if o["op"] != "snapshot_get":
+            return b""  # the host's acks
+        for i in range(MAX_QUEUED):
+            _push_event(hub, {"log": "workspace", "event": {"n": i}}, seq=100 + i)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        link.request("snapshot_get", {}, sign=sign, seq=1)
+        got = []
+        for _ in range(MAX_QUEUED):
+            got.append(link.next_event_deliver(0)[1]["n"])
+            link.ack_event_deliver()
+        assert got == list(range(MAX_QUEUED))

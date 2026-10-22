@@ -98,6 +98,17 @@ def _refuse(_: str) -> Any:
     raise ValueError("float or constant")
 
 
+CASE_INSENSITIVE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+
+
+def is_canonical_url(url: str) -> bool:
+    """Section 4.1: the one form of a marketplace or repository URL that is a trust key. The schema covers the shape
+    (https, lower-case ASCII host, no port, credentials, query, fragment, trailing slash or ``.git``); this adds the
+    lower-case path on hosts known to ignore case, where ``ACME/m`` and ``acme/m`` are one repository."""
+    host = url.split("/")[2]
+    return not (host in CASE_INSENSITIVE_HOSTS and url != url.lower())
+
+
 def check_index(index: Any) -> dict[str, Any]:
     """Section 3: parse, the pin and digest pre-checks, the schema, the semantic rules. Returns the parsed index."""
     doc = parse_index(index)
@@ -112,6 +123,8 @@ def check_index(index: Any) -> dict[str, Any]:
             ):
                 raise Refuse("market.bad_digest_format")
     if next(Draft202012Validator(schema()).iter_errors(doc), None) is not None:
+        raise Refuse("market.malformed")
+    if not all(is_canonical_url(u) for u in [doc["source"]["git"], *(e["source"]["git"] for e in doc["addons"])]):
         raise Refuse("market.malformed")
     ids = [e["id"] for e in doc["addons"]]
     if len(set(ids)) != len(ids):
@@ -250,8 +263,14 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     ctx = a["ctx"]
     if ctx["actor"] != "human":  # step 0, before anything is read
         raise Refuse("market.actor_refused")
-    doc = check_index(a["index"])
     repo = ctx["market_repo"]
+    if (
+        not is_canonical_url(repo)
+        or not re.fullmatch(r"https://[a-z0-9.-]+(?:/[^/\s]+)+", repo)
+        or repo.endswith(".git")
+    ):
+        raise Refuse("market.malformed")  # `market add` refuses a non-canonical URL instead of normalising it
+    doc = check_index(a["index"])
     if doc["source"]["git"] != repo:
         raise Refuse("market.source_mismatch")
     if ctx["last_version"] is not None and doc["version"] < ctx["last_version"]:

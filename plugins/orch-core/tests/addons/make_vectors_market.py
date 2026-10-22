@@ -856,6 +856,62 @@ def build() -> None:
         refuse("lock_invalid"),
     )
 
+    # ---- L2M-3: one repository, one trust key
+    add("index_source_git_suffix", "index", {"index": index(OTHER + ".git", [])}, refuse("malformed"))
+    add("index_source_trailing_slash", "index", {"index": index(OTHER + "/", [])}, refuse("malformed"))
+    add(
+        "index_source_upper_case_host",
+        "index",
+        {"index": index("https://GitHub.com/acme/orch-market", [])},
+        refuse("malformed"),
+    )
+    add(
+        "index_source_upper_case_path_on_github",
+        "index",
+        {"index": index("https://github.com/ACME/orch-market", [])},
+        refuse("malformed"),
+    )
+    add(
+        "index_entry_source_upper_case_path_on_github",
+        "index",
+        {"index": bad(lambda i: i["addons"][0]["source"].update(git="https://github.com/Acme/standup"))},
+        refuse("malformed"),
+    )
+    add(
+        "index_entry_source_git_suffix",
+        "index",
+        {"index": hostile("https://github.com/acme/standup.git")},
+        refuse("malformed"),
+    )
+    add(
+        "index_source_upper_case_path_other_host_ok",
+        "index",
+        {"index": index("https://git.example.org/Acme/Market", [])},
+        ok(addons=[]),
+    )
+    alias = OTHER + ".git"
+    ae = entry(
+        "jira",
+        jf,
+        caps=["network", "serve_http"],
+        signer="mallory",
+        market=alias,
+        runtime={"kind": "python-requirements", "lock": "requirements.txt"},
+    )
+    add(
+        "install_alias_url_does_not_reset_tofu",
+        "install",
+        inst(index(alias, [ae]), jf, "jira", market_repo=alias, known_keys={f"{OTHER}|jira": PUB["jane"]}),
+        refuse("malformed"),
+    )
+    add("install_alias_url_given_to_the_installer", "install", inst(market_repo=alias), refuse("malformed"))
+    add(
+        "install_upper_case_url_given_to_the_installer",
+        "install",
+        inst(market_repo="https://github.com/ACME/orch-market"),
+        refuse("malformed"),
+    )
+
 
 if __name__ == "__main__":
     build()

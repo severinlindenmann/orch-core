@@ -111,11 +111,21 @@ Example (the digest is shortened):
 
 ## 4. Identity, trust classes and the publisher key
 
-### 4.1 Identity
+### 4.1 Identity and the canonical URL
 
-A marketplace is identified by its **normalized source URL** (the `source.git` it was added from, which the index
-repeats and must equal), never by its `name`. Normal form: https, lower-case host, no credentials, query or fragment, no
-trailing `.git` or slash. Allow lists, block lists, the install record and the TOFU store all key on that URL.
+A marketplace is identified by its **canonical source URL**, never by its `name`. Normal form: `https`, lower-case ASCII
+host (an internationalised name is its `xn--` form, and the review shows only that ASCII form, never a Unicode
+rendering), no port, credentials, query or fragment, no trailing slash, **no trailing `.git`**, and a **lower-case path
+on hosts that ignore case** (`github.com`, `gitlab.com`, `bitbucket.org`, where `ACME/m` and `acme/m` are one
+repository). The same form applies to every add-on `source.git`.
+
+One function, `canonical_market_url()`, decides this, and it is the only place that does. It is used wherever the URL
+is a key or an input: `market add`, comparing the index's `source.git` with the added URL, the publisher signature
+(§4.3), the TOFU store, the rollback floors, the origin record, hub allow and block lists, and the install record.
+**It rejects; it does not repair.** `market add acme/m.git` is refused (`market.malformed`) and the person is shown the
+canonical form to use, because a silent normalisation would let two spellings reach different stored keys. The schema
+refuses a non-canonical `source.git` in an index, and the installer refuses a non-canonical URL handed to it. So one
+repository can never hold two TOFU slots, two rollback floors, two origins, or slip past an exact-match block entry.
 
 ### 4.2 Classes
 

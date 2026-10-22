@@ -27,6 +27,11 @@ PLANNED = {
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
     "sig_publish_hub": "orch/v2/publish-hub|",  # V3 C7: publish through the hub
+    "sig_space_item": "orch/v2/sig/space-item|",  # V3 C13: shared spaces (hub contract 10.4)
+    "sig_space_accept": "orch/v2/sig/space-accept|",
+    "h_space_members": "orch/v2/hub-space-members|",
+    "h_sk_commit": "orch/v2/hub-sk-commit|",
+    "aad_space": "orch/v2/space-aad|",
 }
 
 

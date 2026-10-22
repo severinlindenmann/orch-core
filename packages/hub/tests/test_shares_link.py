@@ -282,6 +282,26 @@ def test_failed_purge_is_retried_before_a_rebind_can_resurrect_items(shub):
     assert h.share_store.usage(G.WS_A)[0] == 0 and h.svc.list_shared(OWNER, G.WS_A) == []
 
 
+def test_rebind_before_the_retry_does_not_resurrect_old_items(shub, tmp_path):
+    h = shub(store_path=str(tmp_path / "shares.db"))
+    c = h.join()
+    c.request("share_put", body())
+    good = h.svc._on_change
+    h.svc._on_change = lambda _ev: (_ for _ in ()).throw(RuntimeError("down"))
+    c.request("binding_put", {"object": G.unbound(seq=1)})
+    assert h.share_store.pending() == {G.WS_A}
+    c.request("binding_put", {"object": G.binding(seq=2, mode="selective")})  # rebound, sink still down
+    assert h.svc.list_shared(OWNER, G.WS_A) == []  # the old binding's item is not served
+    refused(c, "share_put", body(IT2, 1), "not_bound")
+    # durable: a new service on the same store (a restart) still knows
+    assert h.share_store.pending() == {G.WS_A}
+    h.svc._on_change = good
+    h.svc.reconcile()
+    assert h.share_store.pending() == set() and h.share_store.usage(G.WS_A)[0] == 0
+    assert h.svc.list_shared(OWNER, G.WS_A) == []
+    assert c.request("share_put", body(IT2, 1)) == {}
+
+
 def test_reconcile_after_restart_drops_orphans(shub, tmp_path):
     h = shub(store_path=str(tmp_path / "shares.db"))
     c = h.join()

@@ -53,7 +53,7 @@ class ShareService:
         """The caller holds the registry lock."""
         if self._reg.pin(ws) is None:
             raise Refused("unknown_workspace")
-        if ws in self._pending:
+        if ws in self.store.pending():
             raise Refused("not_bound")  # stale items of an earlier binding are still there: fail closed until purged
         st = self._reg.binding_state(ws)
         if st is None or st["status"] != "bound":
@@ -147,21 +147,21 @@ class ShareService:
         workspace for a retry (here, at the next sync or reconcile) and lets the other unbind steps go on; until the
         retry succeeds the workspace serves and accepts nothing."""
         try:
-            if ws in self._pending:
+            if ws in self.store.pending():
                 self.purge(ws)  # the items are those of an earlier binding, whatever the state is now
-                self._pending.discard(ws)
+                self.store.clear_pending(ws)
             st = self._reg.binding_state(ws)
             if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
                 self.purge(ws)
         except Exception:  # noqa: BLE001  any sink failure must leave the other unbind steps running
-            self._pending.add(ws)
+            self.store.mark_pending(ws)
             _log.exception("share purge failed; items kept, retry at the next sync")
 
     def reconcile(self) -> None:
         """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash).
         A failure of one workspace is logged and retried later; it never stops the startup."""
         with self._reg.lock:
-            for ws in sorted(set(self.store.workspaces()) | self._pending):
+            for ws in sorted(set(self.store.workspaces()) | self.store.pending()):
                 self.sync(ws)
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------

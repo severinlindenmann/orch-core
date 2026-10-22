@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS share_item (
   stored_ms INTEGER NOT NULL, item_version INTEGER NOT NULL, item_hash TEXT NOT NULL,
   revoked INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (ws, item_id)
 );
+CREATE TABLE IF NOT EXISTS share_pending (ws TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS share_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ws TEXT NOT NULL, item_id TEXT, change TEXT NOT NULL CHECK (change IN
   ('put','replace','revoke','unbind')), digest TEXT, count INTEGER NOT NULL DEFAULT 1, ts_ms INTEGER NOT NULL
@@ -122,6 +123,19 @@ class ShareStore:
                     (ws, None, "unbind", n, now_ms),
                 )
         return n
+
+    def mark_pending(self, ws: str) -> None:
+        """A purge of ``ws`` failed: its items belong to a binding that is gone, until a purge succeeds (durable)."""
+        with self.lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO share_pending(ws) VALUES (?)", (ws,))
+
+    def clear_pending(self, ws: str) -> None:
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM share_pending WHERE ws=?", (ws,))
+
+    def pending(self) -> set[str]:
+        with self.lock:
+            return {r[0] for r in self._db.execute("SELECT ws FROM share_pending").fetchall()}
 
     def items(self, ws: str) -> list[dict[str, Any]]:
         with self.lock:

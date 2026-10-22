@@ -1,12 +1,12 @@
 """trusted.trusted_current is the one invariant behind refresh.py and channel_seq.py (see its docstring).
 
-TODO(U2 lands): swap `ref_verify` for orch.update.verify.verify_envelope (the production adapter is
-trusted.core_verifier) and drive the same cases with the contract vectors.
+Envelopes are signed with the public TEST keys and checked by the real verifier (orch.update.verify).
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -18,6 +18,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from orch.update import keys as keys_mod
+
 SCRIPTS = Path(__file__).resolve().parents[4] / "scripts" / "release"
 spec = importlib.util.spec_from_file_location("trusted", SCRIPTS / "trusted.py")
 trusted = importlib.util.module_from_spec(spec)
@@ -25,9 +27,10 @@ sys.modules["trusted"] = trusted
 spec.loader.exec_module(trusted)
 refresh = trusted
 
-ROOT = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+ROOT = Ed25519PrivateKey.from_private_bytes(
+    hashlib.sha256(b"orch-release TEST key root-1; never trust outside tests").digest()
+)  # the public TEST root
 RK = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
-ROOTS = {"root-1": ROOT.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)}
 SHA = "a" * 40
 b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
 jcs = refresh.jcs
@@ -65,6 +68,12 @@ def cert(serial=1):
     return {"cert": b64(body), "root_key_id": "root-1", "sig": b64(ROOT.sign(b"orch-release-key/1\n" + body))}
 
 
+FILES = [
+    {"role": r, "name": n, "sha256": "d" * 64, "size": 1, "url": f"https://example.invalid/{n}"}
+    for r, n in (("core", "c.whl"), ("dashboard", "d.whl"), ("constraints", "constraints.txt"))
+]
+
+
 def manifest(seq=7, channel="develop", commit=SHA, version=None):
     return {
         "format": "orch.release/1",
@@ -74,8 +83,8 @@ def manifest(seq=7, channel="develop", commit=SHA, version=None):
         "commit": commit,
         "issued_at": "2026-06-01T00:00:00Z",
         "expires_at": "2026-06-22T00:00:00Z",
-        "files": [],
-        "changelog": "",
+        "files": FILES,
+        "changelog": "x",
         "min_from": "2.0.0.dev1",
     }
 
@@ -93,38 +102,15 @@ def envelope(doc, key=RK, serial=1) -> bytes:
     )
 
 
+@pytest.fixture(autouse=True)
+def _test_root():
+    with keys_mod.enable_test_root_for_tests():
+        yield
+
+
 def ref_verify(env: bytes, channel: str, now: datetime, allow_expired: bool) -> dict:
-    """Minimal CONTRACT.md section 3 stand-in: signatures, serial, certificate window AT NOW, channel, expiry."""
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    def ok(pub, sig, msg):
-        try:
-            Ed25519PublicKey.from_public_bytes(pub).verify(base64.b64decode(sig), msg)
-            return True
-        except InvalidSignature:
-            return False
-
-    e = json.loads(env)
-    kc, rv = e["key_cert"], e["revocations"]
-    cb, rb, pb = base64.b64decode(kc["cert"]), base64.b64decode(rv["doc"]), base64.b64decode(e["payload"])
-    if not ok(ROOTS[kc["root_key_id"]], kc["sig"], b"orch-release-key/1\n" + cb):
-        raise refresh.Refused("bad_cert_sig")
-    if not ok(ROOTS[rv["root_key_id"]], rv["sig"], b"orch-revocations/1\n" + rb):
-        raise refresh.Refused("bad_revocations_sig")
-    c, r = json.loads(cb), json.loads(rb)
-    if not refresh.parse_time(c["not_before"]) <= now < refresh.parse_time(c["not_after"]):
-        raise refresh.Refused("cert_expired")
-    if c["serial"] < r["min_serial"] or c["serial"] in r["revoked"]:
-        raise refresh.Refused("key_revoked")
-    if not ok(base64.b64decode(c["public_key"]), e["sig"]["value"], b"orch-release/1\n" + pb):
-        raise refresh.Refused("bad_sig")
-    doc = json.loads(pb)
-    if doc["channel"] != channel:
-        raise refresh.Refused("wrong_channel")
-    if now >= refresh.parse_time(doc["expires_at"]) and not allow_expired:
-        raise refresh.Refused("expired")
-    return doc
+    """The real verifier (orch.update.verify, U2) against the TEST root, via the production adapter."""
+    return trusted.core_verifier()(env, channel, now, allow_expired)
 
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)  # after the manifests' expires_at (2026-06-22): the reason to refresh
@@ -247,3 +233,25 @@ def test_scripts_fail_closed_with_exit_1(tmp_path, content):
     assert r.returncode == 1 and not out.exists()
     r = _run("channel_seq.py", tmp_path, *common, "--new-seq", "99")
     assert r.returncode == 1 and r.stdout == ""
+
+
+def test_expired_pointer_with_a_bad_signature_or_revoked_or_expired_cert_is_refused():
+    """allow_expired skips only the manifest expiry: every other rule still refuses (no fail-open on 'expired')."""
+    assert NOW >= trusted.parse_time(manifest(7)["expires_at"])  # the pointer is expired in all cases below
+    stranger = Ed25519PrivateKey.from_private_bytes(bytes(range(9, 41)))
+    good = envelope(manifest(7))
+    cases = [
+        (envelope(manifest(7), key=stranger), {}, NOW, "bad_sig"),
+        (good, {}, NOW, None),  # control: valid but expired is accepted as the reason to refresh
+        (good, {"revs": revocations(min_serial=2)}, NOW, "key_revoked"),
+        (good, {"revs": revocations(revoked=[1])}, NOW, "key_revoked"),
+        (good, {}, datetime(2028, 1, 1, tzinfo=UTC), "cert_expired"),
+    ]
+    for env, kw, now, reason in cases:
+        if reason is None:
+            assert current(env, {"v2.0.0.dev7": env}, now=now, **kw).seq == 7
+        else:
+            with pytest.raises(trusted.Refused, match=reason):
+                current(env, {"v2.0.0.dev7": env}, now=now, **kw)
+    with pytest.raises(trusted.Refused, match="bad_sig"):  # a bad-sig release behind a good pointer is refused too
+        current(good, {"v2.0.0.dev7": envelope(manifest(7), key=stranger)})

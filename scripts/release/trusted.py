@@ -15,7 +15,6 @@ of exactly the version it names must verify too and agree with it.
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import subprocess
@@ -53,10 +52,6 @@ def parse_time(value: object) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
-def _payload(envelope: dict[str, Any]) -> dict[str, Any]:
-    return json.loads(base64.b64decode(envelope["payload"], validate=True))
-
-
 def core_verifier() -> Verifier:
     """orch.update.verify (U2) against the embedded roots. Fails closed if it is not importable."""
     try:
@@ -65,16 +60,21 @@ def core_verifier() -> Verifier:
         raise Refused(f"the core verifier is not available: {exc}") from None
 
     def verify(envelope: bytes, channel: str, now: datetime, allow_expired: bool) -> dict[str, Any]:
+        # allow_expired skips ONLY the manifest expires_at rule inside the verifier; every other rule still runs and
+        # the returned document is the verifier's own. A refusal is never turned into a payload.
         try:
             return dict(
                 verify_envelope(
-                    envelope, purpose="core", channel=channel, now=now, seq_seen=None, revocations_issued_at=None
+                    envelope,
+                    purpose="core",
+                    channel=channel,
+                    now=now,
+                    seq_seen=None,
+                    revocations_issued_at=None,
+                    allow_expired_manifest=allow_expired,
                 ).document
             )
         except UpdateRefused as exc:
-            # "expired" is rule 6, after certificate, revocation, signature and manifest checks: all of those passed.
-            if allow_expired and str(exc.reason) == "expired":
-                return _payload(json.loads(envelope))
             raise Refused(f"verification refused: {exc.reason}") from None
 
     return verify
@@ -92,10 +92,10 @@ def verify_published(
     """Verify a published envelope at ``now`` against the repository's CURRENT revocation list."""
     try:
         envelope = json.loads(raw)
-        doc = _payload(envelope)
+        doc = verify(jcs({**envelope, "revocations": revocations}), channel, now, allow_expired)
         if parse_time(doc["issued_at"]) > now:
             raise Refused("issued_at is in the future")
-        return verify(jcs({**envelope, "revocations": revocations}), channel, now, allow_expired)
+        return doc
     except (KeyError, TypeError, IndexError, ValueError) as exc:
         raise Refused(f"unreadable envelope: {type(exc).__name__}") from None
 

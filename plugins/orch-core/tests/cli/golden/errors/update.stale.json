@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.stale",
+    "message": "the release or catalog is out of date",
+    "hint": "nothing was changed; fetch a fresh one later",
+    "fix": {
+      "argv": [
+        "orch",
+        "doctor"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -11,10 +11,15 @@ from .types import WsCore
 
 
 def canonical(ws: WsCore, ident: str) -> str:
-    """``p_<person>`` for an aliased ``u_<user>`` of the hub joined now (none after ``hub.left``), else ``ident``."""
-    if ident.startswith("u_"):
-        aliases = ws.hub.get("aliases") if ws.hub and ws.hub.get("status") == "joined" else None
-        if aliases:
+    """``p_<person>`` for a ``u_<user>`` aliased under ANY hub this workspace ever joined, else ``ident``.
+
+    The alias book is append-only and ``hub_joined`` keeps it a function (a user id never names two people), so the
+    union is stable: history recorded as ``u_x`` (workers, decisions, owners) keeps merging with ``p_y`` after
+    ``hub.left`` and after another hub is joined (L2P4-C1b, else the owner could approve their own work, D59).
+    TODO(C3): the host must refuse a hub event that uses a user id aliased under another hub (a hub may not mint
+    another hub's ids); that check belongs where hub events enter, not here."""
+    if ident.startswith("u_") and ws.hub:
+        for aliases in ws.hub.get("alias_book", {}).values():
             for pid, uid in aliases.items():
                 if "u_" + uid == ident:
                     return "p_" + pid

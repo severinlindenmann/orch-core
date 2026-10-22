@@ -467,6 +467,11 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if aliases.get(pid, uid) != uid or users.get(uid, pid) != pid:
             return Refusal(Code.HUB_INVALID, "an alias is never re-pointed")
         aliases[pid], users[uid] = uid, pid
+    # the union over all hubs must stay a function: a user id another hub aliased to someone else is refused (L2P4-C1b)
+    other = {u: p for hid, al in book.items() if hid != e["hub_id"] for p, u in al.items()}
+    for a in e["aliases"]:
+        if other.get(a["user_id"], a["person_id"]) != a["person_id"]:
+            return Refusal(Code.HUB_INVALID, "this user id is already aliased to another person under another hub")
     if any("p_" + pid not in ws.members for pid in aliases):
         return Refusal(Code.HUB_INVALID, "an alias names a person who is not a member")
     ws.hub = {

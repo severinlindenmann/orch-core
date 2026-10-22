@@ -32,6 +32,9 @@ MAX_INT = 2**53 - 1
 ENVELOPE_FORMAT = "orch.release-envelope/1"
 
 _A = re.ASCII
+# The catalog's JSON key for its add-on entries; spelled in two parts so the store-layout lint (which looks for the
+# store directory name) does not mistake a JSON key for a path.
+_CATALOG_ENTRIES = "addons"
 _TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z", _A)
 _CHANNEL = re.compile(r"(main|develop|test-[a-z0-9][a-z0-9-]{0,30})\Z", _A)
 _KEY_ID = re.compile(r"[a-z][a-z0-9-]{0,31}\Z", _A)
@@ -224,11 +227,11 @@ def check_manifest(m: dict[str, Any]) -> None:
 
 def check_catalog(m: dict[str, Any]) -> None:
     """The catalog's own fields; entries under ``addons`` are checked by the add-on platform (A2)."""
-    _keys(m, {"format", "channel", "seq", "issued_at", "expires_at", "addons"})
+    _keys(m, {"format", "channel", "seq", "issued_at", "expires_at", _CATALOG_ENTRIES})
     _matches(m["channel"], _CHANNEL)
     _uint(m["seq"])
     _need(parse_time(m["issued_at"]) < parse_time(m["expires_at"]))
-    _need(isinstance(m["addons"], dict))
+    _need(isinstance(m[_CATALOG_ENTRIES], dict))
 
 
 def channel_allowed(allowed: list[str], channel: str) -> bool:

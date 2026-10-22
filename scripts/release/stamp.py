@@ -36,7 +36,7 @@ def stamp(
     commit: str,
     *,
     core: Path = CORE,
-    dashboard: Path = DASHBOARD,
+    dashboard: Path,
     now: datetime.datetime | None = None,
 ) -> None:
     if not VERSION.fullmatch(version):
@@ -69,7 +69,7 @@ def main(argv: list[str]) -> int:
         print("usage: stamp.py VERSION CHANNEL COMMIT", file=sys.stderr)
         return 2
     try:
-        stamp(*argv)
+        stamp(*argv, dashboard=DASHBOARD)
     except ValueError as e:
         print(f"stamp: {e}", file=sys.stderr)
         return 1

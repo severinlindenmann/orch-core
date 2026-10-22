@@ -26,7 +26,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Self
 
 from ..contract import hub as H
 from ..contract import suite as S
@@ -96,7 +96,7 @@ class LinkServer:
             t.join(5)
         self._listen.close()
 
-    def __enter__(self) -> LinkServer:
+    def __enter__(self) -> Self:
         return self.start()
 
     def __exit__(self, *exc: object) -> None:
@@ -126,7 +126,7 @@ class LinkServer:
             self._link(conn)
         except LinkClosed, LinkTimeout, framing.FrameError:
             pass
-        except Exception:  # fail closed on anything unexpected; never echo it
+        except Exception:  # noqa: BLE001, S110  # fail closed on anything unexpected; never echo it
             pass
         finally:
             if conn is not None:
@@ -247,5 +247,5 @@ class LinkServer:
             return {"error": e.code}
         except CanonError, ValueError, KeyError, TypeError:
             return {"error": "malformed"}
-        except Exception:
+        except Exception:  # noqa: BLE001
             return {"error": "internal"}

@@ -138,17 +138,16 @@ def test_cert_expiry_script(tmp_path):
 def test_publish_pointer_verifies_and_fails_loudly_on_lower_seq(wf):
     step = next(s for s in wf["jobs"]["publish"]["steps"] if s.get("name") == "Move the channel pointer")
     run = step["run"]
-    assert "channel_seq.py" in run and "-gt" in run
+    assert "channel_seq.py" in run and "--new-seq" in run
     assert "exit 0" not in run  # a pointer that is not moved fails the job
-    assert re.search(r'-gt "\$SEQ" \]; then\n.*::error::.*\n\s+exit 1', run)
+    assert re.search(r"\*\) echo \"::error::[^\n]*exit 1", run)
 
 
 def test_refresh_never_signs_the_published_channel_json(wf):
     job = wf["jobs"]["refresh"]
-    text = json.dumps(job)
-    assert "curl" not in text and "current.json" not in text
+    assert "curl" not in json.dumps(job)
     run = "\n".join(s.get("run", "") for s in job["steps"])
-    assert "gh release download" in run and "refresh.py --candidates" in run
+    assert "refresh.py" in run and "--pointer-url" in run and "candidates" not in run
     assert run.index("refresh.py") < run.index("sign.py")
     sign = next(s for s in job["steps"] if s.get("name") == "Sign the manifest")
     assert "steps.retime.outputs.exists" in sign["if"]

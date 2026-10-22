@@ -8,12 +8,13 @@ One page for the owner. Design: `docs/design/install-update.md` (sections 3 and 
   check them, write the manifest (seq = run number, expires in 21 days), sign it, and publish two things:
   an immutable release `v<version>` (wheels, `constraints.txt`, `release.json`) and the fixed release
   `channel-<main|develop>` whose `channel.json` is replaced (never moved back to an older seq).
-- Every Monday 04:17 UTC the workflow re-signs both channels with fresh `issued_at`/`expires_at`. It never reads
-  `channel.json` (anyone with write access could replace it). It rebuilds the payload from the newest immutable
-  `v<version>` release, verified with the core verifier against the embedded root and the current
-  `release/keys/revocations.json`, and cross-checked with the git tag (version, seq, commit). Any failure fails the job
-  and nothing is signed. The publish step likewise only trusts the published `channel.json` seq after it verifies;
-  a lower seq or an unverifiable file fails the job (inspect and delete that asset).
+- Every Monday 04:17 UTC the workflow re-signs both channels with fresh `issued_at`/`expires_at`. One rule decides
+  what CI may sign (`scripts/release/trusted.py`, `trusted_current`): the current `channel.json` must verify NOW
+  (certificate valid now, not revoked by `release/keys/revocations.json`; an expired manifest is accepted only as the
+  reason to refresh), the immutable release of exactly that version must verify and agree with it, and the git tag must
+  point at its commit. Refresh re-signs that version, seq and commit and nothing else. Publish uses the same function
+  and never moves the pointer to a lower seq. Every failure fails the job; only a channel that was never published is
+  skipped.
 - Manual test channel: Actions, "release", Run workflow, channel `test-<name>`. It uses the test key and environment.
 
 ## One-time setup (owner)
@@ -28,6 +29,7 @@ Only the owner's account can push workflow files. Push `.github/workflows/releas
 | Environment `release-test` | Settings, Environments | for `test-*` channels only; no branch restriction needed |
 | Secret `ORCH_RELEASE_KEY` + variable `RELEASE_TEST_KEY_ID` | environment `release-test` / repository variable | a separate test key whose certificate lists `test-*` |
 | Repository files | in git | `release/keys/<key id>.cert.json` (root-signed certificate), `release/keys/revocations.json` (root-signed list) |
+| Tag protection | Settings, Rules, Tags | protect `v*` tags (no deletion, no update) so a version tag cannot be moved to another commit. Recommended; the workflow also checks tag and manifest commit agree |
 | Immutable releases | Settings, General | on. Note: this must still allow replacing `channel.json` on `channel-*`; if GitHub blocks that, the channel pointer needs another home (see Open issues) |
 
 The root key is never on GitHub. Only the sign step reads the secret (as the variable `ORCH_RELEASE_SIGNING_KEY`);

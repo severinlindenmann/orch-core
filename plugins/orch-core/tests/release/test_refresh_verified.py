@@ -1,7 +1,7 @@
-"""refresh.py / channel_seq.py never trust the published channel.json: only verified immutable releases count.
+"""trusted.trusted_current is the one invariant behind refresh.py and channel_seq.py (see its docstring).
 
 TODO(U2 lands): swap `ref_verify` for orch.update.verify.verify_envelope (the production adapter is
-refresh.core_verifier) and drive the same cases with the contract vectors.
+trusted.core_verifier) and drive the same cases with the contract vectors.
 """
 
 from __future__ import annotations
@@ -19,10 +19,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 SCRIPTS = Path(__file__).resolve().parents[4] / "scripts" / "release"
-spec = importlib.util.spec_from_file_location("refresh", SCRIPTS / "refresh.py")
-refresh = importlib.util.module_from_spec(spec)
-sys.modules["refresh"] = refresh
-spec.loader.exec_module(refresh)
+spec = importlib.util.spec_from_file_location("trusted", SCRIPTS / "trusted.py")
+trusted = importlib.util.module_from_spec(spec)
+sys.modules["trusted"] = trusted
+spec.loader.exec_module(trusted)
+refresh = trusted
 
 ROOT = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 RK = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
@@ -92,15 +93,13 @@ def envelope(doc, key=RK, serial=1) -> bytes:
     )
 
 
-def ref_verify(env: bytes, channel: str, now: datetime) -> dict:
-    """Minimal CONTRACT.md section 3 stand-in: cert and revocation signatures, serial, validity, payload signature."""
+def ref_verify(env: bytes, channel: str, now: datetime, allow_expired: bool) -> dict:
+    """Minimal CONTRACT.md section 3 stand-in: signatures, serial, certificate window AT NOW, channel, expiry."""
     from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     def ok(pub, sig, msg):
         try:
-            Ed25519PrivateKey  # noqa: B018
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
             Ed25519PublicKey.from_public_bytes(pub).verify(base64.b64decode(sig), msg)
             return True
         except InvalidSignature:
@@ -114,6 +113,8 @@ def ref_verify(env: bytes, channel: str, now: datetime) -> dict:
     if not ok(ROOTS[rv["root_key_id"]], rv["sig"], b"orch-revocations/1\n" + rb):
         raise refresh.Refused("bad_revocations_sig")
     c, r = json.loads(cb), json.loads(rb)
+    if not refresh.parse_time(c["not_before"]) <= now < refresh.parse_time(c["not_after"]):
+        raise refresh.Refused("cert_expired")
     if c["serial"] < r["min_serial"] or c["serial"] in r["revoked"]:
         raise refresh.Refused("key_revoked")
     if not ok(base64.b64decode(c["public_key"]), e["sig"]["value"], b"orch-release/1\n" + pb):
@@ -121,132 +122,128 @@ def ref_verify(env: bytes, channel: str, now: datetime) -> dict:
     doc = json.loads(pb)
     if doc["channel"] != channel:
         raise refresh.Refused("wrong_channel")
+    if now >= refresh.parse_time(doc["expires_at"]) and not allow_expired:
+        raise refresh.Refused("expired")
     return doc
 
 
-def put(tmp: Path, tag: str, data: bytes) -> None:
-    (tmp / tag).mkdir(parents=True, exist_ok=True)
-    (tmp / tag / "release.json").write_bytes(data)
+NOW = datetime(2026, 9, 1, tzinfo=UTC)  # after the manifests' expires_at (2026-06-22): the reason to refresh
+TIMES = ("2026-09-01T00:00:00Z", "2026-09-22T00:00:00Z")
 
 
-def run(tmp, commit_of=lambda tag: SHA, revs=None, channel="develop"):
-    return refresh.rebuild_payload(
-        tmp, channel, revs or revocations(), "2026-09-01T00:00:00Z", "2026-09-22T00:00:00Z", ref_verify, commit_of
+def current(pointer, releases, *, revs=None, now=NOW, commit_of=lambda tag: SHA, listed=()):
+    return trusted.trusted_current(
+        "develop",
+        revs or revocations(),
+        ref_verify,
+        now,
+        get_pointer=lambda: pointer,
+        get_release=lambda tag: releases.get(tag),
+        tag_commit=commit_of,
+        releases_for_channel=lambda: list(listed),
     )
 
 
-def test_rebuilds_from_the_newest_verified_release_and_changes_only_times(tmp_path):
-    put(tmp_path, "v2.0.0.dev6", envelope(manifest(6)))
-    put(tmp_path, "v2.0.0.dev7", envelope(manifest(7)))
-    put(tmp_path, "v2.0.0.dev9", envelope(manifest(9, channel="main")))  # other channel: skipped
-    new = json.loads(run(tmp_path))
-    assert new == {**manifest(7), "issued_at": "2026-09-01T00:00:00Z", "expires_at": "2026-09-22T00:00:00Z"}
+def test_refresh_resigns_exactly_the_current_pointer_with_new_times():
+    env = envelope(manifest(7))
+    t = current(env, {"v2.0.0.dev7": env, "v2.0.0.dev9": envelope(manifest(9))})  # a newer release is ignored
+    assert json.loads(trusted.refresh_payload(t, *TIMES)) == {
+        **manifest(7),
+        "issued_at": TIMES[0],
+        "expires_at": TIMES[1],
+    }
 
 
-def test_tampered_release_is_refused(tmp_path):
+def test_tampered_or_unsigned_pointer_is_refused():
     env = json.loads(envelope(manifest(7)))
-    evil = jcs({**manifest(7), "commit": "b" * 40})
-    env["payload"] = b64(evil)  # signature no longer matches
-    put(tmp_path, "v2.0.0.dev7", jcs(env))
+    env["payload"] = b64(jcs({**manifest(7), "commit": "b" * 40}))
     with pytest.raises(refresh.Refused, match="bad_sig"):
-        run(tmp_path, commit_of=lambda tag: "b" * 40)
-
-
-def test_unsigned_or_foreign_key_is_refused(tmp_path):
+        current(jcs(env), {"v2.0.0.dev7": envelope(manifest(7))}, commit_of=lambda t: "b" * 40)
     stranger = Ed25519PrivateKey.from_private_bytes(bytes(range(9, 41)))
-    put(tmp_path, "v2.0.0.dev7", envelope(manifest(7), key=stranger))
     with pytest.raises(refresh.Refused, match="bad_sig"):
-        run(tmp_path)
+        current(envelope(manifest(7), key=stranger), {})
+    unsigned = jcs({"format": "orch.release-envelope/1", "payload": b64(jcs(manifest(7)))})
+    with pytest.raises(refresh.Refused):
+        current(unsigned, {})
 
 
-@pytest.mark.parametrize(
-    ("tag", "commit_of"),
-    [
-        ("v2.0.0.dev8", lambda t: SHA),  # tag says 8, manifest says 7
-        ("v2.0.0.dev7", lambda t: "c" * 40),  # tag points at another commit
-    ],
-)
-def test_mismatch_with_the_git_tag_is_refused(tmp_path, tag, commit_of):
-    put(tmp_path, tag, envelope(manifest(7)))
-    with pytest.raises(refresh.Refused, match="does not match"):
-        run(tmp_path, commit_of=commit_of)
+def test_lower_seq_rebuild_is_refused():
+    t = current(envelope(manifest(7)), {"v2.0.0.dev7": envelope(manifest(7))})
+    trusted.check_new_seq(t, 7)
+    trusted.check_new_seq(t, 8)
+    with pytest.raises(refresh.Refused, match="lower"):
+        trusted.check_new_seq(t, 6)
+    # the immutable release says an older seq than the pointer: refresh must not rebuild from it
+    with pytest.raises(refresh.Refused, match="disagree|agree"):
+        current(envelope(manifest(7)), {"v2.0.0.dev7": envelope(manifest(6, version="2.0.0.dev7"))})
 
 
-def test_key_revoked_by_the_current_list_is_refused(tmp_path):
-    put(tmp_path, "v2.0.0.dev7", envelope(manifest(7), serial=1))
+def test_deleted_current_version_is_an_error_not_nothing_to_refresh():
+    env = envelope(manifest(7))
+    with pytest.raises(refresh.Refused, match="missing"):
+        current(env, {"v2.0.0.dev9": envelope(manifest(9))})  # newer releases exist, the current one is gone
+
+
+def test_never_published_is_the_only_exit_3_case():
+    with pytest.raises(refresh.NothingToRefresh):
+        current(None, {})
+    with pytest.raises(refresh.Refused, match="no channel.json"):
+        current(None, {}, listed=["v2.0.0.dev7"])
+
+
+def test_unexpected_exceptions_become_refused():
+    def boom(tag):
+        raise KeyError("x")
+
+    env = envelope(manifest(7))
+    with pytest.raises(refresh.Refused):
+        current(env, {"v2.0.0.dev7": env}, commit_of=boom)
+    with pytest.raises(refresh.Refused):
+        current(b"{}", {})
+    with pytest.raises(refresh.Refused):
+        trusted.trusted_current(
+            "develop",
+            revocations(),
+            ref_verify,
+            NOW,
+            get_pointer=lambda: env,
+            get_release=lambda t: [][0],
+            tag_commit=lambda t: SHA,
+            releases_for_channel=list,
+        )
+
+
+def test_backdated_release_from_expired_or_revoked_cert_is_refused():
+    env = envelope(manifest(7))  # issued 2026-06-01, inside the cert window
+    later = datetime(2028, 1, 1, tzinfo=UTC)  # cert not_after is 2027-01-01
+    with pytest.raises(refresh.Refused, match="cert_expired"):
+        current(env, {"v2.0.0.dev7": env}, now=later)
     with pytest.raises(refresh.Refused, match="key_revoked"):
-        run(tmp_path, revs=revocations(min_serial=2))
+        current(env, {"v2.0.0.dev7": env}, revs=revocations(min_serial=2))
+    with pytest.raises(refresh.Refused, match="key_revoked"):
+        current(env, {"v2.0.0.dev7": env}, revs=revocations(revoked=[1]))
 
 
-def test_no_release_for_channel_is_nothing_to_refresh(tmp_path):
-    put(tmp_path, "v2.0.0.dev9", envelope(manifest(9, channel="main")))
-    with pytest.raises(LookupError):
-        run(tmp_path)
+def test_commit_must_match_the_git_tag():
+    env = envelope(manifest(7))
+    with pytest.raises(refresh.Refused, match="git tag"):
+        current(env, {"v2.0.0.dev7": env}, commit_of=lambda t: "c" * 40)
 
 
-def test_main_fails_closed_and_writes_nothing(tmp_path):
-    """No signing happens without a payload file: a refusal leaves no output (and exits 1, not 0 or 3)."""
-    put(tmp_path / "c", "v2.0.0.dev7", b"not json")
+def _run(script, tmp_path, *args):
+    return subprocess.run([sys.executable, "-I", str(SCRIPTS / script), *args], capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("content", [b"{}", b"not json", None])
+def test_scripts_fail_closed_with_exit_1(tmp_path, content):
+    """A KeyError or unreadable pointer is exit 1 (never 3, never 0) and nothing is written for signing."""
     (tmp_path / "rev.json").write_text(json.dumps(revocations()))
+    url = (tmp_path / "channel.json").as_uri()
+    if content is not None:
+        (tmp_path / "channel.json").write_bytes(content)
     out = tmp_path / "manifest.json"
-    res = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            str(SCRIPTS / "refresh.py"),
-            "--candidates",
-            str(tmp_path / "c"),
-            "--channel",
-            "develop",
-            "--revocations",
-            str(tmp_path / "rev.json"),
-            "--issued-at",
-            "2026-09-01T00:00:00Z",
-            "--expires-at",
-            "2026-09-22T00:00:00Z",
-            "--out",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 1 and not out.exists()
-
-
-def test_published_pointer_must_verify_before_its_seq_counts(tmp_path):
-    good = envelope(manifest(7))
-    assert (
-        refresh.verify_published(good, "develop", revocations(), ref_verify, now=datetime(2026, 9, 1, tzinfo=UTC))[
-            "seq"
-        ]
-        == 7
-    )
-    unsigned = jcs({"format": "orch.release-envelope/1", "payload": b64(jcs(manifest(99)))})
-    for bad in (
-        unsigned,
-        b"garbage",
-        envelope(manifest(99), key=Ed25519PrivateKey.from_private_bytes(bytes(range(9, 41)))),
-    ):
-        with pytest.raises((refresh.Refused, KeyError)):
-            refresh.verify_published(bad, "develop", revocations(), ref_verify, now=datetime(2026, 9, 1, tzinfo=UTC))
-
-
-def test_channel_seq_script_rejects_an_unsigned_file(tmp_path):
-    f = tmp_path / "prev.json"
-    f.write_bytes(jcs({"format": "orch.release-envelope/1", "payload": b64(jcs(manifest(99)))}))
-    (tmp_path / "rev.json").write_text(json.dumps(revocations()))
-    res = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            str(SCRIPTS / "channel_seq.py"),
-            str(f),
-            "--channel",
-            "develop",
-            "--revocations",
-            str(tmp_path / "rev.json"),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 1 and res.stdout == ""
+    common = ["--channel", "develop", "--pointer-url", url, "--revocations", str(tmp_path / "rev.json")]
+    r = _run("refresh.py", tmp_path, *common, "--issued-at", TIMES[0], "--expires-at", TIMES[1], "--out", str(out))
+    assert r.returncode == 1 and not out.exists()
+    r = _run("channel_seq.py", tmp_path, *common, "--new-seq", "99")
+    assert r.returncode == 1 and r.stdout == ""

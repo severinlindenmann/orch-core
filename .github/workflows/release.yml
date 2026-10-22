@@ -226,6 +226,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -261,23 +262,19 @@ jobs:
             dist/orch_core-"${VERSION}"-*.whl dist/orch_dashboard-"${VERSION}"-*.whl dist/constraints.txt release.json
       - name: Move the channel pointer
         run: |
-          set -euo pipefail
-          # The published channel.json is attacker-writable: its seq counts only after it verifies.
-          url="https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
-          code=$(curl -sSL --max-time 30 -o prev.json -w '%{http_code}' "$url")
-          case "$code" in
-            200)
-              cur=$(uv run --project plugins/orch-core --frozen python -I scripts/release/channel_seq.py prev.json \
-                --channel "$CHANNEL" --revocations release/keys/revocations.json) \
-                || { echo "::error::the published channel-${CHANNEL}/channel.json does not verify: not trusting it, not moving the pointer (inspect and delete that asset)"; exit 1; }
-              ;;
-            404) cur=0 ;;
-            *) echo "::error::cannot fetch channel.json (HTTP ${code})"; exit 1 ;;
+          set -uo pipefail
+          # One invariant (scripts/release/trusted.py): the current pointer only counts after it verifies, and the
+          # pointer never moves to a lower seq. Anything but "never published" (exit 3) that is not OK fails the job.
+          uv run --project plugins/orch-core --frozen python -I scripts/release/channel_seq.py \
+            --channel "$CHANNEL" --revocations release/keys/revocations.json --new-seq "$SEQ" \
+            --exclude-tag "v${VERSION}" \
+            --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
+          rc=$?
+          case "$rc" in
+            0|3) ;;
+            *) echo "::error::the channel pointer was NOT moved: the current channel-${CHANNEL} state did not verify or is newer (inspect it)"; exit 1 ;;
           esac
-          if [ "$cur" -gt "$SEQ" ]; then
-            echo "::error::channel-${CHANNEL} already points at verified seq ${cur}, newer than ${SEQ}: the pointer was NOT moved"
-            exit 1
-          fi
+          set -e
           if ! gh release view "channel-${CHANNEL}" >/dev/null 2>&1; then
             gh release create "channel-${CHANNEL}" --prerelease --latest=false --target "$SHA" \
               --title "channel ${CHANNEL}" --notes "Fixed pointer release: channel.json is replaced on every publish."
@@ -312,29 +309,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-      - name: Fetch the immutable version releases
-        run: |
-          set -euo pipefail
-          # Never channel.json (mutable, writable by anyone with access): only per-version releases, verified next.
-          mkdir candidates
-          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName' \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$' | sort -t. -k4.4nr | head -30); do
-            gh release download "$tag" --pattern release.json --dir "candidates/${tag}"
-          done
       - name: Rebuild and verify the manifest
         id: retime
         run: |
           set -uo pipefail
+          # scripts/release/trusted.py: re-sign exactly the verified current pointer (same version, seq, commit).
           issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           expires=$(date -u -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
-          uv run --project plugins/orch-core --frozen python -I scripts/release/refresh.py --candidates candidates \
+          uv run --project plugins/orch-core --frozen python -I scripts/release/refresh.py \
             --channel "$CHANNEL" --revocations release/keys/revocations.json \
+            --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json" \
             --issued-at "$issued" --expires-at "$expires" --out manifest.json
           rc=$?
           case "$rc" in
             0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
-            3) echo "::notice::no release for channel ${CHANNEL} yet; nothing to refresh"; echo "exists=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "::error::refresh refused: a published manifest failed verification, nothing was signed"; exit 1 ;;
+            3) echo "::notice::channel ${CHANNEL} has never been published; nothing to refresh"; echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::refresh refused: the current channel state did not verify, nothing was signed"; exit 1 ;;
           esac
       - name: Sign the manifest
         if: steps.retime.outputs.exists == 'true'

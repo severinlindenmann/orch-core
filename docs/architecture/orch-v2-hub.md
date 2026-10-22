@@ -3,6 +3,8 @@
 Status: **draft for the owner's review**, 22 Oct 2026. Numbers continue after D63–D66. Decisions taken with the owner
 on 22 Oct 2026; the visual draft is `~/orch-dev/mockups/hub-vision/index.html` (v3). Nothing here is built yet.
 
+**Principle (D79): orch core always works standalone.** The hub is an addition, never a dependency.
+
 This amends, in hub mode only: D2 and D3 (a second holder of `WK_e`), D6, D11, D41, D49, D66 (a new factor), §4
 (threat model: a hub row), orch-v2-ticket-format (the delegation check and `member.added`: aliases and member kind
 `hub`), §5.4 (epochs: `WK_e` goes to the hub over the hub link, and removing a person no longer
@@ -46,6 +48,7 @@ people sign in to it once, and admins work in it.
 | D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish requests stay `WSK`-signed by the workspace and are forwarded by the hub; orch-publish accepts them through a hub only while it holds that workspace's `WSK`-signed `hub.binding` (§8). Namespaces stay per workspace. Amends §6.1 and §10. |
 | D77 | Hub to hub | One hub per company. Companies, and subsidiaries of one group, link hub to hub through a relay. Only hub-to-hub objects cross (handoffs, shared spaces); nobody gets direct access to another hub's workspaces. |
 | D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. No human-only verb works while the hub is down, except the break-glass operations (§8). No second hub instance for now. |
+| D79 | Standalone core | orch core always works as a standalone workspace with none of the hub, relay, publish or phone: tickets, agents, skills, Mission Control and local signing (D64). Everything in this document is an addition on top and never a dependency. orch core imports no hub code; the hub path lives behind the host↔hub link and a hub add-on. CI keeps a standalone suite and an e2e scenario that run with no hub configured, and every hub step (§10) must leave them green. |
 
 Later, not now: **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
 then); Slack and other channels after the phone and browser.
@@ -240,6 +243,7 @@ at step H5, so daily use keeps working.
 | Later | Entra ID / OIDC and group sync; Slack channel | orch-hub |
 
 Every step touching keys, custody, signatures or the protocol goes through the security reviewer (Opus) before its PR.
+Every step keeps the standalone suite and the standalone e2e scenario green (D79).
 
 ## 11. Open questions
 

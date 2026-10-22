@@ -174,10 +174,6 @@ def signing_bytes(label: bytes, o: Mapping[str, Any]) -> bytes:
         raise Refused("malformed") from None
 
 
-def sign_object(key: Any, label_key: str, o: dict[str, Any], *, deterministic: bool = False) -> dict[str, Any]:
-    return {"o": o, "sig": b64u(S.sign(key, signing_bytes(L[label_key], o), deterministic=deterministic))}
-
-
 def _envelope(signed: Any, kind: str, extra_keys: tuple[str, ...] = ()) -> dict[str, Any]:
     """Envelope and header (protocol-v2 §2.4 step 1-2)."""
     if type(signed) is not dict or set(signed) != {"o", "sig", *extra_keys}:

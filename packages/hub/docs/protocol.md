@@ -148,8 +148,16 @@ Reused unchanged: `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `
 `[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}` (so it never contains `|`; anything else is `malformed`). All
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
 `HK_root` under the two root labels, `HK_op` under the seven `hub-*` labels, `UK` under the custodial family, a channel
-key under `hub-channel-proof`. A hub implementation MUST enforce this in its key store (one signing function per key
-kind with its label hard-wired), not by convention.
+key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels and `orch/v2/publish-hub|`, the owner's
+device key under `sig/hub-publish-approval|`.
+
+**Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
+signer per key kind (`RootSigner`, `OpSigner`, `UkSigner`, `ChannelSigner`, `WskSigner`, `OwnerDeviceSigner`). Each
+takes only the objects (by `kind`, and for `hub.link` by direction) or the exact fields it may sign, builds its label
+itself, and raises `KeyUseError` for anything else; none has a "sign these bytes under this label" call. A hub key
+store wraps each private key in its signer once and never hands out the raw key. `tests/test_keystore.py` checks every
+(key kind, object kind) pair. The vector generator's raw signer exists only to make the wrong-domain and wrong-signer
+negative vectors.
 
 ## 4. Hub identity: `HK_root`, `HK_op`
 

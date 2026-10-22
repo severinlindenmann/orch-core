@@ -59,7 +59,9 @@ def hdr(kind: str) -> dict[str, Any]:
 
 
 def signed(key: str, label_key: str, o: dict[str, Any]) -> dict[str, Any]:
-    return H.sign_object(K.priv[key], label_key, o, deterministic=True)
+    # Test-only raw signer: any key under any label, so the negative vectors can sign under the wrong domain or key.
+    # Shipped code signs only through orch_hub.contract.keystore (one signer per key kind, L2-4).
+    return {"o": o, "sig": b64u(S.sign(K.priv[key], H.signing_bytes(L[label_key], o), deterministic=True))}
 
 
 def resign(key: str, label_key: str, obj: dict[str, Any], **changes: Any) -> dict[str, Any]:

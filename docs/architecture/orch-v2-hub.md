@@ -3,8 +3,13 @@
 Status: **draft for the owner's review**, 22 Oct 2026. Numbers continue after D63–D66. Decisions taken with the owner
 on 22 Oct 2026; the visual draft is `~/orch-dev/mockups/hub-vision/index.html` (v3). Nothing here is built yet.
 
-This amends D3, D6, D11, D41 and D49 (in hub mode only), §6.1 (directory), §9 (linked workspaces) and §10 (publish
-signing), as noted per decision. Direct mode, a workspace with no hub, keeps the current spec unchanged.
+This amends, in hub mode only: D2 and D3 (a second holder of `WK_e`), D6, D11, D41, D49, D66 (a new factor), §4
+(threat model: a hub row), §5.4 (epochs: `WK_e` goes to the hub over the hub link, and removing a person no longer
+rotates), §6.1 (directory), §9 (linked workspaces) and §10 (publish acceptance), as noted per decision. Direct mode, a
+workspace with no hub, keeps the current spec unchanged.
+
+Opus design check, 22 Oct 2026: "design OK with fixes". Findings B1–B5 and S1–S7 are folded in below (§5, §6, §7, §8,
+§9, §10, §11).
 
 ## 1. Why
 
@@ -33,13 +38,13 @@ people sign in to it once, and admins work in it.
 | D69 | Direct mode | A workspace without a hub is **local only**: `spool:` links on the same machine (D11 *Local*), no phone, no publish, no relay. It joins a hub later with one invite code. Amends D11 (*Internal*/*External* now mean "through a hub"). |
 | D70 | Users, groups, roles | The hub holds the users and groups. Each workspace grants a role to groups, never to a person directly: `read` (see tickets, docs, shared spaces), `edit` (work: tickets, agents, answers, handoffs), `admin` (skills, settings, links, releases, approvals: today's owner). A person's role in a workspace is the highest role of their groups. |
 | D71 | Hub admin | Members of the `hub-admin` group hold `admin` on every workspace of the hub and manage users and groups. For now there is no workspace-side veto. |
-| D72 | Custodial signing | The hub holds each user's signing key, bound to that user, and signs for them after the user authenticates to the hub through a channel. Workspace keys (`WSK`, `WXK`, `WK_e`) stay in the workspace host (D3 unchanged for them). Amends D41 and D49 in hub mode. |
+| D72 | Custodial signing | The hub holds each user's signing key, bound to that user, and signs for them. Each signature needs a fresh proof from a strongly bound channel over the event digest (§5, §7); a session alone only shows and routes. The hub signs only payloads it builds itself. Workspace keys (`WSK`, `WXK`, `WK_e`) stay in the workspace host. Amends D41 and D49 in hub mode. |
 | D73 | Channels | People reach orch through channels that end at the hub: the iPhone app now, the browser, later Slack and others. The phone pairs **once with the hub** by QR; it never pairs with a workspace. Amends D6 in hub mode. |
 | D74 | Trusted hub | The hub is a member of every workspace it serves: each workspace seals its `WK_e` to the hub, so the hub can render content for channels and act for users. The hub is a **trusted operator**, like an identity provider; the edge relay stays blind. |
 | D75 | Shared spaces | Shared spaces live on the hub, keyed `SK_e`, held by the hub. Workspaces put filtered slices into them under their share rules (option B of the draft). |
-| D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish accepts requests signed by the hub that carry the workspace admin's signature; namespaces stay per workspace. Amends §6.1 and §10. |
+| D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish accepts a hub-signed request for a workspace only while it holds that workspace's `WSK`-signed `hub.binding` (§8); namespaces stay per workspace. Amends §6.1 and §10. |
 | D77 | Hub to hub | One hub per company. Companies, and subsidiaries of one group, link hub to hub through a relay. Only hub-to-hub objects cross (handoffs, shared spaces); nobody gets direct access to another hub's workspaces. |
-| D78 | Hub down | Workspaces keep working locally. Channels, publish and handoffs wait and drain when the hub is back. No second hub instance for now. |
+| D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. No human-only verb works while the hub is down, except the break-glass operations (§8). No second hub instance for now. |
 
 Later, not now: **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
 then); Slack and other channels after the phone and browser.
@@ -65,40 +70,61 @@ then); Slack and other channels after the phone and browser.
 | Component | Holds keys? |
 |---|---|
 | orch workspace host | `WSK`, `WXK`, `WK_e` of its workspace (unchanged) |
-| orch hub | Its own hub key `HK` (signs cards, routing, publish requests), each user's signing key `UK`, `SK_e` of the shared spaces, a member copy of each served workspace's `WK_e` |
+| orch hub | `HK_op`, its online signing key, certified by the offline `HK_root` (§5); `HXK`, its key-agreement key, which receives `WK_e` and `SK` wraps; each user's signing key `UK`; `SK_e` of the shared spaces; a member copy of each served workspace's `WK_e` |
 | orch-relay | None: routing ids and ciphertext |
 | orch-publish | Its TLS keys; verifies `HK` against the hub card |
 | iPhone app | A channel key in the Secure Enclave, bound to one hub session; no `UK`, no `WK_e` |
 
 ## 5. Identity and signatures in hub mode
 
-- **Hub identity.** `HK` is created at hub install; its public half and the hub's relay address form the **hub card**.
-  The relay registers hubs by card. The install prints a recovery code for `HK`, as for `PK` (D50).
-- **Users.** A user is `{user_id, display, groups, status}` on the hub. The hub creates `UK_user` (P-256) in its key
-  store at user creation and signs `{user_id, uk_pub}` with `HK`. In hub mode `user_id` takes the place of
-  `person_id`, and `Actor("human", user_id, via=<channel session>)` the place of a device.
-- **Custodial signature.** A human-only verb from any channel produces the same signed event as today, with:
-  `auth: "hub"`, `channel` (`ios`, `browser`, `slack`, …), `session_id`, `hub_id`, signed by `UK_user`. The hub signs only
-  after a fresh channel authentication (§7) and only for verbs the user's role allows in that workspace (D70).
-- **Verification in the workspace.** The host verifies `UK_user` through the `HK` certificate it pinned when it joined
-  the hub, checks the role from the hub-signed group snapshot (§6), and records the event. D66 workspace policy can
-  still require a stronger factor for named verbs; `hub` is a factor value like `passphrase`.
-- **Audit.** Every custodial signature is logged on the hub with channel and session, and the workspace keeps the
-  signed event, so each side can check the other.
+- **Hub identity: two levels.** At install the hub derives `HK_root` from a recovery code (as `PK`, D50) and keeps it
+  offline. `HK_root` certifies an online `HK_op`. Workspaces pin `HK_root`. Rotating `HK_op` (routine, or after a
+  suspected compromise of the online host) needs no re-pin. Only a compromise of `HK_root` forces every workspace to
+  re-pin. The hub card is `{hub_id, hk_root_pub, hk_op_cert, hxk_pub, relay_url, dev}`. The relay registers hubs by card.
+- **Signing domains.** `HK_op` signs with a separate domain per object: `orch/v2/hub-card`, `hub-uk-cert`,
+  `hub-snapshot`, `hub-route`, `hub-publish`, `hub-audit`. `UK` signs only in `orch/v2/hub-custodial|<verb>`.
+- **Users.** A user is `{user_id, display, groups, status}` on the hub. `user_id` is pseudonymous and names live
+  only in sealed parts. The hub creates `UK_user` (P-256) in its key store at user creation and certifies
+  `{user_id, uk_pub, hub_id, dev}` with `HK_op`. In hub mode `Actor("human", user_id, via=<channel>)` takes the place of a
+  device actor.
+- **Identity aliases.** A person who already has a `p_` identity in a workspace gets a signed alias
+  `{person_id, user_id}` at join. The alias is signed by the person's current key, or by the owner for others. Every
+  identity check (D59 "never the assignee", gate quorums, the ticket-format delegation check `actor.id ==
+  "p_"+owner_person_id`) compares canonical identities, so `p_x` and `u_x` count as one person.
+- **The hub signs only what it builds (prepare → recompute → sign).** Only a channel can start a signature. The hub
+  builds the event from its own `WK_e` view of the workspace: the ticket, the gate hash material, the host-chain head.
+  The channel signs the digest with its channel key. The hub checks that proof, then signs with `UK_user`. The
+  host↔hub link has a closed operation list (§8). It has no "sign this" request from the host side, so a hostile or
+  client-hosted host (D29) cannot get arbitrary events signed.
+- **Custodial event.** These fields are added to the event: `auth: "hub"`, `channel_factor` (`se-unlocked`, `passkey`,
+  `password+totp`, signed), `channel`, `hub_id`, `workspace_id`, `snapshot_version`, and the channel proof. All of
+  them sit inside the signed material, so an event cannot be replayed in another workspace.
+- **Verification in the workspace.** The host checks the chain `UK_user` → `HK_op` cert → pinned `HK_root`. It checks
+  the channel proof over the digest and the role, both against the newest snapshot it holds when the event arrives
+  (§6). Then it records the event. D66 workspace policy maps onto `channel_factor`: a policy that requires
+  `secure-enclave` is met by `se-unlocked` or `passkey`, never by `password+totp`.
+- **Audit.** Every custodial signature and every grant or membership change is in a hash-chained hub audit log.
+  Workspaces acknowledge its head on every sync, so a compromised hub cannot silently drop entries. The workspace also
+  keeps each signed event.
 
 ## 6. Access model
 
 - **Grants** are `{workspace_id, group_id, role}`, set by workspace admins or hub admins. **Memberships** are
   `{user_id, group_id}`, set by hub admins.
-- The hub publishes a **group snapshot per workspace**: `{workspace_id, version, roles: {user_id: role}}`, signed by
-  `HK`. The host pins the latest version and refuses an older one, so a replayed snapshot cannot bring back a removed
-  user.
+- The hub publishes a **group snapshot per workspace**: `{workspace_id, hub_id, generation, version, issued_at,
+  roles: {user_id: role}}`, signed by `HK_op`.
+  - The host refuses an older `(generation, version)`, so a replayed snapshot cannot bring back a removed user.
+  - A hub restored from backup starts a new `generation`, signed under `HK_root`, so it is not locked out for good.
+  - Each snapshot is stored in the workspace ledger, so readers and restores can verify old events.
+- Every grant and membership change is signed by the acting admin's `UK`, with a channel proof as in §5.
 - **Removing a user** from every group that reaches a workspace makes the hub drop their channel sessions for it;
   the workspace sees the new snapshot. No `WK_e` rotation is needed, because the user never held `WK_e` (D73, D74).
   Removing the **hub** from a workspace, or a hub key compromise, rotates the epoch (§5.4).
 - **Agents** stay as they are: workspace-local under the host, or scoped agent devices (D15) granted to one shared
   space on the hub, with an expiry.
-- Dev certificates (`dev: true`) are refused by a hub not marked dev, as by real workspaces today.
+- **Dev hubs.** The hub card and every `UK` certificate carry `dev`. A real workspace refuses a dev hub, and a real hub
+  refuses a dev workspace join and dev certificates. The test-human override (D34, D51) never applies on the hub path.
+  The test that proves the override "never works on a real workspace" is extended to cover all of these.
 
 ## 7. Channels
 
@@ -109,30 +135,64 @@ then); Slack and other channels after the phone and browser.
   hub session can ask the hub to sign".
 - **Browser.** The hub serves the person's home (all workspaces, one needs-you list) and the admin console. A
   workspace's Mission Control stays reachable through the hub for users whose role allows it.
-- **Slack and others (later).** Same rule: the channel authenticates to the hub, the hub signs. A channel that cannot
-  bind a user strongly (a shared Slack channel) may only show and route, never sign.
-- **Fresh authentication.** Signing needs a channel session younger than a policy window (default 12 h) and, for
-  `admin` verbs, a re-authentication within 5 min. The window is per hub; D66 policy may tighten it per verb.
+- **Strongly bound channel.** A channel holds a non-exportable key bound to one user: the iPhone's Secure Enclave key,
+  or a passkey (WebAuthn) in the browser. Every custodial signature needs a fresh signature from that key over the
+  event digest (§5). A session token, cookie or Mission Control token only shows and routes. An agent that steals one
+  (agents run as the person's UID on macOS) cannot sign. The browser passkey is a new D64 backend (`webauthn`) with its
+  own contract.
+- **Slack and others (later).** These channels show and route. To sign, they hand off to a strongly bound channel, for
+  example a link that opens the passkey prompt or a push to the phone.
+- **Sessions.** A channel session lives up to 12 h for showing and routing. `admin` verbs also need a sign-in within the
+  last 5 min. Both windows are per hub, and D66 policy may tighten them per verb.
 
 ## 8. Workspaces joining and leaving
 
 1. A hub admin creates an invite code for a new or existing workspace.
 2. A person with access to the workspace's host runs `orch hub join <code>` on its terminal (human-only verb).
-3. The host pins `HK`, registers its card with the hub, and seals `WK_e` to the hub's member key; the hub becomes a
-   member device with full scope.
-4. The workspace switches to hub mode: the host stops dialling the relay and publish, and its earlier direct-mode
-   device memberships (phones paired per D6) are removed with an epoch rotation.
+3. The owner's current key signs `hub.joined {hub_id, hk_root_pub, aliases}` into the ledger. The host pins
+   `HK_root`, adds a member of the new kind `hub` to its `WSK`-signed member list (D39), and seals `WK_e` to `HXK`
+   over the hub link. That link replaces the relay's `PUT membership` (§5.4) for this workspace.
+4. The host signs `hub.binding {workspace_id, hub_id, hk_root_pub, valid_from}` with `WSK`. The hub hands it to
+   orch-publish and the relay (D76).
+5. The workspace switches to hub mode, but **only from step H5 on** (§10). Before H5, `hub join` is a dev and test step
+   on dev workspaces. From H5 on, the host stops dialling the relay and publish, refuses any direct-relay envelope,
+   and removes its direct-mode device memberships (phones paired per D6) with an epoch rotation.
 
-`orch hub leave` (workspace admin, from the host terminal) removes the hub's membership, rotates, and returns the
-workspace to direct mode, local only.
+**The host↔hub link** has a closed operation list: `snapshot_get`, `event_deliver` (custodial events in), `route_out`
+and `route_in` (ws→ws envelopes), `wk_seal` (epoch wraps to `HXK`), `audit_ack`. It has no signing request from the
+host.
+
+**Linked workspaces through the router (§9).**
+- Envelopes keep the sender's `WSK` signature and `WXK` sealing end to end. The receiver checks its pin of the
+  sender workspace, not only the hub.
+- Across hubs (D77): foreign workspace ids are bound to the foreign hub card, and a hub never re-signs foreign
+  envelopes with its own key. D28 "from-peer" applies. A human co-signature verifies as `UK` → foreign `HK_op` cert →
+  the pinned foreign hub card.
+
+**Break-glass.** The workspace owner keeps a local key (`PK` from the recovery code, or a passphrase device key, D65).
+It has exactly three powers, all from the host terminal, none needing the hub:
+- `orch hub leave` signs `hub.unbound` with `WSK`, removes the hub member and rotates the epoch;
+- `orch hub repin` pins a new `HK_root` after a hub rebuild;
+- `orch keys rotate`.
+
+This is no veto on hub admins (D71). It is how a workspace gets away from a lost or compromised hub. Hub compromise
+means: break-glass leave, then rotate, then rejoin a rebuilt hub.
+
+**Publish (D76).** orch-publish accepts a hub request for a workspace only while it holds that workspace's
+`hub.binding` and no later `hub.unbound`. It evicts the binding like a card. The agent `publish(...)` path (§5.5) stays:
+a charter rule lets the hub sign as the workspace, under `hub-publish`, without a human. Public access still needs a
+custodial human signature.
 
 ## 9. Threat model in hub mode
 
 | Threat | Result | Mitigation |
 |---|---|---|
-| Hub server or key store taken over | Attacker can read every served workspace and sign as any user | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, signed audit log the workspaces can check, epoch rotation after recovery |
+| Hub server or key store taken over | Attacker can read every served workspace and sign as any user | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
+| Hostile or client-hosted workspace host | Could try to get events signed for other workspaces | The hub signs only payloads it builds itself; signatures are bound to `workspace_id`; the link has no signing request (§5, §8) |
+| Agent steals a hub session or cookie | Can show and route, cannot sign | Every signature needs a fresh channel-key proof (§7) |
 | Malicious or careless hub admin | Can grant themselves `admin` anywhere (D71) | Accepted for now; every grant and membership change is signed by the acting admin's `UK` and audited; a workspace-side veto is an open question |
-| Stolen phone | Can ask the hub to sign while the session lives | Short session window, re-auth for admin verbs, hub admin revokes the channel key |
+| Stolen phone | Can sign while the phone is unlocked (as D49 today) | A hub admin revokes the channel key; `admin` verbs need a recent sign-in |
+| Rogue hub claims a workspace's publish namespace | Refused | Only with the workspace's `WSK`-signed `hub.binding` (D76) |
 | Relay taken over | Sees ciphertext and routing ids only | Unchanged (§4 of the spec) |
 | Agent in a workspace | Cannot reach `UK` or the hub's keys | The hub is on another host; the workspace socket API (§5.5) has no hub signing operation |
 | Other company's hub (D77) | Sees only objects sent to it | No workspace access crosses hubs |
@@ -148,7 +208,7 @@ at step H5, so daily use keeps working.
 
 | Step | Content | Repos |
 |---|---|---|
-| H0 | Contract first: `orch-hub/docs/protocol.md` + vectors for hub card, `UK` certificate, custodial event, group snapshot, host↔hub link envelopes | orch-hub, orch-core |
+| H0 | Contract first: `orch-hub/docs/protocol.md` + vectors for the hub card (`HK_root`/`HK_op`), `UK` certificate, signing domains, custodial event with channel proof, group snapshot, `hub.joined`, `hub.binding`/`hub.unbound`, identity alias, member kind `hub`, host↔hub link operations, the `webauthn` channel contract | orch-hub, orch-core |
 | H1 | Hub skeleton: install, `HK`, users, groups, grants, admin console (dashboard look and feel), audit log | orch-hub |
 | H2 | Workspace join/leave (§8), group snapshot pinning, `auth: hub` verification in core | orch-core, orch-hub |
 | H3 | Router: ws→ws through the hub; shared spaces on the hub | orch-hub, orch-core |
@@ -162,8 +222,9 @@ Every step touching keys, custody, signatures or the protocol goes through the s
 
 ## 11. Open questions
 
-1. **Mission Control on the person's own laptop in hub mode.** Does a click in a local Mission Control sign with the
-   local key (direct custody, D64) or go through the hub? Proposal: through the hub, so one user has one key.
+1. **Mission Control on the person's own laptop in hub mode.** Proposal (from the Opus check): local Mission Control
+   holds no hub session that can sign; a click hands the signature to a strongly bound channel (passkey prompt or
+   phone). One user, one key, and no bearer token on a machine where agents run as the person.
 2. **Personal workspaces.** A person's own workspace (Anna / personal) joined to the company hub is readable by the hub
    (D74). Is that wanted, or do personal workspaces stay in direct mode and give up the phone?
 3. **Hub agents.** May the hub run agents over shared spaces (summaries, routing)? Option B allows it; the scope and

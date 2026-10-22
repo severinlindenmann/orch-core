@@ -25,9 +25,11 @@ from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .router import AccessAuthz, RouteQueue, Router
+from .spaces import SpaceService, SpaceStore
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
+SPACES_FILE = "spaces.db"
 WK_SEAL_FILE = "wk-seal.db"
 
 
@@ -99,6 +101,10 @@ def serve(
     queue = RouteQueue(str(queue_path))
     wk_seals = WkSeals(str(state / WK_SEAL_FILE), hub_id=keys.hub_id, hxk_pub=keys.hxk_pub, exchange=keys.hxk_exchange)
     router = Router(registry, queue, AccessAuthz(registry, access))
+    space_store = SpaceStore(str(state / SPACES_FILE))
+    spaces = SpaceService(
+        space_store, registry, access, keys.op_signer, keys.hub_id, lambda: keys.op_cert()["o"]["cert_id"]
+    )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -110,11 +116,13 @@ def serve(
         downstream=fw,
         router=router,
         access=access,
+        spaces=spaces,
         wk_seals=wk_seals,
         host=host,
         port=port,
     )
     try:
+        spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         fw.restore(registry.binding_objects())
         server.start()
         if threading.current_thread() is threading.main_thread():
@@ -130,6 +138,7 @@ def serve(
     finally:
         server.close()
         queue.close()
+        space_store.close()
         registry.close()
         wk_seals.close()
         access.close()

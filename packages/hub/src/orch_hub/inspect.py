@@ -16,7 +16,11 @@ Output (``--json``)::
         "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
                                       # envelopes the router took where this workspace is sender or recipient
     }},
-     "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
+     "unjoined_ops": {"<op>": {"accepted": N, "refused": N}},    # links with no pinned workspace; unknown ops = "other"
+     "spaces": [{"space_id", "name", "epoch", "members": [ws], "epochs": [{"epoch", "members", "sk_commit"}],
+                 "items": [{"item_id", "seq", "epoch", "workspace_id", "revoked", "sha256"}]}]}
+        # shared spaces (D75): ids, epochs, members, item metadata and the SHA-256 of each sealed item; never SK_e, wraps
+        # or sealed bytes
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from .contract.canon import unb64u
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
+SPACES_FILE = "spaces.db"
 WK_SEAL_FILE = "wk-seal.db"
 ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
@@ -96,6 +101,37 @@ def _routes(state: Path) -> list[dict[str, str]]:
     finally:
         db.close()
     return [{"id": i, "from": f, "to": t, "sha256": bytes(d).hex()} for i, f, t, d in rows]
+
+
+def _spaces(state: Path) -> list[dict[str, Any]]:
+    path = state / SPACES_FILE
+    if not path.is_file():
+        return []
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        out = []
+        for sid, name, epoch in db.execute("SELECT space_id, name, epoch FROM space ORDER BY space_id").fetchall():
+            eps = []
+            for e, members, rec in db.execute(
+                "SELECT epoch, members, record FROM space_epoch WHERE space_id=? ORDER BY epoch", (sid,)
+            ).fetchall():
+                eps.append({"epoch": e, "members": json.loads(members), "sk_commit": json.loads(rec)["o"]["sk_commit"]})
+            items = [
+                {"item_id": i, "seq": q, "epoch": e, "workspace_id": w, "revoked": bool(r), "sha256": d}
+                for i, q, e, w, r, d in db.execute(
+                    "SELECT item_id, seq, epoch, workspace_id, revoked, digest FROM space_item "
+                    "WHERE space_id=? ORDER BY seq",
+                    (sid,),
+                ).fetchall()
+            ]
+            cur = next((x["members"] for x in eps if x["epoch"] == epoch), [])
+            out.append({"space_id": sid, "name": name, "epoch": epoch, "members": cur, "epochs": eps, "items": items})
+        return out
+    except sqlite3.Error, ValueError, KeyError, TypeError:
+        return []  # unreadable or foreign rows: inspect shows nothing rather than failing
+    finally:
+        db.close()
 
 
 def _wk_epochs(state: Path) -> dict[str, list[int]]:
@@ -168,4 +204,10 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     for cws, op, outcome, n in counts:
         if cws == "":
             unjoined.setdefault(op, {"accepted": 0, "refused": 0})[outcome] = n
-    return {"dev": True, "hub_id": card.get("hub_id"), "workspaces": out, "unjoined_ops": unjoined}
+    return {
+        "dev": True,
+        "hub_id": card.get("hub_id"),
+        "workspaces": out,
+        "unjoined_ops": unjoined,
+        "spaces": _spaces(state),
+    }

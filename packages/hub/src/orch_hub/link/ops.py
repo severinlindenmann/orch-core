@@ -108,6 +108,7 @@ class OpContext:
     now_ms: int
     dev_mode: bool
     router: Router | None = None
+    spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
 
@@ -209,6 +210,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         pin = _require_pin(c)
         wsk = unb64u(pin["wsk_pub"], 65)
         held = c.registry.binding_state(c.workspace_id)
+        old_mode = c.registry.mode(c.workspace_id)
         if kind == "hub.binding":
             b = H.verify_binding(obj, workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode)
             if b["hub_id"] != c.hub_id:
@@ -224,6 +226,10 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         c.registry.set_binding_state(c.workspace_id, state, obj)
         _sync_wk_seals(c, state)
     c.downstream.binding(c.workspace_id, obj)
+    if c.spaces is not None and (
+        kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
+    ):
+        c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
     return {}
 
 
@@ -253,6 +259,35 @@ def route_out(c: OpContext) -> dict[str, Any]:
     return {"state": c.router.route_out(c.workspace_id, unb64u(c.body["envelope"]))}
 
 
+def _spaces(c: OpContext) -> Any:
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.spaces is None:
+        raise Refused("unknown_op")
+    return c.spaces
+
+
+def space_list(c: OpContext) -> dict[str, Any]:
+    return {"spaces": _spaces(c).list_for(c.workspace_id)}
+
+
+def space_put(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).put(c.workspace_id, c.body)
+
+
+def space_revoke(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).revoke(c.workspace_id, c.body)
+
+
+def space_get(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).get(c.workspace_id, c.body)
+
+
+def space_accept(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).accept(c.workspace_id, c.body)
+
+
 def wk_seal(c: OpContext) -> dict[str, Any]:
     """``WK_e`` sealed to HXK (§10.2, full mode). Checked and stored inside the registry lock, so the mode check and the
     write cannot be separated from an unbind."""
@@ -278,6 +313,11 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "snapshot_get": snapshot_get,
     "publish_out": publish_out,
     "route_out": route_out,
+    "space_list": space_list,
+    "space_put": space_put,
+    "space_revoke": space_revoke,
+    "space_get": space_get,
+    "space_accept": space_accept,
     "wk_seal": wk_seal,
 }
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -384,8 +385,12 @@ def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any,
 class _Epochs:
     """:class:`orch.hubclient.EpochKeys` over the workspace's membership key store (R6a). ``WK_e`` never leaves it."""
 
-    def __init__(self, mk: Any, local_owner: str | None = None) -> None:
+    def __init__(
+        self, mk: Any, local_owner: str | None = None, sealed_epoch: Callable[[], int | None] | None = None
+    ) -> None:
         self._mk = mk
+        #: the epoch now sealed to the bound full hub (re-read each call); ``view_key`` answers for that one only
+        self._sealed_epoch = sealed_epoch
         #: a relay-less workspace makes its own epochs (``MembershipKeys.advance_local``); ``None``: the relay path
         #: (the publisher) makes them and a rotation is only requested through the gate
         self._local_owner = local_owner
@@ -411,11 +416,17 @@ class _Epochs:
 
     def view_key(self, epoch: int) -> bytes:
         """``K_view(epoch)`` for ``log_sync`` (hub contract 10.7): derived inside the key store, so only the derived
-        key leaves it. Any epoch the store still holds (an older one stays readable for pages already sent); a missing,
-        burned or unreadable key is ``no_epoch``."""
+        key leaves it. Only the epoch now sealed to the bound full hub (L2-C14-2: never one the hub was not meant to
+        open, such as the epoch a rotation after a leave made); a missing, burned or unreadable key is ``no_epoch``."""
         from orch.hubclient import HubRefused
         from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe
 
+        try:
+            sealed = None if self._sealed_epoch is None else self._sealed_epoch()
+        except Exception:  # noqa: BLE001 - unreadable hub state: fail closed
+            sealed = None
+        if sealed is None or sealed != epoch:
+            raise HubRefused("no_epoch")
         try:
             return bytes(self._mk.view_key(epoch))
         except (CustodyRefused, MembershipUnsafe):
@@ -444,9 +455,18 @@ def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
         owner = None
         if not mk.previously_linked:  # fresh each call (the probe), never the answer cached at the first open
             owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
-        return _Epochs(mk, owner)
+        return _Epochs(mk, owner, lambda: _sealed_epoch(service))
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
         return None
+
+
+def _sealed_epoch(service: WorkspaceService) -> int | None:
+    """The epoch sealed to the bound full hub, else ``None`` (read from hub.json every time)."""
+    with _MU:
+        st = _load_state(service)
+    if st is None or st.status != "bound" or st.mode != "full" or st.sealed is None or st.rotate_after is not None:
+        return None
+    return int(st.sealed["epoch"])
 
 
 class _NoEpochs:

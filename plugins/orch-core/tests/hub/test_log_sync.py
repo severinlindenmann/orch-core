@@ -460,3 +460,114 @@ def test_page_size_shrinks_to_fit(full):
     p = s.pages()
     assert all(len(x["sealed"]) <= LS.MAX_SEALED for x in p) and sum(x["count"] for x in p) == 4 and len(p) > 1
     assert hub_view(full) == local_summary(logs)
+
+
+# --- l2-c14 adversarial (Opus security review, 22 Oct) ------------------------------------------------------------
+
+
+def test_l2_c14_1_a_leave_during_a_pass_stops_the_next_page(full):
+    """L2-C14-1 (P1): a leave (or switch/unbind) that lands while a pass is on the network must stop the pass before
+    its next page. A hostile hub that ignores the leave and keeps acknowledging must not receive lines committed after
+    the leave, sealed under the old epoch it still holds (the 10.7 claim "a host that rotated the hub out cannot leak
+    later content")."""
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created")
+    s = Sender(full, logs)
+    link = HubLink(full.wire, hub_id=full.state.hub_id, workspace_id=WS, hk_op_pub=pub("hk_op"), sign=sign_wsk,
+                   mode=full.state.mode, now_ms=lambda: V["now_ms"])  # fmt: skip
+    after_leave: list[dict[str, Any]] = []
+    left = []
+
+    def call(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if left:  # the hostile hub: takes everything, ignores the leave
+            after_leave.append(body)
+            return {"seq": body["from_seq"] + body["count"] - 1, "head": body["head"]}
+        reply = link.call(op, body)
+        full.leave()  # the owner leaves while the pass is on the network
+        left.append(True)
+        logs.add(TKT, "ticket.updated", note="WRITTEN-AFTER-THE-LEAVE")
+        return reply
+
+    try:
+        s.run(call=call)
+    except HubRefused:
+        pass  # stopping with a refusal is fine
+    assert after_leave == [], f"{len(after_leave)} page(s) sent to the hub after the leave"
+
+
+def test_l2_c14_1_a_line_committed_during_a_pass_waits_for_the_next_pass(full):
+    """The pass sends nothing beyond the head each log had when it began (the next pass carries the rest)."""
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created")
+    s = Sender(full, logs)
+    link = HubLink(full.wire, hub_id=full.state.hub_id, workspace_id=WS, hk_op_pub=pub("hk_op"), sign=sign_wsk,
+                   mode=full.state.mode, now_ms=lambda: V["now_ms"])  # fmt: skip
+    seen: list[dict[str, Any]] = []
+
+    def call(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        seen.append(body)
+        reply = link.call(op, body)
+        if len(seen) == 1:
+            logs.add("workspace", "member.added")
+            logs.add(TKT, "ticket.updated")
+        return reply
+
+    r = s.run(call=call)
+    assert [(x["log"], x["from_seq"], x["count"]) for x in seen] == [("workspace", 1, 1), (TKT, 1, 1)] and r.lines == 2
+    s.run()
+    assert hub_view(full) == local_summary(logs)
+
+
+def test_l2_c14_1_the_live_check_ends_the_pass_before_the_next_page(full):
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created")
+    s = Sender(full, logs)
+    n = {"calls": 0}
+
+    def live() -> bool:
+        n["calls"] += 1
+        return n["calls"] < 2  # yes for the first page, no for the second
+
+    with pytest.raises(HubRefused) as e:
+        s.run(live=live)
+    assert e.value.code == "not_joined" and len(s.pages()) == 1
+
+
+def test_l2_c14_3_forced_resends_are_rate_limited(full):
+    logs = Logs()
+    for _ in range(3):
+        logs.add("workspace")
+    s = Sender(full, logs)
+    s.run()
+    full.hub.workspaces[WS].view = logview.View()  # the hub "lost" everything: view_gap on the next page
+    logs.add("workspace")
+    before = len(s.pages())
+    with pytest.raises(HubRefused) as e:
+        s.run(allow_resend=lambda: False)
+    assert e.value.code == "resend_limited" and len(s.pages()) == before + 1  # only the page that was refused
+
+
+def test_l2_c14_2_the_view_key_is_only_for_the_epoch_sealed_to_the_hub():
+    from orch.host.hubops import _Epochs
+
+    class Store:  # holds every epoch: the gate, not the store, must refuse
+        asked: list[int] = []
+
+        def view_key(self, epoch: int) -> bytes:
+            self.asked.append(epoch)
+            return b"k" * 32
+
+    st, sealed = Store(), {"v": 1}
+    e = _Epochs(st, None, lambda: sealed["v"])
+    assert e.view_key(1) == b"k" * 32
+    with pytest.raises(HubRefused) as x:
+        e.view_key(2)  # held, but newer than the epoch sealed to the hub
+    assert x.value.code == "no_epoch" and st.asked == [1]
+    sealed["v"] = None
+    with pytest.raises(HubRefused):
+        e.view_key(1)
+    with pytest.raises(HubRefused):
+        _Epochs(st).view_key(1)  # no provider: fail closed

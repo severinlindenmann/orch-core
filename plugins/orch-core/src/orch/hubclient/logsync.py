@@ -149,10 +149,12 @@ class Position:
     hub_id: str
     binding_seq: int
     logs: dict[str, tuple[int, str]] = field(default_factory=dict)
+    #: when (ms) the hub last forced a resend from seq 1 (``view_gap``/``view_fork``); the host rate-limits on it
+    forced: list[int] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "hub_id": self.hub_id, "binding_seq": self.binding_seq,
+            "hub_id": self.hub_id, "binding_seq": self.binding_seq, "forced": list(self.forced[-64:]),
             "logs": {k: {"seq": s, "head": h} for k, (s, h) in sorted(self.logs.items())},
         }  # fmt: skip
 
@@ -169,7 +171,10 @@ class Position:
                     return cls(hub_id, binding_seq)
                 _raw_head(v["head"])
                 logs[k] = (v["seq"], v["head"])
-            return cls(hub_id, binding_seq, logs)
+            forced = d.get("forced", [])
+            if type(forced) is not list or any(type(t) is not int or t < 0 for t in forced):
+                forced = []
+            return cls(hub_id, binding_seq, logs, forced[-64:])
         except (KeyError, TypeError, AttributeError, HubRefused):
             return cls(hub_id, binding_seq)
 
@@ -227,10 +232,17 @@ def sync_logs(
     view_key: Callable[[int], bytes],
     position: Position,
     save: Callable[[Position], None],
+    live: Callable[[], bool] | None = None,
+    allow_resend: Callable[[], bool] | None = None,
 ) -> SyncReport:
     """One pass: send every log from the hub's acknowledged position to the local head. ``call`` is a link's ``call``
     (``HubLink.call`` or ``LinkClient.call``). Returns what was sent; raises :class:`HubRefused` on a gate or a refusal
-    the pass cannot repair (``bad_epoch``, ``bad_wrap``, ``malformed``, ``hub_unreachable`` ...)."""
+    the pass cannot repair (``bad_epoch``, ``bad_wrap``, ``malformed``, ``hub_unreachable`` ...).
+
+    L2-C14-1: before EVERY page the gate is checked again on ``state`` and ``live()`` (the host reloads the hub state
+    under its lock) must still say yes, with the same epoch; and no line beyond the head each log had when the pass
+    began is sent. A leave, a switch or an unbind therefore ends the pass at its next page, however slowly the hub
+    answers. ``allow_resend()`` (L2-C14-3) is asked before each resend from seq 1 the hub forced; ``False`` refuses."""
     epoch = gate(state)
     if position.hub_id != state.hub_id or position.binding_seq != state.binding_seq:
         raise HubRefused("not_joined")
@@ -242,6 +254,8 @@ def sync_logs(
     if not logs or logs[0] != WORKSPACE:
         raise HubRefused("malformed")
     ctx = _Pass(state, workspace_id, call, source, k_view, epoch, position, save, report)
+    ctx.live, ctx.allow_resend = live, allow_resend
+    ctx.ceiling = {log: source.seq(log) for log in logs}  # nothing committed after this moment goes out in this pass
     ctx.log(WORKSPACE)  # a reset of it drops every ticket position (the hub dropped its ticket views)
     for log in logs[1:]:
         ctx.log(log)
@@ -253,12 +267,25 @@ class _Pass:
     def __init__(self, state, workspace_id, call, source, k_view, epoch, position, save, report) -> None:  # noqa: ANN001
         self.state, self.ws, self.call, self.src = state, workspace_id, call, source
         self.k, self.epoch, self.pos, self.save, self.report = k_view, epoch, position, save, report
+        self.live: Callable[[], bool] | None = None
+        self.allow_resend: Callable[[], bool] | None = None
+        self.ceiling: dict[str, int | None] = {}
+
+    def _may_send(self) -> None:
+        """Before every page: still full, joined, the same hub and epoch (else a refusal that ends the pass)."""
+        if gate(self.state) != self.epoch or (self.live is not None and not self.live()):
+            raise HubRefused("not_joined")
+
+    def _may_resend(self) -> None:
+        if self.allow_resend is not None and not self.allow_resend():
+            raise HubRefused("resend_limited")
 
     def log(self, log: str) -> bool:
         """Bring one log up to date. Returns True when a ``reset`` was sent for it."""
         local = self.src.seq(log)
-        if local is None:
-            return False  # unreadable right now: send nothing of it (fail closed), the next pass tries again
+        cap = self.ceiling.get(log)
+        if local is None or cap is None:
+            return False  # unreadable (or born after the pass began): send nothing of it, the next pass tries again
         reset_sent = False
         acked = self.pos.logs.get(log)
         reset = False
@@ -268,11 +295,12 @@ class _Pass:
         tries = {"gap": 0, "fork": 0}
         while True:
             start = 1 if acked is None else acked[0] + 1
-            if start > local:
+            if start > min(local, cap):
                 return reset_sent
-            events = self.src.after(log, start - 1, MAX_LINES)
+            events = [e for e in self.src.after(log, start - 1, MAX_LINES) if e.get("seq", cap + 1) <= cap]
             if not events:
                 return reset_sent
+            self._may_send()
             page = _fit(self.k, self.ws, self.epoch, log, events, reset and start == 1)
             try:
                 reply = self.call("log_sync", page)
@@ -285,6 +313,7 @@ class _Pass:
                         acked = self.pos.logs.get(log)
                         if acked is not None and acked[0] >= start:
                             continue
+                    self._may_resend()
                     acked = None  # the hub holds less than we believed: resend from 1 (overlap is idempotent)
                     self.pos.logs.pop(log, None)
                     if log == WORKSPACE:  # a hub that lost the workspace view lost the ticket views gated on it
@@ -292,6 +321,7 @@ class _Pass:
                     continue
                 if code == "view_fork" and tries["fork"] == 0:
                     tries["fork"] += 1
+                    self._may_resend()
                     reset, acked = True, None
                     self.pos.logs.pop(log, None)
                     continue

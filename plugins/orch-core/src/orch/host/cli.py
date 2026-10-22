@@ -768,6 +768,32 @@ def _dead_device(device: Any, person: str | None, ws: Any) -> str | None:
 _clock = time.time  # the clock of request expiry for `convenience on` (tests set it to the lab's clock)
 
 
+def _cwd_workspace(entries: list[dict[str, Any]]) -> str | None:
+    """The workspace id whose registered root is the current directory or its nearest registered parent, else None.
+    Fail closed: None when the logical ``$PWD`` is not the physical directory (a symlink could point this process at
+    another workspace), and registered roots that are empty or not absolute never match."""
+    try:
+        here = os.getcwd()
+    except OSError:
+        return None
+    logical = os.environ.get("PWD")
+    if logical and logical != here:
+        return None
+    best: tuple[int, str] | None = None
+    for item in entries:
+        raw = item.get("root")
+        if not isinstance(raw, str) or not raw.startswith("/"):
+            continue
+        try:
+            root = Path(raw).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if root == Path(here) or root in Path(here).parents:
+            if best is None or len(root.parts) > best[0]:
+                best = (len(root.parts), str(item.get("workspace_id")))
+    return best[1] if best else None
+
+
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
     (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
@@ -785,15 +811,30 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if args.switch == "show":
         out.write(json.dumps(convenience.read(state, uid), sort_keys=True) + "\n")
         return 0
-    if not args.workspace:
-        return write_error(out, False, "invalid.input", "--workspace is required")
     from .custody import read_json
 
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    here = None
+    if not args.workspace:
+        # only `off` (it takes authority away) may default to the folder's workspace; `on` always names it
+        here = _cwd_workspace(reg.get("workspaces") or []) if args.switch == "off" else None
+        if here is None:
+            return write_error(
+                out,
+                False,
+                "invalid.input",
+                "--workspace is required"
+                + (" (or run `off` inside the workspace folder)" if args.switch == "off" else ""),
+                hint=f"orch host convenience {args.switch} --workspace W",
+                fix=["orch", "host", "convenience", args.switch, "--workspace", "W"],
+            )
+        args.workspace = here
     match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
+    if here is not None:  # named before acting, so a wrong folder is seen
+        out.write(f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign off for it\n")
     try:
         if (
             args.switch == "on"
@@ -816,6 +857,11 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
+    if args.switch == "off":
+        out.write(
+            "The key stays in one-click custody, so it cannot sign in the Terminal yet. To sign with a passphrase: "
+            f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"
+        )
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"

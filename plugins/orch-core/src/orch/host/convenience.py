@@ -554,8 +554,9 @@ READER_UPGRADE = (
 # -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
 
 CLICK_ONLY_TEXT = (
-    "click-to-sign is on for this workspace: use Sign in the dashboard, or turn convenience off with "
-    "`orch host convenience off --workspace {ws}`"
+    "click-to-sign is on for this workspace: use Sign in the dashboard. To sign in the terminal instead, turn "
+    "convenience off with `orch host convenience off --workspace {ws}` and move the key back with "
+    "`orch keys custody passphrase --workspace {ws} --in-place`"
 )
 
 
@@ -604,7 +605,8 @@ def refuse_handoff(service: Any) -> None:
         raise HostError(
             "sign.click_only",
             CLICK_ONLY_TEXT.format(ws=service.workspace_id),
-            hint="sign in the dashboard, or: orch host convenience off --workspace W",
+            hint="sign in the dashboard, or: orch host convenience off --workspace W, then "
+            "orch keys custody passphrase --workspace W --in-place",
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
         )
 

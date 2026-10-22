@@ -1464,6 +1464,21 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
+Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of these travel on the link):
+
+| Code | Status | Meaning |
+|---|---|---|
+| `bad_credentials` | 401 | sign-in: user id, password or TOTP wrong (one code for all, and for an unknown user) |
+| `rate_limited` | 429 | sign-in (per user and source, per source, all sources, or all hash slots busy), prepare, sign |
+| `unknown_prepared` | 404 | `prepared_id` unknown, used, or another user's (same answer) |
+| `prepared_expired` | 410 | the prepared request is past `expires_ms` |
+| `too_many_channels` | 429 | the user holds the maximum of active channels |
+| `weak_password` | 400 | password policy (admin set-up) |
+| `unauthorized` | 403 | a pairing or credential action by someone other than the user |
+| `unknown_user`, `unknown_group` | 404 | admin routes naming a user or group that does not exist |
+| `exists`, `channel_exists`, `reserved_group` | 409, 409, 400 | a user or group name taken; a channel key already registered; a built-in group name |
+| `bad_pairing_code` | 400 | phone registration: wrong, used or expired pairing code |
+
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
 `other_person`, `stale_timestamp`, `unknown_workspace`, `replay`, `stale_card`. HTTP statuses for publish are in §11.2;
 link errors travel as `{"error": code}` reply bodies; host-side refusals are local (logged, never sent back as content).

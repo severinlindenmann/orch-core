@@ -218,3 +218,33 @@ def test_no_route_takes_event_bytes_or_a_digest_to_sign():
         "/api/v1/sign/sign",
     ]
     assert cj({}) == b"{}"
+
+
+def test_get_prepared_returns_the_same_answer_to_its_owner_only(w):
+    tok = w.login(w.ann)
+    signer, cid = w.register_channel(tok)
+    s, o = prepared(w, tok, cid)
+    assert s == 200, o
+    s, again, _ = w.call("GET", "/sign/prepared/" + o["prepared_id"], token=tok)
+    assert s == 200 and again == o  # same ctx, digest and "shown"; reading does not consume it
+    other = w.login(w.admin)
+    assert w.call("GET", "/sign/prepared/" + o["prepared_id"], token=other)[:2] == (404, {"error": "unknown_prepared"})
+    assert w.call("GET", "/sign/prepared/" + "ab" * 16, token=tok)[:2] == (404, {"error": "unknown_prepared"})
+    assert w.call("GET", "/sign/prepared/" + o["prepared_id"])[0] == 401  # no session
+    s, got, _ = w.call(
+        "POST",
+        "/sign/sign",
+        {"prepared_id": o["prepared_id"], "channel_id": cid, "channel_proof": w.proof(signer, again["digest"])},
+        token=tok,
+    )
+    assert s == 200, got
+    assert w.call("GET", "/sign/prepared/" + o["prepared_id"], token=tok)[:2] == (404, {"error": "unknown_prepared"})
+
+
+def test_get_prepared_after_expiry_is_prepared_expired(w):
+    tok = w.login(w.ann)
+    _, cid = w.register_channel(tok)
+    _, o = prepared(w, tok, cid)
+    w.clock.t = o["expires_ms"] + 1
+    tok = w.login(w.ann)  # the first session expired with the clock
+    assert w.call("GET", "/sign/prepared/" + o["prepared_id"], token=tok)[:2] == (410, {"error": "prepared_expired"})

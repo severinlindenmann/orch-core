@@ -212,6 +212,13 @@ ROUTES: tuple[Route, ...] = (
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
+    _r(
+        "GET",
+        "/sign/prepared/{prepared_id}",
+        "session",
+        "prepared",
+        "A request I prepared: what to show and the digest",
+    ),
     _r("POST", "/sign/sign", "session", "sign", "Hand the channel's proof to the hub, which signs with my UK"),
     # (e) channel registration
     _r("POST", "/channels/register/begin", "session", "reg_begin", "Open a channel registration challenge for one key"),
@@ -309,7 +316,9 @@ class WebApi:
     def __init__(self, deps: WebDeps) -> None:
         self.d = deps
         self._limit = _Limiter(deps.now_ms)
-        self._prepared: dict[str, tuple[str, str, str, str, int]] = {}  # id -> user, channel, workspace, log, expires
+        self._prepared: dict[
+            str, tuple[str, str, str, str, int, Any]
+        ] = {}  # id -> user, channel, workspace, log, expires, Prepared
         self._plock = threading.Lock()
         self._kinds: dict[str, tuple[str, int]] = {}  # sha256(token) -> (client kind, expires_ms), this process only
         self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
@@ -616,8 +625,20 @@ class WebApi:
                 del self._prepared[k]
             if len(self._prepared) >= MAX_PREPARED:
                 raise ApiError("unavailable")
-            self._prepared[pr.prepared_id] = (c.user_id, ch, ws, pr.log, pr.expires_ms)
+            self._prepared[pr.prepared_id] = (c.user_id, ch, ws, pr.log, pr.expires_ms, pr)
         return 200, {**pr.public(), "shown": self._shown(pr.ctx)}
+
+    def _h_prepared(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The same answer as ``prepare`` for one request this user prepared (a push carries only the id). Read-only:
+        it does not consume the request. Another user's id and an unknown id are both ``unknown_prepared``."""
+        with self._plock:
+            mine = self._prepared.get(p["prepared_id"])
+        if mine is None or mine[0] != c.user_id:
+            raise ApiError("unknown_prepared")
+        if mine[4] <= self.d.now_ms():
+            raise ApiError("prepared_expired")
+        self._mine(c.user_id, mine[2])
+        return 200, {**mine[5].public(), "shown": self._shown(mine[5].ctx)}
 
     def _h_sign(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, prepared_id=str, channel_id=str, channel_proof=str)

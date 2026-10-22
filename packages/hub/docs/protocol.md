@@ -809,7 +809,7 @@ query or method does not verify. The label keeps a publish transport signature (
 | 2 | `\|now − ts\| ≤ 120 s` | 401 `stale_timestamp` (`server_ms`) |
 | 3 | the **held, current** hub card for `Orch-Hub`, **verified again for this request**: its op certificate valid, not expired, not revoked, `hub_id` of the root, dev marker | 401 `unknown_hub` |
 | 4 | `Orch-Hub-Signature` under that card's `HK_op` over the bytes above | 401 `bad_hub_signature` |
-| 5 | scope: only workspaces with a **current binding to this hub** (status `bound`, `hub_id` and `hk_root_pub` of the held card) whose `wsk_pub` equals the workspace card's current `WSK`; the workspace the target names (path `/v1/ws/<id>/…` or the one `workspace=` key), if any, must be in that set, **and so must the workspace of every row the data layer returns** (a row outside it is never emitted) | 403 `not_bound` |
+| 5 | scope: only workspaces with a **current binding to this hub in `mode: "full"`** (status `bound`, `hub_id` and `hk_root_pub` of the held card) whose `wsk_pub` equals the workspace card's current `WSK`; the workspace the target names (path `/v1/ws/<id>/…` or the one `workspace=` key), if any, must be in that set, **and so must the workspace of every row the data layer returns** (a row outside it is never emitted) | 403 `not_bound` |
 | 6 | data | — |
 
 **Canonical targets only (L2P-5).** The target is `malformed` unless it is ASCII, starts with `/`, contains no `%`
@@ -822,8 +822,12 @@ scope (vectors `admin_read_target_*`).
 
 **No nonce store, by design:** the request is idempotent metadata, so a replay inside the 120 s window returns what the
 original did, and the hub's key is online anyway. (If a state-changing admin route is ever added, it needs its own
-contract.) **Response rows carry exactly** `workspace_id`, `release_id`, `kind`, `state`, `created_ms`, `expires_ms`
-(or `null`), `revoked`, `bytes`, `public_url` (`null` unless the release has a public kind); any other field is a
+contract.) **Selective workspaces are out of scope (L2P-6).** D71: the hub-admin has no role in a selective workspace, whose
+card says the hub sees only what it shares; release metadata, including releases made on the direct v2 path that the
+hub never forwarded, stays hidden from it. Only a later, explicit owner opt-in could add them (not specified).
+
+**Response rows carry exactly** `workspace_id`, `release_id`, `kind`, `state`, `created_ms`, `expires_ms`
+(or `null`), `revoked`, `bytes`, `public_url`, which **MUST be `null` in `hv: 0`** (orch-publish has no public kind; a non-null value is a violation, vector `admin_read_row_with_public_url`). A later `hv` may add it for live public releases only, never for a URL that carries a token or grants access; any other field is a
 violation (`check_admin_read_row`, vectors `admin_read_row_*`).
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)

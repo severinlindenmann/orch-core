@@ -1245,7 +1245,7 @@ ADMIN_READ_ROW: dict[str, Check] = {
     "expires_ms": lambda x: x is None or _int_min(0)(x),
     "revoked": _bool,
     "bytes": _int_min(0),
-    "public_url": lambda x: x is None or (type(x) is str and x.isascii() and 0 < len(x) <= 2048),
+    "public_url": lambda x: x is None,  # hv 0: orch-publish has no public kind; see protocol.md §10.6
 }
 
 
@@ -1347,6 +1347,7 @@ def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: i
         ws
         for ws, b in st["bindings"].items()
         if b["status"] == "bound"
+        and b["binding"]["mode"] == "full"
         and b["binding"]["hub_id"] == hub
         and b["binding"]["hk_root_pub"] == b64u(held["hk_root_pub"])
         and ws in st["cards"]

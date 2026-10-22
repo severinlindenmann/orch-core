@@ -2623,7 +2623,13 @@ def build() -> dict[str, Any]:
 
     # ---- hub admin read for orch-publish (phase 3, protocol.md §10.6)
     acards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
-    ab = {**base, "hub_id": HUB_ID, "hub_card": c, "cards": acards, "bindings": {WS_A: [{"binding": binding()}]}}
+    ab = {
+        **base,
+        "hub_id": HUB_ID,
+        "hub_card": c,
+        "cards": acards,
+        "bindings": {WS_A: [{"binding": binding(mode="full")}]},
+    }
     ok_ar = {"ok": {"hub": HUB_ID, "workspaces": [WS_A]}}
     ws_path = f"/v1/ws/{WS_A}/releases?state=active"
     case("admin_read_valid", "admin_read", {**ab, "request": admin_req()}, ok_ar, 3)
@@ -2801,6 +2807,22 @@ def build() -> dict[str, Any]:
         3,
         "whatever the target resolved to, a row of another workspace is not returned",
     )
+    sel_b = {**ab, "bindings": {WS_A: [{"binding": binding(mode="selective")}]}}
+    case(
+        "admin_read_selective_binding_excluded",
+        "admin_read",
+        {**sel_b, "request": admin_req()},
+        {"ok": {"hub": HUB_ID, "workspaces": []}},
+        3,
+        "D71/D80: the hub-admin has no role in a selective workspace, and its card says the hub sees only what it shares",
+    )
+    case(
+        "admin_read_selective_workspace_path",
+        "admin_read",
+        {**sel_b, "request": admin_req(target=ws_path)},
+        {"error": "not_bound"},
+        3,
+    )
     case(
         "admin_read_workspace_not_bound",
         "admin_read",
@@ -2814,7 +2836,7 @@ def build() -> dict[str, Any]:
         "admin_read",
         {
             **ab,
-            "bindings": {WS_A: [{"binding": binding()}, {"unbound": unbound()}]},
+            "bindings": {WS_A: [{"binding": binding(mode="full")}, {"unbound": unbound()}]},
             "request": admin_req(target=ws_path),
         },
         {"error": "not_bound"},
@@ -2823,14 +2845,18 @@ def build() -> dict[str, Any]:
     case(
         "admin_read_scope_excludes_unbound",
         "admin_read",
-        {**ab, "bindings": {WS_A: [{"binding": binding()}, {"unbound": unbound()}]}, "request": admin_req()},
+        {**ab, "bindings": {WS_A: [{"binding": binding(mode="full")}, {"unbound": unbound()}]}, "request": admin_req()},
         {"ok": {"hub": HUB_ID, "workspaces": []}},
         3,
     )
     case(
         "admin_read_binding_to_other_hub",
         "admin_read",
-        {**ab, "bindings": {WS_A: [{"binding": binding(root="hk_root_rogue")}]}, "request": admin_req(target=ws_path)},
+        {
+            **ab,
+            "bindings": {WS_A: [{"binding": binding(root="hk_root_rogue", mode="full")}]},
+            "request": admin_req(target=ws_path),
+        },
         {"error": "not_bound"},
         3,
     )
@@ -2839,8 +2865,9 @@ def build() -> dict[str, Any]:
         "admin_read_row_with_public_url",
         "admin_read_row",
         {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
-        {"ok": {"row": True}},
+        {"error": "malformed"},
         3,
+        "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
     )
     case(
         "admin_read_row_extra_content_field",

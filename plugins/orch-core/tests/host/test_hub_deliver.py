@@ -17,7 +17,7 @@ from orch.crypto.encoding import b64u
 from orch.host import hubdeliver, hubops
 from orch.hubclient import custodial as C
 from tests.host import human_helpers
-from tests.host.dispatch_helpers import ok
+from tests.host.dispatch_helpers import SESSION, ok
 from tests.host.test_hub_ops import (  # noqa: F401 - fixtures
     HUB_ID,
     connect_args,
@@ -57,16 +57,19 @@ def mint(wid: str, log: str, typ: str, **payload: Any) -> dict[str, Any]:
 
 
 class Env:
-    def __init__(self, served: Any, human: Any, version: int = 3) -> None:
+    def __init__(self, served: Any, human: Any, version: int = 3, mode: str = "full") -> None:
         self.served = served
-        human.run("hub.join", join_args(mode="full"))
+        extra = {}
+        if mode == "selective":  # the grant: the owner's person aliased to the vector user, owner-signed at join (15.7)
+            extra["aliases"] = [{"person_id": human.person.ref.removeprefix("p_"), "user_id": ALICE}]
+        human.run("hub.join", join_args(mode=mode, **extra))
         ok(served.client().req("hub.connect", connect_args(), idem=True))
         self.service = served.service
         self.service.submit(self._dev, self.service.store).result()
         self.wid = served.wid
         self.state = hubops._load_state(self.service)  # noqa: SLF001
         self.state.snapshot = hub_snapshot(self.wid, version)
-        self.uid, _ = served.ticket("hub ticket")
+        self.uid, self.key = served.ticket("hub ticket")
         served.lab.ws.clock[0] = 1_790_000_000.5  # inside the vector certificates' validity (contract now_ms)
         self.n = 0
 
@@ -238,3 +241,113 @@ def test_selective_inputs_come_from_the_store_and_the_share_state(env):
     n, last, (live, superseded) = env.service.submit(read).result()
     assert n == len(env.lines(env.uid)) and last == env.head(env.uid)
     assert live == {} and superseded == frozenset()  # nothing shared yet: no decision is granted (fail closed)
+
+
+# --- selective mode (D80, ticket-format 15.7): the item the person was shown ----------------------------------------
+
+
+@pytest.fixture
+def sel(served, human, stub):  # noqa: F811
+    env = Env(served, human, mode="selective")
+    ok(
+        served.client().req(
+            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+        )
+    )
+    return env
+
+
+def qhash(env: Env) -> str:
+    return next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
+
+
+def share(env: Env, **over: Any) -> dict[str, Any]:
+    """The host's share state after a sync that put one item showing question Q1 at the log's current end: what
+    ``sharefmt``/C6b keep in ``ShareState.sent`` (chain and f1 as signed into the item)."""
+    from orch.hubclient.shares import ShareState
+
+    lines = env.lines(env.uid)
+    entry = {
+        "item_id": "1" * 32, "digest": "d", "version": 1, "item_hash": "sha256:" + "5e" * 32,
+        "chain": {"log": env.uid, "seq": len(lines), "head": env.head(env.uid)},
+        "f1": {"roster_v": env.roster_v(), "gates": {}, "questions": {"Q1": {"hash": qhash(env)}}},
+    }  # fmt: skip
+    entry.update(over)
+
+    def save():
+        from orch.host import shareops
+
+        st = ShareState()
+        st.sent = {"question:" + env.uid + ":Q1": entry}
+        shareops._save(env.service, st)  # noqa: SLF001
+
+    env.service.submit(save).result()
+    return entry
+
+
+def answer(env: Env, entry: dict[str, Any], **over: Any) -> dict[str, Any]:
+    env.n += 1
+    base = {
+        "id": f"01J9ZP000000000000000{env.n:05d}", "based_on": entry["chain"]["head"],
+        "roster_v": entry["f1"]["roster_v"],
+        "question": "Q1", "hash": qhash(env), "text": "yes", "item_hash": entry["item_hash"],
+    }  # fmt: skip
+    return mint(env.wid, env.uid, "question.answered", **{**base, **over})
+
+
+def test_a_selective_answer_lands_when_it_shows_exactly_the_item(sel):
+    entry = share(sel)
+    e = answer(sel, entry)
+    assert sel.deliver(e) is None
+    line = sel.lines(sel.uid)[-1]
+    assert line["type"] == "question.answered" and line["item_hash"] == entry["item_hash"] and line["auth"] == "hub"
+    store = sel.store()
+    try:
+        q = store.state.tickets[sel.uid].questions[0]
+        assert q.answered and not store.chain_errors()
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("make", "code"),
+    [
+        (lambda env, entry: answer(env, entry, roster_v=entry["f1"]["roster_v"] + 1), "event_changed"),
+        (lambda env, entry: answer(env, entry, hash="sha256:" + "9" * 64), "event_changed"),
+        (lambda env, entry: answer(env, entry, based_on="sha256:" + "9" * 64), "event_changed"),
+        (lambda env, entry: answer(env, entry, item_hash="sha256:" + "7" * 64), "not_granted"),  # not a live item
+        (lambda env, entry: answer(env, entry, question="Q2"), "not_granted"),  # the item does not show Q2
+    ],
+)
+def test_a_selective_event_that_differs_from_the_item_is_refused_and_nothing_lands(sel, make, code):
+    entry = share(sel)
+    before = (len(sel.lines(sel.uid)), len(sel.lines("workspace")))
+    assert sel.deliver(make(sel, entry)) == code
+    assert (len(sel.lines(sel.uid)), len(sel.lines("workspace"))) == before  # not even the ledger pins
+
+
+def test_a_selective_item_whose_chain_is_not_our_log_is_a_view_fork(sel):
+    entry = share(sel)
+    entry = share(sel, chain={**entry["chain"], "head": "sha256:" + "8" * 64})
+    assert sel.deliver(answer(sel, entry, based_on=entry["chain"]["head"])) == "view_fork"
+
+
+def test_an_item_without_the_shown_values_grants_no_decision(sel):
+    entry = share(sel)
+    gone = {k: v for k, v in entry.items() if k not in ("chain", "f1")}
+
+    def save():
+        from orch.host import shareops
+        from orch.hubclient.shares import ShareState
+
+        st = ShareState()
+        st.sent = {"q": gone}
+        shareops._save(sel.service, st)  # noqa: SLF001
+
+    sel.service.submit(save).result()
+    assert sel.deliver(answer(sel, entry)) == "not_granted"  # fail closed: an older entry is not live for decisions
+
+
+def test_a_replaced_version_is_event_changed_not_not_granted(sel):
+    entry = share(sel, superseded=["sha256:" + "6" * 64])
+    assert sel.deliver(answer(sel, entry, item_hash="sha256:" + "6" * 64)) == "event_changed"

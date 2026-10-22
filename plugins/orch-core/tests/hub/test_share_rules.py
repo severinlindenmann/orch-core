@@ -307,3 +307,36 @@ def test_a_state_from_before_the_confirmed_field_confirms_what_it_already_sent()
     assert [i.logical for i in got] == ["ticket:a"]
     with pytest.raises(HubRefused):
         S.ShareState.from_json(old | {"confirmed": [1]})
+
+
+def test_sync_keeps_what_the_person_was_shown_for_the_admission_of_a_selective_event():
+    """Ticket-format 15.7: a ``sent`` entry carries the chain claim and the f1 values the item was signed with, and the
+    item hashes it replaced; an item without f1 grants no decision. Round-trips through the state file."""
+    chain = (3, "sha256:" + "c1" * 32)
+    f1 = {"roster_v": 2, "gates": {}, "questions": {"Q1": {"hash": "sha256:" + "d1" * 32}}}
+    item = S.ShareItem("question:t:Q1", "question", "t", "K-1", {"x": 1}, "dig1", f1, "", (), chain)
+    st, link = S.ShareState(), FakeLink()
+    saved = []
+
+    def build(version_hash):
+        return lambda item_id, it, version: (f"sealed:{version}", version_hash)
+
+    S.sync(st, [item], link=link, build=build("sha256:" + "01" * 32), save=lambda s: saved.append(1))
+    (entry,) = st.sent.values()
+    assert entry["chain"] == {"log": "t", "seq": 3, "head": chain[1]} and entry["f1"] == f1
+    assert "superseded" not in entry
+    changed = S.ShareItem(
+        "question:t:Q1", "question", "t", "K-1", {"x": 1}, "dig2", {**f1, "roster_v": 3}, "", (), chain
+    )
+    S.sync(st, [changed], link=link, build=build("sha256:" + "02" * 32), save=lambda s: saved.append(1))
+    (entry,) = st.sent.values()
+    assert entry["f1"]["roster_v"] == 3 and entry["superseded"] == ["sha256:" + "01" * 32]
+    assert S.ShareState.from_json(st.to_json()).sent == st.sent
+    bare = S.ShareItem("question:t:Q1", "question", "t", "K-1", {"x": 1}, "dig3", None, "", (), chain)
+    S.sync(st, [bare], link=link, build=build("sha256:" + "03" * 32), save=lambda s: saved.append(1))
+    (entry,) = st.sent.values()
+    assert "chain" not in entry and "f1" not in entry  # no f1: the hub cannot build on it, the host grants nothing
+    bad = st.to_json()
+    bad["sent"][next(iter(bad["sent"]))]["chain"] = {"log": "t"}
+    with pytest.raises(HubRefused):
+        S.ShareState.from_json(bad)

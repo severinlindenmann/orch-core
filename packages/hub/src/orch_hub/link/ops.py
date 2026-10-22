@@ -1,0 +1,222 @@
+"""Op handlers of the link server (phase 2 subset of the closed list, §10.2).
+
+A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
+or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
+sign anything for the host. Ops of later phases (``route_*``, ``wk_seal``, ``audit_ack``, the share ops until C6) are
+not served: ``unknown_op``.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from ..contract import hub as H
+from ..contract.canon import unb64u
+from ..contract.hub import Refused
+from ..contract.keystore import OpSigner
+from .registry import Registry
+
+
+class InviteGate(Protocol):
+    """Hub-admin invites (not in H0). ``check`` returns the ``workspace_id`` the invite is bound to, or None, and
+    raises ``Refused("bad_invite")`` for an unknown, used or expired one; ``consume`` runs after a successful join."""
+
+    def check(self, invite: str, now_ms: int) -> str | None: ...
+
+    def consume(self, invite: str, workspace_id: str) -> None: ...
+
+
+class SnapshotProvider(Protocol):
+    def snapshot(self, workspace_id: str, mode: str) -> dict[str, Any]:
+        """A signed ``hub.snapshot`` (``{"o","sig"}``) for the workspace."""
+
+
+class PublishForwarder(Protocol):
+    """D11 implements this: forward a ``publish_out`` request unchanged, add the hub headers (§11.1)."""
+
+    def forward(self, workspace_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Returns ``{"status": int, "body_hex": str}``."""
+
+
+class Downstream(Protocol):
+    """Where accepted cards and bindings go next (orch-publish, the relay). Default: nowhere."""
+
+    def card(self, workspace_id: str, card: dict[str, Any], pk_pub: str) -> None: ...
+
+    def binding(self, workspace_id: str, obj: dict[str, Any]) -> None: ...
+
+
+class NoDownstream:
+    def card(self, workspace_id: str, card: dict[str, Any], pk_pub: str) -> None:
+        pass
+
+    def binding(self, workspace_id: str, obj: dict[str, Any]) -> None:
+        pass
+
+
+class NoPublish:
+    def forward(self, workspace_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        raise Refused("unavailable")
+
+
+class StubSnapshots:
+    """Phase-2 stub: version 1, no roles, no revoked channels, signed by HK_op under the current op cert."""
+
+    def __init__(self, op_signer: OpSigner, hub_id: str, op_cert_id: str, now_ms: Callable[[], int]) -> None:
+        self._s, self._hub, self._cert, self._now = op_signer, hub_id, op_cert_id, now_ms
+
+    def snapshot(self, workspace_id: str, mode: str) -> dict[str, Any]:
+        o = {
+            "v": 2,
+            "suite": 2,
+            "kind": "hub.snapshot",
+            "hv": H.HV,
+            "hub_id": self._hub,
+            "op_cert_id": self._cert,
+            "workspace_id": workspace_id,
+            "generation": 0,
+            "version": 1,
+            "issued_ms": self._now(),
+            "roles": {},
+            "revoked_channels": [],
+            "dev": True,
+        }
+        return self._s.sign_object(o)
+
+
+@dataclass
+class OpContext:
+    hub_id: str
+    workspace_id: str
+    link_wsk_pub: bytes  # the key the link authenticated with
+    body: dict[str, Any]
+    registry: Registry
+    invites: InviteGate
+    snapshots: SnapshotProvider
+    publish: PublishForwarder
+    downstream: Downstream
+    now_ms: int
+    dev_mode: bool
+
+
+def _require_pin(c: OpContext) -> dict[str, str]:
+    pin = c.registry.pin(c.workspace_id)
+    if pin is None:
+        raise Refused("unknown_workspace")
+    return pin
+
+
+def _require_bound(c: OpContext) -> None:
+    st = c.registry.binding_state(c.workspace_id)
+    if st is None:
+        raise Refused("unknown_workspace")
+    if st["status"] != "bound":
+        raise Refused("not_bound")
+
+
+def join(c: OpContext) -> dict[str, Any]:
+    invite = c.body["invite"]
+    if type(invite) is not str or not invite:
+        raise Refused("malformed")
+    join_msg = {k: c.body[k] for k in ("card", "pk_pub", "binding")}
+    with c.registry.lock:  # invite check, TOFU check, pin write and invite consume are one step
+        inv_ws = c.invites.check(invite, c.now_ms)
+        pin = H.check_hub_join(
+            join_msg,
+            hub_id_=c.hub_id,
+            pins=c.registry.pins(),
+            now_ms=c.now_ms,
+            dev_mode=c.dev_mode,
+            invite_workspace_id=inv_ws,
+        )
+        if pin["workspace_id"] != c.workspace_id:
+            raise Refused("other_workspace")
+        wsk = unb64u(pin["wsk_pub"], 65)
+        if wsk != c.link_wsk_pub:
+            raise Refused("wsk_mismatch")
+        b = H.verify_binding(
+            join_msg["binding"], workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode
+        )
+        state = H.apply_binding(c.registry.binding_state(c.workspace_id), b)
+        c.registry.commit_join(
+            c.workspace_id, pin["owner_person_id"], pin["wsk_pub"], join_msg["pk_pub"], join_msg["card"], state
+        )
+        c.invites.consume(invite, c.workspace_id)
+    c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
+    c.downstream.binding(c.workspace_id, join_msg["binding"])
+    return {}
+
+
+def card_put(c: OpContext) -> dict[str, Any]:
+    card, pk_b64 = c.body["card"], c.body["pk_pub"]
+    with c.registry.lock:
+        pin = _require_pin(c)
+        o = H.verify_v2_card(card, unb64u(pk_b64, 65), now_ms=c.now_ms)
+        if o["owner_person_id"] != pin["owner_person_id"]:
+            raise Refused("other_person")
+        if o["workspace_id"] != c.workspace_id:
+            raise Refused("other_workspace")
+        if o["wsk_pub"] != pin["wsk_pub"]:
+            raise Refused("wsk_mismatch")
+        held = c.registry.card(c.workspace_id)
+        if held is not None:
+            if o["card_seq"] < held["o"]["card_seq"]:
+                raise Refused("stale_card")
+            if o["card_seq"] == held["o"]["card_seq"] and card != held:
+                raise Refused("stale_card")
+        c.registry.put_card(c.workspace_id, pk_b64, card)
+    c.downstream.card(c.workspace_id, card, pk_b64)
+    return {}
+
+
+def binding_put(c: OpContext) -> dict[str, Any]:
+    obj = c.body["object"]
+    o = obj.get("o") if type(obj) is dict else None
+    kind = o.get("kind") if type(o) is dict else None
+    with c.registry.lock:
+        pin = _require_pin(c)
+        wsk = unb64u(pin["wsk_pub"], 65)
+        held = c.registry.binding_state(c.workspace_id)
+        if kind == "hub.binding":
+            b = H.verify_binding(obj, workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode)
+            if b["hub_id"] != c.hub_id:
+                raise Refused("other_hub")
+            state = H.apply_binding(held, b)
+        elif kind == "hub.unbound":
+            u = H.verify_unbound(obj, workspace_id=c.workspace_id, wsk_pub=wsk, dev_mode=c.dev_mode)
+            if u["hub_id"] != c.hub_id:
+                raise Refused("other_hub")
+            state = H.apply_unbound(held, u)
+        else:
+            raise Refused("malformed")
+        c.registry.set_binding_state(c.workspace_id, state)
+    c.downstream.binding(c.workspace_id, obj)
+    return {}
+
+
+def snapshot_get(c: OpContext) -> dict[str, Any]:
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
+
+
+def publish_out(c: OpContext) -> dict[str, Any]:
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    return c.publish.forward(c.workspace_id, c.body["request"])
+
+
+HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
+    "join": join,
+    "card_put": card_put,
+    "binding_put": binding_put,
+    "snapshot_get": snapshot_get,
+    "publish_out": publish_out,
+}
+
+__all__ = ["HANDLERS", "OpContext"]

@@ -359,9 +359,9 @@ def _sign_code_explained(entry: dict[str, Any], run: Callable[..., Any], *a: Any
             raise HostError(
                 exc.code,
                 "disabled: this key is in one-click custody and one-click signing is off, so it cannot sign in the "
-                "Terminal. Turn one-click on again, or move the key back to a passphrase.",
-                hint=f"orch host convenience on --workspace {ws}  or  orch keys custody passphrase --workspace {ws} "
-                "--in-place",
+                "Terminal. Move the key back to a passphrase, or turn one-click on again.",
+                hint=f"orch keys custody passphrase --workspace {ws} --in-place  or  "
+                f"orch host convenience on --workspace {ws}",
                 detail=exc.detail,
             ) from None
         raise

@@ -344,6 +344,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
             phoneDisabled={switching || phoneRun.busy}
           />
         )}
+        {click.phase === 'ready' && click.problem?.stale && p.action && (
+          <Button data-testid="click-try-again" onClick={() => void prepareClickAgain()}>Try again</Button>
+        )}
 
         {click.phase === 'settling' && (
           <div role="status" data-testid="click-settling" className="flex items-start gap-2 rounded-md border border-warning/40 px-3 py-2 text-[13px]">

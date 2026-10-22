@@ -155,9 +155,11 @@ export interface ClickProblem {
   details?: string
   /** H12d-2: the device ids the refusal names (shown by label through `RefusalDevices`, never as ids). */
   devices?: string[]
+  /** The switch moved after the page chose its way: a new request follows the host's current answer (Try again). */
+  stale?: boolean
 }
 
-const OFF = ' Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`.'
+const OFF = ' Fix it, or sign in the terminal: turn convenience off with `orch host convenience off --workspace <prefix>`, then move the key back with `orch keys custody passphrase --workspace <prefix> --in-place`.'
 
 const REFUSED: Record<string, ClickProblem> = {
   terminal_only: { title: 'Terminal only', body: 'This one cannot be signed with one click.', next: 'terminal' },
@@ -205,7 +207,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: 'Click-to-sign is off for this workspace now. Press Try again to sign in the Terminal.', next: 'retry' }
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: 'Click-to-sign is off for this workspace now. To sign in the Terminal, the key must first move back to a passphrase: `orch keys custody passphrase --workspace <prefix> --in-place`. Try again makes a new request for the Terminal.', next: 'retry', stale: true }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:

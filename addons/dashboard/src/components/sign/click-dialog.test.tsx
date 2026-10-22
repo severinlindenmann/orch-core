@@ -627,3 +627,35 @@ it('has no "Other ways": the method follows My settings, with the phone as the o
   expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
   expect(s.prepare).not.toHaveBeenCalled()
 })
+
+describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {
+  it('a stale-method event while the click review is open: the review stays, nothing is signed, cancelled or re-prepared', async () => {
+    const { dialog } = await toPanel()
+    flag(false)
+    act(() => { window.dispatchEvent(new Event('orch:signing-method-stale')) })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(within(dialog).getByTestId('click-panel')).toBeInTheDocument()
+    expect(c.sign).not.toHaveBeenCalled()
+    expect(c.cancel).not.toHaveBeenCalled()
+    expect(s.prepare).not.toHaveBeenCalled()
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('switched off between review and Sign: one sign attempt, Try again cancels the click request BEFORE a new terminal request', async () => {
+    s.prepare.mockResolvedValue(fakeRequest())
+    s.get.mockResolvedValue(state(fakeRequest()))
+    const { dialog } = await toPanel()
+    c.sign.mockImplementationOnce(async () => { flag(false); throw new ApiError(409, { code: 'sign.convenience_unavailable', message: 'disabled: off', retryable: false, reason: 'disabled' }, 3) })
+    press(await armed(dialog))
+    await within(dialog).findByTestId('click-problem', {}, T)
+    // The text says Try again, so the button is there (the request is still open: a sign refusal keeps it)
+    const again = await within(dialog).findByRole('button', { name: /Try again/ }, T)
+    expect(c.sign).toHaveBeenCalledTimes(1)
+    fireEvent.click(again)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(c.cancel).toHaveBeenCalledTimes(1) // the click request is cancelled before the new terminal request
+    expect(c.sign).toHaveBeenCalledTimes(1) // never signed another way
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+    expect(s.postAction).not.toHaveBeenCalled()
+  })
+})

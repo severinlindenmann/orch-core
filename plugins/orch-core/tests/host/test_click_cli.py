@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 
 from orch.cli.main import main
 from orch.custody import PassphraseBackend
@@ -48,13 +49,18 @@ def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, mon
     state = str(served.lab.state)
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
     monkeypatch.chdir(served.service.entry.root)
+    monkeypatch.setenv("PWD", os.getcwd())
+    code, out, _ = run("host", "convenience", "on", "--state", state)  # `on` never defaults to the folder
+    assert code == 5 and "--workspace is required" in out
     code, out, _ = run("host", "convenience", "off", "--state", state)
     assert code == 0 and not convenience.enabled(served.lab.state, served.wid, UID)
+    assert "this folder belongs to" in out and served.service.entry.prefix in out
     assert "stays in one-click custody" in out and "orch keys custody passphrase" in out  # F1: the way to a passphrase
     monkeypatch.chdir("/")
-    code, out, _ = run("host", "convenience", "on", "--state", state)
+    monkeypatch.setenv("PWD", "/")
+    code, out, _ = run("host", "convenience", "off", "--state", state)
     assert code == 5 and "invalid.input" in out
-    assert "describe describe" not in out and "orch host convenience on --workspace W" in out
+    assert "describe describe" not in out and "orch host convenience off --workspace W" in out
 
 
 def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(served, monkeypatch):

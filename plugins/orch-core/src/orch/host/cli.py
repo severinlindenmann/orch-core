@@ -769,18 +769,26 @@ _clock = time.time  # the clock of request expiry for `convenience on` (tests se
 
 
 def _cwd_workspace(entries: list[dict[str, Any]]) -> str | None:
-    """The workspace id whose registered root is the current directory or its nearest registered parent, else None."""
+    """The workspace id whose registered root is the current directory or its nearest registered parent, else None.
+    Fail closed: None when the logical ``$PWD`` is not the physical directory (a symlink could point this process at
+    another workspace), and registered roots that are empty or not absolute never match."""
     try:
-        here = Path.cwd().resolve()
+        here = os.getcwd()
     except OSError:
+        return None
+    logical = os.environ.get("PWD")
+    if logical and logical != here:
         return None
     best: tuple[int, str] | None = None
     for item in entries:
+        raw = item.get("root")
+        if not isinstance(raw, str) or not raw.startswith("/"):
+            continue
         try:
-            root = Path(str(item.get("root"))).resolve()
+            root = Path(raw).resolve()
         except (OSError, RuntimeError):
             continue
-        if root == here or root in here.parents:
+        if root == Path(here) or root in Path(here).parents:
             if best is None or len(root.parts) > best[0]:
                 best = (len(root.parts), str(item.get("workspace_id")))
     return best[1] if best else None
@@ -806,15 +814,17 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     from .custody import read_json
 
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    here = None
     if not args.workspace:
-        # inside a workspace folder the workspace is that folder's (the innermost registered root holding the cwd)
-        here = _cwd_workspace(reg.get("workspaces") or [])
+        # only `off` (it takes authority away) may default to the folder's workspace; `on` always names it
+        here = _cwd_workspace(reg.get("workspaces") or []) if args.switch == "off" else None
         if here is None:
             return write_error(
                 out,
                 False,
                 "invalid.input",
-                "--workspace is required (or run this inside the workspace folder)",
+                "--workspace is required"
+                + (" (or run `off` inside the workspace folder)" if args.switch == "off" else ""),
                 hint=f"orch host convenience {args.switch} --workspace W",
                 fix=["orch", "host", "convenience", args.switch, "--workspace", "W"],
             )
@@ -823,6 +833,8 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
+    if here is not None:  # named before acting, so a wrong folder is seen
+        out.write(f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign off for it\n")
     try:
         if (
             args.switch == "on"

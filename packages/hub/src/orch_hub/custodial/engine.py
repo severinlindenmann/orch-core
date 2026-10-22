@@ -213,19 +213,12 @@ class CustodialEngine:
         typ = core["type"]
         if type(typ) is not str or not EVENT_TYPE.fullmatch(typ):
             raise Refused("malformed")
-        # the view may not turn the action into another type or log (defence in depth: re-check what was built)
-        want_log = action["log"] if action["type"] != "ticket.created" else None
-        if typ != action["type"] or (want_log is not None and built.log != want_log):
-            raise Refused("event_changed")
-        if want_log is None and not _ULID_LOG.fullmatch(built.log):
+        # the view may not turn the action into another type or log, and a decision carries the hash the person
+        # reviewed (contract check_built, always runs: missing hash = malformed, another = event_changed)
+        P4.check_built(action, built.log, core)
+        if action["type"] == "ticket.created" and not _ULID_LOG.fullmatch(built.log):
             raise Refused("malformed")  # ticket.created: the hub makes the new ticket's uid
         H.check_custodial_role(typ, built.log, role)
-        # a decision names the hash the person reviewed (§8.5): the view refuses with event_changed when its current
-        # hash moved; the engine also refuses an event whose hash is not the one the person saw.
-        # TODO(contract): the event-side field name of the reviewed item hash is not pinned for every type (and the
-        # selective-mode item hash is open, §16); until it is, only a `hash` field on the built core is compared.
-        if "hash" in action and "hash" in core and core["hash"] != action["hash"]:
-            raise Refused("event_changed")
         event = {
             **core,
             "v": 2,

@@ -340,6 +340,13 @@ def test_decision_hash_moved_is_event_changed(env):
     assert env.delivered == []
 
 
+def test_decision_event_without_hash_is_malformed(env):
+    h = "sha256:" + "11" * 32
+    act = {"type": "gate.approved", "log": LOG, "gate": "plan", "hash": h}
+    env.view.extra = {"gate": "plan"}  # the view built no hash at all: check_built never skips it
+    assert code(env.prepare, act) == "malformed"
+
+
 def test_malformed_ids_and_action_are_refused(env):
     assert code(env.engine.prepare, "sess", "zz", env.user, env.channel, {}) == "malformed"
     assert code(env.engine.prepare, "sess", WS, env.user, env.channel, "not a dict") == "malformed"

@@ -1173,9 +1173,39 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_granted_owner",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE]},
+        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
         ok_cus,
         4,
+    )
+    # L2P4-1: selective mode floors on the canonical person's F1 member role, not a fixed admin
+    case(
+        "custodial_selective_granted_member_cannot_people_changed",
+        "custodial",
+        {
+            **cus,
+            "event": custodial(typ="people.changed"),
+            "mode": "selective",
+            "granted_users": [U_ALICE],
+            "member_roles": {U_ALICE: "member"},
+        },
+        {"error": "forbidden_role"},
+        4,
+        "a granted member is edit, not admin",
+    )
+    case(
+        "custodial_selective_granted_member_decides",
+        "custodial",
+        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "member"}},
+        ok_cus,
+        4,
+    )
+    case(
+        "custodial_selective_granted_unaliased_is_viewer",
+        "custodial",
+        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE]},
+        {"error": "forbidden_role"},
+        4,
+        "a granted user without an alias to a member is a viewer and signs nothing",
     )
     case(
         "custodial_factor_policy_d41",

@@ -8,11 +8,11 @@ expire after ``ttl_ms``. Order is the autoincrement id (enqueue order), which is
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 import threading
 from dataclasses import dataclass
 
 from ..contract.hub import Refused
+from ..fsutil import open_private_db
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS route_queue (
@@ -36,7 +36,7 @@ class RouteQueue:
     def __init__(self, path: str = ":memory:", limits: Limits | None = None) -> None:
         self.limits = limits or Limits()
         self._lock = threading.RLock()
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db = open_private_db(path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()
 

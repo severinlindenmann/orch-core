@@ -9,7 +9,6 @@ orch-publish after a restart. One ready line is printed on stdout once the port 
 from __future__ import annotations
 
 import ipaddress
-import os
 import signal
 import sys
 import threading
@@ -17,6 +16,8 @@ import urllib.parse
 from pathlib import Path
 from typing import TextIO
 
+from .access import Access, AccessSnapshots
+from .access.cli import ACCESS_FILE
 from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
@@ -73,15 +74,15 @@ def serve(
     keys = HubKeys.open(state)
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
-    os.chmod(reg_path, 0o600)
+    access = Access(str(state / ACCESS_FILE))
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
-    os.chmod(queue_path, 0o600)
     router = Router(registry, queue)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
         keys,
+        snapshots=AccessSnapshots(access, keys),
         registry=registry,
         invites=FixedInvites(invites),
         publish=fw,
@@ -107,4 +108,5 @@ def serve(
         server.close()
         queue.close()
         registry.close()
+        access.close()
     return 0

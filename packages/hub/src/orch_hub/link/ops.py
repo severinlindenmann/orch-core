@@ -21,6 +21,7 @@ from .registry import Registry
 
 if TYPE_CHECKING:
     from ..router import Router
+    from ..view import ViewService
     from .wkseal import WkSeals
 
 
@@ -112,6 +113,7 @@ class OpContext:
     spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
+    views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -136,6 +138,8 @@ def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
     b = state.get("binding")
     if state.get("status") != "bound" or type(b) is not dict or b.get("mode") != "full":
         c.wk_seals.retire(c.workspace_id)
+        if c.views is not None:
+            c.views.store.drop(c.workspace_id)  # the view is useless without the wraps; forget it with them
 
 
 def join(c: OpContext) -> dict[str, Any]:
@@ -324,6 +328,19 @@ def wk_seal(c: OpContext) -> dict[str, Any]:
     return {}
 
 
+def log_sync(c: OpContext) -> dict[str, Any]:
+    """A sealed page of the workspace's own log lines (§10.7, full mode only). Mode check, the contract's page check
+    and the store write are one step inside the registry lock, so they cannot be separated from an unbind."""
+    if c.views is None:
+        raise Refused("unavailable")
+    with c.registry.lock:
+        pin = _require_pin(c)
+        _require_bound(c)
+        if c.registry.mode(c.workspace_id) != "full":
+            raise Refused("wrong_mode")
+        return c.views.accept(c.workspace_id, unb64u(pin["wsk_pub"], 65), c.body)
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
@@ -339,6 +356,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "space_get": space_get,
     "space_accept": space_accept,
     "wk_seal": wk_seal,
+    "log_sync": log_sync,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

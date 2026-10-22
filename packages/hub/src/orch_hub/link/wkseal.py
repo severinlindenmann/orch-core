@@ -123,3 +123,14 @@ class WkSeals:
         if row is None:
             raise Refused("unavailable")
         return row[0], bytearray(self._open_wrap(ws, row[0], bytes(row[1])))
+
+    def open_epoch(self, ws: str, epoch: int) -> bytearray:
+        """``WK_e`` of one LIVE epoch (not retired), opened for ONE in-memory use like :meth:`open_current`. The hub's
+        stored view pages stay sealed under the epoch they arrived in; a build opens each epoch it needs this way."""
+        with self.lock:
+            row = self._db.execute(
+                "SELECT wrap FROM wk_seal WHERE ws=? AND epoch=? AND retired=0", (ws, epoch)
+            ).fetchone()
+        if row is None:
+            raise Refused("unavailable")
+        return bytearray(self._open_wrap(ws, epoch, bytes(row[0])))

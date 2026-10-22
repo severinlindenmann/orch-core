@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from orch.addons.package import package_digest
 from orch.crypto.encoding import b64u
-from tests.addons.market_ref import sign_entry, sign_index
+from tests.addons.market_ref import sign_entry, sign_index, tree_hash
 
 OUT = Path(__file__).with_name("vectors_market.json")
 OFFICIAL = "https://github.com/severinlindenmann/orch-marketplace"
@@ -1096,6 +1096,67 @@ def build() -> None:
             "jira",
         ),
         refuse("manifest_mismatch"),
+    )
+
+    # ---- L2M-7: the dependency environment is checked, not trusted
+    add(
+        "env_paths_ok",
+        "env_paths",
+        {"paths": ["requests/__init__.py", "idna/core.py", "requests-2.32.3.dist-info/METADATA", "six.py"]},
+        ok(),
+    )
+    for nm, paths in (
+        ("pth_file", ["requests/__init__.py", "evil.pth"]),
+        ("pth_file_upper_case", ["EVIL.PTH"]),
+        ("sitecustomize", ["sitecustomize.py"]),
+        ("sitecustomize_package", ["sitecustomize/__init__.py"]),
+        ("usercustomize", ["usercustomize.py"]),
+        ("dot_dot", ["../outside.py"]),
+        ("nested_dot_dot", ["pkg/../../outside.py"]),
+        ("absolute", ["/etc/cron.d/x"]),
+        ("empty_segment", ["pkg//x.py"]),
+        ("backslash", ["pkg\\x.py"]),
+    ):
+        add("env_paths_" + nm, "env_paths", {"paths": paths}, refuse("env_failed"))
+    tree = [["requests/__init__.py", "a" * 64, 0o644], ["idna/core.py", "b" * 64, 0o644]]
+    pd = "sha256:" + "5" * 64
+    stamp = {"digest": pd, "tree": tree_hash(tree)}
+    add("env_stamp_matches", "env_stamp", {"stamp": stamp, "package_sha256": pd, "actual": tree}, ok())
+    add(
+        "env_stamp_file_planted",
+        "env_stamp",
+        {"stamp": stamp, "package_sha256": pd, "actual": [*tree, ["sitecustomize.py", "c" * 64, 0o644]]},
+        refuse("env_changed"),
+    )
+    add(
+        "env_stamp_file_modified",
+        "env_stamp",
+        {"stamp": stamp, "package_sha256": pd, "actual": [tree[0], ["idna/core.py", "d" * 64, 0o644]]},
+        refuse("env_changed"),
+    )
+    add(
+        "env_stamp_file_removed",
+        "env_stamp",
+        {"stamp": stamp, "package_sha256": pd, "actual": tree[:1]},
+        refuse("env_changed"),
+    )
+    add(
+        "env_stamp_mode_changed",
+        "env_stamp",
+        {"stamp": stamp, "package_sha256": pd, "actual": [tree[0], ["idna/core.py", "b" * 64, 0o755]]},
+        refuse("env_changed"),
+    )
+    add(
+        "env_stamp_for_another_package_digest",
+        "env_stamp",
+        {"stamp": stamp, "package_sha256": "sha256:" + "6" * 64, "actual": tree},
+        refuse("env_changed"),
+    )
+    add(
+        "env_stamp_missing_fields",
+        "env_stamp",
+        {"stamp": {}, "package_sha256": pd, "actual": tree},
+        refuse("env_changed"),
     )
 
 

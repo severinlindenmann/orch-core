@@ -19,7 +19,7 @@ CASES = VECTORS["cases"]
 DOC = Path(__file__).parents[4] / "docs/architecture/orch-v2-marketplace.md"
 
 # codes the doc defines that need a network, git or a running host, so there is no pure vector for them here
-NO_VECTOR = {"market.commit_mismatch", "market.fetch_failed", "market.staged_changed", "market.env_failed"}
+NO_VECTOR = {"market.commit_mismatch", "market.fetch_failed", "market.staged_changed"}
 
 
 def doc_codes() -> set[str]:

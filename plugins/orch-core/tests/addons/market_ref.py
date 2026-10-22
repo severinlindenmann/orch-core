@@ -283,6 +283,39 @@ def check_lock(kind: str, text: str) -> None:
         raise Refuse("market.malformed")
 
 
+# ------------------------------------------------------------------------------------------------ environments
+
+_AUTO_RUN = re.compile(r"(?:sitecustomize|usercustomize)(?:\..*)?|.*\.pth", re.I)
+
+
+def check_env_paths(paths: list[str]) -> None:
+    """Section 8.2: the files a dependency install would put into the add-on's environment root. Nothing may escape
+    the root, and nothing at the root may run by itself when an interpreter starts (``.pth`` files, ``sitecustomize``,
+    ``usercustomize``). Raises ``env_failed``."""
+    for p in paths:
+        parts = p.split("/")
+        if p.startswith("/") or "" in parts or "." in parts or ".." in parts or "\\" in p or "\x00" in p:
+            raise Refuse("market.env_failed")
+        if _AUTO_RUN.fullmatch(parts[0]):
+            raise Refuse("market.env_failed")
+
+
+def tree_hash(entries: list[list[Any]]) -> str:
+    """``sha256:`` over ``<sha256>  <mode 4 octal digits>  <path>\\n`` lines in byte order of the path: the environment
+    stamp. A changed, added, removed or re-moded file changes it."""
+    import hashlib
+
+    lines = [f"{sha}  {mode:04o}  {path}\n" for path, sha, mode in sorted(entries, key=lambda e: e[0].encode())]
+    return "sha256:" + hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def check_env_stamp(stamp: dict[str, Any], package_digest_: str, actual: list[list[Any]]) -> None:
+    """Section 8.2, before every run: the stamp names this package digest and the tree on disk hashes to the stamp.
+    Raises ``env_changed``."""
+    if stamp.get("digest") != package_digest_ or stamp.get("tree") != tree_hash(actual):
+        raise Refuse("market.env_changed")
+
+
 # ------------------------------------------------------------------------------------------------ network targets
 
 
@@ -440,6 +473,13 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             return {"ok": {"addons": [e["id"] for e in doc["addons"]]}}
         if case["check"] == "install":
             return {"ok": install(case["args"])}
+        if case["check"] == "env_paths":
+            check_env_paths(case["args"]["paths"])
+            return {"ok": {}}
+        if case["check"] == "env_stamp":
+            a = case["args"]
+            check_env_stamp(a["stamp"], a["package_sha256"], a["actual"])
+            return {"ok": {}}
         if case["check"] == "address":
             check_address(case["args"]["ip"])
             return {"ok": {}}

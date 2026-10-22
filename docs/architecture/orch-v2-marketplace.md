@@ -237,7 +237,7 @@ network and write nothing; the first network access is step 11.
 | 16 | Compatibility with this core (`incompatibility()` of addon-api §3) | existing `addon.incompatible` |
 | 17 | **Review**, then the human signs `addon.granted` for exactly `grant_event(manifest, package)` of the staged bytes | the owner declines |
 | 18 | Under the store lock, the host re-reads the staged package, checks its digest equals the digest in the signed grant, appends `addon.granted`, swaps the directory by rename, records origin and (now) the TOFU key | `market.staged_changed` |
-| 19 | If `runtime` is set: install the dependencies (§8.2) into the add-on's own environment. The add-on stays unavailable until this has succeeded | `market.env_failed` |
+| 19 | If the granted manifest declares `runtime`: build the dependency environment (§8.2) from the lockfile bytes of the granted package. The add-on stays unavailable until this has succeeded; from then on the environment is re-verified before every run | `market.env_failed`, `market.env_changed` |
 
 Steps 12 to 15 are repeated by the host at step 18 on the staged bytes; the checks of 13 and 18 are the safety, the
 others are early, readable errors.
@@ -357,27 +357,51 @@ review line "installs these packages" is derived from the granted manifest and l
 
 More kinds (other runtimes) are an additive change to the schema's enum with their own rules and vectors.
 
-### 8.2 Installing
+### 8.2 Installing, and keeping the environment inside the guarantee
 
-Dependencies are installed **after the grant is signed and never before** (§5, step 19), by the host and not by the
-add-on, into an environment owned by that add-on alone:
+The package is verified on every run (the runner copies in-memory bytes into a fresh read-only directory). A
+dependency environment is persistent code too, so it gets the same guarantee: **an environment runs only if it is
+exactly the tree the host built from the granted lockfile**, checked before every run.
 
-- Location `<state>/addon-env/<workspace id>/<name>/<digest hex prefix>/`, outside the workspace and the package. Not
-  shared between add-ons, workspaces, or versions.
-- The installer is called so that it **cannot resolve anything and cannot run dependency code**. Python: `pip install
-  --require-hashes --no-deps --only-binary=:all:`, with the index fixed by the installer (`https://pypi.org/simple`),
-  never by the lockfile. Node: `npm ci --ignore-scripts` with the registry fixed by the installer. Another package
-  manager MUST use its equivalents: exact versions from the lock, hash verification, no source builds, no lifecycle
-  or install scripts, no resolution. Every downloaded artifact is hashed and compared with the lockfile before it is
-  unpacked, and every connection obeys the address checks of §5.1. A dependency whose only form is a source
-  distribution cannot be installed, which is a refusal (`market.env_failed`), not a fallback.
-- The environment gets a stamp file `{digest, lock hash, installer, time}`. The runner refuses to start an add-on whose
-  environment has no stamp or a stamp for another digest (`addon.incompatible`-style state "environment missing"), so a
-  half-built or replaced environment never runs.
-- A failure leaves no environment and no running add-on (`market.env_failed`); the grant stays signed, and the owner can
-  retry or remove.
-- At run time the add-on's capabilities are unchanged by having dependencies. `network` stays a capability; installing
-  dependencies is the host's act and is not available to the add-on.
+**Building** (step 19, after the signed grant, by the host and never by the add-on):
+
+1. *Fresh and ours.* Create the environment in a new `mkdtemp` directory under `<state>/addon-env/` (host-user private,
+   outside workspace and package), install into it, then `rename` it to
+   `<state>/addon-env/<workspace id>/<name>/<package digest hex prefix>/`. If the target already exists it is refused
+   (`market.env_failed`) unless the host created it and its record says so: a directory an agent created beforehand at
+   the predictable path is never adopted. Not shared between add-ons, workspaces or versions.
+2. *Lock bytes from memory.* The lockfile fed to the installer is written from the verified in-memory `Package` that was
+   granted, never re-read from staging or from the installed package directory. Which file is the lockfile comes
+   from the granted manifest's `runtime` (§8.1).
+3. *Nothing resolves, nothing from a dependency runs.* Python: `pip install --isolated --require-hashes --no-deps
+   --only-binary=:all: --target <env>`, the index fixed by the installer (`https://pypi.org/simple`, files from
+   `files.pythonhosted.org`), never by the lockfile. Node: `npm ci --ignore-scripts --userconfig=/dev/null
+   --globalconfig=/dev/null`, the registry fixed by the installer. The installer's environment is scrubbed (no
+   `PIP_*`, `NPM_*`, `NODE_OPTIONS`, `PYTHON*`, proxy variables, no `HOME` config: a per-user `pip.conf` or `.npmrc` is
+   not read). Another package manager MUST use its equivalents: exact versions from the lock, hash verification, no
+   source builds, no lifecycle or install scripts, no resolution. Every artifact is hashed and compared with the
+   lockfile before it is unpacked, and every connection obeys §5.1. A dependency whose only form is a source
+   distribution is refused (`market.env_failed`), not built.
+4. *No interpreter ever starts inside the environment.* The host does not run `<env>/bin/python` or any tool from
+   the environment to build, check or stamp it. At run time, Python dependencies are put on the path with `PYTHONPATH`
+   pointing at the `--target` directory from the host's own interpreter, so no `site` directory is registered and no
+   `.pth` file is processed.
+5. *Auto-running files are refused.* After installing, the file list is checked: a path that leaves the environment
+   (absolute, `..`, empty or `.` segment, backslash), and, at the environment root, any `*.pth`, `sitecustomize` or
+   `usercustomize` (file or package, any case) fails the build (`market.env_failed`; vectors `env_paths_*`).
+6. *Stamp.* The host writes a stamp outside the environment: `{digest: <package digest>, tree: <tree hash>}`, where the
+   tree hash is `sha256:` over `<sha256>  <mode>  <path>` lines of every file in byte order of the path (the
+   same shape as the §8.1 package digest, plus the mode).
+
+**Checking** (before every start, in the runner, like the package): the stamp's `digest` is the package digest being
+run, and the tree on disk hashes to the stamp's `tree`; otherwise the add-on does not start (`market.env_changed`,
+shown as "environment changed" and offered a rebuild, which is the install again). Equivalent and allowed: copy the
+environment into the same fresh read-only directory as the package and hash the copy. A file planted before the build
+(refused by step 1), added, changed, removed or re-moded afterwards is caught here.
+
+A failure at any step leaves no environment and no running add-on; the grant stays signed, and the owner can retry or
+remove. Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
+dependencies is the host's act, not available to the add-on.
 
 ## 9. Hub policy hook (interface only)
 
@@ -441,11 +465,11 @@ The invariants are numbered; the tests and the review point at them.
 
 | Invariant | Statement |
 |---|---|
-| **I1 Digest binding** | What runs is exactly the bytes whose §8.1 digest equals both the index entry and the digest inside the owner-signed `addon.granted`; the runner re-checks it on every run. No commit, tag, signature, index version or marketplace name is a substitute for it |
+| **I1 Digest binding** | What runs is exactly the bytes whose §8.1 digest equals both the index entry and the digest inside the owner-signed `addon.granted`; the runner re-checks it on every run. **The same holds for the dependency environment**: it runs only if its tree hash equals the stamp the host wrote from the granted lockfile, checked before every run (§8.2), so code that is not in the package is covered by an equally checked binding. No commit, tag, signature, index version or marketplace name is a substitute for it |
 | **I2 Human gate by custody** | Adding a marketplace, installing, updating, removing and granting need a human; an agent or mandate is refused before any network access, and cannot sign |
 | **I3 Read once, in staging** | Fetched bytes live in a private staging directory, are read once into memory with `read_package`, and every later step (review, grant, swap) uses those bytes or re-compares their digest under the store lock |
 | **I4 The pin does not move, and signatures name their place** | An entry names a full object id and a digest; nothing floats. A different release is a different index state, a new review and a new grant. Index and add-on versions cannot go backwards (a validly signed old entry is still refused), an add-on cannot change marketplace, and a publisher signature is valid only in the marketplace URL it signed |
-| **I5 Dependencies are inside the digest and inert until granted** | Lockfiles are package files; they are hash-pinned, resolved by nothing, and parsed by a real grammar, not by pattern. They are installed only after the signed grant, with dependency scripts disabled by the installer (never by trusting lock metadata), from allow-listed hosts, into an environment of the add-on's own that the runner checks against the digest |
+| **I5 Dependencies are inside the digest and inert until granted** | Lockfiles are package files; they are hash-pinned, resolved by nothing, and parsed by a real grammar, not by pattern. They are installed only after the signed grant, with dependency scripts disabled by the installer (never by trusting lock metadata), from allow-listed hosts, into a fresh environment of the add-on's own that is never adopted from an existing directory, never started as an interpreter by the host, free of auto-running files, and re-verified against its stamp before every run |
 | **I6 Policy only restricts, and fails closed** | Hub policy, the community gate and the ceiling can only refuse; unreadable or missing policy under a hub means nothing is allowed; block beats allow; marketplaces are identified by URL, never by self-declared name; the ceiling is checked on the index, the manifest and the grant |
 | **I7 The installer connects only to public, expected places** | Fetch and download targets are https, standard port, a host that is the marketplace's own or on a list the index cannot extend, and a public unicast address checked after name resolution; redirects are refused |
 
@@ -462,6 +486,8 @@ The invariants are numbered; the tests and the review point at them.
 | **TOCTOU between fetch and grant** (directory changed, symlink swapped, tag moved after the review) | Plumbing-only export into private staging; `read_package` with `O_NOFOLLOW`; the grant is for the digest of the staged bytes and the host re-compares inside the lock before the swap; a change gives `market.staged_changed` | I3, I1 |
 | **Hostile git content** (filters, hooks, `.gitattributes`, symlinks, submodules, LFS pointers, `.git` inside the tree) | Private git config, no checkout, blobs written as plain files, link and submodule modes refused, `.`-leading names refused by §8.1 | I3 |
 | **Dependency confusion** (a private name resolved from a public index; a lookalike package) | Nothing is resolved at install: the lockfile names exact versions, URLs and hashes, and option lines that add indexes are refused. The same add-on id from another marketplace is refused (`origin_changed`); other marketplaces cannot claim reserved ids | I5, I4 |
+| **Planted or edited environment** (an agent creates the predictable env directory first, or edits it later; a `sitecustomize.py` or `.pth` that runs whenever an interpreter starts there) | Fresh `mkdtemp` and rename, existing target refused; `PYTHONPATH` from the host's interpreter so no site directory exists; auto-running files refused; the tree hash is verified before every run | I1, I5 |
+| **User config redirecting the installer** (`pip.conf`, `PIP_*`, `~/.npmrc`, `NODE_OPTIONS`) | `--isolated`, empty user/global config, scrubbed environment | I5 |
 | **Lockfile tampering** (changed after review, or in transit) | The lockfile is inside the digest, so a change is a new digest and a new grant; each downloaded artifact is hash-checked before it is unpacked; the environment is stamped with the digest | I5, I1 |
 | **Malicious dependency code at install time** (an install script, a build backend, a metadata flag claiming there is none) | Binary-only, hash-checked installs with scripts disabled by the installer; lock metadata is never trusted for safety, so nothing from a dependency runs before the add-on does, and the add-on runs under its granted capabilities only | I5 |
 | **Option smuggling in a requirements line** (`; --index-url …` inside a marker) | The requirement part must parse as PEP 508; anything else is `lock_invalid` | I5 |
@@ -511,7 +537,8 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.lock_missing` | `runtime.lock` is not in the package | 15 |
 | `market.lock_invalid` | the lockfile breaks a rule of §8.1 | 15 |
 | `market.staged_changed` | the staged package no longer has the signed digest at grant time | 18 |
-| `market.env_failed` | the dependency environment could not be built | 19 |
+| `market.env_failed` | the dependency environment could not be built: install failure, a source-only dependency, a path leaving the environment, an auto-running file (`.pth`, `sitecustomize`, `usercustomize`), or an existing target not created by the host | 19 |
+| `market.env_changed` | at run time, the environment no longer matches its stamp or the stamp is for another package digest | run |
 | `market.actor_refused` | an agent or mandate asked for a human-only action | 0 |
 
 Rows without a vector in `vectors_market.json` (`fetch_failed`, `commit_mismatch`, `staged_changed`, `env_failed`) need

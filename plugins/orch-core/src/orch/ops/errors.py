@@ -563,6 +563,15 @@ _SPECS = [
         "A workspace has one hub. Leave it (break-glass) before joining another.",
     ),
     _e(
+        "hub.unbind_pending",
+        3,
+        False,
+        "the last hub has not been told about your leave yet",
+        "finish the leave first: orch hub unbind",
+        ["orch", "hub", "unbind"],
+        "A hub.unbound is still owed to the previous hub; a new join waits until it was delivered.",
+    ),
+    _e(
         "hub.not_joined",
         3,
         False,

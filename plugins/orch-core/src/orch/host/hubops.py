@@ -333,6 +333,10 @@ def _owner(call: Call) -> str:
 def _refused(code: str) -> HostError:
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
+    if code == "unbind_pending":
+        return HostError(
+            "hub.unbind_pending", "the last hub has not been told about your leave yet", hint="run: orch hub unbind"
+        )
     return HostError("hub.refused", f"the hub is refused: {code}")
 
 
@@ -384,6 +388,8 @@ def serve(call: Call) -> dict[str, Any]:
         )
     plan: dict[str, Any] = {"op": op, "model": model, "state": state}
     if op == "hub.unbind":
+        if state is not None and state.pending_unbound is not None:
+            return {"plan": plan}  # a signed unbound is still owed to a hub, whatever the model says now
         if not model or model.get("status") != "left":
             raise HostError("hub.not_joined", "sign `orch hub leave` first: the log has no hub.left")
         return {"plan": plan}
@@ -459,6 +465,15 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         raise _refused(exc.code) from None
 
 
+def _old_transport(service: Any, s: Any, wsk_pub: bytes, sign: Any) -> Any:
+    """The link to the hub of a stored state (its own address and pin), for an unbound it is still owed."""
+    from orch.crypto.encoding import unb64u
+
+    link = {"addr": _addr({}, s, bool(s.binding["o"]["dev"])), "spki": s.tls_spki, "hk_op": unb64u(s.hk_op_pub, 65),
+            "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
+    return _transport(service, s.hub_id, link)
+
+
 def _join(
     state: Any,
     plan: dict[str, Any],
@@ -480,6 +495,7 @@ def _join(
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
         save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
+        old_transport=lambda s: _old_transport(service, s, wsk_pub, sign),
     )  # fmt: skip
 
 

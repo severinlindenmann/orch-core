@@ -127,6 +127,7 @@ def join_selective(
     mode: str = "selective",
     binding_seq: int | None = None,
     addr: str | None = None,
+    old_transport: Callable[[HubState], HubTransport] | None = None,
 ) -> JoinResult:
     if mode != "selective":
         raise HubRefused("full_mode_later")
@@ -136,7 +137,20 @@ def join_selective(
     verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
     root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
     if state is not None and state.status == "bound":
+        if binding_seq is not None and binding_seq > state.binding_seq:
+            raise HubRefused("unbind_pending")  # left on the log, the hub not told: finish the leave first
         raise HubRefused("already_joined")
+    if state is not None and state.status == "unbound" and state.pending_unbound is not None:
+        # the old hub must hear about the leave before any new binding exists; never lose the signed unbound
+        t_old = old_transport(state) if old_transport is not None else transport
+        try:
+            done = _deliver(state, workspace_id, sign_wsk, now_ms, t_old)
+        except HubRefused:
+            done = False
+        finally:
+            save(state)
+        if not done:
+            raise HubRefused("unbind_pending")
     resume = state is not None and state.status == "joining"
     if resume:
         assert state is not None

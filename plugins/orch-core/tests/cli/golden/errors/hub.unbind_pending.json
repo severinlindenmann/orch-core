@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.unbind_pending",
+    "message": "the last hub has not been told about your leave yet",
+    "hint": "finish the leave first: orch hub unbind",
+    "fix": {
+      "argv": [
+        "orch",
+        "hub",
+        "unbind"
+      ]
+    },
+    "retryable": false
+  }
+}

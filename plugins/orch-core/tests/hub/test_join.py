@@ -292,3 +292,23 @@ def test_the_wire_labels_are_the_custody_labels_of_the_workspace_key():
         (wire.SIG_LINK, "sig_hub_link"),
     ):
         assert const == L[key] and const in HOST_LABELS and const not in PERSON_LABELS  # WSK only, never a person key
+
+
+def test_rejoin_another_hub_delivers_the_owed_unbound_to_the_old_hub(hub: FakeHub) -> None:
+    h = Host(hub)
+    h.join()
+    h.wire.down = True
+    h.leave()
+    old_wire = h.wire
+    other = FakeHub()
+    h.wire = Wire(other)
+    kw = dict(
+        state=h.state, transport=h.wire, record_joined=lambda p: h.log.append(("hub.joined", p)), save=h._save,
+        binding_seq=2, **h.kw,
+    )  # fmt: skip
+    assert code(lambda: join_selective(old_transport=lambda s: old_wire, **kw)) == "unbind_pending"  # old hub down
+    assert other.workspaces == {} and h.state.pending_unbound is not None
+    old_wire.down = False
+    join_selective(old_transport=lambda s: old_wire, **{**kw, "state": h.state})
+    assert hub.workspaces[WS].binding["status"] == "unbound" and other.workspaces[WS].binding["status"] == "bound"
+    assert h.state.pending_unbound is None and h.state.binding_seq == 2

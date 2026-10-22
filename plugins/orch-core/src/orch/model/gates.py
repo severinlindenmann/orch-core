@@ -11,7 +11,7 @@ from typing import Any
 
 from orch.canon import HashError, gate_hash, people_hash, section_hash
 
-from . import generations, policies, source
+from . import generations, identity, policies, source
 from .codes import Code, Refusal
 from .types import GATES, Decision, TCore, WsCore
 
@@ -158,7 +158,7 @@ def done_rule(ws: WsCore, t: TCore) -> bool:
 def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     """gate.approved, gate.changes_requested, verdict.given by a person (§5.7, §5.9). Validates, then mutates."""
     kind, gate = _kind_gate(e)
-    person, device = e["actor"]["id"], e["actor"]["device"]
+    person, device = identity.canonical(ws, e["actor"]["id"]), e["actor"]["device"]
     pol = policies.effective(ws, t, gate)
     if not policies.applies_to(pol, t.ticket_type):
         return Refusal(Code.GATE_NOT_APPLICABLE, f"{gate} does not apply to {t.ticket_type}")
@@ -173,7 +173,11 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.GATE_STATUS, "wrong status")
     if not policies.may_decide(ws, t, gate, person, pol):
         return Refusal(Code.GATE_NOT_ELIGIBLE, f"{person} may not decide {gate}")
-    if kind in ("approve", "pass") and (pol["independent"] or gate == "code") and person in t.workers:
+    if (
+        kind in ("approve", "pass")
+        and (pol["independent"] or gate == "code")
+        and person in identity.canonical_set(ws, t.workers)
+    ):
         # §5.11 refusal order, step 7: independence sits beside the token check, before anything stale or incomplete
         return Refusal(Code.GATE_NOT_ELIGIBLE, "independent: the signer is a worker of this ticket (§5.7)")
     gc = t.gates[gate]

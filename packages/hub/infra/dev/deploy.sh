@@ -43,7 +43,7 @@ ssh "$HOST" "mkdir -p '${rdir}' '${BASE}/hub'"
 rsync -a "$wheel" "${HOST}:${rdir}/${wheel_name}"
 
 # Everything below runs on the host under the shared deploy lock.
-ssh "$HOST" bash -s -- "$rdir" "$wheel_name" "$wheel_sha" "$BASE" "$KEEP" "${ORCH_HUB_SKIP_RESTART:-}" <<'REMOTE'
+ssh "$HOST" bash -s -- "$rdir" "$wheel_name" "$wheel_sha" "$BASE" "$KEEP" "${ORCH_HUB_SKIP_RESTART:-0}" <<'REMOTE'
 set -euo pipefail
 rdir="$1"; wheel_name="$2"; wheel_sha="$3"; base="$4"; keep="$5"; skip_restart="$6"
 units="orch-hub"

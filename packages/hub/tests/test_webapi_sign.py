@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from channels_helpers import new_channel, prove
 from custodial_helpers import ACTION
-from webapi_helpers import WS, Web
+from webapi_helpers import ORIGIN, WS, Web
 
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u, cj
@@ -155,7 +155,10 @@ def test_registration_rules_over_http(w):
     tok = w.login(w.ann)
     signer = new_channel()
     s, begun, _ = w.call(
-        "POST", "/channels/register/begin", {"kind": "browser", "key_pub": b64u(signer.public)}, token=tok
+        "POST",
+        "/channels/register/begin",
+        {"kind": "browser", "key_pub": b64u(signer.public), **w.creds(w.ann)},
+        token=tok,
     )
     assert s == 200 and begun["challenge"]["attestation"] == "session"
     bad = prove(signer, begun)
@@ -206,7 +209,9 @@ def test_registration_rules_over_http(w):
 def test_malformed_key_pub(w):
     tok = w.login(w.ann)
     for bad in ("", "AAAA", b64u(b"\x04" + b"\0" * 64)):
-        s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": bad}, token=tok)
+        s, o, _ = w.call(
+            "POST", "/channels/register/begin", {"kind": "browser", "key_pub": bad, **w.creds(w.ann)}, token=tok
+        )
         assert s == 400 and o["error"] == "malformed"
 
 
@@ -248,3 +253,65 @@ def test_get_prepared_after_expiry_is_prepared_expired(w):
     w.clock.t = o["expires_ms"] + 1
     tok = w.login(w.ann)  # the first session expired with the clock
     assert w.call("GET", "/sign/prepared/" + o["prepared_id"], token=tok)[:2] == (410, {"error": "prepared_expired"})
+
+
+def test_browser_registration_needs_password_and_a_fresh_totp(w):
+    """A8-3: a session alone (a stolen cookie, a script on the page) cannot mint a browser key."""
+    tok = w.login(w.ann)
+    key = b64u(new_channel().public)
+
+    def begin(extra):
+        return w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": key, **extra}, token=tok)
+
+    assert begin({})[:2] == (400, {"error": "malformed"})
+    assert begin({"password": "correct horse battery"})[:2] == (400, {"error": "malformed"})
+    c = w.creds(w.ann)
+    assert begin({**c, "password": "wrong password!!"})[:2] == (401, {"error": "bad_credentials"})
+    c = w.creds(w.ann)
+    assert begin({**c, "totp": "000000"})[:2] == (401, {"error": "bad_credentials"})
+    ok = w.creds(w.ann)
+    assert begin(ok)[0] == 200
+    assert begin(ok)[:2] == (401, {"error": "bad_credentials"})  # the TOTP step is single use
+    assert w.env.svc.channels(w.ann) == []  # nothing registered by the refusals
+
+
+def test_the_code_used_at_sign_in_does_not_register_a_key(w):
+    code = w.env.next_code(w.ann)
+    s, o, h = w.call(
+        "POST",
+        "/session",
+        {"user_id": w.ann, "password": "correct horse battery", "totp": code, "client": "browser"},
+        origin=ORIGIN,
+    )
+    assert s == 200
+    tok = h["Set-Cookie"].split(";")[0].split("=", 1)[1]
+    s, o, _ = w.call(
+        "POST",
+        "/channels/register/begin",
+        {"kind": "browser", "key_pub": b64u(new_channel().public), "password": "correct horse battery", "totp": code},
+        token=tok,
+        cookie=True,
+    )
+    assert (s, o) == (401, {"error": "bad_credentials"})
+
+
+def test_registration_reentry_shares_the_sign_in_limiter(w):
+    tok = w.login(w.ann)
+    key = b64u(new_channel().public)
+    seen = set()
+    for _ in range(40):
+        s, _o, _ = w.call(
+            "POST",
+            "/channels/register/begin",
+            {"kind": "browser", "key_pub": key, "password": "nope nope nope!", "totp": "123456"},
+            token=tok,
+        )
+        seen.add(s)
+        if s == 429:
+            break
+    assert 429 in seen
+    # while limited, even the right credentials are refused
+    s, _o, _ = w.call(
+        "POST", "/channels/register/begin", {"kind": "browser", "key_pub": key, **w.creds(w.ann)}, token=tok
+    )
+    assert s in (401, 429)

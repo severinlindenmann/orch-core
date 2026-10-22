@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from functools import cache
 from typing import Any
 
-from orch import schema
 from orch.canon.jcs import JcsError
 from orch.canon.jcs import dumps as cj
 from orch.crypto import suite as _suite
@@ -31,6 +29,7 @@ from orch.model import Refusal
 from orch.model.identity import hub_actor
 
 from . import wire
+from .custodial_shape import check_custodial_payload
 from .errors import HubRefused
 from .snapshot import ROLES, _held, verify_snapshot
 
@@ -130,26 +129,11 @@ def event_digest(workspace_id: str, log: str, e_signed: Mapping[str, Any]) -> by
     return _suite.sha256(_H_EVENT_DIGEST + _context(workspace_id, log, e))
 
 
-@cache
-def _payload_spec(typ: str) -> tuple[frozenset[str], frozenset[str]]:
-    """The exact payload of a custodial type, from core's own event schema (additionalProperties is false there, so a
-    field the schema does not list is a smuggled one): (allowed, required) top-level names."""
-    sch = schema.load("event." + typ)
-    return frozenset(sch["properties"]), frozenset(sch["required"])
-
-
 def _payload_shape(typ: str, event: Mapping[str, Any]) -> None:
-    """Exact field set of the event type, plus section 8.1's hub fields. A field the type does not carry, or a missing
-    one, is ``malformed`` (field smuggling); the VALUES are the ticket-format checks of step 9."""
-    try:
-        allowed, required = _payload_spec(typ)
-    except KeyError:
-        raise HubRefused("not_custodial") from None
-    host = frozenset(HOST_FIELDS)
-    if not set(event) <= (allowed | set(HUB_FIELDS)):
-        raise HubRefused("malformed")
-    if not (required - host) <= set(event):
-        raise HubRefused("malformed")
+    """The exact 8.5 payload of the type (:mod:`.custodial_shape`): allow-list of names and exact nested schemas.
+    Runs inside :func:`verify_custodial` before it returns (the shared vectors pin the order of the earlier codes);
+    the VALUES against the host's log are the ticket-format checks of step 9."""
+    check_custodial_payload(typ, event, frozenset(HUB_FIELDS) | {"sig"})
     if typ in DECISION_TYPES and type(event.get("hash")) is not str:
         raise HubRefused("malformed")  # L2P4-2a: the reviewed hash is always present
 

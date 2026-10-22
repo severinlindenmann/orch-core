@@ -255,16 +255,17 @@ def test_gate_approved_without_a_hash_is_refused_and_a_changed_hash_is_a_differe
     assert code(changed) == "bad_signature"
 
 
-def test_check_built_hash_rule_is_checked_on_all_four_decision_types(monkeypatch):
+def test_check_built_hash_rule_is_checked_on_all_four_decision_types():
     """The payload shape runs after the signature steps, so it is exercised directly for the types whose events the
     vectors do not carry: every decision type needs `hash` present as a string."""
+    from .test_custodial_shape import VALID, event
+
     for typ in C.DECISION_TYPES:
-        base = {"hash": "sha256:" + "0" * 64}
-        monkeypatch.setattr(C, "_payload_spec", lambda t: (frozenset({"hash", "type"}), frozenset({"type", "hash"})))
-        C._payload_shape(typ, {"type": typ, **base})  # noqa: SLF001
-        for bad in ({"type": typ}, {"type": typ, "hash": None}, {"type": typ, "hash": 1}):
+        C._payload_shape(typ, event(typ))  # noqa: SLF001
+        for bad in ({"hash": ...}, {"hash": None}, {"hash": 1}):
+            assert VALID[typ]["hash"]
             with pytest.raises(HubRefused) as e:
-                C._payload_shape(typ, bad)  # noqa: SLF001
+                C._payload_shape(typ, event(typ, **bad))  # noqa: SLF001
             assert e.value.code == "malformed"
 
 

@@ -78,8 +78,9 @@ class Mailbox:
     * ``peers``: ws hex -> ``{wsk_pub, wxk_pub, wxk_version}`` (b64u): the address book pin (empty: nobody may send).
     * ``seen``: ``"<from>/<id>"`` -> ``{digest, outcome, until}`` (11.4 step 4).
     * ``sent``: id hex -> ``{to, consumed: [kinds], deadline_ms, sha256, state, result}``.
-    * ``inbox``: id hex -> ``{from_ws, sha256, depth, deadline_ms, ticket, attachments, state}`` (``new`` | ``accepted``
-      | ``replied``); a key is the envelope id and, per sender, unique through ``seen``.
+    * ``inbox``: ``"<from_ws>/<id>"`` -> ``{envelope_id, from_ws, sha256, depth, deadline_ms, ticket, attachments,
+      state}`` (``new`` | ``accepted``
+      | ``replied``); never overwritten.
     * ``outbox``: id hex -> b64u envelope bytes the hub did not take yet (resent unchanged: idempotent by id)."""
 
     peers: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -286,10 +287,16 @@ def receive(
         if p["deadline_ms"] + SKEW_MS < now_ms:
             return refuse("deadline_passed")
         item = {
-            "from_ws": from_ws, "sha256": sha, "depth": p["depth"], "deadline_ms": p["deadline_ms"],
-            "ticket": p["ticket"], "attachments": p["attachments"], "state": "new",
-        }  # fmt: skip
-        mailbox.inbox[env_id.hex()] = item
+            "envelope_id": env_id.hex(),
+            "from_ws": from_ws,
+            "sha256": sha,
+            "depth": p["depth"],
+            "deadline_ms": p["deadline_ms"],
+            "ticket": p["ticket"],
+            "attachments": p["attachments"],
+            "state": "new",
+        }
+        mailbox.inbox.setdefault(seen_key, item)  # keyed per sender: another sender's id never collides
         return done(Outcome("inbox", item=item), p["deadline_ms"])
     # a reply must answer an envelope we sent to this peer; each kind is taken once, result and refusal together
     sent = mailbox.sent.get(p["in_reply_to"]) if type(p["in_reply_to"]) is str else None

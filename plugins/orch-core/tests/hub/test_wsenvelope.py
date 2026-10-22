@@ -165,3 +165,21 @@ def test_mailbox_json_round_trip_and_strict() -> None:
     for bad in (None, {}, {**a.mb.to_json(), "x": {}}, {**a.mb.to_json(), "peers": []}):
         with pytest.raises(W.EnvelopeError):
             W.Mailbox.from_json(bad)
+
+
+def test_same_envelope_id_from_two_senders_makes_two_items_and_one_from_one() -> None:
+    a, b = pair()
+    c = Side("cc" * 16)
+    c.pin(b)
+    b.pin(c)
+    eid = bytes(range(16))
+    body = W.new_ticket_body({"title": "from-a"}, deadline_ms=NOW + 3_600_000)
+    ea = W.build_envelope(mailbox=a.mb, wsk=a.wsk, from_ws=A, to_ws=B, body=body, env_id=eid)
+    body_c = W.new_ticket_body({"title": "from-c"}, deadline_ms=NOW + 3_600_000)
+    ec = W.build_envelope(mailbox=c.mb, wsk=c.wsk, from_ws=c.ws, to_ws=B, body=body_c, env_id=eid)
+    assert b.recv(ea.envelope).action == "inbox"
+    assert b.recv(ec.envelope).action == "inbox"
+    assert b.recv(ea.envelope, NOW + 1).action == "duplicate"
+    assert len(b.mb.inbox) == 2
+    titles = {v["from_ws"]: v["ticket"]["title"] for v in b.mb.inbox.values()}
+    assert titles == {A: "from-a", c.ws: "from-c"}

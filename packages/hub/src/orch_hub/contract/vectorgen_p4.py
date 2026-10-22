@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
 from . import audit as AU
 from . import hub as H
 from . import phase4 as P4
+from . import relayroutes as RR
 from . import spaces as SP
 from . import suite as S
 from .canon import b64u, cj
@@ -247,6 +249,17 @@ def share_body(item: dict[str, Any] | None = None, hxk: str = "hxk", item_id: st
         salt=S.fake_seed(f"hub/share_salt/{v}")[:16],
     )
     return {"item_id": item_id or it["o"]["item_id"], "sealed": sealed}
+
+
+def _rr_entry(req: tuple[str, str, bytes]) -> dict[str, Any]:
+    """A route request with the exact bytes the hub signs (§10.8) at the vector clock and nonce."""
+    method, target, body = req
+    return {
+        "method": method,
+        "target": target,
+        "body_hex": body.hex(),
+        "signed_hex": P4.relay_request_bytes(HUB_ID, OP_CERT_ID, NOW, RELAY_NONCE, method, target, body).hex(),
+    }
 
 
 def build_p4(
@@ -1129,6 +1142,86 @@ def build_p4(
     rel("relay_request_bad_method", relay_req("PATCH"), {"error": "malformed"})
     rel("relay_request_missing_nonce", relay_req(**{"Orch-Hub-Nonce": None}), {"error": "malformed"})
 
+    # ---- §10.8.1 the routes below /v2/hubs/{hub_id}/ and the sealed push payload (D10 / relay E2)
+    def rt(name: str, req: tuple[str, str, bytes], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        method, target, body = req
+        a = {"method": method, "target": target, "hub_id": HUB_ID, "body_hex": body.hex(), **kw}
+        case(name, "relay_route", a, expect, 4, note)
+
+    tok = S.fake_seed("hub/apns_token") + S.fake_seed("hub/apns_token2")[:8]  # 40 bytes
+    mid, mid2 = fake16("push_msg"), fake16("mailbox_msg")
+    ch_pub = K.pub["channel_alice_phone"]
+    eph_seed = S.fake_seed("hub/push_eph")
+    payload = RR.push_payload("prepare", NOW, fake16("push_ref"))
+    sealed = RR.seal_push(
+        payload, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, channel_pub=ch_pub, eph_seed=eph_seed
+    )
+    assert (
+        RR.open_push(sealed, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, channel_priv=K.priv["channel_alice_phone"])
+        == payload
+    )
+    put_req = RR.push_put_request(HUB_ID, CH_ALICE, "sandbox", "io.severin.orch", tok)
+    send_req = RR.push_send_request(HUB_ID, CH_ALICE, mid, sealed)
+    mb_put = RR.mailbox_put_request(HUB_ID, CH_ALICE, mid2, sealed)
+    ok_ = lambda r, **x: {"ok": {"route": r, "channel_id": CH_ALICE, **x}}
+    rt("relay_route_push_put", put_req, ok_("push_put"))
+    rt("relay_route_push_delete", RR.push_delete_request(HUB_ID, CH_ALICE), ok_("push_delete"))
+    rt("relay_route_push_send", send_req, ok_("push_send"))
+    rt("relay_route_mailbox_put", mb_put, ok_("mailbox_put", id=mid2))
+    rt("relay_route_mailbox_get", RR.mailbox_get_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_get", id=mid2))
+    rt("relay_route_mailbox_delete", RR.mailbox_delete_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_delete", id=mid2))
+    rt("relay_route_mailbox_purge", RR.mailbox_delete_request(HUB_ID, CH_ALICE), ok_("mailbox_purge"))
+    m, t, b = put_req
+    rt(
+        "relay_route_push_put_bad_env",
+        (m, t, cj({"v": 2, "env": "dev", "topic": "io.severin.orch", "token": b64u(tok)})),
+        {"error": "malformed"},
+    )
+    rt(
+        "relay_route_push_put_short_token",
+        (m, t, cj({"v": 2, "env": "sandbox", "topic": "io.severin.orch", "token": b64u(tok[:31])})),
+        {"error": "malformed"},
+    )
+    rt("relay_route_push_put_extra_field", (m, t, cj({**json.loads(b), "x": 1})), {"error": "malformed"})
+    rt("relay_route_push_put_empty_body", (m, t, b""), {"error": "malformed"})
+    rt("relay_route_push_delete_with_body", ("DELETE", t, b"{}"), {"error": "malformed"})
+    m, t, b = send_req
+    o = json.loads(b)
+    rt("relay_route_push_send_other_channel", (m, t.replace(CH_ALICE, fake16("other_ch")), b), {"error": "malformed"})
+    rt(
+        "relay_route_push_send_outer_other_hub",
+        (m, t, cj({**o, "outer": {**o["outer"], "hub": fake16("other_hub")}})),
+        {"error": "malformed"},
+    )
+    rt("relay_route_push_send_bad_priority", (m, t, cj({**o, "priority": "urgent"})), {"error": "malformed"})
+    rt("relay_route_push_send_ttl_too_long", (m, t, cj({**o, "ttl_s": 86_401})), {"error": "malformed"})
+    rt(
+        "relay_route_push_send_outer_too_large",
+        (m, t, cj({**o, "outer": {**o["outer"], "c": b64u(bytes(3100))}})),
+        {"error": "too_large"},
+    )
+    rt(
+        "relay_route_push_send_outer_extra_field",
+        (m, t, cj({**o, "outer": {**o["outer"], "alert": "x"}})),
+        {"error": "malformed"},
+    )
+    rt("relay_route_push_send_get", ("GET", t, b""), {"error": "not_found"})
+    m, t, b = mb_put
+    rt("relay_route_mailbox_put_ttl_too_short", (m, t, cj({"v": 2, "c": sealed, "ttl_s": 59})), {"error": "malformed"})
+    rt(
+        "relay_route_mailbox_put_too_large",
+        (m, t, cj({"v": 2, "c": b64u(bytes(16 * 1024 + 1)), "ttl_s": 600})),
+        {"error": "too_large"},
+    )
+    rt("relay_route_mailbox_put_bad_message_id", (m, t.rsplit("/", 1)[0] + "/not-an-id", b), {"error": "not_found"})
+    rt("relay_route_unknown_path", ("GET", f"/v2/hubs/{HUB_ID}/settings", b""), {"error": "not_found"})
+    rt(
+        "relay_route_with_query",
+        ("GET", f"/v2/hubs/{HUB_ID}/mailbox/{CH_ALICE}/{mid2}?after=1", b""),
+        {"error": "malformed"},
+    )
+    rt("relay_route_other_hub", ("PUT", t.replace(HUB_ID, fake16("other_hub")), b), {"error": "other_hub"})
+
     # ---- §10.2b selective share_put content (C6/D9)
     sh = {
         "hub_id": HUB_ID,
@@ -1394,6 +1487,21 @@ def build_p4(
             "signed_hex": P4.relay_request_bytes(
                 HUB_ID, OP_CERT_ID, NOW, RELAY_NONCE, "POST", RELAY_TARGET, RELAY_BODY
             ).hex(),
+        },
+        "relay_routes": {
+            "push_put": _rr_entry(put_req),
+            "push_send": _rr_entry(send_req),
+            "mailbox_put": _rr_entry(mb_put),
+            "push_seal": {
+                "channel_key": "channel_alice_phone",
+                "channel_id": CH_ALICE,
+                "msg_id": mid,
+                "eph_seed_hex": eph_seed.hex(),
+                "payload": payload,
+                "payload_cj_hex": cj(payload).hex(),
+                "aad_hex": RR._aad(HUB_ID, mid).hex(),
+                "sealed": sealed,
+            },
         },
         "custodial_types": [{"type": t, "log": lk, "min_role": r} for (t, lk), r in sorted(H.CUSTODIAL_TYPES.items())],
         "space_accept_from_proposal": P4.accept_from_proposal(prop_o["o"]),

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import random
 
 import pytest
 
 from orch import crypto
-from orch.host.auth import secret_in_request
+from orch.host.auth import GITHUB_TOKEN_SHAPE, secret_in_request
 
 TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0"  # ghp_ + 20 chars
 SIG = TOKEN + "A" * (86 - len(TOKEN) - 1) + "A"  # 86 chars, canonical (last char 'A'), contains the token shape
@@ -55,9 +54,51 @@ def test_a_signature_still_gets_the_grant_checks():
     assert secret_in_request(frame)
 
 
-def test_ten_thousand_random_signatures_are_accepted():
+def _forced(rng):
+    """A canonical 64-byte signature value whose base64url text contains ``gh?_`` plus 20 or more token chars."""
+    while True:
+        raw = bytearray(crypto.b64u(rng.randbytes(64)).encode())
+        pos = rng.randrange(0, 86 - 24)
+        raw[pos : pos + 4] = b"gh" + bytes([rng.choice(b"pousr")]) + b"_"
+        text = raw.decode()
+        try:
+            crypto.unb64u(text, crypto.SIG_LEN)
+        except crypto.EncodingError:
+            continue
+        if GITHUB_TOKEN_SHAPE.search(text):
+            return text
+
+
+def test_ten_thousand_forced_token_shaped_signatures_are_accepted():
+    """Fails without the exemption: every value here matches the token shape (so the old guard refused it)."""
     rng = random.Random(825)
     for _ in range(10_000):
-        sig = crypto.b64u(rng.randbytes(64))
+        sig = _forced(rng)
+        assert GITHUB_TOKEN_SHAPE.search(sig) and len(crypto.unb64u(sig, crypto.SIG_LEN)) == 64
         assert not secret_in_request(submit(sig))
-    assert not secret_in_request(submit(crypto.b64u(os.urandom(64))))
+
+
+def test_ten_thousand_random_signatures_are_accepted():
+    rng = random.Random(826)
+    for _ in range(10_000):
+        assert not secret_in_request(submit(crypto.b64u(rng.randbytes(64))))
+
+
+def test_the_presented_grant_secret_inside_a_signature_shaped_value_is_still_refused():
+    secret = crypto.b64u(bytes(range(32)))  # 43 chars, like a grant secret
+    sig = (("A" * 5) + secret + "A" * 86)[:85] + "A"
+    assert len(crypto.unb64u(sig, crypto.SIG_LEN)) == 64
+    frame = submit(sig)
+    frame["auth"] = {"grant": "gr_x." + secret}
+    assert secret_in_request(frame)
+    frame["auth"] = {"grant": "gr_x." + crypto.b64u(bytes(32))}
+    assert not secret_in_request(frame)
+
+
+def test_the_outcome_record_keeps_a_digest_of_each_signature_not_the_raw_value():
+    from orch.host.human import _sigs_digested
+
+    args = {"request_id": "r", "events": [{"id": "e", "sig": SIG, "note": "n"}, {"id": "f"}]}
+    out = _sigs_digested(args)
+    assert SIG not in repr(out) and out["events"][0]["sig"].startswith("sha256:") and out["request_id"] == "r"
+    assert args["events"][0]["sig"] == SIG and out["events"][1] == {"id": "f"}

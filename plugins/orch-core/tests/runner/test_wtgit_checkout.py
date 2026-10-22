@@ -290,3 +290,73 @@ def test_populate_refuses_a_non_empty_worktree(world):  # noqa: F811
     (wt / "stray").write_text("x")
     with pytest.raises(Unavailable):
         populate(str(wt), own)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [".gitmodules", ".GITMODULES", ".GitModules", "gitmod~1", ".gitattributes", ".GITIGNORE", ".gitignore", ".mailmap"],
+)
+@pytest.mark.parametrize("deep", [False, True])
+def test_special_files_as_symlinks_fail_closed_at_any_depth(world, name, deep):  # noqa: F811
+    root, repo, own, args = world
+    env = {"PATH": os.environ["PATH"], "HOME": str(repo)}
+
+    def run(cmd: list[str], text: str) -> str:
+        return subprocess.run(
+            cmd, cwd=repo, input=text, capture_output=True, text=True, check=True, env=env
+        ).stdout.strip()
+
+    oid = run(["git", "hash-object", "-w", "--stdin"], "x")
+    tree = run(["git", "mktree"], f"120000 blob {oid}\t{name}\n")
+    if deep:
+        tree = run(["git", "mktree"], f"040000 tree {tree}\tsub\n")
+    commit = _git(repo, "commit-tree", tree, "-m", "evil")
+    _git(repo, "update-ref", "refs/heads/main", commit)
+    _refused(world)
+
+
+def test_a_regular_gitattributes_is_fine(world):  # noqa: F811
+    root, repo, own, args = world
+    _commit(repo, {".gitignore": "x\n", ".gitattributes": "* -text\n"})
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+
+
+def test_a_filter_with_endless_output_is_killed_at_the_cap(world, monkeypatch):  # noqa: F811
+    from orch.gitread import checkout
+
+    root, repo, own, args = world
+    monkeypatch.setattr(checkout, "FILTER_OUT_MAX", 100_000)
+    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = yes\n')
+    _commit(repo, {".gitattributes": "* filter=lfs\n"})
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(a, own)
+    assert e.value.code == "worktree.checkout_unsupported" and "too much output" in e.value.message
+    assert not _wt(repo).exists()
+
+
+def test_a_hanging_filter_is_stopped(world, monkeypatch):  # noqa: F811
+    from orch.gitread import checkout
+
+    root, repo, own, args = world
+    monkeypatch.setattr(checkout, "FILTER_SECONDS", 1.0)
+    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = sleep 30\n')
+    _commit(repo, {".gitattributes": "* filter=lfs\n"})
+    _refused(world)
+
+
+def test_exponential_macros_are_bounded(world):  # noqa: F811
+    root, repo, own, args = world
+    lines = ["[attr]m0 a b"] + [f"[attr]m{i} m{i - 1} m{i - 1}" for i in range(1, 40)]
+    _commit(repo, {".gitattributes": "\n".join(lines) + "\n* m39\n"})
+    _refused(world)
+
+
+def test_a_slow_checkout_hits_the_deadline(world, monkeypatch):  # noqa: F811
+    from orch.gitread import checkout
+
+    root, repo, own, args = world
+    monkeypatch.setattr(checkout, "POPULATE_SECONDS", -1.0)
+    _commit(repo, {"a": "1"})
+    _refused(world)

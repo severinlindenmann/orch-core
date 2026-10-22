@@ -33,10 +33,13 @@ import contextlib
 import hashlib
 import os
 import re
+import selectors
 import signal
 import stat
 import struct
 import subprocess
+import threading
+import time
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -57,6 +60,9 @@ __all__ = ["ALLOWED_FILTERS", "populate"]
 ALLOWED_FILTERS = frozenset({"lfs"})
 FILTER_SECONDS = 30.0
 FILTER_OUT_MAX = 256 * limits.MiB
+FILTER_ERR_MAX = 8192
+ATTRS_MAX = 1000
+POPULATE_SECONDS = 600.0
 ATTR_FILE_MAX = limits.MiB
 DEPTH_MAX = 200
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -127,6 +133,25 @@ class _Rule:
     attrs: list[tuple[str, str, str | None]]  # (name, "set"|"unset"|"unspec"|"val", value)
 
 
+def _expand(
+    attrs: list[tuple[str, str, str | None]], macros: dict[str, list[tuple[str, str, str | None]]]
+) -> list[tuple[str, str, str | None]]:
+    """One level of macro expansion. Macros are stored already expanded (:class:`_AttrFile` expands each at its
+    definition against the macros defined before it, as git does), so this never recurses and the result is bounded by
+    :data:`ATTRS_MAX` (more is :class:`Unavailable`)."""
+    out: list[tuple[str, str, str | None]] = []
+    for name, state, val in attrs:
+        macro = macros.get(name)
+        if macro is not None:
+            if state != "set":
+                raise Unavailable("a macro attribute is unset or reset; this reader cannot be sure")
+            out.extend(macro)
+        out.append((name, state, val))
+        if len(out) > ATTRS_MAX:
+            raise Unavailable("a .gitattributes line expands to too many attributes")
+    return out
+
+
 def _tokens(words: list[str]) -> list[tuple[str, str, str | None]]:
     out: list[tuple[str, str, str | None]] = []
     for w in words:
@@ -166,13 +191,13 @@ class _AttrFile:
             pat, rest = words[0], words[1:]
             if pat.startswith("[attr]"):
                 if root and len(pat) > 6:
-                    macros[pat[6:]] = _tokens(rest)
+                    macros[pat[6:]] = _expand(_tokens(rest), macros)
                 continue
             if pat.startswith("!") or pat.endswith("/"):
                 continue  # git never matches a file with these
             slash = "/" in pat
             glob = compile_glob(pat.lstrip("/").encode("utf-8"))
-            self.rules.append(_Rule(glob, slash, _tokens(rest)))
+            self.rules.append(_Rule(glob, slash, _expand(_tokens(rest), macros)))
 
 
 class _Attrs:
@@ -183,18 +208,8 @@ class _Attrs:
     def __init__(self, info: _AttrFile | None, global_: _AttrFile | None, macros: dict) -> None:
         self.info, self.global_, self.macros = info, global_, macros
 
-    def _flatten(self, attrs: list[tuple[str, str, str | None]], depth: int = 0) -> list[tuple[str, str, str | None]]:
-        out: list[tuple[str, str, str | None]] = []
-        for name, state, val in attrs:
-            macro = self.macros.get(name)
-            if macro is not None:
-                if state != "set":
-                    raise Unavailable("a macro attribute is unset or reset; this reader cannot be sure")
-                if depth > 8:
-                    raise Unavailable("macro attributes nest too deep")
-                out.extend(self._flatten(macro, depth + 1))
-            out.append((name, state, val))
-        return out
+    def _flatten(self, attrs: list[tuple[str, str, str | None]]) -> list[tuple[str, str, str | None]]:
+        return _expand(attrs, self.macros)
 
     def query(self, stack: list[_AttrFile], rel: bytes) -> dict[str, tuple[str, str | None]]:
         sources = [self.info, *reversed(stack), self.global_]
@@ -218,15 +233,34 @@ class _Attrs:
 # -- the writer -------------------------------------------------------------------------------------------------------
 
 
+def _fold(raw: bytes) -> str | None:
+    """The spelling a case/Unicode-folding file system or git's short-name rules would compare: NFKC, ignorable code
+    points dropped, casefolded, trailing dots and spaces removed. ``None`` for a non-UTF-8 name."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return _IGNORABLE.sub("", unicodedata.normalize("NFKC", text)).casefold().rstrip(" .")
+
+
+#: names git refuses to check out as anything but a regular file (``fsck`` ``*_SYMLINK``), with their 8.3 short names
+_REGULAR_ONLY = {".gitmodules": "gitmod~", ".gitattributes": "gitatt~", ".gitignore": "gitign~", ".mailmap": "mailma~"}
+
+
+def _special_symlink(raw: bytes) -> bool:
+    s = _fold(raw)
+    if s is None:
+        return False
+    return any(s == n or (s.startswith(short) and s[len(short) :].isdigit()) for n, short in _REGULAR_ONLY.items())
+
+
 def _bad_name(raw: bytes) -> bool:
     """git's ``verify_path`` for one component, plus the spellings other file systems fold to ``.git``."""
     if not raw or b"\0" in raw or b"/" in raw or raw in (b".", b".."):
         return True
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
+    s = _fold(raw)
+    if s is None:
         return False  # a non-UTF-8 name is a plain byte name; it cannot spell .git on a folding file system
-    s = _IGNORABLE.sub("", unicodedata.normalize("NFKC", text)).casefold().rstrip(" .")
     return s == ".git" or (s.startswith("git~") and s[4:].isdigit())
 
 
@@ -254,6 +288,7 @@ class _Writer:
         log: Callable[[str], None] | None,
     ) -> None:
         self.repo, self.person, self.attrs, self.env, self.cwd, self.log = repo, person, attrs, env, cwd, log
+        self.deadline = time.monotonic() + POPULATE_SECONDS
         self.entries: list[_Entry] = []
         self.count = 0
         self.root_dir = root_dir
@@ -277,6 +312,8 @@ class _Writer:
                 stack = [*stack, _AttrFile(prefix, blob, self.macros, depth == 0)]
         for e in items:
             self.count += 1
+            if time.monotonic() > self.deadline:
+                raise Unavailable("the checkout took too long")
             if self.count > limits.TREE_ENTRIES_MAX:
                 raise Unavailable("too many paths to check out")
             path = prefix + e.name
@@ -291,8 +328,8 @@ class _Writer:
             if e.mode == 0o160000:
                 os.mkdir(e.name, 0o777, dir_fd=dirfd)  # a submodule: an empty directory, as git without --recurse
             elif e.mode == 0o120000:
-                if path == b".gitmodules":
-                    raise Unavailable(".gitmodules is a symlink")
+                if _special_symlink(e.name):
+                    raise Unavailable("a .gitmodules, .gitattributes, .gitignore or .mailmap is a symlink")
                 target = self.repo.blob(e.oid)
                 if not target or b"\0" in target:
                     raise Unavailable("a symlink has an empty or malformed target")
@@ -361,21 +398,71 @@ class _Writer:
             )
         except OSError as exc:
             raise Unavailable(f"the person's filter could not start ({type(exc).__name__})") from None
-        try:
-            out, err = proc.communicate(data, timeout=FILTER_SECONDS)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(OSError):
-                os.killpg(proc.pid, signal.SIGKILL)
-            with contextlib.suppress(Exception):
-                proc.communicate(timeout=5)
-            raise Unavailable("the person's filter took too long and was stopped") from None
+        out, err = _stream(proc, data)
         if proc.returncode != 0:
             if self.log is not None:
                 self.log(f"checkout filter failed ({proc.returncode}): {err.decode('utf-8', 'replace')[-500:]}")
             raise Unavailable(f"the person's filter failed (exit {proc.returncode})")
-        if len(out) > FILTER_OUT_MAX:
-            raise Unavailable("the person's filter produced too much output")
         return out
+
+
+def _kill(proc: subprocess.Popen[bytes]) -> None:
+    with contextlib.suppress(OSError):
+        os.killpg(proc.pid, signal.SIGKILL)  # the group this checkout created for this filter, nothing else
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=5)
+
+
+def _stream(proc: subprocess.Popen[bytes], data: bytes) -> tuple[bytes, bytes]:
+    """Feed ``data`` to the filter and read its output incrementally: the process group is killed the moment stdout
+    passes :data:`FILTER_OUT_MAX` (stderr keeps only :data:`FILTER_ERR_MAX`) or :data:`FILTER_SECONDS` pass."""
+    assert proc.stdin and proc.stdout and proc.stderr
+
+    def feed() -> None:
+        with contextlib.suppress(OSError):
+            try:
+                proc.stdin.write(data)  # type: ignore[union-attr]
+            finally:
+                proc.stdin.close()  # type: ignore[union-attr]
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    deadline = time.monotonic() + FILTER_SECONDS
+    sel = selectors.DefaultSelector()
+    sel.register(proc.stdout, selectors.EVENT_READ, "out")
+    sel.register(proc.stderr, selectors.EVENT_READ, "err")
+    out: list[bytes] = []
+    err = b""
+    got = 0
+    try:
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                _kill(proc)
+                raise Unavailable("the person's filter took too long and was stopped")
+            for key, _ in sel.select(min(left, 1.0)):
+                chunk = os.read(key.fileobj.fileno(), 65536)  # type: ignore[union-attr]
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                elif key.data == "out":
+                    got += len(chunk)
+                    if got > FILTER_OUT_MAX:
+                        _kill(proc)
+                        raise Unavailable("the person's filter produced too much output and was stopped")
+                    out.append(chunk)
+                else:
+                    err = (err + chunk)[-FILTER_ERR_MAX:]
+        try:
+            proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+            raise Unavailable("the person's filter took too long and was stopped") from None
+    finally:
+        sel.close()
+        proc.stdout.close()
+        proc.stderr.close()
+        writer.join(timeout=1)
+    return b"".join(out), err
 
 
 def _index_bytes(entries: list[_Entry], algo: str) -> bytes:

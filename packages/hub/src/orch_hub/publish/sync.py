@@ -22,5 +22,8 @@ class PublishSync(Protocol):
     def put_hub_card(self, card: Mapping[str, Any]) -> None:
         """The hub's current signed ``hub.card`` (with its op cert), as ``accept_hub_card``."""
 
+    def put_op_revoked(self, revoked: Mapping[str, Any]) -> None:
+        """A root-signed ``hub.op_revoked`` of the hub, as ``accept_op_revoked``."""
+
     def put_binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         """A WSK-signed ``hub.binding`` or ``hub.unbound`` of the workspace, as ``accept_binding`` / ``accept_unbound``."""

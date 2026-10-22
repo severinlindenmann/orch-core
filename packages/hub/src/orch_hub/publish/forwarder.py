@@ -88,7 +88,11 @@ class HubPublish:
     """Implements ``PublishForwarder`` (link server) and the link's ``Downstream`` (it learns the bindings)."""
 
     def __init__(
-        self, keys: HubKeys | Callable[[], tuple[OpSigner, dict[str, Any], str]], sync: PublishSync, cfg: PublishConfig
+        self,
+        keys: HubKeys | Callable[[], tuple[OpSigner, dict[str, Any], str]],
+        sync: PublishSync,
+        cfg: PublishConfig,
+        revocations: Callable[[], list[dict[str, Any]]] | None = None,
     ):
         self._scheme, self._host, self._port = _endpoint(cfg.base_url)
         self._cfg = cfg
@@ -100,6 +104,7 @@ class HubPublish:
                 return hk.op_signer, hk.card(), hk.hub_id
 
             self._keys = current
+            revocations = revocations or hk.revocations
         else:
             self._keys = keys
         self._lock = threading.Lock()
@@ -107,6 +112,8 @@ class HubPublish:
         self._bindings: dict[str, dict[str, Any]] = {}  # workspace -> latest binding / unbound object, as accepted
         self._synced: dict[str, bytes] = {}  # workspace -> cj of the object orch-publish holds
         self._card_synced: bytes | None = None
+        self._revocations = revocations or (list)
+        self._revoked_synced: set[bytes] = set()
 
     # --- Downstream (the link server calls these after it accepted the object) -------------------------------------
 
@@ -145,6 +152,14 @@ class HubPublish:
         except Refused:
             pass  # not reachable now: the next forward syncs again, and refuses if it cannot
 
+    def restore(self, bindings: Mapping[str, Mapping[str, Any]]) -> None:
+        """After a restart: the signed binding / unbound objects the registry persisted (nothing is synced yet)."""
+        for ws, obj in bindings.items():
+            try:
+                self.binding(ws, obj)
+            except Refused:
+                pass  # an object that no longer passes is dropped: fail closed (not_bound)
+
     # --- PublishForwarder ------------------------------------------------------------------------------------------
 
     def forward(self, workspace_id: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +186,7 @@ class HubPublish:
             with self._lock:
                 self._synced.pop(workspace_id, None)
                 self._card_synced = None
+                self._revoked_synced.clear()
         return {"status": status, "body_hex": body.hex()}
 
     # --- internals -------------------------------------------------------------------------------------------------
@@ -194,6 +210,13 @@ class HubPublish:
                     self._sync.put_hub_card(card)
                     with self._lock:
                         self._card_synced = c
+                        self._revoked_synced.clear()
+                for rv in self._revocations():  # after the card: orch-publish needs the hub's card to take them
+                    r = cj(rv)
+                    if r not in self._revoked_synced:
+                        self._sync.put_op_revoked(rv)
+                        with self._lock:
+                            self._revoked_synced.add(r)
                 if obj is not None:
                     b = cj(obj)
                     if synced != b:

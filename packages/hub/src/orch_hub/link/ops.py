@@ -141,7 +141,13 @@ def join(c: OpContext) -> dict[str, Any]:
         )
         state = H.apply_binding(c.registry.binding_state(c.workspace_id), b)
         c.registry.commit_join(
-            c.workspace_id, pin["owner_person_id"], pin["wsk_pub"], join_msg["pk_pub"], join_msg["card"], state
+            c.workspace_id,
+            pin["owner_person_id"],
+            pin["wsk_pub"],
+            join_msg["pk_pub"],
+            join_msg["card"],
+            state,
+            join_msg["binding"],
         )
         c.invites.consume(invite, c.workspace_id)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
@@ -191,7 +197,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             state = H.apply_unbound(held, u)
         else:
             raise Refused("malformed")
-        c.registry.set_binding_state(c.workspace_id, state)
+        c.registry.set_binding_state(c.workspace_id, state, obj)
     c.downstream.binding(c.workspace_id, obj)
     return {}
 

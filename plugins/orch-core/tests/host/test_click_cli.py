@@ -42,6 +42,21 @@ def test_the_flag_is_switched_per_workspace_by_the_host_cli(served, monkeypatch)
     assert code == 3 and "human_only" in out
 
 
+def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, monkeypatch):
+    """F3: inside a workspace folder `--workspace` is that folder's workspace; elsewhere the error names the fix."""
+    monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)
+    state = str(served.lab.state)
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    monkeypatch.chdir(served.service.entry.root)
+    code, out, _ = run("host", "convenience", "off", "--state", state)
+    assert code == 0 and not convenience.enabled(served.lab.state, served.wid, UID)
+    assert "stays in one-click custody" in out and "orch keys custody passphrase" in out  # F1: the way to a passphrase
+    monkeypatch.chdir("/")
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert code == 5 and "invalid.input" in out
+    assert "describe describe" not in out and "orch host convenience on --workspace W" in out
+
+
 def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(served, monkeypatch):
     state = served.lab.state
     provider = Provider()

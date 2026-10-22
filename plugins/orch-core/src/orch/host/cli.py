@@ -768,6 +768,24 @@ def _dead_device(device: Any, person: str | None, ws: Any) -> str | None:
 _clock = time.time  # the clock of request expiry for `convenience on` (tests set it to the lab's clock)
 
 
+def _cwd_workspace(entries: list[dict[str, Any]]) -> str | None:
+    """The workspace id whose registered root is the current directory or its nearest registered parent, else None."""
+    try:
+        here = Path.cwd().resolve()
+    except OSError:
+        return None
+    best: tuple[int, str] | None = None
+    for item in entries:
+        try:
+            root = Path(str(item.get("root"))).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if root == here or root in here.parents:
+            if best is None or len(root.parts) > best[0]:
+                best = (len(root.parts), str(item.get("workspace_id")))
+    return best[1] if best else None
+
+
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
     (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
@@ -785,11 +803,22 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if args.switch == "show":
         out.write(json.dumps(convenience.read(state, uid), sort_keys=True) + "\n")
         return 0
-    if not args.workspace:
-        return write_error(out, False, "invalid.input", "--workspace is required")
     from .custody import read_json
 
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    if not args.workspace:
+        # inside a workspace folder the workspace is that folder's (the innermost registered root holding the cwd)
+        here = _cwd_workspace(reg.get("workspaces") or [])
+        if here is None:
+            return write_error(
+                out,
+                False,
+                "invalid.input",
+                "--workspace is required (or run this inside the workspace folder)",
+                hint=f"orch host convenience {args.switch} --workspace W",
+                fix=["orch", "host", "convenience", args.switch, "--workspace", "W"],
+            )
+        args.workspace = here
     match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
@@ -816,6 +845,11 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
+    if args.switch == "off":
+        out.write(
+            "The key stays in one-click custody, so it cannot sign in the Terminal yet. To sign with a passphrase: "
+            f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"
+        )
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"

@@ -261,6 +261,7 @@ def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Pat
 
     matches: list[tuple[dict[str, Any], Any, list[dict[str, Any]]]] = []
     errors: list[str] = []
+    unreachable = 0
     try:
         for entry in entries:
             wid = entry["workspace_id"]
@@ -279,7 +280,10 @@ def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Pat
                 found = c.call("human.pending", {"code": code})["data"]["requests"]
             except HostError as exc:
                 c.close()
-                errors.append(f"{label}: {exc.code}")
+                if exc.code == "workspace.unavailable":
+                    unreachable += 1  # another workspace that cannot answer: plain words, no ids
+                else:
+                    errors.append(f"{label}: {exc.code}")
                 continue
             except (OSError, ConnectionError, frames.FrameError) as exc:
                 c.close()
@@ -296,6 +300,12 @@ def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Pat
         for _, other, _ in matches:
             other.close()
         raise
+    if unreachable:
+        errors.append(
+            "1 other workspace on this Mac is not reachable"
+            if unreachable == 1
+            else f"{unreachable} other workspaces on this Mac are not reachable"
+        )
     if len(matches) == 1:
         if errors:
             err.write("orch sign: not asked: " + "; ".join(errors) + "\n")
@@ -331,6 +341,30 @@ def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, A
             continue
         out.append(item)
     return out
+
+
+def _sign_code_explained(entry: dict[str, Any], run: Callable[..., Any], *a: Any, backend: Any, **kw: Any) -> Any:
+    """:func:`sign_code`, with the one refusal the person cannot act on made plain: a key in one-click custody binds
+    ``auth: convenience`` (the key has no passphrase), and while click-to-sign is off the host refuses that binding
+    (reason ``disabled``). Nothing is signed another way: the request keeps its method, the host's check stands."""
+    try:
+        return run(*a, backend=backend, **kw)
+    except HostError as exc:
+        if (
+            exc.code == "sign.convenience_unavailable"
+            and (exc.detail or {}).get("reason", exc.message.split(":", 1)[0]) == "disabled"
+            and getattr(backend, "auth", None) == "convenience"
+        ):
+            ws = entry.get("prefix") or entry["workspace_id"]
+            raise HostError(
+                exc.code,
+                "disabled: this key is in one-click custody and one-click signing is off, so it cannot sign in the "
+                "Terminal. Turn one-click on again, or move the key back to a passphrase.",
+                hint=f"orch host convenience on --workspace {ws}  or  orch keys custody passphrase --workspace {ws} "
+                "--in-place",
+                detail=exc.detail,
+            ) from None
+        raise
 
 
 def _backend(state: Path, workspace_id: str) -> Any:
@@ -391,7 +425,9 @@ def main(
         def workspace(w: str) -> tuple[str, str] | None:
             return (name, str(entry.get("prefix"))) if w == wid else None
 
-        result = sign_code(
+        result = _sign_code_explained(
+            entry,
+            sign_code,
             conn.call,
             code,
             backend=backend,

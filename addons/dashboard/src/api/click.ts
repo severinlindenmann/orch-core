@@ -204,6 +204,8 @@ export function clickProblem(e: unknown): ClickProblem {
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
+      // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: 'Click-to-sign is off for this workspace now. Press Try again to sign in the Terminal.', next: 'retry' }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:
@@ -227,7 +229,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.click_only':
-      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
+      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'retry' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
       // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.

@@ -6,6 +6,7 @@ import { useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { isRealHost } from '@/api/features'
+import { useSigningMethodRefresh } from '@/api/signingRefresh'
 import { useLiveUpdates as useStream } from '@/api/useLiveUpdates'
 import { useWorkspace } from './workspace'
 
@@ -69,5 +70,6 @@ function useStreamUpdates() {
 
 // The host kind never changes while the app runs, so the same hook runs on every render.
 export function useLiveUpdates() {
+  useSigningMethodRefresh()
   return (isRealHost() ? useStreamUpdates : usePollUpdates)()
 }

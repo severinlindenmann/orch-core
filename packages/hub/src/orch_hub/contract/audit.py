@@ -71,13 +71,15 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "workspace_id": _opt_hex16,
         "actor_user_id": _opt_hex16,
     },
-    # p4 (§10.2b): a selective workspace shared, replaced or revoked an item (scoped to that workspace)
+    # p4 (§10.2b): a selective workspace shared, replaced or revoked an item, or the hub purged its items at unbind or a
+    # mode switch (scoped to that workspace). Per-change field rules in _share_rule.
     "share": {
         "workspace_id": _hex16,
-        "item_id": _hex16,
-        "change": _enum("put", "revoke"),
-        "item_version": _int_min(1),
+        "item_id": _opt_hex16,
+        "change": _enum("put", "revoke", "purge"),
+        "item_version": lambda x: x is None or _int_min(1)(x),
         "item_hash": lambda x: x is None or (type(x) is str and len(x) == 71 and x.startswith("sha256:")),
+        "count": lambda x: x is None or _int_min(0)(x),
     },
     # p4 (§10.5): a channel key was registered or revoked (revocation is permanent); hub-wide, so no scope tag.
     # actor_user_id: the user who registered or revoked it, or None for the operator at the hub terminal.
@@ -114,11 +116,29 @@ def chain_hash(signed: Mapping[str, Any]) -> str:
         raise Refused("malformed") from None
 
 
+def _share_rule(e: Mapping[str, Any]) -> bool:
+    """put: item, version, hash, no count; revoke: item, the tombstoned version, hash null, no count (a revoke of an
+    unknown or revoked id is the idempotent {} and writes no record); purge: one record per workspace at unbind or a
+    switch to full, item, version and hash null, ``count`` = the live items purged (L2 p4, D9)."""
+    c, item, ver, h, n = e["change"], e["item_id"], e["item_version"], e["item_hash"], e["count"]
+    if c == "put":
+        return item is not None and ver is not None and h is not None and n is None
+    if c == "revoke":
+        return item is not None and ver is not None and h is None and n is None
+    return item is None and ver is None and h is None and n is not None
+
+
+EVENT_RULES: dict[str, Any] = {"share": _share_rule}
+
+
 def check_event(typ: str, event: Any) -> dict[str, Any]:
     spec = EVENT_FIELDS.get(typ)
     if spec is None or type(event) is not dict or set(event) != set(spec):
         raise Refused("malformed")
     if not all(ok(event[k]) for k, ok in spec.items()):
+        raise Refused("malformed")
+    rule = EVENT_RULES.get(typ)
+    if rule is not None and not rule(event):
         raise Refused("malformed")
     return event
 

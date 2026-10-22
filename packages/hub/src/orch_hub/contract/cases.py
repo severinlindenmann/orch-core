@@ -196,6 +196,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             granted_users=frozenset(a.get("granted_users", [])),
             min_factor=a.get("min_factor"),
             revoked_op_certs=_later(a),
+            member_roles=a.get("member_roles", {}),
         )
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], unb64u(a["wsk_pub"], 65), now, dev)
@@ -318,6 +319,11 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "action":
         o = P4.check_action(a["action"], role=a["role"])
         return {"type": o["type"]}
+    if check == "built":
+        P4.check_built(a["action"], a["log"], a["event"])
+        return {"built": True}
+    if check == "render":
+        return {"shown": P4.render_text(a["text"])}
     if check == "prepared":
         return {"digest_hex": P4.check_prepared(a["ctx"], a["digest_hex"]).hex()}
     if check == "log_sync":
@@ -345,7 +351,13 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {}
     if check == "channel_register":
         r = P4.verify_channel_register(
-            a["signed"], hub_id=a["hub_id"], challenge=a["challenge"], now_ms=now, dev_mode=dev
+            a["signed"],
+            hub_id=a["hub_id"],
+            challenge=a["challenge"],
+            now_ms=now,
+            dev_mode=dev,
+            revoked_channels=a.get("revoked_channels", []),
+            registered=a.get("registered", {}),
         )
         return {"channel_id": r["channel_id"], "factor": r["factor"]}
     if check == "space_proposal":

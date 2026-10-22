@@ -587,6 +587,9 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     ("addon.purged", "workspace"): "admin",
 }
 ROLE_RANK = {"read": 1, "edit": 2, "admin": 3}
+#: Selective mode (L2P4-1): the F1 member role of the canonical person -> the role floor of step 7b; full mode maps the
+#: other way for step 9 (admin -> owner, edit -> member, read -> viewer).
+MEMBER_ROLE_FLOOR = {"owner": "admin", "maintainer": "edit", "member": "edit", "viewer": "read"}
 
 
 def log_kind(log: str) -> str:
@@ -640,6 +643,7 @@ def verify_custodial(
     granted_users: frozenset[str] = frozenset(),
     min_factor: str | None = None,
     revoked_op_certs: frozenset[str] = frozenset(),
+    member_roles: Mapping[str, str] = {},
 ) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
@@ -709,7 +713,13 @@ def verify_custodial(
         raise Refused("forbidden_role")
     # 7b. the closed list of custodial types and the lowest role per type (p4, §8.5; selective: owner-granted users,
     # and still only custodial types)
-    check_custodial_role(typ, log, "admin" if mode == "selective" else snapshot["roles"].get(user))
+    # L2P4-1: in selective mode there is no hub role; the floor comes from the F1 member role of the canonical person
+    # (the user's alias to a member p_, §9.1), and a granted user without an alias is a viewer (signs nothing).
+    if mode == "selective":
+        floor = MEMBER_ROLE_FLOOR.get(member_roles.get(user, "viewer"))  # unknown role -> None -> forbidden_role
+    else:
+        floor = snapshot["roles"].get(user)
+    check_custodial_role(typ, log, floor)
     # 8. D66 factor policy
     if min_factor is not None and FACTOR_RANK[event["channel_factor"]] < FACTOR_RANK[min_factor]:
         raise Refused("factor_too_weak")

@@ -374,8 +374,8 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
     workspace log, signed by the owner at the host terminal. Selective mode only: ``full`` is refused here (C2b) and by
     the model and the signer. The hub card is verified here against the host's own clock and dev state
     (``ctx.prepare.hub``); the event adds no member and carries no key material beyond the hub's public root."""
-    from orch.hub import wire
-    from orch.hub.errors import HubRefused
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
 
     h = _Human(ctx, "hub.join")
     _owner(h, "hub.join")

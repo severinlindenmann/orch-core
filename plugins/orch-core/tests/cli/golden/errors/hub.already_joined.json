@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.already_joined",
+    "message": "this workspace is already joined to a hub",
+    "hint": "leave the hub first: orch hub leave",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

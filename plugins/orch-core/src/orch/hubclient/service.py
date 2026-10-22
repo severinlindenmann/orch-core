@@ -1,7 +1,7 @@
 """Join and leave a hub in selective mode (spec 8, 8a, D80; protocol 9). Orchestration over injected pieces so it is
 testable without a host: the workspace's ``WSK`` signer, the callbacks that record the owner-signed log events
 (``record_joined``, ``record_left``: the host signs them with the owner's key at its terminal), a persistence
-callback and a :class:`~orch.hub.link.HubTransport`.
+callback and a :class:`~orch.hubclient.link.HubTransport`.
 
 Invariants: selective only (``full_mode_later``); no ``hub`` member and no ``WK_e`` anywhere on this path; the owner's
 log event is recorded before anything is sent to the hub; ``leave`` works with the hub down (the signed

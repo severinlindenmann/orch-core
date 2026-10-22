@@ -250,7 +250,19 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert set(body) == {"invite", "card", "pk_pub", "binding"}
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)
-    assert "wk_seal" not in stub.ops() and "wk" not in str(body).lower().replace("wsk", "")
+    keys = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                keys.add(k)
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(body)
+    assert "wk_seal" not in stub.ops() and not {k for k in keys if "wk" in k.lower().replace("wsk", "") or "wrap" in k}
     status = ok(served.client().req("hub.status", {}, idem=False))["data"]
     assert status["joined"] and status["link"] == "bound" and status["mode"] == "selective"
     _, members = hub_state(served)

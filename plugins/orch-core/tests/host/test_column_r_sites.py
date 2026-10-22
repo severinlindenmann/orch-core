@@ -92,6 +92,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("publishing.py", "facts_for"): (2, "unreachable (publish.share is prepared through human.prepare, P only)"),
     ("publishing.py", "_discard"): (2, "unreachable (publish.* are not R ops)"),
     ("publishing.py", "_list"): (6, "unreachable (publish.list is not an R op); R would see what P sees"),
+    ("hubops.py", "_owner"): (2, "unreachable (hub.* are not R ops); R is not P, so it would be refused"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_plan"): (2, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_register"): (4, "unreachable (worktree.* are not R ops)"),

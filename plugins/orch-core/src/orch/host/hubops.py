@@ -95,7 +95,7 @@ def _dir(service: WorkspaceService) -> Path:
 
 
 def _load_state(service: WorkspaceService) -> Any:
-    from orch.hub import HubRefused, HubState
+    from orch.hubclient import HubRefused, HubState
 
     from .custody import read_json
 
@@ -201,7 +201,7 @@ def _audit(call: Call, event: str, **more: Any) -> None:
 
 def serve(call: Call) -> dict[str, Any]:
     from orch.crypto.encoding import b64u, unb64u
-    from orch.hub import HubRefused, wire
+    from orch.hubclient import HubRefused, wire
 
     from .workspace import ok_result
 
@@ -271,7 +271,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
 
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from orch.crypto.encoding import unb64u
-    from orch.hub import HubRefused, flush_unbound, join_selective, leave
+    from orch.hubclient import HubRefused, flush_unbound, join_selective, leave
 
     from .workspace import ok_result
 
@@ -301,7 +301,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 def _unbind(
     call: Call, plan: dict[str, Any], state: Any, sign: Any, now: Any, save: Any, leave: Any, flush: Any
 ) -> dict[str, Any]:
-    from orch.hub import HubRefused
+    from orch.hubclient import HubRefused
 
     service, model = call.service, plan["model"]
     if state is None:  # never connected: there is no binding anywhere to end

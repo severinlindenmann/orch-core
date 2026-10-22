@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.not_joined",
+    "message": "this workspace is not joined to a hub",
+    "hint": "nothing to leave",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

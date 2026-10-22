@@ -795,8 +795,8 @@ def _ev_hub_joined(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     """Hub contract 9.1: ``hub_id`` is derived from ``hk_root_pub``; aliases sorted by ``person_id``, unique on both
     members (a re-pointed alias across joins is the model's check)."""
     from orch.crypto.encoding import EncodingError, unb64u
-    from orch.hub import wire
-    from orch.hub.errors import HubRefused
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
 
     try:
         root = unb64u(obj["hk_root_pub"], 65)

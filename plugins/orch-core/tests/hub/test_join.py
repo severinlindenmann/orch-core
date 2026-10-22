@@ -1,4 +1,4 @@
-"""C2a step 1: core's hub client (``orch.hub``) joins and leaves selectively against the in-process fake hub."""
+"""C2a step 1: core's hub client (``orch.hubclient``) joins and leaves selectively against the in-process fake hub."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 from orch.crypto import suite as S
 from orch.crypto.encoding import unb64u
-from orch.hub import HubRefused, HubState, flush_unbound, join_selective, leave, wire
+from orch.hubclient import HubRefused, HubState, flush_unbound, join_selective, leave, wire
 
 from . import contract as H
 from .fake import FakeHub
@@ -101,7 +101,7 @@ def test_hub_never_sees_wk_material(host: Host, hub: FakeHub) -> None:
 
 
 def test_wk_seal_refused_in_selective(host: Host, hub: FakeHub) -> None:
-    from orch.hub.link import HubLink
+    from orch.hubclient.link import HubLink
 
     host.join()
     link = HubLink(host.wire, hub_id=hub.hub_id, workspace_id=WS, hk_op_pub=hub.hk_op_pub, sign=sign_wsk,

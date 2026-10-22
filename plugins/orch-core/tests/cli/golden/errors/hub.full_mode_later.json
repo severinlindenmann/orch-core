@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.full_mode_later",
+    "message": "a full join comes later",
+    "hint": "join in selective mode: the hub then sees only what you share",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -65,6 +65,7 @@ W2H_OPS: dict[str, str | None] = {
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
+    "log_sync": "full",
 }
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
@@ -78,6 +79,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         and type(b["next"]) is int
         and type(b.get("records", [])) is list
     ),
+    "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
     "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),
     "snapshot_get": lambda b: set(b) == {"snapshot"} and type(b["snapshot"]) is dict,
     "publish_out": lambda b: (

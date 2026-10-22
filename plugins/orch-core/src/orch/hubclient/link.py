@@ -35,6 +35,7 @@ W2H_OPS: dict[str, str | None] = {
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
+    "log_sync": "full",
 }
 
 

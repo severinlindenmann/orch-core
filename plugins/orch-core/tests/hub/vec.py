@@ -38,6 +38,7 @@ RUN_CHECKS = frozenset(
         "space_wrap",
         "space_item",
         "host_put",
+        "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py)
     }
 )
 SKIPPED_CHECKS = {
@@ -46,6 +47,15 @@ SKIPPED_CHECKS = {
     "space_flow": "the hub's put / revoke / get rules over a space: hub side (orch_hub), core sees only the replies",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
+    "action": "phase 4: custodial actions are the hub's and the channels' (D6/D7); core verifies the event (C3)",
+    "share_item": "phase 4: selective share items (C6)",
+    "share_revoke": "phase 4: selective share items (C6)",
+    "relay_request": "phase 4: hub -> relay requests are the hub's and orch-relay's (E1)",
+    "channel_register": "phase 4: channel registration is the hub's (D7)",
+    "space_proposal": "phase 4: space proposals (C13 follow-up)",
+    "prepared": "phase 4: what a channel shows and signs is the hub's and the apps' (D6/D7)",
+    "built": "phase 4: the hub builds custodial events (D6)",
+    "render": "phase 4: channel rendering (D7)",
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
@@ -168,6 +178,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check in ("space", "space_wrap", "space_item", "host_put"):
         return _run_space(check, a)
+    if check == "log_sync":
+        return _run_log_sync(a)
     raise ValueError(f"check {check} is not replayed by core")
 
 
@@ -222,3 +234,15 @@ def outcome(case: dict[str, Any]) -> dict[str, Any]:
         return {"ok": run(case["check"], case["args"])}
     except (H.Refused, HubRefused) as r:
         return {"error": r.code}
+
+
+def _run_log_sync(a: dict[str, Any]) -> dict[str, Any]:
+    """Apply the pages in order to an empty hub view (the test-side port of the hub's rules); the first refusal is the
+    outcome, else the held ``{log: {seq, head}}``."""
+    from . import logview
+
+    view = logview.View()
+    wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
+    for page in a["pages"]:
+        logview.apply_page(view, page, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk=wk)
+    return view.summary()

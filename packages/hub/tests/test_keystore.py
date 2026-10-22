@@ -25,6 +25,11 @@ SAMPLES = {
     "hub.uk_cert": G.uk_cert()["o"],
     "hub.channel_cert": G.channel_cert()["o"],
     "hub.snapshot": G.snapshot()["o"],
+    "hub.audit": G.audit_chain()[0]["o"],
+    "space.accept": G.space_accept_obj()["o"],
+    "hub.space": G.space_rec()["o"],
+    "hub.space_wrap": G.space_wrap()["o"],
+    "space.item": G.space_item_obj()["o"],
     "hub.binding": G.binding()["o"],
     "hub.unbound": G.unbound()["o"],
     "hub.publish_approval": G.approval()["o"],
@@ -33,10 +38,19 @@ SAMPLES = {
 }
 ALLOWED = {
     KS.RootSigner: {"hub.op_cert", "hub.op_revoked"},
-    KS.OpSigner: {"hub.card", "hub.uk_cert", "hub.channel_cert", "hub.snapshot", "link.h2w"},
+    KS.OpSigner: {
+        "hub.card",
+        "hub.uk_cert",
+        "hub.channel_cert",
+        "hub.snapshot",
+        "hub.space",
+        "hub.space_wrap",
+        "hub.audit",
+        "link.h2w",
+    },
     KS.UkSigner: set(),
     KS.ChannelSigner: set(),
-    KS.WskSigner: {"hub.binding", "hub.unbound", "link.w2h"},
+    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
 KEY = {
@@ -126,3 +140,15 @@ def test_link_direction_is_bound_to_the_key():
         KS.WskSigner(G.K.priv["wsk_a"]).sign_object(SAMPLES["link.h2w"])
     with pytest.raises(KS.KeyUseError):
         KS.OpSigner(G.K.priv["hk_op"]).sign_object(SAMPLES["link.w2h"])
+
+
+def test_op_admin_read_signs_only_get_or_head_over_the_exact_bytes():
+    op = signer(KS.OpSigner)
+    sig = op.admin_read(G.HUB_ID, NOW, "GET", G.ADMIN_TARGET)
+    assert S.verify(op.public, sig, H.admin_read_bytes(G.HUB_ID, NOW, "GET", G.ADMIN_TARGET))
+    assert not S.verify(op.public, sig, H.admin_read_bytes(G.HUB_ID, NOW, "HEAD", G.ADMIN_TARGET))
+    for bad in ("POST", "PUT", "DELETE", "get"):
+        with pytest.raises(KS.KeyUseError):
+            op.admin_read(G.HUB_ID, NOW, bad, G.ADMIN_TARGET)
+    for other in (KS.RootSigner, KS.WskSigner, KS.UkSigner):
+        assert not hasattr(signer(other), "admin_read")

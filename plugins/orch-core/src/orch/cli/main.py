@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import re
 import sys
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, TextIO
 
 from orch import schema
+from orch._build import build_info, version_line
 from orch.cli import meta, parser, render
 from orch.cli.args import arg_specs
 from orch.cli.errors import UsageError
@@ -21,7 +23,7 @@ from orch.ops.errors import ERRORS, GLOBAL_ERRORS, OrchError
 
 __all__ = ["Hooks", "main", "run", "stop_rule"]
 
-VERSION_LINE = "orch v2 (in development)"
+VERSION_LINE = version_line()
 _SESSION = re.compile(schema.load("common")["$defs"]["sessionId"]["pattern"])
 _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
 # Not counted by the stop rule: they are about the command line, not about a refusal of the action.
@@ -320,8 +322,8 @@ def main(
         hooks = hooks or workspace_hooks(workspace)
         records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
-        if args == ["--version"]:
-            out.write(VERSION_LINE + "\n")
+        if args in (["--version"], ["--version", "--json"], ["--json", "--version"]):
+            out.write((json.dumps(build_info()) if "--json" in args else VERSION_LINE) + "\n")
             return 0
         grant_env = env.get("ORCH_GRANT") or None
         secrets = _secrets(grant_env)

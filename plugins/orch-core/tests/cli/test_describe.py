@@ -85,7 +85,7 @@ def test_empty_command_line_is_help(cli):
 
 def test_version_is_kept(cli):
     r = cli("--version")
-    assert (r.code, r.out) == (0, "orch v2 (in development)\n")
+    assert (r.code, r.out) == (0, "orch 2.0.0.dev0 (development build)\n")
 
 
 def test_command_help_flag(cli):

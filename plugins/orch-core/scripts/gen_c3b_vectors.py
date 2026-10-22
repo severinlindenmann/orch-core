@@ -341,6 +341,94 @@ def main() -> None:
             ],
         },
         {
+            "name": "aliased_member_removed_locally_has_no_role",
+            "note": "C3b-1: an aliased u_ whose p_ left the roster has no role; never the hub role",
+            "hub": {"mode": "full", "joined": HUB, "aliases": {HUB: {PERSON_ALICE: ALICE}}, "members": {}},
+            "steps": [
+                {"pin": "card_1", "at_ms": T0, "expect": "ok"},
+                {"pin": "snap_v3", "at_ms": T0, "expect": "ok"},
+                {"custodial": "e1", "at_ms": T0 + 1000, "expect": "forbidden_role"},
+            ],
+        },
+        {
+            "name": "aliased_admin_local_member_is_member",
+            "note": "C3b-1: full mode, aliased: the lower of the local role and the mapped hub role (admin -> owner)",
+            "hub": {
+                "mode": "full",
+                "joined": HUB,
+                "aliases": {HUB: {PERSON_ALICE: ALICE}},
+                "members": {"p_" + PERSON_ALICE: "member"},
+            },
+            "steps": [
+                {"pin": "card_1", "at_ms": T0, "expect": "ok"},
+                {"pin": "snap_v3", "at_ms": T0, "expect": "ok"},
+                {"custodial": "e1", "at_ms": T0 + 1000, "expect": "ok", "role": "member"},
+            ],
+        },
+        {
+            "name": "channel_revoked_voids_open_decisions_only",
+            "note": "C3b-2: the pin that first revokes the channel voids its decisions in open generations only",
+            "hub": full,
+            "steps": [
+                {"pin": "card_1", "at_ms": T0, "expect": "ok"},
+                {"pin": "snap_v3", "at_ms": T0, "expect": "ok"},
+                {"custodial": "e1", "at_ms": T0 + 1000, "expect": "ok"},
+                {"consume": True, "expect": "ok"},
+                {"custodial": "e2", "at_ms": T0 + 2000, "expect": "ok"},
+                {
+                    "pin": "snap_v4_revokes_phone",
+                    "at_ms": T0 + 3000,
+                    "expect": "ok",
+                    "voids": ["01J9ZP0000000000000000EVT2"],
+                },
+            ],
+        },
+        {
+            "name": "refused_events_leave_no_pins",
+            "note": "C3b-4: pins and event are one commit; 100 refused deliveries that each needed a pin add 0 lines",
+            "hub": full,
+            "steps": [
+                {"pin": "card_1", "at_ms": T0, "expect": "ok"},
+                {"pin": "snap_v3", "at_ms": T0, "expect": "ok", "ledger_lines": 2},
+                {
+                    "deliver": "e_snap4",
+                    "holds": "snap_v4_drops_alice",
+                    "repeat": 100,
+                    "at_ms": T0 + 1000,
+                    "expect": "forbidden_role",
+                    "ledger_lines": 2,
+                },
+                {
+                    "deliver": "e_snap4",
+                    "holds": "snap_v4_alice_edit",
+                    "at_ms": T0 + 2000,
+                    "expect": "ok",
+                    "ledger_lines": 3,
+                },
+            ],
+        },
+        {
+            "name": "join_aliasing_an_id_first_recorded_unaliased_under_another_hub",
+            "note": "C3b-5: hub.joined may not alias an id another hub's user used unaliased",
+            "hub": {"mode": "full", "joined": HUB, "aliases": {}, "user_hub": {ALICE: V["ids"]["hub_rogue"]}},
+            "steps": [{"join": {PERSON_ALICE: ALICE}, "expect": "foreign_user"}],
+        },
+        {
+            "name": "join_aliasing_same_person_on_both_hubs",
+            "hub": {
+                "mode": "full",
+                "joined": HUB,
+                "aliases": {V["ids"]["hub_rogue"]: {PERSON_ALICE: ALICE}},
+                "user_hub": {ALICE: V["ids"]["hub_rogue"]},
+            },
+            "steps": [
+                {"join": {PERSON_ALICE: ALICE}, "expect": "ok"},
+                {"pin": "card_1", "at_ms": T0, "expect": "ok"},
+                {"pin": "snap_v3", "at_ms": T0, "expect": "ok"},
+                {"custodial": "e1", "at_ms": T0 + 1000, "expect": "ok", "actor": "p_" + PERSON_ALICE},
+            ],
+        },
+        {
             "name": "aliased_under_this_hub_resolves_to_the_person",
             "hub": {"mode": "full", "joined": HUB, "aliases": {HUB: {PERSON_ALICE: ALICE}}},
             "steps": [

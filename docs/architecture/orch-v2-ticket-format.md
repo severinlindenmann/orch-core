@@ -2805,14 +2805,26 @@ a rejoin, so it is in every checkpoint with `ws.hub`): `{root, card, revoked_op_
    detail, absent for state, `auth.invalid_event`, and the workspace freeze until acknowledged. Only the host appends
    these lines and it verifies them first, so a failing one means a broken or hostile host.
 
-**When the host appends (this is what keeps the ledger bounded).** Only right before it admits a custodial event
-(§15.5 step 4), under the workspace-log lock, in this order: every op revocation it holds that the ledger lacks; its
-held card if the ledger has an older one or none; its pinned snapshot if the ledger has an older one or none. Nothing
-is appended while no custodial event arrives, and nothing is appended twice (rules 2–4 refuse repeats). So the ledger
-has at most one line per distinct card, one per revocation, and one per snapshot version that was current when some
-custodial event was admitted: at most one snapshot line per custodial event, usually none. Every line is within the
-§11.2 limit of 524 288 bytes; a snapshot that would not fit makes the custodial event `unavailable` (the hub keeps
-snapshots far smaller: about 50 bytes per user). Nothing is ever pruned: old lines are what make old events verifiable.
+**When the host appends (this is what keeps the ledger bounded, C3b-4).** Only together with a custodial event it
+admits (§15.5 step 4), in this order: every op revocation it holds that the ledger lacks; its held card if the ledger
+has an older one or none; its pinned snapshot **only when needed** (below). Then the event itself.
+
+- **One atomic commit.** The pins and the custodial event are written as one store transaction (§5.5 writing, one
+  lock, one fsync of the workspace log before the ticket line, one `.state/applied` record naming the event). The model
+  admits the whole batch or nothing: **a refused event leaves no pin.** A crash in the middle is the torn-write
+  recovery of §5.5: pins whose event is not in the log are removed before the next append (they are the last lines of
+  the workspace log and were never acknowledged to the hub). So a hostile hub that sends endless refused events adds
+  no line (vector `refused_events_leave_no_pins`).
+- **A snapshot is pinned only when the event needs it:** when the event's `snapshot_version` is above the pinned
+  version (§15.3 step 3), the host pins the newest snapshot it holds. An event built on the pinned version or an
+  older one adds no snapshot line (it is checked against the pinned one, which only narrows, §15.3). Every pin rides on
+  an admitted event, and every admitted event needs a fresh channel proof.
+- **Caps** (a pin over a cap is refused with `hub.invalid` `too_many` / `too_large`; the event that needed it gets
+  `unavailable`, retryable, §15.5): at most **64** op revocations and **16** cards per hub in the ledger; a snapshot
+  object at most **64 KiB** (`cj`); at most **one** snapshot pin per **10 minutes** of `at` per hub, except a snapshot
+  that only narrows (revokes a channel, removes or lowers a role, nothing else changed), which always pins.
+- Nothing is ever pruned: old lines are what make old events verifiable. The caps bound the ledger at
+  64 + 16 + (one snapshot per 10 minutes + narrowing ones), each line ≤ 64 KiB.
 
 **Why the log, not a side file.** The merged order (§5.5) then decides which material applies to which event, replay
 sees exactly what admission saw, and checkpoints, `restore`, `doctor` and clones work on the hub material with no new
@@ -2874,16 +2886,19 @@ actor directly.** They all go through two model helpers, enforced in one place:
     `u_…`), `role` below, `key = "hub:" + hub_id + "/" + channel` (never a `d_` id).
 - `identity.role_of(ws, ident) -> role | None`, the member role of any id at the current position:
   - `p_…`: `ws.members` (unchanged);
-  - a `u_…` aliased to a member `p_…`: selective mode: that member's role (L2P4-1); full mode: the **lower** of that
-    member's role and the snapshot role mapped `admin` → `owner`, `edit` → `member`, `read` → `viewer`; no snapshot
-    role → `None`;
+  - a `u_…` aliased (in any hub's alias book, the C4 union) to a `p_…`: if that `p_…` is **not a member now**
+    (never added, or `member.removed`), `None`: it never falls back to the unaliased branch, so a person removed from the
+    roster never keeps the hub role. Otherwise: selective mode: that member's role (L2P4-1); full mode: the **lower**
+    of that member's role and the snapshot role mapped `admin` → `owner`, `edit` → `member`, `read` → `viewer`, in
+    the total order `owner > maintainer > member > viewer`; no snapshot role → `None`;
   - an unaliased `u_…`: full mode: the mapped snapshot role, else `None`; selective mode: `None` (not granted);
   - no hub joined: `None` for every `u_…`.
 
   **DECIDED HERE (full mode, aliased user):** the lower of the two roles, not the hub role alone. The contract says
   the hub role "stands for" the member role; for a person the owner already put on the local roster, that roster
   (owner-signed) stays the ceiling, and a hub demotion still applies. An unaliased hub user gets exactly the mapped
-  hub role, as the contract says (D70: `admin` is today's owner). Opus: please confirm.
+  hub role, as the contract says (D70: `admin` is today's owner). **Confirmed by the Opus pass (C3b-1)**, with the
+  edge cases above. Vectors `aliased_member_removed_locally_has_no_role`, `aliased_admin_local_member_is_member`.
 
 The consumers:
 
@@ -2891,11 +2906,12 @@ The consumers:
 |---|---|
 | `authz` | `authorize_person` keeps the device path; a new `authorize_hub` is §15.3 steps 1–5; both end in the shared rules (viewer, `roster_v`, freeze) on `Signer.role`. `member.unknown` for a hub actor is `role_of` = `None`. |
 | `gates.decision` | `person = Signer.person`; the `Decision` column `device` becomes `signer` (`Signer.key`). `may_decide` and `person_tokens` take the role from `role_of`. D59 independence is unchanged: `person in canonical_set(ws, t.workers)`, so `u_x` aliased to `p_x` counts as one person (C4 union). |
-| `generations.counting` | one counting decision per canonical person (unchanged). `void_device` matches only `d_` keys. A channel revocation or an op revocation does **not** void past decisions: neither carries a "compromised" reason in hv 0, and the lines were valid at their position. Hardening row: when the hub contract adds a compromised op revocation, void the decisions under that op cert like a compromised device. |
+| `generations.counting` | one counting decision per canonical person (unchanged). **A channel revocation voids (C3b-2):** hv 0 carries no reason, so every channel revocation is treated like a compromised device: at the `hub.pinned` snapshot line that first adds channel X to the ledger's `revoked_channels`, the counting decisions whose `signer` is `hub:<hub_id>/X` in generations that are still open (not consumed) are voided exactly as `void_device` does for a `d_` key (`void_signer`; settled tickets list them and wait, as for devices). Deterministic on replay because the pin is a log line. An op-cert revocation, a rotation and a snapshot that drops a user or lowers a role void nothing (rotation and role changes, like `role.changed`). Vector `channel_revoked_voids_open_decisions_only`. |
 | claims | a hub actor may append `claim.released` (`released`) under the same rule as a person: ticket owner (canonical compare), owner or maintainer by `role_of`. It never takes a claim (agent-only). |
 | `questions` | `may_answer` compares canonical ids and uses `role_of` (L2P4-C2: today it compares the raw id). |
 | `lifecycle`, `workspace`, `engine` | every `ws.members[e["actor"]["id"]]` (L2P4-C2 list: `engine.py` ~192, `lifecycle.py` ~48/171, `workspace.py` ~43/173/320) goes through `signer`/`role_of`. A hub actor never signs a workspace-log type outside §8.5 (`addon.disabled`, `addon.purged`), so the member, device, grant, settings and policy paths refuse it at the custodial table already. |
-| `policies.sign_methods` (B6) | not judged for `auth: "hub"` in V3: the owner's signed `hub.joined` is the opt-in and `hub.left` the opt-out. Open point for the owner (§15.11). |
+| `policies.sign_methods` (B6, C3b-6) | `sign_methods` gains the value `hub`, and `AUTH_METHOD["hub"] = "hub"`: when the workspace sets `sign_methods` without `hub`, every `auth: "hub"` event is refused (`sign.method`), whatever its factor. Not set: every way is allowed, as before. So an owner policy "decisions need a device key" (`[terminal]`) is never bypassed by a `password+totp` channel. |
+| D66 factor floor (L2-C3-3 carry-over) | one model function `policies.factor_floor(ws, t, type)` gives the `min_factor` for a hub event from the effective gate policy's optional `factor` key (D66: `secure-enclave` → only `passkey`; `secure-enclave-unlocked` → `se-unlocked` or `passkey`; absent → `password+totp`, the weakest, returned by the function). The host passes its result to `verify_custodial` (the parameter is required there since C3 round 2) and **never a literal**; replay applies the same function at the line's position (`hub.denied` `factor_too_weak`). The `factor` key is additive and owner-set like every policy field. |
 | views, `orch show`, `orch log` | the actor renders as the alias's member name when aliased, else `hub user <first 8 hex>`, then `via hub · <factor>` (`phone, unlocked` for `se-unlocked`, `browser, password + code` for `password+totp`, `passkey`). Technical details (folded): hub id, channel id, snapshot version, op cert id. The signed certificate blobs are never printed. `readmodel` adds `via` to the actor keys and `channel_factor`, `hub_id` to the event row; `hub.pinned` lines render as "hub key/roles updated" in the workspace log view, with the kind and version. |
 | dashboard | the same strings as the views, from `readmodel`; a hub-signed decision shows its short hash next to the decision (L2P4-2c). Display only: no new action, no signing path. |
 
@@ -2911,7 +2927,7 @@ Under the store lock, in this order (the reply codes are the contract's, §14):
    a dedup key (not persisted, SHORTCUT L7).
 3. `verify_hub_event` against the host's current `HubState` (C3, contract §8.3 steps 1–8) as a fast pre-check. On
    `unknown_snapshot` the host runs one `snapshot_get`, pins, and retries once; still unknown → `unknown_snapshot`.
-4. Pin the ledger lines the event needs (§15.2).
+4. Build the ledger pins the event needs (§15.2); they are written only together with the event in step 7.
 5. Selective mode only: the item check (§15.7) → `not_granted`, `view_fork`.
 6. The model's admit (`Ctx(admit=True)`) at the new position: §15.3 and the type's F1 rules. **This is the host-side
    `check_built`:** a decision's `hash` must equal the host's own current gate hash (`gate.stale`), a
@@ -2919,7 +2935,7 @@ Under the store lock, in this order (the reply codes are the contract's, §14):
    `source_sha` the current ones, `based_on` a head of this log, `roster_v` the current version. The schema makes
    `hash` required on the four decision types (L2P4-2a), so a decision without it is `malformed`. An event the hub
    built from a stale or false view (§10.7) is refused here.
-7. Append with `host_sig`; reply `{}`.
+7. Append the pins and the event as one commit (§15.2), each with `host_sig`; reply `{}`.
 
 Model refusal → reply code: `validation.*`, `chain.broken`, `hub.invalid` → `malformed` (or the detail when it is a
 §14 code); `hub.cert_invalid`, `hub.denied`, `hub.unknown_snapshot` → their detail; `hub.foreign_user` →
@@ -2955,9 +2971,17 @@ the log (workers, owners, `people`, visibility, question `to`, decisions) and ma
   admitted custodial event → that event's `hub_id`; (2) a `u_` reference in a person event's payload (`people.changed`,
   `visibility.changed`, `question.asked` `to`) → the hub joined at that position (refused with `hub.invalid` when none
   is); (3) an alias in `hub.joined` → that `hub_id`. Never re-pointed.
+- **`hub.joined` refuses an id of another hub (C3b-5).** An alias `{person_id, user_id}` in a new `hub.joined` for hub
+  B is refused (`hub.invalid`, detail `foreign_user`) when `user_hub[user_id]` is another hub A, **unless** A's alias
+  book maps `user_id` to the **same** person. An id that first appeared unaliased under A never qualifies. Otherwise
+  the C4 union would let B's alias rewrite A-era history (`canonical(u_y)` turning an A worker into B's `p_bob`:
+  L2P4-C1b through the join). Vectors `join_aliasing_an_id_first_recorded_unaliased_under_another_hub` (refused),
+  `join_aliasing_same_person_on_both_hubs` (ok).
 - **`identity.hub_actor(ws, hub_id, user_id)`** refuses (`hub.foreign_user`) when `user_hub[user_id]` is another hub
   **or** another hub's alias book names `user_id` (today's L2P4-C1 rule), unless `hub_id`'s own alias book names it
-  for the same person (C4: one person may reuse their id on both hubs). So hub B can neither mint an id hub A aliased
+  for the same person **and** the other hub's book maps it to that same person (an alias on both hubs to the same
+  `p_`; C4: one person may reuse their id on both hubs). An id first recorded unaliased under another hub never
+  qualifies. So hub B can neither mint an id hub A aliased
   nor an id hub A's user only ever used unaliased (owner, worker, `people` entry). The same rule refuses a payload `u_`
   reference that belongs to another hub (case 2 above), so the owner cannot hand an A-era id to a B user either.
 - **Consumers compare bare canonical ids, unchanged.** Because an id can be recorded under one hub only, equal bare
@@ -2993,22 +3017,24 @@ per shared item (`ShareState.sent[...].item_hash`, C6-5). In full mode `item_has
 1. `item_hash` is the **current** `item_hash` of a live (sent, not revoked) item in `ShareState` → else
    `not_granted`. An item updated since (a higher `item_version`) has a new hash, so a decision on the old version is
    refused here, which is the selective twin of the stale-hash rule.
-2. That item's `chain.log` is the event's log (a ticket item for a ticket event; no selective workspace-log types) →
-   else `not_granted`.
+2. That item's `chain.log` is the event's log, and the **type matches what the item showed** (C3b-3, hub contract
+   §8.6): the type is one of `SELECTIVE_TYPES` (`question.answered`, `gate.approved`, `gate.changes_requested`,
+   `verdict.given`; anything else `not_custodial`); the item carries an `f1` block; `question.answered` needs
+   `f1.questions[<question>]` and a gate decision `f1.gates[<gate>]` (`verify` for `verdict.given`) → else
+   `not_granted`. So a question item's hash never admits a gate approval. In V3 a selective `question.answered`
+   carries `text` only (no `option`; options are not shared).
 3. `chain.head` is the head of `chain.log` at `chain.seq` in the host's own log → else `view_fork`.
 
 This check is **not replayed**: shares are host state (C6), not log. What replay checks is the grant (the alias, in
 the log) and every F1 rule; the `item_hash` stays in the line as evidence of what the person was shown. A host is
 trusted for its own workspace (D29), so admission is the right place.
 
-**Gap for the hub contract (needs the hub contract author, then Opus).** A selective hub holds no `WK_e` view
-(§10.7), and `share.item` carries only `chain {log, seq, head}` and display content. The hub can take `based_on`
-from `chain.head`, but it has no `roster_v`, and for decisions no `gate_gen`, gate `hash`, `policy_hash` or
-`source_sha`, so it **cannot build** a selective custodial event that §15.3 step 6 accepts. Proposed additive change
-to §10.2b (a new exact key in `share.item`, so the `share_item_*` vectors change): `f1: {roster_v, gates: {<gate>:
-{gen, hash, policy_hash, source_sha?}}?, questions: {<Q>: {hash}}?}`, filled by the host at share time from the same
-facts as the content. Until that lands, core implements the §15.7 field and checks, and selective custodial events are
-refused by F1 as stale; C3's `wrong_mode` refusal for selective `event_deliver` is lifted only with it.
+**Building them (hub contract addendum, orch-hub `v3-p4-addendum`).** The hub builds a selective event from one live
+shared item with the additive `f1` block of §10.2b (`roster_v`, `gates`, `questions`), signed inside `share.item` and
+so covered by `item_hash`: the proof binds exactly the values the person was shown. The host puts the item again with
+a higher `item_version` whenever an `f1` value changes; a decision on the old values is refused by step 1 above or by
+the F1 rules (`event_changed` in the reply). Core's C6 builder adds `f1` (task 6 below). C3's `wrong_mode` refusal for
+selective `event_deliver` is lifted with tasks 5–6.
 
 ### 15.8 D79: the standalone workspace
 
@@ -3052,11 +3078,14 @@ regenerated and declared per op (orch-core rule); `event_deliver` is not a CLI o
 
 ### 15.11 Open points
 
-- **Owner:** may a workspace's `sign_methods` (B6) also turn hub signing off without leaving the hub? Proposed: not in
-  V3 (`hub.left` is the switch); a `hub` method value later.
-- **Opus:** the full-mode aliased role (the lower of the two, §15.4); no voiding of past decisions on op or channel
-  revocation (§15.4); admission-only item check (§15.7).
-- **Hub contract:** `foreign_user` in §14 and the §9.1 sentence (§15.6); the retryable ack codes (§15.5); the `f1` block of `share.item` (§15.7).
+- **Owner:** the default when `sign_methods` is set without `hub` is "refuse hub events" (fail closed, §15.4); the
+  owner adds `hub` to allow them. The D66 `factor` key on gate policies is owner-set; until set, the floor is
+  `password+totp` (B6 `sign_methods` is then the owner's switch).
+- **Opus pass on #1031 (l2-c14): PASS-after-fixes**; C3b-1 to C3b-6 are folded in above (roles, channel voiding, ledger
+  bound, join refusal, type and item, `sign_methods`). Settled: admission-only item check; dedup before verification.
+- **Hub contract** (addendum `v3-p4-addendum`): `foreign_user` (§9.1, §14), the `event_deliver` ack table (§8.7; the
+  same as §15.5), the `share.item` `f1` block and the selective build (§8.6, §10.2b), `ticket.updated` `base_rev` in
+  the object form `{path: hash}` keyed exactly by `set` (§8.5 event side; core drops C3's string branch in task 5).
 
 ### 15.12 Vectors
 
@@ -3066,37 +3095,55 @@ vector keys, checked by `tests/hub/test_c3b_vectors.py`:
 - `lines`: the exact bytes of a `hub.pinned` snapshot line and of a custodial `gate.approved` line (`line_hex`,
   `host_signed_hex` under `wsk_a`, `head`). The custodial line is the hub vectors' event plus `seq`, `at`, `prev`,
   `ws_seq`, `host_sig` only, and its two hub signatures still verify over the stored line.
-- `replay`: 23 cases, each a sequence of ledger pins and custodial events with `at` and the expected outcome:
-  `valid_full_mode`; `later_revoked_op_cert_still_replays`; `snapshot_never_pinned_is_refused`;
-  `no_snapshot_pinned_at_all`; `no_card_pinned`; `older_event_obeys_newest_pinned_revocations`;
-  `channel_revocation_is_permanent_in_the_ledger`; `role_removed_later`; `op_rotation_old_certs_stop_new_ones_work`;
+- `replay`: 29 cases, each a sequence of steps (`pin`, `custodial`, `deliver` = pins and event as one commit,
+  `join`, `consume`) with `at` and the expected outcome, plus where it matters the canonical `actor`, the effective
+  `role`, the decisions a pin `voids` and the `ledger_lines` count: `valid_full_mode`;
+  `later_revoked_op_cert_still_replays`; `snapshot_never_pinned_is_refused`; `no_snapshot_pinned_at_all`;
+  `no_card_pinned`; `older_event_obeys_newest_pinned_revocations`; `channel_revocation_is_permanent_in_the_ledger`;
+  `role_removed_later`; `op_rotation_old_certs_stop_new_ones_work`;
   `certificate_time_is_the_event_at_not_the_reader_clock`; `ledger_is_monotone_and_bounded`;
   `snapshot_before_any_card`; `card_under_another_root`; `standalone_workspace_refuses_everything_hub`;
-  `duplicate_delivery`; `user_id_aliased_under_another_hub`;
-  `unaliased_user_id_first_recorded_under_another_hub`; `user_id_first_recorded_under_this_hub`; `aliased_under_this_hub_resolves_to_the_person`;
-  `selective_unaliased_user_is_not_granted`; `full_mode_refuses_an_item_hash`; and, as strict xfails until C3b,
-  `selective_aliased_member_with_live_item`, `selective_item_not_shared`.
+  `duplicate_delivery`; `user_id_aliased_under_another_hub`; `unaliased_user_id_first_recorded_under_another_hub`;
+  `user_id_first_recorded_under_this_hub`; `aliased_member_removed_locally_has_no_role`;
+  `aliased_admin_local_member_is_member`; `channel_revoked_voids_open_decisions_only`;
+  `refused_events_leave_no_pins` (100 refused deliveries, 0 new lines);
+  `join_aliasing_an_id_first_recorded_unaliased_under_another_hub`; `join_aliasing_same_person_on_both_hubs`;
+  `aliased_under_this_hub_resolves_to_the_person`; `selective_unaliased_user_is_not_granted`;
+  `full_mode_refuses_an_item_hash`; and, as strict xfails until task 6, `selective_aliased_member_with_live_item`,
+  `selective_item_not_shared`.
 - The test runs every case through a test-side reference ledger built only from C3's verifiers. The implementation
   task adds a second runner that drives the same cases through the model's replay (`Store` over a built log), so the
   model and the reference must agree.
 
 ### 15.13 Implementation tasks (Sonnet, in this order; T0 after each)
 
-1. **Schemas** (`schema/schemas/common.json`, `event.json` and the `event.<type>.json` of every §8.5 type, plus
-   `people.changed`, `visibility.changed`, `question.asked` for `personRef`; new `event.hub.pinned.json`): §15.1.
-   T0 `uv run pytest tests/schema -x -q` plus a new `tests/model/test_hub_actor_schema.py`.
-2. **Ledger** (new `model/hubledger.py`; `model/workspace.py` `hub_joined` carries `ledger`; `model/verifier.py`
-   three methods; `model/testing.py` fake): §15.2. T0 `tests/model/test_hubledger.py`.
-3. **Replay of custodial lines** (`model/engine.py` `_chain_check`/line check, `model/authz.py` `authorize_hub`,
-   `model/identity.py` `signer`, `role_of`, `hub_actor` → `hub.foreign_user` with `user_hub`; `model/codes.py` four codes): §15.3,
-   §15.6, §15.10. T0 `tests/hub/test_c3b_vectors.py` with the model runner, `tests/model -k "alias or canonical or hub"`.
-4. **Consumers** (`gates.py`, `generations.py`, `policies.py`, `questions.py`, `lifecycle.py`, `workspace.py`,
-   `claims.py`): §15.4, L2P4-C2. T0 `tests/model -k "gate or question or claim"` plus a D59 test: worker `u_x`
-   aliased to `p_x`, `p_x` approves → `gate.not_eligible`.
-5. **Host verifier and admission** (`hubclient/custodial.py` `item_hash` in `HUB_FIELDS` for selective,
-   `accept_event_deliver` dedup + ledger pins + admit + reply mapping; a host `Verifier` implementation over
-   `hubclient`; store entry for a hub event under the lock): §15.5, §15.7. T0 `tests/hub -k "custodial or c3b"`.
-6. **Rendering** (`host/readmodel.py`, `orch show`/`log`, dashboard actor label): §15.4 views row. T0 the readmodel
-   tests and the CLI goldens (new codes).
+Each task gets a new test for its behaviour; the model runner of `tests/hub/test_c3b_vectors.py` (a second runner that
+drives the same `replay` cases through a built log and `Store` replay) is added in task 3 and must agree with the
+reference from then on.
 
-Tasks 1–3 are one PR (the format), 4–6 a second; both need the Opus security pass (custody, authority, replay).
+1. **Schemas** (`schema/schemas/common.json`: `auth` + `hub`, `hubUserId`, `personRef`, `sign_methods` + `hub`;
+   `event.json` and `event.<type>.json` of every §8.5 type, `people.changed`, `visibility.changed`, `question.asked`;
+   new `event.hub.pinned.json`; `ticket.updated` `base_rev` object form only for hub events): §15.1.
+   T0 `uv run pytest tests/schema -x -q` + new `tests/model/test_hub_actor_schema.py`.
+2. **Ledger** (new `model/hubledger.py`: rules 1–5, caps; `model/workspace.py` `hub_joined` carries `ledger` and
+   `user_hub`, refuses a foreign id (C3b-5); `model/verifier.py` three methods, fail-closed default; `model/testing.py`
+   fake): §15.2, §15.6. T0 new `tests/model/test_hubledger.py`.
+3. **Replay of custodial lines** (`model/engine.py` line check; `model/authz.py` `authorize_hub`; `model/identity.py`
+   `signer`, `role_of`, `hub_actor` with `user_hub` → `hub.foreign_user`; `model/codes.py` four codes; CLI goldens):
+   §15.3, §15.6, §15.10. T0 `tests/hub/test_c3b_vectors.py` (both runners) + `tests/model -k "alias or canonical or hub"`.
+   Tasks 1–3 = PR A (the format), Opus pass.
+4. **Consumers** (`gates.py` signer column; `generations.py` `void_signer` at the channel-revoking pin; `policies.py`
+   `role_of`, `factor_floor`, `sign_methods` `hub`; `questions.py`, `lifecycle.py`, `workspace.py`, `claims.py`,
+   `engine.py` member lookups, L2P4-C2): §15.4. T0 `tests/model -k "gate or question or claim or generation"` + a D59
+   test (worker `u_x` aliased to `p_x`, `p_x` approves → `gate.not_eligible`).
+5. **Host admission** (`hubclient/custodial.py`: `accept_event_deliver` = dedup, pre-check, scratch admit of pins +
+   event, one commit, reply mapping and ack classes; `min_factor` from `policies.factor_floor`, never a literal, with a
+   test that the wiring passes the policy value; drop C3's `base_rev` string branch; a host `Verifier` over
+   `hubclient`; a store entry for the batch under the lock): §15.2, §15.5. T0 `tests/hub -k "custodial or c3b"`.
+6. **Selective** (C6 share builder adds the `f1` block and re-puts on change; `item_hash` in `HUB_FIELDS` for
+   selective; the §15.7 admission check incl. type ↔ item; lift `wrong_mode`): §15.7. T0 `tests/hub -k "share or
+   c3b"`, flips the two strict xfails.
+7. **Rendering** (`host/readmodel.py`, `orch show`/`log`, dashboard actor label, `hub.pinned` row): §15.4 views row.
+   T0 the readmodel tests + CLI goldens.
+
+Tasks 4–7 = PR B; tasks 5 and 6 need the Opus security pass (custody, authority).

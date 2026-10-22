@@ -64,7 +64,9 @@ class Forwarded:
     """A publish request as the fake hub forwarded it to (a fake) orch-publish."""
 
     workspace_id: str
-    request: Json  # method, host, target, headers (with Orch-Hub-Signature added), body_hex, ...
+    request: (
+        Json  # method, host, target, headers (with Orch-Hub and Orch-Hub-Signature added by the hub), body_hex, ...
+    )
     at_ms: int
 
 
@@ -344,13 +346,21 @@ class FakeHub:
         h = {str(k).lower(): v for k, v in req["headers"].items()}
         if len(h) != len(req["headers"]):  # names are case-insensitively unique
             raise H.Refused("malformed")
+        if not {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature"} <= set(h) or set(h) - {
+            "orch-workspace",
+            "orch-ts",
+            "orch-nonce",
+            "orch-signature",
+            "orch-owner-approval",
+            "content-type",
+        }:  # the host's set only (11.1): Orch-Hub and Orch-Hub-Signature are the hub's alone
+            raise H.Refused("malformed")
         try:
             wsid = H.unhex(h["orch-workspace"], 16)
             if type(h["orch-ts"]) is not str or not H._TS.fullmatch(h["orch-ts"]):
                 raise H.CanonError("ts")
             ts, nonce = int(h["orch-ts"]), H.unhex(h["orch-nonce"], 16)
-            wsig, hub = unb64u(h["orch-signature"], 64), h["orch-hub"]
-            H.unhex(hub, 16)
+            wsig, hub = unb64u(h["orch-signature"], 64), self.hub_id
             approval = H.parse(unb64u(h["orch-owner-approval"])) if "orch-owner-approval" in h else None
             payload = bytes.fromhex(req["body_hex"])
             if not all(x.isascii() for x in (req["method"], req["host"], req["target"])):
@@ -359,8 +369,6 @@ class FakeHub:
             raise H.Refused("malformed") from None
         if wsid.hex() != ws_id:
             raise H.Refused("other_workspace")
-        if hub != self.hub_id:
-            raise H.Refused("other_hub")
         if abs(self.now_ms - ts) > H.PUBLISH_WINDOW_MS:
             raise H.Refused("stale_timestamp")
         pbytes = H.hub_path_signed_bytes(
@@ -370,7 +378,7 @@ class FakeHub:
             raise H.Refused("bad_signature")
         if ws.binding["status"] != "bound":
             raise H.Refused("not_bound")
-        headers = {k: v for k, v in req["headers"].items() if k.lower() != "orch-hub-signature"}
+        headers = dict(req["headers"]) | {"Orch-Hub": hub}
         headers["Orch-Hub-Signature"] = b64u(S.sign(self._hk_op, H.hub_publish_bytes(hub, pbytes)))
         fwd = Forwarded(ws_id, {**req, "headers": headers}, self.now_ms)
         self.forwarded.append(fwd)

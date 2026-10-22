@@ -6,8 +6,12 @@ orch-publish checkout the forwarded request is also run through its real verifie
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -81,15 +85,16 @@ def _verify(sp, body, approval=None):
     h = sp.headers
     signed = hp.hub_path_signed_bytes(
         bytes.fromhex(h["Orch-Workspace"]), int(h["Orch-Ts"]), bytes.fromhex(h["Orch-Nonce"]), sp.method, sp.host,
-        sp.target, body, h["Orch-Hub"], approval,
+        sp.target, body, HUB, approval,
     )  # fmt: skip
     return S.verify(pub("wsk_a"), unb64u(h["Orch-Signature"], 64), signed)
 
 
 def test_the_signer_signs_the_hub_path_bytes_with_the_hub_header_and_no_approval():
     sp = _signer().request("PUT", TARGET, b"{}")
-    assert sp.host == "pub.dev.severin.io" and sp.headers["Orch-Hub"] == HUB
-    assert "Orch-Owner-Approval" not in sp.headers and "Orch-Hub-Signature" not in sp.headers
+    assert sp.host == "pub.dev.severin.io"
+    # contract 11.1: the host sends exactly these four (+ the approval for public access); the hub adds its own two
+    assert {k.lower() for k in sp.headers} == {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature"}
     assert _verify(sp, b"{}")
     assert not _verify(sp, b"{ }")  # the body is covered
 
@@ -178,7 +183,7 @@ def test_a_request_goes_through_publish_out_and_the_reply_comes_back(joined_link
     r = fwd.request
     assert (r["method"], r["host"], r["target"]) == ("PUT", "pub.dev.severin.io", TARGET)
     assert bytes.fromhex(r["body_hex"]) == b'{"a":1}'
-    assert r["headers"]["Orch-Hub"] == HUB and r["headers"]["Orch-Hub-Signature"]
+    assert r["headers"]["Orch-Hub"] == HUB and r["headers"]["Orch-Hub-Signature"]  # added by the hub
     assert [c[1] for c in hub.calls if c[1] == "publish_out"] == ["publish_out"]
 
 
@@ -256,3 +261,71 @@ def test_a_malformed_reply_is_refused(joined_link):
     t = hp.HubPublishTransport(type("L", (), {"call": lambda self, op, body: {"status": "200", "body_hex": ""}})())
     with pytest.raises(HubRefused):
         t("https", "h", "GET", TARGET, {}, b"", 1.0)
+
+
+# -- cross-repo: the request as the REAL hub and the REAL orch-publish take it (#981) ------------------------------
+
+HUB_SRC = os.environ.get("ORCH_HUB_SRC", "")
+needs_hub = pytest.mark.skipif(
+    not (HUB_SRC and (Path(HUB_SRC) / "src" / "orch_hub" / "publish").is_dir() and shutil.which("uv")),
+    reason="ORCH_HUB_SRC not set to an orch-hub checkout with orch_hub.publish",
+)
+
+
+def _through_the_hub(request):
+    out = subprocess.run(
+        ["uv", "run", "--project", HUB_SRC, "python", str(Path(__file__).with_name("hub_forward_proc.py")), HUB_SRC],
+        input=json.dumps({"request": request}), capture_output=True, text=True, timeout=120, check=True,
+    )  # fmt: skip
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def _host_request(hub, link):
+    """What the host sent over the link, built by the real signer and transport (the fake hub recorded it with the
+    hub's two headers added; they come off again)."""
+    _client(hub, link).request("PUT", TARGET, b'{"a":1}')
+    sent = hub.forwarded[-1].request
+    return sent | {"headers": {k: v for k, v in sent["headers"].items() if k not in ("Orch-Hub", "Orch-Hub-Signature")}}
+
+
+@needs_hub
+def test_the_real_hub_takes_the_host_request_and_the_real_publish_takes_the_forward(joined_link):
+    hub, link = joined_link
+    request = _host_request(hub, link)
+    assert {k.lower() for k in request["headers"]} == {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature"}
+    got = _through_the_hub(request)
+    assert "forwarded" in got, got  # the hub's own validator accepts it (this refused it with `malformed` in #981)
+    fwd = got["forwarded"]
+    assert fwd["headers"]["Orch-Hub"] == HUB and fwd["headers"]["Orch-Hub-Signature"]
+    src = os.environ.get("ORCH_PUBLISH_SRC")
+    if not src:
+        return
+    sys.path.insert(0, src)
+    try:
+        from pubsrv import hub_path as hpath
+    finally:
+        sys.path.remove(src)
+    wsk = b64u(pub("wsk_a"))
+    st = hpath.State(
+        {WS: {"wsk_pub": wsk, "owner_person_id": V["ids"]["person_alice"]}},
+        {WS: {"status": "bound", "binding": {"wsk_pub": wsk, "hub_id": HUB, "hk_root_pub": b64u(pub("hk_root"))}}},
+        lambda hub_hex: {"hk_root_pub": pub("hk_root"), "hk_op_pub": pub("hk_op")},
+    )  # fmt: skip
+
+    class Nonces:
+        def record(self, ws, nonce, now):
+            return True
+
+    req = {
+        "method": fwd["method"], "host": fwd["host"], "target": fwd["target"], "body": bytes.fromhex(fwd["body_hex"]),
+        "headers": {k.lower(): v for k, v in fwd["headers"].items()},
+    }  # fmt: skip
+    assert hpath.check_hub_publish(req, st, Nonces(), hub.now_ms, True)["workspace"] == WS
+
+
+@needs_hub
+def test_the_real_hub_refuses_a_hub_header_from_the_host(joined_link):
+    hub, link = joined_link
+    request = _host_request(hub, link)
+    request["headers"]["Orch-Hub"] = HUB  # the shape #981 sent
+    assert _through_the_hub(request) == {"refused": "malformed"}

@@ -198,8 +198,7 @@ class HubPublishSigner:
             "Orch-Ts": str(ts),
             "Orch-Nonce": nonce.hex(),
             "Orch-Signature": b64u(sig),
-            "Orch-Hub": self.hub_id,
-        }
+        }  # exactly the host's set (contract 11.1): Orch-Hub and Orch-Hub-Signature are the hub's alone
         if approval is not None:
             headers["Orch-Owner-Approval"] = b64u(cj(dict(approval)))
         return SignedPublish(method, self.ctx.host, target, headers)

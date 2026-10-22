@@ -32,7 +32,7 @@ class HubServer(FakeServer):
 
     def _authentic(self, headers, method, netloc, target, body):
         h = {k.lower(): v for k, v in headers.items()}
-        if "orch-hub" not in h or "orch-hub-signature" not in h or "orch-owner-approval" in h:
+        if "orch-hub" not in h or "orch-hub-signature" not in h or "orch-owner-approval" in h:  # the hub added two
             return False
         signed = H.hub_path_signed_bytes(
             bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), method, netloc,
@@ -69,13 +69,15 @@ class PublishHub:
 
     def _forward(self, req):
         h = {k.lower(): v for k, v in req["headers"].items()}
+        assert set(h) == {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature"}, "the host's header set (11.1)"
+        h["orch-hub"] = HUB_ID
         wsk = self.server.wsk_pub
         signed = H.hub_path_signed_bytes(
             bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), req["method"],
             req["host"], req["target"], bytes.fromhex(req["body_hex"]), h["orch-hub"], None,
         )  # fmt: skip
         assert S.verify(wsk, crypto.unb64u(h["orch-signature"], 64), signed), "the host's signature must verify"
-        headers = {k: v for k, v in req["headers"].items() if k.lower() != "orch-hub-signature"}
+        headers = dict(req["headers"]) | {"Orch-Hub": HUB_ID}
         headers["Orch-Hub-Signature"] = crypto.b64u(
             S.sign(private_key("hk_op"), H.hub_publish_bytes(h["orch-hub"], signed))
         )

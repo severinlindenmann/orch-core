@@ -3,9 +3,14 @@ current. Full mode only, and only after the join is complete (bound, ``wk_seal``
 
 One daemon thread per workspace. It runs a pass (``orch.hubclient.logsync.sync_logs``) when the workspace commits an
 event (``wake``, debounced so a burst is one pass), once when it starts (a join or connect just finished, or the host
-opened a workspace that is bound in full mode) and every ``IDLE_S`` as a cheap local check. A pass opens its own link
-and closes it; nothing is sent when the local logs equal the hub's acknowledged position. The position is kept in
-``hub/logsync.json`` (0600, per hub and binding) and saved after every accepted page.
+opened a workspace that is bound in full mode) and every ``IDLE_S`` as a cheap local check. **One live link per
+workspace** (10.7 rule 6): the pass sends over the link the ws->ws runtime keeps
+(``peerops.shared_link``), never its own;
+the hub would replace the older link. Each time that link is a different one from the last pass (first pass, redial),
+the pass starts with the resume probe (10.7 rule 4). Nothing else is sent when the local logs equal the hub's
+acknowledged position. The position is kept in ``hub/logsync.json`` (0600, per hub and binding) and saved after every
+accepted page. A log with a line bigger than a page is reported (``status()``, ``orch hub status``) and not synced
+further.
 
 It reads the store only through its read-only views (``events_after``, ``head_at``, ``log_seq``, ``log_marks``), never
 appends, and never touches ``WK_e``: the key store hands out ``K_view(epoch)`` only (:meth:`hubops._Epochs.view_key`).
@@ -34,7 +39,8 @@ STOP_WAIT_S = 5.0  # how long a leave/switch/unbind waits for a pass that is on 
 RESEND_LIMIT = 6  # hub-forced resends from seq 1 per hour (L2-C14-3)
 RESEND_WINDOW_MS = 3_600_000
 _MU = threading.Lock()
-#: the seam for the link: ``(service) -> object with call(op, body) and close()``; ``None``: the ws->ws path's TLS link
+#: the seam for the link: ``(service) -> the workspace's one current link (an object with call(op, body))``, never
+#: closed here; ``None``: the ws->ws runtime's shared link (``peerops.shared_link``)
 OPEN_LINK: Any = None
 _RUNTIMES: dict[tuple[str, str], _Runtime] = {}
 
@@ -46,6 +52,8 @@ class _Runtime:
         self.thread: threading.Thread | None = None
         self.position: Any = None
         self.last_error: str | None = None
+        self.reported: dict[str, int] = {}  # stuck logs already logged
+        self.link: Any = None  # the link the last pass used: a different one is a link open, which starts with a probe
 
 
 def _key(service: WorkspaceService) -> tuple[str, str]:
@@ -82,20 +90,26 @@ def _eligible(state: Any) -> bool:
     )
 
 
-def _model_joined(service: WorkspaceService, hub_id: str, binding_seq: int) -> bool:
+def _model_check(service: WorkspaceService, hub_id: str, binding_seq: int) -> bool | None:
     """Does the signed log still say joined, full, to this hub and binding? A ``hub.left`` that reached the log by
-    another path (a replay, another host process) ends sending even while hub.json still says bound. Any doubt is no."""
+    another path (a replay, another host process) ends sending even while hub.json still says bound. ``None``: it could
+    not be read just now (a transient error; the caller retries, it does not retire)."""
     try:
         service.store.refresh()
         m = dict(service.store.state.workspace.hub)
     except Exception:  # noqa: BLE001
-        return False
+        return None
     return (m.get("status"), m.get("hub_id"), m.get("binding_seq"), m.get("mode")) == (
         "joined",
         hub_id,
         binding_seq,
         "full",
     )
+
+
+def _model_joined(service: WorkspaceService, hub_id: str, binding_seq: int) -> bool:
+    """:func:`_model_check` with any doubt as no (used where a start needs a definite yes)."""
+    return _model_check(service, hub_id, binding_seq) is True
 
 
 def _path(service: WorkspaceService) -> Path:
@@ -192,7 +206,7 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     if rt is None:
         return None
     return {"running": not rt.stop.is_set(), "logs": {k: s for k, (s, _h) in rt.position.logs.items()},
-            "last_error": rt.last_error}  # fmt: skip
+            "stuck": dict(rt.position.stuck), "last_error": rt.last_error}  # fmt: skip
 
 
 def _loop(service: WorkspaceService, rt: _Runtime) -> None:
@@ -231,54 +245,84 @@ def _pass(service: WorkspaceService, rt: _Runtime) -> None:
     from orch.hubclient import HubRefused, pending, sync_logs
 
     from . import hubops, peerops
+    from .errors import HostError
 
     state = hubops._load_state(service)  # noqa: SLF001 - every pass: a leave or a rebinding ends this runtime
-    if (
-        not _eligible(state)
-        or (state.hub_id, state.binding_seq) != (rt.hub_id, rt.binding_seq)
-        or not _model_joined(service, rt.hub_id, rt.binding_seq)
-    ):
+    joined = _model_check(service, rt.hub_id, rt.binding_seq)
+    if not _eligible(state) or (state.hub_id, state.binding_seq) != (rt.hub_id, rt.binding_seq) or joined is False:
         raise HubRefused("not_joined")
+    if joined is None:
+        raise HubRefused("live_check_failed")  # the log could not be read just now: try again, do not retire
     store = service.store
     epochs = hubops.epochs_for(service)
     if store is None or epochs is None:
         raise HubRefused("no_epoch")
     source = StoreSource(store)
-    if not pending(source, rt.position):
+    owed = pending(source, rt.position)
+    # One live link per workspace: peek at the shared one without dialing. A different link from the last pass (or none
+    # yet) is a link open: the pass starts with the resume probe, even with nothing to send.
+    cur = OPEN_LINK(service) if OPEN_LINK is not None else peerops.shared_link(service, dial=False)
+    if not owed and rt.link is not None and (cur is None or cur is rt.link):
         return
     epoch = int(state.sealed["epoch"])
 
     def live() -> bool:
         """Before every page, under the hub-state lock on freshly read state: still full, joined, the same hub and
-        binding, the same sealed epoch, and this runtime not stopped (L2-C14-1)."""
+        binding, the same sealed epoch, and this runtime not stopped (L2-C14-1). A definite "no" is ``False`` (the
+        sender ends); an epoch that moved or a read that failed ends only this pass (retryable, core#1034)."""
         if rt.stop.is_set():
             return False
-        with hubops._MU:  # noqa: SLF001
-            cur = hubops._load_state(service)  # noqa: SLF001
-        return (
-            _eligible(cur)
-            and (cur.hub_id, cur.binding_seq) == (rt.hub_id, rt.binding_seq)
-            and int(cur.sealed["epoch"]) == epoch
-            and _model_joined(service, rt.hub_id, rt.binding_seq)
-            and not rt.stop.is_set()
-        )
-
-    def allow_resend() -> bool:
-        now = int(service.clock() * 1000)
-        recent = [t for t in rt.position.forced if now - t < RESEND_WINDOW_MS]
-        if len(recent) >= RESEND_LIMIT:
-            rt.position.forced = recent
+        try:
+            with hubops._MU:  # noqa: SLF001
+                cur = hubops._load_state(service)  # noqa: SLF001
+        except Exception:  # noqa: BLE001 - hub.json could not be read just now
+            raise HubRefused("live_check_failed") from None
+        if not _eligible(cur) or (cur.hub_id, cur.binding_seq) != (rt.hub_id, rt.binding_seq):
             return False
-        rt.position.forced = [*recent, now]
+        model = _model_check(service, rt.hub_id, rt.binding_seq)
+        if model is None:
+            raise HubRefused("live_check_failed")
+        if not model or rt.stop.is_set():
+            return False
+        if int(cur.sealed["epoch"]) != epoch:
+            raise HubRefused("epoch_changed")  # re-sealed mid-pass: stop here, the next pass uses the new epoch
+        return True
+
+    def allow_resend(log: str) -> bool:
+        """At most ``RESEND_LIMIT`` hub-forced resends per hour PER LOG. Times in the future (the clock stepped back)
+        do not count as recent."""
+        now = int(service.clock() * 1000)
+        mine = rt.position.forced.get(log, [])
+        recent = [t for t in mine if 0 <= now - t < RESEND_WINDOW_MS]
+        if len(recent) >= RESEND_LIMIT:
+            rt.position.forced[log] = recent
+            return False
+        rt.position.forced[log] = [*recent, now]
         _save_position(service, rt.position)
         return True
 
-    link = (OPEN_LINK or peerops._open_link)(service)  # noqa: SLF001 - the same dial as the ws->ws link
     try:
-        sync_logs(
+        link = cur if OPEN_LINK is not None else peerops.shared_link(service)
+    except HostError as exc:
+        if exc.code == "hub.not_joined":
+            raise HubRefused("not_joined") from None
+        raise
+    probe = link is not rt.link
+    try:
+        report = sync_logs(
             state=state, workspace_id=service.workspace_id, call=link.call, source=source,
             view_key=epochs.view_key, position=rt.position, save=lambda p: _save_position(service, p),
-            live=live, allow_resend=allow_resend,
+            live=live, allow_resend=allow_resend, probe=probe,
         )  # fmt: skip
-    finally:
-        link.close()
+    except BaseException:
+        if OPEN_LINK is None and not getattr(link, "is_open", True):
+            peerops.drop_shared_link(service, link)  # the transport failed: the next pass redials and probes
+        raise
+    rt.link = link
+    for log, seq in report.stuck.items():
+        if rt.reported.get(log) != seq:
+            rt.reported[log] = seq
+            LOG.warning("logsync of %s: line %d of a log is bigger than a page; that log is not synced further",
+                        service.workspace_id, seq)  # fmt: skip
+    for log in [k for k in rt.reported if k not in report.stuck]:
+        del rt.reported[log]

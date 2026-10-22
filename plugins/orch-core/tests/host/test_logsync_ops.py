@@ -41,6 +41,8 @@ class LogHub:
         self._mu = threading.Lock()
         self.hold: threading.Event | None = None  # a slow hub: the next page waits here until released
         self.entered = threading.Event()
+        self.relink = False
+        self.links: list[Any] = []
 
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
         m = message["o"]
@@ -82,11 +84,18 @@ def loghub(monkeypatch, served, keystore):  # noqa: F811
 
     hub = LogHub(unb64u(wsk, 65), {1: keystore.wk(1)})
 
+    hub.links = []  # every link the sender was handed, in order
+
     def open_link(service):
+        """The workspace's one link: the same object until ``hub.relink`` (a redial)."""
+        if hub.links and not hub.relink:
+            return hub.links[-1]
+        hub.relink = False
         _, sign = hubops._wsk_sign(service)
         link = HubLink(hub, hub_id=HUB_ID, workspace_id=service.workspace_id, hk_op_pub=pub("hk_op"), sign=sign,
                        mode="full", now_ms=lambda: int(service.clock() * 1000))  # fmt: skip
-        return _Link(link)
+        hub.links.append(_Link(link))
+        return hub.links[-1]
 
     monkeypatch.setattr(logsyncops, "OPEN_LINK", open_link)
     monkeypatch.setattr(logsyncops, "DEBOUNCE_S", 0.05)
@@ -226,7 +235,138 @@ def test_the_position_is_kept_in_a_private_file_and_survives_a_restart(human, se
     n = len(loghub.pages)
     assert logsyncops.start(served.service)
     time.sleep(0.5)
-    assert len(loghub.pages) == n  # the saved position: nothing is resent
+    probe = loghub.pages[n:]
+    assert len(probe) == 1 and probe[0]["count"] == 1 and not probe[0]["reset"]  # only the resume probe, no resend
     human.ticket("later")
     assert until(lambda: loghub.view.summary() == local_summary(served))
-    assert loghub.pages[n]["from_seq"] > 1 or loghub.pages[n]["log"] != "workspace"
+    assert loghub.pages[n + 1]["from_seq"] > 1 or loghub.pages[n + 1]["log"] != "workspace"
+
+
+def test_a_new_link_starts_with_the_probe_and_a_hub_that_lost_its_view_is_refilled(human, served, stub, loghub):  # noqa: F811
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    human.ticket("one")
+    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2)
+    assert len(loghub.links) == 1  # one link for the pass after pass: no link of its own per pass
+    n = len(loghub.pages)
+    logsyncops.wake(served.service)
+    time.sleep(0.4)
+    assert len(loghub.pages) == n  # same link, nothing new: no probe
+    loghub.view = logview.View()  # the hub restored an old database ...
+    loghub.relink = True  # ... and the link was redialed
+    logsyncops.wake(served.service)
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert len(loghub.links) == 2 and all(not p["reset"] for p in loghub.pages[n:])
+
+
+def test_the_sender_uses_the_workspaces_shared_link_and_never_closes_or_dials_its_own(
+    monkeypatch,
+    human,
+    served,
+    stub,  # noqa: F811
+    loghub,
+):
+    from orch.host import peerops
+
+    monkeypatch.setattr(logsyncops, "OPEN_LINK", None)
+    seen: list[bool] = []
+    made: list[Any] = []
+
+    def shared_link(service, *, dial=True):
+        seen.append(dial)
+        if not dial:
+            return made[-1] if made else None
+        if not made:
+            made.append(loghub_link(service))
+        return made[-1]
+
+    def loghub_link(service):
+        _, sign = hubops._wsk_sign(service)
+        return _Link(HubLink(loghub, hub_id=HUB_ID, workspace_id=service.workspace_id, hk_op_pub=pub("hk_op"),
+                             sign=sign, mode="full", now_ms=lambda: int(service.clock() * 1000)))  # fmt: skip
+
+    closed: list[bool] = []
+    monkeypatch.setattr(peerops, "shared_link", shared_link)
+    monkeypatch.setattr(_Link, "close", lambda self: closed.append(True))
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    human.ticket("x")
+    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2)
+    assert True in seen and len(made) == 1 and closed == []
+
+
+def test_core_1034_a_retryable_failure_does_not_end_the_sender(monkeypatch, human, served, stub, loghub):  # noqa: F811
+    from orch.hubclient import HubRefused
+
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    real = logsyncops._pass  # noqa: SLF001
+    codes = iter(["epoch_changed", "live_check_failed"])
+
+    def flaky(service, rt):
+        code = next(codes, None)
+        if code is not None:
+            raise HubRefused(code)
+        return real(service, rt)
+
+    monkeypatch.setattr(logsyncops, "_pass", flaky)
+    human.ticket("during the re-seal")
+    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2, 12)
+    status = logsyncops.status(served.service)
+    assert status is not None and status["running"] and status["last_error"] is None
+
+
+def test_core_1034_the_live_check_tells_a_moved_epoch_from_a_definite_no(monkeypatch, human, served, stub, loghub):  # noqa: F811
+    """The pass's ``live`` closure: a moved epoch or unreadable state is retryable, a left workspace is a no."""
+    from orch.hubclient import HubRefused
+    from orch.hubclient import logsync as LS
+
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    captured: dict[str, Any] = {}
+    real = LS.sync_logs
+    monkeypatch.setattr(logsyncops, "OPEN_LINK", lambda service: loghub.links[-1])
+
+    def spy(**kw):
+        captured.update(kw)
+        raise HubRefused("stopped_for_test")
+
+    import orch.hubclient as H
+
+    monkeypatch.setattr(H, "sync_logs", spy)
+    logsyncops.stop(served.service)
+    assert logsyncops.start(served.service)
+    assert until(lambda: "live" in captured)
+    monkeypatch.setattr(H, "sync_logs", real)
+    live = captured["live"]
+    assert live() is True
+    real_load = hubops._load_state  # noqa: SLF001
+    monkeypatch.setattr(hubops, "_load_state", lambda svc: (_ for _ in ()).throw(OSError("transient")))
+    with pytest.raises(HubRefused) as e:
+        live()
+    assert e.value.code == "live_check_failed"
+    monkeypatch.setattr(hubops, "_load_state", real_load)
+
+    def moved(svc):
+        st = real_load(svc)
+        st.sealed = {**st.sealed, "epoch": st.sealed["epoch"] + 1}
+        return st
+
+    monkeypatch.setattr(hubops, "_load_state", moved)
+    with pytest.raises(HubRefused) as e:
+        live()
+    assert e.value.code == "epoch_changed"
+    monkeypatch.setattr(hubops, "_load_state", real_load)
+    human.run("hub.leave", {})
+    assert live() is False  # a definite no: the sender ends
+
+
+def test_hub_status_reports_the_sender(human, served, stub, loghub):  # noqa: F811
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    data = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert data["log_sync"] == {"running": True, "last_error": None, "stuck": {}}

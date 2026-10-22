@@ -10,7 +10,9 @@ Output (``--json``)::
         "workspace_id": "...", "owner_person_id": "...", "wsk_pub": "<b64u>", "wsk_fingerprint": "<sha256 hex>",
         "mode": "selective" | "full" | null,
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
-        "ops": {"<op>": {"accepted": N, "refused": N}, ...}   # always includes "wk_seal"
+        "ops": {"<op>": {"accepted": N, "refused": N}, ...},  # always includes "wk_seal", "route_out", "route_in"
+        "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
+                                      # envelopes the router took where this workspace is sender or recipient
     }},
      "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
 """
@@ -26,7 +28,8 @@ from typing import Any
 from .contract.canon import unb64u
 
 REGISTRY_FILE = "registry.db"
-ALWAYS_COUNTED = ("wk_seal",)
+ROUTE_QUEUE_FILE = "route-queue.db"
+ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
 class InspectError(Exception):
@@ -43,6 +46,22 @@ def _hub_card(state: Path) -> dict[str, Any]:
         return o
     except OSError, ValueError, KeyError, TypeError:
         raise InspectError("no readable hub card in the state dir") from None
+
+
+def _routes(state: Path) -> list[dict[str, str]]:
+    """Ids and SHA-256 of the envelopes the router has taken (queued or delivered); never their bytes."""
+    path = state / ROUTE_QUEUE_FILE
+    if not path.is_file():
+        return []
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT env_id, from_ws, to_ws, digest FROM route_queue ORDER BY id").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        db.close()
+    return [{"id": i, "from": f, "to": t, "sha256": bytes(d).hex()} for i, f, t, d in rows]
 
 
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
@@ -62,6 +81,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             counts = []
     finally:
         db.close()
+    routes = _routes(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
@@ -80,6 +100,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "mode": b.get("mode") if type(b) is dict else None,
             "binding": {"state": st["status"], "binding_seq": st["binding_seq"]},
             "ops": ops,
+            "routes": [r for r in routes if ws in (r["from"], r["to"])],
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
     for cws, op, outcome, n in counts:

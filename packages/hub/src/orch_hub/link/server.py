@@ -27,7 +27,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from ..contract import hub as H
 from ..contract import suite as S
@@ -38,6 +38,9 @@ from ..keys import HubKeys
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
+
+if TYPE_CHECKING:
+    from ..router import Router
 
 _log = logging.getLogger("orch_hub.link")
 
@@ -58,6 +61,7 @@ class LinkServer:
         snapshots: ops.SnapshotProvider,
         publish: ops.PublishForwarder | None = None,
         downstream: ops.Downstream | None = None,
+        router: Router | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool = True,
@@ -74,6 +78,7 @@ class LinkServer:
         self._invites, self._snaps = invites, snapshots
         self._publish = publish or ops.NoPublish()
         self._down = downstream or ops.NoDownstream()
+        self._router = router
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
@@ -220,7 +225,20 @@ class LinkServer:
         if who is None:
             return
         ws, wsk = who
-        seq = 0
+        port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max)
+        try:
+            self._serve_link(conn, port, ws, wsk)
+        finally:
+            if self._router is not None and port.live is not None:
+                self._router.detach(ws, port.live)
+
+    def _attach(self, ws: str, port: _Port) -> None:
+        """Join the router's live set once the workspace is pinned and bound (queued ``route_in`` goes out now)."""
+        if self._router is not None and port.live is None and self._reg.mode(ws) is not None:
+            port.live = self._router.attach(ws, port)
+
+    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
+        self._attach(ws, port)
         while not self._stop.is_set():
             pin = self._reg.pin(ws)
             try:
@@ -243,23 +261,15 @@ class LinkServer:
                 self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
                 return
-            seq += 1
+            if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
+                if self._router is not None and port.live is not None:
+                    self._router.on_reply(ws, port.live, o)
+                continue
             body = self._dispatch(ws, wsk, o, now)
-            reply = {
-                "v": 2,
-                "suite": 2,
-                "kind": "hub.link",
-                "hv": H.HV,
-                "hub_id": self.hub_id,
-                "workspace_id": ws,
-                "dir": "h2w",
-                "seq": seq,
-                "ts_ms": now,
-                "op": o["op"] if o["op"] in H.LINK_OPS else "error",  # never sign a peer-chosen string
-                "re": o["seq"],
-                "body": body,
-            }
-            self._send(conn, self._signer.sign_object(reply))
+            port.send_signed(
+                o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
+            )  # never sign a peer-chosen string
+            self._attach(ws, port)  # a join on this link just made the workspace routable
 
     def _count(self, ws: str, op: object, accepted: bool) -> None:
         """Dev-only aggregate op counters. Pinned workspaces get their own row; unjoined links share ws ``""``; an op
@@ -305,6 +315,7 @@ class LinkServer:
                 downstream=self._down,
                 now_ms=now,
                 dev_mode=self._dev,
+                router=self._router,
             )
             return handler(ctx)
         except Refused as e:
@@ -313,3 +324,45 @@ class LinkServer:
             return {"error": "malformed"}
         except Exception:  # noqa: BLE001
             return {"error": "internal"}
+
+
+class _Port:
+    """Writes the hub's signed h2w messages on one link. Replies (from the link's own thread) and ``route_in`` requests
+    (from the router, on any thread) share the h2w ``seq`` counter and the write lock."""
+
+    def __init__(self, conn, signer, hub_id, ws, now_ms, timeout, max_bytes) -> None:
+        self._c, self._signer, self._hub, self._ws = conn, signer, hub_id, ws
+        self._now, self._t, self._max = now_ms, timeout, max_bytes
+        self._lock = threading.Lock()
+        self._seq = 0
+        self.live = None
+
+    def _send(self, op: str, re: int | None, body: dict[str, Any]) -> int:
+        with self._lock:
+            self._seq += 1
+            o = {
+                "v": 2,
+                "suite": 2,
+                "kind": "hub.link",
+                "hv": H.HV,
+                "hub_id": self._hub,
+                "workspace_id": self._ws,
+                "dir": "h2w",
+                "seq": self._seq,
+                "ts_ms": self._now(),
+                "op": op,
+                "re": re,
+                "body": body,
+            }
+            try:
+                framing.write_frame(self._c, self._signer.sign_object(o), timeout=self._t, max_bytes=self._max)
+            except BaseException:
+                self._c.close()  # a half-written frame corrupts the stream: the link is over
+                raise
+            return self._seq
+
+    def send_signed(self, op: str, re: int, body: dict[str, Any]) -> None:
+        self._send(op, re, body)
+
+    def send_request(self, op: str, body: dict[str, Any]) -> int:
+        return self._send(op, None, body)

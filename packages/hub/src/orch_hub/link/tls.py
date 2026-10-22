@@ -84,6 +84,9 @@ class TlsConn:
 
     def __init__(self, conn: SSL.Connection, sock: socket.socket, stop: threading.Event | None = None) -> None:
         self._c, self._s, self._stop = conn, sock, stop
+        # One OpenSSL object is not safe for two threads at once. The router writes route_in frames from another
+        # link's thread while this link's own thread reads, so each single SSL call (never a wait) holds this lock.
+        self._io = threading.Lock()
 
     def _wait(self, write: bool, deadline: float) -> None:
         while True:
@@ -99,7 +102,8 @@ class TlsConn:
     def _run(self, fn, deadline: float):
         while True:
             try:
-                return fn()
+                with self._io:
+                    return fn()
             except SSL.WantReadError:
                 self._wait(False, deadline)
             except SSL.WantWriteError:

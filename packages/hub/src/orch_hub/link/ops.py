@@ -159,9 +159,8 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["card"],
             state,
             join_msg["binding"],
+            owner_alias=alias,
         )
-        if alias is not None:
-            c.registry.set_owner_alias(c.workspace_id, alias)
         c.invites.consume(invite, c.workspace_id)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     c.downstream.binding(c.workspace_id, join_msg["binding"])

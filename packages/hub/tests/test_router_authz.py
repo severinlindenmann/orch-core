@@ -118,6 +118,111 @@ def test_access_errors_fail_closed(rhub):
 def test_fixed_invites_parse_owner_alias():
     from orch_hub.serve import FixedInvites
 
-    inv = FixedInvites([f"code1={U}", "plain", "weird=notahexid"])
+    inv = FixedInvites([f"code1={U}", "plain"])
     assert inv.owner_user("code1") == U and inv.owner_user("plain") is None
-    assert inv.check("code1", 0) is None and inv.check("weird=notahexid", 0) is None
+    assert inv.check("code1", 0) is None
+
+
+@pytest.mark.parametrize("bad", ["weird=notahexid", "x=" + U[:-1], "x=" + U.upper(), "x=", f"={U}"])
+def test_fixed_invites_reject_a_bad_alias(bad):
+    from orch_hub.serve import FixedInvites
+
+    with pytest.raises(ValueError, match=r"invite #2"):
+        FixedInvites(["ok", bad])
+
+
+def test_cli_exits_with_an_error_for_a_bad_alias(tmp_path, capsys):
+    from orch_hub.cli import main
+
+    assert (
+        main(
+            [
+                "serve",
+                "--state",
+                str(tmp_path),
+                "--listen",
+                "127.0.0.1:0",
+                "--publish-url",
+                "http://127.0.0.1:1",
+                "--invite",
+                "a=zz",
+            ]
+        )
+        == 1
+    )
+    assert "invite #1" in capsys.readouterr().err
+
+
+def rejoin(h, a, b, invite_alias):
+    """B leaves (hub.unbound), then A leaves and joins again with a new invite."""
+    a.request("binding_put", {"object": G.unbound(seq=1)})
+    h.invites.codes["inv2"] = None
+    h.server._invites = AliasInvites(h.invites, {"inv2": invite_alias} if invite_alias else {})
+    a2 = h.open(first=True)
+    a2.request("join", h.join_body("inv2", seq=2))
+    return a2
+
+
+def test_rejoin_without_alias_deletes_the_old_one(rhub):
+    h, acc, a, b = setup(rhub)
+    assert h.registry.owner_alias(G.WS_A) == U
+    a2 = rejoin(h, a, b, None)
+    assert h.registry.owner_alias(G.WS_A) is None
+    refused(a2, envelope())
+
+
+def test_rejoin_with_another_alias_replaces_it(rhub):
+    h, acc, a, b = setup(rhub)
+    other = G.U_BOB
+    a2 = rejoin(h, a, b, other)
+    assert h.registry.owner_alias(G.WS_A) == other
+    refused(a2, envelope())  # bob has no role in B
+
+
+def test_alias_is_committed_with_the_join_or_not_at_all(rhub, monkeypatch):
+    h, acc, a, b = setup(rhub)
+    reg = h.registry
+    real = reg._db.execute
+
+    # a failure inside commit_join (after the pin row, before the alias row) must roll the whole join back
+    def boom(sql, *args):
+        if "owner_alias" in sql and sql.startswith("INSERT"):
+            raise RuntimeError("disk")
+        return real(sql, *args)
+
+    class Wrap:
+        def __init__(self, db):
+            self._db = db
+
+        def execute(self, sql, *args):
+            return boom(sql, *args)
+
+        def __enter__(self):
+            return self._db.__enter__()
+
+        def __exit__(self, *e):
+            return self._db.__exit__(*e)
+
+        def __getattr__(self, n):
+            return getattr(self._db, n)
+
+    before = reg.binding_state(G.WS_A)
+    reg._db = Wrap(reg._db)
+    with pytest.raises(RuntimeError):
+        reg.commit_join(
+            G.WS_A,
+            reg.pin(G.WS_A)["owner_person_id"],
+            reg.pin(G.WS_A)["wsk_pub"],
+            reg.pin(G.WS_A)["pk_pub"],
+            reg.card(G.WS_A),
+            {"binding_seq": 9, "status": "bound", "binding": before["binding"]},
+            owner_alias=G.U_BOB,
+        )
+    reg._db = reg._db._db
+    assert reg.binding_state(G.WS_A) == before and reg.owner_alias(G.WS_A) == U
+
+
+def test_unbound_sender_is_refused_by_authz_itself(rhub):
+    h, acc, a, b = setup(rhub)
+    a.request("binding_put", {"object": G.unbound(seq=1)})
+    assert AccessAuthz(h.registry, acc).may_route(G.WS_A, G.WS_B) is False

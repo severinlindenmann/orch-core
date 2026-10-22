@@ -38,13 +38,15 @@ class FixedInvites:
 
     def __init__(self, codes: list[str]) -> None:
         self._codes, self._owner = set(), {}
-        for c in codes:
+        for i, c in enumerate(codes, 1):
             code, sep, user = c.rpartition("=")
-            if sep and _HEX16.fullmatch(user):
+            if not sep:
+                self._codes.add(c)
+            elif code and _HEX16.fullmatch(user):
                 self._codes.add(code)
                 self._owner[code] = user
-            else:
-                self._codes.add(c)
+            else:  # CODE=<not a 32-hex user id>: refuse to start rather than silently drop the alias
+                raise ValueError(f"invite #{i}: the part after '=' ({user[:40]!r}) is not a 32-hex hub user id")
         self._lock = threading.Lock()
 
     def owner_user(self, invite: str) -> str | None:
@@ -84,6 +86,7 @@ def serve(
 ) -> int:
     out = out or sys.stdout
     host, port = parse_listen(listen)
+    gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
     keys = HubKeys.open(state)
@@ -99,7 +102,7 @@ def serve(
         keys,
         snapshots=AccessSnapshots(access, keys),
         registry=registry,
-        invites=FixedInvites(invites),
+        invites=gate,
         publish=fw,
         downstream=fw,
         router=router,

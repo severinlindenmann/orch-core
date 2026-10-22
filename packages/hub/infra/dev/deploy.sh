@@ -43,9 +43,9 @@ ssh "$HOST" "mkdir -p '${rdir}' '${BASE}/hub'"
 rsync -a "$wheel" "${HOST}:${rdir}/${wheel_name}"
 
 # Everything below runs on the host under the shared deploy lock.
-ssh "$HOST" bash -s -- "$rdir" "$wheel_name" "$wheel_sha" "$BASE" "$KEEP" <<'REMOTE'
+ssh "$HOST" bash -s -- "$rdir" "$wheel_name" "$wheel_sha" "$BASE" "$KEEP" "${ORCH_HUB_SKIP_RESTART:-}" <<'REMOTE'
 set -euo pipefail
-rdir="$1"; wheel_name="$2"; wheel_sha="$3"; base="$4"; keep="$5"
+rdir="$1"; wheel_name="$2"; wheel_sha="$3"; base="$4"; keep="$5"; skip_restart="$6"
 units="orch-hub"
 
 exec 9>"$base/.deploy.lock"
@@ -91,7 +91,7 @@ check_all() {
 
 prev="$(readlink "$base/hub/current" || true)"
 switch "$rdir"
-if [ "${ORCH_HUB_SKIP_RESTART:-}" = 1 ]; then
+if [ "$skip_restart" = 1 ]; then
     echo "installed ${rdir} (ORCH_HUB_SKIP_RESTART=1: no restart)"
 elif restart_all && check_all; then
     :

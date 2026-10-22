@@ -14,12 +14,12 @@ sends it to the hub over the link (``publish_out``); the hub forwards it unchang
   (host derived from the signed publish setting, target pinned to the workspace's routes, a fresh nonce and clock per
   call) plus the hub: the signature commits to the hub that forwards it. The request content is whatever the host's
   publish op passes in; nothing here takes a blob to sign.
-* :class:`HubPublishTransport`: ``PublishClient``'s transport, one ``publish_out`` per call. A hub that cannot be reached
-  raises :class:`HubRefused` ``hub_unreachable``; it is **never** turned into a direct request.
+* :class:`HubPublishTransport`: ``PublishClient``'s transport, one ``publish_out`` per call. A hub that cannot be
+  reached raises :class:`HubRefused` ``hub_unreachable``; it is **never** turned into a direct request.
 
 Public access (11.3). No publish route grants public access today (``PUBLIC_ROUTES`` is empty, as in orch-publish's
-``hub_path``). A route listed there is refused here unless the owner's ``hub.publish_approval`` naming this exact request
-(``request_hash``) is supplied by the ``approver``; no host op passes one yet, so such a request fails closed
+``hub_path``). A route listed there is refused here unless the owner's ``hub.publish_approval`` naming this exact
+request (``request_hash``) is supplied by the ``approver``; no host op passes one yet, so such a request fails closed
 (``approval_required``). The approval, when there is one, is inside the ``WSK`` signature (``approval_hash``).
 """
 
@@ -120,7 +120,7 @@ def hub_path_signed_bytes(
 def request_hash(
     ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes, hub_id: str
 ) -> bytes:
-    """What the owner's approval names (11.3): the one exact request, ``ts`` and ``nonce`` included, through this hub."""
+    """What the owner's approval names (11.3): the one exact request (``ts``, ``nonce``), through this hub."""
     try:
         hub = unhex(hub_id, 16)
     except Exception:  # noqa: BLE001

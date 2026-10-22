@@ -216,6 +216,23 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
     return {"count": len(items), "items": rows, "more": max(0, len(items) - limit), "plan": _plan(items)}
 
 
+def _after(st: Any, facts: list[Any], *, add: Any = None, remove: Any = None) -> tuple[list[Any], list[str], list[Any]]:
+    """The rules and withdrawn list after ``add`` / ``remove`` and the items they would share (withdrawn ones left
+    out): what ``share.preview`` shows, what ``expect`` is checked against and what the sync sends."""
+    from orch.hubclient import shares as S
+
+    rules = [dict(r) for r in st.rules]
+    if remove is not None:
+        rules = [r for r in rules if r != remove]
+    if add is not None and add not in rules:
+        rules.append(add)
+    withdrawn = list(st.withdrawn)
+    if add is not None and add["kind"] == "ticket":  # naming a ticket again is a fresh, explicit choice
+        withdrawn = [w for w in withdrawn if not any(w == f"ticket:{t.uid}" and add["ticket"] in (t.key, t.uid)
+                                                      for t in facts)]  # fmt: skip
+    return rules, withdrawn, [i for i in S.select(rules, facts) if i.logical not in withdrawn]
+
+
 def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
@@ -228,13 +245,11 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         if op == "share.rules":
             rules = [{**r, "count": len(S.select([r], facts)), "describes": S.describe(r)} for r in st.rules]
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn)})
-        rules = [dict(r) for r in st.rules]
-        if "remove" in args:
-            rules = [r for r in rules if r != S.normalize_rule(args["remove"])]
-        if "add" in args:
-            add = S.normalize_rule(args["add"])
-            rules += [add] if add not in rules else []
-        want = [i for i in S.select(rules, facts) if i.logical not in st.withdrawn]
+        rules, _w, want = _after(
+            st, facts,
+            add=S.normalize_rule(args["add"]) if "add" in args else None,
+            remove=S.normalize_rule(args["remove"]) if "remove" in args else None,
+        )  # fmt: skip
         had = set(st.sent)
         now = {i.logical for i in want}
         out = _rows(want)
@@ -295,28 +310,35 @@ def _builder(service: WorkspaceService) -> Any:
     return build
 
 
-def sync_now(service: WorkspaceService) -> dict[str, Any]:
-    """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
-    ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing."""
+def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[str, Any]:
+    """Send exactly ``wanted`` (the caller holds ``_MU`` and read ``st`` under it)."""
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
 
     closer = _link(service)
     try:
-        with _MU:
-            st = _load(service)
-            wanted = S.select(st.rules, tickets_for(service))
-            try:
-                counts = S.sync(st, wanted, link=closer, build=_builder(service), save=lambda s: _save(service, s))
-            except HubRefused as exc:
-                _save(service, st)
-                return {"synced": False, "pending": exc.code}
-            except OSError:
-                _save(service, st)
-                return {"synced": False, "pending": "hub_unreachable"}
-            return {"synced": True, **counts}
+        try:
+            counts = S.sync(st, wanted, link=closer, build=_builder(service), save=lambda s: _save(service, s))
+        except HubRefused as exc:
+            _save(service, st)
+            return {"synced": False, "pending": exc.code}
+        except OSError:
+            _save(service, st)
+            return {"synced": False, "pending": "hub_unreachable"}
+        return {"synced": True, **counts}
     finally:
         closer.close()
+
+
+def sync_now(service: WorkspaceService) -> dict[str, Any]:
+    """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
+    ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
+    ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent)."""
+    from orch.hubclient import shares as S
+
+    with _MU:
+        st = _load(service)
+        return _sync_locked(service, st, S.select(st.rules, tickets_for(service)))
 
 
 def _find(st: Any, ref: str, facts: list[Any]) -> str:
@@ -354,26 +376,21 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 note = "withdrawn; what the hub already read cannot be taken back"
             else:
                 rule = S.normalize_rule(args["rule"])
-                after = [dict(r) for r in st.rules]
-                changed = (rule in after) if op == "share.rule_remove" else (rule not in after)
-                if op == "share.rule_remove":
-                    after = [r for r in after if r != rule]
-                elif changed:
-                    after.append(rule)
-                if "expect" in args:
-                    shown = [i for i in S.select(after, facts) if i.logical not in st.withdrawn]
-                    if _plan(shown) != args["expect"]:
-                        raise HostError(
-                            "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
-                        )
+                after, withdrawn, shown = _after(st, facts, add=rule if op == "share.rule_add" else None,
+                                                 remove=rule if op == "share.rule_remove" else None)  # fmt: skip
+                changed = after != st.rules
+                if "expect" in args and _plan(shown) != args["expect"]:
+                    raise HostError(
+                        "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
+                    )
                 if changed:
-                    st.rules = after
-                    if rule["kind"] == "ticket":  # naming a ticket again is a fresh, explicit choice
-                        st.withdrawn = [w for w in st.withdrawn if not any(w == f"ticket:{t.uid}"
-                                        and rule["ticket"] in (t.key, t.uid) for t in facts)]  # fmt: skip
+                    st.rules, st.withdrawn = after, withdrawn
                     _save(service, st)
                 note = "changed" if changed else "unchanged"
+            # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
+            # second selection that a ticket change in between could have altered)
+            got = _sync_locked(service, st, S.select(st.rules, facts))
         hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
-        return ok_result({"note": note} | sync_now(service))
+        return ok_result({"note": note} | got)
     except HubRefused as exc:
         raise hubops._refused(exc.code) from None  # noqa: SLF001

@@ -161,6 +161,33 @@ def test_a_rule_change_needs_the_plan_the_owner_was_shown(served, selective, mon
     assert selective.ops == [] and len(ok(req(served, "share.rules"))["data"]["rules"]) == 1
 
 
+def test_the_sync_sends_exactly_the_confirmed_selection_even_if_a_ticket_changes_meanwhile(
+    served, selective, monkeypatch
+):
+    """C6-2: the confirmed plan is the selection that is sent; a ticket that starts to match a moment later (here: a
+    second public ticket appears on every later read of the tickets) is not shared by this confirmation."""
+    import dataclasses
+
+    from orch.host import shareops
+
+    labelled(served, "Public note", "public")
+    rule = {"kind": "tag", "tag": "public"}
+    shown = ok(req(served, "share.preview", {"add": rule}))["data"]["plan"]
+    real, calls = shareops.tickets_for, []
+
+    def moving(service):
+        facts = real(service)
+        calls.append(1)
+        if len(calls) > 1:  # any later read sees one more matching ticket
+            facts.append(dataclasses.replace(facts[0], uid="01J9ZP0000000000000000MOVE", key="MOVE-1", title="Later"))
+        return facts
+
+    monkeypatch.setattr(shareops, "tickets_for", moving)
+    got = ok(req(served, "share.rule_add", {"rule": rule, "expect": shown}))["data"]
+    assert got["synced"] is True and got["put"] == 1 and selective.count("share_put") == 1
+    assert [i["content"]["title"] for i in selective.opened] == ["Public note"]
+
+
 def test_rule_add_puts_exactly_the_matching_ticket_then_remove_revokes_once(served, selective, monkeypatch):
     uid, _ = labelled(served, "Public note", "public")
     labelled(served, "Private review", "private")

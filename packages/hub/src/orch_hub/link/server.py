@@ -243,19 +243,38 @@ class LinkServer:
             return
         ws, wsk = who
         port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max)
+        port.current = lambda: self._current(ws, wsk)
         try:
             self._serve_link(conn, port, ws, wsk)
         finally:
-            if self._router is not None and port.live is not None:
-                self._router.detach(ws, port.live)
-            if self._deliveries is not None and port.delivery is not None:
-                self._deliveries.detach(ws, port.delivery)
+            self._detach(ws, port)
+
+    def _current(self, ws: str, wsk: bytes) -> bool:
+        """The link's key is the workspace's CURRENT pin and the binding is bound (checked on every attach, every
+        dispatch and every h2w write): a link opened with an old key after a rotation or rebind gets nothing."""
+        pin = self._reg.pin(ws)
+        try:
+            return pin is not None and unb64u(pin["wsk_pub"], 65) == wsk and self._reg.mode(ws) is not None
+        except Exception:  # noqa: BLE001  # fail closed
+            return False
+
+    def _detach(self, ws: str, port: _Port) -> None:
+        if self._router is not None and port.live is not None:
+            self._router.detach(ws, port.live)
+            port.live = None
+        if self._deliveries is not None and port.delivery is not None:
+            self._deliveries.detach(ws, port.delivery)
+            port.delivery = None
 
     def _attach(self, ws: str, port: _Port) -> None:
-        """Join the router's live set once the workspace is pinned and bound (queued ``route_in`` goes out now)."""
-        if self._router is not None and port.live is None and self._reg.mode(ws) is not None:
+        """Join the router's live set and the delivery queue once the workspace is pinned and bound with THIS link's
+        key (queued ``route_in`` goes out now). A link that is no longer current is detached."""
+        if not port.current():
+            self._detach(ws, port)
+            return
+        if self._router is not None and port.live is None:
             port.live = self._router.attach(ws, port)
-        if self._deliveries is not None and port.delivery is None and self._reg.mode(ws) is not None:
+        if self._deliveries is not None and port.delivery is None:
             port.delivery = self._deliveries.attach(ws, port)
 
     def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
@@ -374,6 +393,7 @@ class _Port:
         self._seq = 0
         self.live = None
         self.delivery = None
+        self.current: Callable[[], bool] = lambda: True
 
     def _send(self, op: str, re: int | None, body: dict[str, Any]) -> int:
         with self._lock:
@@ -403,4 +423,6 @@ class _Port:
         self._send(op, re, body)
 
     def send_request(self, op: str, body: dict[str, Any]) -> int:
+        if not self.current():  # h2w requests only go to the link holding the current pin
+            raise OSError("link is not current")
         return self._send(op, None, body)

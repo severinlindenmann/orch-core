@@ -10,7 +10,7 @@ from test_deliver_queue import LOG, ev
 
 from orch_hub.contract import vectorgen as G
 from orch_hub.custodial.deliver import DeliveryQueue
-from orch_hub.link import LinkError
+from orch_hub.link import LinkError, tls
 
 
 def until(pred, secs=5.0):
@@ -75,3 +75,38 @@ def test_the_host_cannot_send_event_deliver(rig):
     _q, _h, c = rig
     with pytest.raises(LinkError):
         c.request("event_deliver", {"log": LOG, "event": {}})
+
+
+def _silent(c):
+    c._t = 0.4
+    with pytest.raises((LinkError, tls.LinkTimeout, tls.LinkClosed)):  # LinkTimeout / LinkError: no frame arrives
+        c.recv_reply()
+
+
+def test_a_link_with_a_rotated_out_key_gets_no_delivery(rig, monkeypatch):
+    q, h, c = rig
+    pin = h.registry.pin(G.WS_A)
+    other = {**pin, "wsk_pub": G.K.b("wsk_b")}  # the pin moved to another key while this (old) link stayed open
+    monkeypatch.setattr(h.registry, "pin", lambda ws: other)
+    q(G.WS_A, LOG, ev())
+    time.sleep(0.3)
+    assert q.pending()[0]["attempts"] in (0, 1)
+    _silent(c)
+    assert q.outcomes() == []
+
+
+def test_a_link_whose_binding_ended_gets_no_delivery(rig, monkeypatch):
+    q, h, c = rig
+    monkeypatch.setattr(h.registry, "mode", lambda ws: None)
+    q(G.WS_A, LOG, ev())
+    time.sleep(0.3)
+    _silent(c)
+    assert len(q.pending()) == 1
+
+
+def test_a_stale_link_is_detached_at_the_next_dispatch(rig, monkeypatch):
+    q, h, c = rig
+    assert G.WS_A in q._links
+    monkeypatch.setattr(h.registry, "mode", lambda ws: None)
+    c.request("snapshot_get", {})
+    assert until(lambda: G.WS_A not in q._links)

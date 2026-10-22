@@ -347,6 +347,12 @@ def _status_text(d: Mapping[str, Any]) -> str:
         ", the hub cannot read new content until you run orch hub connect (new key)" if d.get("reseal_needed") else ""
     )
     queued += ", the new workspace key is not ready yet (orch hub unbind)" if d.get("rotation") == "pending" else ""
+    ls = d.get("log_sync") or {}
+    if ls.get("stuck"):
+        queued += (
+            f", the hub's view of {len(ls['stuck'])} log(s) stopped: a line is bigger than a page, the log is broken"
+            " (orch doctor)"
+        )
     snap = d.get("snapshot")
     roles = f", group snapshot v{snap['version']} ({len(snap['roles'])} roles)" if snap else ""
     return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{roles}{queued}"

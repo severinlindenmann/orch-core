@@ -87,6 +87,14 @@ def test_happy_path_auth_and_one_request(make_hub) -> None:
     assert hub.requests[0]["o"]["op"] == "snapshot_get"
 
 
+def test_is_open_tells_a_closed_link(make_hub) -> None:
+    hub = make_hub()
+    link = open_link(hub)
+    assert link.is_open
+    link.close()
+    assert not link.is_open
+
+
 def test_first_link_sends_wsk_pub_only_when_asked(make_hub) -> None:
     hub = make_hub()
     with open_link(hub, wsk_pub=WSK_PUB):

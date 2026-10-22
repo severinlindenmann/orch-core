@@ -501,6 +501,11 @@ class LinkClient:
             raise LinkError(_code(rb["error"]))
         return rb
 
+    @property
+    def is_open(self) -> bool:
+        """False once the link was closed (by :meth:`close`, or by a transport or verification failure)."""
+        return self._open
+
     def close(self) -> None:
         self._open = False
         self._c.close()

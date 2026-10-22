@@ -10,11 +10,11 @@ exactly the signed ``hub.link`` objects of the contract (orch-hub ``docs/protoco
 * :class:`HostLink` is the workspace end for tests: it signs requests with a ``WSK`` and verifies the replies the way
   the host must (the held card's ``HK_op``, label ``orch/v2/hub-route|``).
 
-Fake-only behaviour, not in the contract (the contract fixes request bodies only, reply bodies are D5/C5):
-an invite the fake does not know (or has used: invites are single use) is refused with ``bad_invite``; after ``hub.unbound`` every op except ``join`` and
-``binding_put`` is refused with ``not_bound``; an op outside the closed list is answered as op ``error`` (never
-echoed, correlate by ``re``); an unreadable request still gets a signed ``{"error": code}`` reply (a real hub would
-drop the link).
+Fake-only behaviour, not in the contract (it fixes request bodies only, reply bodies are D5/C5):
+* an invite the fake does not know, or has used (single use), is refused with ``bad_invite``;
+* after ``hub.unbound`` every op except ``join`` and ``binding_put`` is refused with ``not_bound``;
+* an op outside the closed list is answered as op ``error`` (never echoed); correlate replies by ``re``;
+* an unreadable request still gets a signed ``{"error": code}`` reply (a real hub would drop the link).
 """
 
 from __future__ import annotations

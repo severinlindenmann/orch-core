@@ -105,6 +105,14 @@ def _setup(served, human, mode, keys=None):
 
 
 @pytest.fixture(autouse=True)
+def no_log_sync_sender(monkeypatch):
+    """These tests are about spaces over the one shared link; the stub hub does not speak ``log_sync``."""
+    from orch.host import logsyncops
+
+    monkeypatch.setattr(logsyncops, "start", lambda service: False)
+
+
+@pytest.fixture(autouse=True)
 def dev_workspace(monkeypatch):
     from orch.host import hubops
 

@@ -377,6 +377,7 @@ class Run:
         self.done = False
         self.error: dict[str, Any] | None = None
         self.retry: list[str] = []
+        self.reasons: dict[str, str] = {}
         self.workspace: dict[str, str] | None = None
         self.waiting_tty = False
         #: called with one plain line when a step ends (the setup terminal prints it; B11 finding 25)
@@ -395,6 +396,14 @@ class Run:
             with contextlib.suppress(Exception):
                 self.echo(said)
 
+    def explain(self, step: str, text: str) -> None:
+        """Why a step failed and what to run next (plain words); echoed to the setup terminal, shown in ``view``."""
+        with self._lock:
+            self.reasons[step] = text
+        if self.echo is not None:
+            with contextlib.suppress(Exception):
+                self.echo(f"    {text}")
+
     def status(self, step: str) -> str | None:
         with self._lock:
             return next((s["status"] for s in self.steps if s["id"] == step), None)
@@ -411,6 +420,7 @@ class Run:
                 "done": self.done,
                 "error": self.error,
                 "retry": list(self.retry),
+                "reasons": dict(self.reasons),
                 "workspace": self.workspace,
                 "waiting": "waiting for terminal" if self.waiting_tty else None,
             }
@@ -434,6 +444,14 @@ STEP_LABELS = {
     "custody": "Moving your key to one-click custody",
 }
 HELLO_SECONDS = 30.0
+
+
+def _runner_failure(exc: BaseException) -> str:
+    """The reason the runner could not be turned on, and the command to run next (one line, no control characters)."""
+    why = " ".join("".join(c if c.isprintable() else " " for c in str(exc)).split()) or type(exc).__name__
+    if "--replace" in why:
+        return why[:300]  # it already names the command: ... To do that on purpose: orch runner enable --replace
+    return f"Dashboard execution is not on: {why[:300]}. Next: orch runner enable"
 
 
 class Creator:
@@ -639,9 +657,10 @@ class Creator:
         terminals = any(f["id"] == "terminals" for f in self.plan.flags)
         try:
             self.ports.runner_enable(self.wid, self.profile["prefix"], terminals)
-        except Exception:  # noqa: BLE001 - reported as a retry item; the rest of the setup goes on
+        except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup goes on
             self.run.set("runner", "failed")
             self.run.add_retry("runner")
+            self.run.explain("runner", _runner_failure(exc))
             if grant is not None:
                 self._skip_grant()
             return

@@ -239,7 +239,8 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
         "unavailable"
         if check is None
         else check(
-            e, workspace_id=ws.workspace_id, log=log, card=led["card"], revoked=frozenset(led["revoked_op_certs"]),
+            e, workspace_id=ws.workspace_id, log=log, root=led["root"], card=led["card"],
+            revoked=frozenset(led["revoked_op_certs"]),
             snapshot=led["snapshot"], revoked_channels=frozenset(led["revoked_channels"]), at_ms=ts(e["at"]) * 1000,
             dev=dev, mode=mode, member_role=member_role,
         )

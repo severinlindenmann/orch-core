@@ -62,6 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
+    "revoked_op_objs",
 }  # fmt: skip
 
 
@@ -114,6 +115,8 @@ class HubState:
     )
     revoked_op_certs: list[str] = field(default_factory=list)  # cert_ids of root-signed hub.op_revoked, never removed
     snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
+    #: cert_id -> the root-signed ``hub.op_revoked`` object itself: what a ``hub.pinned`` line carries (15.2)
+    revoked_op_objs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -134,6 +137,7 @@ class HubState:
             "card": self.card,
             "revoked_op_certs": sorted(self.revoked_op_certs),
             "snapshot": self.snapshot,
+            "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
         }
 
     @classmethod
@@ -163,6 +167,8 @@ class HubState:
             and type(d.get("revoked_op_certs", [])) is list
             and all(wire.hex16(c) for c in d.get("revoked_op_certs", []))
             and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
+            and type(d.get("revoked_op_objs", {})) is dict
+            and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -185,6 +191,7 @@ class HubState:
             card=d.get("card"),
             revoked_op_certs=list(d.get("revoked_op_certs", [])),
             snapshot=d.get("snapshot"),
+            revoked_op_objs=dict(d.get("revoked_op_objs", {})),
         )
 
 

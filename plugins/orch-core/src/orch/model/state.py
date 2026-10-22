@@ -140,6 +140,7 @@ def replay(
     expected_genesis: str | None = None,
     verb_events: Mapping[str, Iterable[str]] | None = None,
     invalidations: tuple[str, Callable[[str, str], None]] | None = None,
+    hub_dev: bool = False,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
 
@@ -153,7 +154,7 @@ def replay(
     Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
-    ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events)
+    ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events, hub_dev=hub_dev)
     core = Core()
     workspace_events = list(workspace_events)
     # Each log's lines are walked in file order, never sorted (§5.5 Reading); the logs are merged by the key below.

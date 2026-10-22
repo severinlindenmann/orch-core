@@ -27,7 +27,10 @@ def _refused(event) -> str | None:
 
 
 def _updated(set_, **extra):
-    return mint({"type": "ticket.updated", "set": set_, "base_rev": "sha256:" + "1" * 64, **extra}, drop=_DECISION)
+    return mint(
+        {"type": "ticket.updated", "set": set_, "base_rev": {k: "sha256:" + "1" * 64 for k in set_}, **extra},
+        drop=_DECISION,
+    )
 
 
 def test_c3r_1_a_plain_title_update_is_accepted():

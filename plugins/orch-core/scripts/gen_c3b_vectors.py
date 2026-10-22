@@ -448,7 +448,6 @@ def main() -> None:
         },
         {
             "name": "selective_aliased_member_with_live_item",
-            "pending": "C3b implementation: item_hash is a section 8.1 field in selective mode",
             "hub": {
                 "mode": "selective",
                 "joined": HUB,
@@ -464,7 +463,6 @@ def main() -> None:
         },
         {
             "name": "selective_item_not_shared",
-            "pending": "C3b implementation: item_hash is a section 8.1 field in selective mode",
             "hub": {
                 "mode": "selective",
                 "joined": HUB,

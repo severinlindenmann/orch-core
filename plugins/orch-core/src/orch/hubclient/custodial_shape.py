@@ -119,11 +119,9 @@ def _set(x: Any) -> bool:
 
 
 def _base_rev(x: Any) -> bool:
-    """Derived by the hub (8.5 names the field, not its shape): one revision hash, or the hash of each path the update
-    sets. Core's ticket-format schema, checked in step 9, takes the per-path object only."""
-    return _hash(x) or (
-        type(x) is dict and 0 < len(x) <= len(SET_PATHS) and all(k in SET_PATHS and _hash(v) for k, v in x.items())
-    )
+    """Derived by the hub: the hash of each path the update sets (the object form, as ticket-format 15.1 and the hub
+    addendum pin it; the single-hash string form is gone)."""
+    return type(x) is dict and 0 < len(x) <= len(SET_PATHS) and all(k in SET_PATHS and _hash(v) for k, v in x.items())
 
 
 def _option(x: Any) -> bool:
@@ -137,15 +135,17 @@ def _option(x: Any) -> bool:
 
 
 def _question(x: Any) -> bool:
-    """The question a person asks: exactly `{to, text, why?, options?, recommended?, blocking}`; no `id`, no `sig`."""
-    if type(x) is not dict or not {"to", "text", "blocking"} <= set(x) <= {
-        "to", "text", "why", "options", "recommended", "blocking",
+    """The question a person asks: exactly `{id, to, text, why?, options?, recommended?, blocking}` (the id is the
+    hub's next free `Q<n>`, derived like `qid`); no `sig`."""
+    if type(x) is not dict or not {"id", "to", "text", "blocking"} <= set(x) <= {
+        "id", "to", "text", "why", "options", "recommended", "blocking",
     }:  # fmt: skip
         return False
     opts = x.get("options", [])
     keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
     return (
-        (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
+        _re(_QID)(x["id"])
+        and (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
         and _text(2000, multiline=True)(x["text"])
         and ("why" not in x or _text(1000, multiline=True)(x["why"]))
         and keys is not None
@@ -252,6 +252,11 @@ def check_custodial_payload(typ: str, event: Mapping[str, Any], hub_fields: froz
     checks = {**req, **opt}
     if not all(checks[k](event[k]) for k in names):
         raise HubRefused("malformed")
+    if typ == "ticket.created" and event["based_on"] is not None:
+        raise HubRefused("malformed")  # the first event of a log has no base
+    if typ in ("gate.approved", "gate.changes_requested"):  # source_sha belongs on a code approval, and only there
+        if ("source_sha" in names) != (typ == "gate.approved" and event["gate"] == "code"):
+            raise HubRefused("malformed")
     if typ == "question.answered" and not ({"option", "text"} & names):
         raise HubRefused("malformed")
     if typ == "verdict.given" and event["outcome"] == "fail" and "text" not in names:

@@ -378,6 +378,8 @@ class Store:
         #: revocation (``HostPins``, not model state) calls the same :meth:`_raise_relay_gate`. Set by
         #: ``R6Gate.install``; the host's journal never replaces it; :meth:`close` clears it (R6 is then gated).
         self.relay_gate: Callable[[str, str], None] | None = None
+        #: C3b 15.3: this is a dev workspace (a host configuration, never read from a log): dev hub material verifies
+        self.hub_dev = False
         #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
         #: finish): the host's cheap foreign-append signal (F11)
         self.outside_changes = 0
@@ -460,6 +462,7 @@ class Store:
         ident: tuple[int, int] | None = None,
         store_pin: StorePin | None = None,
         create: bool = False,
+        hub_dev: bool = False,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -511,6 +514,7 @@ class Store:
                 layout=layout,
             )
             store.created_store = created
+            store.hub_dev = hub_dev  # before the first replay
             store._open(load == "all", config)
         except BaseException:
             fs.close()
@@ -819,6 +823,7 @@ class Store:
                 expected_genesis=self._pin,
                 verb_events=_verb_events(),
                 invalidations=(uid, note),
+                hub_dev=self.hub_dev,
             )
 
     def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
@@ -1094,6 +1099,7 @@ class Store:
             expected_workspace_id=self.workspace_id,
             expected_genesis=self._pin,
             verb_events=_verb_events(),
+            hub_dev=self.hub_dev,
         )
         ws = self._state.workspace
         if ws_events and ws.genesis is None:

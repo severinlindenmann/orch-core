@@ -116,6 +116,7 @@ def record_revoked_op(state: HubState, signed: Any) -> bool:
     if o["cert_id"] in state.revoked_op_certs:
         return False
     state.revoked_op_certs = sorted({*state.revoked_op_certs, o["cert_id"]})
+    state.revoked_op_objs[o["cert_id"]] = signed
     return True
 
 

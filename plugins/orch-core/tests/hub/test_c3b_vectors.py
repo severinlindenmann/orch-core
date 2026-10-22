@@ -3,9 +3,7 @@
 ``RefLedger`` below is the TEST-SIDE REFERENCE of §15.2/§15.3, built only from the host's existing verifiers
 (``wire``, ``snapshot.verify_snapshot``, ``custodial.verify_custodial``, ``identity.hub_actor``). It is not production
 code: the C3b implementation makes the model's replay (``model/hubledger.py``) produce the same outcome for every case,
-and then this test also runs the cases through the model. Cases marked ``pending`` need the §15.7 ``item_hash`` field
-and are strict xfails until C3b lands.
-"""
+and then this test also runs the cases through the model."""
 
 from __future__ import annotations
 
@@ -22,6 +20,7 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import unb64u
 from orch.hubclient import HubRefused, wire
 from orch.hubclient import custodial as C
+from orch.hubclient.modelverify import HubModelChecks
 from orch.hubclient.snapshot import verify_snapshot
 from orch.model import Refusal
 from orch.model.identity import hub_actor
@@ -33,6 +32,22 @@ WS, HUB = X["workspace_id"], X["hub_id"]
 DEV = X["dev_mode"]
 #: what policies.factor_floor returns for a policy without a D66 ``factor`` key (§15.4); the reference has no policy
 NO_FLOOR = "password+totp"
+
+
+def shown_item(event: dict[str, Any], log: str) -> dict[str, Any]:
+    """A shared item that shows exactly the values ``event`` carries (a live item of the host's C6 state)."""
+    typ, key = event["type"], event.get("question") if event["type"] == "question.answered" else event.get("gate")
+    f1: dict[str, Any] = {"roster_v": event["roster_v"], "gates": {}, "questions": {}}
+    if typ == "question.answered":
+        f1["questions"][key] = {"hash": event["hash"]}
+    else:
+        key = "verify" if typ == "verdict.given" else key
+        f1["gates"][key] = {
+            k: event[e] for k, e in (("hash", "hash"), ("gen", "gate_gen"), ("policy_hash", "policy_hash"))
+        }
+        if "source_sha" in event:
+            f1["gates"][key]["source_sha"] = event["source_sha"]
+    return {"chain": {"log": log, "seq": 1, "head": event["based_on"]}, "f1": f1}
 
 
 class RefLedger:
@@ -133,6 +148,12 @@ class RefLedger:
         v = C.verify_custodial(
             event, workspace_id=WS, log=log, held=held, snapshot=snap, now_ms=at, dev_mode=DEV, mode=self.mode,
             granted_users=granted, member_roles=roles, revoked_op_certs=frozenset(self.revoked), min_factor=NO_FLOOR,
+            live_items=(
+                {event["item_hash"]: shown_item(event, log)}
+                if self.mode == "selective" and self.shared.get(event.get("item_hash")) == log
+                else {}
+            ),
+            log_heads={log: [event["based_on"]]},
         )  # fmt: skip
         assert v["user_id"] == user
         own_alias = user in self.book.get(self.joined, {}).values()
@@ -215,10 +236,7 @@ def run_case(case: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     return [_step(led, st) for st in case["steps"]]
 
 
-CASES = [
-    pytest.param(c, id=c["name"], marks=[pytest.mark.xfail(strict=True, reason=c["pending"])] if "pending" in c else [])
-    for c in X["replay"]
-]
+CASES = [pytest.param(c, id=c["name"]) for c in X["replay"]]
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -313,81 +331,9 @@ from orch.model import identity as ident  # noqa: E402
 from orch.model.types import Core, Decision, Member, TCore, WsCore, new_fields  # noqa: E402
 
 
-class HubAdapter:
-    """The three C3b ``Verifier`` methods over ``orch.hubclient``; ``HubRefused`` becomes the contract code."""
-
-    def verify_custodial_sigs(self, event: Any, *, workspace_id: str, log: str) -> bool:
-        try:
-            body = {k: v for k, v in event.items() if k not in C.NOT_SIGNED}
-            uk = unb64u(event["uk_cert"]["o"]["uk_pub"], 65)
-            ch = unb64u(event["channel_cert"]["o"]["key_pub"], 65)
-            ok = S.verify(
-                uk,
-                unb64u(event["sig"], 64),
-                C.custodial_label(event["type"]) + C._context(workspace_id, log, body),  # noqa: SLF001
-            )
-            return ok and S.verify(
-                ch,
-                unb64u(event["channel_proof"], 64),
-                C.SIG_CHANNEL_PROOF + C.event_digest(workspace_id, log, body),
-            )
-        except (HubRefused, KeyError, TypeError, ValueError):
-            return False
-
-    @staticmethod
-    def _held(card: Any, at_ms: int, dev: bool, revoked: frozenset[str]) -> dict[str, Any]:
-        return wire.verify_card(
-            card, now_ms=at_ms, dev_mode=dev, pinned_root=unb64u(X["pinned_root"], 65), revoked_op_certs=revoked
-        )
-
-    def verify_hub_pin(self, obj: Any, *, root: str, card: Any, revoked: frozenset[str], snapshot: Any,
-                       workspace_id: str, at_ms: int, dev: bool) -> str | None:  # fmt: skip
-        try:
-            kind = obj["o"]["kind"]
-            if kind == "hub.op_revoked":
-                wire.verify_op_revoked(obj, unb64u(root, 65))
-            elif kind == "hub.card":
-                old = None
-                if card is not None:  # the card as it was verified when pinned (no revocation, its own issue time)
-                    old = wire.verify_card(
-                        card, now_ms=card["op_cert"]["o"]["issued_ms"] + 1, dev_mode=dev, pinned_root=unb64u(root, 65)
-                    )
-                wire.verify_card(
-                    obj, now_ms=at_ms, dev_mode=dev, pinned_root=unb64u(root, 65), revoked_op_certs=revoked, held=old
-                )
-            elif kind == "hub.snapshot":
-                held = self._held(card, at_ms, dev, revoked)
-                verify_snapshot(
-                    obj, held, workspace_id=workspace_id, dev_mode=dev, pinned=snapshot["o"] if snapshot else None,
-                    revoked_op_certs=revoked,
-                )  # fmt: skip
-            else:
-                return "malformed"
-        except HubRefused as e:
-            return e.code
-        return None
-
-    def verify_hub_actor(self, event: Any, *, workspace_id: str, log: str, card: Any, revoked: frozenset[str],
-                         snapshot: Any, revoked_channels: frozenset[str], at_ms: int, dev: bool, mode: str,
-                         member_role: str | None) -> str | None:  # fmt: skip
-        try:
-            if card is None:
-                return "no_card"
-            if snapshot is None:
-                return "unknown_snapshot"
-            held = self._held(card, at_ms, dev, revoked)
-            snap = {**snapshot["o"], "revoked_channels": sorted(revoked_channels)}
-            user = event["actor"]["id"][2:]
-            delivered = {k: v for k, v in event.items() if k not in C.HOST_FIELDS}  # a log line has the host fields
-            C.verify_custodial(
-                delivered, workspace_id=workspace_id, log=log, held=held, snapshot=snap, now_ms=at_ms, dev_mode=dev,
-                mode=mode, granted_users=frozenset({user}) if member_role is not None else frozenset(),
-                member_roles={user: member_role} if member_role is not None else {},
-                revoked_op_certs=revoked, min_factor=NO_FLOOR,
-            )  # fmt: skip
-        except HubRefused as e:
-            return e.code
-        return None
+class HubAdapter(HubModelChecks):
+    """The three C3b ``Verifier`` methods: the production ones (``orch.hubclient.modelverify``), so the vectors run
+    through exactly what the host runs."""
 
 
 def _stamp(ms: int) -> str:
@@ -416,6 +362,7 @@ class ModelLedger:
                 **({"member": {"kind": "hub", "hub_id": joined}} if hub["mode"] == "full" else {}),
             }  # fmt: skip
         self.v = HubAdapter()
+        self.shared = hub.get("shared", {})  # item_hash -> log: the live shared items (host state, admission only)
         self.t = TCore(uid="T", key="T-1", owner="p_" + "0" * 32, status="open", fields=new_fields("feature", "t"))
         self.ids: dict[str, bytes] = {}
         self.lines = 0
@@ -442,6 +389,8 @@ class ModelLedger:
         ws.roster_v = event["roster_v"]  # the event's own view: roster_v is checked by the type rules elsewhere
         line = {**event, "at": _stamp(at)}
         r = authz.authorize_hub(Core(ws=ws), log, line, self.v, dev=DEV)  # type: ignore[arg-type]
+        if r is None and ws.hub.get("mode") == "selective" and self.shared.get(event.get("item_hash")) != log:
+            return "not_granted"  # 15.7 step 1-2, admission only: shares are host state, not log
         if r is not None:
             return r.detail if r.code.value.startswith("hub.") else r.code.value
         sg = ident.signer(ws, line)
@@ -508,12 +457,7 @@ def run_model_case(case: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     return out
 
 
-MODEL_CASES = [
-    pytest.param(
-        c, id=c["name"], marks=[pytest.mark.skip(reason="admission item check: task 6")] if "pending" in c else []
-    )
-    for c in X["replay"]
-]
+MODEL_CASES = [pytest.param(c, id=c["name"]) for c in X["replay"]]
 
 
 @pytest.mark.parametrize("case", MODEL_CASES)
@@ -526,6 +470,6 @@ def test_model_replay_case_agrees_with_the_reference(case: dict[str, Any]) -> No
                 assert info.get(k) == st[k], (st, k, info)
 
 
-@pytest.mark.parametrize("case", [c for c in X["replay"] if "pending" not in c], ids=lambda c: c["name"])
+@pytest.mark.parametrize("case", X["replay"], ids=lambda c: c["name"])
 def test_model_and_reference_give_the_same_outcomes(case: dict[str, Any]) -> None:
     assert [r for r, _ in run_model_case(case)] == [r for r, _ in run_case(case)]

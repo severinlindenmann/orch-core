@@ -40,7 +40,7 @@ VALID: dict[str, dict[str, Any]] = {
     "log.added": {"text": "line one\nline two"},
     "handoff.written": {"text": "handoff"},
     "question.asked": {
-        "question": {"to": "assignees", "text": "Ship?", "blocking": True, "options": [{"key": "a", "label": "A"}], "recommended": "a"},  # noqa: E501
+        "question": {"id": "Q1", "to": "assignees", "text": "Ship?", "blocking": True, "options": [{"key": "a", "label": "A"}], "recommended": "a"},  # noqa: E501
         "qid": "c" * 32, "hash": H1,
     },
     "question.answered": {"question": "Q1", "hash": H1, "option": "a"},
@@ -54,6 +54,8 @@ VALID: dict[str, dict[str, Any]] = {
 
 def event(typ: str, **over: Any) -> dict[str, Any]:
     e = {**_COMMON, "type": typ, "actor": {"kind": "person", "id": U1, "via": "x"}, **copy.deepcopy(VALID[typ])}
+    if typ == "ticket.created":
+        e["based_on"] = None  # the first event of a log has no base
     e.update(over)
     return {k: v for k, v in e.items() if v is not ...}
 
@@ -131,20 +133,28 @@ def test_ticket_updated_base_rev_must_cover_exactly_the_set_paths():
 @pytest.mark.parametrize(
     "q",
     [
-        {"to": "assignees", "text": "x", "blocking": True, "id": "Q9"},
-        {"to": "assignees", "text": "x", "blocking": True, "sig": "AAAA"},
-        {"to": "assignees", "text": "x", "blocking": True, "options": [{"actor": "u_x", "key": "a", "label": "A"}]},
+        {"to": "assignees", "text": "x", "blocking": True},  # no id
+        {"id": "Q1", "to": "assignees", "text": "x", "blocking": True, "sig": "AAAA"},
         {
+            "id": "Q1",
+            "to": "assignees",
+            "text": "x",
+            "blocking": True,
+            "options": [{"actor": "u_x", "key": "a", "label": "A"}],
+        },
+        {
+            "id": "Q1",
             "to": "assignees",
             "text": "x",
             "blocking": False,
             "options": [{"key": "a", "label": "A"}],
             "recommended": "b",
         },
-        {"to": "everyone", "text": "x", "blocking": True},
-        {"to": "assignees", "text": "x", "blocking": 1},
-        {"to": "assignees", "text": "x", "blocking": True, "options": []},
+        {"id": "Q1", "to": "everyone", "text": "x", "blocking": True},
+        {"id": "Q1", "to": "assignees", "text": "x", "blocking": 1},
+        {"id": "Q1", "to": "assignees", "text": "x", "blocking": True, "options": []},
         {
+            "id": "Q1",
             "to": "assignees",
             "text": "x",
             "blocking": True,
@@ -280,7 +290,11 @@ _ENVELOPE_NAMES = {
 
 def _action_cases():
     for c in V["cases"]:
-        if c["check"] != "action" or c["name"].startswith("action_smuggles_"):
+        if (
+            c["check"] != "action"
+            or c["name"].startswith("action_smuggles_")
+            or c["name"] == "action_smuggle_question_with_id"
+        ):
             continue
         a, exp = c["args"]["action"], c["expect"]
         if a.get("type") not in PAYLOAD or set(exp) not in ({"ok"}, {"error"}):
@@ -302,7 +316,12 @@ def _as_event(a: dict[str, Any]) -> dict[str, Any]:
     names = {"key", "owner", "base_rev", "from", "qid", "gate_gen", "policy_hash", "source_sha"}
     names |= {"hash"} if typ == "question.asked" else set()  # the hub derives the question's content hash
     derived = {k: v for k, v in VALID[typ].items() if k in names and k not in fields}
-    return {**_COMMON, "type": typ, "actor": {"kind": "person", "id": U1, "via": "x"}, **derived, **fields}
+    e = {**_COMMON, "type": typ, "actor": {"kind": "person", "id": U1, "via": "x"}, **derived, **fields}
+    if typ == "ticket.created":
+        e["based_on"] = None
+    if typ == "question.asked" and type(e.get("question")) is dict:
+        e["question"] = {"id": "Q1", **e["question"]}  # the hub assigns the id from its view
+    return e
 
 
 @pytest.mark.parametrize("case", list(_action_cases()))
@@ -322,7 +341,6 @@ def test_the_replay_covers_the_hub_vectors_that_matter():
     assert len(names) >= 45
     assert {
         "action_smuggle_set_tasks_verify_cmd",
-        "action_smuggle_question_with_id",
         "action_smuggle_visibility_extra_key",
         "action_text_rlo_u202e",
     } <= names

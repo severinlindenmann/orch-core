@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import audit as AU
 from . import hub as H
+from . import spaces as SP
+from . import suite as S
 from .canon import b64u, unb64u
 
 
@@ -54,6 +57,88 @@ def _apply_store(steps: list[dict[str, Any]], ws: str, wsk: bytes, now_ms: int, 
                 state, H.verify_unbound(st["unbound"], workspace_id=ws, wsk_pub=wsk, dev_mode=dev_mode)
             )
     return state
+
+
+def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
+    """The hub's rules over spaces: ``steps`` build the state (each must succeed), ``final`` is the call under test."""
+    dev = a.get("dev_mode", True)
+    held = _held(a)
+    sks = {int(e): bytes.fromhex(k) for e, k in a.get("sks", {}).items()}
+    pubs = {w: unb64u(k, 65) for w, k in a.get("wsk_pubs", {}).items()}
+    modes = a.get("modes", {})
+    states: dict[str, Any] = {}
+
+    def step(st: dict[str, Any]) -> Any:
+        if "space" in st:
+            sid = st["space"]["o"]["space_id"]
+            prior = states[sid]["space"] if sid in states else None
+            o = SP.verify_space(st["space"], held, dev_mode=dev, prior=prior)
+            SP.check_added_members(
+                None if prior is None else prior["members"],
+                o,
+                modes={w: modes.get(w, "full") for w in o["members"]},
+                accepts=st.get("accepts", {}),
+                wsk_pubs=pubs,
+                dev_mode=dev,
+            )
+            states[sid] = SP.apply_space(states[sid], o) if sid in states else SP.new_state(o)
+            return None
+        if "unbind" in st:
+            u = st["unbind"]
+            sid = u["space_id"]
+            rec = (
+                SP.verify_space(u["space"], held, dev_mode=dev, prior=states[sid]["space"]) if u.get("space") else None
+            )
+            states[sid] = SP.apply_unbind(states.get(sid), u["ws"], rec)
+            if states[sid] is None:
+                del states[sid]
+            return None
+        kind = next(k for k in ("put", "revoke", "get") if k in st)
+        c = st[kind]
+        cur = states.get(c["body"]["space_id"])
+        if kind == "get":
+            return SP.space_get(cur, c["ws"], c["body"])
+        if kind == "put":
+            new, reply = SP.space_put(cur, c["ws"], c["body"], sks=sks, wsk_pubs=pubs, dev_mode=dev)
+        else:
+            new, reply = SP.space_revoke(cur, c["ws"], c["body"])
+        states[c["body"]["space_id"]] = new
+        return reply
+
+    for st in a["steps"]:
+        step(st)
+    out = step(a["final"])
+    if out is None:
+        return {}
+    if "entries" in out:
+        return {"seqs": [e["seq"] for e in out["entries"]], "next": out["next"]}
+    return out
+
+
+def _audit(a: dict[str, Any]) -> dict[str, Any]:
+    dev = a.get("dev_mode", True)
+    held = _held({**a, "revoked_op_certs": []})  # revocations are checked per record (they stand for passed history)
+    certs, now = a.get("op_certs", []), a["now_ms"]
+    cur = held["op_cert"]["op_seq"]
+    head = a.get("head")
+    accepted: dict[int, str] = {}
+    for st in a.get("steps", []):  # the history the verifier accepted before any revocation it learns of now
+        o, ops = AU.verify_record_ex(st, held, dev_mode=dev, now_ms=now, op_certs=certs, trusted_seq=1 << 62)
+        head = AU.apply_record(head, st, o, op_seq=ops, current_op_seq=cur)
+        accepted[o["seq"]] = AU.chain_hash(st)
+    o, ops = AU.verify_record_ex(
+        a["signed"],
+        held,
+        dev_mode=dev,
+        now_ms=now,
+        event=a.get("event"),
+        op_certs=certs,
+        revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
+        accepted_hashes=accepted,
+        trusted_seq=head["seq"] if head else 0,
+    )
+    new = AU.apply_record(head, a["signed"], o, op_seq=ops, current_op_seq=cur, accepted_hashes=accepted)
+    return {"seq": new["seq"], "hash": new["hash"]}
 
 
 def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
@@ -167,6 +252,67 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         if a.get("path") == "direct":
             return H.check_direct_publish(req, unb64u(a["cards"][a["workspace_id"]]["wsk_pub"], 65))
         return H.check_hub_publish(req, st, now_ms=now, dev_mode=dev)
+    if check == "space":
+        prior = None
+        if a.get("prior"):  # held under the card that was current when it was accepted
+            prior = SP.verify_space(
+                a["prior"], _held({**a, "card": a.get("held_card", a["card"]), "held_card": None}), dev_mode=dev
+            )
+        o = SP.verify_space(a["signed"], _held(a), dev_mode=dev, prior=prior, revoked_op_certs=_later(a))
+        return {"epoch": o["epoch"], "members": o["members"]}
+    if check == "space_wrap":
+        held = _held(a)
+        space = SP.verify_space(a["space"], held, dev_mode=dev)
+        o, sk = SP.verify_space_wrap(
+            a["signed"],
+            held,
+            space,
+            workspace_id=a["workspace_id"],
+            wxk_priv=S.key_from_seed(bytes.fromhex(a["wxk_seed"])),
+            wxk_version=a["wxk_version"],
+            dev_mode=dev,
+        )
+        return {"epoch": o["epoch"], "sk_hex": sk.hex()}
+    if check == "space_item":
+        o = SP.verify_item(
+            a["sealed"],
+            sk=bytes.fromhex(a["sk_hex"]),
+            space_id=a["space_id"],
+            epoch=a["epoch"],
+            item_id=a["item_id"],
+            members=a["members"],
+            wsk_pubs={w: unb64u(k, 65) for w, k in a["wsk_pubs"].items()},
+            hub_id=a["hub_id"],
+            dev_mode=dev,
+        )
+        return {"author": o["workspace_id"]}
+    if check == "audit":
+        return _audit(a)
+    if check == "audit_ack":
+        return AU.check_ack(a["chain"], a.get("acked", {}), a["workspace_id"], a["body"])
+    if check == "admin_read":
+        r = a["request"]
+        st = {
+            "cards": a["cards"],
+            "bindings": {
+                w: _apply_store(steps, w, unb64u(a["cards"][w]["wsk_pub"], 65), now, dev)
+                for w, steps in a.get("bindings", {}).items()
+            },
+            "hub_cards": {a["hub_id"]: a["hub_card"]},
+            "revoked_op_certs": a.get("revoked_op_certs", []),
+        }
+        return H.check_admin_read(r, st, now_ms=now, dev_mode=dev)
+    if check == "admin_read_rows":
+        return {"rows": len(H.check_admin_rows(a["rows"], a["scope"]))}
+    if check == "admin_read_row":
+        H.check_admin_read_row(a["row"])
+        return {"row": True}
+    if check == "host_put":
+        space = SP.verify_space(a["space"], _held(a), dev_mode=dev)
+        SP.check_host_put(a["rule"], space)
+        return {"put": True}
+    if check == "space_flow":
+        return _space_flow(a)
     raise ValueError(f"unknown check {check}")
 
 

@@ -18,6 +18,9 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_route": "orch/v2/hub-route|",
     "sig_hub_publish": "orch/v2/hub-publish|",
     "sig_hub_audit": "orch/v2/hub-audit|",  # reserved for D4 (audit chain); no object in H0
+    "sig_hub_admin_read": "orch/v2/hub-admin-read|",  # F3: hub admin metadata read at orch-publish
+    "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
+    "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
     # signatures by a channel key
     "sig_hub_channel_proof": "orch/v2/hub-channel-proof|",
     # signatures by WSK (workspace host)
@@ -25,6 +28,8 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    "sig_space_item": "orch/v2/sig/space-item|",  # V3-D8: a member workspace's item in a shared space
+    "sig_space_accept": "orch/v2/sig/space-accept|",  # L2P-2: a selective workspace's owner accepts a member set
     "sig_publish_hub": "orch/v2/publish-hub|",  # a publish request on the hub path (L2-2); v2 keeps orch/v2/publish|
     # signature by the workspace owner's device key (V3-D4)
     "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
@@ -33,7 +38,22 @@ HUB_LABELS: dict[str, str] = {
     "h_channel_id": "orch/v2/id/channel|",
     "h_hub_event_digest": "orch/v2/hub-event-digest|",
     "h_hub_publish_request": "orch/v2/hub-publish-request|",
+    "h_hub_audit_chain": "orch/v2/hub-audit-chain|",  # D4: hash of one signed audit record (the chain link)
+    "h_hub_audit_scope": "orch/v2/hub-audit-scope|",  # L2P-4: blinded workspace tag of an audit record
+    "h_hub_audit_event": "orch/v2/hub-audit-event|",  # D4: hash of an audit event, signed into its record
+    "h_space_members": "orch/v2/hub-space-members|",  # L2P-1: an item signs the member set of its epoch
+    "h_sk_commit": "orch/v2/hub-sk-commit|",  # V3-D8: commitment to SK_e inside the signed space record
+    # AAD of a sealed space item
+    "aad_space": "orch/v2/space-aad|",
 }
+
+#: HKDF labels and seal purposes of V3-D8 (not signed/AAD bytes, so outside the prefix-free table; protocol-v2 §3 rules:
+#: ``info`` = label followed by ``|`` fields).
+KDF_SPACE_ITEM = b"orch/v2/space-item"  # HKDF(SK_e, "", label|space|epoch) -> the space's item key
+KDF_SPACE_ITEM_MSG = b"orch/v2/space-item-msg"  # HKDF(item key, salt16, label) -> one item's AEAD key
+PURPOSE_SPACE_SK = (
+    "space-sk"  # seal_to purpose: SK_e to a member workspace's WXK (an addition to v2 §5.3's closed list)
+)
 
 #: UK signs only under this family: ``"orch/v2/hub-custodial|" + <event type> + "|"`` (spec §5).
 CUSTODIAL_PREFIX = "orch/v2/hub-custodial|"
@@ -42,6 +62,7 @@ EVENT_TYPE = re.compile(r"[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}")
 #: Existing v2 labels this contract reuses as they are.
 V2_REUSED: dict[str, str] = {
     "sig_publish": "orch/v2/publish|",
+    "aad_seal": "orch/v2/seal-aad|",
     "sig_device_cert": "orch/v2/sig/device-cert|",
     "sig_ws_event": "orch/v2/sig/ws-event|",
     "sig_ws_delegation": "orch/v2/sig/ws-delegation|",

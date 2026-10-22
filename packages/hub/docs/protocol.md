@@ -33,8 +33,11 @@ byte string is canonical unpadded b64u, `lp16(x)` is a 2-byte big-endian length 
 | 9 | `hub.binding`, `hub.unbound` | `WSK` | publish, relay, hub | 2 |
 | 10 | link messages `hub.link`, link auth | `WSK` (w2h), `HK_op` (h2w) | hub, host | 2 |
 | 11 | publish through the hub, `hub.publish_approval` | `WSK`, `HK_op`, owner's device key | orch-publish | 2 |
+| 10.5 | hub audit chain `hub.audit` (D4) | `HK_op` | workspaces, admins | 3 |
+| 10.6 | hub admin read (F3) | `HK_op` | orch-publish | 3 |
+| 10.4 | shared spaces: `hub.space`, `hub.space_wrap`, `space.item` (V3-D8) | `HK_op`, `HK_op`, `WSK` | host, hub | 3 |
 
-Not in H0 (named so nobody builds them from guesswork): the hub audit chain object (D4; label reserved), snapshot
+Not in H0 (named so nobody builds them from guesswork): snapshot
 generations (#910), the standalone signed alias (C4), the `webauthn` passkey channel contract (#908), hub↔hub
 objects (H7), relay hub accounts (E1).
 
@@ -127,7 +130,11 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_snapshot` | `orch/v2/hub-snapshot\|` | `HK_op` | `cj(o)` of `hub.snapshot` | 7 |
 | `sig_hub_route` | `orch/v2/hub-route\|` | `HK_op` | `cj(o)` of a hub→host `hub.link` | 10 |
 | `sig_hub_publish` | `orch/v2/hub-publish\|` | `HK_op` | the transport signature of a forwarded publish request | 11 |
-| `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | reserved for the audit chain (D4), no object in H0 | — |
+| `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | `cj(o)` of `hub.audit` | 10.5 |
+| `sig_hub_admin_read` | `orch/v2/hub-admin-read\|` | `HK_op` | the bytes of a hub admin read request | 10.6 |
+| `h_hub_audit_chain` | `orch/v2/hub-audit-chain\|` | hash | one signed audit record (the chain link) | 10.5 |
+| `h_hub_audit_scope` | `orch/v2/hub-audit-scope\|` | hash | the blinded workspace tag of an audit record | 10.5 |
+| `h_hub_audit_event` | `orch/v2/hub-audit-event\|` | hash | an audit event, signed into its record | 10.5 |
 | custodial family | `orch/v2/hub-custodial\|<type>\|` | `UK` | a custodial event (`type` is the event type) | 8 |
 | `sig_hub_channel_proof` | `orch/v2/hub-channel-proof\|` | channel key | the event digest | 8 |
 | `sig_hub_binding` | `orch/v2/sig/hub-binding\|` | `WSK` | `cj(o)` of `hub.binding` | 9 |
@@ -136,19 +143,26 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_link_auth` | `orch/v2/sig/hub-link-auth\|` | `WSK` | the link-open challenge, bound to TLS | 10 |
 | `sig_publish_hub` | `orch/v2/publish-hub\|` | `WSK` | a publish request on the hub path, with `hub_id` and the approval (L2-2) | 11 |
 | `sig_hub_publish_approval` | `orch/v2/sig/hub-publish-approval\|` | owner's `dk_sig` | `cj(o)` of `hub.publish_approval` | 11 |
+| `sig_hub_space` | `orch/v2/hub-space\|` | `HK_op` | `cj(o)` of `hub.space` | 10.4 |
+| `sig_hub_space_wrap` | `orch/v2/hub-space-wrap\|` | `HK_op` | `cj(o)` of `hub.space_wrap` | 10.4 |
+| `sig_space_item` | `orch/v2/sig/space-item\|` | `WSK` | `cj(o)` of `space.item` | 10.4 |
+| `sig_space_accept` | `orch/v2/sig/space-accept\|` | `WSK` | `cj(o)` of `space.accept` | 10.4 |
+| `h_space_members` | `orch/v2/hub-space-members\|` | hash | the member list of one space epoch, signed into an item | 10.4 |
+| `h_sk_commit` | `orch/v2/hub-sk-commit\|` | hash | the commitment to `SK_e` in `hub.space` | 10.4 |
+| `aad_space` | `orch/v2/space-aad\|` | AAD | one sealed space item | 10.4 |
 | `h_hub_id` | `orch/v2/id/hub\|` | hash | `hub_id` | 2.3 |
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
 
-Reused unchanged: `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
+HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch) and `orch/v2/space-item-msg` (one item). Reused unchanged: `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
 
 **The custodial family.** `UK` signs only under `"orch/v2/hub-custodial|" || type || "|"`, and `type` must match
 `[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}` (so it never contains `|`; anything else is `malformed`). All
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
-`HK_root` under the two root labels, `HK_op` under the seven `hub-*` labels, `UK` under the custodial family, a channel
-key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels and `orch/v2/publish-hub|`, the owner's
+`HK_root` under the two root labels, `HK_op` under the eleven `hub-*` labels, `UK` under the custodial family, a channel
+key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
 device key under `sig/hub-publish-approval|`.
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
@@ -542,9 +556,15 @@ unknown `op` is `unknown_op`.
 | `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5) | `{}` |
 | `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, opaque to the hub, forwarded to publish and the relay (§16) | `{}` |
 | `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is | `{}` |
-| `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{}` |
+| `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
+| `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
+| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
+| `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
+| `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
+| `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 
 A reply's body is either the reply body above or `{"error": <code>}`; H0 fixes request bodies only (reply bodies are
 built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and the selective ops in phase 2 (share ops
@@ -589,6 +609,257 @@ enqueue order. The host answers with a w2h reply (`op: "route_in"`, `re` = the r
 `{"error": code}` if its receiver refused it); only the answer removes the entry, so delivery is at least once and the
 receiver deduplicates on `(from_ws, id)` (v2 §11.4). Queued envelopes are persisted, delivered in order on reconnect and
 expire after 31 days. Frames may be up to 1.5 MB (an envelope of 1 MiB as base64url).
+
+### 10.4 Shared spaces (phase 3, V3-D8, spec D75)
+
+**What a space is.** A hub-hosted set of items that several member workspaces of this hub put into and read from.
+It has a `space_id`, a member list (workspaces of this hub) and, per **epoch**, a 32-byte key `SK_e` that the hub
+generates and holds. **Option B (spec §2, D75): the hub holds every `SK_e`, opens every item it stores and may index
+it.** What the hub never holds is a workspace's own keys: items enter only because a member **host** put them (below),
+and workspace traffic outside spaces stays E2E sealed (§10.3 envelopes).
+
+**Who creates and changes a space, and who consents (L2P-2).** Hub-side policy decides who may *ask* for a change: a
+hub-admin, or a user with `admin` in **every** member workspace (D3's `Access`). That is not consent to *join*:
+
+- **A selective workspace is added only by its owner.** D71: the hub-admin has no role in a selective workspace; §8a: only
+  its owner, at the host terminal, decides what is shared. The owner's host signs a `space.accept`
+  `{hub_id, space_id, workspace_id, epoch, prev_members_hash, members_hash, dev}` with its `WSK` (reference label
+  `sig_space_accept`; made only by a human-only host verb, never by an agent) for exactly one transition: the `epoch` the
+  addition creates, the member set before it (`prev_members_hash`; the hash of the empty list for a new space) and the
+  set after it. An old accept cannot be replayed when the same set recurs, so a workspace that was removed and is listed
+  again needs a new owner decision (vector `space_add_selective_accept_replayed_at_later_epoch`), and sends it with `space_accept
+  {accept}`. The hub must hold it before it signs a `hub.space` that lists that workspace (`not_accepted` otherwise;
+  `check_added_members`). A hub-admin can **remove** a selective workspace and can never add one. A workspace whose mode
+  is unknown is treated like a selective one.
+- **A host puts only into a space whose member set its owner approved.** The owner's share rule pins
+  `{space_id, members}`, not just the `space_id`. Before **every** `space_put` the host verifies the current `hub.space`
+  (signature, epoch not older than the one it holds) and refuses to put when the member set holds anyone the owner did
+  not approve: `members_changed` (local, never sent). A smaller set needs nothing; a grown set needs the owner to
+  re-approve at the host (an `admin` of that workspace in full mode), which replaces the rule (`check_host_put`,
+  vectors `host_put_*`). So a member added later by a compromised or careless hub reads **nothing** the host puts
+  after that, unless the owner approved the new set.
+- **Items of a space are untrusted input** to the agents of a member workspace (D29 rules for foreign content): an item
+  is data from another workspace, never an instruction.
+
+**Creating a space or adding a member pulls no data.** An item exists only if a member host chose to `space_put` it
+under the rules above. In a selective workspace `space_put` is accepted (the op exists in both modes) and what may be
+put is the owner's share rules at the host; the hub cannot check them.
+
+**Epochs and rotation.** `epoch` starts at 1 and **rises on every membership change** (add, remove, a workspace that
+unbinds). The hub makes a fresh `SK_e`, signs a new `hub.space` and issues one `hub.space_wrap` per current member. A
+member host holds the `SK_e` of every epoch it was a member of. **A workspace that leaves loses all access to later
+epochs**: it gets no later wrap, and the hub answers its `space_get` / `space_put` / `space_revoke` with `not_member`.
+**Revocation cannot take back what was read:** a leaver (or a revoked item's earlier readers) keeps the plaintext and
+the old `SK_e` it already held; rotation only ends *future* access. A member added later gets wraps from its first epoch
+on and **no backfill**: items of earlier epochs are not returned to it (the hub could re-seal them; V3 does not).
+A workspace that leaves and returns reads the epochs it was in, not the gap.
+
+**Unbinding ends membership in the same step (decided).** When a workspace's `hub.unbound` is accepted (§9.4), the
+hub removes it from **every** space it is in before it answers anything else for that workspace: one new epoch per
+space, a fresh `SK_e`, a new `hub.space` that no longer lists it. The record must be exactly the old one at
+`epoch + 1` minus that workspace; anything else is `malformed` (`apply_unbind`, vectors `space_unbind_*`). A space whose
+last member unbinds ends (audited as `delete`). A workspace that is not a member needs no record.
+
+#### The objects
+
+```
+hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, epoch ≥ 1,
+                members: [workspace_id]  (sorted, unique, 1..64), sk_commit: b64u(32), issued_ms, dev}
+                signed by HK_op, label sig_hub_space
+hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
+                wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
+space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, members_hash: b64u(32), item_id,
+                workspace_id (the author), created_ms, body: object (opaque to the contract), dev}
+                                                                            signed by the author's WSK, sig_space_item
+```
+
+- `sk_commit = b64u(H("orch/v2/hub-sk-commit|" || suite || space_id || u32(epoch) || SK_e))`: in the signed record, so
+  every member opens a wrap to the same key (like v2's `ck_commit`).
+- **The wrap** is v2 §5.3 `seal_to` with a new purpose `space-sk`. **Amendment to v2 §5.3's closed purpose list**
+  (orch-relay `docs/protocol-v2.md`; to be applied there with this contract): `space-sk` | recipient: workspace (`WXK`)
+  | `object_id` space_id | `epoch` space epoch | `extra` `hub_id || u32(wxk_version)` | plaintext `SK_e` (32). It is the
+  workspace-recipient counterpart of the device purpose `sk`: recipient = the member's `WXK` of `wxk_version`, recipient id = `workspace_id`, `object_id = space_id`,
+  `epoch = space epoch`, `extra = hub_id || u32(wxk_version)`, plaintext `SK_e`. A sealed blob proves nothing about its
+  sender (v2 §5.3); that is why the wrap object is signed by `HK_op`.
+- **An item signs the hub, the epoch and the member set it is shared with (L2P-1).** `members_hash =
+  b64u(H("orch/v2/hub-space-members|" || cj(sorted member list of that epoch)))`. The AAD alone is not enough: the hub
+  writes the AAD (it holds every `SK_e`), so only the author's signature can carry the author's consent to one epoch's
+  member set. The hub (at `space_put`) and every reader check `hub_id` (`other_hub`), `epoch`, `space_id`, `item_id` and
+  `members_hash` against the `hub.space` of that epoch (`malformed`). An item re-sealed by the hub into a later epoch,
+  into a space of another hub, or shown to another member set fails (vectors `space_item_resealed_into_later_epoch`,
+  `space_item_from_other_hub`, `space_item_members_hash_mismatch`); a hub that shows two member lists for one epoch is
+  caught by the author's own hash. "No backfill" is therefore enforced by the authors' signatures, not only by hub policy.
+- **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
+  `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
+  `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,
+  cj(signed space.item), AAD)` with `AAD = "orch/v2/space-aad|" || suite || space_id || u32(epoch) || item_id`.
+  The AAD binds space, epoch and item id: an item moved to another space, epoch or id fails (vectors
+  `space_item_wrong_epoch`, `…moved_to_other_item_id`, `…moved_to_other_space`). The signed inner object carries the
+  author, so a reader (or a later reader of the hub's store) can tell who wrote it, and a hub or a member cannot
+  plant an item in another workspace's name (vectors `space_item_signed_by_other_member`, `…author_not_member`).
+  An item is **immutable**: a change is a new `item_id` plus a `space_revoke` of the old one.
+
+`space.accept` is the fourth object: see the consent rules above (signed by the workspace's `WSK`).
+
+**Where a reader gets a co-member's `WSK` (L2P-7).** Only from that workspace's v2 directory card, verified through its
+`ws_delegation` (the same card store and never-change rules as orch-publish, §16), **pinned per `workspace_id` by the
+reader itself**; never from a map the hub supplies (the hub holds every `SK_e` and can seal anything, so a hub-supplied
+key would let it plant items "from Marketing"). The `wsk_pubs` argument of `verify_item` is that pin. A member with no
+pin gives an item that is **refused** ("author unverified"); agents never act on it (vectors
+`space_item_author_key_from_hub_differs_from_card`, `space_item_author_unknown_key`). **Residual, stated:** the first
+card of a co-member is first-come (relay directory), and after H5 cards travel through the hub (`card_put`), so a hub can
+introduce a fabricated card for a `workspace_id` the reader has never seen; what a human verifies once is the card's
+`owner_person_id`.
+
+#### Operations (§10.2 table; w2h; both modes)
+
+| Op | Rules, in order | Refusals |
+|---|---|---|
+| `space_list` | returns the current `hub.space` of every space the link's workspace is a member of | — |
+| `space_put` | the workspace is a member of the current epoch; `epoch` = the current epoch; size ≤ 256 KiB sealed; the hub opens the item (option B) and checks it is for this space and `item_id`, written and signed by **the link's workspace**; the same `(space_id, item_id)` with the same bytes is idempotent (same `seq`) | `not_member`, `stale_epoch` (older: refresh with `space_get` and re-seal), `malformed` (newer), `too_large`, `malformed` / `bad_signature` / `unknown_workspace` (the item), `other_workspace` (author ≠ link), `replay` (same id, other bytes) |
+| `space_accept` | `{"accept": <space.accept>}`: stored if it verifies under the link workspace's pinned `WSK`, names this hub and this workspace (`other_workspace`, `other_hub`, `bad_signature`, `malformed`); used by the next listing of that workspace in a space | as listed |
+| `space_revoke` | member; the item exists; the link's workspace is its author (a leaver can no longer revoke: revoke before leaving). The revocation is a new `seq`, so pollers see it. Idempotent | `not_member`, `unknown_item`, `other_workspace` |
+| `space_get` | member of the current epoch. Entries with `seq` > `since`, **only items of epochs in which the caller was a member**, oldest first, at most 100 entries and 1 MiB of sealed data per page. Reply `{"space": <current hub.space>, "wraps": [<hub.space_wrap> of the caller for the current epoch and each epoch an entry belongs to], "entries": [{"seq", "item_id", "epoch", "revoked", "sealed"?}], "next"}` (`sealed` absent when `revoked`; `next` = the last `seq` returned, or `since`) | `not_member` |
+
+**One answer for "no such space" and "not a member"** (`not_member`), so a workspace learns nothing about spaces it
+is not in. A host that gets `stale_epoch` or sees a higher `epoch` in a reply verifies the new `hub.space`
+(under the pinned hub card, epochs only rise: `stale_epoch` for a replayed older record, `space_conflict` for the same
+epoch with other **content**: the identity of a record is `(space_id, epoch, members, sk_commit)`, not its signature, so
+the hub's re-signed record after an `HK_op` rotation is no conflict, L2P-3; after a rotation the hub re-signs the
+current record of every space and every wrap it may still serve under the new op cert), then its wrap: signature, this workspace is listed, the wrap names this space, epoch,
+workspace and its `WXK` version (`bad_wxk_version` otherwise: rotate and ask again), the seal opens (`bad_wrap`) and the
+key matches `sk_commit` (`commit_mismatch`).
+
+The reference checks are `space`, `space_wrap`, `space_item` and `space_flow` (put / revoke / get over a space with
+rotations) in `orch_hub.contract.spaces`; the negative vectors cover non-member put and get, unknown space, stale and
+future epoch, a replayed put, an item from a workspace outside the space, a leaver's read after rotation, a late
+joiner's missing backfill and a rejoiner's gap.
+
+**Not in this section** (named so nobody guesses): hub↔hub spaces (D77, H7); re-sealing old items for new members;
+the hub-side audit of space reads (D4); the admin CLI and its authorization (D3 / D8 build, against this section).
+**Decided by the orchestrator:** `space_list` is part of the op list; `space-sk` is added to v2 §5.3's purposes (above);
+unbinding removes the workspace from every space in the same step (above).
+
+### 10.5 The hub audit chain (phase 3, D4)
+
+**What it is.** One hash-chained log per hub of **every custodial signature and every grant, membership and space
+change** (spec §5 "Audit"). It makes a hub that edits its own history detectable by anyone who holds a later head:
+workspaces verify and acknowledge it (`audit_ack`), admins read it in full.
+
+```
+hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev: b64u(32), ts_ms,
+           type: "custodial" | "grant" | "membership" | "space", scope_tag: b64u(32) | null,
+           event_hash: b64u(32), dev}                       signed by HK_op, label sig_hub_audit
+```
+
+- **Chain rule.** `chain_hash(r) = b64u(H("orch/v2/hub-audit-chain|" || cj({"o", "sig"})))`, over the whole signed
+  record. `seq` starts at 1 with `prev = b64u(32 zero bytes)`; record `n + 1` has `seq = n + 1` and
+  `prev = chain_hash(record n)`. Rewriting, removing or reordering any record breaks every later `prev`.
+- **The record signs the event's hash, not the event** (`event_hash = b64u(H("orch/v2/hub-audit-event|" || cj(event)))`),
+  so a workspace can verify the whole chain, including records about others, and sees the events only of its own
+  scope. **The scope is blinded (L2P-4):** `scope_tag = b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) ||
+  scope_nonce (16)))`, where the 16 random bytes `scope_nonce` are a field **inside the event**. Only the workspace the
+  event is about receives the event, so only it can compute and check the tag; every other tenant sees an opaque value
+  and learns neither the `workspace_id` (also the TOFU key of §9.5) nor which records are the same workspace's.
+  `scope_tag` is `null` for hub-wide events (memberships). `audit_mismatch` when the tag does not match. **What stays
+  visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
+  memberships and space changes and when they happened, not whose).
+- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, scope_nonce}` (the
+  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, scope_nonce}`; `membership`
+  `{group, user_id, added, actor_user_id}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  workspace_id | null, actor_user_id | null, scope_nonce}`. The acting admin's `UK` signature on a grant or membership change is
+  the custodial event it came from (spec §10); the audit record points at it, it does not replace it.
+
+**Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
+verifies under the op certificate **it names** (`op_cert_id`): the held card's current one, or an earlier one that this
+hub's root signed (`hub.op_cert`, served in `audit_get`'s `op_certs`). The chain therefore survives a routine `HK_op`
+rotation: a new workspace verifies from genesis, an offline one past its head. The verifier does not trust the record's
+own date alone:
+
+- `ts_ms` may not be ahead of the verifier's clock plus 300 s (`not_yet_valid`) and **never decreases along the chain**
+  (`stale_timestamp`);
+- a non-current op cert must have been valid at the record's `ts_ms` and must **not have lapsed before its successor was
+  issued** (`stale_op_cert`: nothing could have signed in that gap); and a record **beyond the verifier's trusted head**
+  needs a cert that is **not expired at the verifier's own time** (`cert_expired`): an expired old key cannot be made to
+  sign a "backdated" new record (vector `audit_expired_key_backdated_into_its_validity`). History up to the trusted head
+  is covered by the hash chain and stays valid whatever became of the cert (vector
+  `audit_expired_key_old_record_still_verifies`). Consequence, stated: a workspace that was offline longer than an old
+  cert's life cannot catch up through records that cert signed beyond its head, and a new workspace cannot verify from
+  genesis through expired certs; both start from an anchor head obtained at join (see the L7 note);
+- `op_seq` of the op cert never decreases along the chain (`stale_op_cert`). The floor is the head's `op_seq`, or, when
+  the head has none (an anchor head), **the held card's current `op_seq`**, so an anchor cannot be used to take an old
+  key back (vector `audit_head_without_op_seq_uses_the_held_card`). A non-current cert that is not served, not signed by
+  this root, or not lower than the current one is refused (`stale_op_cert`, `bad_signature`);
+- a **revoked** op cert (`hub.op_revoked`) signs nothing, not even at a past `seq`: a record under it verifies only if it
+  **is** the record the verifier already accepted (same bytes: the verifier keeps the chain hash it accepted per `seq`),
+  otherwise `revoked` (vectors `audit_revoked_key_forges_a_passed_seq`, `…_the_head_seq`). A workspace that joins after a
+  revocation therefore starts from an anchor head it was given at join (stored, trust-on-first-use for the prefix, see the
+  L7 note below) and does not re-verify history signed by the revoked key.
+
+Then the usual checks (`hub_id`, dev marker, exact fields), `seq = 1` ⇒ genesis `prev`;
+then, with its head `{seq, hash}` (or none: it expects genesis, or starts from an anchor head it was given):
+
+| Situation | Result |
+|---|---|
+| `seq = head.seq + 1` and `prev = head.hash` | accept; the head moves |
+| `seq > head.seq + 1`, or no head and `seq > 1` | `audit_gap` (a record was dropped, or the hub withholds it) |
+| `seq = head.seq + 1` and another `prev`; or `seq = head.seq` with other bytes | `audit_fork` (the hub signed two histories) |
+| the same bytes at `seq = head.seq`, or a record older than the head | ignored: the head stays (L2P-10: overlapping `audit_get` pages re-deliver records). If the verifier kept the hash it accepted for that `seq` and the bytes differ: `audit_fork`. It keeps any two valid records with one `seq` and different bytes as fork evidence |
+| an event it holds does not hash to `event_hash`, is no valid event of that `type`, or its tag is not the record's `scope_tag` | `audit_mismatch` |
+
+**`audit_get {since}`** (w2h, added so the ack has something to refer to): returns up to 100 records after `since`
+in order, each with its `event` only if it concerns the caller (`scope_tag` is the tag of its workspace), the hub's `head`
+`{seq, hash}`, and the root-signed `op_certs` the page's records name (reply `{"records", "head", "op_certs"}`). **`audit_ack {seq, head}`**: the workspace says "I verified the chain up to `seq`, whose chain hash is
+`head`". The hub checks `head` against its own record `seq` (`seq` beyond its chain, or another hash: `audit_fork`: the
+workspace holds a chain the hub did not sign there) and stores the highest acked `seq` per workspace; an older ack
+changes nothing. Reply `{"acked": seq}`. Gaps are found by the workspace (`audit_gap`), forks by either side
+(`audit_fork`), and a workspace that cares compares its head with the hub's. **SHORTCUT** `Audit acks recorded, not
+enforced` (L7): the hub stores acks and never blocks, alerts or truncates on a missing, stale or forked one; a fork is
+visible in the vectors' checks and in `orch-hub inspect`, not acted on.
+
+Vectors: `audit_*` (genesis, next, gap, forks, rewritten first record, scope and event mismatches, wrong signer and
+domain) and `audit_ack_*`.
+
+### 10.6 Hub admin read at orch-publish (phase 3, F3)
+
+Lets a hub admin read **metadata** about releases of workspaces bound to the hub, through orch-publish, without
+holding any workspace key. Read-only; never content or secrets.
+
+```
+signed bytes = "orch/v2/hub-admin-read|" || suite (1) || hub_id (16) || u64(ts_ms) || lp16(METHOD) || lp16(path + query)
+headers      = Orch-Hub: <hub_id hex>, Orch-Hub-Ts: <ts_ms decimal>, Orch-Hub-Signature: b64u(Sign(HK_op, bytes))
+```
+
+`METHOD` is `GET` or `HEAD`; `path + query` is the request target exactly as sent (raw query, ASCII), so a swapped path,
+query or method does not verify. The label keeps a publish transport signature (§11) from being read as an admin read
+(vector `admin_read_publish_signature_replayed`). **What orch-publish checks, in order:**
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | header syntax (`Orch-Hub` hex16, `Orch-Hub-Ts` a decimal without leading zeros, `Orch-Hub-Signature` 64 bytes b64u), method `GET` or `HEAD`; **the target is canonical** (below) | 400 `malformed` |
+| 2 | `\|now − ts\| ≤ 120 s` | 401 `stale_timestamp` (`server_ms`) |
+| 3 | the **held, current** hub card for `Orch-Hub`, **verified again for this request**: its op certificate valid, not expired, not revoked, `hub_id` of the root, dev marker | 401 `unknown_hub` |
+| 4 | `Orch-Hub-Signature` under that card's `HK_op` over the bytes above | 401 `bad_hub_signature` |
+| 5 | scope: only workspaces with a **current binding to this hub in `mode: "full"`** (status `bound`, `hub_id` and `hk_root_pub` of the held card) whose `wsk_pub` equals the workspace card's current `WSK`; the workspace the target names (path `/v1/ws/<id>/…` or the one `workspace=` key), if any, must be in that set, **and so must the workspace of every row the data layer returns** (a row outside it is never emitted) | 403 `not_bound` |
+| 6 | data | — |
+
+**Canonical targets only (L2P-5).** The target is `malformed` unless it is ASCII, starts with `/`, contains no `%`
+(no percent-encoding at all) and has a path of non-empty lower-case segments `[a-z0-9][a-z0-9_-]*` (so no `//`, `.`,
+`..`, trailing `/` or upper case) and an optional query of unique `key=value` pairs, keys `[a-z][a-z_]*`, values
+`[a-z0-9][a-z0-9_-]*` (no `#`, `+`, `;`). A workspace id in the path or in the `workspace=` key is 32 lower-case hex digits;
+path and query must name the same one. The scope applies to that workspace, after routing, and to every row returned
+(`check_admin_rows`), so a router that normalises or decodes the target differently cannot reach a workspace outside the
+scope (vectors `admin_read_target_*`).
+
+**No nonce store, by design:** the request is idempotent metadata, so a replay inside the 120 s window returns what the
+original did, and the hub's key is online anyway. (If a state-changing admin route is ever added, it needs its own
+contract.) **Selective workspaces are out of scope (L2P-6).** D71: the hub-admin has no role in a selective workspace, whose
+card says the hub sees only what it shares; release metadata, including releases made on the direct v2 path that the
+hub never forwarded, stays hidden from it. Only a later, explicit owner opt-in could add them (not specified).
+
+**Response rows carry exactly** `workspace_id`, `release_id`, `kind`, `state`, `created_ms`, `expires_ms`
+(or `null`), `revoked`, `bytes`, `public_url`, which **MUST be `null` in `hv: 0`** (orch-publish has no public kind; a non-null value is a violation, vector `admin_read_row_with_public_url`). A later `hv` may add it for live public releases only, never for a URL that carries a token or grants access; any other field is a
+violation (`check_admin_read_row`, vectors `admin_read_row_*`).
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -714,6 +985,19 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
 - A **compromised hub** can sign as any user in full mode (accepted, spec §9) but cannot forge a channel proof
   (vector `custodial_proof_not_by_channel`) without a channel key it does not hold; it can drop or delay events. It
   cannot revive a binding after leave (§9.4) and cannot unbind a workspace (only `WSK` can).
+- **The audit chain, honestly (L7 gap).** A workspace detects a **gap** (a record removed from what it is shown) and a
+  **fork** on its own path, and nobody can alter a record without breaking every later `prev`. What is **not** true
+  until an off-hub witness exists (L7): that a compromised hub "cannot silently drop entries". It can show workspace A
+  one chain and workspace B another (**equivocation**); each verifies consistently, and the acks go to the hub itself,
+  so nothing in this contract detects it. What the acks give today: an honest hub holds `WSK`-signed link messages
+  saying "W verified up to `seq`/`head`" (evidence against a later rewrite, if someone outside the hub ever looks);
+  against a compromised hub, nothing. The L7 proposal: the hub posts `HK_op`-signed checkpoints `{seq, head}` to
+  orch-publish (append-only per `hub_id`; two heads at one `seq` are a transferable fork proof) and hosts compare. The
+  "anchor head" a workspace starts from (taken at join and stored) is trust-on-first-use for the prefix. The hub also
+  chooses a record's `scope_tag` (it can file a record about A under another tag so A never sees the event); hosts
+  should cross-check that every custodial event and every `hub.space` epoch they accepted has a matching record within
+  the next sync (phase 4). The spec sentence in orch-v2-hub.md §10 ("a hash-chained audit acknowledged by the
+  workspaces" as mitigation of a taken-over hub) overstates this and is to be amended to match.
 - **Replays.** Snapshots are monotonic (§7); custodial events are bound to workspace, log and type and go through the
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
@@ -739,8 +1023,11 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `not_allowed`, `queue_full`, `too_large` | `route_out` reply | §10.3; `too_large` is the v2 code, reused |
+| `audit_gap`, `audit_fork`, `audit_mismatch` | audit chain | §10.5 |
+| `not_member`, `not_accepted`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
+| `members_changed` | host, local | §10.4: the member set grew since the owner approved it; never sent on the link |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
-| `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish | §11.2 |
+| `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read | §11.2, §10.6 |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
@@ -761,7 +1048,9 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
-| `cases` | 156 cases (30 positive, 126 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
+| `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
+| `cases` | 348 cases (81 positive, 267 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -793,6 +1082,12 @@ Every implementation runs the cases of the checks it implements: the hub all of 
 | 16 | Unbound delivery with the hub down | the host sends it to publish directly | spec §8 break-glass "none needs the hub" |
 | 17 | The hub's trust in a workspace's `WSK` at join | the v2 directory card + owner `PK` in `join`; first come per `workspace_id` | L2-3 |
 | 18 | `WSK` source after H5 | the v2 directory card, carried opaquely through the hub (`card_put`); publish never pins bindings first-come | L2 recommendation, adopted |
+
+| 19 | Route subject (V3-D19) | a ws→ws route A→B is authorized as A's owner: the hub user aliased to A's owner at join (`--owner-user-id`, stored with the pin/binding), needing role ≥ `edit` on B via D3's `Access`; no alias → `not_allowed` | orchestrator, 22 Oct |
+| 20 | Shared-space ops | `space_list` is part of the op list; the seal purpose `space-sk` is added to v2 §5.3 | orchestrator, 22 Oct |
+| 21 | Unbind and spaces | `hub.unbound` removes the workspace from every space in the same step (§10.4) | orchestrator, 22 Oct |
+| 22 | Audit | chain over event hashes (workspaces verify all, read their own events); `audit_get` added; acks recorded not enforced | D4, L7 |
+| 23 | Admin read | F3's layout (`lp16`, raw query signed), no nonce store, held card re-verified per request | orchestrator, 22 Oct |
 
 **Open / decided after L2:**
 

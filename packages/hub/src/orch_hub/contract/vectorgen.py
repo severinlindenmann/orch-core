@@ -12,7 +12,9 @@ import json
 import sys
 from typing import Any
 
+from . import audit as AU
 from . import hub as H
+from . import spaces as SP
 from . import suite as S
 from .canon import b64u, cj
 from .cases import outcome
@@ -32,6 +34,7 @@ KEY_NAMES = (
     "wsk_a",
     "wsk_b",
     "wxk_a",
+    "wxk_b",
     "pk_alice",
     "dk_alice_mac.sig",
     "dk_alice_mac.kx",
@@ -62,6 +65,9 @@ HUB_ID = H.hub_id(K.pub["hk_root"])
 ROGUE_HUB_ID = H.hub_id(K.pub["hk_root_rogue"])
 WS_A = fake16("workspace_a")
 WS_B = fake16("workspace_b")
+WS_C = fake16("workspace_c")
+SPACE = fake16("space_1")
+SPACE_2 = fake16("space_2")
 U_ALICE = fake16("user_alice")
 U_BOB = fake16("user_bob")
 P_ALICE = H.person_id(K.pub["pk_alice"])
@@ -403,6 +409,248 @@ def link(
     }
     lk = label or ("sig_hub_link" if direction == "w2h" else "sig_hub_route")
     return signed(key, lk, o)
+
+
+# --- shared spaces (V3-D8) ------------------------------------------------------------------------------------------
+
+SK = {1: S.fake_seed("hub/sk_e1"), 2: S.fake_seed("hub/sk_e2"), 3: S.fake_seed("hub/sk_e3")}
+WSK_OF = {WS_A: "wsk_a", WS_B: "wsk_b"}
+
+
+def space_rec(epoch: int = 1, members: list[str] | None = None, sk: bytes | None = None, space: str = SPACE, **kw: Any):
+    mem = members if members is not None else [WS_A, WS_B]
+    o = {
+        **hdr("hub.space"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "space_id": space,
+        "epoch": epoch,
+        "members": sorted(mem),
+        "sk_commit": SP.sk_commit(space, epoch, sk or SK[epoch]),
+        "issued_ms": NOW - 60_000,
+        "dev": True,
+        **kw,
+    }
+    return signed("hk_op", "sig_hub_space", o)
+
+
+def space_wrap(
+    epoch: int = 1,
+    ws: str = WS_B,
+    wxk: str = "wxk_b",
+    version: int = 1,
+    sk: bytes | None = None,
+    space: str = SPACE,
+    signer: str = "hk_op",
+    **kw: Any,
+):
+    sealed = SP.seal_sk(
+        sk or SK[epoch],
+        hub_id=HUB_ID,
+        space_id=space,
+        epoch=epoch,
+        workspace_id=ws,
+        wxk_pub=K.pub[wxk],
+        wxk_version=version,
+        eph_seed=S.fake_seed(f"hub/eph/{space}/{epoch}/{ws}"),
+    )
+    o = {
+        **hdr("hub.space_wrap"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "space_id": space,
+        "epoch": epoch,
+        "workspace_id": ws,
+        "wxk_version": version,
+        "sealed": sealed,
+        "dev": True,
+        **kw,
+    }
+    return signed(signer, "sig_hub_space_wrap", o)
+
+
+DEFAULT_MEMBERS = {1: [WS_A, WS_B], 2: [WS_A, WS_B, WS_C]}
+
+
+def space_item_obj(
+    ws: str = WS_A,
+    item_id: str | None = None,
+    space: str = SPACE,
+    key: str | None = None,
+    epoch: int = 1,
+    members: list[str] | None = None,
+    **kw: Any,
+):
+    o = {
+        **hdr("space.item"),
+        "hub_id": HUB_ID,
+        "space_id": space,
+        "epoch": epoch,
+        "members_hash": SP.members_hash(sorted(members if members is not None else DEFAULT_MEMBERS[epoch])),
+        "item_id": item_id or fake16("item_1"),
+        "workspace_id": ws,
+        "created_ms": NOW - 1000,
+        "body": {"kind": "ticket.summary", "title": "Reconcile March invoices", "status": "open"},
+        "dev": True,
+        **kw,
+    }
+    return signed(key or WSK_OF[ws], "sig_space_item", o)
+
+
+def space_accept_obj(
+    ws: str = WS_B,
+    members: list[str] | None = None,
+    key: str | None = None,
+    epoch: int = 1,
+    prev: list[str] | None = None,
+    **kw: Any,
+):
+    o = {
+        **hdr("space.accept"),
+        "hub_id": HUB_ID,
+        "space_id": SPACE,
+        "workspace_id": ws,
+        "epoch": epoch,
+        "prev_members_hash": SP.members_hash(sorted(prev or [])),
+        "members_hash": SP.members_hash(sorted(members if members is not None else [WS_A, WS_B])),
+        "dev": True,
+        **kw,
+    }
+    return signed(key or WSK_OF[ws], "sig_space_accept", o)
+
+
+def sealed_item(
+    ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, sk: bytes | None = None, **kw: Any
+) -> str:
+    iid = item_id or fake16("item_1")
+    obj = space_item_obj(ws, iid, space, epoch=epoch, **kw)
+    return SP.seal_item(sk or SK[epoch], space, epoch, iid, obj, salt=S.fake_seed("hub/salt/" + iid + ws)[:16])
+
+
+def put_body(
+    ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, **kw: Any
+) -> dict[str, Any]:
+    iid = item_id or fake16("item_1")
+    return {
+        "space_id": space,
+        "epoch": epoch,
+        "item_id": iid,
+        "sealed": sealed_item(ws, iid, epoch, space, **kw),
+    }
+
+
+# --- D4 audit chain, admin read (§10.5, §10.6) -------------------------------------------------------------------------
+
+
+def nonce16(label: str) -> str:
+    return b64u(S.fake_seed("hub/scope_nonce/" + label)[:16])
+
+
+AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
+    (
+        "custodial",
+        {
+            "workspace_id": WS_A,
+            "log": TICKET,
+            "verb": "gate.approved",
+            "user_id": U_ALICE,
+            "channel_id": CH_ALICE,
+            "digest": b64u(S.fake_seed("hub/audit_digest")),
+            "scope_nonce": nonce16("custodial"),
+        },
+    ),
+    (
+        "grant",
+        {
+            "group": "ops",
+            "workspace_id": WS_A,
+            "role": "edit",
+            "actor_user_id": U_ALICE,
+            "scope_nonce": nonce16("grant"),
+        },
+    ),
+    ("membership", {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE}),
+    (
+        "space",
+        {
+            "space_id": SPACE,
+            "epoch": 2,
+            "change": "remove",
+            "workspace_id": WS_B,
+            "actor_user_id": U_ALICE,
+            "scope_nonce": nonce16("space"),
+        },
+    ),
+]
+
+
+def audit_rec(
+    seq: int, prev: str, typ: str, event: dict[str, Any], *, scope: Any = "auto", signer: str = "hk_op", **kw: Any
+) -> dict[str, Any]:
+    if "scope_nonce" not in event and typ in ("custodial", "grant", "space"):
+        event = {**event, "scope_nonce": nonce16(typ)}
+    o = {
+        **hdr("hub.audit"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "seq": seq,
+        "prev": prev,
+        "ts_ms": NOW - 1000 * (10 - seq),
+        "type": typ,
+        "scope_tag": AU.scope_tag_of(event) if scope == "auto" else scope,
+        "event_hash": AU.event_hash(event),
+        "dev": True,
+        **kw,
+    }
+    return signed(signer, "sig_hub_audit", o)
+
+
+def audit_chain(n: int = 4) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    prev = AU.GENESIS_PREV
+    for i in range(n):
+        typ, ev = AUDIT_EVENTS[i]
+        r = audit_rec(i + 1, prev, typ, ev)
+        out.append(r)
+        prev = AU.chain_hash(r)
+    return out
+
+
+ADMIN_TARGET = "/v1/admin/releases?state=active"
+
+
+def admin_req(
+    method: str = "GET",
+    target: str = ADMIN_TARGET,
+    *,
+    ts: int = NOW,
+    key: str = "hk_op",
+    signed_target: str | None = None,
+    signed_method: str | None = None,
+    hub: str = HUB_ID,
+    **hdr_kw: Any,
+) -> dict[str, Any]:
+    msg = H.admin_read_bytes(hub, ts, signed_method or method, signed_target or target)
+    headers = {
+        "Orch-Hub": hub,
+        "Orch-Hub-Ts": str(ts),
+        "Orch-Hub-Signature": b64u(S.sign(K.priv[key], msg, deterministic=True)),
+    }
+    headers.update(hdr_kw)
+    return {"method": method, "target": target, "headers": {k: v for k, v in headers.items() if v is not None}}
+
+
+ADMIN_ROW = {
+    "workspace_id": WS_A,
+    "release_id": "rel_2026_10_22_a",
+    "kind": "share",
+    "state": "active",
+    "created_ms": NOW - DAY,
+    "expires_ms": NOW + DAY,
+    "revoked": False,
+    "bytes": 12_345,
+    "public_url": None,
+}
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1356,6 +1604,1335 @@ def build() -> dict[str, Any]:
         2,
     )
 
+    # ---- shared spaces (phase 3, V3-D8, protocol.md §10.4)
+
+    sp_pubs = {WS_A: K.b("wsk_a"), WS_B: K.b("wsk_b")}
+    e1, e2 = space_rec(1), space_rec(2, [WS_A])
+    e2_abc = space_rec(2, [WS_A, WS_B, WS_C])
+    sks_hex = {str(k): v.hex() for k, v in SK.items()}
+    sp = {**with_card, "sks": sks_hex, "wsk_pubs": sp_pubs}
+
+    case(
+        "space_valid_e1", "space", {**with_card, "signed": e1}, {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}}, 3
+    )
+    case(
+        "space_rotation_e2_after_e1",
+        "space",
+        {**with_card, "signed": e2, "prior": e1},
+        {"ok": {"epoch": 2, "members": [WS_A]}},
+        3,
+    )
+    case(
+        "space_same_resend",
+        "space",
+        {**with_card, "signed": e1, "prior": e1},
+        {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}},
+        3,
+    )
+    case(
+        "space_older_epoch_replayed",
+        "space",
+        {**with_card, "signed": e1, "prior": e2},
+        {"error": "stale_epoch"},
+        3,
+        "a replayed record cannot bring a removed member back",
+    )
+    case(
+        "space_same_epoch_other_members",
+        "space",
+        {**with_card, "signed": space_rec(1, [WS_A]), "prior": e1},
+        {"error": "space_conflict"},
+        3,
+    )
+    case(
+        "space_other_space_as_prior",
+        "space",
+        {**with_card, "signed": space_rec(2, space=SPACE_2), "prior": e1},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_unsorted",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[WS_B, WS_A])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_duplicate",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[WS_A, WS_A])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_empty",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_too_many",
+        "space",
+        {
+            **with_card,
+            "signed": resign("hk_op", "sig_hub_space", e1, members=sorted(fake16(f"m{i}") for i in range(65))),
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_epoch_zero",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, epoch=0)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_under_snapshot_label",
+        "space",
+        {**with_card, "signed": signed("hk_op", "sig_hub_snapshot", e1["o"])},
+        {"error": "bad_signature"},
+        3,
+        "wrong domain",
+    )
+    case(
+        "space_signed_by_workspace_key",
+        "space",
+        {**with_card, "signed": signed("wsk_a", "sig_hub_space", e1["o"])},
+        {"error": "bad_signature"},
+        3,
+        "a workspace cannot make a space",
+    )
+    case(
+        "space_stale_op_cert",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT)},
+        {"error": "stale_op_cert"},
+        3,
+    )
+    case(
+        "space_missing_dev_marker",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, dev=DROP)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_extra_field",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, name="finance")},
+        {"error": "malformed"},
+        3,
+    )
+
+    # the wrap of SK_e to one member's WXK
+    wr = {**with_card, "space": e1, "workspace_id": WS_B, "wxk_seed": K.seed["wxk_b"].hex(), "wxk_version": 1}
+    case(
+        "space_wrap_valid", "space_wrap", {**wr, "signed": space_wrap()}, {"ok": {"epoch": 1, "sk_hex": SK[1].hex()}}, 3
+    )
+    case(
+        "space_wrap_for_other_workspace",
+        "space_wrap",
+        {**wr, "signed": space_wrap(ws=WS_A, wxk="wxk_a")},
+        {"error": "other_workspace"},
+        3,
+        "B presented A's wrap",
+    )
+    case(
+        "space_wrap_to_non_member",
+        "space_wrap",
+        {**wr, "workspace_id": WS_C, "signed": space_wrap(ws=WS_C)},
+        {"error": "not_member"},
+        3,
+        "the record does not list C; a wrap for C is not a way in",
+    )
+    wr_bad = {**wr, "signed": space_wrap()}
+    wr_bad["wxk_seed"] = K.seed["wxk_a"].hex()
+    case("space_wrap_opened_with_other_wxk", "space_wrap", wr_bad, {"error": "bad_wrap"}, 3)
+    case(
+        "space_wrap_wxk_version_mismatch",
+        "space_wrap",
+        {**wr, "signed": space_wrap(), "wxk_version": 2},
+        {"error": "bad_wxk_version"},
+        3,
+        "a rotated WXK: the host asks for a new wrap",
+    )
+    case(
+        "space_wrap_other_key_than_committed",
+        "space_wrap",
+        {**wr, "signed": space_wrap(sk=SK[3])},
+        {"error": "commit_mismatch"},
+        3,
+        "the hub sealed another key than the record commits to",
+    )
+    case(
+        "space_wrap_old_epoch_under_new_record",
+        "space_wrap",
+        {
+            **wr,
+            "space": space_rec(2, [WS_A, WS_B]),
+            "signed": resign("hk_op", "sig_hub_space_wrap", space_wrap(1), epoch=2),
+        },
+        {"error": "bad_wrap"},
+        3,
+        "a wrap of epoch 1 relabelled epoch 2 fails the seal's AAD",
+    )
+    case(
+        "space_wrap_epoch_differs_from_record",
+        "space_wrap",
+        {**wr, "space": space_rec(2, [WS_A, WS_B]), "signed": space_wrap()},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_wrap_signed_by_workspace_key",
+        "space_wrap",
+        {**wr, "signed": space_wrap(signer="wsk_a")},
+        {"error": "bad_signature"},
+        3,
+    )
+    moved = space_wrap()
+    moved = resign("hk_op", "sig_hub_space_wrap", moved, space_id=SPACE_2)
+    case(
+        "space_wrap_moved_to_other_space",
+        "space_wrap",
+        {**wr, "space": space_rec(1, space=SPACE_2), "signed": moved},
+        {"error": "bad_wrap"},
+        3,
+        "the seal binds the space id",
+    )
+
+    # a sealed item
+    it = {
+        **with_card,
+        "sk_hex": SK[1].hex(),
+        "space_id": SPACE,
+        "epoch": 1,
+        "item_id": fake16("item_1"),
+        "members": sorted([WS_A, WS_B]),
+        "wsk_pubs": sp_pubs,
+        "hub_id": HUB_ID,
+    }
+    good = sealed_item()
+    case("space_item_valid", "space_item", {**it, "sealed": good}, {"ok": {"author": WS_A}}, 3)
+    case(
+        "space_item_wrong_epoch",
+        "space_item",
+        {**it, "sealed": good, "epoch": 2},
+        {"error": "malformed"},
+        3,
+        "the AAD binds the epoch",
+    )
+    case(
+        "space_item_moved_to_other_item_id",
+        "space_item",
+        {**it, "sealed": good, "item_id": fake16("item_2")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_item_moved_to_other_space",
+        "space_item",
+        {**it, "sealed": good, "space_id": SPACE_2},
+        {"error": "malformed"},
+        3,
+    )
+    case("space_item_wrong_key", "space_item", {**it, "sealed": good, "sk_hex": SK[2].hex()}, {"error": "malformed"}, 3)
+    flipped = bytearray(__import__("orch_hub.contract.canon", fromlist=["unb64u"]).unb64u(good))
+    flipped[40] ^= 1
+    case("space_item_tampered", "space_item", {**it, "sealed": b64u(bytes(flipped))}, {"error": "malformed"}, 3)
+    case(
+        "space_item_author_not_member",
+        "space_item",
+        {**it, "sealed": sealed_item(ws=WS_C, key="wsk_a"), "wsk_pubs": {**sp_pubs, WS_C: K.b("wsk_a")}},
+        {"error": "not_member"},
+        3,
+        "a rogue hub or member planting an item of a workspace outside the space",
+    )
+    case(
+        "space_item_author_key_from_hub_differs_from_card",
+        "space_item",
+        {**it, "sealed": sealed_item(ws=WS_B, key="hk_op")},
+        {"error": "bad_signature"},
+        3,
+        "the hub sealed an item 'from B' signed with a key of its own; the reader's pin of B comes from B's v2 card",
+    )
+    case(
+        "space_item_author_unknown_key",
+        "space_item",
+        {**it, "sealed": good, "wsk_pubs": {WS_B: K.b("wsk_b")}},
+        {"error": "unknown_workspace"},
+        3,
+    )
+    case(
+        "space_item_signed_by_other_member",
+        "space_item",
+        {**it, "sealed": sealed_item(key="wsk_b")},
+        {"error": "bad_signature"},
+        3,
+        "B signed an item that names A",
+    )
+    case(
+        "space_item_under_wrong_label",
+        "space_item",
+        {
+            **it,
+            "sealed": SP.seal_item(
+                SK[1],
+                SPACE,
+                1,
+                fake16("item_1"),
+                signed("wsk_a", "sig_publish_hub", space_item_obj()["o"]),
+                salt=S.fake_seed("hub/salt/x")[:16],
+            ),
+        },
+        {"error": "bad_signature"},
+        3,
+    )
+
+    iid1 = fake16("item_1")
+
+    def seal_obj(obj: dict[str, Any], epoch: int = 1) -> str:
+        return SP.seal_item(SK[epoch], SPACE, epoch, iid1, obj, salt=S.fake_seed("hub/salt/l2p1")[:16])
+
+    case(
+        "space_item_resealed_into_later_epoch",
+        "space_item",
+        {
+            **it,
+            "sealed": seal_obj(space_item_obj(epoch=1), 2),
+            "sk_hex": SK[2].hex(),
+            "epoch": 2,
+            "members": sorted([WS_A, WS_C]),
+        },
+        {"error": "malformed"},
+        3,
+        "the hub re-seals A's epoch-1 item for a later member set: the author signed epoch 1",
+    )
+    case(
+        "space_item_from_other_hub",
+        "space_item",
+        {**it, "sealed": seal_obj(space_item_obj(hub_id=ROGUE_HUB_ID))},
+        {"error": "other_hub"},
+        3,
+        "an item replayed from another hub's space with the same id",
+    )
+    case(
+        "space_item_members_hash_mismatch",
+        "space_item",
+        {**it, "sealed": seal_obj(space_item_obj(members=[WS_A, WS_B, WS_C]))},
+        {"error": "malformed"},
+        3,
+        "the author consented to another member set",
+    )
+
+    # consent: the host's put guard and the hub's rule for adding selective workspaces (L2P-2)
+    rule = {"space_id": SPACE, "members": sorted([WS_A, WS_B])}
+    hp = {**with_card, "rule": rule}
+    case("host_put_unchanged_member_set", "host_put", {**hp, "space": e1}, {"ok": {"put": True}}, 3)
+    case(
+        "host_put_after_member_removed",
+        "host_put",
+        {**hp, "space": e2},
+        {"ok": {"put": True}},
+        3,
+        "a smaller set needs nothing",
+    )
+    case(
+        "host_put_after_member_added",
+        "host_put",
+        {**hp, "space": space_rec(2, [WS_A, WS_B, WS_C])},
+        {"error": "members_changed"},
+        3,
+        "C was added by the hub: the owner never approved a set with C",
+    )
+    case(
+        "host_put_after_member_replaced",
+        "host_put",
+        {**hp, "space": space_rec(2, [WS_A, WS_C])},
+        {"error": "members_changed"},
+        3,
+    )
+    case("host_put_other_space", "host_put", {**hp, "space": space_rec(1, space=SPACE_2)}, {"error": "malformed"}, 3)
+
+    sel = {"modes": {WS_B: "selective"}, "wsk_pubs": sp_pubs}
+    sp_sel = {**sp, **sel}
+    acc_b = space_accept_obj()
+    case(
+        "space_add_selective_without_accept",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1}},
+        {"error": "not_accepted"},
+        3,
+        "a hub-admin cannot list a selective workspace (D71, D80)",
+    )
+    case(
+        "space_add_selective_with_accept",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: acc_b}}},
+        {"ok": {}},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_member_set",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(members=[WS_B])}}},
+        {"error": "not_accepted"},
+        3,
+        "the owner approved a different set",
+    )
+    case(
+        "space_add_selective_accept_signed_by_other_key",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(key="wsk_a")}}},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_hub",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(hub_id=ROGUE_HUB_ID)}}},
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_add_selective_accept_replayed_at_later_epoch",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {"space": space_rec(3, [WS_A, WS_B]), "accepts": {WS_B: acc_b}},
+        },
+        {"error": "not_accepted"},
+        3,
+        "B was removed and listed again with the same member set: the old accept is for epoch 1 only",
+    )
+    case(
+        "space_add_selective_readded_with_new_accept",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {
+                "space": space_rec(3, [WS_A, WS_B]),
+                "accepts": {WS_B: space_accept_obj(epoch=3, prev=[WS_A])},
+            },
+        },
+        {"ok": {}},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_prior_set",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {
+                "space": space_rec(3, [WS_A, WS_B]),
+                "accepts": {WS_B: space_accept_obj(epoch=3, prev=[WS_A, WS_C])},
+            },
+        },
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_add_full_mode_needs_no_accept", "space_flow", {**sp, "steps": [], "final": {"space": e1}}, {"ok": {}}, 3
+    )
+    case(
+        "space_later_add_of_selective_member",
+        "space_flow",
+        {**sp, "modes": {WS_C: "selective"}, "steps": [{"space": e1}], "final": {"space": e2_abc}},
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_unknown_mode_member_refused",
+        "space_flow",
+        {**sp, "modes": {WS_B: None}, "steps": [], "final": {"space": e1}},
+        {"error": "unknown_workspace"},
+        3,
+    )
+    case(
+        "space_removing_a_selective_member_needs_nothing",
+        "space_flow",
+        {**sp_sel, "steps": [{"space": e1, "accepts": {WS_B: acc_b}}], "final": {"space": e2}},
+        {"ok": {}},
+        3,
+    )
+
+    # the hub's rules over one space (steps build the state, final is the call under test)
+    s1 = {"space": e1}
+    put_a = {"put": {"ws": WS_A, "body": put_body()}}
+    put_b = {"put": {"ws": WS_B, "body": put_body(WS_B, fake16("item_2"))}}
+
+    def flow(name: str, steps: list[Any], final: dict[str, Any], expect: dict[str, Any], note: str = "") -> None:
+        case(name, "space_flow", {**sp, "steps": steps, "final": final}, expect, 3, note)
+
+    flow(
+        "space_put_item_signed_for_other_member_set",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(members=[WS_A, WS_B, WS_C])}},
+        {"error": "malformed"},
+    )
+    flow("space_put_ok", [s1], put_a, {"ok": {"seq": 1}})
+    flow("space_put_same_again_is_idempotent", [s1, put_a], put_a, {"ok": {"seq": 1}})
+    flow(
+        "space_put_same_id_other_bytes",
+        [s1, put_a],
+        {"put": {"ws": WS_A, "body": {**put_body(), "sealed": sealed_item(created_ms=NOW - 5)}}},
+        {"error": "replay"},
+        "an item is immutable: change = new id + revoke",
+    )
+    flow(
+        "space_put_by_non_member",
+        [s1],
+        {"put": {"ws": WS_C, "body": put_body(WS_C, key="wsk_a")}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_put_to_unknown_space",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(space=SPACE_2)}},
+        {"error": "not_member"},
+        "the same answer as for a space the caller is not in",
+    )
+    flow("space_put_stale_epoch", [s1, {"space": e2}], put_a, {"error": "stale_epoch"})
+    flow("space_put_future_epoch", [s1], {"put": {"ws": WS_A, "body": put_body(epoch=2)}}, {"error": "malformed"})
+    flow(
+        "space_put_item_authored_by_other_member",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(WS_B)}},
+        {"error": "other_workspace"},
+        "a member can only put what it wrote and signed",
+    )
+    flow(
+        "space_put_item_of_non_member_author",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(WS_C, key="wsk_a")}},
+        {"error": "not_member"},
+        "the inner author is outside the space",
+    )
+    flow(
+        "space_put_after_rotation_at_new_epoch",
+        [s1, {"space": e2_abc}],
+        {"put": {"ws": WS_A, "body": put_body(epoch=2)}},
+        {"ok": {"seq": 1}},
+    )
+    flow(
+        "space_get_member",
+        [s1, put_a, put_b],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1, 2], "next": 2}},
+    )
+    flow(
+        "space_get_since",
+        [s1, put_a, put_b],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [2], "next": 2}},
+    )
+    flow(
+        "space_get_nothing_new",
+        [s1, put_a],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [], "next": 1}},
+    )
+    flow(
+        "space_get_by_non_member",
+        [s1, put_a],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_get_unknown_space",
+        [s1],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE_2, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_get_after_leaving",
+        [s1, put_a, {"space": e2}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+        "rotation: the leaver's future access ends (what it already read stays read)",
+    )
+    flow(
+        "space_put_after_leaving",
+        [s1, {"space": e2}],
+        {"put": {"ws": WS_B, "body": put_body(WS_B, epoch=2)}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_new_member_gets_no_backfill",
+        [s1, put_a, {"space": e2_abc}],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [], "next": 0}},
+        "an item of epoch 1 is not readable by a member of epoch 2 that was not in epoch 1",
+    )
+    flow(
+        "space_new_member_reads_its_epoch",
+        [s1, put_a, {"space": e2_abc}, {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"))}}],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [2], "next": 2}},
+    )
+    flow(
+        "space_old_member_reads_across_rotation",
+        [s1, put_a, {"space": e2_abc}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+    )
+    flow(
+        "space_rejoined_member_misses_the_gap",
+        [
+            s1,
+            put_a,
+            {"space": e2},
+            {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"), members=[WS_A])}},
+            {"space": space_rec(3, [WS_A, WS_B])},
+        ],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+        "B read epoch 1, was out in epoch 2, and is back in epoch 3: epoch 2 stays closed to it",
+    )
+    flow("space_record_replayed_after_rotation", [s1, {"space": e2}], {"space": e1}, {"error": "stale_epoch"})
+    flow(
+        "space_revoke_ok",
+        [s1, put_a],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"ok": {"seq": 2}},
+    )
+    flow(
+        "space_revoke_idempotent",
+        [s1, put_a, {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}}],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"ok": {"seq": 2}},
+    )
+    flow(
+        "space_revoke_by_other_member",
+        [s1, put_a],
+        {"revoke": {"ws": WS_B, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"error": "other_workspace"},
+    )
+    flow(
+        "space_revoke_unknown_item",
+        [s1],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("nope")}}},
+        {"error": "unknown_item"},
+    )
+    flow(
+        "space_revoke_by_non_member",
+        [s1, put_a],
+        {"revoke": {"ws": WS_C, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_revocation_is_a_new_entry",
+        [s1, put_a, {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [2], "next": 2}},
+        "pollers that already read seq 1 see the revocation at seq 2; it cannot take back what was read",
+    )
+
+    # ---- D4 audit chain (phase 3, protocol.md §10.5)
+    ch = audit_chain()
+    h = [AU.chain_hash(r) for r in ch]
+    au = {**with_card}
+    case("audit_genesis", "audit", {**au, "signed": ch[0]}, {"ok": {"seq": 1, "hash": h[0]}}, 3)
+    case("audit_next_record", "audit", {**au, "steps": [ch[0]], "signed": ch[1]}, {"ok": {"seq": 2, "hash": h[1]}}, 3)
+    case("audit_four_in_a_row", "audit", {**au, "steps": ch[:3], "signed": ch[3]}, {"ok": {"seq": 4, "hash": h[3]}}, 3)
+    case(
+        "audit_resend_is_idempotent",
+        "audit",
+        {**au, "steps": ch[:2], "signed": ch[1]},
+        {"ok": {"seq": 2, "hash": h[1]}},
+        3,
+    )
+    case(
+        "audit_from_anchor_head",
+        "audit",
+        {**au, "head": {"seq": 2, "hash": h[1]}, "signed": ch[2]},
+        {"ok": {"seq": 3, "hash": h[2]}},
+        3,
+        "a workspace that joined later starts from a head it was given",
+    )
+    case(
+        "audit_event_matches",
+        "audit",
+        {**au, "signed": ch[0], "event": AUDIT_EVENTS[0][1]},
+        {"ok": {"seq": 1, "hash": h[0]}},
+        3,
+    )
+    case(
+        "audit_event_altered",
+        "audit",
+        {**au, "signed": ch[0], "event": {**AUDIT_EVENTS[0][1], "user_id": U_BOB}},
+        {"error": "audit_mismatch"},
+        3,
+        "the record signs the event's hash",
+    )
+    bad_ev = {**AUDIT_EVENTS[1][1], "extra": 1}
+    case(
+        "audit_event_extra_field",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1], event_hash=AU.event_hash(bad_ev)),
+            "event": bad_ev,
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_scope_tag_mismatch",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(
+                1,
+                AU.GENESIS_PREV,
+                "grant",
+                AUDIT_EVENTS[1][1],
+                scope=AU.scope_tag_of({**AUDIT_EVENTS[1][1], "workspace_id": WS_B}),
+            ),
+            "event": AUDIT_EVENTS[1][1],
+        },
+        {"error": "audit_mismatch"},
+        3,
+        "a record cannot be filed under another workspace's tag",
+    )
+    case(
+        "audit_scope_tag_other_nonce",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1]),
+            "event": {**AUDIT_EVENTS[1][1], "scope_nonce": nonce16("other")},
+        },
+        {"error": "audit_mismatch"},
+        3,
+        "the event does not hash to the record's event_hash",
+    )
+    case(
+        "audit_event_without_nonce",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(
+                1,
+                AU.GENESIS_PREV,
+                "grant",
+                AUDIT_EVENTS[1][1],
+                event_hash=AU.event_hash({k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"}),
+            ),
+            "event": {k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"},
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_hub_wide_event_has_no_tag",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[2]), "event": AUDIT_EVENTS[2][1]},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[2]))}},
+        3,
+    )
+    case(
+        "audit_type_not_the_events",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, "space", AUDIT_EVENTS[1][1]), "event": AUDIT_EVENTS[1][1]},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_gap_record_removed",
+        "audit",
+        {**au, "steps": [ch[0]], "signed": ch[2]},
+        {"error": "audit_gap"},
+        3,
+        "a record taken out of the chain",
+    )
+    case("audit_first_record_not_genesis", "audit", {**au, "signed": ch[1]}, {"error": "audit_gap"}, 3)
+    case(
+        "audit_fork_other_prev",
+        "audit",
+        {**au, "steps": [ch[0]], "signed": audit_rec(2, AU.chain_hash(ch[1]), *AUDIT_EVENTS[1])},
+        {"error": "audit_fork"},
+        3,
+    )
+    case(
+        "audit_fork_other_bytes_at_taken_seq",
+        "audit",
+        {**au, "steps": ch[:2], "signed": audit_rec(2, h[0], *AUDIT_EVENTS[1], ts_ms=NOW)},
+        {"error": "audit_fork"},
+        3,
+        "the hub signed two different records for seq 2",
+    )
+    case(
+        "audit_first_record_rewritten",
+        "audit",
+        {**au, "steps": [audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW)], "signed": ch[1]},
+        {"error": "audit_fork"},
+        3,
+        "a rewritten record breaks every later prev",
+    )
+    case(
+        "audit_genesis_with_prev",
+        "audit",
+        {**au, "signed": audit_rec(1, h[0], *AUDIT_EVENTS[0])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_signed_by_workspace_key",
+        "audit",
+        {**au, "signed": signed("wsk_a", "sig_hub_audit", ch[0]["o"])},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "audit_under_snapshot_label",
+        "audit",
+        {**au, "signed": signed("hk_op", "sig_hub_snapshot", ch[0]["o"])},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "audit_stale_op_cert",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], op_cert_id=OP_CERT_NEXT)},
+        {"error": "stale_op_cert"},
+        3,
+    )
+    case(
+        "audit_unknown_type",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], type="login")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_seq_zero",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], seq=0)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_missing_dev_marker",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], dev=DROP)},
+        {"error": "malformed"},
+        3,
+    )
+
+    # ---- HK_op rotation (L2P-3): records verify under the root-certified op cert they name
+    rot = card(
+        op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next", issued_ms=NOW - 5000), op_key="hk_op_next", card_seq=2
+    )
+    cert1 = op_cert()
+    rot_args = {**base, "card": rot, "held_card": c, "op_certs": [cert1]}
+    r2n = audit_rec(2, h[0], *AUDIT_EVENTS[1], signer="hk_op_next", op_cert_id=OP_CERT_NEXT, ts_ms=NOW - 4000)
+    case(
+        "audit_across_op_rotation",
+        "audit",
+        {**rot_args, "steps": [ch[0]], "signed": r2n},
+        {"ok": {"seq": 2, "hash": AU.chain_hash(r2n)}},
+        3,
+        "a record signed before the rotation, one after",
+    )
+    case(
+        "audit_from_genesis_after_rotation",
+        "audit",
+        {**rot_args, "signed": ch[0]},
+        {"ok": {"seq": 1, "hash": h[0]}},
+        3,
+        "a new workspace verifies the whole chain under the op certs the hub serves",
+    )
+    case(
+        "audit_old_cert_missing", "audit", {**rot_args, "op_certs": [], "signed": ch[0]}, {"error": "stale_op_cert"}, 3
+    )
+    case(
+        "audit_old_cert_forged",
+        "audit",
+        {**rot_args, "op_certs": [op_cert(root="hk_root_rogue")], "signed": ch[0]},
+        {"error": "bad_signature"},
+        3,
+        "an op cert not signed by this hub's root is no cert",
+    )
+    r1n = audit_rec(
+        1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], signer="hk_op_next", op_cert_id=OP_CERT_NEXT, ts_ms=NOW - 4500
+    )
+    case(
+        "audit_op_seq_goes_back",
+        "audit",
+        {**rot_args, "steps": [r1n], "signed": audit_rec(2, AU.chain_hash(r1n), *AUDIT_EVENTS[1], ts_ms=NOW - 6000)},
+        {"error": "stale_op_cert"},
+        3,
+        "a lower op cert after a higher one: an old key signing new records",
+    )
+    case(
+        "audit_head_without_op_seq_uses_the_held_card",
+        "audit",
+        {**rot_args, "head": {"seq": 1, "hash": h[0]}, "signed": ch[1]},
+        {"error": "stale_op_cert"},
+        3,
+        "an anchor head without op_seq cannot be used to take an old key back: the floor is the held card's op_seq",
+    )
+    old_c = op_cert(issued_ms=NOW - 10 * DAY, expires_ms=NOW - 2 * DAY)
+    new_c = op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next", issued_ms=NOW - 4 * DAY)
+    rot_old = card(op=new_c, op_key="hk_op_next", card_seq=2)
+    ra = {**base, "card": rot_old, "op_certs": [old_c]}
+    ra1 = audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 5 * DAY)
+    case(
+        "audit_expired_key_backdated_into_its_validity",
+        "audit",
+        {**ra, "steps": [ra1], "signed": audit_rec(2, AU.chain_hash(ra1), *AUDIT_EVENTS[1], ts_ms=NOW - 3 * DAY)},
+        {"error": "cert_expired"},
+        3,
+        "an expired key is made to sign a new record dated inside its validity: a record beyond the head needs a cert "
+        "that is not expired now",
+    )
+    case(
+        "audit_expired_key_old_record_still_verifies",
+        "audit",
+        {**ra, "steps": [ra1], "signed": ra1},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(ra1)}},
+        3,
+        "history already accepted (<= the trusted head) is covered by the hash chain, whatever became of the cert",
+    )
+    lapsed = op_cert(issued_ms=NOW - 20 * DAY, expires_ms=NOW - 8 * DAY)
+    case(
+        "audit_cert_lapsed_before_its_successor",
+        "audit",
+        {
+            **base,
+            "card": card(op=new_c, op_key="hk_op_next", card_seq=2),
+            "op_certs": [lapsed],
+            "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 9 * DAY),
+        },
+        {"error": "stale_op_cert"},
+        3,
+        "the old cert expired 4 days before the new one existed: nothing signed it in that gap",
+    )
+    case(
+        "audit_record_from_the_future",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW + 300_001)},
+        {"error": "not_yet_valid"},
+        3,
+    )
+    case(
+        "audit_timestamp_goes_back",
+        "audit",
+        {**au, "steps": ch[:2], "signed": audit_rec(3, h[1], *AUDIT_EVENTS[2], ts_ms=NOW - 8500)},
+        {"error": "stale_timestamp"},
+        3,
+        "ts_ms never decreases along the chain",
+    )
+    case(
+        "audit_revoked_key_forges_a_passed_seq",
+        "audit",
+        {
+            **with_card,
+            "steps": ch[:2],
+            "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 9500),
+            "revoked_op_certs": [OP_CERT_ID],
+        },
+        {"error": "revoked"},
+        3,
+        "other bytes at seq 1 signed by the revoked key: only the exact record already accepted verifies",
+    )
+    case(
+        "audit_revoked_key_forges_the_head_seq",
+        "audit",
+        {
+            **with_card,
+            "steps": ch[:2],
+            "signed": audit_rec(2, h[0], *AUDIT_EVENTS[1], ts_ms=NOW - 100),
+            "revoked_op_certs": [OP_CERT_ID],
+        },
+        {"error": "revoked"},
+        3,
+    )
+    case(
+        "audit_new_record_under_revoked_op",
+        "audit",
+        {**with_card, "steps": [ch[0]], "signed": ch[1], "revoked_op_certs": [OP_CERT_ID]},
+        {"error": "revoked"},
+        3,
+        "the op cert was revoked: nothing newer than what the verifier passed",
+    )
+    case(
+        "audit_passed_record_under_revoked_op_stays_valid",
+        "audit",
+        {**with_card, "steps": ch[:2], "signed": ch[0], "revoked_op_certs": [OP_CERT_ID]},
+        {"ok": {"seq": 2, "hash": h[1]}},
+        3,
+        "history already passed (<= head) is covered by the hash chain",
+    )
+    sr = resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT)
+    case(
+        "space_resigned_after_rotation",
+        "space",
+        {**base, "card": rot, "held_card": c, "signed": sr, "prior": e1},
+        {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}},
+        3,
+        "the same record under the new op cert is no conflict",
+    )
+    case(
+        "space_resigned_after_rotation_other_members",
+        "space",
+        {
+            **base,
+            "card": rot,
+            "held_card": c,
+            "prior": e1,
+            "signed": resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT, members=[WS_A]),
+        },
+        {"error": "space_conflict"},
+        3,
+    )
+    case(
+        "space_resigned_after_rotation_other_key",
+        "space",
+        {
+            **base,
+            "card": rot,
+            "held_card": c,
+            "prior": e1,
+            "signed": resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT, sk_commit=b64u(bytes(32))),
+        },
+        {"error": "space_conflict"},
+        3,
+    )
+
+    ak = {"chain": ch, "workspace_id": WS_A}
+    case("audit_ack_valid", "audit_ack", {**ak, "body": {"seq": 2, "head": h[1]}}, {"ok": {"acked": 2}}, 3)
+    case("audit_ack_head", "audit_ack", {**ak, "body": {"seq": 4, "head": h[3]}}, {"ok": {"acked": 4}}, 3)
+    case(
+        "audit_ack_older_keeps_the_newer",
+        "audit_ack",
+        {**ak, "acked": {WS_A: 4}, "body": {"seq": 2, "head": h[1]}},
+        {"ok": {"acked": 4}},
+        3,
+    )
+    case(
+        "audit_ack_wrong_head",
+        "audit_ack",
+        {**ak, "body": {"seq": 2, "head": h[2]}},
+        {"error": "audit_fork"},
+        3,
+        "the workspace holds a chain the hub did not sign there",
+    )
+    case(
+        "audit_ack_beyond_the_chain", "audit_ack", {**ak, "body": {"seq": 5, "head": h[3]}}, {"error": "audit_fork"}, 3
+    )
+
+    # ---- hub admin read for orch-publish (phase 3, protocol.md §10.6)
+    acards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
+    ab = {
+        **base,
+        "hub_id": HUB_ID,
+        "hub_card": c,
+        "cards": acards,
+        "bindings": {WS_A: [{"binding": binding(mode="full")}]},
+    }
+    ok_ar = {"ok": {"hub": HUB_ID, "workspaces": [WS_A]}}
+    ws_path = f"/v1/ws/{WS_A}/releases?state=active"
+    case("admin_read_valid", "admin_read", {**ab, "request": admin_req()}, ok_ar, 3)
+    case("admin_read_workspace_path_in_scope", "admin_read", {**ab, "request": admin_req(target=ws_path)}, ok_ar, 3)
+    case("admin_read_head", "admin_read", {**ab, "request": admin_req("HEAD")}, ok_ar, 3)
+    case(
+        "admin_read_post_refused",
+        "admin_read",
+        {**ab, "request": admin_req("POST")},
+        {"error": "malformed"},
+        3,
+        "read-only: no write method is ever an admin read",
+    )
+    case(
+        "admin_read_missing_ts",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Ts": None})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_ts_leading_zero",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Ts": "0" + str(NOW)})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_short_signature",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Signature": b64u(b"x" * 63)})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_relative_target",
+        "admin_read",
+        {**ab, "request": admin_req(target="v1/x", signed_target="v1/x")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_stale_ts",
+        "admin_read",
+        {**ab, "request": admin_req(ts=NOW - 120_001)},
+        {"error": "stale_timestamp"},
+        3,
+    )
+    case(
+        "admin_read_future_ts",
+        "admin_read",
+        {**ab, "request": admin_req(ts=NOW + 120_001)},
+        {"error": "stale_timestamp"},
+        3,
+    )
+    case("admin_read_edge_of_window", "admin_read", {**ab, "request": admin_req(ts=NOW - 120_000)}, ok_ar, 3)
+    case(
+        "admin_read_swapped_query",
+        "admin_read",
+        {**ab, "request": admin_req(target="/v1/admin/releases?workspace=" + WS_B, signed_target=ADMIN_TARGET)},
+        {"error": "bad_hub_signature"},
+        3,
+        "the raw query is signed",
+    )
+    case(
+        "admin_read_swapped_path",
+        "admin_read",
+        {**ab, "request": admin_req(target=ws_path, signed_target=ADMIN_TARGET)},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_swapped_method",
+        "admin_read",
+        {**ab, "request": admin_req("HEAD", signed_method="GET")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    pr = publish_request()
+    case(
+        "admin_read_publish_signature_replayed",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Signature": pr["headers"]["Orch-Hub-Signature"]})},
+        {"error": "bad_hub_signature"},
+        3,
+        "a hub transport signature over a publish request is not an admin read",
+    )
+    case(
+        "admin_read_signed_by_root",
+        "admin_read",
+        {**ab, "request": admin_req(key="hk_root")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_signed_by_workspace_key",
+        "admin_read",
+        {**ab, "request": admin_req(key="wsk_a")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_revoked_op_cert",
+        "admin_read",
+        {**ab, "request": admin_req(), "revoked_op_certs": [OP_CERT_ID]},
+        {"error": "unknown_hub"},
+        3,
+        "the held card is re-verified for every request",
+    )
+    case(
+        "admin_read_unknown_hub",
+        "admin_read",
+        {**ab, "request": admin_req(hub=ROGUE_HUB_ID)},
+        {"error": "unknown_hub"},
+        3,
+    )
+    case(
+        "admin_read_dev_card_at_real_verifier",
+        "admin_read",
+        {**ab, "request": admin_req(), "dev_mode": False, "bindings": {}},
+        {"error": "unknown_hub"},
+        3,
+    )
+    # canonical targets only (L2P-5): every spelling a router might resolve to an unbound workspace
+    for name, tgt, code in (
+        ("upper_case_id", f"/v1/ws/{WS_C.upper()}/releases", "malformed"),
+        ("empty_segment", f"//v1/ws/{WS_C}/releases", "malformed"),
+        ("dot_segment", f"/v1/./ws/{WS_C}/releases", "malformed"),
+        ("dot_dot_segment", f"/v1/x/../ws/{WS_C}/releases", "malformed"),
+        ("percent_encoded_id", f"/v1/ws/%{ord(WS_C[0]):02x}{WS_C[1:]}/releases", "malformed"),
+        ("trailing_slash", f"/v1/ws/{WS_C}/", "malformed"),
+        ("query_workspace_unbound", f"/v1/admin/releases?workspace={WS_C}", "not_bound"),
+        ("query_workspace_upper_case", f"/v1/admin/releases?workspace={WS_A.upper()}", "malformed"),
+        ("query_workspace_twice", f"/v1/admin/releases?workspace={WS_A}&workspace={WS_C}", "malformed"),
+        ("query_other_than_path", f"/v1/ws/{WS_A}/releases?workspace={WS_C}", "malformed"),
+        ("query_without_value", "/v1/admin/releases?state", "malformed"),
+        ("query_plus", "/v1/admin/releases?state=a+b", "malformed"),
+        ("fragment", "/v1/admin/releases?state=active#x", "malformed"),
+        ("short_workspace_id", "/v1/ws/abcd/releases", "malformed"),
+    ):
+        case(
+            f"admin_read_target_{name}",
+            "admin_read",
+            {**ab, "request": admin_req(target=tgt)},
+            {"error": code},
+            3,
+            "a router that normalises the target must not serve another workspace's metadata",
+        )
+    case(
+        "admin_read_query_workspace_in_scope",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/admin/releases?workspace={WS_A}&state=active")},
+        ok_ar,
+        3,
+    )
+    case(
+        "admin_read_path_and_query_agree",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/ws/{WS_A}/releases?workspace={WS_A}")},
+        ok_ar,
+        3,
+    )
+    case(
+        "admin_read_rows_in_scope",
+        "admin_read_rows",
+        {"rows": [ADMIN_ROW], "scope": [WS_A]},
+        {"ok": {"rows": 1}},
+        3,
+    )
+    case(
+        "admin_read_row_outside_scope_never_emitted",
+        "admin_read_rows",
+        {"rows": [ADMIN_ROW, {**ADMIN_ROW, "workspace_id": WS_C}], "scope": [WS_A]},
+        {"error": "not_bound"},
+        3,
+        "whatever the target resolved to, a row of another workspace is not returned",
+    )
+    sel_b = {**ab, "bindings": {WS_A: [{"binding": binding(mode="selective")}]}}
+    case(
+        "admin_read_selective_binding_excluded",
+        "admin_read",
+        {**sel_b, "request": admin_req()},
+        {"ok": {"hub": HUB_ID, "workspaces": []}},
+        3,
+        "D71/D80: the hub-admin has no role in a selective workspace, and its card says the hub sees only what it shares",
+    )
+    case(
+        "admin_read_selective_workspace_path",
+        "admin_read",
+        {**sel_b, "request": admin_req(target=ws_path)},
+        {"error": "not_bound"},
+        3,
+    )
+    case(
+        "admin_read_workspace_not_bound",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/ws/{WS_B}/releases")},
+        {"error": "not_bound"},
+        3,
+        "only workspaces with a current binding to this hub",
+    )
+    case(
+        "admin_read_workspace_after_unbound",
+        "admin_read",
+        {
+            **ab,
+            "bindings": {WS_A: [{"binding": binding(mode="full")}, {"unbound": unbound()}]},
+            "request": admin_req(target=ws_path),
+        },
+        {"error": "not_bound"},
+        3,
+    )
+    case(
+        "admin_read_scope_excludes_unbound",
+        "admin_read",
+        {**ab, "bindings": {WS_A: [{"binding": binding(mode="full")}, {"unbound": unbound()}]}, "request": admin_req()},
+        {"ok": {"hub": HUB_ID, "workspaces": []}},
+        3,
+    )
+    case(
+        "admin_read_binding_to_other_hub",
+        "admin_read",
+        {
+            **ab,
+            "bindings": {WS_A: [{"binding": binding(root="hk_root_rogue", mode="full")}]},
+            "request": admin_req(target=ws_path),
+        },
+        {"error": "not_bound"},
+        3,
+    )
+    case("admin_read_row_valid", "admin_read_row", {"row": ADMIN_ROW}, {"ok": {"row": True}}, 3)
+    case(
+        "admin_read_row_with_public_url",
+        "admin_read_row",
+        {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
+        {"error": "malformed"},
+        3,
+        "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
+    )
+    case(
+        "admin_read_row_extra_content_field",
+        "admin_read_row",
+        {"row": {**ADMIN_ROW, "content": "aGk"}},
+        {"error": "malformed"},
+        3,
+        "metadata only",
+    )
+    case(
+        "admin_read_row_missing_field",
+        "admin_read_row",
+        {"row": {k: v for k, v in ADMIN_ROW.items() if k != "bytes"}},
+        {"error": "malformed"},
+        3,
+    )
+    case("admin_read_row_wrong_type", "admin_read_row", {"row": {**ADMIN_ROW, "revoked": 0}}, {"error": "malformed"}, 3)
+
+    # ---- unbind removes the workspace from every space (same step as hub.unbound)
+    e2_a = space_rec(2, [WS_A])
+    un = lambda ws, rec, sid=SPACE: {"unbind": {"ws": ws, "space_id": sid, "space": rec}}
+    flow(
+        "space_unbind_removes_member",
+        [s1, put_a, un(WS_B, e2_a)],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_unbind_then_put",
+        [s1, un(WS_B, e2_a)],
+        {"put": {"ws": WS_B, "body": put_body(WS_B, epoch=2)}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_unbind_keeps_the_others",
+        [s1, put_a, un(WS_B, e2_a)],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+    )
+    flow(
+        "space_unbind_record_still_lists_it",
+        [s1],
+        un(WS_B, space_rec(2, [WS_A, WS_B])),
+        {"error": "malformed"},
+        "the hub cannot keep an unbound workspace in the space",
+    )
+    flow("space_unbind_record_missing", [s1], un(WS_B, None), {"error": "malformed"})
+    flow("space_unbind_record_skips_an_epoch", [s1], un(WS_B, space_rec(3, [WS_A])), {"error": "malformed"})
+    flow("space_unbind_record_changes_others", [s1], un(WS_B, space_rec(2, [WS_C])), {"error": "malformed"})
+    flow("space_unbind_non_member_needs_no_record", [s1], un(WS_C, None), {"ok": {}})
+    flow(
+        "space_unbind_last_member_ends_the_space",
+        [{"space": space_rec(1, [WS_A])}, un(WS_A, None, SPACE)],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+
     # ---- publish through the hub (phase 2)
     cards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
@@ -1573,6 +3150,10 @@ def build() -> dict[str, Any]:
     sig_entry("unbound", "wsk_a", "sig_hub_unbound", u1)
     sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out)
     sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply)
+    sig_entry("audit_1", "hk_op", "sig_hub_audit", audit_chain()[0])
+    sig_entry("space_e1", "hk_op", "sig_hub_space", space_rec(1))
+    sig_entry("space_wrap_b_e1", "hk_op", "sig_hub_space_wrap", space_wrap())
+    sig_entry("space_item_a", "wsk_a", "sig_space_item", space_item_obj())
     ap = approval()
     sig_entry("publish_approval", "dk_alice_mac.sig", "sig_hub_publish_approval", ap)
     sig_entry("device_cert_alice_mac", "pk_alice", "sig_device_cert", ap["device_cert"])
@@ -1622,6 +3203,30 @@ def build() -> dict[str, Any]:
         ),
     }
 
+    iid = fake16("item_1")
+    item_salt = S.fake_seed("hub/salt/" + iid + WS_A)[:16]
+    spaces_vec = {
+        "space_id": SPACE,
+        "sk": {str(e): k.hex() for e, k in SK.items()},
+        "sk_commit_e1": SP.sk_commit(SPACE, 1, SK[1]),
+        "item": {
+            "item_id": iid,
+            "epoch": 1,
+            "salt_hex": item_salt.hex(),
+            "item_key_hex": SP._item_key(SK[1], SPACE, 1, item_salt).hex(),
+            "aad_hex": SP._item_aad(SPACE, 1, iid).hex(),
+            "signed_item": space_item_obj(),
+            "sealed": sealed_item(),
+        },
+        "wrap_b_e1": {
+            "workspace_id": WS_B,
+            "wxk_version": 1,
+            "eph_seed_hex": S.fake_seed(f"hub/eph/{SPACE}/1/{WS_B}").hex(),
+            "aad_hex": SP._seal_aad("space-sk", bytes.fromhex(SPACE), 1, SP._wrap_extra(HUB_ID, 1)).hex(),
+            "sealed": space_wrap()["o"]["sealed"],
+        },
+    }
+
     challenge, exporter = S.fake_seed("hub/link_challenge"), S.fake_seed("hub/tls_exporter")
     la = H.link_auth_bytes(HUB_ID, WS_A, challenge, exporter)
     link_auth_vec = {
@@ -1657,6 +3262,9 @@ def build() -> dict[str, Any]:
             "channel_alice_phone": CH_ALICE,
             "channel_bob_browser": CH_BOB,
             "ticket": TICKET,
+            "workspace_c": WS_C,
+            "space_1": SPACE,
+            "space_2": SPACE_2,
         },
         "labels": {**HUB_LABELS, "custodial_family": "orch/v2/hub-custodial|<event type>|"},
         "objects": {
@@ -1669,12 +3277,30 @@ def build() -> dict[str, Any]:
             "unbound_a_1": u1,
             "op_revoked": rev,
             "publish_approval": ap,
+            "audit_1": audit_chain()[0],
+            "space_e1": space_rec(1),
+            "space_wrap_b_e1": space_wrap(),
+            "space_item_a": space_item_obj(),
         },
         "signatures": sigs,
         "custodial": custodial_vec,
         "hub_joined": joined_vec,
         "publish": publish_vec,
         "link_auth": link_auth_vec,
+        "spaces": spaces_vec,
+        "audit": {
+            "chain": audit_chain(),
+            "events": [{"type": t, "event": e} for t, e in AUDIT_EVENTS],
+            "hashes": [AU.chain_hash(r) for r in audit_chain()],
+            "genesis_prev": AU.GENESIS_PREV,
+        },
+        "admin_read": {
+            "target": ADMIN_TARGET,
+            "ts_ms": NOW,
+            "signed_hex": H.admin_read_bytes(HUB_ID, NOW, "GET", ADMIN_TARGET).hex(),
+            "request": admin_req(),
+            "row": ADMIN_ROW,
+        },
         "cases": cases,
     }
 

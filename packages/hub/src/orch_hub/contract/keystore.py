@@ -81,6 +81,9 @@ class OpSigner(_Signer):
             "hub.uk_cert": "sig_hub_uk_cert",
             "hub.channel_cert": "sig_hub_channel_cert",
             "hub.snapshot": "sig_hub_snapshot",
+            "hub.space": "sig_hub_space",
+            "hub.space_wrap": "sig_hub_space_wrap",
+            "hub.audit": "sig_hub_audit",
         }
     )
     LINK_DIR = "h2w"
@@ -95,6 +98,15 @@ class OpSigner(_Signer):
         if type(o) is dict and o.get("kind") == "hub.card" and "op_cert" in o:
             raise KeyUseError("pass the card's o, not the card")
         return super().sign_object(o)
+
+    def admin_read(self, hub_id: str, ts_ms: int, method: str, target: str) -> bytes:
+        """The hub admin read signature (§10.6) over the exact bytes; the method is GET or HEAD only."""
+        if method not in ("GET", "HEAD"):
+            raise KeyUseError("admin reads are GET or HEAD")
+        try:
+            return self._sig(H.admin_read_bytes(hub_id, ts_ms, method, target))
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
 
     def publish_transport(self, hub_id: str, wsk_signed_bytes: bytes) -> bytes:
         """The forwarding signature (§11.1) over hub-path WSK-signed bytes only."""
@@ -131,7 +143,14 @@ class ChannelSigner(_Signer):
 class WskSigner(_Signer):
     """A workspace's ``WSK`` (host side): binding, unbound, host->hub link messages, link auth, publish requests."""
 
-    KINDS = MappingProxyType({"hub.binding": "sig_hub_binding", "hub.unbound": "sig_hub_unbound"})
+    KINDS = MappingProxyType(
+        {
+            "hub.binding": "sig_hub_binding",
+            "hub.unbound": "sig_hub_unbound",
+            "space.item": "sig_space_item",
+            "space.accept": "sig_space_accept",
+        }
+    )
     LINK_DIR = "w2h"
 
     def link_auth(self, hub_id: str, workspace_id: str, challenge: bytes, exporter: bytes) -> bytes:

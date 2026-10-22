@@ -73,6 +73,12 @@ def test_every_case_has_a_phase_and_negatives_cover_the_brief():
         "card_text_duplicate_key",
         "card_dev_at_real_verifier",
         "link_sign_request_refused",
+        "audit_gap_record_removed",
+        "audit_fork_other_bytes_at_taken_seq",
+        "admin_read_publish_signature_replayed",
+        "admin_read_swapped_query",
+        "admin_read_revoked_op_cert",
+        "space_unbind_removes_member",
     ):
         assert must in names
 
@@ -155,3 +161,24 @@ def test_protocol_doc_names_every_label_and_code():
         assert label.replace("|", "\\|") in doc or label in doc, label
     for code in {c["expect"]["error"] for c in V["cases"] if "error" in c["expect"]}:
         assert f"`{code}`" in doc, code
+
+
+def test_admin_read_vector_bytes():
+    a = V["admin_read"]
+    msg = H.admin_read_bytes(V["ids"]["hub"], a["ts_ms"], "GET", a["target"])
+    assert msg.hex() == a["signed_hex"]
+    assert msg.startswith(b"orch/v2/hub-admin-read|" + bytes([2]) + bytes.fromhex(V["ids"]["hub"]))
+    sig = unb64u(a["request"]["headers"]["Orch-Hub-Signature"], 64)
+    assert S.verify(pub("hk_op"), sig, msg)
+
+
+def test_audit_chain_vector_links():
+    from orch_hub.contract import audit as AU
+
+    au = V["audit"]
+    prev = au["genesis_prev"]
+    for r, h, e in zip(au["chain"], au["hashes"], au["events"], strict=True):
+        assert r["o"]["prev"] == prev and r["o"]["type"] == e["type"]
+        assert r["o"]["event_hash"] == AU.event_hash(e["event"])
+        assert AU.chain_hash(r) == h
+        prev = h

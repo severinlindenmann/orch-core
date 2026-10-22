@@ -160,6 +160,8 @@ def test_operation_errors_are_declared_once_known_and_complete():
         used |= {e["code"] for e in op.errors}
     # R6c: returned by the host's control op host.relay_pair_offer (orch host relay pair), not by a registry op
     control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
+    # U2: raised by orch.update.verify; the update ops that declare them land with U3/U4 (then drop these two)
+    control_only |= {"update.unverified", "update.stale"}
     unused = (
         set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only
     )  # the latter: the CLI composite `quick add` (H11f)

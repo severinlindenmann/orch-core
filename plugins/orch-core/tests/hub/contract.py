@@ -12,6 +12,7 @@ Every verifier raises :class:`Refused` with one code of section 14 and fails clo
 from __future__ import annotations
 
 import re
+import struct
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -65,6 +66,7 @@ HUB_LABELS = {
 V2_LABELS = {
     "sig_ws_delegation": "orch/v2/sig/ws-delegation|",
     "sig_card_wsk": "orch/v2/sig/card-wsk|",
+    "sig_publish": "orch/v2/publish|",
     "h_person_id": "orch/v2/id/person|",
     "h_device_id": "orch/v2/id/device|",
 }
@@ -785,3 +787,83 @@ def link_auth_bytes(hub_id_: str, workspace_id: str, challenge: bytes, exporter:
     return (
         L["sig_hub_link_auth"] + bytes([SUITE_ID]) + unhex(hub_id_, 16) + unhex(workspace_id, 16) + challenge + exporter
     )
+
+
+# --- publish through the hub: the bytes the hub checks and signs when it forwards (section 11.1) -------------------
+
+_TS = re.compile(r"0|[1-9][0-9]{0,15}")
+H_PUBLISH_REQUEST_LABEL = "h_hub_publish_request"
+
+
+def _lp16(b: bytes) -> bytes:
+    if len(b) >= 1 << 16:
+        raise Refused("malformed")
+    return struct.pack(">H", len(b)) + b
+
+
+def publish_signed_bytes(
+    ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes
+) -> bytes:
+    """protocol-v2 §12.1, unchanged."""
+    return (
+        L["sig_publish"]
+        + bytes([SUITE_ID])
+        + ws
+        + struct.pack(">Q", ts_ms)
+        + nonce
+        + _lp16(method.encode("ascii"))
+        + _lp16(host.encode("ascii"))
+        + _lp16(target.encode("ascii"))
+        + sha256(body)
+    )
+
+
+def _request_fields(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes) -> bytes:
+    """The v2 §12.1 fields after the label, in v2 order."""
+    return (
+        bytes([SUITE_ID])
+        + ws
+        + struct.pack(">Q", ts_ms)
+        + nonce
+        + _lp16(method.encode("ascii"))
+        + _lp16(host.encode("ascii"))
+        + _lp16(target.encode("ascii"))
+        + sha256(body)
+    )
+
+
+def approval_hash(approval: Mapping[str, Any] | None) -> bytes:
+    """``H(cj(approval))``, or 32 zero bytes when the request carries none."""
+    if approval is None:
+        return bytes(32)
+    try:
+        return sha256(cj(dict(approval)))
+    except CanonError:
+        raise Refused("malformed") from None
+
+
+def hub_path_signed_bytes(
+    ws: bytes,
+    ts_ms: int,
+    nonce: bytes,
+    method: str,
+    host: str,
+    target: str,
+    body: bytes,
+    hub_id_: str,
+    approval: Mapping[str, Any] | None,
+) -> bytes:
+    """What WSK signs on the hub path (L2-2): its own label, the v2 §12.1 fields, the hub, and the approval the host
+    attaches (or none). A hub-path signature never verifies as a direct request, the host commits to the hub that
+    forwards it, and nobody can add, swap or strip an approval after the host signed."""
+    return (
+        L["sig_publish_hub"]
+        + _request_fields(ws, ts_ms, nonce, method, host, target, body)
+        + unhex(hub_id_, 16)
+        + approval_hash(approval)
+    )
+
+
+def hub_publish_bytes(hub_id_: str, wsk_bytes: bytes) -> bytes:
+    """What HK_op signs when forwarding: the exact hub-path WSK-signed bytes, by hash, bound to the hub."""
+    return L["sig_hub_publish"] + bytes([SUITE_ID]) + unhex(hub_id_, 16) + sha256(wsk_bytes)

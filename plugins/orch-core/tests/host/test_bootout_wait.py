@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from orch.host import enable as svc
-from orch.setup.steps import Run, _runner_failure
+from orch.setup.steps import HIDDEN_REASON, Creator, Run, Secrets, _runner_failure
 
 
 def done(code: int = 0, err: str = "") -> subprocess.CompletedProcess[str]:
@@ -155,15 +155,32 @@ def test_an_always_failing_bootstrap_5_names_the_retry_command_and_login_items(t
     assert "orch runner enable" in str(e.value) and "Login Items" in str(e.value)
 
 
+def _same(text, limit=None):
+    return text if limit is None else text[:limit]
+
+
+def test_setup_runner_reason_never_shows_a_secret():
+    c = Creator.__new__(Creator)
+    c.secrets, c._passphrase = Secrets(show_passphrase=True), None
+    c.secrets.confirmed = True
+    code = c.secrets.code()
+    text = _runner_failure(OSError("bootstrap failed " + code), c._safe)
+    assert code not in text and HIDDEN_REASON in text and "orch runner enable" in text
+    split = "\n".join(code.split())
+    assert all(w not in _runner_failure(OSError(split), c._safe) for w in code.split() if len(w) > 4)
+
+
 def test_setup_shows_why_the_runner_failed_and_the_next_command():
     differ = OSError(
         "a runner service (io.orch.runner) is already installed for another setup (python differ); replacing it "
         "ends its runs. To do that on purpose: orch runner enable --replace"
     )
-    assert "orch runner enable --replace" in _runner_failure(differ) and "python differ" in _runner_failure(differ)
-    other = _runner_failure(OSError("boom\nx"))
+    assert "orch runner enable --replace" in _runner_failure(differ, _same) and "python differ" in _runner_failure(
+        differ, _same
+    )
+    other = _runner_failure(OSError("boom\nx"), _same)
     assert "boom x" in other and "Next: orch runner enable" in other and "\n" not in other
     run, lines = Run("r", [("runner", "Turning on dashboard execution")]), []
     run.echo = lines.append
-    run.explain("runner", _runner_failure(differ))
-    assert "--replace" in lines[0] and run.view()["reasons"]["runner"] == _runner_failure(differ)
+    run.explain("runner", _runner_failure(differ, _same))
+    assert "--replace" in lines[0] and run.view()["reasons"]["runner"] == _runner_failure(differ, _same)

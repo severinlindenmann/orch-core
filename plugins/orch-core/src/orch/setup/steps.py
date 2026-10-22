@@ -446,12 +446,15 @@ STEP_LABELS = {
 HELLO_SECONDS = 30.0
 
 
-def _runner_failure(exc: BaseException) -> str:
-    """The reason the runner could not be turned on, and the command to run next (one line, no control characters)."""
-    why = " ".join("".join(c if c.isprintable() else " " for c in str(exc)).split()) or type(exc).__name__
+def _runner_failure(exc: BaseException, safe: Callable[[str, int | None], str]) -> str:
+    """The reason the runner could not be turned on, and the command to run next (one line, no control characters).
+    The exception text goes through the setup redaction gate (``safe`` = ``Creator._safe``) before it is cut or shown;
+    our own fixed words are added after it."""
+    why = safe(str(exc), None) or type(exc).__name__
+    why = " ".join("".join(c if c.isprintable() else " " for c in why).split())[:300]
     if "--replace" in why:
-        return why[:300]  # it already names the command: ... To do that on purpose: orch runner enable --replace
-    return f"Dashboard execution is not on: {why[:300]}. Next: orch runner enable"
+        return why  # it already names the command: ... To do that on purpose: orch runner enable --replace
+    return f"Dashboard execution is not on: {why}. Next: orch runner enable"
 
 
 class Creator:
@@ -660,7 +663,7 @@ class Creator:
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup goes on
             self.run.set("runner", "failed")
             self.run.add_retry("runner")
-            self.run.explain("runner", _runner_failure(exc))
+            self.run.explain("runner", _runner_failure(exc, self._safe))
             if grant is not None:
                 self._skip_grant()
             return

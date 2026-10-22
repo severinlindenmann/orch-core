@@ -175,11 +175,18 @@ class Web:
         assert s == 200, o
         return o["token"] if client == "app" else h["Set-Cookie"].split(";")[0].split("=", 1)[1]
 
+    def creds(self, user: str) -> dict[str, str]:
+        """The password + a fresh TOTP step, as the browser re-enters them to register a key (A8-3)."""
+        return {"password": "correct horse battery", "totp": self.env.next_code(user)}
+
     def register_channel(self, token: str, user: str | None = None):
         """A browser channel registered through the HTTP API. Returns (signer, channel_id)."""
         signer = new_channel()
         s, begun, _ = self.call(
-            "POST", "/channels/register/begin", {"kind": "browser", "key_pub": b64u(signer.public)}, token=token
+            "POST",
+            "/channels/register/begin",
+            {"kind": "browser", "key_pub": b64u(signer.public), **self.creds(user or self.env.svc.session_user(token))},
+            token=token,
         )
         assert s == 200, begun
         s, got, _ = self.call(

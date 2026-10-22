@@ -183,3 +183,26 @@ def test_mode_full_signs_hub_mode_and_connects_without_an_invite(host, card_file
 def test_mode_takes_only_full_and_a_card(offline, argv):
     code, out = run(argv, {})
     assert code in (2, 5) and "error invalid.input" in out
+
+
+def test_status_json_carries_the_pinned_snapshot_and_refresh_asks_the_host_first(host):
+    snap = {"version": 3, "roles": {"11" * 16: "admin"}}
+    host.reply["hub.status"] = {"joined": True, "hub_id": V["ids"]["hub"], "mode": "selective", "link": "bound",
+                                "unbound_pending": False, "snapshot": snap}  # fmt: skip
+    code, out = run(["status", "--refresh"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"]["snapshot"] == snap
+    assert [op for op, _ in host.called] == ["hub.refresh", "hub.status"] and host.signed == []
+    assert host.called[0][1] == {}
+    assert "group snapshot v3 (1 roles)" in run(["status"], {})[1]
+
+
+def test_refresh_may_carry_a_newer_hub_card(host, card_file):
+    host.reply["hub.status"] = {"joined": True, "hub_id": V["ids"]["hub"], "mode": "selective"}
+    assert run(["status", "--refresh", "--hub-card", card_file], {})[0] == 0
+    assert host.called[0] == ("hub.refresh", {"hub_card": CARD})
+
+
+@pytest.mark.parametrize("argv", [["status", "--hub-card", "x"], ["leave", "--refresh"], ["unbind", "--refresh"]])
+def test_refresh_flags_belong_to_status(host, argv):
+    code, out = run(argv, {})
+    assert code == 2 and host.called == []

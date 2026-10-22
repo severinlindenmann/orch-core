@@ -57,6 +57,10 @@ class HubLink:
         self._hk_op, self._sign, self.mode, self._now = hk_op_pub, sign, mode, now_ms
         self._seq = 0
 
+    def set_hk_op(self, hk_op_pub: bytes) -> None:
+        """Verify replies from now on under another op key (the host adopted a rotated hub card)."""
+        self._hk_op = hk_op_pub
+
     def call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         """Send one request and return the reply body. A hub refusal raises ``HubRefused(code)``; an unreachable hub
         raises ``HubRefused("hub_unreachable")``."""

@@ -6,7 +6,7 @@
     orch hub leave                                                                       a person: leave (signed)
     orch hub connect INVITE --hub-card FILE   a person: finish a join the hub could not take yet
     orch hub unbind                           a person: tell the hub about a leave it has not heard yet
-    orch hub status                           a person: the joined hub and the link state
+    orch hub status [--refresh]               a person: the joined hub, the link state and the pinned snapshot
 
 ``join``, ``mode`` and ``leave`` are signed with the owner's own key on the owner's terminal and are refused to agents
 (``ORCH_GRANT`` set: ``op.not_allowed``; the host refuses them again). The default join is **selective**: the hub sees
@@ -35,7 +35,8 @@ __all__ = ["main"]
 _USAGE = (
     "usage: orch hub {join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
-    "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind | status} [--json]"
+    "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
+    "| status [--refresh [--hub-card FILE]]} [--json]"
 )
 _CARD_MAX = 64 * 1024
 
@@ -52,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--hub-addr")
     p.add_argument("--mode", default="selective")
     p.add_argument("--owner-user-id")
+    p.add_argument("--refresh", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
     return p
@@ -93,6 +95,8 @@ def _check_shape(a: argparse.Namespace) -> None:
     n = {"join": 1, "mode": 1, "connect": 1, "leave": 0, "unbind": 0, "status": 0}[a.cmd]
     if len(a.rest) != n and not (a.cmd == "connect" and not a.rest):  # connect: the invite is for a new join only
         raise PubError("invalid.input", _USAGE, 2)
+    if (a.refresh and a.cmd != "status") or (a.cmd == "status" and a.hub_card and not a.refresh):
+        raise PubError("invalid.input", "--refresh belongs to status; --hub-card needs --refresh there", 2)
     if a.cmd in ("join", "connect", "mode") and not a.hub_card:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "mode" and a.rest != ["full"]:
@@ -210,6 +214,9 @@ def main(
         _check_shape(a)
         target = _target(env)
         if a.cmd == "status":
+            if a.refresh:
+                args = {"hub_card": _read_card(a.hub_card)} if a.hub_card else {}
+                _call(target, "hub.refresh", args, env)
             data = _call(target, "hub.status", {}, env)
             _emit(out, as_json, data, _status_text(data))
             return 0
@@ -254,4 +261,6 @@ def _status_text(d: Mapping[str, Any]) -> str:
         ", the hub cannot read new content until you run orch hub connect (new key)" if d.get("reseal_needed") else ""
     )
     queued += ", the new workspace key is not ready yet (orch hub unbind)" if d.get("rotation") == "pending" else ""
-    return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{queued}"
+    snap = d.get("snapshot")
+    roles = f", group snapshot v{snap['version']} ({len(snap['roles'])} roles)" if snap else ""
+    return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{roles}{queued}"

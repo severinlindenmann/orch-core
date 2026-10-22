@@ -40,14 +40,15 @@ __all__ = [
     "HubFacts",
     "execute",
     "facts_for",
+    "hub_role",
     "publish_link",
     "publish_route",
     "serve",
     "workspace_dev",
 ]
 
-HUB_OPS: dict[str, int] = {"hub.connect": 1, "hub.unbind": 1, "hub.status": 1}
-NETWORK_OPS = frozenset({"hub.connect", "hub.unbind"})
+HUB_OPS: dict[str, int] = {"hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1}
+NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -66,6 +67,11 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "addr": {"type": "string", "minLength": 3, "maxLength": 300},
         },
         "required": ["hub_card"],  # the invite is needed by a join only (not by a mode switch or a re-seal)
+        "additionalProperties": False,
+    },
+    "hub.refresh": {  # fetch and pin the newest group snapshot; ``hub_card``: a newer hub card (rotated op cert)
+        "type": "object",
+        "properties": {"hub_card": {"type": "object"}},
         "additionalProperties": False,
     },
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -127,19 +133,63 @@ def _load_state(service: WorkspaceService) -> Any:
 
 
 def _save_state(service: WorkspaceService, state: Any) -> None:
+    with _MU:
+        _write_state(service, state)
+
+
+def _write_state(service: WorkspaceService, state: Any) -> None:
+    """The write itself; the caller holds ``_MU``."""
     import json
 
     from orch.store.fsio import write_atomic
 
     from .custody import ensure_private_dir
 
+    d = _dir(service)
+    for level in (d.parent, d):
+        ensure_private_dir(level, service.host_uid)
+    write_atomic(
+        d / "hub.json", json.dumps(state.to_json(), sort_keys=True, separators=(",", ":")).encode(), mode=0o600
+    )
+
+
+def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
+    """Commit what a snapshot refresh learned, without trusting the state it started from (the fetch ran on the network,
+    outside any lock). Under ``_MU`` hub.json is read again and checked: still the same bound binding of the same hub,
+    else nothing is written (a leave or unbind that ran meanwhile stays). The pin only moves up (a racing higher
+    version is never rolled back; the same version with other bytes is ``snapshot_conflict``); the revoked set only
+    grows; a newer card is adopted only if it is not older than the one now on disk."""
+    from orch.hubclient import HubRefused, wire
+
     with _MU:
-        d = _dir(service)
-        for level in (d.parent, d):
-            ensure_private_dir(level, service.host_uid)
-        write_atomic(
-            d / "hub.json", json.dumps(state.to_json(), sort_keys=True, separators=(",", ":")).encode(), mode=0o600
-        )
+        cur = _load_state(service)
+        if (
+            cur is None
+            or cur.status != "bound"
+            or cur.hub_id != fetched.hub_id
+            or cur.binding_seq != fetched.binding_seq
+        ):
+            raise HubRefused("not_joined")
+        changed = False
+        new = fetched.snapshot
+        if new is not None:
+            held = None if cur.snapshot is None else cur.snapshot["o"]
+            if held is None or new["o"]["version"] > held["version"]:
+                cur.snapshot, changed = new, True
+            elif new["o"]["version"] == held["version"] and wire.cj(new["o"]) != wire.cj(held):
+                raise HubRefused("snapshot_conflict")
+        revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
+        if revoked != sorted(cur.revoked_op_certs):
+            cur.revoked_op_certs, changed = revoked, True
+        if fetched.card is not None and cur.card != fetched.card:
+            on_disk, mine = cur.card, fetched.card
+            order = lambda c: (c["op_cert"]["o"]["op_seq"], c["o"]["card_seq"])  # noqa: E731
+            if on_disk is None or order(mine) > order(on_disk):
+                cur.card, cur.hk_op_pub, cur.tls_spki, changed = mine, fetched.hk_op_pub, fetched.tls_spki, True
+            elif order(mine) == order(on_disk):  # same place, other bytes: keep the disk, say so
+                raise HubRefused("stale_card")
+        if changed:
+            _write_state(service, cur)
 
 
 def _wsk_sign(service: WorkspaceService) -> Any:
@@ -258,6 +308,20 @@ def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
     else the one kept in ``hub.json``. The address is not signed and not trusted: the card's TLS pin decides."""
     env = os.environ.get("ORCH_HUB_ADDR") if dev else None
     return env or args.get("addr") or (None if state is None else state.addr)
+
+
+def hub_role(service: WorkspaceService, user_id: str) -> str | None:
+    """The hub role (``read`` | ``edit`` | ``admin``) of a hub user id from the pinned group snapshot, or ``None``
+    (no snapshot, no role, or anything that does not verify now). Worker thread. Phase 3 (V3-D3): for hub-side reads,
+    routes and shared spaces only; it never authorises a signature."""
+    from orch.hubclient import snapshot
+
+    try:
+        state = _load_state(service)
+    except HostError:
+        return None
+    facts = facts_for(service)
+    return snapshot.hub_role(state, user_id, now_ms=facts.now_ms, dev_mode=facts.dev_mode)
 
 
 # -- publish through the hub (V3 C7) ---------------------------------------------------------------------------------
@@ -472,8 +536,11 @@ def serve(call: Call) -> dict[str, Any]:
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
     if op == "hub.status":
+        from orch.hubclient import snapshot
+
         return ok_result(
             {
+                "snapshot": snapshot.pinned_view(state),
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),
@@ -488,6 +555,16 @@ def serve(call: Call) -> dict[str, Any]:
             }
         )
     plan: dict[str, Any] = {"op": op, "model": model, "state": state}
+    if op == "hub.refresh":
+        if (
+            state is None
+            or state.status != "bound"
+            or state.hub_id != model.get("hub_id")
+            or model.get("status") != "joined"
+        ):
+            raise HostError("hub.not_joined", "this workspace is not connected to a hub: orch hub connect")
+        plan.update(dev=workspace_dev(service), hub_card=args.get("hub_card"))
+        return {"plan": plan}
     if op == "hub.unbind":
         if state is not None and (state.outbox or state.rotate_after is not None):
             return {"plan": plan}  # a signed unbound or a rotation is still owed, whatever the model says now
@@ -573,14 +650,67 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             finally:
                 getattr(transport, "close", lambda: None)()
             _audit(call, "hub.connect", hub_id=r.hub_id, binding_seq=r.binding_seq, mode=r.mode, kind=plan["kind"])
-            return ok_result(
-                {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
-                 "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}
-            )  # fmt: skip
+            out = {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
+                   "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}  # fmt: skip
+            out["snapshot_version"] = _first_snapshot(call, plan, r, wsk_pub, sign, now, save)
+            return ok_result(out)
+        if plan["op"] == "hub.refresh":
+            return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
         return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox))
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
+    """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""
+    from orch.crypto.encoding import unb64u
+    from orch.hubclient import HubLink
+
+    hk_op = unb64u(state.hk_op_pub, 65)
+    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign}
+    transport = _transport(service, state.hub_id, link)
+    hub_link = HubLink(
+        transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
+        mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
+    )  # fmt: skip
+    return hub_link, transport
+
+
+def _refresh(
+    call: Call, plan: dict[str, Any], state: Any, wsk_pub: bytes, sign: Any, now: Any, save: Any
+) -> dict[str, Any]:
+    from orch.hubclient import snapshot
+
+    service = call.service
+    adopted = False
+    if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
+        adopted = snapshot.adopt_card(state, plan["hub_card"], now_ms=now(), dev_mode=plan["dev"])
+    hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, plan["dev"])
+    try:
+        changed = snapshot.refresh(
+            state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
+            save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
+        )  # fmt: skip
+    finally:
+        getattr(transport, "close", lambda: None)()
+    view = snapshot.pinned_view(_load_state(service))  # what is on disk now, not the copy this call started from
+    _audit(call, "hub.snapshot", hub_id=state.hub_id, version=(view or {}).get("version"), changed=changed)
+    return {"hub_id": state.hub_id, "changed": changed, "snapshot": view}
+
+
+def _first_snapshot(
+    call: Call, plan: dict[str, Any], state: Any, wsk_pub: bytes, sign: Any, now: Any, save: Any
+) -> Any:
+    """After a join, fetch the first snapshot. The join already happened: a hub that is down or sends a snapshot that
+    does not verify leaves no pin (audited), it does not undo the connect."""
+    from orch.hubclient import HubRefused
+
+    try:
+        return _refresh(call, {"dev": plan["dev"]}, state, wsk_pub, sign, now, save)["snapshot"]["version"]
+    except HubRefused as exc:
+        _audit(call, "hub.snapshot_refused", hub_id=state.hub_id, code=exc.code)
+        return None
 
 
 def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:

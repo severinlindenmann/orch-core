@@ -60,7 +60,9 @@ class EpochKeys(Protocol):
 
 
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
-_OPTIONAL = {"outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after"}
+_OPTIONAL = {
+    "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
+}  # fmt: skip
 
 
 def _outbox_ok(box: Any) -> bool:
@@ -107,6 +109,11 @@ class HubState:
     #: set by a leave from full mode: the newest epoch the hub may hold. Cleared only once a newer epoch is committed;
     #: until then no full join seals anything (the new key must never reach that hub).
     rotate_after: int | None = None
+    card: dict[str, Any] | None = (
+        None  # the signed hub card (with its op cert) verified at join; snapshots verify under it
+    )
+    revoked_op_certs: list[str] = field(default_factory=list)  # cert_ids of root-signed hub.op_revoked, never removed
+    snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -124,6 +131,9 @@ class HubState:
             "hxk_pub": self.hxk_pub,
             "sealed": self.sealed,
             "rotate_after": self.rotate_after,
+            "card": self.card,
+            "revoked_op_certs": sorted(self.revoked_op_certs),
+            "snapshot": self.snapshot,
         }
 
     @classmethod
@@ -149,6 +159,10 @@ class HubState:
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
             and (d.get("rotate_after") is None or (type(d["rotate_after"]) is int and d["rotate_after"] >= 0))
+            and (d.get("card") is None or type(d["card"]) is dict)
+            and type(d.get("revoked_op_certs", [])) is list
+            and all(wire.hex16(c) for c in d.get("revoked_op_certs", []))
+            and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -168,6 +182,9 @@ class HubState:
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),
             rotate_after=d.get("rotate_after"),
+            card=d.get("card"),
+            revoked_op_certs=list(d.get("revoked_op_certs", [])),
+            snapshot=d.get("snapshot"),
         )
 
 
@@ -239,7 +256,10 @@ def _join(
         assert epochs is not None
         _epoch_ready(state, epochs)
     pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
-    verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
+    revoked = frozenset() if state is None else frozenset(state.revoked_op_certs)  # random ids: never collide
+    verified = wire.verify_card(
+        hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned, revoked_op_certs=revoked
+    )
     root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
     if state is not None and state.outbox:
         # every owed unbound gets ONE try over its own hub's transport, then the new join goes on regardless
@@ -258,6 +278,7 @@ def _join(
         new = state
         new.addr = addr or new.addr  # a retry may name the address the first try did not have
         new.hxk_pub = b64u(_hxk(verified))
+        new.card = hub_card
     else:
         prior = {} if state is None else state.aliases
         seq = binding_seq or (1 if state is None else state.binding_seq + 1)  # strictly increasing (9.2)
@@ -292,6 +313,8 @@ def _join(
             outbox={} if state is None else state.outbox,
             hxk_pub=b64u(_hxk(verified)),
             rotate_after=None if state is None else state.rotate_after,
+            card=hub_card,
+            revoked_op_certs=[] if state is None else list(state.revoked_op_certs),  # only ever grows
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)

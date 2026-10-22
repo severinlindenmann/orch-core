@@ -30,6 +30,7 @@ from typing import Any, Protocol
 from ..access import AccessSnapshots
 from ..audit import AuditLog
 from ..contract import hub as H
+from ..contract import phase4 as P4
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, cj, unb64u
 from ..contract.hub import Refused
@@ -41,6 +42,7 @@ TTL_MS = 120_000  # a prepared request lives two minutes: long enough to look at
 MAX_PER_USER = 4  # outstanding prepared requests per user; over the cap the user's OLDEST is evicted
 MAX_PENDING = 4096  # global hard ceiling (memory guard only, far above users x MAX_PER_USER)
 _LOG = re.compile(r"workspace|[A-Za-z0-9_-]{1,64}")
+_ULID_LOG = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 #: Fields the engine owns. A view may not supply any of them (an event cannot smuggle its own actor, channel or sig).
@@ -59,33 +61,6 @@ RESERVED = frozenset(
     }
 )
 REQUIRED_CORE = ("type", "based_on", "roster_v", "hash_v")
-
-#: Minimum role per event type (D70, hub-side pre-check; the host applies the full table after §8.3 step 7). Exact types
-#: first, then prefixes; anything unlisted needs ``admin`` (fail closed).
-ACTION_ROLE: dict[str, str] = {
-    "ticket.created": "edit",
-    "ticket.updated": "edit",
-    "status.changed": "edit",
-    "ticket.submitted": "edit",
-    "claim.taken": "edit",
-    "claim.released": "edit",
-    "question.answered": "edit",
-    "handoff.written": "edit",
-    "log.added": "edit",
-    "artifact.added": "edit",
-    "artifact.replaced": "edit",
-}
-ROLE_FOR_PREFIX: dict[str, str] = {"task.": "edit"}
-_RANK = {"read": 1, "edit": 2, "admin": 3}
-
-
-def required_role(event_type: str) -> str:
-    if event_type in ACTION_ROLE:
-        return ACTION_ROLE[event_type]
-    for p, r in ROLE_FOR_PREFIX.items():
-        if event_type.startswith(p):
-            return r
-    return "admin"
 
 
 class SessionCheck(Protocol):
@@ -216,6 +191,10 @@ class CustodialEngine:
         role = snap["roles"].get(user_id)
         if role not in H.ROLES:
             raise Refused("forbidden_role")
+        # §8.5: exact action schema, `(type, log)` in the closed custodial table, role reaches its floor. The only place
+        # that decides what a channel may start; the engine has no role table of its own. Raises not_custodial /
+        # forbidden_role / malformed in the contract's order.
+        P4.check_action(dict(action), role=role)
         epoch, wk = self._seals.open_current(workspace_id)
         try:
             built = self._view.build(wk, epoch, workspace_id, user_id, event_id, action)
@@ -234,8 +213,19 @@ class CustodialEngine:
         typ = core["type"]
         if type(typ) is not str or not EVENT_TYPE.fullmatch(typ):
             raise Refused("malformed")
-        if _RANK[role] < _RANK[required_role(typ)]:
-            raise Refused("forbidden_role")
+        # the view may not turn the action into another type or log (defence in depth: re-check what was built)
+        want_log = action["log"] if action["type"] != "ticket.created" else None
+        if typ != action["type"] or (want_log is not None and built.log != want_log):
+            raise Refused("event_changed")
+        if want_log is None and not _ULID_LOG.fullmatch(built.log):
+            raise Refused("malformed")  # ticket.created: the hub makes the new ticket's uid
+        H.check_custodial_role(typ, built.log, role)
+        # a decision names the hash the person reviewed (§8.5): the view refuses with event_changed when its current
+        # hash moved; the engine also refuses an event whose hash is not the one the person saw.
+        # TODO(contract): the event-side field name of the reviewed item hash is not pinned for every type (and the
+        # selective-mode item hash is open, §16); until it is, only a `hash` field on the built core is compared.
+        if "hash" in action and "hash" in core and core["hash"] != action["hash"]:
+            raise Refused("event_changed")
         event = {
             **core,
             "v": 2,
@@ -276,6 +266,10 @@ class CustodialEngine:
         log, event, _ = self._build(workspace_id, user_id, channel_id, event_id, action)
         digest = self._digest(workspace_id, log, event)
         ctx = H.signed_context(workspace_id, log, event)
+        try:
+            P4.check_prepared(ctx, digest.hex())  # what the channel will do with our reply (§8.4 step 3)
+        except Refused:
+            raise Refused("malformed") from None
         prepared = Prepared(secrets.token_hex(16), workspace_id, log, ctx, digest, now + self._ttl)
         with self._lock:
             self._gc(now)

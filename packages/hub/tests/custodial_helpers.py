@@ -22,6 +22,8 @@ from orch_hub.link.wkseal import WkSeals
 WS = "ab" * 16
 LOG = "01J9ZP0000000000000000TKT1"
 WK = bytes(range(32))
+NEW_LOG = "01J9ZP0000000000000000NEW1"
+ACTION = {"type": "log.added", "log": LOG, "text": "hello"}
 BASE = "sha256:" + "6b" * 32
 
 
@@ -39,8 +41,9 @@ class StubView:
 
     def __init__(self) -> None:
         self.text = "hello"
-        self.etype = "log.added"
+        self.etype: str | None = None  # None: the action's type
         self.extra: dict[str, Any] = {}
+        self.log: str | None = None
         self.calls = 0
         self.seen_wk: bytearray | None = None
         self.seen_wk_copy = b""
@@ -48,8 +51,15 @@ class StubView:
     def build(self, wk_e, epoch, workspace_id, user_id, event_id, action) -> BuiltEvent:
         self.calls += 1
         self.seen_wk, self.seen_wk_copy = wk_e, bytes(wk_e)
-        core = {"type": self.etype, "text": self.text, "based_on": BASE, "roster_v": 1, "hash_v": 1, **self.extra}
-        return BuiltEvent(LOG, core)
+        core = {
+            "type": self.etype or action["type"],
+            "text": self.text,
+            "based_on": BASE,
+            "roster_v": 1,
+            "hash_v": 1,
+            **self.extra,
+        }
+        return BuiltEvent(self.log or action.get("log", NEW_LOG), core)
 
 
 class Channels:
@@ -125,7 +135,7 @@ class Env:
         return b64u(_S(priv or self.ch_priv).proof(digest))
 
     def prepare(self, action=None):
-        return self.engine.prepare("sess", WS, self.user, self.channel, action or {"do": "note"})
+        return self.engine.prepare("sess", WS, self.user, self.channel, action or dict(ACTION))
 
     def close(self) -> None:
         self.seals.close()

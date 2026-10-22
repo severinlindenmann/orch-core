@@ -6,25 +6,19 @@ recomputes at signing time is byte-identical to the one the channel was shown. N
 """
 
 from .engine import (
-    ACTION_ROLE,
-    ROLE_FOR_PREFIX,
     BuiltEvent,
     ChannelRegistry,
     CustodialEngine,
     Prepared,
     SessionCheck,
     WorkspaceView,
-    required_role,
 )
 
 __all__ = [
-    "ACTION_ROLE",
-    "ROLE_FOR_PREFIX",
     "BuiltEvent",
     "ChannelRegistry",
     "CustodialEngine",
     "Prepared",
     "SessionCheck",
     "WorkspaceView",
-    "required_role",
 ]

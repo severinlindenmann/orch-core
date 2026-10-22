@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
-from custodial_helpers import LOG, WK, WS, Env
+from custodial_helpers import ACTION, LOG, WK, WS, Env
 
 from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
@@ -16,7 +16,7 @@ from orch_hub.contract import suite as S
 from orch_hub.contract.canon import unb64u
 from orch_hub.contract.hub import Refused
 from orch_hub.contract.labels import custodial_label
-from orch_hub.custodial import BuiltEvent, CustodialEngine, required_role
+from orch_hub.custodial import BuiltEvent, CustodialEngine
 
 VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
 
@@ -82,7 +82,7 @@ def test_wk_is_opened_for_the_build_only_and_wiped(env):
 
 def test_proof_over_another_digest_is_refused_and_consumes_the_request(env):
     p = env.prepare()
-    other = env.prepare({"do": "x"})
+    other = env.prepare(dict(ACTION))
     assert other.digest != p.digest or other.prepared_id != p.prepared_id
     assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(b"\x01" * 32)) == "bad_channel_proof"
     assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "unknown_prepared"  # single use
@@ -138,9 +138,14 @@ def test_read_role_cannot_sign_and_edit_cannot_sign_admin_types(tmp_path, env):
         assert code(r.prepare) == "forbidden_role"
     finally:
         r.close()
-    env.view.etype = "gate.approved"  # approvals need admin (D70)
-    assert code(env.prepare) == "forbidden_role"
-    assert required_role("unknown.thing") == "admin" and required_role("task.done") == "edit"
+    assert (
+        code(
+            env.prepare,
+            {"type": "people.changed", "log": LOG, "role": "watchers", "add": ["u_" + "a" * 32], "remove": []},
+        )
+        == "forbidden_role"
+    )  # admin-only (§8.5)
+    assert code(env.prepare, {"type": "addon.purged", "log": "workspace", "name": "wiki"}) == "forbidden_role"
 
 
 def test_role_lost_between_prepare_and_sign(env):
@@ -172,7 +177,7 @@ def test_channel_of_another_user_is_refused(env):
     other_user = env.keys.issue_uk()["o"]["user_id"]
     cid = env.new_channel(ec.generate_private_key(ec.SECP256R1()), user=other_user)
     assert (
-        code(env.engine.prepare, "sess", WS, env.user, cid, {"do": "x"}) == "channel_revoked"
+        code(env.engine.prepare, "sess", WS, env.user, cid, dict(ACTION)) == "channel_revoked"
     )  # not this user's: not active
 
 
@@ -180,6 +185,16 @@ def test_selective_workspace_is_refused_without_opening_wk(env):
     env.mode = "selective"
     assert code(env.prepare) == "wrong_mode"
     assert env.view.calls == 0
+
+
+def test_prepare_reply_digest_is_what_a_channel_recomputes(env):
+    from orch_hub.contract import phase4 as P4
+
+    p = env.prepare()
+    assert P4.check_prepared(p.public()["ctx"], p.public()["digest"]) == p.digest
+    assert (
+        code(P4.check_prepared, {**p.ctx, "event": {**p.ctx["event"], "text": "x"}}, p.digest.hex()) == "event_changed"
+    )
 
 
 def test_event_changed_between_prepare_and_sign(env):
@@ -262,6 +277,69 @@ def test_audit_failure_blocks_delivery(env):
     assert env.delivered == []
 
 
+@pytest.mark.parametrize(
+    "typ", ["policy.changed", "settings.changed", "claim.taken", "task.done", "artifact.added", "member.added", "x.y"]
+)
+def test_types_outside_the_closed_table_are_not_custodial(env, typ):
+    assert code(env.prepare, {"type": typ, "log": LOG, "text": "x"}) == "not_custodial"
+    assert env.view.calls == 0
+
+
+def test_log_kind_matters_for_the_table(env):
+    assert code(env.prepare, {"type": "log.added", "log": "workspace", "text": "x"}) == "not_custodial"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"set": {"ticket.visibility": "x"}},
+        {"based_on": "x"},
+        {"actor": {}},
+        {"sig": "x"},
+        {"channel_proof": "x"},
+        {"gate_gen": 1},
+        {"unknown": 1},
+    ],
+)
+def test_action_fields_are_exact_no_smuggling(env, extra):
+    assert code(env.prepare, {"type": "log.added", "log": LOG, "text": "x", **extra}) == "malformed"
+    upd = {"type": "ticket.updated", "log": LOG, "set": {"ticket.tasks": []}}
+    assert code(env.prepare, upd) == "malformed"
+    assert env.view.calls == 0
+
+
+def test_text_rule_rejects_display_spoofing(env):
+    assert code(env.prepare, {"type": "log.added", "log": LOG, "text": "a\u202eb"}) == "malformed"
+
+
+def test_ticket_created_has_no_log_and_gets_a_new_uid(env):
+    act = {"type": "ticket.created", "ticket_type": "bug", "title": "t"}
+    p = env.prepare(act)
+    assert p.log == "01J9ZP0000000000000000NEW1"
+    assert code(env.prepare, {**act, "log": LOG}) == "malformed"
+    env.view.log = "workspace"
+    assert code(env.prepare, act) == "malformed"
+
+
+def test_view_cannot_change_the_type_or_log_of_the_action(env):
+    env.view.etype = "ticket.closed"
+    assert code(env.prepare) == "event_changed"
+    env.view.etype = None
+    env.view.log = "01J9ZP0000000000000000OTHR"
+    assert code(env.prepare) == "event_changed"
+
+
+def test_decision_hash_moved_is_event_changed(env):
+    h = "sha256:" + "11" * 32
+    act = {"type": "gate.approved", "log": LOG, "gate": "plan", "hash": h}
+    env.view.extra = {"hash": h, "gate": "plan"}
+    p = env.prepare(act)
+    env.view.extra = {"hash": "sha256:" + "22" * 32, "gate": "plan"}  # content moved since the person looked
+    assert code(env.prepare, act) == "event_changed"
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "event_changed"
+    assert env.delivered == []
+
+
 def test_malformed_ids_and_action_are_refused(env):
     assert code(env.engine.prepare, "sess", "zz", env.user, env.channel, {}) == "malformed"
     assert code(env.engine.prepare, "sess", WS, env.user, env.channel, "not a dict") == "malformed"
@@ -285,7 +363,7 @@ def test_one_user_filling_the_cap_does_not_affect_another(tmp_path, env):
     env.access.add_user(bob, "bob")
     env.access.add_member("team", bob)
     bch = env.new_channel(b_priv, user=bob)
-    pb = env.engine.prepare("sess", WS, bob, bch, {"do": "x"})
+    pb = env.engine.prepare("sess", WS, bob, bch, dict(ACTION))
     for _ in range(E.MAX_PER_USER * 3):
         env.prepare()
     env.engine.sign(pb.prepared_id, bch, env.proof(pb.digest, b_priv))
@@ -293,7 +371,7 @@ def test_one_user_filling_the_cap_does_not_affect_another(tmp_path, env):
 
 
 def test_prepare_needs_the_users_own_session(env):
-    assert code(env.engine.prepare, "stolen", WS, env.user, env.channel, {"do": "x"}) == "unauthorized"
+    assert code(env.engine.prepare, "stolen", WS, env.user, env.channel, dict(ACTION)) == "unauthorized"
     env.sessions.ok = False
     assert code(env.prepare) == "unauthorized"
     assert env.view.calls == 0

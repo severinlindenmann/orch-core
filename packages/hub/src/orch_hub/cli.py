@@ -46,6 +46,13 @@ def _parser() -> argparse.ArgumentParser:
     ins.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     ins.add_argument("--workspace", help="only this workspace id")
     ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
+    rl = sub.add_parser(
+        "releases", help="dev: release metadata of the bound full-mode workspaces, read at orch-publish (admin read)"
+    )
+    rl.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    rl.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
+    rl.add_argument("--workspace", help="only this workspace id (32 lower-case hex)")
+    rl.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     dr = sub.add_parser("doctor", help="dev: check the state dir, card, registry, TLS pin and publish route")
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
@@ -76,6 +83,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .access.cli import run as run_access
 
         return run_access(args)
+    if args.group == "releases":
+        return _releases(args)
     if args.group == "doctor":
         from .doctor import run
 
@@ -123,6 +132,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"orch-hub: refused: {e.code}" + (f" ({e})" if str(e) != e.code else ""), file=sys.stderr)
         return 1
     print(dumps(out))
+    return 0
+
+
+def _releases(args: argparse.Namespace) -> int:
+    from .link.registry import Registry
+    from .publish import AdminReadClient, AdminReadError
+
+    reg = None
+    try:
+        state = Path(args.state) if args.state else default_state_dir()
+        keys = HubKeys.open(state)
+        client = AdminReadClient(args.publish_url, keys.op_signer, keys.hub_id)
+        if args.workspace is not None:
+            client.target(args.workspace)  # canonical or malformed
+            reg = Registry(str(state / "registry.db"))
+            if reg.mode(args.workspace) != "full":  # the admin read covers bound full-mode workspaces only (§10.6)
+                print("orch-hub: refused: not_bound", file=sys.stderr)
+                return 1
+        rows = client.releases(args.workspace)
+    except (ValueError, KeysError) as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    except AdminReadError as e:
+        print(f"orch-hub: refused: {e.code}", file=sys.stderr)
+        return 1
+    finally:
+        if reg is not None:
+            reg.close()
+    print(dumps({"releases": rows}))
     return 0
 
 

@@ -340,6 +340,7 @@ class WebApi:
         self._plock = threading.Lock()
         self._kinds: dict[str, tuple[str, int]] = {}  # sha256(token) -> (client kind, expires_ms), this process only
         self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
+        self._busy: set[str] = set()  # sources holding a hashing slot right now (max 1 each), under _plock
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
 
     # --- the request pipeline ----------------------------------------------------------------------------------------
@@ -527,18 +528,31 @@ class WebApi:
             raise ApiError("not_allowed")
         # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
-        try:  # also the aggregate: IPv6 /48, IPv4 /24 (a neighbour cannot exhaust our bucket, one allocation cannot spray)
-            net = ipaddress.ip_network(c.source, strict=False)
-            net = net.supernet(new_prefix=48 if net.version == 6 else 24)
-            self._limit.hit("signin-net", str(net), SIGNIN_NET_LIMIT)
-        except ValueError:  # "unknown" (no usable peer address) has no aggregate
-            pass
-        if not self._hashing.acquire(blocking=False):
-            raise ApiError("rate_limited")
+        # the aggregate (IPv6 /48, IPv4 /24): a neighbour cannot exhaust our bucket, one allocation cannot spray; a
+        # source that signed in as this user is exempt (cheap indexed read, no hashing), so neighbours cannot lock it out
+        if not self.d.channels.known_source(b["user_id"], c.source):
+            try:
+                net = ipaddress.ip_network(c.source, strict=False)
+                net = net.supernet(new_prefix=48 if net.version == 6 else 24)
+            except ValueError:  # "unknown" (no usable peer address) has no aggregate
+                net = None
+            if net is not None:
+                self._limit.hit("signin-net", str(net), SIGNIN_NET_LIMIT)
+        # at most one hashing slot per source, so one source cannot hold all of them
+        with self._plock:
+            if c.source in self._busy:
+                raise ApiError("rate_limited")
+            self._busy.add(c.source)
         try:
-            s = self.d.channels.sign_in(b["user_id"], b["password"], b["totp"], c.source)
+            if not self._hashing.acquire(blocking=False):
+                raise ApiError("rate_limited")
+            try:
+                s = self.d.channels.sign_in(b["user_id"], b["password"], b["totp"], c.source)
+            finally:
+                self._hashing.release()
         finally:
-            self._hashing.release()
+            with self._plock:
+                self._busy.discard(c.source)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
         with self._plock:
             now = self.d.now_ms()

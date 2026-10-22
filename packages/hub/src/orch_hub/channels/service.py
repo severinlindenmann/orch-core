@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import struct
 import time
 from collections.abc import Callable
@@ -60,10 +61,10 @@ MAX_TOTP_FAILURES = 10
 #: so a stranger's wrong passwords must not be able to delay or lock the real user coming from another address.
 PW_FREE_TRIES = 3
 PW_BACKOFF_CAP_MS = 60_000
-#: failed passwords per user across ALL sources (distributed guessing reveals a reused password even though TOTP blocks
-#: the sign-in). Past PW_USER_FREE the sources that never signed in as this user are refused with ``bad_credentials``
-#: for a delay doubling per failure (cap PW_BACKOFF_CAP_MS). A source that signed in as this user within KNOWN_SOURCE_MS
-#: is exempt, so the real user is never delayed by a stranger.
+#: failed passwords per user across ALL sources (distributed guessing). It only alerts the operator (log, user id
+#: only) past PW_USER_FREE: it NEVER refuses a correct password+TOTP, because a stranger can feed it and a refusal would
+#: lock the real user out of every new address. A wrong password is refused anyway. Sources that signed in as this user
+#: within KNOWN_SOURCE_MS are "known": the web layer exempts them from the network aggregate.
 PW_USER_FREE = 10
 KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
@@ -231,10 +232,11 @@ class Channels:
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, now)
             ).lastrowid
 
-    def _judge(self, user: str, subject: str, source: str, ok_pw: bool, ok_totp: bool) -> bool:
+    def _judge(self, user: str, subject: str, ok_pw: bool, ok_totp: bool, rid: int) -> bool:
         """After the full password and TOTP check: is this sign-in blocked by the per-user TOTP lock or the password
-        backoff for this (user, source)? One transaction with exactly one insert in every case (same work whatever
-        the outcome). A blocked attempt is not counted, so a stranger cannot extend the block."""
+        backoff for this (user, source)? One transaction with the same statements in every case. A blocked attempt is
+        not counted, and a blocked CORRECT one gives its ``login`` reservation back (a refusal must not burn the real
+        user's own pair). The cross-source failed-password count never blocks: it only raises the operator alert."""
         now = self._now()
         with self._tx() as db:
             db.execute("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
@@ -243,28 +245,35 @@ class Channels:
                 "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND subject=?", (subject,)
             ).fetchone()
             delay = 0 if npw < PW_FREE_TRIES else min(PW_BACKOFF_CAP_MS, 1000 * 2 ** (npw - PW_FREE_TRIES))
-            nall, lall = db.execute(
-                "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND (subject=? OR subject LIKE ?)",
-                (user, user + "|%"),
+            (nall,) = db.execute(
+                "SELECT COUNT(*) FROM failures WHERE kind='pw' AND (subject=? OR subject LIKE ?)", (user, user + "|%")
             ).fetchone()
-            dall = 0 if nall < PW_USER_FREE else min(PW_BACKOFF_CAP_MS, 1000 * 2 ** (nall - PW_USER_FREE))
-            known = db.execute(
-                "SELECT 1 FROM known_sources WHERE user_id=? AND source=? AND ts_ms>?",
-                (user, source, now - KNOWN_SOURCE_MS),
-            ).fetchone()
-            pair_blocked = nt >= MAX_TOTP_FAILURES or now < last + delay
-            blocked = pair_blocked or (not known and now < lall + dall)
-            # the cross-source slow-down keeps counting wrong passwords (so it escalates) but never a right one
-            kind = "noop" if (pair_blocked or (ok_pw and ok_totp)) else ("pw" if not ok_pw else "totp")
-            rid = db.execute(
+            blocked = nt >= MAX_TOTP_FAILURES or now < last + delay
+            kind = "noop" if (blocked or (ok_pw and ok_totp)) else ("pw" if not ok_pw else "totp")
+            row = db.execute(
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)",
                 (kind, subject if kind == "pw" else user, now),
             ).lastrowid
             if kind == "noop":
-                db.execute("DELETE FROM failures WHERE id=?", (rid,))
+                db.execute("DELETE FROM failures WHERE id=?", (row,))
             elif kind == "totp" and nt + 1 == MAX_TOTP_FAILURES:
                 log.warning("sign-in TOTP lock tripped for user %s", user)
+            elif kind == "pw" and nall + 1 == PW_USER_FREE:
+                log.warning("distributed failed-password guessing at user %s", user)
+            db.execute("DELETE FROM failures WHERE id=? AND ?=1", (rid, int(blocked and ok_pw and ok_totp)))
         return blocked
+
+    def known_source(self, user_id: str, source: str) -> bool:
+        """Did this source sign in as this user within KNOWN_SOURCE_MS? Cheap read, no hashing; any problem is False."""
+        try:
+            u = self._user(user_id)
+            rows = self.db.q(
+                "SELECT 1 FROM known_sources WHERE user_id=? AND source=? AND ts_ms>?",
+                (u, source, self._now() - KNOWN_SOURCE_MS),
+            )
+        except ChannelError, sqlite3.Error:
+            return False
+        return bool(rows)
 
     def unlock(self, user_id: str) -> None:
         """Operator reset of the per-user TOTP lock and password backoff (the time-out does the same on its own)."""
@@ -314,7 +323,7 @@ class Channels:
             for c in (counter - 1, counter, counter + 1):
                 if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
                     match = c
-        blocked = self._guard(lambda: self._judge(u, subject, source, ok_pw, bool(match)))
+        blocked = self._guard(lambda: self._judge(u, subject, ok_pw, bool(match), rid))
         if blocked or not (
             ok_pw and match
         ):  # one answer for all: wrong password, wrong TOTP, or a tripped lock/backoff
@@ -335,7 +344,7 @@ class Channels:
                 db.execute(
                     "DELETE FROM failures WHERE (kind='totp' AND subject=?) OR (kind='pw' AND subject=?)", (u, subject)
                 )
-                if source:  # remembered 30 days: this address is exempt from the cross-source password slow-down
+                if source:  # remembered 30 days: exempt from the network aggregate
                     db.execute(
                         "INSERT OR REPLACE INTO known_sources(user_id, source, ts_ms) VALUES (?,?,?)", (u, source, now)
                     )

@@ -147,35 +147,51 @@ def test_r3_stranger_without_the_password_cannot_delay_or_lock_the_user_from_a_k
     assert s == 200, o  # the real user from a known source is never delayed
 
 
-def test_r3_distributed_password_guess_across_50_sources_is_slowed(w):
+def test_r3_distributed_guess_across_50_sources_never_refuses_a_correct_sign_in(w, caplog):
     t = _clock(w)
-    for i in range(50):
-        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
-        t[0] += 10
-    # a source that never signed in as this user is refused (generic answer) while the counter is tripped ...
-    assert _good(w, "192.0.2.9")[:2] == (401, {"error": "bad_credentials"})
-    t[0] += 61_000  # ... and only for the delay: never a hard lock
-    s, o, _ = _good(w, "192.0.2.9")
+    with caplog.at_level("WARNING"):
+        for i in range(50):
+            _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
+            t[0] += 10
+    assert "distributed failed-password guessing" in caplog.text  # the operator is told
+    s, o, _ = _good(w, "192.0.2.9")  # a new source with the CORRECT password and TOTP signs in at once ...
     assert s == 200, o
+    assert w.api.d.channels.known_source(w.ann, "192.0.2.9")  # ... and becomes known
 
 
-def test_r3_new_source_for_the_real_user_is_slowed_only_while_tripped(w):
-    t = _clock(w)
-    assert _good(w, "192.0.2.10")[0] == 200  # nothing tripped: a brand-new source signs in at once
-    t[0] += 1000
-    for i in range(20):
-        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
-        t[0] += 1
-    assert _good(w, "192.0.2.11")[0] == 401  # tripped
-    t[0] += 61_000
-    assert _good(w, "192.0.2.11")[0] == 200  # over
+def test_r3_refused_correct_attempts_do_not_burn_the_users_own_pair(w, monkeypatch):
+    from orch_hub.channels import service as CS
+
+    monkeypatch.setattr(CS, "PW_FREE_TRIES", 0)
+    for _ in range(3):  # own wrong passwords put this pair in a backoff
+        _try(w, w.ann, "203.0.113.1", password="wrong wrong wrong")
+    for _ in range(6):  # correct attempts inside the backoff: refused ...
+        body = {"user_id": w.ann, "password": "correct horse battery", "totp": w.env.code(w.ann), "client": "app"}
+        assert w.call("POST", "/session", body, origin=None, peer="203.0.113.1")[1] == {"error": "bad_credentials"}
+    n = w.api.d.channels.db.q("SELECT COUNT(*) FROM failures WHERE kind='login'", ())[0][0]
+    assert n == 3  # ... and none of them left a counted reservation (else the 5-cap would have turned rate_limited)
 
 
-def test_r3_ipv4_24_aggregate(w, monkeypatch):
-    monkeypatch.setattr(A, "SIGNIN_NET_LIMIT", (30, 60_000))
-    codes = [_try(w, "0" * 32, f"203.0.113.{i}")[1].get("error") for i in range(1, 60)]
-    assert "rate_limited" in codes
-    assert _try(w, "0" * 32, "203.0.114.1")[1].get("error") == "bad_credentials"  # another /24 is untouched
+def test_r3_one_source_holds_at_most_one_hashing_slot(w):
+    import threading
+
+    gate, inside = threading.Event(), threading.Event()
+    real = w.api.d.channels.sign_in
+
+    def slow(*a, **k):
+        inside.set()
+        gate.wait(5)
+        return real(*a, **k)
+
+    w.api.d.channels.sign_in = slow
+    first = threading.Thread(target=_try, args=(w, w.ann, "203.0.113.5"))
+    first.start()
+    assert inside.wait(5)
+    assert _try(w, w.ann, "203.0.113.5")[1].get("error") == "rate_limited"  # same source: no second slot
+    gate.set()
+    first.join(5)
+    w.api.d.channels.sign_in = real
+    assert _try(w, w.ann, "203.0.113.6")[1].get("error") == "bad_credentials"
 
 
 def test_r3_ipv6_neighbour_64_cannot_exhaust_ours_but_the_48_is_capped(w, monkeypatch):

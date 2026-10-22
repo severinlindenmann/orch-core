@@ -175,8 +175,8 @@ def test_the_sync_sends_exactly_the_confirmed_selection_even_if_a_ticket_changes
     shown = ok(req(served, "share.preview", {"add": rule}))["data"]["plan"]
     real, calls = shareops.tickets_for, []
 
-    def moving(service):
-        facts = real(service)
+    def moving(service, viewer=None):
+        facts = real(service, viewer)
         calls.append(1)
         if len(calls) > 1:  # any later read sees one more matching ticket
             facts.append(dataclasses.replace(facts[0], uid="01J9ZP0000000000000000MOVE", key="MOVE-1", title="Later"))
@@ -263,3 +263,27 @@ def test_the_item_version_grows_with_every_change_and_revoke_twice_is_the_same_a
     first = ok(req(served, "share.revoke", {"ref": key}))["data"]
     again = ok(req(served, "share.revoke", {"ref": key}))["data"]  # idempotent: same answer, no error
     assert first["revoke"] == 1 and again["revoke"] == 0 and selective.count("share_revoke") == 1
+
+
+def test_a_restricted_ticket_is_never_in_a_preview_or_a_share_even_for_the_owner(served, selective):
+    uid, _ = labelled(served, "Secret plan", "public")
+    served.restrict(uid, [served.lab.owner])
+    labelled(served, "Open note", "public")
+    prev = ok(req(served, "share.preview", {"add": {"kind": "tag", "tag": "public"}}))["data"]
+    assert prev["count"] == 1 and "Open note" in str(prev) and "Secret" not in str(prev)
+
+
+def test_shareable_is_the_viewers_workspace_visible_tickets_only():
+    from types import SimpleNamespace as NS
+
+    from orch.host import shareops
+
+    pub, secret = NS(visibility="workspace"), NS(visibility={"restricted": ["p_a"]})
+    tickets = {"u1": pub, "u2": secret}
+    state = NS(
+        tickets=tickets,
+        visible_to=lambda who: {u: t for u, t in tickets.items() if t is pub or who in t.visibility["restricted"]},
+    )
+    assert shareops._shareable(state, "p_a") == {"u1": pub}  # noqa: SLF001  (A's own restricted ticket stays out)
+    assert shareops._shareable(state, "p_b") == {"u1": pub}  # noqa: SLF001
+    assert shareops._shareable(state, None) == {"u1": pub}  # noqa: SLF001

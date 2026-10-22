@@ -105,6 +105,10 @@ export interface HandoffMaterial {
   before?: Record<string, unknown>
   /** B11: the whole intent of a sequence (bound by `review_digest`); the first request of one signer's run. */
   sequence?: { digest: string; of: number; intent: Record<string, unknown> }
+  /** #740: the manual acceptance statement file of `ac.accept` / `ac.unaccept` (bound by `review_digest`). */
+  statement?: string
+  /** #740: a verify gate's manual acceptances, per host (bound by `review_digest`). */
+  manual_acceptances?: { ac: string; name: string; by: string }[]
   review: HandoffReview[]
 }
 
@@ -196,17 +200,32 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
   })
 }
 
+/** kind -> [required, allowed]: core signer `_MATERIAL_KEYS` for these kinds (a server test keeps them equal). */
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
-  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review']],
+  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement']],
 }
+/** The only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`). */
+const STATEMENT_OPS = ['ac.accept', 'ac.unaccept']
 
-/** Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1). */
-function materialKeysOk(material: HandoffMaterial): boolean {
+const manualRowOk = (row: unknown): boolean =>
+  !!row && typeof row === 'object' && !Array.isArray(row) &&
+  cj(Object.keys(row).sort()) === cj(['ac', 'by', 'name']) &&
+  Object.values(row).every((v) => typeof v === 'string')
+
+/** Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1), and on a `statement` or
+ * `manual_acceptances` where the signer does not allow one (the same rules as the server's `material_keys_ok`). */
+function materialKeysOk(material: HandoffMaterial, op: string): boolean {
   const keys = MATERIAL_KEYS[material.kind]
   const have = Object.keys(material)
-  return !!keys && keys[0].every((k) => have.includes(k)) && have.every((k) => keys[1].includes(k))
+  if (!keys || !keys[0].every((k) => have.includes(k)) || !have.every((k) => keys[1].includes(k))) return false
+  if ('statement' in material && (!STATEMENT_OPS.includes(op) || typeof material.statement !== 'string')) return false
+  if ('manual_acceptances' in material) {
+    const rows: unknown = material.manual_acceptances
+    return material.gate === 'verify' && Array.isArray(rows) && rows.every(manualRowOk)
+  }
+  return true
 }
 
 /** A request lives ten minutes on the host. A bad or far-off `expires_at` is not a request of this host. */
@@ -225,7 +244,7 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
     return (
       digest === request.review_digest &&
       fingerprintOf(digest, request.events, request.op) === request.fingerprint &&
-      materialKeysOk(request.material) &&
+      materialKeysOk(request.material, request.op) &&
       reviewMatches(request.material, request.events) &&
       // A retry with the same key returns the request in its current state: an ended one keeps the time it had.
       (isOpen(request.state) ? expiryMs(request.expires_at) !== null : /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(request.expires_at))

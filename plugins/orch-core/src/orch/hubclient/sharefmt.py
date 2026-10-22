@@ -1,7 +1,8 @@
 """The sealed bytes of a selective ``share_put`` (hub contract 10.2b, V3 C6/D9). No I/O, no state.
 
 ``share.item`` is signed by the workspace's ``WSK`` (label ``sig_share_item``); its content is exact per ``item_kind``
-and follows the one text rule (Unicode 16.0.0: no ``Cc Cf Zl Zp Cs Co Cn`` or ``Default_Ignorable_Code_Point``; LF only in multi-line text). The item key
+and follows the one text rule (Unicode 16.0.0: no ``Cc Cf Zl Zp Cs Co Cn``,
+no ``Default_Ignorable_Code_Point``; LF only in multi-line text). The item key
 ``IK`` (32 fresh random bytes per put) is sealed to the hub's ``HXK`` with the v2 5.3 construction, purpose
 ``hub-share``; the signed item is sealed under ``IK`` with SALTED-AEAD (5.1) and an AAD that binds suite, hub,
 workspace, item id and version::

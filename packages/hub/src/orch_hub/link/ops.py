@@ -3,12 +3,13 @@
 A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
 or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
 sign anything for the host. ``route_out`` is served when a router is configured (``route_in`` is the hub's own
-h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). Ops of later
-phases (``audit_ack``, the share ops until C6) are not served: ``unknown_op``.
+h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). ``share_put`` / ``share_revoke`` are served in selective mode
+(:mod:`orch_hub.shares`).
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -112,6 +113,7 @@ class OpContext:
     spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
+    shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -135,7 +137,19 @@ def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
         return
     b = state.get("binding")
     if state.get("status") != "bound" or type(b) is not dict or b.get("mode") != "full":
-        c.wk_seals.retire(c.workspace_id)
+        try:
+            c.wk_seals.retire(c.workspace_id)
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("wk_seal retire failed; the other steps go on")
+
+
+def _sync_shares(c: OpContext, state: dict[str, Any]) -> None:
+    """Shared items belong to a live SELECTIVE binding only: any other state deletes them (caller holds the lock)."""
+    if c.shares is not None:
+        try:
+            c.shares.sync(c.workspace_id)
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("share sync failed; unbind goes on")
 
 
 def join(c: OpContext) -> dict[str, Any]:
@@ -176,6 +190,7 @@ def join(c: OpContext) -> dict[str, Any]:
         )
         c.invites.consume(invite, c.workspace_id)
         _sync_wk_seals(c, state)
+        _sync_shares(c, state)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     c.downstream.binding(c.workspace_id, join_msg["binding"])
     return {}
@@ -204,6 +219,9 @@ def card_put(c: OpContext) -> dict[str, Any]:
 
 
 def binding_put(c: OpContext) -> dict[str, Any]:
+    # INVARIANT: once the registry has committed a binding state, the post-commit steps below are independent: each
+    # runs whatever any other step does (own try/except, error logged). A share failure leaves the workspace pending
+    # (refused by the share store, retried by retry_pending) until a purge succeeds.
     obj = c.body["object"]
     o = obj.get("o") if type(obj) is dict else None
     kind = o.get("kind") if type(o) is dict else None
@@ -225,12 +243,31 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         else:
             raise Refused("malformed")
         c.registry.set_binding_state(c.workspace_id, state, obj)
-        _sync_wk_seals(c, state)
-    c.downstream.binding(c.workspace_id, obj)
-    if c.spaces is not None and (
-        kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
-    ):
-        c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
+
+    def locked(step: Callable[[], None]) -> Callable[[], None]:
+        def run() -> None:
+            with c.registry.lock:  # re-entrant: the lock is held only for the step itself
+                step()
+
+        return run
+
+    def leave_spaces() -> None:
+        if c.spaces is not None and (
+            kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
+        ):
+            c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
+
+    steps: list[tuple[str, Callable[[], None]]] = [
+        ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
+        ("share sync", locked(lambda: _sync_shares(c, state))),
+        ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
+        ("spaces on_unbind", leave_spaces),
+    ]
+    for name, step in steps:
+        try:
+            step()
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("binding_put: %s failed; the other steps go on", name)
     return {}
 
 
@@ -306,6 +343,20 @@ def space_accept(c: OpContext) -> dict[str, Any]:
     return _spaces(c).accept(c.workspace_id, c.body)
 
 
+def _shares(c: OpContext) -> Any:
+    if c.shares is None:
+        raise Refused("unknown_op")
+    return c.shares
+
+
+def share_put(c: OpContext) -> dict[str, Any]:
+    return _shares(c).put(c.workspace_id, c.body)
+
+
+def share_revoke(c: OpContext) -> dict[str, Any]:
+    return _shares(c).revoke(c.workspace_id, c.body)
+
+
 def wk_seal(c: OpContext) -> dict[str, Any]:
     """``WK_e`` sealed to HXK (§10.2, full mode). Checked and stored inside the registry lock, so the mode check and the
     write cannot be separated from an unbind."""
@@ -339,6 +390,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "space_get": space_get,
     "space_accept": space_accept,
     "wk_seal": wk_seal,
+    "share_put": share_put,
+    "share_revoke": share_revoke,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

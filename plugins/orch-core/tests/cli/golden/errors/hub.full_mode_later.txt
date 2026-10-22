@@ -1,1 +1,0 @@
-err hub.full_mode_later a full join comes later · retry:false · next: join in selective mode: the hub then sees only what you share · fix: orch status

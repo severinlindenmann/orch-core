@@ -372,15 +372,16 @@ def test_v2_refuses_the_v3_keys(extra):
 
 @pytest.mark.parametrize(
     "api",
-    ["", "1.0", ">=1", ">=1.0,", ",>=1.0", ">=1.0,,<2", ">=1.0 ,<2", ">=1.0.0", "^1.0", ">=01.0", ">=1.0,<2\n"]
+    ["", "1.0", ">=1.0,", ",>=1.0", ">=1.0,,<2", ">=1.0 ,<2", ">=1.0.0", "^1.0", ">=01.0", ">=1.0,<2\n"]
     + [">=1.0,<2,>=1.0,<2,>=1.0"],
 )
 def test_a_malformed_api_range_is_refused(api):
-    if api == ">=1":  # a bare major is valid
-        assert load_manifest(raw(manifest(schema="orch.addon/3", api=api)))
-        return
     with pytest.raises(ManifestError):
         load_manifest(raw(manifest(schema="orch.addon/3", api=api)))
+
+
+def test_a_bare_major_is_a_valid_api_range():
+    assert load_manifest(raw(manifest(schema="orch.addon/3", api=">=1"))).api == ">=1"
 
 
 @pytest.mark.parametrize("v", ["", "v2", "2.0.0.dev", "2.0.0.rc1", "2.0.0.0", ">=2.0", "2.0.0\n", 2])

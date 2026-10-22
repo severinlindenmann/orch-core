@@ -16,9 +16,10 @@ Defence in depth on every command: ``-c
 core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol.allow=never`` and an empty
 ``GIT_ALLOW_PROTOCOL`` (no network), ``-c submodule.recurse=false``, no terminal prompt, no pager, no editor, and an
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
-``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. ``worktree add`` is ``--no-checkout`` (#584) and :func:`orch.gitread.checkout.populate` writes the tree: the repo's
-config names no filter that runs; only the allow-listed ``lfs`` the **person** configured globally or system-wide
-is applied, when an attribute selects it, as the person. :func:`run_git` is the one documented exception to
+``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. ``worktree add`` is ``--no-checkout`` (#584)
+and :func:`orch.gitread.checkout.populate` writes the tree: the repo's config names no filter that runs; only the
+allow-listed ``lfs`` the **person** configured globally or system-wide is applied, when an attribute selects it, as
+the person. :func:`run_git` is the one documented exception to
 :data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`), with a race note at its spawn (#565). The
 direct-mode tool's reads (revisions, ``HEAD``, cleanliness) use :data:`orch.gitread.local.READER`, never git.
 

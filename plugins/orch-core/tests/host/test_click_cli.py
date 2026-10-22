@@ -130,3 +130,21 @@ def _with_passphrase(create, passphrase):
         return create(self, key_id, secret=secret, role=role, passphrase=passphrase)
 
     return wrapped
+
+
+def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_through_a_symlink(
+    served, monkeypatch, tmp_path
+):
+    """The hint a person may copy must not be steerable: a planted symlink (logical $PWD != real cwd) gets the placeholder."""
+    state = str(served.lab.state)
+    link = tmp_path / "link"
+    link.symlink_to(served.service.entry.root)
+    monkeypatch.chdir(link)
+    monkeypatch.setenv("PWD", str(link))  # the logical path differs from the physical one
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert code == 5 and "convenience on --workspace <your workspace prefix>" in out
+    assert served.service.entry.prefix not in out
+    monkeypatch.chdir(served.service.entry.root)
+    monkeypatch.setenv("PWD", os.getcwd())
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert f"convenience on --workspace {served.service.entry.prefix}" in out

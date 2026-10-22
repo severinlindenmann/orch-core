@@ -220,6 +220,48 @@ def unbound(ws: str = WS_A, wsk: str = "wsk_a", seq: int = 1, **kw: Any) -> dict
     return signed(wsk, "sig_hub_unbound", o)
 
 
+def _h(name: str) -> str:
+    return "sha256:" + S.fake_seed("hub/ev/" + name).hex()
+
+
+NEW_TICKET = "01J9ZP0000000000000000TKT9"
+SOURCES = [
+    {"repo": "https://github.com/demo/api", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/ev/src").hex()[:40]}
+]
+#: §8.5 event side: per custodial type, the log and the exact payload AFTER the hub derived its fields (core runs its
+#: step-1 exact-payload check on these, L2-C3-1). The gate types keep the fields of the default event.
+EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
+    "ticket.created": (NEW_TICKET, {"key": "DEMO-0044", "ticket_type": "feature", "title": "Load tariff tables",
+                                    "owner": "u_" + U_ALICE}),
+    "ticket.updated": (TICKET, {"set": {"ticket.priority": "high", "ticket.title": "Tariffs v2"},
+                                "base_rev": {"ticket.priority": _h("rev_prio"), "ticket.title": _h("rev_title")}}),
+    "status.changed": (TICKET, {"from": "in_progress", "to": "open", "reason": "waiting for data"}),
+    "ticket.submitted": (TICKET, {}),
+    "ticket.closed": (TICKET, {"resolution": "duplicate", "duplicate_of": "DEMO-0012"}),
+    "ticket.reopened": (TICKET, {"text": "Still broken on Safari"}),
+    "claim.released": (TICKET, {"session": "s_7f3a", "reason": "released"}),
+    "log.added": (TICKET, {"text": "Checked with finance.\nOK to proceed."}),
+    "handoff.written": (TICKET, {"text": "Importer done; API next."}),
+    "question.asked": (TICKET, {"question": {"id": "Q2", "to": "ticket_owner", "text": "CSV or API?", "blocking": True,
+                                             "options": [{"key": "api", "label": "API"}, {"key": "csv", "label": "CSV"}],
+                                             "recommended": "csv"},
+                                "qid": S.fake_seed("hub/ev/qid").hex()[:32], "hash": _h("question")}),
+    "question.answered": (TICKET, {"question": "Q1", "hash": _h("q1"), "option": "csv"}),
+    "gate.approved": (TICKET, None),
+    "gate.changes_requested": (TICKET, {"gate": "plan", "gate_gen": 2, "hash": _h("plan"),
+                                        "policy_hash": _h("policy"), "text": "Split the importer"}),
+    "verdict.given": (TICKET, {"outcome": "pass", "gate_gen": 1, "hash": _h("verify"), "policy_hash": _h("policy"),
+                               "source_sha": SOURCES}),
+    "ticket.moved": (TICKET, {"from": "testing", "to": "backlog", "reason": "Parked until Q1"}),
+    "visibility.changed": (TICKET, {"visibility": {"restricted": ["p_" + fake16("person_alice"), "u_" + U_BOB]}}),
+    "people.changed": (TICKET, {"role": "reviewers", "add": ["u_" + U_BOB], "remove": []}),
+    "addon.disabled": ("workspace", {"name": "wiki"}),
+    "addon.purged": ("workspace", {"name": "wiki"}),
+}  # fmt: skip
+
+ITEM_HASH_SEL = "sha256:" + S.fake_seed("hub/selective_item_hash").hex()
+
+
 def custodial(
     user_key: str = "uk_alice",
     ch_key: str = "channel_alice_phone",
@@ -230,8 +272,15 @@ def custodial(
     tamper_after_sign: dict[str, Any] | None = None,
     typ: str = "gate.approved",
     snapshot_version: int = 3,
+    item_hash: str | None = None,
+    log: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A signed custodial event of ``typ`` with the exact payload the hub builds for it (:data:`EVENT_PAYLOADS`, §8.5
+    event side); an unlisted type keeps the gate payload (it is refused at step 7b before its payload matters)."""
     chan = H.channel_id(K.pub[ch_key])
+    elog, table = EVENT_PAYLOADS.get(typ, (TICKET, None))
+    log, payload = log or elog, payload if payload is not None else table
     e = {
         "v": 2,
         "id": "01J9ZP0000000000000000EVT1",
@@ -252,9 +301,17 @@ def custodial(
         "channel_cert": ch if ch is not None else channel_cert(user=user, key=ch_key, factor=factor),
         "uk_cert": uk if uk is not None else uk_cert(user=user, key=user_key),
     }
-    digest = H.event_digest(WS_A, TICKET, e)
+    if payload is not None:
+        for k in ("gate", "hash", "policy_hash", "gate_gen"):
+            del e[k]
+        e.update(payload)
+        if typ == "ticket.created":
+            e["based_on"] = None
+    if item_hash is not None:  # selective mode only (C3b addendum, §8.1)
+        e["item_hash"] = item_hash
+    digest = H.event_digest(WS_A, log, e)
     e["channel_proof"] = b64u(S.sign(K.priv[ch_key], H.channel_proof_bytes(digest), deterministic=True))
-    sig = S.sign(K.priv[user_key], H.custodial_bytes(WS_A, TICKET, e), deterministic=True)
+    sig = S.sign(K.priv[user_key], H.custodial_bytes(WS_A, log, e), deterministic=True)
     out = {**e, "sig": b64u(sig)}
     if tamper_after_sign:
         out.update(tamper_after_sign)
@@ -1162,10 +1219,27 @@ def build() -> dict[str, Any]:
         {"error": "unknown_snapshot"},
         4,
     )
+    ev_sel = custodial(item_hash=ITEM_HASH_SEL)
+    case(
+        "custodial_selective_without_item_hash",
+        "custodial",
+        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
+        {"error": "malformed"},
+        4,
+        "C3b addendum: a selective custodial event names the shared item it was built on (item_hash)",
+    )
+    case(
+        "custodial_full_with_item_hash",
+        "custodial",
+        {**cus, "event": ev_sel},
+        {"error": "malformed"},
+        4,
+        "item_hash exists only in selective mode",
+    )
     case(
         "custodial_selective_not_granted",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_BOB]},
+        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_BOB]},
         {"error": "not_granted"},
         4,
         "D80: hub roles do not reach a selective workspace",
@@ -1173,7 +1247,7 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_granted_owner",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
+        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
         ok_cus,
         4,
     )
@@ -1183,7 +1257,7 @@ def build() -> dict[str, Any]:
         "custodial",
         {
             **cus,
-            "event": custodial(typ="people.changed"),
+            "event": custodial(typ="people.changed", item_hash=ITEM_HASH_SEL),
             "mode": "selective",
             "granted_users": [U_ALICE],
             "member_roles": {U_ALICE: "member"},
@@ -1195,14 +1269,14 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_granted_member_decides",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "member"}},
+        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "member"}},
         ok_cus,
         4,
     )
     case(
         "custodial_selective_granted_unaliased_is_viewer",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE]},
+        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE]},
         {"error": "forbidden_role"},
         4,
         "a granted user without an alias to a member is a viewer and signs nothing",

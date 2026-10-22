@@ -333,10 +333,21 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         views: dict[str, list[str]] = {}
         wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
         for body in a["pages"]:
+            if type(body) is dict and set(body) == {"wk_seal"}:  # a rotation between pages: the hub takes a new epoch
+                wk.update({int(e): bytes.fromhex(k) for e, k in body["wk_seal"].items()})
+                continue
             views = P4.apply_view_page(
                 views, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
             )
         return {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+    if check == "selective_build":
+        log, core = P4.build_selective(a["action"], a["item"])
+        return {"log": log, "event": core}
+    if check == "deliver_next":
+        return P4.deliver_next(a["reply"], attempt=a["attempt"], first_sent_ms=a["first_sent_ms"], now_ms=now)
+    if check == "user_hub":
+        P4.check_user_hub(a["user_hub"], a["aliases"], a["hub_id"], a["user_id"])
+        return {"belongs": True}
     if check == "share_item":
         r = P4.open_share_item(
             a["body"],

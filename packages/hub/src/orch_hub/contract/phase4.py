@@ -686,7 +686,7 @@ def open_share_item(
         raise Refused("malformed") from None
     o = _envelope(signed, "share.item")
     _signature(signed, L["sig_share_item"], wsk_pub)
-    _fields(o, "share.item")
+    _fields({k: v for k, v in o.items() if k != "f1"}, "share.item")  # f1 is the one optional key (C3b addendum)
     if o["hub_id"] != hub_id:
         raise Refused("other_hub")
     if o["workspace_id"] != workspace_id:
@@ -697,6 +697,8 @@ def open_share_item(
     c = o["content"]
     if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
         raise Refused("malformed")
+    if "f1" in o:
+        check_f1(o["f1"], o["chain"])
     _dev(o, dev_mode)
     h = item_hash(signed)
     if held is not None:
@@ -964,3 +966,249 @@ __all__ = [
     "view_key",
     "visible",
 ]
+
+
+# --- C3b addendum (§10.2b f1, §8.6 selective custodial events, §8.7 delivery acks, §9.1 user ids) --------------------
+
+F1_GATES = ("requirements", "plan", "code", "verify")
+F1_SOURCE_GATES = ("code", "verify")  # ticket-format §5.7: only these carry a source list
+F1_MAX_QUESTIONS = 64
+F1_MAX_SOURCES = 32
+_QID = re.compile(r"Q[1-9][0-9]{0,5}")
+_REF = re.compile(r"refs/heads/[!-~]{1,244}")
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _int0(x: Any) -> bool:
+    return type(x) is int and 0 <= x < 2**53
+
+
+def _source(x: Any) -> bool:
+    """One source-list entry (ticket-format §5.7): ``{repo, ref, sha}``, exact keys."""
+    return (
+        type(x) is dict
+        and set(x) == {"repo", "ref", "sha"}
+        and _text(512)(x["repo"])
+        and type(x["ref"]) is str
+        and _REF.fullmatch(x["ref"]) is not None
+        and type(x["sha"]) is str
+        and _SHA.fullmatch(x["sha"]) is not None
+    )
+
+
+def _sources(x: Any) -> bool:
+    if type(x) is not list or len(x) > F1_MAX_SOURCES or not all(_source(e) for e in x):
+        return False
+    repos = [e["repo"] for e in x]
+    return repos == sorted(set(repos))  # sorted by repo, one entry per repo
+
+
+def _f1_gate(name: str, x: Any) -> bool:
+    keys = {"gen", "hash", "policy_hash"} | ({"source_sha"} if name in F1_SOURCE_GATES else set())
+    return (
+        type(x) is dict
+        and set(x) == keys
+        and _int0(x["gen"])
+        and _hash(x["hash"])
+        and _hash(x["policy_hash"])
+        and ("source_sha" not in x or _sources(x["source_sha"]))
+    )
+
+
+def check_f1(f1: Any, chain: Any) -> None:
+    """The optional ``f1`` block of a ``share.item`` (§10.2b): exactly the F1 values a selective custodial build needs
+    that the item does not already carry (``based_on`` is ``chain.head``). Exact keys at every depth; ``source_sha``
+    exactly on ``code`` and ``verify``; only for an item of a ticket log (no selective workspace-log types)."""
+    if (
+        type(f1) is not dict
+        or set(f1) != {"roster_v", "gates", "questions"}
+        or not _int0(f1["roster_v"])
+        or type(f1["gates"]) is not dict
+        or not all(k in F1_GATES and _f1_gate(k, v) for k, v in f1["gates"].items())
+        or type(f1["questions"]) is not dict
+        or len(f1["questions"]) > F1_MAX_QUESTIONS
+        or not all(
+            type(k) is str and _QID.fullmatch(k) and type(v) is dict and set(v) == {"hash"} and _hash(v["hash"])
+            for k, v in f1["questions"].items()
+        )
+    ):
+        raise Refused("malformed")
+    if type(chain) is not dict or chain.get("log") == "workspace":
+        raise Refused("malformed")
+
+
+#: §8.6: the only types a selective workspace's hub builds (decisions on a shared item of a ticket log).
+SELECTIVE_TYPES = DECISION_TYPES
+
+
+def build_selective(action: Any, item: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """§8.6: the event core the hub builds for a selective workspace from one shared item it holds (``item`` is the
+    signed ``share.item`` that passed :func:`open_share_item`, live, and visible to the user). Returns ``(log,
+    core)``; the engine then adds ``v``, ``id``, ``actor`` and the custodial fields exactly as in full mode (§8.4).
+    Fills only ``based_on`` (= ``chain.head``), ``roster_v``, ``hash_v``, ``item_hash`` and the decision's F1 values
+    from ``f1``; every other field is the person's, from the checked action."""
+    if type(action) is not dict or type(action.get("type")) is not str or not _hex16(action.get("item")):
+        raise Refused("malformed")
+    rest = {k: v for k, v in action.items() if k != "item"}
+    typ = rest["type"]
+    if typ not in SELECTIVE_TYPES:
+        raise Refused("not_custodial")
+    check_action(rest, role="edit")  # the decisions' floor; the host checks the person's real member role
+    o = item["o"]
+    if o["item_id"] != action["item"] or o["chain"]["log"] != rest["log"]:
+        raise Refused("unknown_item")
+    if "f1" not in o:
+        raise Refused("unavailable")  # the host shared it without F1 values: the hub cannot build on it
+    f1, log = o["f1"], o["chain"]["log"]
+    core: dict[str, Any] = {
+        "type": typ,
+        "based_on": o["chain"]["head"],
+        "roster_v": f1["roster_v"],
+        "hash_v": 1,
+        "item_hash": item_hash(item),
+    }
+    if typ == "question.answered":
+        if "option" in rest:
+            raise Refused("malformed")  # options are not shared in V3: the person could not have seen them
+        q = f1["questions"].get(rest["question"])
+        if q is None:
+            raise Refused("unknown_item")
+        if q["hash"] != rest["hash"]:
+            raise Refused("event_changed")
+        core.update(question=rest["question"], hash=q["hash"], text=rest["text"])
+    else:
+        gate = "verify" if typ == "verdict.given" else rest["gate"]
+        g = f1["gates"].get(gate)
+        if g is None:
+            raise Refused("unknown_item")
+        if g["hash"] != rest["hash"]:
+            raise Refused("event_changed")
+        core.update(gate_gen=g["gen"], hash=g["hash"], policy_hash=g["policy_hash"])
+        if typ == "verdict.given":
+            core["outcome"] = rest["outcome"]
+        else:
+            core["gate"] = gate
+        if "text" in rest:
+            core["text"] = rest["text"]
+        if typ == "verdict.given" or (typ == "gate.approved" and gate == "code"):
+            core["source_sha"] = g["source_sha"]
+    check_built(rest, log, core)
+    return log, core
+
+
+#: §8.7: the ``event_deliver`` replies after which the hub resends the same event bytes; every other code is final.
+DELIVER_RETRYABLE = frozenset({"unavailable", "unknown_snapshot"})
+DELIVER_FIRST_DELAY_MS = 1_000
+DELIVER_MAX_DELAY_MS = 300_000
+DELIVER_GIVE_UP_MS = 24 * 3600 * 1000
+
+
+def deliver_next(reply: Any, *, attempt: int, first_sent_ms: int, now_ms: int) -> dict[str, Any]:
+    """What the hub does after delivery attempt ``attempt`` (1, 2, ...) of one custodial event (§8.7). ``reply`` is the
+    host's reply body, or None when no reply came (link drop, timeout). Returns ``{"done": True}``,
+    ``{"resend_in_ms": n}`` (the SAME bytes, never re-signed) or ``{"drop": code}`` (tell the channel ``code``)."""
+    if type(reply) is dict and reply == {}:
+        return {"done": True}
+    if type(reply) is dict and set(reply) == {"error"} and type(reply["error"]) is str:
+        if reply["error"] not in DELIVER_RETRYABLE:
+            return {"drop": reply["error"]}
+        code = reply["error"]
+    else:
+        code = "unavailable"  # no reply, or a reply that is neither {} nor {"error": code}: not provably refused
+    if now_ms - first_sent_ms >= DELIVER_GIVE_UP_MS:
+        return {"drop": code}
+    return {"resend_in_ms": min(DELIVER_FIRST_DELAY_MS << min(max(attempt, 1) - 1, 20), DELIVER_MAX_DELAY_MS)}
+
+
+def check_user_hub(
+    user_hub: Mapping[str, str], aliases: Mapping[str, Mapping[str, str]], hub_id: str, user_id: str
+) -> None:
+    """§9.1 (C3b, L2P4-C1, L2-C3-2): a ``u_`` id belongs to the hub under which it first appeared in the workspace.
+    ``user_hub`` = ``{user_id: hub_id}`` of first appearance (never re-pointed); ``aliases`` = ``{hub_id: {user_id:
+    person_id}}`` from every ``hub.joined``. Refuses ``foreign_user`` when the id was first recorded under another hub
+    or another hub's alias book names it, unless this hub's own book aliases it to the same person as every other
+    book that names it (C4: one person may keep one id on two hubs)."""
+    mine = aliases.get(hub_id, {}).get(user_id)
+    others = {h: b[user_id] for h, b in aliases.items() if h != hub_id and user_id in b}
+    first = user_hub.get(user_id)
+    if first is None or first == hub_id:
+        foreign = bool(others)
+    else:
+        foreign = True
+        others.setdefault(first, aliases.get(first, {}).get(user_id))  # an unaliased first record is no person
+    if foreign and (mine is None or any(p != mine for p in others.values())):
+        raise Refused("foreign_user")
+
+
+# --- §8.5 the event side: the exact payload of a custodial event after the hub derived its fields --------------------
+
+STATUSES_ALL = STATUSES
+ENVELOPE = ("v", "id", "type", "actor", "based_on", "roster_v", "hash_v")
+_QID32 = re.compile(r"[0-9a-f]{32}")
+
+
+def _base_rev(x: Any, keys: Any) -> bool:
+    """``base_rev`` (ticket-format §5.8): an object mapping EVERY ``set`` path, and nothing else, to the value hash the
+    hub's view holds for it. Never a single hash string."""
+    return type(x) is dict and type(keys) is dict and set(x) == set(keys) and all(_hash(v) for v in x.values())
+
+
+#: type -> the fields the hub derives (§8.5 "Everything else in the event is the hub's"), with their checks. The rest of
+#: the payload is exactly the action's fields (``check_action``).
+DERIVED: dict[str, dict[str, Any]] = {
+    "ticket.created": {"key": _re(_KEY), "owner": _re(re.compile(r"u_[0-9a-f]{32}"))},
+    "ticket.updated": {"base_rev": None},  # checked against `set` below
+    "status.changed": {"from": _enum(*STATUSES_ALL)},
+    "ticket.moved": {"from": _enum(*STATUSES_ALL)},
+    "question.asked": {"qid": _re(_QID32), "hash": _hash},
+    "gate.approved": {"gate_gen": _int0, "policy_hash": _hash},
+    "gate.changes_requested": {"gate_gen": _int0, "policy_hash": _hash},
+    "verdict.given": {"gate_gen": _int0, "policy_hash": _hash, "source_sha": _sources},
+}
+
+
+def check_custodial_payload(event: Any, log: str) -> None:
+    """Host §8.3 step 1 (L2-C3-1, structural): a custodial event's envelope and payload are EXACTLY what the hub may
+    build for its type: the action's fields (``check_action``, the same nested schemas, text rule included) plus the
+    fields the hub derives (:data:`DERIVED`, ``source_sha`` exactly on a ``code`` approval). Anything else, at any
+    depth, is ``malformed``. The caller has checked the custodial fields; the type's table entry and role are 7b."""
+    from .hub import CUSTODIAL_FIELDS as CF
+
+    if type(event) is not dict:
+        raise Refused("malformed")
+    typ = event.get("type")
+    rest = {k: v for k, v in event.items() if k not in ENVELOPE and k not in CF and k not in ("sig", "item_hash")}
+    if (
+        event.get("v") != 2
+        or type(event.get("id")) is not str
+        or not _ULID.fullmatch(event["id"])
+        or event.get("hash_v") != 1
+        or not _int0(event.get("roster_v"))
+        or not (event.get("based_on") is None if typ == "ticket.created" else _hash(event.get("based_on")))
+    ):
+        raise Refused("malformed")
+    derived = dict(DERIVED.get(typ, {}))
+    if typ == "gate.approved" and rest.get("gate") == "code":
+        derived["source_sha"] = _sources
+    for k, ok in derived.items():
+        if k not in rest:
+            raise Refused("malformed")
+        if ok is not None and not ok(rest[k]):
+            raise Refused("malformed")
+    if typ == "ticket.updated" and not _base_rev(rest["base_rev"], rest.get("set")):
+        raise Refused("malformed")
+    action = {k: v for k, v in rest.items() if k not in derived}
+    if typ == "question.asked":
+        q = action.get("question")
+        if type(q) is not dict or type(q.get("id")) is not str or not _QID.fullmatch(q["id"]):
+            raise Refused("malformed")
+        action["question"] = {k: v for k, v in q.items() if k != "id"}
+    action["type"] = typ
+    if typ != "ticket.created":
+        action["log"] = log
+    if any(k in RESERVED for k in action if k not in ("type", "log")):
+        raise Refused("malformed")
+    try:
+        check_action(action, role="admin")  # shape only; the role floor is §8.3 step 7b
+    except Refused as r:
+        raise Refused("not_custodial" if r.code == "not_custodial" else "malformed") from None

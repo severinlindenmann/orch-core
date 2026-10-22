@@ -556,6 +556,7 @@ CUSTODIAL_FIELDS = (
 )
 NOT_SIGNED = ("seq", "at", "prev", "ws_seq", "sig", "host_sig")  # ticket-format §5.3
 _USER_ACTOR = re.compile(r"u_[0-9a-f]{32}")
+_ITEM_HASH = re.compile(r"sha256:[0-9a-f]{64}")
 FACTOR_RANK = {"password+totp": 0, "se-unlocked": 1, "passkey": 2}  # D66 mapping, spec §5
 
 
@@ -673,6 +674,16 @@ def verify_custodial(
         or not _int_min(1)(event["snapshot_version"])
     ):
         raise Refused("malformed")
+    # C3b addendum (§8.1): ``item_hash`` (the shared item the person saw) exactly in selective mode
+    if ("item_hash" in event) != (mode == "selective") or (
+        "item_hash" in event and (type(event["item_hash"]) is not str or not _ITEM_HASH.fullmatch(event["item_hash"]))
+    ):
+        raise Refused("malformed")
+    # the exact payload of the type (§8.5 event side, L2-C3-1); a type outside the table is refused at 7b
+    if (typ, log_kind(log)) in CUSTODIAL_TYPES:
+        from .phase4 import check_custodial_payload
+
+        check_custodial_payload(event, log)
     user = actor["id"][2:]
     # 2. the hub this workspace is bound to
     if event["hub_id"] != held["card"]["hub_id"]:

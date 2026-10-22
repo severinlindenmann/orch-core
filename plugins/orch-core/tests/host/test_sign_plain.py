@@ -1017,7 +1017,11 @@ def test_f8_a_stop_says_which_access_in_words_and_keeps_the_id_out_of_them():
     gid = "gr_01M57ABCDEFGHJKMNPQRZMPS4"
     ev = _stop(gid)
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
-    assert c["headline"].startswith("Take back the agent access for this Mac's runner, until ")
+    assert c["headline"] == "Take back agent access"  # signed words only
+    row = c["fields_changed"][0]
+    assert row["after"].startswith("Agent access for this Mac's runner, until ") and row["after"].endswith(
+        "(per host, not signed)"
+    )
     shown = "\n".join(signcontent.text(c, signer._clean)) + c["headline"] + repr(c)
     assert "gr_" not in shown and gid[-10:] not in shown  # the id is in the technical details (the full review)
     assert "per host, not signed" in shown and "technical details" in shown
@@ -1029,7 +1033,8 @@ def test_f8_an_extend_names_the_replaced_access_by_words_only():
     m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
     c = build({"op": "grant", "events": [new, old], "material": m})
     assert "gr_" not in repr(c)  # neither id is in the plain view: both are in the technical details
-    assert any("It replaces the agent access for this Mac's runner, until " in line for line in c["summary"]["lines"])
+    line = next(x for x in c["summary"]["lines"] if "Per host, not signed: that is the agent access" in x)
+    assert "for this Mac's runner, until " in line
     same = _stop(new["grant"], "extended")
     with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
         build({"op": "grant", "events": [new, same], "material": {**m, "grants": {same["grant"]: _info(same)}}})
@@ -1383,3 +1388,22 @@ def test_788_an_extend_is_signed_with_one_unlock_of_the_workspace_event_label_on
     assert len(opened) == 1 and opened[0][1] == (canon.LABELS["sig_ws_event"].encode("ascii"),)
     signer.sign({**prepared, "events": [new]}, backend=Fake(), key_id="dk", workspace_id="7" * 32)
     assert len(opened) == 1 and len(singles) == 1  # a single event keeps its own prompt
+
+
+def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_signed():
+    """material["grants"] is the host's word (unsigned): what it says about the access is only in rows and lines
+    labelled "per host, not signed"; the headline and the summary title are the signed words."""
+    ev = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB")
+    lie = "Totally harmless demo access"
+    c = build(_revoke((ev, {"label": lie, "scope": "all"})))
+    assert c["headline"] == "Take back agent access" and lie not in c["headline"]
+    rows = [r["after"] for r in c["fields_changed"] if r["field"].startswith("access taken back")]
+    assert rows and all(r.endswith("(per host, not signed)") for r in rows)
+    text = "\n".join(signcontent.text(c, signer._clean))
+    assert text.splitlines()[0] == "Take back agent access"
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA", "label": "runner"}
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
+    ext = build({"op": "grant", "events": [new, old], "material": m})
+    assert "Mac's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
+    assert all("per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this Mac's runner, until" in x)

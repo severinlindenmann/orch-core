@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import hashlib
 import os
 import re
 import unicodedata
@@ -956,23 +955,13 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
     out = []
     with contextlib.ExitStack() as stack:
         be = backend
-        if len(events) > 1 and getattr(backend, "unlocked", None) is not None:
+        if len(events) > 1:
             # ONE passphrase for the events of one reviewed request (an Extend is two): the person saw every event in
             # the one review and typed its word. The key signs this log's event label and nothing else (D65 stays the
-            # rule for anything that was not reviewed as one batch).
-            from .sequence_terminal import unlocked_backend
+            # rule for anything that was not reviewed as one batch). The unlock itself lives in sequence_terminal.
+            from .sequence_terminal import request_backend
 
-            label = "sig_ws_event" if log == "workspace" else "sig_ticket_event"
-            be = stack.enter_context(
-                unlocked_backend(
-                    backend,
-                    key_id,
-                    digest=hashlib.sha256(canon.dumps(events)).hexdigest(),
-                    fields=(("signatures", str(len(events))), ("workspace", workspace_id)),
-                    action=f"{prepared['op']}: {len(events)} signatures, one review",
-                    labels=(canon.LABELS[label].encode("ascii"),),
-                )
-            )
+            be = stack.enter_context(request_backend(backend, key_id, prepared, events, workspace_id))
         for ev in events:
             if ev["type"] == "grant.issued":
                 import secrets as _secrets

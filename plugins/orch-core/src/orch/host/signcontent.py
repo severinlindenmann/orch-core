@@ -314,7 +314,7 @@ def _extend_summary(events: list[Mapping[str, Any]], ctx: _Ctx) -> dict[str, Any
     lines = [
         f"New access: agents working for you, for {span(hours)}.",
         *([f"The new access ends {until} (your time)."] if until else []),
-        f"It replaces the {replaced} (per host, not signed); it is taken back when you sign.",
+        f"The access it replaces is taken back when you sign. Per host, not signed: that is the {replaced}.",
         "Affected: agents working for you (per host, not signed).",
     ]
     # the headline is all the terminal's plain view prints first: it keeps the length and the end; the ids of the new
@@ -1151,7 +1151,7 @@ def _event(
                 out["notes"].append(_EXTEND_WARNING)
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
-        return f"Take back the {words}"
+        return "Take back agent access"  # signed words only: which access is in the labelled row (the host's word)
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):

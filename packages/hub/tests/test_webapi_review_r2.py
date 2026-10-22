@@ -40,7 +40,10 @@ def test_r2_totp_guessing_with_a_known_password_is_bounded_per_user(w):
     for i in range(8):  # 8 sources x 4 guesses = 32 TOTP guesses; before round 2 it was 5 per user per 15 min
         for _ in range(4):
             codes.append(_try(w, w.ann, f"203.0.113.{i + 1}", password="correct horse battery")[1].get("error"))
-    assert "rate_limited" in codes
+    # bounded per user (orchestrator, 22 Oct: the lock must not be an oracle, so it answers bad_credentials too)
+    assert set(codes) == {"bad_credentials"}
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.99")
+    assert (s, o) == (401, {"error": "bad_credentials"}), "a correct TOTP is refused while the per-user lock holds"
 
 
 def test_r2_chained_trusted_proxies_yield_the_client(w):
@@ -66,25 +69,58 @@ def test_r2_get_prepared_is_the_owners_only(w):
 
 
 def test_r3_ipv6_normalised_and_v4_mapped(w):
-    assert w.api._source({}, "2001:db8:0:1::5") == w.api._source({}, "2001:db8:0:1:ffff::1") == "2001:db8:0:1::/64"
+    assert w.api._source({}, "2001:db8:0:1::5") == w.api._source({}, "2001:db8:0:ffff::1") == "2001:db8::/48"
     assert w.api._source({}, "::ffff:203.0.113.9") == "203.0.113.9"
     assert w.api._source({}, "203.0.113.9") == "203.0.113.9"
 
 
-def test_r3_xff_ipv6_client_through_edge_is_its_64(w):
+def test_r3_xff_ipv6_client_through_edge_is_its_48(w):
     w.api.d.trusted_peers = frozenset({"10.0.0.1"})
-    assert w.api._source({"x-forwarded-for": "2001:db8:0:1::7"}, "10.0.0.1") == "2001:db8:0:1::/64"
+    assert w.api._source({"x-forwarded-for": "2001:db8:0:1::7"}, "10.0.0.1") == "2001:db8::/48"
 
 
-def test_r3_totp_lockout_is_per_user_and_needs_the_password(w):
-    """10 'password right, TOTP wrong' from different sources lock the user; wrong passwords never count."""
-    for i in range(30):  # a stranger without the password: bad_credentials only, never a lock on the user
-        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
+def test_r3_totp_lock_is_per_user_and_not_an_oracle(w):
+    """10 'password right, TOTP wrong' from different sources trip the lock; afterwards the answer is the same
+    bad_credentials as for a wrong password, even for fully correct credentials. Time-out and unlock end it."""
     codes = [_try(w, w.ann, f"198.51.100.{i + 1}", password="correct horse battery")[1].get("error") for i in range(12)]
-    assert codes[:10] == ["bad_credentials"] * 10 and codes[10:] == ["rate_limited"] * 2
-    # the correct password and TOTP is locked too until the window passes, from any source
+    assert codes == ["bad_credentials"] * 12  # never a distinct code, tripped or not
     s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.77")
-    assert (s, o.get("error")) == (429, "rate_limited")
+    assert (s, o) == (401, {"error": "bad_credentials"})
+    w.api.d.channels.unlock(w.ann)
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.78")
+    assert s == 200, o
+
+
+def test_r3_wrong_password_and_tripped_lock_answer_identically(w):
+    wrong = _try(w, w.ann, "203.0.113.1", password="wrong wrong wrong")
+    for i in range(10):
+        _try(w, w.ann, f"198.51.100.{i + 1}", password="correct horse battery")
+    tripped = _try(w, w.ann, "203.0.113.2", password="correct horse battery")
+    assert wrong[0] == tripped[0] == 401 and wrong[1] == tripped[1]
+
+
+def test_r3_password_backoff_is_per_user_never_a_hard_lock(w):
+    ch = w.api.d.channels
+    t = [ch._now()]
+    ch._now = lambda: t[0]
+    w.api.d.now_ms = lambda: t[0]
+    for i in range(6):  # a distributed password guess: 6 sources, one try each (free tries, then delay)
+        assert _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")[1] == {"error": "bad_credentials"}
+        t[0] += 1
+    # inside the backoff even the right credentials get the generic answer
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.50")
+    assert (s, o) == (401, {"error": "bad_credentials"})
+    t[0] += 61_000  # after the cap the real user signs in
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.51")
+    assert s == 200, o
+
+
+def test_r3_source_is_never_empty(w):
+    w.api.d.trusted_peers = frozenset({"10.0.0.1"})
+    assert w.api._source({"x-forwarded-for": ""}, "10.0.0.1") == "10.0.0.1"
+    assert w.api._source({"x-forwarded-for": "1.2.3.4, "}, "10.0.0.1") == "10.0.0.1"
+    assert w.api._source({}, "10.0.0.1") == "10.0.0.1"
+    assert w.api._source({}, "") == "unknown"
 
 
 def test_r3_behind_the_edge_needs_trusted_peers(w):

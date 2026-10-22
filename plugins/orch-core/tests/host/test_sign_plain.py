@@ -318,11 +318,25 @@ def material_for(typ: str, event: dict) -> dict:
             "ticket": ticket,
             "question": {"id": "q1", "text": "marker question?", "options": [{"key": "a", "label": "Marker option"}]},
         }
-    return {
+    out = {
         "kind": "payload",
         "ticket": ticket,
         "texts": {"summary": "marker summary"},
         "before": {"ticket.priority": "low", "grant_hours": 8},
+    }
+    if typ == "grant.revoked":
+        out["grants"] = {event["grant"]: _info(event)}
+    return out
+
+
+def _info(ev: dict, **over) -> dict:
+    """The host's word about an access taken back (``material["grants"]``): the person's own runner access."""
+    return {
+        "label": "runner",
+        "scope": "workable",
+        "expires_at": "2026-10-25T00:37:00Z",
+        "person": ev["actor"]["id"],
+        **over,
     }
 
 
@@ -992,38 +1006,88 @@ def _stop(grant: str, reason: str | None = None) -> dict:
     return {**ev, "reason": reason} if reason else ev
 
 
-def test_f8_a_stop_keeps_the_access_id_out_of_the_plain_words():
+def _revoke(*pairs, op="grant.revoke"):
+    """A request taking back several accesses: ``pairs`` are (event, info-overrides or None for "host said nothing")."""
+    events = [ev for ev, _ in pairs]
+    grants = {ev["grant"]: _info(ev, **over) for ev, over in pairs if over is not None}
+    return {"op": op, "events": events, "material": {**material_for("grant.revoked", events[0]), "grants": grants}}
+
+
+def test_f8_a_stop_says_which_access_in_words_and_keeps_the_id_out_of_them():
     gid = "gr_01M57ABCDEFGHJKMNPQRZMPS4"
     ev = _stop(gid)
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
-    assert c["headline"] == "Take back agent access"
+    assert c["headline"].startswith("Take back the agent access for this Mac's runner, until ")
     shown = "\n".join(signcontent.text(c, signer._clean)) + c["headline"] + repr(c)
     assert "gr_" not in shown and gid[-10:] not in shown  # the id is in the technical details (the full review)
-    assert "technical details" in shown
+    assert "per host, not signed" in shown and "technical details" in shown
 
 
-def test_f8_an_extend_shows_both_accesses_and_refuses_the_plain_view_for_the_same_id():
-    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA"}
+def test_f8_an_extend_names_the_replaced_access_by_words_only():
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA", "label": "runner"}
     old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
-    c = build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+    m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
+    c = build({"op": "grant", "events": [new, old], "material": m})
     assert "gr_" not in repr(c)  # neither id is in the plain view: both are in the technical details
+    assert any("It replaces the agent access for this Mac's runner, until " in line for line in c["summary"]["lines"])
     same = _stop(new["grant"], "extended")
     with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
-        build({"op": "grant", "events": [new, same], "material": material_for("grant.issued", new)})
+        build({"op": "grant", "events": [new, same], "material": {**m, "grants": {same["grant"]: _info(same)}}})
 
 
-def test_f8_a_stop_without_a_usable_id_says_the_same_words():
-    ev = _stop("x")
-    c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
-    assert c["headline"] == "Take back agent access"
+def test_788_an_extend_whose_old_access_is_not_the_runners_gets_the_full_review():
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA", "label": "runner"}
+    old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
+    base = material_for("grant.issued", new)
+    for grants in (
+        {old["grant"]: _info(old, label="ci")},  # another label
+        {old["grant"]: _info(old, scope="all")},  # another scope
+        {old["grant"]: _info(old, person="p_" + "9" * 32)},  # another person's access
+        {old["grant"]: _info(old, expires_at="soon")},  # no usable end
+        {},  # the host said nothing
+        {"gr_0OTHERCCCCCCCCCCCCCCCCCCC": _info(old)},  # about some other access
+    ):
+        with pytest.raises(signcontent.PlainUnavailable):
+            build({"op": "grant", "events": [new, old], "material": {**base, "grants": grants}})
+    with pytest.raises(signcontent.PlainUnavailable):
+        build({"op": "grant", "events": [new, old], "material": base})  # no grants key at all
+
+
+def test_788_a_stop_without_the_hosts_word_gets_the_full_review():
+    ev = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB")
+    for over in (None, {"expires_at": "x"}, {"person": "p_" + "9" * 32}):
+        with pytest.raises(signcontent.PlainUnavailable):
+            build(_revoke((ev, over)))
+
+
+def test_788_several_stops_say_how_many_and_keep_each_access_apart():
+    a, b, c3 = (_stop(f"gr_0OLDBBBBBBBBBBBBBBBBBBB{ch}{ch}") for ch in "ABC")
+    c = build(
+        _revoke(
+            (a, {"expires_at": "2026-10-25T00:37:00Z"}),
+            (b, {"expires_at": "2026-10-26T00:37:00Z"}),
+            (c3, {"expires_at": "2026-10-27T00:37:00Z", "label": "ci"}),
+        )
+    )
+    assert c["headline"] == "Take back 3 agent accesses"
+    rows = [r["after"] for r in c["fields_changed"] if r["field"].startswith("access taken back")]
+    assert len(rows) == 3 and len(set(rows)) == 3 and c["fields_changed"][0]["field"].endswith("1/3")
+    assert "gr_" not in repr(c)
+
+
+def test_788_identical_looking_accesses_are_never_merged():
+    a, b = _stop("gr_0OLDAAAAAAAAAAAAAAAAAAAAA"), _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB")
+    with pytest.raises(signcontent.PlainUnavailable):  # same words for two accesses: the full review (with ids)
+        build(_revoke((a, {}), (b, {})))
 
 
 def test_f8_two_different_accesses_with_one_short_form_are_refused_in_the_plain_view():
     new = {**sample("grant.issued"), "grant": "gr_0AAAAAAAAAAAAAAAAAAAAAAAAA"}
     old = _stop("gr_0BBBBBBBBBBAAAAAAAAAAAAAAA"[:3] + "1" + "gr_0AAAAAAAAAAAAAAAAAAAAAAAAA"[4:], "extended")
     assert old["grant"][-10:] == new["grant"][-10:] and old["grant"] != new["grant"]
+    m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
     with pytest.raises(signcontent.PlainUnavailable):
-        build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+        build({"op": "grant", "events": [new, old], "material": m})
 
 
 # --- V4: the plain lead of a share approval and of an Extend (WYSIWYS: a summary never replaces the signed text) ----------
@@ -1099,7 +1163,8 @@ def _extend(**over):
         **over,
     }
     old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
-    return build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
+    material = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
+    return build({"op": "grant", "events": [new, old], "material": material})
 
 
 def test_v4_an_extend_is_titled_and_says_running_agents_stop():

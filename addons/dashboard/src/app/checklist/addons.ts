@@ -681,7 +681,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W17',
         title: 'Stop agent access',
         text: 'Stop your agent access from the top pill with an agent running, sign in the Terminal, then reload the page.',
-        see: 'The dialog says a started run needs its own Stop in the dock. After signing the run list refreshes. Each access is stopped with its own review ("Review and sign each stop separately"), so with several accesses listed you sign several stops. After the first stop the pill already reads "No agent access · Let agents work" (before any reload); click it and give access again. The headline reads "Take back agent access"; the access id is only under Technical details.',
+        see: 'The dialog says a started run needs its own Stop in the dock. After signing the run list refreshes. Each access is stopped with its own review ("Review and sign each stop separately"), so with several accesses listed you sign several stops. After the first stop the pill already reads "No agent access · Let agents work" (before any reload); click it and give access again. The headline names the access in words ("Take back the agent access for this Mac\'s runner, until Sun 00:37"), or "Take back 3 agent accesses" with one distinct row each; the access id is only under Technical details.',
       },
     ],
   },

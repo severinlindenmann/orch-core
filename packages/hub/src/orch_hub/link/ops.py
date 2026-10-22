@@ -3,8 +3,8 @@
 A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
 or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
 sign anything for the host. ``route_out`` is served when a router is configured (``route_in`` is the hub's own
-h2w request, see :mod:`orch_hub.router`). Ops of later phases (``wk_seal``, ``audit_ack``, the share ops until C6) are
-not served: ``unknown_op``.
+h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). Ops of later
+phases (``audit_ack``, the share ops until C6) are not served: ``unknown_op``.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from .registry import Registry
 
 if TYPE_CHECKING:
     from ..router import Router
+    from .wkseal import WkSeals
 
 
 class InviteGate(Protocol):
@@ -108,6 +109,7 @@ class OpContext:
     dev_mode: bool
     router: Router | None = None
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
+    wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -123,6 +125,15 @@ def _require_bound(c: OpContext) -> None:
         raise Refused("unknown_workspace")
     if st["status"] != "bound":
         raise Refused("not_bound")
+
+
+def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
+    """Stored epoch wraps belong to a live FULL binding only: any other state retires them (kept, never served)."""
+    if c.wk_seals is None:
+        return
+    b = state.get("binding")
+    if state.get("status") != "bound" or type(b) is not dict or b.get("mode") != "full":
+        c.wk_seals.retire(c.workspace_id)
 
 
 def join(c: OpContext) -> dict[str, Any]:
@@ -162,6 +173,7 @@ def join(c: OpContext) -> dict[str, Any]:
             owner_alias=alias,
         )
         c.invites.consume(invite, c.workspace_id)
+        _sync_wk_seals(c, state)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     c.downstream.binding(c.workspace_id, join_msg["binding"])
     return {}
@@ -210,6 +222,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         else:
             raise Refused("malformed")
         c.registry.set_binding_state(c.workspace_id, state, obj)
+        _sync_wk_seals(c, state)
     c.downstream.binding(c.workspace_id, obj)
     return {}
 
@@ -240,6 +253,24 @@ def route_out(c: OpContext) -> dict[str, Any]:
     return {"state": c.router.route_out(c.workspace_id, unb64u(c.body["envelope"]))}
 
 
+def wk_seal(c: OpContext) -> dict[str, Any]:
+    """``WK_e`` sealed to HXK (§10.2, full mode). Checked and stored inside the registry lock, so the mode check and the
+    write cannot be separated from an unbind."""
+    if c.wk_seals is None:
+        raise Refused("unavailable")
+    body = c.body
+    if set(body) != {"epoch", "wrap"} or type(body["wrap"]) is not str:
+        raise Refused("malformed")
+    wrap = unb64u(body["wrap"])
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        if c.registry.mode(c.workspace_id) != "full":
+            raise Refused("wrong_mode")
+        c.wk_seals.accept(c.workspace_id, body["epoch"], wrap)
+    return {}
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
@@ -247,6 +278,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "snapshot_get": snapshot_get,
     "publish_out": publish_out,
     "route_out": route_out,
+    "wk_seal": wk_seal,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

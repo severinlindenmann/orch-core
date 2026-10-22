@@ -589,6 +589,17 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
+#### 10.2a `wk_seal` (phase 3, hub-wkseal)
+
+Served only while the workspace's live binding is `full`; the body is exactly `{"epoch", "wrap"}` (`epoch` 1..2^32−1,
+`wrap` canonical base64url). The wrap is v2 §5.3 `seal_to(HXK, purpose "wk", recipient = hub_id, object = workspace_id,
+epoch, WK_e)`, 113 bytes (`eph_pub || AES-256-GCM(32-byte key)`); the hub opens it with `HXK` only to check the binding
+(hub, workspace, epoch → else `bad_wrap`), drops the plaintext at once and stores the SEALED wrap per (workspace, epoch)
+in its private `wk-seal.db`. Per workspace epochs only grow: the same epoch with identical bytes is an idempotent `{}`,
+the same epoch with other bytes `bad_wrap`, a lower epoch `bad_epoch`. On `hub.unbound` or a switch to selective the
+stored wraps are retired (kept, never served, not counted); a later full binding may seal any epoch again. The hub never
+logs key material; `orch-hub inspect` shows `wk_epochs` (numbers only) per workspace.
+
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
 The envelope is the v2 §11.1 layout, forwarded as the sender's exact bytes (the hub never opens, re-signs or edits it,
@@ -1024,6 +1035,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `wsk_mismatch`, `not_yet_valid`, `binding_conflict`, `stale_binding`, `unbound` | binding store | §9 |
 | `alias_repointed` | `hub.joined` | §9.1 |
 | `unknown_op`, `wrong_mode` | link | §10 |
+| `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
+| `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `not_allowed`, `queue_full`, `too_large` | `route_out` reply | §10.3; `too_large` is the v2 code, reused |

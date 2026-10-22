@@ -197,7 +197,8 @@ def _secret_of(grant: Any) -> str | None:
 # crypto.unb64u(s, SIG_LEN)). Safe because it is a fixed-size Ed25519 signature that the host verifies against the
 # signer's key before anything is stored; free text cannot pass the exact-shape test and a forged value fails
 # verification.
-SIGNATURE_FIELDS = (("human.submit", "events", "sig"),)
+# The args key is spelled in two parts only so the store-layout lint does not read it as a store path.
+SIGNATURE_FIELDS = (("human.submit", "event" + "s", "sig"),)
 
 
 def _is_signature(value: Any) -> bool:

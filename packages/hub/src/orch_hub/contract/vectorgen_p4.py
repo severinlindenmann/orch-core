@@ -1952,12 +1952,43 @@ def build_p4(
             }
         },
     )
-    pbuild("proj_build_status_changed_from", {"type": "status.changed", "to": "open"}, {"ok": {"from": "testing"}})
+    pbuild(
+        "proj_build_status_changed_from",
+        {"type": "status.changed", "to": "open"},
+        {"ok": {"from": "testing"}},
+        "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
+    )
     pbuild(
         "proj_build_ticket_moved_from",
         {"type": "ticket.moved", "to": "backlog", "reason": "Later"},
         {"ok": {"from": "testing"}},
+        "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
     )
+
+    # D15b-1: roster_v, counted the same by hub (project_workspace) and core (WsCore.roster_v)
+    def rl(*types: str) -> list[dict[str, Any]]:
+        return [{"type": t} for t in types]
+
+    case(
+        "workspace_roster_v",
+        "roster_v",
+        {
+            "lines": rl(
+                "workspace.created",
+                "member.added",
+                "device.added",
+                "role.changed",
+                "policy.changed",
+                "hub.joined",
+                "member.removed",
+                "settings.changed",
+            )
+        },
+        {"ok": {"roster_v": 4}},
+        4,
+        "genesis, add, role change, remove raise it; device, policy, hub, settings events do not",
+    )
+    case("workspace_roster_v_genesis_only", "roster_v", {"lines": rl("workspace.created")}, {"ok": {"roster_v": 1}}, 4)
     pbuild(
         "proj_build_stale_ticket_head",
         ap,

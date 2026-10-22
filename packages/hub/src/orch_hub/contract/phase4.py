@@ -1017,6 +1017,7 @@ __all__ = [
     "parse_relay_target",
     "relay_request_bytes",
     "render_text",
+    "roster_v",
     "seal_view_page",
     "text_ok",
     "verify_channel_register",
@@ -1185,6 +1186,19 @@ def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: An
         raise Refused("view_gap")  # sync the workspace log first
     if ws_heads[proj["ws_seq"] - 1] != proj["ws_head"]:
         raise Refused("view_fork")
+
+
+#: ticket-format §5.4.2: the workspace-log types that raise the member-list version (genesis → 1, +1 per type)
+ROSTER_TYPES = ("workspace.created", "member.added", "member.removed", "role.changed")
+
+
+def roster_v(lines: Any) -> int:
+    """The ``roster_v`` a hub counts from its workspace view (D15b-1, vectors ``workspace_roster_v*``): one per line of
+    :data:`ROSTER_TYPES`. Core's replay (``WsCore.roster_v``) must give the same number, or every full-mode build is
+    ``unavailable`` (§10.7 build rule)."""
+    if type(lines) is not list or not all(type(e) is dict for e in lines):
+        raise Refused("malformed")
+    return sum(1 for e in lines if e.get("type") in ROSTER_TYPES)
 
 
 #: the full-mode types whose derived fields come from the projection (the rest come from the lines, §8.5)

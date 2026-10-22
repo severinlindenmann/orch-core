@@ -624,7 +624,7 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    refuses (`event_changed`) when it differs from `digest`; `ctx` must have exactly `{contract: 1, suite: 2,
    workspace_id, log, event}`, `event.auth == "hub"` and no `channel_proof` (`malformed`; reference
    `check_prepared`, vectors `prepared_*`). It renders **every** authority-bearing field of `ctx.event` (type,
-   workspace, ticket, gate and hash, outcome, text, people, settings), and any field it does not know makes it fall back
+   workspace, ticket, gate and hash, `gate_gen`, `source_sha`, `from`, outcome, text, people, settings), and any field it does not know makes it fall back
    to the full field list (WYSIWYS). It signs only the digest it computed itself.
    **View-derived text is escaped** (L2P4-2d): titles, question texts and option labels come from the workspace's
    events, which agents write and which have no text rule in core; a channel renders every character the §8.5 text
@@ -632,7 +632,9 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    decisions** (L2P4-2c): body text and artifacts are not synced (§10.7), so a channel that offers `gate.approved`,
    `gate.changes_requested` or `verdict.given` shows the decision's hash in short form next to a link to where the
    content was reviewed, and Mission Control shows the same short hash; a channel that cannot do that does not offer
-   content-bound decisions.
+   content-bound decisions. **Projection-derived fields** (D15b-2): on the three decisions the channel shows the gate,
+   the short hash, `gate_gen` and, on a `code` approval or a verdict, each `repo` with its short `sha`; on
+   `status.changed` and `ticket.moved` it shows "`from` → `to`".
 4. The hub's `sign` consumes `prepared_id`, rebuilds `E` from its **current** view and refuses with `event_changed`
    unless it is byte-identical to the prepared one (the view moved, a role or certificate changed), checks the proof,
    signs with `UK`, verifies its own output with §8.3, writes the `custodial` audit record, and only then delivers it
@@ -1437,7 +1439,9 @@ frame (§10.3). A sender may count the text (stricter).
    before that line's `ws_seq` → `malformed`; `P.ws_seq` is held in the workspace view → `view_gap`; `P.ws_head` is
    the held head at `P.ws_seq` → `view_fork`. The hub keeps, per ticket log, the newer `P` by `(seq, ws_seq)` (a tie:
    this page's); a page without `proj` keeps the held one. A reset of a log drops its `P`; a reset of the workspace
-   log drops every `P` (with the ticket views, L2P4-9). Reference `apply_view_page_proj`, vectors `log_sync_proj_*`.
+   log drops every `P` (with the ticket views, L2P4-9). **Any refusal here refuses the whole page**: the view stays as
+   it was before the page (step 6 is not committed, D15b-4). Reference `apply_view_page_proj`, vectors
+   `log_sync_proj_*`.
 
 **The ticket projection `P` (D15b, orch-core #1043).** The five full-mode types whose derived fields need the F1
 engine (§8.5: `gate.approved`, `gate.changes_requested`, `verdict.given` need `gate_gen`, `policy_hash`, the gate
@@ -1464,7 +1468,13 @@ after the visibility check: `P.seq`/`P.head` are the held ticket view's last lin
 rule 7); `status.changed`, `ticket.moved`: `from = P.status`; a decision: `P.gates[gate]` (`verify` for
 `verdict.given`) exists → else `unknown_item`, its `hash` equals `action.hash` → else `event_changed`, and the event
 takes `gate_gen = gen`, `policy_hash`, `hash` and (on a `code` approval and on a verdict) `source_sha` byte for byte,
-as §8.6 does from `f1`. `P` authorizes nothing and is not bound into the event: the host checks the values themselves
+as §8.6 does from `f1`. The channel shows these values (§8.4 step 3, D15b-2). **Needs-you from `P`** (D15b-3): gate
+and verdict rows come only from tickets that pass the one visibility rule above; a row carries the hash it was listed
+with and the action sends that hash, never one re-read when the person taps, so a moved hash is `event_changed` and
+the person reviews again. `P` does not carry eligibility (D59 author ≠ approver), so the host may still refuse an
+offered decision. **`roster_v`** is counted the same on both sides: one per `workspace.created`, `member.added`,
+`member.removed`, `role.changed` line (reference `roster_v`, vectors `workspace_roster_v*`, run by hub and core).
+`P` authorizes nothing and is not bound into the event: the host checks the values themselves
 against its own log (§8.3 step 9), so a stale or false `P` only gets an event refused (`event_changed`).
 
 **What the hub trusts, and what it does not.** The hub verifies that every line is the host's (`WSK`) and that the
@@ -1999,7 +2009,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 888 cases (226 positive, 662 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 890 cases (228 positive, 662 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -2015,7 +2025,8 @@ relay `channel_request` and `channel_route`. C3b addendum: orch-core runs `custo
 `custodial_event_*`, the event-shaped vector per custodial type, for its step-1 exact-payload check), `user_hub`,
 `deliver_next` (the host's reading of its own replies) and `share_item` incl. `f1` (it builds them); the hub runs all,
 plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its seal of `phase4.log_sync.proj_ticket`
-must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`; both run `workspace_roster_v*` (hub: `project_workspace`, core: its replay's
+`roster_v`). The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 

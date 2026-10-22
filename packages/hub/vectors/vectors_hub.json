@@ -50777,6 +50777,7 @@
     }
    },
    "name": "proj_build_status_changed_from",
+   "note": "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
    "phase": 4
   },
   {
@@ -50837,6 +50838,63 @@
     }
    },
    "name": "proj_build_ticket_moved_from",
+   "note": "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
+   "phase": 4
+  },
+  {
+   "args": {
+    "lines": [
+     {
+      "type": "workspace.created"
+     },
+     {
+      "type": "member.added"
+     },
+     {
+      "type": "device.added"
+     },
+     {
+      "type": "role.changed"
+     },
+     {
+      "type": "policy.changed"
+     },
+     {
+      "type": "hub.joined"
+     },
+     {
+      "type": "member.removed"
+     },
+     {
+      "type": "settings.changed"
+     }
+    ]
+   },
+   "check": "roster_v",
+   "expect": {
+    "ok": {
+     "roster_v": 4
+    }
+   },
+   "name": "workspace_roster_v",
+   "note": "genesis, add, role change, remove raise it; device, policy, hub, settings events do not",
+   "phase": 4
+  },
+  {
+   "args": {
+    "lines": [
+     {
+      "type": "workspace.created"
+     }
+    ]
+   },
+   "check": "roster_v",
+   "expect": {
+    "ok": {
+     "roster_v": 1
+    }
+   },
+   "name": "workspace_roster_v_genesis_only",
    "phase": 4
   },
   {

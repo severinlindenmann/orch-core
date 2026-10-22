@@ -206,3 +206,79 @@ def test_refresh_may_carry_a_newer_hub_card(host, card_file):
 def test_refresh_flags_belong_to_status(host, argv):
     code, out = run(argv, {})
     assert code == 2 and host.called == []
+
+
+# --- V3 C6: orch hub share ----------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def share_host(monkeypatch):
+    log = SimpleNamespace(called=[], asked=[], yes=True)
+    preview = {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43,
+               "items": [{"logical": "ticket:t", "kind": "ticket", "line": "ticket K-1: Public note"}]}  # fmt: skip
+    reply = {
+        "share.preview": preview,
+        "share.rule_add": {"note": "changed", "synced": True, "put": 1, "revoke": 0, "kept": 0},
+        "share.rule_remove": {"note": "changed", "synced": True, "put": 0, "revoke": 1, "kept": 0},
+        "share.revoke": {"note": "withdrawn", "synced": True, "put": 0, "revoke": 1, "kept": 0},
+        "share.sync": {"synced": False, "pending": "hub_unreachable"},
+        "share.rules": {
+            "rules": [{"kind": "tag", "tag": "x", "count": 1, "describes": "d"}],
+            "shared": 1,
+            "withdrawn": [],
+        },  # fmt: skip
+    }
+    monkeypatch.setattr(hub, "_target", lambda env: object())
+    monkeypatch.setattr(hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), reply[op])[1])
+    from orch.cli import publish
+
+    monkeypatch.setattr(publish, "_confirm", lambda prompt, word: (log.asked.append((prompt, word)), log.yes)[1])
+    return log
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["share", "rule", "add", "--tag", "x"], ["share", "rule", "list"], ["share", "revoke", "K-1"], ["share", "sync"]],
+)
+def test_an_agent_cannot_use_share_at_all(share_host, argv):
+    code, out = run(argv, {"ORCH_GRANT": "g"}, as_json=True)
+    assert code == 3 and json.loads(out)["code"] == "op.not_allowed" and share_host.called == []
+
+
+def test_rule_add_shows_what_will_be_shared_and_binds_the_plan(share_host):
+    code, out = run(["share", "rule", "add", "--tag", "x"], {}, as_json=True)
+    assert code == 0
+    ((prompt, word),) = share_host.asked
+    assert word == "share" and "ticket K-1: Public note" in prompt and "cannot be taken back" in prompt
+    rule = {"kind": "tag", "tag": "x"}
+    assert share_host.called == [
+        ("share.preview", {"add": rule}),
+        ("share.rule_add", {"rule": rule, "expect": "p" * 43}),
+    ]
+
+
+def test_an_unconfirmed_rule_change_sends_nothing(share_host):
+    share_host.yes = False
+    code, _ = run(["share", "rule", "remove", "--tag", "x"], {}, as_json=True)
+    assert code == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+
+
+def test_revoke_says_it_cannot_take_back_what_was_read(share_host):
+    code, out = run(["share", "revoke", "K-1"], {})
+    assert code == 0 and "cannot be taken back" in out and share_host.called == [("share.revoke", {"ref": "K-1"})]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["share"], ["share", "rule", "add"], ["share", "rule", "add", "--tag", "a", "--type", "b"],
+     ["share", "rule", "list", "--tag", "a"], ["share", "sync", "--questions"], ["share", "revoke"]],
+)  # fmt: skip
+def test_malformed_share_commands_reach_nothing(share_host, argv):
+    assert run(argv, {})[0] == 2 and share_host.called == []
+
+
+def test_list_and_sync_report_without_a_terminal(share_host):
+    code, out = run(["share", "rule", "list"], {})
+    assert code == 0 and "1 now" in out
+    code, out = run(["share", "sync"], {})
+    assert code == 0 and "not updated yet (hub_unreachable)" in out

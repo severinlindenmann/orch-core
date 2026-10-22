@@ -106,7 +106,7 @@ def norm(res: dict, ref: str) -> str:
 def args_for(op: str, ref: str) -> dict:
     import orch.ops as ops
 
-    if op in {"whoami", "host.status", "hub.status"}:
+    if op in {"whoami", "host.status", "hub.status", "share.rules", "share.preview"}:  # share.*: owner-only (C6)
         return {}
     if op == "outcome.get":
         return {"idem": "a_01J9ZP0000000000000000000A"}

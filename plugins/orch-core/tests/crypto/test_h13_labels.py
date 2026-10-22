@@ -32,6 +32,9 @@ PLANNED = {
     "h_space_members": "orch/v2/hub-space-members|",
     "h_sk_commit": "orch/v2/hub-sk-commit|",
     "aad_space": "orch/v2/space-aad|",
+    "sig_share_item": "orch/v2/sig/share-item|",  # V3 C6: selective share_put (hub contract 10.2b)
+    "aad_hub_share": "orch/v2/hub-share-aad|",
+    "h_share_item": "orch/v2/hub-share-item|",
 }
 
 

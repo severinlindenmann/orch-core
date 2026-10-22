@@ -57,6 +57,8 @@ SKIPPED_CHECKS = {
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
+    "built": "phase 4: what the hub builds for a channel decision, hub side (C3 custodial)",
+    "render": "phase 4: how a channel shows a view text, hub side (C3 custodial)",
 }
 
 

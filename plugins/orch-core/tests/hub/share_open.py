@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import re
 import struct
-import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
 
+from orch.canon import text as canon_text
 from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u, unhex
 from orch.crypto.sealing import open_sealed
@@ -37,13 +37,26 @@ TYPES = ("feature", "bug", "chore", "spike", "epic")
 STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
 
 
+_DI = (  # Default_Ignorable_Code_Point, Unicode 16.0.0 (written from DerivedCoreProperties, not shared with production)
+    (0xAD, 0xAD), (0x34F, 0x34F), (0x61C, 0x61C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+)  # fmt: skip
+_WS = {*range(9, 14), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000}
+_FIXED = ((0, 0x1F), (0x7F, 0x9F), (0x2028, 0x2029), (0xD800, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
+
+
+def bad_char(cp: int) -> bool:
+    return any(a <= cp <= b for a, b in _FIXED + _DI) or canon_text.is_format(cp) or not canon_text.is_assigned(cp)
+
+
 def text(n: int, multiline: bool = False):
     def ok(x: Any) -> bool:
-        if type(x) is not str or not 0 < len(x.encode()) <= n or x != x.strip():
+        if type(x) is not str or not 0 < len(x.encode("utf-8", "surrogatepass")) <= n:
             return False
-        return all(
-            (c == "\n" and multiline) or unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp", "Cs") for c in x
-        )
+        if ord(x[0]) in _WS or ord(x[-1]) in _WS:
+            return False
+        return all((c == "\n" and multiline) or not bad_char(ord(c)) for c in x)
 
     return ok
 

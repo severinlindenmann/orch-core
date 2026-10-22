@@ -1,7 +1,7 @@
 """The sealed bytes of a selective ``share_put`` (hub contract 10.2b, V3 C6/D9). No I/O, no state.
 
 ``share.item`` is signed by the workspace's ``WSK`` (label ``sig_share_item``); its content is exact per ``item_kind``
-and follows the one text rule (no Unicode ``Cc``, ``Cf``, ``Zl`` or ``Zp``; LF only in multi-line text). The item key
+and follows the one text rule (Unicode 16.0.0: no ``Cc Cf Zl Zp Cs Co Cn`` or ``Default_Ignorable_Code_Point``; LF only in multi-line text). The item key
 ``IK`` (32 fresh random bytes per put) is sealed to the hub's ``HXK`` with the v2 5.3 construction, purpose
 ``hub-share``; the signed item is sealed under ``IK`` with SALTED-AEAD (5.1) and an AAD that binds suite, hub,
 workspace, item id and version::
@@ -16,14 +16,15 @@ from __future__ import annotations
 import os
 import re
 import struct
-import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from orch.canon.text import is_assigned, is_format
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 from orch.crypto.labels import L
 from orch.crypto.sealing import seal
+from orch.identity.pairing import _IGNORABLE  # noqa: PLC2701 (the Default_Ignorable_Code_Point table, one copy)
 
 from . import wire
 from .errors import HubRefused
@@ -56,16 +57,40 @@ _DATE = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])")
 _QID = re.compile(r"Q[1-9][0-9]{0,5}")
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _HASH = re.compile(r"sha256:[0-9a-f]{64}")
-_FORBIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")
 MAX_LABELS = 32
 
 
+_WHITE_SPACE = frozenset(
+    [*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000]
+)
+
+
+def _forbidden(cp: int) -> bool:
+    """Cc, Cf, Zl, Zp, Cs, Co, Cn or Default_Ignorable_Code_Point under Unicode 16.0.0 (contract 3 and 8.5): the bundled
+    tables of ``orch.canon.text``, never the running Python's ``unicodedata``."""
+    return (
+        cp <= 0x1F
+        or 0x7F <= cp <= 0x9F
+        or cp in (0x2028, 0x2029)
+        or 0xD800 <= cp <= 0xDFFF
+        or 0xE000 <= cp <= 0xF8FF
+        or 0xF0000 <= cp <= 0xFFFFD
+        or 0x100000 <= cp <= 0x10FFFD
+        or is_format(cp)
+        or not is_assigned(cp)
+        or any(a <= cp <= b for a, b in _IGNORABLE)
+    )
+
+
 def text_ok(x: Any, n: int, *, multiline: bool = False) -> bool:
-    """The contract's text rule: 1..``n`` UTF-8 bytes, no leading or trailing white space, no character of the
-    categories Cc, Cf, Zl, Zp (LF allowed only when ``multiline``)."""
-    if type(x) is not str or not 0 < len(x.encode("utf-8", "surrogatepass")) <= n or x != x.strip():
+    """The contract's text rule (Unicode 16.0.0): 1..``n`` UTF-8 bytes, no leading or trailing White_Space, no
+    character of the categories Cc, Cf, Zl, Zp, Cs, Co, Cn and no Default_Ignorable_Code_Point (LF allowed only
+    when ``multiline``)."""
+    if type(x) is not str or not 0 < len(x.encode("utf-8", "surrogatepass")) <= n:
         return False
-    return all((c == "\n" and multiline) or unicodedata.category(c) not in _FORBIDDEN for c in x)
+    if ord(x[0]) in _WHITE_SPACE or ord(x[-1]) in _WHITE_SPACE:
+        return False
+    return all((c == "\n" and multiline) or not _forbidden(ord(c)) for c in x)
 
 
 def _re(rx: re.Pattern[str]) -> Callable[[Any], bool]:

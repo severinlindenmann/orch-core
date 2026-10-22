@@ -84,7 +84,8 @@ then); Slack and other channels after the phone and browser.
   re-pin. The hub card is `{hub_id, hk_root_pub, hk_op_cert, hxk_pub, relay_url, dev}`. The relay registers hubs by card.
 - **Revoking `HK_op`.** `HK_root` signs `hk_op.revoked {cert_id}`. Every `UK` and channel certificate issued under that
   `HK_op` dies with it, because the `UK`s sit in the same key store. The hub creates new `UK`s and certifies them
-  under the new `HK_op`. Workspaces pull revocations on every sync and refuse events under a revoked `HK_op`.
+  under the new `HK_op`. Workspaces pull revocations on every sync and refuse events under a revoked `HK_op`. A compromised hub could hold a revocation back, so the host also accepts an `HK_root`-signed
+  revocation fetched from the relay by hub card, or entered at the host terminal (`orch hub revoke-op <file>`).
 - **Signing domains.** `HK_op` signs with a separate domain per object: `orch/v2/hub-card`, `hub-uk-cert`,
   `hub-snapshot`, `hub-route`, `hub-publish`, `hub-audit`. `UK` signs only in `orch/v2/hub-custodial|<verb>`.
 - **Users.** A user is `{user_id, display, groups, status}` on the hub. `user_id` is pseudonymous and names live

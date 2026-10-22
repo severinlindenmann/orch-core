@@ -616,7 +616,7 @@ class RegistryBackend:
     def serve(self, call: Call, step: Any = None) -> dict[str, Any]:
         from orch.ops.commands.wait import Parked
 
-        redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
+        redactor = Redactor((call.frame.get("auth") or {}).get("grant"), call.frame.get("op"))
         try:
             call.authorize()  # the authoritative column, from the refreshed store, before anything else (F8)
             sessions.record(call)  # H6b: the host session records session.list and grant.list read (never raises)

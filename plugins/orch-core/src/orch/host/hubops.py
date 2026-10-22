@@ -333,10 +333,6 @@ def _owner(call: Call) -> str:
 def _refused(code: str) -> HostError:
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
-    if code == "unbind_pending":
-        return HostError(
-            "hub.unbind_pending", "the last hub has not been told about your leave yet", hint="run: orch hub unbind"
-        )
     return HostError("hub.refused", f"the hub is refused: {code}")
 
 
@@ -383,12 +379,13 @@ def serve(call: Call) -> dict[str, Any]:
                 "mode": model.get("mode"),
                 "binding_seq": model.get("binding_seq"),
                 "link": None if state is None else state.status,
-                "unbound_pending": state is not None and state.pending_unbound is not None,
+                "unbound_pending": state is not None and bool(state.outbox),
+                "owed": [] if state is None else sorted(state.outbox),
             }
         )
     plan: dict[str, Any] = {"op": op, "model": model, "state": state}
     if op == "hub.unbind":
-        if state is not None and state.pending_unbound is not None:
+        if state is not None and state.outbox:
             return {"plan": plan}  # a signed unbound is still owed to a hub, whatever the model says now
         if not model or model.get("status") != "left":
             raise HostError("hub.not_joined", "sign `orch hub leave` first: the log has no hub.left")
@@ -433,7 +430,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
-    from orch.hubclient import HubRefused, flush_unbound, leave
+    from orch.hubclient import HubRefused, flush_outbox, leave
 
     from .workspace import ok_result
 
@@ -459,19 +456,23 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 getattr(transport, "close", lambda: None)()
             _audit(call, "hub.connect", hub_id=r.state.hub_id, binding_seq=r.state.binding_seq)
             return ok_result({"hub_id": r.state.hub_id, "status": r.state.status, "binding_seq": r.state.binding_seq})
-        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_unbound))
+        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox))
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
 
 
-def _old_transport(service: Any, s: Any, wsk_pub: bytes, sign: Any) -> Any:
-    """The link to the hub of a stored state (its own address and pin), for an unbound it is still owed."""
+def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:
+    """``(hub_id, outbox entry) -> transport``: always the link to THAT hub (its own address and pin)."""
     from orch.crypto.encoding import unb64u
 
-    link = {"addr": _addr({}, s, bool(s.binding["o"]["dev"])), "spki": s.tls_spki, "hk_op": unb64u(s.hk_op_pub, 65),
-            "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
-    return _transport(service, s.hub_id, link)
+    def make(hub_id: str, e: dict[str, Any]) -> Any:
+        link = {"addr": e["addr"],  # the entry's own address wins: ORCH_HUB_ADDR is for the hub being joined only
+                 "spki": e["tls_spki"],
+                "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
+        return _transport(service, hub_id, link)
+
+    return make
 
 
 def _join(
@@ -495,45 +496,25 @@ def _join(
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
         save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
-        old_transport=lambda s: _old_transport(service, s, wsk_pub, sign),
+        old_transport=_transport_for(service, wsk_pub, sign),
     )  # fmt: skip
 
 
 def _unbind(
     call: Call, plan: dict[str, Any], state: Any, sign: Any, wsk_pub: Any, now: Any, save: Any, leave: Any, flush: Any
 ) -> dict[str, Any]:
-
     service, model = call.service, plan["model"]
     if state is None:  # never connected: there is no binding anywhere to end
-        return {"hub_id": model["hub_id"], "unbound": False, "delivered": True, "reason": "never_connected"}
-    from orch.crypto.encoding import unb64u
-
-    dev = bool(state.binding["o"]["dev"])  # the unbound keeps the binding's own dev marker
-    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": unb64u(state.hk_op_pub, 65),
-            "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
-    t = _transport(service, state.hub_id, link)
-    try:
-        return _unbind_over(call, plan, state, sign, now, save, leave, flush, dev, t)
-    finally:
-        getattr(t, "close", lambda: None)()
-
-
-def _unbind_over(
-    call: Call, plan: Any, state: Any, sign: Any, now: Any, save: Any, leave: Any, flush: Any, dev: bool, t: Any
-) -> dict[str, Any]:
-    from orch.hubclient import HubRefused
-
-    service = call.service
-    try:
-        r = leave(
-            state=state, workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=dev, now_ms=now,
-            transport=t, record_left=lambda _p: None, save=save,
+        return {"hub_id": model["hub_id"], "unbound": False, "delivered": True, "reason": "never_connected", "owed": []}
+    tf = _transport_for(service, wsk_pub, sign)
+    if model.get("status") == "left" and state.status != "unbound":
+        leave(
+            state=state, workspace_id=service.workspace_id, sign_wsk=sign,
+            dev_mode=bool(state.binding["o"]["dev"]),  # the unbound keeps the binding's own dev marker
+            now_ms=now, transport_for=tf, record_left=lambda _p: None, save=save,
         )  # fmt: skip
-        out = {"hub_id": state.hub_id, "unbound": True, "delivered": r.delivered}
-    except HubRefused as exc:
-        if exc.code != "not_joined":
-            raise
-        done = flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport=t, save=save)
-        out = {"hub_id": state.hub_id, "unbound": True, "delivered": done}
+    else:
+        flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)
+    out = {"hub_id": state.hub_id, "unbound": True, "delivered": not state.outbox, "owed": sorted(state.outbox)}
     _audit(call, "hub.unbind", hub_id=state.hub_id, delivered=out["delivered"])
     return out

@@ -95,6 +95,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.in_use": (3, False),
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
+    "worktree.checkout_unsupported": (3, False),
     "unsupported.platform": (3, False),
     # P5, the Publish add-on (design-publish-addon)
     "publish.not_configured": (3, False),
@@ -107,7 +108,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "hub.no_card": (3, False),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
-    "hub.unbind_pending": (3, False),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),

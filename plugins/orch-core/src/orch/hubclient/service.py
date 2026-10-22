@@ -19,9 +19,26 @@ from . import wire
 from .errors import HubRefused
 from .link import HubLink, HubTransport
 
-__all__ = ["HubState", "JoinResult", "LeaveResult", "flush_unbound", "join_selective", "leave"]
+__all__ = ["HubState", "JoinResult", "LeaveResult", "flush_outbox", "join_selective", "leave"]
 
 STATUSES = ("joining", "bound", "unbound")
+
+
+_ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
+
+
+def _outbox_ok(box: Any) -> bool:
+    return type(box) is dict and all(
+        wire.hex16(h)
+        and type(e) is dict
+        and set(e) == _ENTRY
+        and type(e["unbound"]) is dict
+        and wire.is_pub(e["hk_op_pub"])
+        and e["mode"] in wire.MODES
+        and (e["addr"] is None or type(e["addr"]) is str)
+        and (e["tls_spki"] is None or type(e["tls_spki"]) is str)
+        for h, e in box.items()
+    )
 
 
 @dataclass
@@ -36,7 +53,9 @@ class HubState:
     status: str  # joining | bound | unbound
     binding: dict[str, Any]  # the signed hub.binding of binding_seq
     aliases: dict[str, str] = field(default_factory=dict)  # person_id -> user_id, owner-signed at join only
-    pending_unbound: dict[str, Any] | None = None  # a signed hub.unbound the hub has not acknowledged yet
+    #: hub_id -> {unbound, addr, tls_spki, hk_op_pub, mode}: every signed hub.unbound a hub has not acknowledged.
+    #: Per hub, it survives new bindings (even with another hub) and is deleted only once delivered.
+    outbox: dict[str, dict[str, Any]] = field(default_factory=dict)
     addr: str | None = None  # host:port the host dials (not signed: the TLS pin of the card is the trust)
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
 
@@ -50,7 +69,7 @@ class HubState:
             "status": self.status,
             "binding": self.binding,
             "aliases": dict(self.aliases),
-            "pending_unbound": self.pending_unbound,
+            "outbox": self.outbox,
             "addr": self.addr,
             "tls_spki": self.tls_spki,
         }
@@ -59,7 +78,7 @@ class HubState:
     def from_json(cls, d: Any) -> HubState:
         """Strict: anything unreadable is ``malformed`` (fail closed)."""
         keys = {"hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases"}
-        if type(d) is not dict or set(d) - {"pending_unbound", "addr", "tls_spki"} != keys:
+        if type(d) is not dict or set(d) - {"outbox", "addr", "tls_spki"} != keys:
             raise HubRefused("malformed")
         ok = (
             wire.hex16(d["hub_id"])
@@ -72,7 +91,7 @@ class HubState:
             and type(d["binding"]) is dict
             and type(d["aliases"]) is dict
             and all(wire.hex16(p) and wire.hex16(u) for p, u in d["aliases"].items())
-            and (d.get("pending_unbound") is None or type(d["pending_unbound"]) is dict)
+            and _outbox_ok(d.get("outbox", {}))
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
@@ -88,7 +107,7 @@ class HubState:
             status=d["status"],
             binding=d["binding"],
             aliases=dict(d["aliases"]),
-            pending_unbound=d.get("pending_unbound"),
+            outbox=dict(d.get("outbox", {})),
             addr=d.get("addr"),
             tls_spki=d.get("tls_spki"),
         )
@@ -127,30 +146,26 @@ def join_selective(
     mode: str = "selective",
     binding_seq: int | None = None,
     addr: str | None = None,
-    old_transport: Callable[[HubState], HubTransport] | None = None,
+    old_transport: Callable[[str, dict[str, Any]], HubTransport],
 ) -> JoinResult:
     if mode != "selective":
         raise HubRefused("full_mode_later")
     if type(invite) is not str or not invite or len(invite) > 512:
         raise HubRefused("malformed")
+    if state is not None and state.status == "bound":
+        if binding_seq is None or binding_seq <= state.binding_seq:
+            raise HubRefused("already_joined")
+        # the log says left (and joined again) but the hub was never told: owe it the unbound of the old binding
+        _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
+        state.status = "unbound"
+        save(state)
     pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
     verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
     root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
-    if state is not None and state.status == "bound":
-        if binding_seq is not None and binding_seq > state.binding_seq:
-            raise HubRefused("unbind_pending")  # left on the log, the hub not told: finish the leave first
-        raise HubRefused("already_joined")
-    if state is not None and state.status == "unbound" and state.pending_unbound is not None:
-        # the old hub must hear about the leave before any new binding exists; never lose the signed unbound
-        t_old = old_transport(state) if old_transport is not None else transport
-        try:
-            done = _deliver(state, workspace_id, sign_wsk, now_ms, t_old)
-        except HubRefused:
-            done = False
-        finally:
-            save(state)
-        if not done:
-            raise HubRefused("unbind_pending")
+    if state is not None and state.outbox:
+        # every owed unbound gets ONE try over its own hub's transport, then the new join goes on regardless
+        flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
+                     transport_for=old_transport, save=save)  # fmt: skip
     resume = state is not None and state.status == "joining"
     if resume:
         assert state is not None
@@ -192,6 +207,7 @@ def join_selective(
             aliases=merged,
             addr=addr,
             tls_spki=verified["card"]["tls_spki_sha256"],
+            outbox={} if state is None else state.outbox,
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)
@@ -205,23 +221,55 @@ def join_selective(
     return JoinResult(new, payload)
 
 
-def _link(state: HubState, workspace_id: str, sign_wsk: wire.Sign, now_ms: Callable[[], int], t: HubTransport):
-    return HubLink(
-        t, hub_id=state.hub_id, workspace_id=workspace_id, hk_op_pub=unb64u(state.hk_op_pub, 65),
-        sign=sign_wsk, mode=state.mode, now_ms=now_ms,
+def _owe(state: HubState, workspace_id: str, sign_wsk: wire.Sign, now_ms: Callable[[], int], *, dev: bool) -> dict:
+    """Sign the ``hub.unbound`` of the state's current binding and put it in the outbox under its hub (a newer one for
+    the same hub replaces an older one)."""
+    unbound = wire.build_unbound(
+        workspace_id=workspace_id, hub_id_=state.hub_id, binding_seq=state.binding_seq,
+        unbound_ms=now_ms(), dev=dev, sign=sign_wsk,
     )  # fmt: skip
+    held = state.outbox.get(state.hub_id)
+    if held is None or held["unbound"]["o"]["binding_seq"] <= state.binding_seq:
+        state.outbox[state.hub_id] = {
+            "unbound": unbound, "addr": state.addr, "tls_spki": state.tls_spki, "hk_op_pub": state.hk_op_pub,
+            "mode": state.mode,
+        }  # fmt: skip
+    return unbound
 
 
-def _deliver(state: HubState, workspace_id: str, sign_wsk, now_ms, transport) -> bool:
-    assert state.pending_unbound is not None
-    try:
-        _link(state, workspace_id, sign_wsk, now_ms, transport).call("binding_put", {"object": state.pending_unbound})
-    except HubRefused as exc:
-        if exc.code == "hub_unreachable":
-            return False
-        raise
-    state.pending_unbound = None
-    return True
+def flush_outbox(
+    *,
+    state: HubState,
+    workspace_id: str,
+    sign_wsk: wire.Sign,
+    now_ms: Callable[[], int],
+    transport_for: Callable[[str, dict[str, Any]], HubTransport],
+    save: Callable[[HubState], None],
+) -> list[str]:
+    """One try per owed unbound, each over ITS hub's transport (``transport_for(hub_id, entry)``, required: the
+    unbound of one hub is never offered to another). A hub that is down or refuses leaves its entry in place. Returns
+    the hub ids that took theirs."""
+    done: list[str] = []
+    for hub_id, entry in sorted(state.outbox.items()):
+        t = transport_for(hub_id, entry)
+        try:
+            HubLink(
+                t, hub_id=hub_id, workspace_id=workspace_id, hk_op_pub=unb64u(entry["hk_op_pub"], 65),
+                sign=sign_wsk, mode=entry["mode"], now_ms=now_ms,
+            ).call("binding_put", {"object": entry["unbound"]})  # fmt: skip
+        except HubRefused as exc:
+            if exc.code != "stale_binding":  # the hub holds a newer binding: there is nothing left to unbind
+                continue
+        except OSError:
+            continue
+        finally:
+            getattr(t, "close", lambda: None)()
+        done.append(hub_id)
+    for hub_id in done:
+        state.outbox.pop(hub_id, None)
+    if done or state.outbox:
+        save(state)
+    return done
 
 
 def leave(
@@ -231,44 +279,19 @@ def leave(
     sign_wsk: wire.Sign,
     dev_mode: bool,
     now_ms: Callable[[], int],
-    transport: HubTransport,
+    transport_for: Callable[[str, dict[str, Any]], HubTransport],
     record_left: Callable[[dict[str, Any]], None],
     save: Callable[[HubState], None],
 ) -> LeaveResult:
-    """Break-glass leave: ``hub.left`` is logged, ``hub.unbound`` is signed with ``WSK`` and offered to the hub; an
-    unreachable hub does not stop it (the unbound stays queued). Works from ``joining`` too (the join never
-    completed)."""
+    """Break-glass leave: ``hub.left`` is logged, ``hub.unbound`` is signed with ``WSK``, stored in the outbox and
+    offered to its hub once; an unreachable hub does not stop it. Works from ``joining`` too."""
     if state is None or state.status == "unbound":
         raise HubRefused("not_joined")
     payload = wire.left_payload(hub_id_=state.hub_id, binding_seq=state.binding_seq)
-    unbound = wire.build_unbound(
-        workspace_id=workspace_id, hub_id_=state.hub_id, binding_seq=state.binding_seq,
-        unbound_ms=now_ms(), dev=dev_mode, sign=sign_wsk,
-    )  # fmt: skip
     record_left(payload)
-    state.status, state.pending_unbound = "unbound", unbound
+    unbound = _owe(state, workspace_id, sign_wsk, now_ms, dev=dev_mode)
+    state.status = "unbound"
     save(state)
-    delivered = False
-    try:
-        delivered = _deliver(state, workspace_id, sign_wsk, now_ms, transport)
-    finally:
-        save(state)
-    return LeaveResult(state, payload, unbound, delivered)
-
-
-def flush_unbound(
-    *,
-    state: HubState,
-    workspace_id: str,
-    sign_wsk: wire.Sign,
-    now_ms: Callable[[], int],
-    transport: HubTransport,
-    save: Callable[[HubState], None],
-) -> bool:
-    """Retry a queued ``hub.unbound`` (idempotent: the hub's store takes the same unbound again)."""
-    if state.pending_unbound is None:
-        return True
-    try:
-        return _deliver(state, workspace_id, sign_wsk, now_ms, transport)
-    finally:
-        save(state)
+    flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
+                 transport_for=transport_for, save=save)  # fmt: skip
+    return LeaveResult(state, payload, unbound, state.hub_id not in state.outbox)

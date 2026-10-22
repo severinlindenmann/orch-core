@@ -158,10 +158,12 @@ def test_the_whole_command_over_the_socket(tmp):
                 result["error"] = repr(e)
                 shutdown()
 
-        threading.Thread(target=safe, daemon=True).start()
+        driver.append(threading.Thread(target=safe, daemon=True))
+        driver[0].start()
         return True
 
     holder = {}
+    driver: list[threading.Thread] = []
     real = flow_mod.SetupFlow
 
     class Capturing(real):
@@ -174,6 +176,8 @@ def test_the_whole_command_over_the_socket(tmp):
         rc, out, err = run_main(tmp, ports=ports, open_browser=browser)
     finally:
         flow_mod.SetupFlow = real  # type: ignore[misc]
+    driver[0].join(10)  # the command exits once finish is answered; the driver still has to record it (#949)
+    assert not driver[0].is_alive()
     assert "error" not in result, result
     assert rc == 0, (err, result)
     assert "browser connected" in err and "set up in" in out

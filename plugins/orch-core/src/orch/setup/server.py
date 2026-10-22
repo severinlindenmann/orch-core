@@ -93,6 +93,8 @@ class SetupServer:
         self._srv: socketserver.BaseServer | None = None
         self._thread: threading.Thread | None = None
         self._watch: threading.Thread | None = None
+        self._inflight = 0  # requests being handled or answered; stop() waits for them (#949)
+        self._idle = threading.Condition()
 
     # ------------------------------------------------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -114,9 +116,23 @@ class SetupServer:
         self._watch = threading.Thread(target=self._watchdog, daemon=True)
         self._watch.start()
 
+    def request_started(self) -> None:
+        with self._idle:
+            self._inflight += 1
+
+    def request_done(self) -> None:
+        with self._idle:
+            self._inflight -= 1
+            self._idle.notify_all()
+
     def stop(self) -> None:
         self.stop_event.set()
         self._remove_code_file()
+        # The request that ended the session (finish, shutdown) calls die() before its response is written, and the
+        # command's main loop wakes on stop_event. Let that answer go out before the listener closes and the process
+        # can exit (handler threads are daemons); bounded, so a stuck peer cannot hold the terminal.
+        with self._idle:
+            self._idle.wait_for(lambda: self._inflight == 0, timeout=5.0)
         if self._srv is not None:
             self._srv.shutdown()
             self._srv.server_close()
@@ -366,6 +382,13 @@ def _make_handler(owner: SetupServer) -> type[BaseHTTPRequestHandler]:
             return "unix"
 
         def _go(self) -> None:
+            owner.request_started()
+            try:
+                self._serve()
+            finally:
+                owner.request_done()
+
+        def _serve(self) -> None:
             length = self.headers.get("Content-Length", "0")
             if not length.isdigit() or int(length) > MAX_BODY or self.headers.get("Transfer-Encoding"):
                 status, body = 413, {"error": {"code": "setup.too_large", "message": "request too large"}}

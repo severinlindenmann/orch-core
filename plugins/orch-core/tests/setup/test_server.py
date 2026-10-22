@@ -459,3 +459,28 @@ def test_a_leave_call_does_not_reset_the_idle_timer(srv):
     srv.clock_obj.t += 20  # 610 s since the last real request: the leave call did not count as activity
     srv.check_idle()
     assert srv.ended == "idle"
+
+
+def test_stop_waits_for_the_request_that_ended_the_session_to_be_answered(srv):
+    """#949: ``die()`` runs inside the request that ends the session (finish, shutdown), before its response is
+    written. The command's main loop wakes on ``stop_event`` and calls ``stop()``; ``stop()`` must not return (and the
+    process exit) while that response is still being written, or the page loses its last answer. The slow ``die``
+    makes the window wide enough to hit every time."""
+    import threading
+    import time
+
+    path, _tok, _ = claimed(srv)
+    real_die = srv.die
+
+    def slow_die(why):
+        real_die(why)  # stop_event is set from here on
+        time.sleep(0.3)  # ... and the response is not written yet
+
+    srv.die = slow_die  # type: ignore[method-assign]
+    got: list = []
+    t = threading.Thread(target=lambda: got.append(call(path, "POST", "/shutdown", {})))
+    t.start()
+    assert srv.stop_event.wait(5)
+    srv.stop()  # what the command does as soon as it sees the event
+    assert got and got[0][0] == 200, "stop() returned before the shutdown request was answered"
+    t.join(5)

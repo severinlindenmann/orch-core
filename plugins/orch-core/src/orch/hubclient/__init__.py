@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from .errors import HubRefused
 from .link import HubLink, HubTransport
-from .logsync import LogSource, Position, SyncReport, derive_view_key, sync_logs
+from .logsync import LogSource, Position, SyncReport, derive_view_key, pending, sync_logs
 from .service import (
     EpochKeys,
     HubState,
@@ -45,6 +45,7 @@ __all__ = [
     "seal_to_hub",
     "settle_rotation",
     "derive_view_key",
+    "pending",
     "sync_logs",
     "switch_full",
 ]

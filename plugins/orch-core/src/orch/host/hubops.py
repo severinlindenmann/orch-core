@@ -679,9 +679,10 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _stop_peers(service: Any) -> None:
-    from . import peerops
+    from . import logsyncops, peerops
 
     peerops.stop(service)
+    logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
 def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:

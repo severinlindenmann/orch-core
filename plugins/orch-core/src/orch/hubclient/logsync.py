@@ -43,6 +43,7 @@ __all__ = [
     "derive_view_key",
     "event_head",
     "gate",
+    "pending",
     "page_aad",
     "seal_page",
     "sync_logs",
@@ -324,3 +325,18 @@ class _Pass:
                         del self.pos.logs[t]
                     self.save(self.pos)
             reset = False
+
+
+def pending(source: LogSource, position: Position) -> bool:
+    """Is there anything to send, or a rewrite to repair? Reads the local logs only (no link needed to ask)."""
+    for log in source.logs():
+        local = source.seq(log)
+        if local is None:
+            continue
+        acked = position.logs.get(log)
+        if acked is None:
+            if local > 0:
+                return True
+        elif local != acked[0] or source.head_at(log, acked[0]) != acked[1]:
+            return True
+    return False

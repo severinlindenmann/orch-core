@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { ArrowLeft, Check, ClipboardCopy, Copy, ImagePlus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Check, ClipboardCopy, Copy, Download, ImagePlus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import * as testrun from '@/api/testrun'
 import { addImage, imageProblem, imageUrl, loadPrevious, loadRun, removeImage, saveStep, STATUSES, type PreviousRun, type StepNotes, type StepStatus, TestrunError, retryable } from '@/api/testrun'
 import { cn } from '@/lib/utils'
 import { copyText } from '../copyLink'
@@ -211,6 +212,7 @@ export function ChecklistPage() {
   const [previous, setPrevious] = useState<PreviousRun[]>([])
   const [onlyNotes, setOnlyNotes] = useState(false)
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null)
+  const [zipping, setZipping] = useState<'busy' | 'ok' | string | null>(null)
   const latest = useRef(notes)
   latest.current = notes
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
@@ -383,6 +385,18 @@ export function ChecklistPage() {
     setTimeout(() => setCopied(null), 2500)
   }
 
+  const shotCount = Object.values(notes).reduce((n, r) => n + (r.images?.length ?? 0), 0)
+  const downloadZip = async () => {
+    setZipping('busy')
+    try {
+      await testrun.downloadScreenshots(RUN_ID)
+      setZipping('ok')
+    } catch (e) {
+      setZipping(e instanceof testrun.TestrunError && e.code === 'zip.too_large' ? 'The screenshots are larger than 200 MB. Copy them from the folder shown above instead.' : e instanceof testrun.TestrunError && e.status === 404 ? 'There are no screenshots to download.' : 'Could not download the screenshots. Try again.')
+    }
+    setTimeout(() => setZipping(null), 4000)
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-bg">
       <div className="mx-auto max-w-3xl px-4 py-4 sm:py-6">
@@ -435,6 +449,12 @@ export function ChecklistPage() {
             </label>
             <Button type="button" size="xs" onClick={copyReport}><ClipboardCopy /> Copy report</Button>
             <span role="status">{copied === 'ok' ? 'Report copied' : copied === 'fail' ? 'Could not copy' : ''}</span>
+            {paths && shotCount > 0 && (
+              <Button type="button" size="xs" variant="outline" disabled={zipping === 'busy'} onClick={downloadZip}>
+                <Download /> {shotCount === 1 ? 'Download 1 screenshot (zip)' : `Download ${shotCount} screenshots (zip)`}
+              </Button>
+            )}
+            <span role="status">{zipping === 'busy' ? 'Preparing the zip...' : zipping === 'ok' ? 'Zip downloaded' : zipping ?? ''}</span>
           </div>
         </div>
 

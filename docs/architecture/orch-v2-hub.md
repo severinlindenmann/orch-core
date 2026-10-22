@@ -40,7 +40,7 @@ people sign in to it once, and admins work in it.
 | D68 | Only path | In hub mode a workspace host talks only to its hub: ws→ws handoffs, the phone and other channels, publish and the relay all go through it. The host dials out to the hub; nothing dials into a workspace. Amends §9 and §10. |
 | D69 | Direct mode | A workspace without a hub is **local only**: `spool:` links on the same machine (D11 *Local*), no phone, no publish, no relay. It joins a hub later with one invite code. Amends D11 (*Internal*/*External* now mean "through a hub"). |
 | D70 | Users, groups, roles | The hub holds the users and groups. Each workspace grants a role to groups, never to a person directly: `read` (see tickets, docs, shared spaces), `edit` (work: tickets, agents, answers, handoffs), `admin` (skills, settings, links, releases, approvals: today's owner). A person's role in a workspace is the highest role of their groups. |
-| D71 | Hub admin | Members of the `hub-admin` group hold `admin` on every workspace of the hub and manage users and groups. For now there is no workspace-side veto. |
+| D71 | Hub admin | Members of the `hub-admin` group hold `admin` on every full-mode workspace of the hub (not on selective ones, D80) and manage users and groups. For now there is no workspace-side veto. |
 | D72 | Custodial signing | The hub holds each user's signing key, bound to that user, and signs for them. Each signature needs a fresh proof from a strongly bound channel over the event digest (§5, §7); a session alone only shows and routes. The hub signs only payloads it builds itself. Workspace keys (`WSK`, `WXK`, `WK_e`) stay in the workspace host. Amends D41 and D49 in hub mode. |
 | D73 | Channels | People reach orch through channels that end at the hub: the iPhone app now, the browser, later Slack and others. The phone pairs **once with the hub** by QR; it never pairs with a workspace. Amends D6 in hub mode. |
 | D74 | Trusted hub | The hub is a member of every **full-mode** workspace it serves (selective mode: D80): each workspace seals its `WK_e` to the hub, so the hub can render content for channels and act for users. The hub is a **trusted operator**, like an identity provider; the edge relay stays blind. |
@@ -219,8 +219,8 @@ charter. Public access still needs a custodial human signature, carried in the r
   nothing but needs-you summaries.
 - **How.** The host seals each selected item to `HXK` under a per-item key and sends it over the link (`share_put`,
   `share_revoke`). Each item carries its `WSK`-signed state and the host-chain head. A custodial digest binds the item
-  hash, and the host checks its own chain when the event comes back, so an altered item cannot collect a valid owner
-  signature. These two link operations exist only in selective mode. The hub never receives `WK_e`, so the member
+  hash, and the host checks its own chain when the event comes back, so the hub or the link cannot alter an item. A
+  hostile host can only mislead within its own workspace (D29), which it controls anyway. These two link operations exist only in selective mode. The hub never receives `WK_e`, so the member
   list gets no `hub` member and `wk_seal` is refused.
 - **Signing.** The host accepts the owner's local key (D64) for every verb, and `UK` only for shared items. The hub
   builds custodial events only for items it holds (§5).
@@ -240,7 +240,7 @@ charter. Public access still needs a custodial human signature, carried in the r
 | Hub server or key store taken over | Attacker can read every full-mode workspace and the shared items of selective ones, and sign as any user there | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
 | Hostile or client-hosted workspace host | Could try to get events signed for other workspaces | The hub signs only payloads it builds itself; signatures are bound to `workspace_id`; the link has no signing request (§5, §8) |
 | Agent steals a hub session or cookie | Can show and route, cannot sign | Every signature needs a fresh channel-key proof (§7) |
-| Malicious or careless hub admin | Can grant themselves `admin` anywhere (D71) | Accepted for now; every grant and membership change is signed by the acting admin's `UK` and audited; a workspace-side veto is an open question |
+| Malicious or careless hub admin | Can grant themselves `admin` in any full-mode workspace (D71) | Accepted for now; every grant and membership change is signed by the acting admin's `UK` and audited; a workspace-side veto is an open question |
 | Stolen phone | Can sign while the phone is unlocked (as D49 today) | A hub admin revokes the channel key; `admin` verbs need a recent sign-in |
 | Rogue hub claims a workspace's publish namespace | Refused | Only with the workspace's `WSK`-signed `hub.binding` (D76) |
 | Relay taken over | Sees ciphertext and routing ids only | Unchanged (§4 of the spec) |

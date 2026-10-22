@@ -159,10 +159,10 @@ def test_l2p6_admin_read_row_public_url_is_null_in_hv0():
         H.check_admin_read_row({**G.ADMIN_ROW, "public_url": "https://pub.example/s/secret-token"})
 
 
-# --- L2P-7: a re-delivered old record is reported as a fork -----------------------------------------------------------
+# --- L2P-10: a re-delivered old record is reported as a fork -----------------------------------------------------------
 
 
-def test_l2p7_redelivered_old_record_is_not_a_fork():
+def test_l2p10_redelivered_old_record_is_not_a_fork():
     """A host that keeps only its head cannot compare an older record; re-delivery (overlapping audit_get pages) is
     not evidence of a fork. A fork needs two HK_op-signed records with the same seq and different bytes."""
     ch = G.audit_chain(3)

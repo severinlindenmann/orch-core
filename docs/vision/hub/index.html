@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orch hub draft</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1014; --sidebar:#0a0c0f; --surface:#15181d; --surface-2:#1c2027; --surface-3:#242a32;
+  --border:#2a3038; --border-strong:#3a424d; --text:#e8eaed; --text-muted:#9aa3ad; --text-faint:#8b949e;
+  --brand:#2fc6a3; --on-brand:#06231c; --brand-soft:rgba(47,198,163,.14);
+  --addon:#f07a2e; --addon-soft:rgba(240,122,46,.10); --addon-border:rgba(240,122,46,.45);
+  --violet:#b392f0; --violet-soft:rgba(179,146,240,.14);
+  --warning:#fbbf24; --danger:#f87171; --info:#60a5fa;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 Geist,-apple-system,system-ui,sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:36px 16px 80px}
+.mono{font-family:"Geist Mono",ui-monospace,Menlo,monospace}
+.eyebrow{font:600 11px/1 "Geist Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--text-faint)}
+h1{font-size:clamp(28px,4.4vw,42px);line-height:1.1;letter-spacing:-.02em;margin:10px 0 10px}
+h2{font-size:22px;letter-spacing:-.01em;margin:0 0 6px}
+h3{font-size:15px;margin:0 0 4px}
+p{margin:0 0 10px}
+.lead{font-size:17px;color:var(--text-muted);max-width:820px}
+.sub{color:var(--text-muted);max-width:820px;margin-bottom:18px}
+section{margin-top:52px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;font:500 11px/1 "Geist Mono",monospace;padding:5px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted)}
+.chip.brand{color:var(--brand);border-color:rgba(47,198,163,.4);background:var(--brand-soft)}
+.chip.addon{color:var(--addon);border-color:var(--addon-border);background:var(--addon-soft)}
+.chip.violet{color:var(--violet);border-color:rgba(179,146,240,.4);background:var(--violet-soft)}
+.chip.warn{color:var(--warning);border-color:rgba(251,191,36,.4)}
+.names{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.draftnote{margin-top:14px;font-size:13px;color:var(--text-faint)}
+
+/* diagram */
+.diagram{padding:10px;overflow-x:auto}
+.diagram svg{width:100%;min-width:900px;height:auto;display:block}
+.diagram text{font-family:Geist,system-ui,sans-serif;fill:var(--text)}
+.diagram .t-m{fill:var(--text-muted)}
+.diagram .t-f{fill:var(--text-faint)}
+.diagram .t-mono{font-family:"Geist Mono",monospace}
+.legend{display:flex;flex-wrap:wrap;gap:16px;padding:10px 12px 6px;color:var(--text-muted);font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.legend i{display:inline-block;width:22px;height:0;border-top:2px solid}
+
+/* compare */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:820px){.compare{grid-template-columns:1fr}}
+.compare .card{padding:18px}
+.compare ul{margin:8px 0 0;padding-left:18px;color:var(--text-muted)}
+.compare li{margin:4px 0}
+.compare li b{color:var(--text);font-weight:500}
+
+/* control panel mock */
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tab{font:500 13px Geist,sans-serif;background:var(--surface);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--brand-soft);color:var(--brand);border-color:rgba(47,198,163,.45)}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:470px;overflow:hidden}
+@media(max-width:760px){.app{grid-template-columns:1fr}.side{display:none}}
+.side{background:var(--sidebar);border-right:1px solid var(--border);padding:16px 12px}
+.brandrow{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:-.02em;margin-bottom:18px}
+.brandrow svg{width:22px;height:22px}
+.brandrow small{font:500 12px "Geist Mono",monospace;color:var(--brand)}
+.nav-h{font:600 10px "Geist Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--text-faint);margin:14px 6px 6px}
+.nav{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;font-size:13.5px;color:var(--text-muted)}
+.nav.on{background:var(--surface-2);color:var(--text)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.badge{margin-left:auto;font:600 11px "Geist Mono",monospace;background:var(--brand-soft);color:var(--brand);border-radius:999px;padding:2px 7px}
+.main{padding:18px 20px}
+.main h2{font-size:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0 18px}
+@media(max-width:980px){.grid3{grid-template-columns:1fr}}
+.ws{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.ws .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.ws .role{margin-left:auto}
+.ws .meta{font-size:13px;color:var(--text-muted)}
+.ws .open{margin-top:10px;font:500 12.5px Geist,sans-serif;color:var(--brand)}
+.feed{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13.5px}
+.row .src{font:500 11px "Geist Mono",monospace;color:var(--text-faint);min-width:84px}
+.row .act{margin-left:auto;font:600 12px Geist,sans-serif;color:var(--on-brand);background:var(--brand);border-radius:6px;padding:5px 10px}
+table.matrix{width:100%;border-collapse:collapse;font-size:13.5px}
+.matrix th,.matrix td{padding:9px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+.matrix th{font:600 11px "Geist Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint)}
+.matrix td.c{color:var(--text-muted)}
+.r-owner{color:var(--brand)} .r-member{color:var(--text)} .r-view{color:var(--text-muted)} .r-none{color:var(--border-strong)} .r-agent{color:var(--violet)}
+.tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+.admingrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px}
+@media(max-width:980px){.admingrid{grid-template-columns:1fr}}
+.mini{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:13.5px}
+.mini .kv{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border);color:var(--text-muted)}
+.mini .kv:last-child{border-bottom:0}
+.mini .kv b{color:var(--text);font-weight:500}
+[hidden]{display:none!important}
+
+/* trust options */
+.opts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:900px){.opts{grid-template-columns:1fr}}
+.opt{padding:18px;position:relative}
+.opt.rec{border-color:rgba(47,198,163,.55);box-shadow:0 0 0 3px var(--brand-soft)}
+.opt h3{margin:10px 0 6px}
+.opt p{color:var(--text-muted);font-size:14px}
+.opt .pro,.opt .con{font-size:13.5px;margin:4px 0;color:var(--text-muted)}
+.opt .pro::before{content:"+ ";color:var(--brand);font-weight:700}
+.opt .con::before{content:"− ";color:var(--danger);font-weight:700}
+ol.qs{color:var(--text-muted);padding-left:20px}
+ol.qs li{margin:8px 0}
+ol.qs b{color:var(--text);font-weight:500}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">Vision v4 · 22 Oct 2026 · matches spec orch-v2-hub.md (D67–D81, orch-core #830)</div>
+  <h1>One hub every workspace goes through</h1>
+  <p class="lead">Each team or person has an <b>orch workspace</b>, running <b>orch core</b>, with its own keys. Workspaces no longer talk to the relay,
+    publish or each other directly: everything goes through the company's one <b style="color:var(--brand)">orch hub</b>, its own component
+    inside the company network. The hub holds the users and groups (or the Entra connection), decides which group may read, edit or admin
+    which workspace, and is where admins work. There is no separate admin console.</p>
+  <div class="names">
+    <span class="eyebrow" style="align-self:center;margin-right:4px">Names</span>
+    <span class="chip">orch workspace = a team's or person's space</span>
+    <span class="chip">orch core = the software in a workspace</span>
+    <span class="chip brand">orch hub = the company's control panel</span>
+    <span class="chip addon">orch-relay · orch-publish = edge</span>
+  </div>
+  <div class="card" style="margin-top:16px;padding:14px 16px;border-color:rgba(47,198,163,.45);display:flex;gap:12px;align-items:flex-start">
+    <span class="chip brand" style="flex:none">Principle · D79</span>
+    <span style="color:var(--text-muted)"><b style="color:var(--text)">orch core always works standalone.</b> One workspace on its own, with tickets, agents, skills,
+      Mission Control and local signing, needs none of the hub, relay, publish or phone. Everything on this page is an addition, never a dependency.</span>
+  </div>
+
+  <!-- ============ DIAGRAM ============ -->
+  <section>
+    <h2>Topology</h2>
+    <p class="sub">Same three zones as the enterprise picture. What's new: the hub sits between the workspaces and everything
+      else, and the admin console moves into it. Without a hub, a workspace still runs on its own, locally.</p>
+    <div class="card diagram">
+      <svg viewBox="0 0 1240 800" role="img" aria-label="Topology: internet, company edge with relay and publish, internal network with the hub in the middle and workspaces around it">
+        <defs>
+          <g id="lock">
+            <rect x="-9" y="-8" width="18" height="18" rx="4" fill="#15181d" stroke="#b392f0" stroke-width="1.5"/>
+            <path d="M-4 -1 v-3 a4 4 0 0 1 8 0 v3" fill="none" stroke="#b392f0" stroke-width="1.5"/>
+            <rect x="-5" y="-1" width="10" height="7" rx="1.5" fill="#b392f0"/>
+          </g>
+          <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#f07a2e"/></marker>
+        </defs>
+
+        <!-- zones -->
+        <rect x="14" y="14" width="250" height="700" rx="12" fill="none" stroke="#2a3038"/>
+        <text x="34" y="44" class="t-mono" font-size="12" font-weight="600" letter-spacing="1.5">INTERNET</text>
+
+        <rect x="284" y="14" width="236" height="700" rx="12" fill="rgba(240,122,46,.06)" stroke="rgba(240,122,46,.45)"/>
+        <text x="304" y="44" class="t-mono" font-size="12" font-weight="600" letter-spacing="1.5" style="fill:#f07a2e">COMPANY EDGE / VPS</text>
+
+        <rect x="540" y="14" width="686" height="700" rx="12" fill="none" stroke="#2a3038"/>
+        <text x="560" y="44" class="t-mono" font-size="12" font-weight="600" letter-spacing="1.5">INTERNAL NETWORK · HOST OR K8S</text>
+
+        <!-- ===== internet boxes ===== -->
+        <g>
+          <rect x="34" y="110" width="210" height="80" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="50" y="138" font-size="15" font-weight="600">orch app</text>
+          <text x="50" y="160" font-size="13" class="t-m">App Store · iPhone</text>
+          <text x="50" y="178" font-size="13" class="t-m">Signs in to the hub</text>
+
+          <rect x="34" y="235" width="210" height="80" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="50" y="263" font-size="15" font-weight="600">Company IdP</text>
+          <text x="50" y="285" font-size="13" class="t-m">Microsoft Entra ID</text>
+          <text x="50" y="303" font-size="13" class="t-m">OAuth / OIDC · groups</text>
+
+          <rect x="34" y="370" width="210" height="80" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="50" y="398" font-size="15" font-weight="600">Released content</text>
+          <text x="50" y="420" font-size="13" class="t-m">External audience</text>
+          <text x="50" y="438" font-size="13" class="t-m">Expires · revocable</text>
+
+          <rect x="34" y="530" width="210" height="96" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="50" y="558" font-size="15" font-weight="600">SaaS tools</text>
+          <text x="50" y="580" font-size="13" class="t-m">Jira · Confluence</text>
+          <text x="50" y="598" font-size="13" class="t-m">Outlook / Graph</text>
+          <text x="50" y="616" font-size="13" class="t-m">Figma · GitHub</text>
+        </g>
+
+        <!-- ===== edge boxes ===== -->
+        <g>
+          <rect x="304" y="110" width="196" height="96" rx="10" fill="#1c2027" stroke="rgba(240,122,46,.55)"/>
+          <text x="320" y="138" font-size="15" font-weight="600" style="fill:#f07a2e">orch-relay</text>
+          <text x="320" y="160" font-size="13" class="t-m">Push + routing</text>
+          <text x="320" y="178" font-size="13" class="t-m">Ciphertext only</text>
+          <text x="320" y="196" font-size="13" class="t-m">Talks only to the hub</text>
+
+          <rect x="304" y="362" width="196" height="96" rx="10" fill="#1c2027" stroke="rgba(240,122,46,.55)"/>
+          <text x="320" y="390" font-size="15" font-weight="600" style="fill:#f07a2e">orch-publish</text>
+          <text x="320" y="412" font-size="13" class="t-m">External sharing</text>
+          <text x="320" y="430" font-size="13" class="t-m">Only released data</text>
+          <text x="320" y="448" font-size="13" class="t-m">Signed by the hub</text>
+
+          <!-- hub to hub -->
+          <rect x="304" y="530" width="196" height="96" rx="10" fill="#1c2027" stroke="rgba(179,146,240,.55)"/>
+          <text x="320" y="558" font-size="15" font-weight="600" style="fill:#b392f0">Hub ↔ hub</text>
+          <text x="320" y="580" font-size="13" class="t-m">Company B · subsidiary</text>
+          <text x="320" y="598" font-size="13" class="t-m">Through the relay</text>
+          <text x="320" y="616" font-size="13" class="t-f">See "Between companies"</text>
+        </g>
+
+        <!-- ===== HUB ===== -->
+        <g>
+          <rect x="560" y="70" width="270" height="572" rx="12" fill="rgba(47,198,163,.06)" stroke="#2fc6a3" stroke-width="1.6"/>
+          <!-- orbit mark -->
+          <g transform="translate(588 100) scale(.42)">
+            <circle cx="0" cy="0" r="20" fill="none" stroke="#e8eaed" stroke-width="6"/>
+            <circle cx="0" cy="0" r="6" fill="#2fc6a3"/>
+            <circle cx="15" cy="-15" r="7" fill="#2fc6a3" stroke="#0a0c0f" stroke-width="3"/>
+          </g>
+          <text x="608" y="106" font-size="17" font-weight="700" letter-spacing="-.3">orch hub</text>
+          <text x="688" y="106" font-size="12" class="t-mono" style="fill:#2fc6a3">control panel</text>
+          <text x="580" y="128" font-size="12.5" class="t-m">Own component · one per company</text>
+
+          <!-- modules: y centers line up with the outside links -->
+          <g font-size="13">
+            <rect x="576" y="140" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="158" font-weight="600">Gateway</text>
+            <text x="590" y="173" font-size="12" class="t-m">relay link · push · phone · other hubs</text>
+
+            <rect x="576" y="190" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="208" font-weight="600">Sign-in &amp; access</text>
+            <text x="590" y="223" font-size="12" class="t-m">users · groups · read / edit / admin</text>
+
+            <rect x="576" y="240" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="258" font-weight="600">Workspace directory</text>
+            <text x="590" y="273" font-size="12" class="t-m">cards · owners · who handles what</text>
+
+            <rect x="576" y="290" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="308" font-weight="600">Router</text>
+            <text x="590" y="323" font-size="12" class="t-m">ws → ws handoffs, sealed end to end</text>
+
+            <rect x="576" y="340" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="358" font-weight="600">Release gate</text>
+            <text x="590" y="373" font-size="12" class="t-m">owner-approved → orch-publish</text>
+
+            <rect x="576" y="390" width="238" height="54" rx="8" fill="#1c2027" stroke="#2fc6a3" stroke-dasharray="5 4"/>
+            <text x="590" y="409" font-weight="600" style="fill:#2fc6a3">Shared spaces</text>
+            <text x="590" y="425" font-size="12" class="t-m">Launch Product X</text>
+            <text x="590" y="439" font-size="12" class="t-m">Product + Marketing · filtered slice</text>
+
+            <rect x="576" y="454" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="472" font-weight="600">Skills &amp; secrets</text>
+            <text x="590" y="487" font-size="12" class="t-m">signed skills · sealed service principals</text>
+
+            <rect x="576" y="504" width="238" height="40" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="522" font-weight="600">Policy &amp; audit</text>
+            <text x="590" y="537" font-size="12" class="t-m">agent rules · network policy · log</text>
+
+            <rect x="576" y="554" width="238" height="74" rx="8" fill="#1c2027" stroke="#2a3038"/>
+            <text x="590" y="574" font-weight="600">Admin console</text>
+            <text x="590" y="592" font-size="12" class="t-m">Sys admin: relay, containers, IdP</text>
+            <text x="590" y="608" font-size="12" class="t-m">AI admin: skills, links, share rules</text>
+            <text x="590" y="622" font-size="12" class="t-m">(roles in the hub, no extra app)</text>
+          </g>
+        </g>
+
+        <!-- ===== workspaces ===== -->
+        <g>
+          <rect x="930" y="90" width="270" height="92" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="946" y="118" font-size="15" font-weight="600">Product</text>
+          <text x="946" y="140" font-size="13" class="t-m">8 people · own keys</text>
+          <text x="946" y="158" font-size="13" class="t-m">Jira · wiki · Figma</text>
+          <text x="946" y="174" font-size="13" class="t-m">Agents + skills</text>
+
+          <rect x="930" y="212" width="270" height="92" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="946" y="240" font-size="15" font-weight="600">Marketing</text>
+          <text x="946" y="262" font-size="13" class="t-m">5 people · own keys</text>
+          <text x="946" y="280" font-size="13" class="t-m">Jira · Outlook · HubSpot</text>
+          <text x="946" y="296" font-size="13" class="t-m">Agents + skills</text>
+
+          <rect x="930" y="334" width="270" height="92" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="946" y="362" font-size="15" font-weight="600">Legal</text>
+          <text x="946" y="384" font-size="13" class="t-m">SharePoint · Outlook · own keys</text>
+          <text x="946" y="402" font-size="13" class="t-m">Agents · skills · memory</text>
+
+          <rect x="930" y="456" width="270" height="92" rx="10" fill="#1c2027" stroke="#3a424d"/>
+          <text x="946" y="484" font-size="15" font-weight="600">Anna / personal</text>
+          <text x="946" y="506" font-size="13" class="t-m">Outlook · GitHub app</text>
+          <text x="946" y="524" font-size="13" class="t-m">Own keys + memory</text>
+          <text x="946" y="540" font-size="12" style="fill:#2fc6a3">selective join: hub sees only what she shares</text>
+
+          <!-- local-only -->
+          <rect x="930" y="586" width="270" height="78" rx="10" fill="none" stroke="#3a424d" stroke-dasharray="5 5"/>
+          <text x="946" y="612" font-size="15" font-weight="600" class="t-m">Solo workspace (no hub)</text>
+          <text x="946" y="634" font-size="13" class="t-f">Local only: no phone, no publish</text>
+          <text x="946" y="652" font-size="13" class="t-f">Joins a hub later with one invite</text>
+        </g>
+
+        <!-- ===== links ===== -->
+        <!-- app <-> IdP (SSO) -->
+        <path d="M139 190 V 235" stroke="#9aa3ad" stroke-width="1.5" fill="none"/>
+        <text x="148" y="218" font-size="12" class="t-mono t-m">SSO</text>
+
+        <!-- app -> relay -> hub gateway (encrypted) -->
+        <path d="M244 160 H 304" stroke="#b392f0" stroke-width="1.8" fill="none"/>
+        <path d="M500 160 H 576" stroke="#b392f0" stroke-width="1.8" fill="none"/>
+        <use href="#lock" x="538" y="158"/>
+        <text x="300" y="96" font-size="12.5" style="fill:#b392f0">Encrypted traffic</text>
+
+        <!-- IdP -> hub sign-in (OIDC), passes through edge zone between relay and publish -->
+        <path d="M244 275 H 520 Q 540 275 545 255 Q 550 210 576 210" stroke="#9aa3ad" stroke-width="1.5" fill="none" stroke-dasharray="6 4"/>
+        <text x="320" y="268" font-size="12" class="t-mono t-m">OIDC · groups</text>
+
+        <!-- publish <- hub release gate ; released content <- publish -->
+        <path d="M576 360 H 520 Q 510 360 510 380 V 410 H 500" stroke="#f07a2e" stroke-width="1.8" fill="none" marker-end="url(#arrO)"/>
+        <path d="M304 410 H 244" stroke="#f07a2e" stroke-width="1.8" fill="none" marker-end="url(#arrO)"/>
+        <text x="304" y="350" font-size="12.5" style="fill:#f07a2e">Human-approved release</text>
+
+        <!-- workspaces <-> hub router (E2E) -->
+        <g stroke="#b392f0" stroke-width="1.8" fill="none">
+          <path d="M930 136 H 870 Q 850 136 850 156 V 300 Q 850 310 830 310"/>
+          <path d="M930 258 H 870 Q 850 258 850 270"/>
+          <path d="M930 380 H 870 Q 850 380 850 360 V 320 Q 850 310 830 310"/>
+          <path d="M930 502 H 870 Q 850 502 850 482 V 360"/>
+        </g>
+        <use href="#lock" x="895" y="136"/>
+        <use href="#lock" x="895" y="258"/>
+        <use href="#lock" x="895" y="380"/>
+        <use href="#lock" x="895" y="502"/>
+        <text x="930" y="76" font-size="12" class="t-mono" style="fill:#9aa3ad">ORCH WORKSPACES · RUN ORCH CORE</text>
+
+        <!-- shared space feed (Product + Marketing slices) -->
+        <path d="M1200 136 H 1214 V 417 H 830" stroke="#2fc6a3" stroke-width="1.4" fill="none" stroke-dasharray="3 4" opacity=".9"/>
+        <path d="M1200 258 H 1214" stroke="#2fc6a3" stroke-width="1.4" fill="none" stroke-dasharray="3 4" opacity=".9"/>
+        <text x="1090" y="440" font-size="12" style="fill:#2fc6a3" text-anchor="end">filtered slice into shared space</text>
+
+        <!-- SaaS: workspace's own service principal, secret delivered by hub -->
+        <path d="M139 626 V 690 H 1222 V 502 H 1200" stroke="#9aa3ad" stroke-width="1.5" fill="none"/>
+        <circle cx="660" cy="690" r="4" fill="#2fc6a3"/>
+        <text x="300" y="708" font-size="12.5" class="t-m">Workspace → SaaS · its own service principal · secret delivered sealed by the hub · allowed by network policy</text>
+
+        <!-- footer legend in-svg -->
+        <g transform="translate(14 740)" font-size="13">
+          <use href="#lock" x="14" y="16"/>
+          <text x="32" y="21" class="t-m">Workspace keys protect each handoff; the hub forwards sealed envelopes</text>
+          <rect x="560" y="8" width="18" height="14" rx="3" fill="none" stroke="#2fc6a3" stroke-dasharray="3 3"/>
+          <text x="586" y="21" class="t-m">Shared space holds a filtered slice</text>
+          <rect x="840" y="8" width="18" height="14" rx="3" fill="none" stroke="#3a424d" stroke-dasharray="3 3"/>
+          <text x="866" y="21" class="t-m">Not connected / removed</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#b392f0"></i>end-to-end encrypted</span>
+        <span><i style="border-color:#f07a2e"></i>release to the outside (human-approved)</span>
+        <span><i style="border-color:#9aa3ad;border-top-style:dashed"></i>sign-in / identity</span>
+        <span><i style="border-color:#2fc6a3;border-top-style:dotted"></i>slice shared into a shared space</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HUB TO HUB ============ -->
+  <section>
+    <h2>Between companies: hub to hub, through the relay</h2>
+    <p class="sub">One hub per company. Two companies, or two subsidiaries of one group, link their hubs. The traffic always goes through a
+      relay, so neither side opens its network to the other. Each hub decides which of its workspaces and shared spaces the other side sees.</p>
+    <div class="card diagram">
+      <svg viewBox="0 0 1240 250" role="img" aria-label="Company A hub and Company B hub linked through orch-relay">
+        <g font-size="13">
+          <rect x="20" y="40" width="300" height="170" rx="12" fill="none" stroke="#2a3038"/>
+          <text x="36" y="66" class="t-mono" font-size="11.5" font-weight="600" letter-spacing="1.3">COMPANY A · INTERNAL</text>
+          <rect x="40" y="84" width="120" height="38" rx="8" fill="#1c2027" stroke="#3a424d"/><text x="54" y="108">Product</text>
+          <rect x="40" y="132" width="120" height="38" rx="8" fill="#1c2027" stroke="#3a424d"/><text x="54" y="156">Marketing</text>
+          <rect x="190" y="84" width="112" height="86" rx="10" fill="rgba(47,198,163,.08)" stroke="#2fc6a3" stroke-width="1.5"/>
+          <text x="204" y="112" font-weight="700">orch hub</text><text x="204" y="132" font-size="12" class="t-m">Company A</text>
+          <path d="M160 103 H190 M160 151 H190" stroke="#b392f0" stroke-width="1.6"/>
+
+          <rect x="470" y="78" width="300" height="100" rx="12" fill="rgba(240,122,46,.06)" stroke="rgba(240,122,46,.45)"/>
+          <text x="490" y="108" font-weight="600" font-size="15" style="fill:#f07a2e">orch-relay</text>
+          <text x="490" y="130" class="t-m">Either company's, or a shared one</text>
+          <text x="490" y="150" class="t-m">Sees only ciphertext + routing ids</text>
+
+          <rect x="920" y="40" width="300" height="170" rx="12" fill="none" stroke="#2a3038"/>
+          <text x="936" y="66" class="t-mono" font-size="11.5" font-weight="600" letter-spacing="1.3">COMPANY B / SUBSIDIARY</text>
+          <rect x="938" y="84" width="112" height="86" rx="10" fill="rgba(47,198,163,.08)" stroke="#2fc6a3" stroke-width="1.5"/>
+          <text x="952" y="112" font-weight="700">orch hub</text><text x="952" y="132" font-size="12" class="t-m">Company B</text>
+          <rect x="1080" y="84" width="120" height="38" rx="8" fill="#1c2027" stroke="#3a424d"/><text x="1094" y="108">Sales</text>
+          <rect x="1080" y="132" width="120" height="38" rx="8" fill="#1c2027" stroke="#3a424d"/><text x="1094" y="156">Agency</text>
+          <path d="M1050 103 H1080 M1050 151 H1080" stroke="#b392f0" stroke-width="1.6"/>
+
+          <path d="M302 127 H470 M770 127 H938" stroke="#b392f0" stroke-width="1.8"/>
+          <use href="#lock" x="386" y="127"/><use href="#lock" x="854" y="127"/>
+          <text x="386" y="160" text-anchor="middle" font-size="12" style="fill:#b392f0">hub-signed, sealed</text>
+          <text x="854" y="160" text-anchor="middle" font-size="12" style="fill:#b392f0">hub-signed, sealed</text>
+          <text x="620" y="232" text-anchor="middle" class="t-m">Example: a shared space "Launch Product X" with Company B's agency; each hub admin approves the link and what crosses it</text>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ============ COMPARE ============ -->
+  <section>
+    <h2>What changes against the v2 spec today</h2>
+    <div class="compare">
+      <div class="card">
+        <span class="chip">Today (orch-v2.md)</span>
+        <ul>
+          <li>Each workspace host dials <b>orch-relay</b> itself (ws→ws mailboxes, push, drop).</li>
+          <li>Each workspace signs its own requests to <b>orch-publish</b> with its <span class="mono">WSK</span>.</li>
+          <li>The relay's <b>directory</b> holds accounts, devices, cards, memberships.</li>
+          <li>A person adds each workspace to the phone separately (QR per workspace).</li>
+          <li>Admin work lives nowhere yet; the enterprise picture has a separate <b>admin console</b> on the edge.</li>
+          <li>Shared spaces are a Drop space kind on the relay, key <span class="mono">SK</span>.</li>
+        </ul>
+      </div>
+      <div class="card" style="border-color:rgba(47,198,163,.45)">
+        <span class="chip brand">Proposed (hub)</span>
+        <ul>
+          <li>Workspaces talk <b>only to the hub</b>. The hub, its own component, holds the one relay link and the one publish link.</li>
+          <li>Publish trusts the hub; the hub forwards a release only with the signature of a workspace admin on it.</li>
+          <li>The <b>hub holds the users and groups</b> (local, or synced from Entra ID) and the workspace cards. The relay keeps only routing ids.</li>
+          <li>Access is <b>per group per workspace</b>: <span class="mono">read</span>, <span class="mono">edit</span> or <span class="mono">admin</span>. Workspace admin replaces "owner". <span class="mono">hub-admin</span> manages every workspace.</li>
+          <li>People reach orch through <b>channels on the hub</b>: phone today, later Slack and others. The QR scan pairs with the hub, once.</li>
+          <li>The hub <b>holds each user's signing key</b>, bound to that user. A decision from any channel is signed by the hub for that user.</li>
+          <li>The <b>admin console is part of the hub</b>.</li>
+          <li>Shared spaces live on the hub; the hub can read them (option B), never the workspaces' own data.</li>
+          <li>Without a hub, a workspace is <b>local only</b>: no phone, no publish, no links to other workspaces.</li>
+          <li><b>One hub per company</b>; companies or subsidiaries link hub to hub through a relay.</li>
+          <li><b>Selective join</b> for personal workspaces: the hub never gets the workspace key and sees only items the owner shares.</li>
+          <li>Every signature needs a <b>fresh tap</b> on the phone or a passkey; sessions and Slack only show and route.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CONTROL PANEL MOCK ============ -->
+  <section>
+    <h2>What a person sees in the hub</h2>
+    <p class="sub">Example: Anna can open three workspaces. She signs in once and works across them; an admin sees the same app
+      with an extra Admin section.</p>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-view="member">Anna (member)</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="admin">Admin</button>
+    </div>
+
+    <div class="card app">
+      <aside class="side">
+        <div class="brandrow">
+          <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="20" fill="none" stroke="#e8eaed" stroke-width="6"/><circle cx="32" cy="32" r="6" fill="#2fc6a3"/><circle cx="47" cy="17" r="7" fill="#2fc6a3" stroke="#0a0c0f" stroke-width="3"/></svg>
+          orch <small>hub</small>
+        </div>
+        <div class="nav on" data-nav="member">Home <span class="badge">4</span></div>
+        <div class="nav-h">My workspaces</div>
+        <div class="nav"><span class="dot" style="background:#60a5fa"></span>Product</div>
+        <div class="nav"><span class="dot" style="background:#2fc6a3"></span>Marketing <span class="badge">3</span></div>
+        <div class="nav"><span class="dot" style="background:#b392f0"></span>Anna / personal <span class="badge">1</span></div>
+        <div class="nav-h">Shared spaces</div>
+        <div class="nav"><span class="dot" style="background:transparent;border:1.5px dashed #2fc6a3"></span>Launch Product X</div>
+        <div class="admin-only" hidden>
+          <div class="nav-h">Admin</div>
+          <div class="nav on">Access</div>
+          <div class="nav">Workspaces</div>
+          <div class="nav">Skills &amp; secrets</div>
+          <div class="nav">Links &amp; share rules</div>
+          <div class="nav">Relay &amp; publish</div>
+          <div class="nav">Audit log</div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <!-- member view -->
+        <div data-panel="member">
+          <h2>Good morning, Anna</h2>
+          <p class="sub" style="margin:0">Signed in to the hub · groups: product-edit, marketing-admin · 3 workspaces · this Mac and iPhone</p>
+          <div class="grid3">
+            <div class="ws"><div class="top"><span class="dot" style="background:#60a5fa"></span><h3>Product</h3><span class="chip role">edit</span></div>
+              <div class="meta">12 open tickets · 2 agents running</div><div class="open">Open Mission Control →</div></div>
+            <div class="ws"><div class="top"><span class="dot" style="background:#2fc6a3"></span><h3>Marketing</h3><span class="chip brand role">admin</span></div>
+              <div class="meta">3 need you · 1 handoff waiting</div><div class="open">Open Mission Control →</div></div>
+            <div class="ws"><div class="top"><span class="dot" style="background:#b392f0"></span><h3>Anna / personal</h3><span class="chip brand role">admin</span></div>
+              <div class="meta">1 question from an agent</div><div class="open">Open Mission Control →</div></div>
+          </div>
+          <h3 style="margin-bottom:8px">Needs you, across all workspaces</h3>
+          <div class="feed">
+            <div class="row"><span class="src">Marketing</span>Handoff from Product: "Launch Product X" campaign <span class="act">Accept</span></div>
+            <div class="row"><span class="src">Marketing</span>Agent asks: use the Q4 brand palette for the renders? <span class="act">Answer</span></div>
+            <div class="row"><span class="src">Marketing</span>Approve plan: launch email sequence (3 mails) <span class="act">Review</span></div>
+            <div class="row"><span class="src">personal</span>Agent asks: move Friday 1:1 to 14:00? <span class="act">Answer</span></div>
+          </div>
+        </div>
+
+        <!-- admin view -->
+        <div data-panel="admin" hidden>
+          <h2>Access</h2>
+          <p class="sub" style="margin:0 0 12px">Step 1: each workspace grants roles to groups. Step 2 (below): people go into groups. Nobody gets a
+            workspace role directly. Members of the <span class="mono">hub-admin</span> group manage every full-mode workspace; a selective workspace (Anna / personal) only accepts its owner. Groups live on the hub
+            for now; Entra ID sync comes later.</p>
+          <div class="tablewrap">
+            <table class="matrix">
+              <thead><tr><th>Group</th><th>Product</th><th>Marketing</th><th>Legal</th><th>Anna / personal</th><th>Members</th></tr></thead>
+              <tbody>
+                <tr><td>hub-admin</td><td class="r-owner">admin</td><td class="r-owner">admin</td><td class="r-owner">admin</td><td class="r-none">— (selective)</td><td class="c">2 · hub</td></tr>
+                <tr><td>product-edit</td><td class="r-member">edit</td><td class="r-none">—</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">8 · hub</td></tr>
+                <tr><td>product-admin</td><td class="r-owner">admin</td><td class="r-none">—</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">2 · hub</td></tr>
+                <tr><td>marketing-read</td><td class="r-view">read</td><td class="r-view">read</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">14 · hub</td></tr>
+                <tr><td>marketing-edit</td><td class="r-none">—</td><td class="r-member">edit</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">5 · hub</td></tr>
+                <tr><td>marketing-admin</td><td class="r-none">—</td><td class="r-owner">admin</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">1 · hub</td></tr>
+                <tr><td>legal-edit</td><td class="r-none">—</td><td class="r-none">—</td><td class="r-member">edit</td><td class="r-none">—</td><td class="c">3 · hub</td></tr>
+                <tr><td>anna (personal)</td><td class="r-none">—</td><td class="r-none">—</td><td class="r-none">—</td><td class="r-owner">admin</td><td class="c">1 · fixed</td></tr>
+                <tr><td>agent: launch-bot</td><td class="r-agent">shared space</td><td class="r-agent">shared space</td><td class="r-none">—</td><td class="r-none">—</td><td class="c">scoped, 7 d</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mini" style="margin-top:12px"><h3>Roles</h3>
+            <div class="kv"><span class="mono">read</span> <b>see tickets, docs, shared spaces</b></div>
+            <div class="kv"><span class="mono">edit</span> <b>work: tickets, agents, answers, handoffs</b></div>
+            <div class="kv"><span class="mono">admin</span> <b>skills, settings, links, releases, approvals (today's "owner")</b></div>
+          </div>
+          <h3 style="margin:16px 0 8px">Groups → people</h3>
+          <div class="tablewrap">
+            <table class="matrix">
+              <thead><tr><th>Person</th><th>Groups</th><th>Channels</th><th>Source</th></tr></thead>
+              <tbody>
+                <tr><td>Anna Keller</td><td class="c">product-edit · marketing-admin · anna</td><td class="c">iPhone · Slack · browser</td><td class="c">hub</td></tr>
+                <tr><td>Jonas Weber</td><td class="c">product-admin · marketing-read</td><td class="c">browser</td><td class="c">hub</td></tr>
+                <tr><td>Mia Roth</td><td class="c">marketing-edit · marketing-read</td><td class="c">iPhone</td><td class="c">hub</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="admingrid">
+            <div class="mini"><h3>Sign-in</h3>
+              <div class="kv">Provider <b>hub accounts (Entra ID later)</b></div>
+              <div class="kv">Protocol <b>OIDC</b></div>
+              <div class="kv">Group sync <b>every 15 min</b></div>
+              <div class="kv">Dev certificates <b style="color:var(--danger)">refused</b></div></div>
+            <div class="mini"><h3>Skills &amp; secrets</h3>
+              <div class="kv">Skill catalog <b>14 signed</b></div>
+              <div class="kv">Jira service principal <b>Product, Marketing</b></div>
+              <div class="kv">Graph (Outlook) <b>Marketing, Legal</b></div>
+              <div class="kv">Delivery <b>sealed to workspace key</b></div></div>
+            <div class="mini"><h3>Edge</h3>
+              <div class="kv">orch-relay <b style="color:var(--brand)">connected</b></div>
+              <div class="kv">orch-publish <b style="color:var(--brand)">connected</b></div>
+              <div class="kv">Workspaces direct to edge <b>blocked</b></div>
+              <div class="kv">Releases this week <b>2</b></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TRUST ============ -->
+  <section>
+    <h2>What can the hub read? Decided: trusted hub, selective join for personal workspaces</h2>
+    <p class="sub">The hub becomes the most valuable box in the company. How much it can read decides how bad a break-in, or a
+      careless admin, would be. Three ways to cut it:</p>
+    <div class="card" style="padding:16px 18px;margin-bottom:14px;border-color:rgba(251,191,36,.45)">
+      <span class="chip warn">Consequence of decisions 1 + 2</span>
+      <p style="margin:10px 0 0;color:var(--text-muted)">The hub holds every user's signing key, and hub admins manage every workspace. So the hub can act as any
+        user, and through a user with read access it can open that workspace. Workspace data is still sealed in storage and on the wire, but the
+        hub is a <b style="color:var(--text)">trusted operator</b>, like Okta or Slack in a company, not a blind relay. The edge relay stays blind.
+        What to protect: the hub server, its key store (HSM / keychain) and the hub-admin group; every action the hub signs goes in an audit log
+        the workspace can check.</p>
+    </div>
+    <div class="opts" style="margin-bottom:14px">
+      <div class="card opt rec">
+        <span class="chip brand">Full mode · team workspaces</span>
+        <h3>Hub is a member</h3>
+        <p>The workspace seals its key to the hub. The hub renders content for phone and browser and signs for users. Hub admins manage it.</p>
+      </div>
+      <div class="card opt rec">
+        <span class="chip brand">Selective mode · personal (D80)</span>
+        <h3>Hub sees only what you share</h3>
+        <p>No workspace key for the hub. The owner picks ticket types, single tickets or tags; default is only needs-you summaries. Only the owner, at the workspace's terminal, can switch to full mode. Hub admins get no role.</p>
+      </div>
+      <div class="card opt">
+        <span class="chip violet">Signing (D72, D81)</span>
+        <h3>A fresh tap for every signature</h3>
+        <p>The hub holds the user's key, but signs only after a tap on the phone (Secure Enclave) or a browser passkey. Local Mission Control and Slack hand off to that tap.</p>
+      </div>
+    </div>
+    <div class="card" style="padding:16px 18px;margin-bottom:14px">
+      <span class="chip">Safety nets from the Opus review</span>
+      <ul style="margin:10px 0 0;padding-left:18px;color:var(--text-muted)">
+        <li>The hub signs only events it builds itself, bound to one workspace; a workspace host can never ask the hub to sign.</li>
+        <li>Two-level hub key: an offline root certifies the online key, which can be revoked and replaced without re-pinning.</li>
+        <li>Each workspace owner keeps an emergency key: leave the hub, rotate; pointing at a rebuilt hub needs the recovery code.</li>
+        <li>Publish accepts the hub only with a binding signed by the workspace itself.</li>
+        <li>Hash-chained audit log that every workspace confirms on sync.</li>
+      </ul>
+    </div>
+    <p class="sub">The three options considered:</p>
+    <div class="opts">
+      <div class="card opt">
+        <span class="chip">A · blind hub</span>
+        <h3>Routes and manages, reads nothing</h3>
+        <p>Like the relay today, but inside the company: access, directory, routing, policy. Content stays sealed between workspaces.</p>
+        <div class="pro">Keeps the E2E promise and the current protocol</div>
+        <div class="con">No hub agents over shared context; shared spaces need their own key holders</div>
+      </div>
+      <div class="card opt rec">
+        <span class="chip brand">B · decided 22 Oct</span>
+        <h3>Blind for workspaces, member of shared spaces</h3>
+        <p>Workspace-to-workspace traffic stays sealed. The hub holds keys only for the shared spaces it hosts and for its own
+          admin data, so it can run agents on what teams chose to share. Each shared space shows "hub can read" on its card.</p>
+        <div class="pro">Context in shared spaces is usable; private workspace data stays private</div>
+        <div class="con">A hub break-in exposes every shared space; needs a spec amendment for shared-space keys</div>
+      </div>
+      <div class="card opt">
+        <span class="chip warn">C · trusted hub</span>
+        <h3>Hub holds every workspace key</h3>
+        <p>Full management platform: the hub can read, search and act in all workspaces.</p>
+        <div class="pro">Simplest admin story, cross-company search</div>
+        <div class="con">Ends E2E between workspaces; reopens D2/D3 (keys only in each host)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ OPEN ============ -->
+  <section>
+    <h2>Decided 22 Oct</h2>
+    <ol class="qs">
+      <li><b>Names:</b> orch workspace (runs orch core), orch hub, orch-relay, orch-publish.</li>
+      <li><b>What the hub reads:</b> B. Workspace traffic stays sealed end to end; the hub can read the shared spaces it hosts.</li>
+      <li><b>Component:</b> the hub is its own component, not a workspace with an add-on.</li>
+      <li><b>Access:</b> groups per workspace with read / edit / admin; people are added to groups on the hub. Admin = today's owner.</li>
+      <li><b>Hub admin:</b> members of the hub-admin group manage every full-mode workspace (for now).</li>
+      <li><b>Signatures:</b> the hub holds each user's signing key, bound to that user, and signs for them.</li>
+      <li><b>Entra ID:</b> not now, a must later. Groups live on the hub; later they sync.</li>
+      <li><b>Channels:</b> phone, later Slack and others, all through the hub. The QR scan pairs with the hub.</li>
+      <li><b>Solo:</b> without a hub, no phone and no publish.</li>
+      <li><b>Several hubs:</b> one per company; hub to hub through a relay, also between subsidiaries. No direct access to another company's workspaces.</li>
+      <li><b>Hub down:</b> workspaces keep working locally; phone, publish and handoffs wait. No second instance needed.</li>
+      <li><b>Standalone (D79):</b> orch core always works alone; the hub is never a dependency.</li>
+      <li><b>Selective join (D80):</b> personal workspaces may join and choose what to share.</li>
+      <li><b>Local Mission Control (D81):</b> hands signing to the phone or a passkey.</li>
+      <li><b>Hub agents:</b> later.</li>
+    </ol>
+    <h2 style="margin-top:28px">Still open (not blocking)</h2>
+    <ol class="qs">
+      <li><b>Workspace veto</b> on hub-admin grants, before the first real company.</li>
+      <li><b>Small-team hub</b> on the same machine as the workspaces, or always a separate host?</li>
+    </ol>
+    <h2 style="margin-top:28px">Build order</h2>
+    <ol class="qs">
+      <li><b>H0</b> protocol contract + test vectors (new repo orch-hub) · <b>H1</b> hub skeleton, users, groups, admin console · <b>H2</b> join / leave, signature checks in core</li>
+      <li><b>H3</b> router + shared spaces · <b>H4</b> browser home · <b>H5</b> relay + phone through the hub · <b>H6</b> publish through the hub · <b>H7</b> hub to hub</li>
+      <li>Later: Entra ID sign-in and group sync, Slack, hub agents. Every step keeps the standalone core green.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    const v = t.dataset.view;
+    tabs.forEach(x => x.setAttribute('aria-selected', String(x === t)));
+    document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== v);
+    document.querySelector('.admin-only').hidden = v !== 'admin';
+    document.querySelector('[data-nav="member"]').classList.toggle('on', v === 'member');
+  }));
+  if (location.hash === '#admin') document.querySelector('[data-view="admin"]').click();
+</script>
+</body>
+</html>

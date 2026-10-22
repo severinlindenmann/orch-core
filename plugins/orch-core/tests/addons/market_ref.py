@@ -141,14 +141,28 @@ def _py_requirement_ok(req: str) -> bool:
     return r.url is None and len(specs) == 1 and specs[0].operator == "==" and "*" not in specs[0].version
 
 
-def _node_entry_ok(p: Any) -> bool:
-    if not isinstance(p, dict) or p.get("link"):
+_NPM_NAME = r"(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*"
+_NODE_KEY = re.compile(rf"node_modules/{_NPM_NAME}(?:/node_modules/{_NPM_NAME})*")
+_NODE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]{1,40})?(?:\+[0-9A-Za-z.-]{1,40})?")
+_SHA512 = re.compile(r"sha512-[A-Za-z0-9+/]{86}==")
+
+
+def _node_entry_ok(key: str, p: Any) -> bool:
+    """A locked package: the key is a plain ``node_modules/…`` chain of package names, ``version`` is a version, the
+    tarball URL is exactly the registry's URL for that name and version (so what the review shows is what installs),
+    and ``integrity`` is exactly one full sha512 digest."""
+    if not isinstance(p, dict) or p.get("link") or _NODE_KEY.fullmatch(key) is None:
         return False
-    resolved, integrity = p.get("resolved"), p.get("integrity")
-    if not isinstance(resolved, str) or not isinstance(integrity, str) or not integrity.startswith("sha512-"):
+    name = key.rsplit("node_modules/", 1)[1]
+    version, resolved, integrity = p.get("version"), p.get("resolved"), p.get("integrity")
+    if not isinstance(version, str) or not _NODE_VERSION.fullmatch(version):
         return False
-    m = re.fullmatch(r"https://([a-z0-9.-]+)/[A-Za-z0-9@._~/-]+", resolved)
-    return m is not None and m[1] in NODE_HOSTS
+    base = name.rsplit("/", 1)[-1]
+    return (
+        resolved in [f"https://{h}/{name}/-/{base}-{version}.tgz" for h in NODE_HOSTS]
+        and isinstance(integrity, str)
+        and _SHA512.fullmatch(integrity) is not None
+    )
 
 
 def check_lock(kind: str, text: str) -> None:
@@ -168,7 +182,13 @@ def check_lock(kind: str, text: str) -> None:
             lock = json.loads(text, object_pairs_hook=_strict_pairs)
             pkgs = lock["packages"]
             root = pkgs[""]
-            ok = lock["lockfileVersion"] == 3 and isinstance(pkgs, dict) and len(pkgs) > 1 and isinstance(root, dict)
+            ok = (
+                type(lock["lockfileVersion"]) is int
+                and lock["lockfileVersion"] == 3
+                and isinstance(pkgs, dict)
+                and len(pkgs) > 1
+                and isinstance(root, dict)
+            )
             # the root entry is the add-on itself: it is not fetched, so it must not claim a source or a link,
             # and everything it depends on must be a locked entry
             ok = ok and not ({"resolved", "integrity", "link", "inBundle"} & set(root))
@@ -177,7 +197,7 @@ def check_lock(kind: str, text: str) -> None:
                     ok = ok and f"node_modules/{dep}" in pkgs
             for key, p in pkgs.items():
                 if key != "":
-                    ok = ok and key.startswith("node_modules/") and _node_entry_ok(p)
+                    ok = ok and _node_entry_ok(key, p)
         except (ValueError, KeyError, TypeError, AttributeError):
             ok = False
         if not ok:

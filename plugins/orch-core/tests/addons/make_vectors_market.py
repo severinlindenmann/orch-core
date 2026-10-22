@@ -557,7 +557,11 @@ def build() -> None:
 
     # ---- fixed from automated review (22 Oct): scripts, markers, replay and rollback, network targets
     ni = lambda pkgs, root=None: json.dumps({"lockfileVersion": 3, "packages": {"": root or {}, **pkgs}})  # noqa: E731
-    good = {"resolved": "https://registry.npmjs.org/x/-/x-1.0.0.tgz", "integrity": "sha512-" + "A" * 86 + "=="}
+    good = {
+        "version": "1.0.0",
+        "resolved": "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
+        "integrity": "sha512-" + "A" * 86 + "==",
+    }
     add(
         "lock_node_install_script_flag_is_not_judged",
         "lock",
@@ -758,6 +762,99 @@ def build() -> None:
         add("address_refused_" + name, "address", {"ip": ip}, refuse("address_refused"))
     add("address_public_v4", "address", {"ip": "93.184.216.34"}, ok())
     add("address_public_v6", "address", {"ip": "2606:4700:4700::1111"}, ok())
+
+    # ---- L2M-6: node lock entries are bound to their key and pinned by a full digest
+    def nl(key: str, **ov: Any) -> dict[str, Any]:
+        name = key.rsplit("node_modules/", 1)[-1]
+        e = {
+            "version": "1.0.0",
+            "resolved": f"https://registry.npmjs.org/{name}/-/{name.rsplit('/', 1)[-1]}-1.0.0.tgz",
+            "integrity": "sha512-" + "A" * 86 + "==",
+        }
+        return {key: {**e, **ov}}
+
+    nk = "node_modules/"
+    add(
+        "lock_node_scoped_and_nested_ok",
+        "lock",
+        {"kind": "node-package-lock", "text": ni({**nl(nk + "@types/node"), **nl(nk + "a/" + nk + "b")})},
+        ok(),
+    )
+    add(
+        "lock_node_key_traversal",
+        "lock",
+        {"kind": "node-package-lock", "text": ni(nl(nk + "../../../escape"))},
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_key_empty_segment",
+        "lock",
+        {"kind": "node-package-lock", "text": ni({nk + "/etc": nl("x")["x"]})},
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_key_not_under_node_modules",
+        "lock",
+        {"kind": "node-package-lock", "text": ni(nl("packages/evil"))},
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_resolved_names_another_package",
+        "lock",
+        {
+            "kind": "node-package-lock",
+            "text": ni(nl(nk + "lodash", resolved="https://registry.npmjs.org/evil-pkg/-/evil-pkg-6.6.6.tgz")),
+        },
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_resolved_other_version",
+        "lock",
+        {
+            "kind": "node-package-lock",
+            "text": ni(nl(nk + "lodash", resolved="https://registry.npmjs.org/lodash/-/lodash-0.9.9.tgz")),
+        },
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_resolved_dot_dot",
+        "lock",
+        {
+            "kind": "node-package-lock",
+            "text": ni(nl(nk + "a", resolved="https://registry.npmjs.org/../evil/-/a-1.0.0.tgz")),
+        },
+        refuse("lock_invalid"),
+    )
+    add(
+        "lock_node_no_version",
+        "lock",
+        {
+            "kind": "node-package-lock",
+            "text": ni({nk + "a": {k: v for k, v in nl(nk + "a")[nk + "a"].items() if k != "version"}}),
+        },
+        refuse("lock_invalid"),
+    )
+    for nm, integ in (
+        ("empty", "sha512-"),
+        ("short", "sha512-AAAA"),
+        ("two_hashes", "sha512-" + "A" * 86 + "== sha1-AAAA"),
+        ("sha1_only", "sha1-" + "A" * 27 + "="),
+    ):
+        add(
+            "lock_node_integrity_" + nm,
+            "lock",
+            {"kind": "node-package-lock", "text": ni(nl(nk + "b", integrity=integ))},
+            refuse("lock_invalid"),
+        )
+    add(
+        "lock_node_lockfile_version_float",
+        "lock",
+        {
+            "kind": "node-package-lock",
+            "text": ni(nl(nk + "b")).replace('"lockfileVersion": 3', '"lockfileVersion": 3.0'),
+        },
+        refuse("lock_invalid"),
+    )
 
 
 if __name__ == "__main__":

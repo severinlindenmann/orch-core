@@ -437,6 +437,7 @@ A custodial event is a ticket-format §5.1 person event with:
 | `uk_cert` | the signed `hub.uk_cert` |
 | `channel_proof` | b64u, the channel key's signature (§8.2) |
 | `sig` | b64u, the `UK` signature (§8.2) |
+| `item_hash` | **selective mode only** (C3b addendum): the `item_hash` (§10.2b) of the shared item the event was built on (§8.6); absent in full mode. Under both signatures like every other field |
 
 and the event type's own payload, `id`, `type`, `based_on`, `roster_v`, `hash_v` (and `gate_gen` on decisions) exactly
 as ticket-format §5.1–§5.4. **DECIDED HERE:** the spec's "`workspace_id`" field is not repeated in the event; it is in
@@ -470,7 +471,11 @@ host↔hub link has no operation that asks the hub to sign (§10).
 
 1. shape: `auth == "hub"`, every field of §8.1 present, `type` in the custodial grammar, `actor` exactly
    `{kind: "person", id: "u_<32 hex>", via}` with `via == channel`, `channel_factor` in the closed list, no host
-   fields → `malformed`;
+   fields, `item_hash` (a hash) present exactly in selective mode → `malformed`; selective mode: `type` one of the
+   four decisions of §8.6 and `log` a ticket → else `not_custodial`, a `question.answered` without `option` → else
+   `malformed`; a `log` key in the event body (the log is the signed context's) → `malformed`; for a `(type, log)` of the §8.5
+   table, the envelope and payload are exactly the event side of §8.5 ("The event side") → `malformed` (reference
+   `check_custodial_payload`, vectors `custodial_event_*`);
 2. `hub_id` is the hub this workspace is bound to → `other_hub`;
 3. `uk_cert` verifies under the held card (§6.1: `bad_signature`, `other_hub`, `stale_op_cert`, `dev_*`, `cert_*`), and
    names the actor's user → `other_user`. The held card was verified through the pinned `HK_root` with the revoked op
@@ -480,9 +485,22 @@ host↔hub link has no operation that asks the hub to sign (§10).
 5. `sig` under `uk_pub` with the custodial label of `type` → `bad_signature`;
 6. `channel_proof` under the channel certificate's `key_pub` over `digest` → `bad_channel_proof`;
 7. snapshot: `snapshot_version` greater than the newest snapshot the host holds → `unknown_snapshot` (the host syncs
-   and retries); `channel` in that snapshot's `revoked_channels` → `channel_revoked`; full mode: the user has a role in
+   and retries); (C3b) the user id belongs to this hub in this workspace (§9.1) → `foreign_user`, checked only after
+   the certificates so an unauthenticated event learns nothing of the id map; `channel` in that snapshot's
+   `revoked_channels` → `channel_revoked`; full mode: the user has a role in
    it → else `forbidden_role` (which verbs each role may use is the role table of spec D70, applied after this);
-   selective mode: the user is explicitly granted by the owner → else `not_granted`, and the item is shared (C6);
+   selective mode: the user is explicitly granted by the owner → else `not_granted`, and **the item check at
+   admission** (§8.6, core §15.7), in order: (i) `item_hash` is the current hash of a live item the host shared → an
+   earlier version of a live item is `event_changed` (a re-put raced the decision; the person may sign again), else
+   `not_granted`; (ii) that item's `chain.log` is the event's log, and the decision's target is in that item's `f1`
+   (`gates[gate]`, `gates.verify` for `verdict.given`, `questions[question]`) → else `not_granted` (a question item
+   never admits a gate decision); the event carries exactly that item's values: `hash` = the entry's `hash`, on gate
+   decisions `gate_gen` = `gen`, `policy_hash` = `policy_hash` and (where present) `source_sha` = `source_sha`, and
+   always `based_on` = `chain.head` and `roster_v` = `f1.roster_v` → else `event_changed` (vectors
+   `custodial_selective_value_*_differs`); (iii) `chain.head` is the head of `chain.log` at `chain.seq` in the host's own log
+   → else `view_fork`. Reference inputs: `live_items = {item_hash: {chain, f1}}` (current versions),
+   `superseded_items` (earlier hashes of live items), `log_heads = {log: [head of seq 1, …]}`; vectors
+   `custodial_selective_*` use the real `share_item_f1` item;
    7b. (p4) the event's `(type, log)` is in the custodial table of §8.5 → else `not_custodial`; the user's role
    reaches the type's lowest role → else `forbidden_role`. **Selective mode (L2P4-1):** there is no hub role; the
    floor is the F1 member role of the user's canonical person (its alias to a member `p_`, §9.1) mapped `owner` →
@@ -606,6 +624,82 @@ head of its view), `roster_v`, `gate_gen`, `policy_hash`, `source_sha`, `qid` an
 check: shape and `log` → `malformed`; type listed → `not_custodial`; role → `forbidden_role`; fields → `malformed`
 (reference `check_action`; vectors `action_*`).
 
+**The event side (C3b addendum, L2-C3-1).** A custodial event's payload is **exactly** the action's fields (same
+nested schemas, same text rule) plus the fields the hub derives, nothing else at any depth; the envelope is `v: 2`,
+`id` (a ULID), `type`, `actor`, `based_on` (a hash; `null` exactly on `ticket.created`), `roster_v` (integer ≥ 0),
+`hash_v: 1`, then the §8.1 custodial fields (and `item_hash` in selective mode). The derived payload fields per type:
+
+| Type | Derived by the hub (from its view, §10.7, or the shared item, §8.6) |
+|---|---|
+| `ticket.created` | `key` (the host's `next_key`), `owner` (`u_` + the signer's user id); `based_on: null`; the log is the new uid |
+| `ticket.updated` | `base_rev`: **an object** `{path: value hash}` whose keys are **exactly** the keys of `set` (ticket-format §5.8, value hash §5.6). Never a single hash string |
+| `status.changed`, `ticket.moved` | `from` (the current status, status list) |
+| `question.asked` | `question.id` (`Q<n>`), `qid` (32 hex), `hash` (question hash) |
+| `gate.approved` | `gate_gen` (integer ≥ 0), `policy_hash`; `source_sha` (the source list `[{repo, ref, sha}]`, sorted by `repo`) **only and always** on `gate: "code"` |
+| `gate.changes_requested` | `gate_gen`, `policy_hash` (no `source_sha`) |
+| `verdict.given` | `gate_gen`, `policy_hash`, `source_sha` (always) |
+| every other type | nothing (`ticket.submitted`, `ticket.closed`, `ticket.reopened`, `claim.released`, `log.added`, `handoff.written`, `question.answered`, `visibility.changed`, `people.changed`, `addon.*`) |
+
+The host runs this check in §8.3 step 1, before any certificate or signature (reference `check_custodial_payload`;
+it maps the event back to its action and runs `check_action`), so a buggy or compromised hub cannot plant a field a
+local person event could carry (a `sections` edit, a `ticket.tasks` `verify.cmd`, a question `sig`). Vectors: one
+valid signed event per custodial type (`custodial_event_<type>`, the payload exactly as the hub builds it) and the
+smuggling cases `custodial_event_base_rev_*`, `…_ticket_updated_with_sections`, `…_set_of_ticket_tasks`,
+`…_question_with_sig`, `…_gate_payload_under_people_changed`, … (all `malformed`).
+
+### 8.6 Selective custodial events (C3b addendum; D9 hub, C6 core)
+
+A selective hub holds no `WK_e` view (§10.7 is full mode only). It builds a custodial event from **one shared item**
+(§10.2b) that carries an `f1` block, and only for these types (reference `SELECTIVE_TYPES`): `question.answered`,
+`gate.approved`, `gate.changes_requested`, `verdict.given`, on the ticket log of the item. Every other type is
+`not_custodial` in selective mode (nothing on the workspace log, nothing that needs the ticket's own fields).
+
+- **The action** is the §8.5 action plus `item` (the `item_id`, 32 hex): `{type, log, item, <fields>}`. `item` in a
+  full-mode action is `malformed`. In V3 a selective `question.answered` carries `text` only: question options are not
+  shared, so an `option` is `malformed` (the person cannot have seen them).
+- **Who.** Only the hub user the admin aliased as the workspace owner reads selective items (§10.2b), so only that
+  user prepares (`not_granted` otherwise). The host checks the real grant and member role (core §15.7, §8.3 step 7).
+- **Build** (reference `build_selective`, vectors `selective_build_*`), on the live item the hub holds under `item`:
+  1. the action's shape, the type in the selective list (`not_custodial`), `check_action` with the `edit` floor;
+  2. the item is held, live (not revoked) and its `chain.log` is the action's `log` → else `unknown_item`; the item
+     has an `f1` block → else `unavailable` (the host shared it without one);
+  3. a question answer: `f1.questions[question]` exists → else `unknown_item`; its `hash` equals `action.hash` →
+     else `event_changed`. A gate decision: `f1.gates[gate]` (`verify` for `verdict.given`) exists → else
+     `unknown_item`; its `hash` equals `action.hash` → else `event_changed`;
+  4. the event core: `based_on = chain.head`, `roster_v = f1.roster_v`, `hash_v: 1`, `item_hash` = the item's
+     §10.2b hash, and per type the fields of §8.5's event side from the `f1` entry (`gate_gen = gen`,
+     `policy_hash`, `source_sha` on a `code` approval and on a verdict); every other field is the action's;
+  5. `check_built` (§8.4), then the custodial fields, prepare, proof and sign exactly as §8.4, with the workspace's
+     snapshot (§7). `sign` rebuilds from the item held **then**: a newer `item_version` (another hash) is
+     `event_changed`, a revoked item `unknown_item`.
+- **What binds what.** `item_hash` is under both signatures (§8.1), and it covers the whole signed item including
+  `f1`, so the proof binds exactly the values the person was shown. The host admits the event only while that hash is
+  the current hash of a live item it shared, of the event's log, with a matching chain head (core §15.7:
+  `not_granted`, `view_fork`), and then runs every F1 rule against its own log (§8.3 step 9): a stale `f1` value is
+  refused there (`event_changed` in the reply, §8.7).
+
+### 8.7 Delivery and acknowledgement (`event_deliver`, C3b addendum, L2-C3-4)
+
+The hub delivers each signed custodial event with `event_deliver` (§10.2) and keeps it (persisted) until the host's
+reply decides it. The host's reply is a signed w2h reply; its body decides (reference `deliver_next`, vectors
+`deliver_*`):
+
+| Reply | The hub |
+|---|---|
+| `{}` | **done**. Also the reply to a duplicate: the host dedups by event `id` before it verifies anything (core §15.5 step 2) |
+| `{"error": "unavailable"}`, `{"error": "unknown_snapshot"}` | **resend** |
+| no reply (link drop, timeout), or a body that is neither `{}` nor `{"error": <string>}` | **resend** (not provably refused) |
+| `{"error": <any other code>}` (`malformed`, `not_bound`, `wrong_mode`, `replay`, `event_changed`, `forbidden_role`, `not_granted`, `foreign_user`, `channel_revoked`, `not_custodial`, `factor_too_weak`, `view_fork`, `internal`, …) | **final**: drop it and tell the channel the code; on `event_changed` the person may prepare and sign again |
+
+- **Resend** means the **same event bytes** (same `id`, same signatures), never a rebuilt or re-signed event; only
+  that makes the host's dedup by `id` safe.
+- **Backoff:** attempt `n` (1, 2, …) is followed by a wait of `min(1 s · 2^(n−1), 5 min)`; a resend after a link drop
+  goes out on the next link, still under that wait. At most 24 h after the first send the event is dropped and the
+  channel told the last code (`unavailable` for no reply).
+- One event in flight per link (§10.2); later events wait behind it in delivery order.
+- The host replies `unavailable` only when it cannot decide now (lock timeout, `freeze.active`, a snapshot it could
+  not fetch), never for a refusal on the event's content, so a resend can never turn a refusal into an admission.
+
 ## 9. Join, binding, leave
 
 ### 9.1 `hub.joined` and `hub.left` (workspace log)
@@ -625,6 +719,14 @@ verbs at the host terminal (`orch hub join`, `orch hub leave`); never an agent, 
   join only` (C4): an alias exists only inside `hub.joined`, under the owner's signature. **An alias is never
   re-pointed:** a `person_id` already aliased to another `user_id`, or a `user_id` already aliased to another
   `person_id`, in any earlier `hub.joined` of this workspace → `alias_repointed`.
+- **A `u_` id belongs to the hub under which it first appeared in the workspace** (C3b, L2P4-C1, L2-C3-2): as the
+  actor of an admitted custodial event, as a `u_` reference in a person event's payload (under the hub joined at that
+  position) or as an alias in a `hub.joined`. The workspace keeps that record for good (core `user_hub`, never
+  re-pointed). **A hub must never present another hub's user id**: it issues `uk_cert`s only for its own users and
+  never builds, signs or delivers an event whose actor is a user id another hub owns in that workspace. The host
+  refuses one with `foreign_user` (§8.3 step 7), unless this hub's own alias book names the id for the same person as
+  every other book that names it (C4: one person may keep one id on two hubs). Reference `check_user_hub`, vectors
+  `user_id_*`, `unaliased_user_id_first_recorded_under_another_hub`, `same_person_aliased_on_both_hubs`.
 - Full mode also adds the member of kind `hub` to the `WSK`-signed member list and seals `WK_e` to `HXK` over the link
   (`wk_seal`, C2b, phase 3). Selective mode adds no member and seals nothing (D80).
 - **Mode switch.** Selective → full is a new `hub.joined` with `mode: "full"` and a higher `binding_seq`, by the owner
@@ -803,7 +905,7 @@ The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, 
 
 ```
 share.item {v, suite, kind: "share.item", hv, hub_id, workspace_id, item_id, item_kind: "needs_you" | "ticket" | "question",
-            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, dev}
+            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, f1?, dev}
             signed by the workspace's WSK, label sig_share_item
 IK        = 32 fresh random bytes per put
 wrap      = seal_to(HXK, purpose "hub-share", recipient id hub_id, object_id item_id, epoch item_version,
@@ -828,7 +930,27 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   shared item comes back** (selective mode, C6), the event carries the `item_hash` inside its signed payload (so the
   channel proof binds it), and the host checks before §8.3 step 9: the hash is of an item it shared and has not
   revoked (`not_granted` otherwise), and `chain.head` is the head of `chain.log` at `chain.seq` in its own log (else
-  `view_fork`: the hub or the link changed the item). The exact field name in the event comes with C6's event types.
+  `view_fork`: the hub or the link changed the item). The field in the event is `item_hash` (§8.1, §8.6).
+- **The `f1` block (C3b addendum, optional, additive).** The F1 values a selective custodial build needs that the item
+  does not already carry (`based_on` is `chain.head`). Filled by the host at share time from the same log position as
+  the item. An item without `f1` is valid and unchanged (every earlier `share_item_*` vector stays valid); the hub
+  cannot build on it (`unavailable`, §8.6). Exact keys at every depth:
+
+  ```
+  f1 = {"roster_v": int ≥ 0,
+        "gates":     {<gate>: {"gen": int ≥ 0, "hash", "policy_hash", "source_sha"?}},   gate ∈ requirements, plan, code, verify
+        "questions": {"Q<n>": {"hash"}}}                                                   at most 64
+  ```
+
+  `hash`, `policy_hash` are hashes (`sha256:` + 64 hex): the gate hash and policy hash (ticket-format §5.6) of the
+  current generation, and the question hash. `source_sha` is present **exactly** on `code` and `verify`: the source
+  list (ticket-format §5.7) `[{repo (one line, ≤ 512 bytes), ref ("refs/heads/…"), sha (40 or 64 hex)}]`, sorted by
+  `repo`, one entry per repo, at most 32. `f1` is allowed only on an item whose `chain.log` is a ticket (`malformed`
+  otherwise). A host includes only the gates and questions the item is about (a needs-you gate item: that gate). **The
+  host puts the item again with a higher `item_version` whenever a value in its `f1` changes** (a member change
+  raises `roster_v`, a new generation, a changed policy or source list, a re-asked question); until then events built
+  on the old values are refused at admission (§8.6). Reference `check_f1`, vectors `share_item_with_f1`,
+  `share_item_f1_*`.
 - **Content per kind (C6 4, D9).** Exact keys, no free objects, the text rule of §8.5:
   - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
   - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
@@ -1179,7 +1301,7 @@ violation (`check_admin_read_row`, vectors `admin_read_row_*`).
 `based_on`, the member-list version, the gate generation, hash material and policy. H0 had no op that gave it that
 view. `log_sync` is that op: the host sends its own log lines, sealed under a key only `WK_e` holders derive; the hub
 verifies every line under the pinned `WSK` before it keeps it. Full mode only (`wrong_mode` otherwise): a selective hub
-holds no `WK_e` and builds nothing (D80; selective custodial signing over shared items is C6, not here).
+holds no `WK_e` (D80) and builds only from shared items (§8.6).
 
 **The page.** Body `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed"}`: `log` is `"workspace"` or a
 ticket ULID; the lines `from_seq … from_seq + count − 1` (1 ≤ `count` ≤ 256) of that log, each **exactly** the
@@ -1196,7 +1318,9 @@ sealed    = SALTED-AEAD(K_view(epoch), "orch/v2/hub-view-msg", AAD, cj({"lines":
 Sealed although the link is TLS (DECIDED HERE): the hub stores the pages sealed and opens them with `WK_e` only inside a
 build (D6's `WorkspaceView.build(wk_e, …)`), so its database alone reads nothing; and a host that rotated the hub out
 (leave, full → selective) cannot leak later content to it by mistake: the hub has no wrap for the new epoch
-(`bad_epoch`). At most 1 MiB sealed per page.
+(`bad_epoch`). At most 1 MiB sealed per page: **counted on the raw bytes** of `sealed` after base64url decoding
+(`salt ‖ ct`, ≤ 1 048 576), so its text is at most 1 398 102 characters and the whole message fits the 1.5 MB link
+frame (§10.3). A sender may count the text (stricter).
 
 **The hub's check, in order** (reference `apply_view_page`, vectors `log_sync_*`):
 
@@ -1225,9 +1349,12 @@ verifies anywhere else, and the host re-checks the event against its own log (§
 view only gets events about its own workspace refused by itself, or shown to and signed by a person who sees them.
 
 **`reset`.** A host `restore` (ticket-format §5.10) abandons a suffix, so the honest log forks from the hub's view. The
-host then resends the log from `seq` 1 with `reset: true`, which replaces the hub's view of that log. **SHORTCUT**
-`log_sync reset on the host's word`: the hub does not check that the log it held was abandoned by a valid `restore`;
-hardening ties `reset` to the `restore` event (its `abandoned` head must be on the hub's held chain) and audits it.
+host then resends the log from `seq` 1 with `reset: true`, which replaces the hub's view of that log. **DECIDED (C3b
+addendum): `reset` stays on the host's word and is not tied to the `restore` event.** The view authorizes nothing: it
+only fills fields of an event a channel asked for, and the host admits a custodial event only after its own
+`check_built` against its own log (§8.3 step 9, core §15.5 step 6). A false reset can only make the host's own events
+fail at the host (D29). Tying it to `restore` would add a second verifier of core's restore rules to the hub for no
+authority gain.
 **A reset of the workspace log drops every ticket view** (L2P4-9): held ticket lines may name a `ws_seq` beyond the
 shorter new workspace log; the host resends the ticket logs.
 
@@ -1239,6 +1366,33 @@ count: an owner who restricts a ticket without its ticket owner hides it from th
 answers to are their `u_` id and, when the hub aliased the workspace owner to them, the owner's person id (both
 canonical, §9.1). A ticket that is not visible reads as `unknown_item` in a build and as nothing in needs-you. Vectors
 `visible_*` (check `visible`, args `{visibility, me}`) are run by hub and host alike.
+
+**Sender rules (C3b addendum; answers C14, orch-core #1027).** Simplest safe rules, all on existing ops:
+
+1. **Rotation.** The hub keeps the wrap of every epoch of the live binding (§10.2a) and every page it accepted, sealed
+   under its epoch. After a rotation the host **does not resend** old lines: it sends `wk_seal` for the new epoch,
+   then continues from its acknowledged position under the new epoch. A page under an older epoch is `bad_epoch`;
+   the host reseals the same lines under the newest epoch and sends again (vectors
+   `log_sync_rotation_continues_under_new_epoch`, `log_sync_rotation_old_epoch_refused`). A retired epoch (unbind,
+   switch to selective) never opens again; after a rebind the host resends every log from `seq` 1.
+2. **Size.** 1 MiB raw (above). The host splits by lines (at most 256), halving a page until it fits.
+3. **A line bigger than a page** cannot occur in a valid log: a line is at most 524 288 bytes (ticket-format §11.2),
+   so a one-line page seals to at most 524 288 + 44 bytes. A host that finds a longer line has a broken log: it sends
+   nothing more of that log (it never skips a line: the hub cannot chain past a hole) and reports it (`orch doctor`);
+   the hub refuses such a page with `too_large`.
+4. **Hub state loss with nothing pending. No head-read op.** At every link open the host sends a **resume probe**:
+   the workspace log's last acknowledged line again as a one-line page (`from_seq` = acknowledged `seq`). That is an
+   idempotent overlap; the reply `{seq, head}` confirms the hub's view. `view_gap` (the hub lost its view) makes the
+   host forget every acknowledged position and resend every log from `seq` 1, workspace log first, **without**
+   `reset` (nothing is abandoned). `view_fork` on the probe means the host's log changed (a restore): the reset rule
+   above. Any `view_gap` on a later page of a log likewise resends that log from `seq` 1. The host takes its
+   positions only from replies (vectors `log_sync_resume_probe_*`).
+5. **`reset` and `restore`:** not tied (decided above).
+6. **Two links per workspace.** The hub serves one live link per workspace: a newer authenticated link replaces the
+   older one, which the hub closes (§10.3 does the same for `route_in`). Each page is checked and applied atomically
+   under the view lock against the view as it is then, so pages from a closing link and the new one interleave
+   safely (an idempotent overlap or a `view_gap`, never a wrong view). The host runs one sync pass per workspace at a
+   time.
 
 **Size cap.** At most 64 MiB sealed per workspace on the hub; a workspace whose log exceeds it answers `too_large` on
 every page, and a `reset` refills to the same cap, so the host must keep its synced logs under it (hardening: a
@@ -1386,6 +1540,54 @@ prepare is waiting for this user, §8.4) and `needs_you` (a change the user has 
 the seal is anonymous (anyone who knows a channel's public key can make one), so the extension shows generic text at most
 and the app acts only on what it fetches from the hub over its authenticated channel, never on this payload. The `id`,
 `ch` and `hub` in `outer` are not secret; the `type` and `ref` are.
+
+### 10.8.3 Cut-over of a workspace's direct relay path (phase 4, relay E3, orch-core #896)
+
+**Purpose.** Until H5 a workspace keeps its direct (v2) relay path. When it moves behind a hub, the relay closes that
+path for it. The relay holds no hub ↔ workspace binding, so **the workspace names the hub first and the hub only
+confirms**: a hub alone can never close (DoS) someone's direct path, redirect it or reverse it.
+
+**Workspace side** (v2 relay session of the workspace itself, i.e. its `WSK`; a device or any other session is
+`403 not_eligible`, a `GET` also from a member device). **`PUT` and `DELETE` are fenced like every durable workspace
+write: they require the current `Orch-Holder` generation, else `409 fenced`; `GET` is unfenced** (L2-E3-1). A `PUT`
+naming a `hub_id` that has no account at this relay is `403 unknown_hub` (to the workspace only; reference input
+`registered_hubs`, vectors `cutover_workspace_unregistered_hub`, `…_renames_to_unregistered_hub`). A `pending` row
+expires 24 h after it was written (it reads as `direct`; the hub then gets `other_hub`), so a hub cannot confirm at a
+moment of its choosing long after the owner's act (L2-E3-4).
+
+| Route | Body | Effect / answer |
+|---|---|---|
+| `PUT /v2/workspaces/{ws}/cutover` | `{v: 2, hub_id, state: "pending" \| "cut_over"}` | `pending`: names (or renames) the hub; `cut_over`: closes the direct path at once (the workspace's own act). `pending` while `cut_over` is `403 cut_over` (naming never weakens a cut-over; `DELETE` first). Answer: the state below |
+| `DELETE /v2/workspaces/{ws}/cutover` | empty | back to `direct` (only the workspace reverses) |
+| `GET /v2/workspaces/{ws}/cutover` | empty | `{state: "direct" \| "pending" \| "cut_over", hub_id, cut_over_ms, drain_until_ms, purged}` (`direct`: `state` only) |
+
+**Hub side** (signed under §10.8 and checked in its order before the route; then the §10.8.1 body rules; not subject
+to the push-configuration `404`):
+
+| Route | Body | Answer |
+|---|---|---|
+| `PUT /v2/hubs/{hub}/workspaces/{ws}/cutover` | `{v: 2, state: "cut_over"}` | confirms `pending` → `cut_over` for a workspace that named **exactly this hub**; a repeat on `cut_over` is `200` and changes nothing (times kept). Answer: the state |
+| `GET /v2/hubs/{hub}/workspaces/{ws}/cutover` | empty | the state, only for a workspace that named this hub |
+| `DELETE /v2/hubs/{hub}/workspaces/{ws}/cutover` | empty | always `403 not_allowed` |
+
+- An unknown workspace, one that named no hub (`direct`) and one that named another hub all answer the hub
+  `403 other_hub`, so a hub learns nothing about workspaces that did not name it. `{ws}` not 32 lower-case hex, a
+  query, or another body is `400 malformed`; another method `404 not_found`. **DECIDED HERE (changes to E3):** the
+  hub's `PUT` carries `{v: 2, state: "cut_over"}` (not an empty body), like every other signed `PUT` of §10.8.1, so the
+  signed bytes name the act; and a workspace `pending` over a `cut_over` is `403 cut_over` (E3: `malformed`).
+- **After `cut_over`: one gate over every per-workspace direct route** (L2-E3-2), with an explicit allow-list.
+  Allowed: reads of the direct mailbox and the host's hold/poll **during the drain window** (relay configuration,
+  default 7 days); push unregistration (cleanup); the workspace's own cut-over `GET` and `DELETE`. **Everything else**
+  under the workspace (bridge and pairing, direct envelopes, push registration and send, hooks, Drop, `cert-requests`,
+  checkpoints, card and membership writes, and any route added later) is `403 cut_over` (details `drain_until_ms`,
+  `drained`), at once. At the end of the drain the relay purges the workspace's direct mailbox, replay records, push
+  registrations, hooks and Drop data; after that the mailbox reads are refused too. The gate runs **after**
+  authentication: an anonymous or unauthenticated request (e.g. an anonymous pair request) gets its ordinary refusal
+  with no details and never learns the cut-over state or its times (L2-E3-5). Short-lived bridge data may be gone
+  long before the drain ends (60 s expiry); the drain only keeps reads possible, it stores nothing extra (L2-E3-6). A
+  reversal (`DELETE`) after the purge leaves devices without push until they re-register (core tells them to).
+- Reference `relayroutes.route` (`cutover_put`/`cutover_get`), `cutover_hub`, `cutover_workspace`; vectors
+  `relay_route_cutover_*`, `cutover_*`, and the signed request bytes `phase4.relay_routes.cutover_put`/`cutover_get`.
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -1562,6 +1764,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `not_member`, `not_accepted`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
 | `members_changed` | host, local | §10.4: the member set grew since the owner approved it; never sent on the link |
 | `view_gap`, `view_fork` (p4) | `log_sync` reply | §10.7: a page that leaves a hole (or a ticket line ahead of the workspace log the hub holds); a line that contradicts the chain the hub holds. Reused there: `bad_wrap`, `bad_epoch`, `too_large`, `wrong_mode` |
+| `foreign_user` (p4, C3b) | custodial, `event_deliver` reply | the event's `user_id` belongs to another hub of this workspace (aliased there, or first recorded under it) and not to the signing hub: a hub may not present another hub's user ids (§9.1, L2P4-C1, L2-C3-2). Checked after the certificates |
 | `not_custodial` (p4) | action, custodial | §8.5: the type is not in the custodial table for that log |
 | `event_changed` (p4) | channel, hub `sign` | §8.4: the digest does not match the shown context, or the hub's view moved since `prepare` |
 | `stale_version`, `too_many_items` (p4) | selective `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
@@ -1570,6 +1773,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
+| `unknown_hub` (403) (p4) | relay, §10.8.3 | a workspace cut-over `PUT` names a hub with no account at this relay (to the workspace only) |
+| `cut_over` (403) (p4) | relay, §10.8.3 | the workspace's direct relay path is closed (cut over to a hub); also a workspace `pending` over a `cut_over` |
 | `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
@@ -1609,7 +1814,8 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
-| `cases` | 609 cases (127 positive, 482 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
+| `cases` | 756 cases (198 positive, 558 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1619,7 +1825,10 @@ Every implementation runs the cases of the checks it implements: the hub all of 
 `snapshot`, `uk_cert`, `channel_cert`, `custodial`, `joined_payload`, `link` (h2w), and from phase 4 `space_proposal`
 and the host side of `log_sync` (it builds the pages the vectors open); orch-publish `binding_store`,
 `publish`, `card`, `v2_card`; orch-relay (p4) `card`, `op_*`, `relay_request`, `relay_route`; orch-mobile and the browser home (p4)
-`prepared`, `channel_register` (the object they sign). The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+`prepared`, `channel_register` (the object they sign). C3b addendum: orch-core runs `custodial` (now with
+`custodial_event_*`, the event-shaped vector per custodial type, for its step-1 exact-payload check), `user_hub`,
+`deliver_next` (the host's reading of its own replies) and `share_item` incl. `f1` (it builds them); the hub runs all,
+plus `selective_build`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 
@@ -1660,11 +1869,18 @@ and the host side of `log_sync` (it builds the pages the vectors open); orch-pub
 | 32 | Selective `share_put` content (C6, D9) | `share.item` WSK-signed with exact content per kind, `IK` sealed to `HXK` (new v2 §5.3 purpose `hub-share`), monotonic `item_version`, idempotent revoke with tombstone, 16 KiB / 1000 items | C6 orch-core#1022, D9 orch-hub#23, spec §8a |
 | 33 | Text fields | one rule: no `Cc`, `Cf`, `Zl`, `Zp`; LF only in multi-line texts | security review (display spoofing) |
 | 35 | Opus pass on orch-hub#22 (l2-review-p4, PASS, 0 P0) | P1s fixed in one follow-up: L2P4-1 selective role floor; L2P4-2 hash pinned on the 4 decision types, `check_built` always, view text escaped, content-bound decisions show the short hash; L2P4-3 text rule adds `Cs`, `Co`, `Cn`, Default_Ignorable, Unicode 16.0 pinned; L2P4-6 revoked key never registers (`channel_revoked`), `key_in_use`; D7: `key_pub` in the challenge, pairing code needs a live session (`no_session`), revoke of an unknown id refused (`unknown_channel`), no `audit_failed`; D9: `share` `purge`, revoke record pinned; L2P4-9 (P2) workspace reset drops ticket views | state/l2-review-p4.md |
+| 36 | `u_` ids and hubs (C3b addendum) | a `u_` id belongs to the hub it first appeared under; `foreign_user` (§9.1, §14) | core #1031 §15.6, L2-C3-2 |
+| 37 | `event_deliver` acks (C3b addendum) | `{}` done; `unavailable`, `unknown_snapshot`, no reply → resend the same bytes, 1 s doubling to 5 min, give up after 24 h; every other code final (§8.7) | core #1031 §15.5, L2-C3-4 |
+| 38 | Selective custodial events (C3b addendum) | additive `f1` block in `share.item`; four decision types only; action names `item`; text-only answers in V3; `item_hash` in the event (§8.6, §10.2b) | core #1031 §15.7 |
+| 39 | Event side of §8.5 (C3b addendum) | exact payload per custodial type incl. derived fields; `base_rev` is a `{path: hash}` object keyed exactly by `set`; host checks it in step 1; one event-shaped vector per type | L2-C3-1, C3 review |
+| 40 | `log_sync` sender rules (C3b addendum, C14) | old pages kept across rotation; 1 MiB raw; no oversize line; resume probe instead of a head-read op; `reset` not tied to `restore`; one live link per workspace (§10.7) | orch-core #1027 |
+| 42 | Addendum review (l2-add) | L2-ADD-1: selective admission checks the target in the item's `f1` and the chain head (§8.3 step 7); L2-ADD-2: §10.8.3 carries the E3 fixes (fence, one gate with an allow-list, purge of hooks and Drop, `pending` TTL 24 h, registered `hub_id`, no state to anonymous callers); L2-ADD-3: a superseded item version is `event_changed`; L2-ADD-7: vector renamed | state/l2-review-p4.md "Addendum hub#34" |
+| 41 | Relay cut-over (E3) | workspace names the hub, the hub only confirms; `other_hub` for every workspace that did not name it; hub `PUT` body `{v: 2, state: "cut_over"}`; `cut_over` (403) (§10.8.3) | orch-relay #88 |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no
-App Attest)` (§6.3, D7 → hardening: App Attest); `log_sync reset on the host's word` (§10.7, D6/C-side → hardening: tie
-to the `restore` event); `Custodial ticket.updated without body sections; no artifact custody` (§8.5 → a text/blob
+App Attest)` (§6.3, D7 → hardening: App Attest); `log_sync reset on the host's word` (§10.7; **decided, C3b addendum: stays,
+not tied to `restore`**); `Custodial ticket.updated without body sections; no artifact custody` (§8.5 → a text/blob
 transport in the action).
 
 **Hardening from the phase-4 Opus pass (P2, not built; each a `hardening` row):**
@@ -1676,7 +1892,11 @@ transport in the action).
 | L2P4-11 relay origin not in the §10.8 bytes | §10.8 | add `lp16(relay_origin)` (a request to relay A replayable to relay B within 120 s) |
 | L2P4-12 duplicate `Orch-Hub*` headers | §10.8, §10.6 | exactly one of each, else `malformed` |
 | L2P4-13 proposal vs held space | §10.4 | at `epoch == held + 1`, `prev_members == held.members` |
-| L2P4-14 `log_sync reset` on the host's word | §10.7 | SHORTCUT above: tie to the `restore` event, audit it |
+| L2-ADD-4 re-put fan-out | §10.2b, C6 host | the host coalesces `f1` re-puts (one per item per pass); the hub's `stale_version` path stays cheap |
+| L2-ADD-5 `unknown_snapshot` amplification | §8.7, host | rate-limit snapshot fetches per workspace; once a fresh fetch still lacks the version, answer without fetching again |
+| L2-ADD-6 alias after an unaliased first record | §9.1, core `hub.joined` | refuse at join an alias of a `u_` id first recorded under another hub, so the owner sees it (today it fails closed later as `foreign_user`) |
+| L2-E3-3 cut-over is human-only by nature | §10.8.3, core C10 | cut-over and reversal as human-only signed host ops; optional WSK/PK-signed statement stored by the relay |
+| L2P4-14 `log_sync reset` on the host's word | §10.7 | decided (C3b addendum): not needed, the view authorizes nothing (§10.7) |
 | L2P4-C2 core actor lookups not through `canonical` | C3 | route every actor lookup through `identity.canonical` plus the role mapping |
 | L2P4-C1 aliases not scoped to a hub (P1 for core) | §9.1, C4 | key aliases by `(hub_id, user_id)`; "never re-pointed **for the same hub**"; must land before C3 accepts `auth: "hub"` |
 | D9 tombstones unbounded | §10.2b | per-workspace monotonic `item_version` counter + prunable tombstones with a `version_floor`; until then a hard cap (`too_many_items`) |
@@ -1693,8 +1913,7 @@ transport in the action).
 - **Policy and settings changes in a full-mode hub workspace.** Not channel-startable in V3 (§8.5); with no local
   human signing in full mode after H5 (D78/D81), they then need either an admin-only custodial type with an exact
   policy/settings schema and a full review screen, or a break-glass power. Decide together with agent grants.
-- **Selective custodial signing (C6).** `log_sync` is full mode only. A selective workspace's custodial events over
-  shared items (spec §8a "a custodial digest binds the item hash") need the item format of C6; not specified here.
+- (Decided, C3b addendum.) **Selective custodial signing** is §8.6 over the `f1` block of §10.2b.
 
 **Open / decided after L2:**
 

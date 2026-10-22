@@ -198,6 +198,9 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             min_factor=a.get("min_factor"),
             revoked_op_certs=_later(a),
             member_roles=a.get("member_roles", {}),
+            live_items=a.get("live_items", {}),
+            superseded_items=frozenset(a.get("superseded_items", [])),
+            log_heads=a.get("log_heads", {}),
         )
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], unb64u(a["wsk_pub"], 65), now, dev)
@@ -333,10 +336,21 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         views: dict[str, list[str]] = {}
         wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
         for body in a["pages"]:
+            if type(body) is dict and set(body) == {"wk_seal"}:  # a rotation between pages: the hub takes a new epoch
+                wk.update({int(e): bytes.fromhex(k) for e, k in body["wk_seal"].items()})
+                continue
             views = P4.apply_view_page(
                 views, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
             )
         return {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+    if check == "selective_build":
+        log, core = P4.build_selective(a["action"], a["item"])
+        return {"log": log, "event": core}
+    if check == "deliver_next":
+        return P4.deliver_next(a["reply"], attempt=a["attempt"], first_sent_ms=a["first_sent_ms"], now_ms=now)
+    if check == "user_hub":
+        P4.check_user_hub(a["user_hub"], a["aliases"], a["hub_id"], a["user_id"])
+        return {"belongs": True}
     if check == "share_item":
         r = P4.open_share_item(
             a["body"],
@@ -391,6 +405,12 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             "body": bytes.fromhex(r["body_hex"]),
         }
         return P4.check_relay_request(req, st, now_ms=now, dev_mode=dev)
+    if check == "cutover":
+        if a["side"] == "workspace":
+            regs = frozenset(a.get("registered_hubs", []))
+            return {"row": RR.cutover_workspace(a["row"], a["method"], bytes.fromhex(a["body_hex"]), regs)}
+        r = RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
+        return RR.cutover_hub(a["row"], a["hub_id"], r["route"])
     if check == "relay_route":
         return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
     raise ValueError(f"unknown check {check}")

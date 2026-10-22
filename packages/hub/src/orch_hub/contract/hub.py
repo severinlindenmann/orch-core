@@ -556,6 +556,7 @@ CUSTODIAL_FIELDS = (
 )
 NOT_SIGNED = ("seq", "at", "prev", "ws_seq", "sig", "host_sig")  # ticket-format §5.3
 _USER_ACTOR = re.compile(r"u_[0-9a-f]{32}")
+_ITEM_HASH = re.compile(r"sha256:[0-9a-f]{64}")
 FACTOR_RANK = {"password+totp": 0, "se-unlocked": 1, "passkey": 2}  # D66 mapping, spec §5
 
 
@@ -644,6 +645,9 @@ def verify_custodial(
     min_factor: str | None = None,
     revoked_op_certs: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
+    live_items: Mapping[str, Any] = {},
+    superseded_items: frozenset[str] = frozenset(),
+    log_heads: Mapping[str, list[str]] = {},
 ) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
@@ -673,6 +677,22 @@ def verify_custodial(
         or not _int_min(1)(event["snapshot_version"])
     ):
         raise Refused("malformed")
+    # C3b addendum (§8.1): ``item_hash`` (the shared item the person saw) exactly in selective mode
+    if ("item_hash" in event) != (mode == "selective") or (
+        "item_hash" in event and (type(event["item_hash"]) is not str or not _ITEM_HASH.fullmatch(event["item_hash"]))
+    ):
+        raise Refused("malformed")
+    # selective mode (§8.6): only the four decisions, on a ticket log, text-only answers
+    from .phase4 import SELECTIVE_TYPES, check_custodial_payload
+
+    if mode == "selective":
+        if typ not in SELECTIVE_TYPES or log == "workspace":
+            raise Refused("not_custodial")
+        if typ == "question.answered" and "option" in event:
+            raise Refused("malformed")
+    # the exact payload of the type (§8.5 event side, L2-C3-1); a type outside the table is refused at 7b
+    if (typ, log_kind(log)) in CUSTODIAL_TYPES:
+        check_custodial_payload(event, log)
     user = actor["id"][2:]
     # 2. the hub this workspace is bound to
     if event["hub_id"] != held["card"]["hub_id"]:
@@ -709,6 +729,12 @@ def verify_custodial(
     if mode == "selective":
         if user not in granted_users:
             raise Refused("not_granted")
+        item = live_items.get(event["item_hash"])
+        if item is None and event["item_hash"] in superseded_items:
+            raise Refused("event_changed")  # an earlier version of a live item: the person may sign again
+        if type(item) is not dict or type(item.get("chain")) is not dict or type(item.get("f1")) is not dict:
+            raise Refused("not_granted")
+        _selective_item(event, log, item["chain"], item["f1"], log_heads)
     elif snapshot["roles"].get(user) not in ROLES:
         raise Refused("forbidden_role")
     # 7b. the closed list of custodial types and the lowest role per type (p4, §8.5; selective: owner-granted users,
@@ -724,6 +750,50 @@ def verify_custodial(
     if min_factor is not None and FACTOR_RANK[event["channel_factor"]] < FACTOR_RANK[min_factor]:
         raise Refused("factor_too_weak")
     return {"user_id": user, "channel": event["channel"], "role": snapshot["roles"].get(user)}
+
+
+def _selective_item(
+    event: Mapping[str, Any],
+    log: str,
+    chain: Mapping[str, Any],
+    f1: Mapping[str, Any],
+    log_heads: Mapping[str, list[str]],
+) -> None:
+    """The item check at admission (§8.3 step 7, §8.6, core §15.7). ``live_items`` = the host's live shared items
+    ``{item_hash: {"chain": {log, seq, head}, "f1": {...}}}`` (current versions only); ``superseded`` = hashes of
+    earlier versions of live items; ``log_heads`` = ``{log: [head of seq 1, 2, ...]}`` of the host's own logs.
+    1. the hash is a current live item (an earlier version: ``event_changed``, the person may sign again; else
+    ``not_granted``); 2. its ``chain.log`` is the event's log and the decision's target is in its ``f1`` (``gates[gate]``,
+    ``verify`` for a verdict, ``questions[question]``) → else ``not_granted``; 3. ``chain.head`` is the head of
+    ``chain.log`` at ``chain.seq`` in the host's log → else ``view_fork``. Anything unreadable refuses."""
+    if chain.get("log") != log:
+        raise Refused("not_granted")
+    typ = event["type"]
+    if typ == "question.answered":
+        targets, key = f1.get("questions"), event.get("question")
+    else:
+        targets, key = f1.get("gates"), "verify" if typ == "verdict.given" else event.get("gate")
+    if type(targets) is not dict or type(key) is not str or key not in targets:
+        raise Refused("not_granted")
+    # the event is built on exactly this item's values (what the person was shown); another value → event_changed
+    t = targets[key]
+    if type(t) is not dict:
+        raise Refused("not_granted")
+    want = {"hash": t.get("hash"), "based_on": chain.get("head"), "roster_v": f1.get("roster_v")}
+    if typ != "question.answered":
+        want.update(gate_gen=t.get("gen"), policy_hash=t.get("policy_hash"))
+    if "source_sha" in event:  # step 1 already requires it exactly on a code approval and a verdict
+        want["source_sha"] = t.get("source_sha")
+    if any(v is None or event.get(k) != v for k, v in want.items()):
+        raise Refused("event_changed")
+    heads, seq = log_heads.get(log), chain.get("seq")
+    if (
+        type(heads) is not list
+        or type(seq) is not int
+        or not 1 <= seq <= len(heads)
+        or heads[seq - 1] != chain.get("head")
+    ):
+        raise Refused("view_fork")
 
 
 # --- WSK: binding and unbound; the publish-side store ---------------------------------------------------------------

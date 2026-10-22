@@ -1290,8 +1290,13 @@ implements exactly this (relay task E2).
 Below `/v2/hubs/{hub_id}/` every request is signed by `HK_op` and checked in the order of the §10.8 table **before** the
 route and its body are looked at. `{ch}` and `{id}` are 32 lower-case hex. Bodies are `cj` objects with exactly the listed
 members and `"v": 2` (an extra or missing member, another `v`, a non-canonical value is `400 malformed`); `GET` and `DELETE`
-have an **empty body** (`H("")` is signed). No route takes a query (`400 malformed`). An unknown path, or a known path with
-another method, is `404 not_found`. A relay without a complete push configuration answers `404 not_found` on every route
+have an **empty body** (`H("")` is signed). No route takes a query (`400 malformed`). **Order of refusals** (the reference
+`route()`, vectors `relay_route_*`; the relay answers the first that applies): (1) the §10.8 target checks, and a query
+(`400 malformed`); (2) under `mailbox/` with one or two further segments, a `{ch}` that is not 32 lower-case hex is `400 malformed`, whatever the method;
+(3) a path shape or method not in the table is `404 not_found`: this includes any other first segment or segment count,
+`mailbox/{ch}/{id}` with an `{id}` that is not 32 hex, and, under `push/`, a bad `{ch}` with a method or shape the table
+does not have; (4) the body, then (under `push/`, for a path and method that are in the table) `{ch}`: `400 malformed`
+(`413 too_large` for an oversize `outer` or mailbox message, found only when `{ch}` is valid). A relay without a complete push configuration answers `404 not_found` on every route
 of this subsection, as for v2 push (after authentication).
 
 | Route | Signed | Body | Answer |
@@ -1310,7 +1315,8 @@ of this subsection, as for v2 push (after authentication).
 v2); `token` is the b64u APNs device token, 32 to 100 bytes. **One target per `(hub, channel)`**: a `PUT` replaces the held
 one (a phone that gets a new token re-registers), an exact repeat is a no-op. The relay stores the token sealed (v2
 §19.10) and never returns it. The relay does not know the channel's key or certificate: *which* channels exist and are
-live is the hub's business (§6.2, §7); the relay holds at most 64 targets per hub (`429 quota_exceeded`).
+live is the hub's business (§6.2, §7); the relay holds at most `max_push_targets_per_hub` targets per hub (`429 quota_exceeded`). That is a relay
+configuration value, **default 4096**; the hub does not rely on a number. The per-channel mailbox caps below stay fixed.
 
 **Send** (`POST .../push/{ch}/send`). `priority` is `high` or `normal`, `ttl_s` an integer 0 to 86 400. `outer` is exactly
 `{v: 2, hub, ch, id, c}` with `hub` and `ch` equal to the path's, `id` 32 hex (the hub's message id), `c` canonical b64u

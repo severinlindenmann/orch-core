@@ -21,6 +21,7 @@ TOKEN = bytes(range(40))
 
 class World:
     def __init__(self, tmp_path, **kw):
+        kw.setdefault("dev", True)
         self.env = Env(tmp_path)
         self.relay = FakeRelay(self.env.clock)
         self.sleeps: list[float] = []
@@ -229,9 +230,9 @@ def test_dev_flag_must_match_the_card(tmp_path):
 def test_relay_url_must_be_https_or_loopback(w):
     for bad in ("http://relay.example", "ftp://x", "https://u:p@x", "https://x/path"):
         with pytest.raises(RelayError):
-            RelayClient(w.env.keys, bad, transport=w.relay)
+            RelayClient(w.env.keys, bad, dev=True, transport=w.relay)
     with pytest.raises(RelayError) as e:
-        RelayClient(w.env.keys, transport=w.relay)  # the card has no relay_url
+        RelayClient(w.env.keys, dev=True, transport=w.relay)  # the card has no relay_url
     assert e.value.code == "no_relay"
 
 
@@ -279,3 +280,78 @@ def test_prepare_notifies_the_users_phones_and_a_failing_hook_cannot_break_it(tm
         assert e.prepare().prepared_id  # the prepare stands
     finally:
         e.close()
+
+
+def test_dev_has_no_default():
+    import inspect
+
+    p = inspect.signature(RelayClient).parameters["dev"]
+    assert p.default is inspect.Parameter.empty
+
+
+def test_relay_errors_are_failures_and_unknown_codes_are_not_logged(w, caplog):
+    w.client.register()
+    u = w.env.user("ann")
+    _, cid = w.phone(u)
+    n = PushNotifier(w.client, w.env.svc)
+
+    def refuse(*_a, **_k):
+        raise RelayError("<script>evil", 400)
+
+    w.client.send_push = refuse
+    with caplog.at_level("WARNING"):
+        assert n.notify_user(u, "prepare") == {cid: "failed"}
+    assert "bad_response" in caplog.text and "evil" not in caplog.text
+
+
+def test_register_target_refuses_a_browser_channel(w):
+    from channels_helpers import register
+
+    u = w.env.user("ann")
+    _, cert = register(w.env, u)
+    cid = cert["o"]["channel_id"]
+    n = PushNotifier(w.client, w.env.svc)
+    with pytest.raises(RelayError) as e:
+        n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    assert e.value.code == "unknown_channel"
+
+
+def test_restart_pass_cleans_channels_revoked_before_the_restart(w):
+    w.client.register()
+    u = w.env.user("ann")
+    _, cid = w.phone(u)
+    n = PushNotifier(w.client, w.env.svc)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    w.client.mailbox_put(cid, "ee" * 16, "AAAA")
+    w.env.svc.revoke(cid)  # no hook: as if the hub died before the cleanup ran
+    assert cid in w.relay.targets
+    fresh = PushNotifier(w.client, w.env.svc)  # the restarted process: empty pending set
+    assert fresh.pending_cleanup == set()
+    fresh.restart_pass()
+    assert w.relay.targets == {} and w.relay.mailbox == {} and fresh.pending_cleanup == set()
+    w.relay.faults = [OSError("down")] * 8
+    fresh.restart_pass()  # a dead relay: kept for the next flush
+    assert fresh.pending_cleanup == {cid}
+
+
+def test_notify_async_returns_at_once_and_the_worker_sends(w):
+    import threading
+
+    w.client.register()
+    u = w.env.user("ann")
+    _, cid = w.phone(u)
+    n = PushNotifier(w.client, w.env.svc)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    gate = threading.Event()
+    real = w.client.send_push
+
+    def slow(*a, **k):
+        gate.wait(5)
+        return real(*a, **k)
+
+    w.client.send_push = slow
+    n.notify_async(u, "prepare", "cd" * 16)  # returns while the relay "hangs"
+    assert w.relay.sent == []
+    gate.set()
+    n.drain()
+    assert len(w.relay.sent) == 1

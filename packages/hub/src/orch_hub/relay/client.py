@@ -5,7 +5,7 @@ picked up) over the exact bytes the relay rebuilds, with a fresh timestamp and n
 errors, 429, 503 and 5xx, with bounded exponential backoff that honours ``Retry-After``; one correction of the clock
 after ``stale_timestamp``; every other 4xx is final. All routes are idempotent (§10.8.1), so a retry is safe.
 
-Dev flag (consistent with the relay's ``ORCH_RELAY_DEV``): ``dev=True`` (the V3 default) requires a dev card and a
+Dev flag (consistent with the relay's ``ORCH_RELAY_DEV``): ``dev`` is required (no default: the caller takes it from the hub's config). ``dev=True`` requires a dev card and a
 relay URL that is https or plain http on a loopback address; the card's own marker must equal ``dev`` (``dev_mismatch``).
 Errors carry a stable code and the HTTP status, never a body, a token or a key.
 """
@@ -66,7 +66,7 @@ class RelayClient:
         keys: Any,  # HubKeys (hub_id, card(), op_cert(), op_signer)
         relay_url: str | None = None,
         *,
-        dev: bool = True,
+        dev: bool,
         transport: Transport | None = None,
         now_ms: Callable[[], int] | None = None,
         nonce: Callable[[], bytes] | None = None,

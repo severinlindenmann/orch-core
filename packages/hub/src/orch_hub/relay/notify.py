@@ -8,13 +8,18 @@ as active (unrevoked, unexpired, current cert, §6.2) and of kind ``phone`` (onl
 never asked who is live.
 
 A failed revocation cleanup is kept in ``pending_cleanup`` and repeated by :meth:`flush` (called at the start of every
-``notify_user`` as well); it is in memory, so a restart forgets it (follow-up: persist). That is safe: nothing is ever
-sent to a revoked channel, and what the relay still holds for it is a sealed token it cannot use.
+``notify_user`` as well). The set is in memory, so :meth:`restart_pass` rebuilds it at start from the channel store's
+revoked channels (the durable truth) and re-sends both DELETEs (idempotent at the relay).
+
+``notify_async`` is the hook for ``CustodialEngine(notify=...)`` in a running hub: it only enqueues (bounded; a full
+queue drops the hint, which is only a hint) and a daemon worker does the relay calls, so a slow or dead relay never
+stalls a prepare. ``notify_user`` itself stays synchronous (tests, the worker).
 """
 
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 from typing import Any
 
@@ -23,18 +28,36 @@ from .client import RelayClient, RelayError
 
 log = logging.getLogger(__name__)
 
+#: relay codes that may be logged verbatim; anything else (a relay is not trusted for log text) is ``bad_response``
+KNOWN_CODES = frozenset(
+    {
+        "malformed", "too_large", "not_found", "message_conflict", "quota_exceeded", "overloaded", "not_allowed",
+        "bad_hub_signature", "unknown_hub", "stale_op_cert", "other_hub", "replay", "stale_timestamp", "unavailable",
+        "bad_response", "dev_mismatch", "no_relay", "unknown_channel", "internal",
+    }
+)  # fmt: skip
+QUEUE_MAX = 256
+
+
+def _safe_code(code: object) -> str:
+    return code if isinstance(code, str) and code in KNOWN_CODES else "bad_response"
+
 
 class PushNotifier:
     def __init__(self, client: RelayClient, channels: Any) -> None:
         self._client, self._channels = client, channels
         self._lock = threading.Lock()
         self.pending_cleanup: set[str] = set()
+        self._q: queue.Queue[tuple[str, str, str | None]] = queue.Queue(QUEUE_MAX)
+        self._worker: threading.Thread | None = None
 
     # --- the phone gave its APNs token (over its authenticated channel session; the caller has checked that) -------
 
     def register_target(self, user_id: str, channel_id: str, env: str, topic: str, token: bytes) -> None:
         """Register or replace the push target of one of the user's own live phone channels."""
-        if self._cert_pub(user_id, channel_id) is None:
+        if self._cert_pub(user_id, channel_id) is None or not any(
+            c["channel_id"] == channel_id and c["kind"] == "phone" for c in self._channels.channels(user_id)
+        ):
             raise RelayError("unknown_channel")
         self._client.put_push_target(channel_id, env, topic, token)
 
@@ -60,7 +83,7 @@ class PushNotifier:
 
     def notify_user(self, user_id: str, kind: str, ref: str | None = None) -> dict[str, str]:
         """Send one hint to every live phone channel of ``user_id``. Never raises; returns ``{channel_id: result}``
-        with ``sent``, ``no_target`` (the relay holds no push target) or the relay's error code."""
+        with ``sent``, ``no_target`` (the relay holds no push target) or ``failed`` (the relay's code is logged)."""
         self.flush()
         out: dict[str, str] = {}
         try:
@@ -72,12 +95,37 @@ class PushNotifier:
             try:
                 out[cid] = "sent" if self._client.send_push(cid, pub, kind, ref) else "no_target"
             except RelayError as e:
-                out[cid] = e.code
-                log.warning("push to %s failed: %s", cid[:8], e.code)
+                out[cid] = "failed"
+                log.warning("push to %s failed: %s", cid[:8], _safe_code(e.code))
             except Exception:  # noqa: BLE001
-                out[cid] = "error"
+                out[cid] = "failed"
                 log.warning("push to %s failed", cid[:8])
         return out
+
+    def notify_async(self, user_id: str, kind: str, ref: str | None = None) -> None:
+        """Queue a hint and return at once (the engine hook). Never raises, never blocks."""
+        with self._lock:
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._work, daemon=True)
+                self._worker.start()
+        try:
+            self._q.put_nowait((user_id, kind, ref))
+        except queue.Full:
+            log.warning("push queue full: hint dropped")
+
+    def _work(self) -> None:
+        while True:
+            user_id, kind, ref = self._q.get()
+            try:
+                self.notify_user(user_id, kind, ref)
+            except Exception:  # noqa: BLE001
+                log.warning("push worker failed")
+            finally:
+                self._q.task_done()
+
+    def drain(self) -> None:
+        """Wait until every queued hint has been handled (tests, orderly shutdown)."""
+        self._q.join()
 
     # --- revocation -----------------------------------------------------------------------------------------------
 
@@ -100,6 +148,16 @@ class PushNotifier:
         """The hook for ``Channels(on_revoke=...)`` in a running hub: the cleanup (with its retries and sleeps) runs on a
         daemon thread, so a revocation never waits for the relay."""
         threading.Thread(target=self.channel_revoked, args=(channel_id,), daemon=True).start()
+
+    def restart_pass(self) -> None:
+        """At start: every channel the store lists as revoked gets both DELETEs again (idempotent), so a restart cannot
+        leave a revoked channel's target or mailbox at the relay. Failures stay in ``pending_cleanup``."""
+        with self._lock:
+            self.pending_cleanup |= {c["channel_id"] for c in self._channels.channels() if c["status"] == "revoked"}
+        self.flush()
+
+    def restart_pass_async(self) -> None:
+        threading.Thread(target=self.restart_pass, daemon=True).start()
 
     def flush(self) -> None:
         with self._lock:

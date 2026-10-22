@@ -102,7 +102,7 @@ def test_default_transport_over_real_http_on_loopback(tmp_path):
     t.start()
     env = Env(tmp_path)
     try:
-        c = RelayClient(env.keys, f"http://127.0.0.1:{srv.server_address[1]}", now_ms=env.clock)
+        c = RelayClient(env.keys, f"http://127.0.0.1:{srv.server_address[1]}", dev=True, now_ms=env.clock)
         assert c.register()["created"] is True
         assert seen == [("POST", "/v2/hubs", cj(env.keys.card()))]
     finally:
@@ -123,3 +123,26 @@ def test_cli_relay_register_prints_the_answer_and_refuses_without_a_relay(tmp_pa
     monkeypatch.setattr(RelayClient, "register", lambda self: {"hub_id": self.hub_id, "created": True})
     assert main(["relay", "--state", str(state), "--relay-url", "http://127.0.0.1:9", "register"]) == 0
     assert json.loads(capsys.readouterr().out)["created"] is True
+
+
+CH = "ab" * 16
+MID = "cd" * 16
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "code"),
+    [
+        ("PUT", "/mailbox/zz", b"", "malformed"),  # §10.8.1 order: {ch} under mailbox first, any method
+        ("GET", "/mailbox/zz", b"", "malformed"),
+        ("PUT", f"/mailbox/{CH}", b"", "not_found"),  # known shape, no such method
+        ("GET", f"/mailbox/{CH}/nothex", b"", "not_found"),  # {id} not 32 hex is a shape miss
+        ("GET", f"/mailbox/zz/{MID}", b"", "malformed"),
+        ("GET", "/push/zz", b"", "not_found"),  # push: a method the table lacks is not_found even with a bad {ch}
+        ("DELETE", "/push/zz", b"", "malformed"),
+        ("PUT", "/nothing", b"", "not_found"),
+    ],
+)
+def test_order_of_refusals_matches_the_spec_text(method, path, body, code):
+    with pytest.raises(H.Refused) as e:
+        RR.route(method, f"/v2/hubs/{HUB}{path}", HUB, body)
+    assert e.value.code == code

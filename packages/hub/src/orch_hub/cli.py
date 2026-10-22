@@ -76,7 +76,7 @@ def _relay_register(args: argparse.Namespace) -> int:
 
     try:
         keys = HubKeys.open(Path(args.state) if args.state else default_state_dir())
-        print(dumps(RelayClient(keys, args.relay_url).register()))
+        print(dumps(RelayClient(keys, args.relay_url, dev=True).register()))  # the V3 hub is dev only
     except (KeysError, RelayError) as e:
         print(f"orch-hub: refused: {e}", file=sys.stderr)
         return 1

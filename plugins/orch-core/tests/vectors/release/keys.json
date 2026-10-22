@@ -1,0 +1,179 @@
+{
+ "WARNING": "TEST KEYS ONLY. Seeds are public (see gen_release_vectors.py). Never embed in a shipped verifier.",
+ "certs": {
+  "ck-1": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "ck-1",
+   "not_after": "2027-03-30T00:00:00Z",
+   "not_before": "2026-10-01T00:00:00Z",
+   "public_key": "uf9XqRA+4A23hI1CzIbeh5P8ieNo/+KNHzGBzbwvwjI=",
+   "purpose": "addon-catalog",
+   "serial": 7
+  },
+  "rk-1": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "rk-1",
+   "not_after": "2027-03-30T00:00:00Z",
+   "not_before": "2026-10-01T00:00:00Z",
+   "public_key": "iuQtXdimPBlXWo4rlkEtoQnXgM93CqYDomsk1AtaR+Y=",
+   "purpose": "core",
+   "serial": 1
+  },
+  "rk-3": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "rk-3",
+   "not_after": "2027-03-30T00:00:00Z",
+   "not_before": "2026-10-01T00:00:00Z",
+   "public_key": "O54sZMFY9inCOLVzTn9Bvr/4p1oKDCYURrsNP48zOa0=",
+   "purpose": "core",
+   "serial": 3
+  },
+  "rk-4": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "rk-4",
+   "not_after": "2027-03-30T00:00:00Z",
+   "not_before": "2026-10-01T00:00:00Z",
+   "public_key": "Sc+bMkGWjmcXQq+VnHotvMpPq56o37qL7cB+7uUX0Yg=",
+   "purpose": "core",
+   "serial": 4
+  },
+  "rk-5": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "rk-5",
+   "not_after": "2026-09-28T00:00:00Z",
+   "not_before": "2026-04-01T00:00:00Z",
+   "public_key": "WeRSM2bLmXeKkkUvIYX5tyxiderukSJQ0tisid/pH1g=",
+   "purpose": "core",
+   "serial": 5
+  },
+  "rk-6": {
+   "channels": [
+    "develop",
+    "main"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "rk-6",
+   "not_after": "2027-04-30T00:00:00Z",
+   "not_before": "2026-11-01T00:00:00Z",
+   "public_key": "qoD4bFVFeX4xpNxbEL1lszEM/A8YwpFph919gK8PcbM=",
+   "purpose": "core",
+   "serial": 6
+  },
+  "tk-1": {
+   "channels": [
+    "test-*"
+   ],
+   "format": "orch.release-key/1",
+   "key_id": "tk-1",
+   "not_after": "2027-03-30T00:00:00Z",
+   "not_before": "2026-10-01T00:00:00Z",
+   "public_key": "d1zDXUnQTC2y69silDRzXsxzLEAtD/kLx2GzrYLgv8A=",
+   "purpose": "core",
+   "serial": 8
+  }
+ },
+ "domains": {
+  "cert": "orch-release-key/1\n",
+  "payload": {
+   "addon-catalog": "orch-addon-catalog/1\n",
+   "core": "orch-release/1\n"
+  },
+  "revocations": "orch-revocations/1\n"
+ },
+ "keys": {
+  "ck-1": {
+   "public_key": "uf9XqRA+4A23hI1CzIbeh5P8ieNo/+KNHzGBzbwvwjI=",
+   "seed_hex_TEST_ONLY": "d14d56a4c69abd7facdc54fe41947c3e283ee98537882ea344c5a991e342c2c1"
+  },
+  "rk-1": {
+   "public_key": "iuQtXdimPBlXWo4rlkEtoQnXgM93CqYDomsk1AtaR+Y=",
+   "seed_hex_TEST_ONLY": "ef58bd8cd347d67daa92cbdcd8b3c58138670cad1cb10d86fd41238f3d5c1485"
+  },
+  "rk-3": {
+   "public_key": "O54sZMFY9inCOLVzTn9Bvr/4p1oKDCYURrsNP48zOa0=",
+   "seed_hex_TEST_ONLY": "c200622c8c92adc422bc59e2585d0205081d480dd402b4b4967524ffde3f7b9e"
+  },
+  "rk-4": {
+   "public_key": "Sc+bMkGWjmcXQq+VnHotvMpPq56o37qL7cB+7uUX0Yg=",
+   "seed_hex_TEST_ONLY": "6aa16d43e7d05fa84b9f70665174eda969db866f563b09199a1caf5ada345875"
+  },
+  "rk-5": {
+   "public_key": "WeRSM2bLmXeKkkUvIYX5tyxiderukSJQ0tisid/pH1g=",
+   "seed_hex_TEST_ONLY": "48c3d4209a656ffc7d10725d0eb189a8a3b691b458c10f2b19a2c81e15c84567"
+  },
+  "rk-6": {
+   "public_key": "qoD4bFVFeX4xpNxbEL1lszEM/A8YwpFph919gK8PcbM=",
+   "seed_hex_TEST_ONLY": "443f639caa44cb6bb630a06f6dd71a954f8a24be13a0f6172ea98ed4f35b353c"
+  },
+  "root-1": {
+   "public_key": "/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k=",
+   "seed_hex_TEST_ONLY": "7aa79855a0388b847fe4ff70a9a31147a3b7a509a9fbca37ecdf1ab62901d4f7"
+  },
+  "root-9": {
+   "public_key": "3j6XXAjF5OIYcWBySYCCPja+zPjzej6B8Pybxha7VRU=",
+   "seed_hex_TEST_ONLY": "37b2d4b8c4ba4ed7344bd63dced282738cb1cf7efd72a7e638d155b91b53dac0"
+  },
+  "tk-1": {
+   "public_key": "d1zDXUnQTC2y69silDRzXsxzLEAtD/kLx2GzrYLgv8A=",
+   "seed_hex_TEST_ONLY": "68f558fce6bb66b6014b473e371f947f0346b49b0739c1eab77c0a0ab48347b0"
+  }
+ },
+ "payload_format": {
+  "addon-catalog": "orch.addon-catalog/1",
+  "core": "orch.release/1"
+ },
+ "reason_code": {
+  "bad_cert_sig": "update.unverified",
+  "bad_revocations_sig": "update.unverified",
+  "bad_sig": "update.unverified",
+  "cert_expired": "update.unverified",
+  "cert_not_yet_valid": "update.unverified",
+  "channel_not_allowed": "update.unverified",
+  "expired": "update.stale",
+  "hash_mismatch": "update.unverified",
+  "key_mismatch": "update.unverified",
+  "key_revoked": "update.unverified",
+  "malformed": "update.unverified",
+  "ok": null,
+  "revocations_rollback": "update.stale",
+  "rollback": "update.stale",
+  "size_mismatch": "update.unverified",
+  "unknown_root": "update.unverified",
+  "wrong_channel": "update.unverified",
+  "wrong_format": "update.unverified",
+  "wrong_purpose": "update.unverified"
+ },
+ "revocations": {
+  "format": "orch.revocations/1",
+  "issued_at": "2026-10-20T00:00:00Z",
+  "min_serial": 2,
+  "revoked": [
+   4
+  ]
+ },
+ "seed_rule": "sha256(b\"orch-release TEST key <name>; never trust outside tests\")",
+ "test_only": true,
+ "trusted_roots": {
+  "root-1": "/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k="
+ }
+}

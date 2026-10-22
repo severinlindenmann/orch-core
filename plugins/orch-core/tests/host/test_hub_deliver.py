@@ -227,3 +227,14 @@ def test_an_admitted_event_records_its_user_under_the_hub(env):
         assert store.state.workspace.hub["user_hub"][ALICE] == HUB_ID
     finally:
         store.close()
+
+
+def test_selective_inputs_come_from_the_store_and_the_share_state(env):
+    def read():
+        land = hubdeliver.StoreLanding(env.service, None, env.state)
+        heads = land.log_heads(env.uid)
+        return len(heads), heads[len(heads) - 1], land.shared_items(env.uid)
+
+    n, last, (live, superseded) = env.service.submit(read).result()
+    assert n == len(env.lines(env.uid)) and last == env.head(env.uid)
+    assert live == {} and superseded == frozenset()  # nothing shared yet: no decision is granted (fail closed)

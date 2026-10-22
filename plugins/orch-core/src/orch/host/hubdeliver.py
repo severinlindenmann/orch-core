@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,6 +20,24 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger("orch.host.hubdeliver")
 WORKSPACE = "workspace"
+
+
+class _Heads(Sequence):
+    """``heads[seq - 1]`` of a log, read from the store on demand (a long log is never copied)."""
+
+    def __init__(self, store: Any, log: str) -> None:
+        self._store, self._log = store, log
+
+    def __len__(self) -> int:
+        return self._store.log_seq(self._log) or 0
+
+    def __getitem__(self, i: Any) -> str:
+        if type(i) is not int or not 0 <= i < len(self):
+            raise IndexError(i)
+        head = self._store.head_at(self._log, i + 1)
+        if head is None:
+            raise IndexError(i)
+        return head
 
 
 class StoreLanding:
@@ -61,6 +79,27 @@ class StoreLanding:
             ):
                 last = ts(line["at"]) * 1000
         return last
+
+    def shared_items(self, log: str) -> tuple[Mapping[str, Any], frozenset[str]]:
+        """The live shared items (C6 ``ShareState.sent``) of THIS host as the item check reads them. An entry counts
+        only if it carries the ``chain`` and ``f1`` the item was built with (C6b, core#1035: the values the person was
+        shown); an older entry is not live for a decision and the delivery is ``not_granted`` (fail closed)."""
+        from . import shareops
+
+        state = shareops._load(self.service)  # noqa: SLF001
+        live: dict[str, Any] = {}
+        old: set[str] = set()
+        for entry in state.sent.values():
+            h = entry.get("item_hash")
+            if type(h) is not str or entry.get("digest") is None:
+                continue
+            if type(entry.get("chain")) is dict and type(entry.get("f1")) is dict:
+                live[h] = {"chain": entry["chain"], "f1": entry["f1"]}
+            old.update(x for x in entry.get("superseded", ()) if type(x) is str)
+        return live, frozenset(old - set(live))
+
+    def log_heads(self, log: str) -> Sequence[str]:
+        return _Heads(self.store, log)
 
     def land(self, pins: list[dict[str, Any]], event: dict[str, Any], log: str) -> None:
         from orch import canon

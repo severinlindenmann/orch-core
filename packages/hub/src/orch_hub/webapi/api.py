@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..access import Access, AccessError, role_rank
+from ..access.store import check_name
 from ..channels import Channels
 from ..channels.service import ChannelError
 from ..contract import phase4 as P4
@@ -285,7 +286,7 @@ def _render(x: Any) -> Any:
     if type(x) is list:
         return [_render(i) for i in x]
     if type(x) is dict:
-        return {k: _render(v) for k, v in x.items()}
+        return {(P4.render_text(k) if type(k) is str else k): _render(v) for k, v in x.items()}
     return x
 
 
@@ -671,6 +672,7 @@ class WebApi:
 
     def _h_a_user_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, name=str)
+        check_name(b["name"])  # before any key is made: a refused name must leave no orphan UK behind
         uid = self.d.keys.issue_uk(None)["o"]["user_id"]
         self.d.access.add_user(uid, b["name"])
         return 200, {"user_id": uid}

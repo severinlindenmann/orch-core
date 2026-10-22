@@ -42,7 +42,7 @@ export function WorkspaceChoice({ prefix, choices }: { prefix: string; choices: 
 /** An address that names (by `?ws=`) a workspace whose host is not running. The others keep working. */
 export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
   const unsafe = workspace.host_state === 'workspace.name_invalid'
-  usePageHeader(unsafe ? 'Workspace not shown' : workspace.host_message ? 'Workspace can\'t be opened' : 'Host not running')
+  usePageHeader(unsafe ? 'Workspace not shown' : workspace.host_state === 'addon.disabled' ? 'Dashboard not switched on' : workspace.host_message ? 'Workspace can\'t be opened' : 'Host not running')
   if (unsafe)
     return (
       <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
@@ -51,6 +51,17 @@ export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
         <p className="mt-1.5 text-[13px] text-text-muted">
           Workspace <span className="font-mono">{uuid8(workspace.id)}</span> has a name with hidden characters, so it is not shown. Your other workspaces keep working.
         </p>
+      </div>
+    )
+  if (workspace.host_state === 'addon.disabled')
+    return (
+      <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
+        <ServerOff className="mx-auto size-7 text-text-muted" aria-hidden />
+        <h1 className="mt-3 text-lg font-semibold">The dashboard is not switched on yet</h1>
+        <p className="mt-1.5 text-[13px] text-text-muted">
+          Only you can switch it on. In a Terminal window, run this and sign with your passphrase, then reload this page:
+        </p>
+        <p className="mt-3 rounded bg-surface-3 px-3 py-2 font-mono text-[13px] select-all">orch addon grant dashboard</p>
       </div>
     )
   if (workspace.host_message)

@@ -188,17 +188,25 @@ def _secret_of(grant: Any) -> str | None:
     return secret if len(secret) >= 8 else None
 
 
-# The GitHub-token shape check skips ONLY the values selected below, by op, exact path and exact shape (#825).
+# The GitHub-token shape check skips ONLY the values selected below, by op, exact path and exact shape (#825, #832).
 # A base64url Ed25519 signature (86 chars) contains ``ghp_`` + 20 base64url chars by chance about 2e-5 of the time and
-# a valid signed submit must not be refused at random. Every other string (notes, titles, paths, keys, any other
+# a valid signed request must not be refused at random. Every other string (notes, titles, paths, keys, any other
 # field, a ``sig`` of any other shape or path) stays fully scanned; the grant-shape and presented-secret checks are
 # never skipped, not even for these values.
-# Entry: op human.submit, path args.events[i].sig. Exact shape: canonical base64url of exactly 64 bytes (86 chars,
-# crypto.unb64u(s, SIG_LEN)). Safe because it is a fixed-size Ed25519 signature that the host verifies against the
-# signer's key before anything is stored; free text cannot pass the exact-shape test and a forged value fails
-# verification.
+# Entries (op, path in args; ``*`` is any list index):
+#   human.submit    events[*].sig      (#825)
+#   reader.declare  reader_decl.sig    (#832; the signed reader declaration ``{o, sig}``)
+# Exact shape: canonical base64url of exactly 64 bytes (86 chars, crypto.unb64u(s, SIG_LEN)). Safe because it is a
+# fixed-size Ed25519 signature that the host verifies against the signer's key before anything is stored; free text
+# cannot pass the exact-shape test and a forged value fails verification.
 # The args key is spelled in two parts only so the store-layout lint does not read it as a store path.
-SIGNATURE_FIELDS = (("human.submit", "event" + "s", "sig"),)
+SIGNATURE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("human.submit", ("event" + "s", "*", "sig")),
+    ("reader.declare", ("reader_decl", "sig")),
+)
+#: A reader declaration file (``member.add --reader-decl PATH``, sent inline in ``files``) is one JSON object
+#: ``{o, sig}``; only its ``sig`` is exempt, by the same exact-shape rule (#832).
+DECLARATION_FILE_OPS = frozenset({"member.add"})
 
 
 def _is_signature(value: Any) -> bool:
@@ -211,23 +219,54 @@ def _is_signature(value: Any) -> bool:
     return True
 
 
+def _blank_at(node: Any, path: tuple[str, ...], sigs: list[str]) -> Any:
+    """``node`` with the exact-shape signature at ``path`` blanked (appended to ``sigs``); the rest unchanged. Only
+    real dicts and lists are followed, and only a ``str`` of the exact shape is taken out."""
+    if not path:
+        if type(node) is str and _is_signature(node):
+            sigs.append(node)
+            return ""
+        return node
+    head, rest = path[0], path[1:]
+    if head == "*":
+        if type(node) is not list:
+            return node
+        return [_blank_at(item, rest, sigs) for item in node]
+    if not isinstance(node, Mapping) or head not in node:
+        return node
+    return {**node, head: _blank_at(node[head], rest, sigs)}
+
+
 def _split_signatures(frame: Mapping[str, Any]) -> tuple[Any, list[str]]:
     """``(args with the allowlisted signature values blanked, those values)``. Only the op and path in
     :data:`SIGNATURE_FIELDS`, and only a value of the exact signature shape, are taken out; all else stays in args."""
     args = frame.get("args")
     sigs: list[str] = []
-    for op, list_key, field_key in SIGNATURE_FIELDS:
-        if frame.get("op") != op or not isinstance(args, Mapping) or type(args.get(list_key)) is not list:
-            continue
-        items = []
-        for item in args[list_key]:
-            sig = item.get(field_key) if isinstance(item, Mapping) else None
-            if type(sig) is str and _is_signature(sig):
-                sigs.append(sig)
-                item = {**item, field_key: ""}
-            items.append(item)
-        args = {**args, list_key: items}
+    if not isinstance(args, Mapping):
+        return args, sigs
+    for op, path in SIGNATURE_FIELDS:
+        if frame.get("op") == op:
+            args = _blank_at(args, path, sigs)
     return args, sigs
+
+
+def _declaration_bytes(data: bytes) -> tuple[bytes, str | None]:
+    """A reader declaration file with its exact-shape ``sig`` blanked, and that ``sig``; the bytes unchanged and
+    ``None`` when the file is not exactly one JSON object ``{o, sig}`` with a signature of the exact shape."""
+    import json
+
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError):
+        return data, None
+    if (
+        type(doc) is not dict
+        or set(doc) != {"o", "sig"}
+        or type(doc["sig"]) is not str
+        or not _is_signature(doc["sig"])
+    ):
+        return data, None
+    return json.dumps({**doc, "sig": ""}).encode(), doc["sig"]
 
 
 def secret_in_request(frame: Mapping[str, Any]) -> bool:
@@ -244,16 +283,26 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
     for text in sigs:
         if GRANT_SHAPE.search(text) or (secret is not None and secret in text):
             return True
-    inline = [spec.get("b64") if isinstance(spec, Mapping) else None for spec in (frame.get("files") or {}).values()]
+    inline = [
+        (name, spec.get("b64") if isinstance(spec, Mapping) else None)
+        for name, spec in (frame.get("files") or {}).items()
+    ]
     if frame.get("op") == "blob.put" and isinstance(frame.get("args"), Mapping):
-        inline.append(frame["args"].get("b64"))  # a chunk's bytes are file content too (§0.10)
-    for raw in inline:
+        inline.append((None, frame["args"].get("b64")))  # a chunk's bytes are file content too (§0.10)
+    # the one file a declaration-taking op names in its args (never any other file, never a blob chunk)
+    named = frame["args"].get("reader_decl") if isinstance(frame.get("args"), Mapping) else None
+    declaration_files = {named} if frame.get("op") in DECLARATION_FILE_OPS and type(named) is str else set()
+    for name, raw in inline:
         if not isinstance(raw, str):
             continue
         try:
             data = base64.b64decode(raw, validate=True)
         except (binascii.Error, ValueError):
             continue  # not base64: blob.invalid later (§0.6 step 8)
+        if name in declaration_files:
+            data, sig = _declaration_bytes(data)
+            if sig is not None and (_GRANT_BYTES.search(sig.encode()) or (secret is not None and secret in sig)):
+                return True
         if (
             _GRANT_BYTES.search(data)
             or GITHUB_TOKEN_BYTES.search(data)
@@ -266,11 +315,20 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
 # --- redaction --------------------------------------------------------------------------------------------------------
 
 
+#: op -> result paths (``*`` is any list index) whose exact-shape signature the read side returns as stored (#832): a
+#: stored declaration's ``sig`` in ``reader.list`` is re-verified by clients, so it must not be replaced by chance.
+READ_SIGNATURE_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "reader.list": (("data", "readers", "*", "decl", "sig"),),
+}
+
+
 class Redactor:
     """The redaction context of one request (D-P2-10): the presented grant and its secret, kept after ``auth`` is
     dropped, plus the shapes that are never returned whatever the request."""
 
-    def __init__(self, grant: Any = None) -> None:
+    def __init__(self, grant: Any = None, op: str | None = None) -> None:
+        #: the result paths of ``op`` whose exact-shape signature is returned as stored (#832), else none
+        self.keep = READ_SIGNATURE_PATHS.get(op or "", ())
         secrets = []
         if isinstance(grant, str) and grant:
             secrets.append(grant)
@@ -279,22 +337,36 @@ class Redactor:
                 secrets.append(secret)
         self.secrets = sorted(secrets, key=len, reverse=True)
 
-    def text(self, text: str) -> str:
+    def text(self, text: str, *, signature: bool = False) -> str:
+        """``text`` redacted. ``signature``: the value is a stored signature (see :meth:`_kept`): only the GitHub
+        token shape is not applied to it; the secrets, grant shape and key blocks always are."""
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)
         text = GRANT_SHAPE.sub(REDACTED, text)
-        text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
+        if not signature:
+            text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)
 
-    def obj(self, value: Any) -> Any:
+    def _kept(self, path: tuple[str, ...], value: str) -> bool:
+        """Is ``value`` at ``path`` (``*`` for a list index) a signature this op returns as stored: exact path, and
+        canonical base64url of exactly 64 bytes?"""
+        return any(
+            len(p) == len(path) and all(a in (b, "*") for a, b in zip(p, path, strict=True)) for p in self.keep
+        ) and (_is_signature(value))
+
+    def obj(self, value: Any, _path: tuple[str, ...] = ()) -> Any:
         if isinstance(value, str):
-            return self.text(value)
+            return self.text(value, signature=bool(self.keep) and self._kept(_path, value))
         if isinstance(value, list | tuple):
-            return [self.obj(v) for v in value]
+            return [self.obj(v, (*_path, "*")) for v in value]
         if isinstance(value, Mapping):
             # a null value carries nothing (a prepared grant.issued has "secret_hash": null, F1): kept, so the
             # signer sees exactly the event it signs
-            return {self.text(str(k)): self.obj(v) for k, v in value.items() if str(k) not in SECRET_KEYS or v is None}
+            return {
+                self.text(str(k)): self.obj(v, (*_path, str(k)))
+                for k, v in value.items()
+                if str(k) not in SECRET_KEYS or v is None
+            }
         return value
 
     def error(self, error: HostError) -> HostError:

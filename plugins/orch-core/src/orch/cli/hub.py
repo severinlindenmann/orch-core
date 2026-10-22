@@ -161,7 +161,13 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
 
 def _unbind(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: TextIO) -> int:
     got = _call(target, "hub.unbind", {}, env)
-    if not got.get("unbound"):
+    if got.get("rotation") == "pending":
+        _emit(
+            out, a.json, got,
+            f"hub left {got.get('hub_id')}, but not finished: the new workspace key the hub must never get is not "
+            "ready yet. Run orch hub unbind again shortly.",
+        )  # fmt: skip
+    elif not got.get("unbound"):
         _emit(out, a.json, got, "ok hub left (the hub never had a binding for this workspace)")
     elif got.get("delivered"):
         _emit(out, a.json, got, f"ok hub left {got.get('hub_id')}: the hub and publish are told")
@@ -244,5 +250,8 @@ def _status_text(d: Mapping[str, Any]) -> str:
         state += ", the hub is a member and can read everything"
     link = f", link {d['link']}" if d.get("link") else ""
     queued = ", the hub has not been told yet (orch hub unbind)" if d.get("unbound_pending") else ""
+    queued += (
+        ", the hub cannot read new content until you run orch hub connect (new key)" if d.get("reseal_needed") else ""
+    )
     queued += ", the new workspace key is not ready yet (orch hub unbind)" if d.get("rotation") == "pending" else ""
     return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{queued}"

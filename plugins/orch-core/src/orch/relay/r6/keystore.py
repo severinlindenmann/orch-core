@@ -773,6 +773,43 @@ class MembershipKeys:
                 self._ehw = max(self._ehw, epoch)
             return pairing.wk_commit(self.workspace_id, epoch, wk)
 
+    @property
+    def previously_linked(self) -> bool:
+        """The workspace is (or may be) linked to a relay: its epochs then come from the relay path only."""
+        return self._previously_linked
+
+    def advance_local(self, owner_person_id: str) -> int:
+        """A relay-less workspace makes its own epoch (V3 C2b): the first one (the genesis epoch, an empty list) or the
+        next one (the committed list's members carried over), through the same write-ahead steps as a rotation:
+        ``new_epoch_key``, one ``expose``, one ``commit``. Same file formats, same custody, no new crypto; the list is
+        not signed or sent anywhere (no relay). Refused for a workspace that is or was linked to a relay: its
+        epochs are the publisher's (a local list there would collide with the relay's ``list_seq`` and epoch)."""
+        self._require_safe()
+        if self._previously_linked:
+            raise CustodyRefused("a relay-linked workspace gets its epochs from the relay path")
+        with self._write():
+            if self._head["exposed"] is not None:
+                raise CustodyRefused("a rotation is exposed and not committed")
+            with self._seal:
+                ehw, lhw = self._ehw, self._lhw
+            committed = self._head["committed"]
+            members = committed["list"]["members"] if committed else []
+            epoch = ehw + 1
+            commit = self.new_epoch_key(epoch)
+            try:
+                o = memberlist.member_list_o(
+                    self.workspace_id, epoch, lhw + 1, self._now_ms(), commit, members,
+                    owner_person_id=owner_person_id, first=False,
+                )  # fmt: skip
+            except Refused:
+                raise CustodyRefused("local member list") from None
+            body = canon.dumps(o)
+            digest = _list_digest(body)
+            self.expose(list_seq=lhw + 1, epoch=epoch, body=body, digest=digest, adds=[])
+            if not self.commit(list_seq=lhw + 1, epoch=epoch, list_hash=digest, list_obj=o, at_ms=self._now_ms()):
+                raise CustodyRefused("the local epoch was not committed")
+            return epoch
+
     def listed_devices(self) -> list[tuple[str, str]]:
         """``(device_id, person_id)`` of every member of the committed list and of the exposed body (a removed
         device may hold the exposed epoch's key once a late 2xx commits it, round 3 R4); a malformed entry is

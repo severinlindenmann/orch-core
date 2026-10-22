@@ -25,6 +25,7 @@ from .link import HubLink, HubTransport
 
 __all__ = [
     "EpochKeys",
+    "retire_full_state",
     "HubState",
     "JoinResult",
     "LeaveResult",
@@ -185,11 +186,11 @@ class LeaveResult:
     rotation_done: bool = True  # False: a full hub left and the newer epoch is not committed yet (state.rotate_after)
 
 
-def join_selective(*, mode: str = "selective", **kw: Any) -> JoinResult:
+def join_selective(*, mode: str = "selective", epochs: EpochKeys | None = None, **kw: Any) -> JoinResult:
     """Selective join (D80). Any other mode is refused here: the full path is :func:`join_full` (needs epoch keys)."""
     if mode != "selective":
         raise HubRefused("full_mode_later")
-    return _join(mode="selective", epochs=None, **kw)
+    return _join(mode="selective", epochs=epochs, **kw)  # epochs: only to retire an earlier full state, never to seal
 
 
 def join_full(*, epochs: EpochKeys, mode: str = "full", **kw: Any) -> JoinResult:
@@ -225,16 +226,18 @@ def _join(
 ) -> JoinResult:
     if type(invite) is not str or not invite or len(invite) > 512:
         raise HubRefused("malformed")
-    if mode == "full":
-        assert epochs is not None
-        _epoch_ready(state, epochs)
     if state is not None and state.status == "bound":
         if binding_seq is None or binding_seq <= state.binding_seq:
             raise HubRefused("already_joined")
-        # the log says left (and joined again) but the hub was never told: owe it the unbound of the old binding
+        # the log says left (and joined again) but the hub was never told: owe it the unbound of the old binding, and
+        # retire a full state first (it owes the rotation whatever comes next, also a selective rejoin)
+        _retire_full_state(state, epochs, save, "rejoin")
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
         save(state)
+    if mode == "full":
+        assert epochs is not None
+        _epoch_ready(state, epochs)
     pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
     verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
     root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
@@ -303,6 +306,29 @@ def _join(
         assert epochs is not None
         _seal(new, link, epochs, save)
     return JoinResult(new, payload)
+
+
+def _retire_full_state(
+    state: HubState, epochs: EpochKeys | None, save: Callable[[HubState], None], reason: str
+) -> bool:
+    """THE one place a full-mode state is ended (a leave, an unbind, a rejoin over an un-ended binding, a mode change).
+    Invariant: a hub that was ever given ``WK_e`` is never given the next one. So: record the rotation obligation
+    (``rotate_after`` = the newest epoch it may hold; the hub member itself goes with the owner's ``hub.left`` in the
+    model), forget the seal, and ask for the rotation (the key store's gate, or the local epoch for a relay-less
+    workspace). Idempotent; the obligation only grows. Returns True when the state was full."""
+    if state.mode != "full":
+        return False
+    held = state.sealed["epoch"] if state.sealed else 0
+    cur = epochs.current_epoch() if epochs is not None else 0
+    state.rotate_after = max(held, cur, state.rotate_after or 0)
+    state.sealed = None
+    save(state)  # durable before anything else happens
+    if epochs is not None:
+        epochs.rotate()
+    return True
+
+
+retire_full_state = _retire_full_state  # the host calls it when it ends a full state without a leave()
 
 
 def _hxk(verified: dict[str, Any]) -> bytes:
@@ -478,6 +504,10 @@ def settle_rotation(
         return True
     if request and epochs is not None:
         epochs.rotate()
+        if epochs.current_epoch() > state.rotate_after:  # a relay-less workspace makes its epoch at once
+            state.rotate_after = None
+            save(state)
+            return True
     return False
 
 
@@ -503,14 +533,11 @@ def leave(
     payload = wire.left_payload(hub_id_=state.hub_id, binding_seq=state.binding_seq)
     record_left(payload)
     unbound = _owe(state, workspace_id, sign_wsk, now_ms, dev=dev_mode)
-    if state.mode == "full":  # fail closed: even a hub that was never sealed to gets a fresh epoch behind it
-        held = state.sealed["epoch"] if state.sealed else 0
-        cur = epochs.current_epoch() if epochs is not None else 0
-        state.rotate_after = max(held, cur, state.rotate_after or 0)
+    _retire_full_state(state, epochs, save, "leave")  # fail closed: even a never-sealed full hub gets a fresh epoch
     state.sealed = None
     state.status = "unbound"
     save(state)
-    done = settle_rotation(state=state, epochs=epochs, save=save, request=True)
+    done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
     flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
                  transport_for=transport_for, save=save)  # fmt: skip
     return LeaveResult(state, payload, unbound, state.hub_id not in state.outbox, done)

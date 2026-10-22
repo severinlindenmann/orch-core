@@ -319,8 +319,16 @@ def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any,
 class _Epochs:
     """:class:`orch.hubclient.EpochKeys` over the workspace's membership key store (R6a). ``WK_e`` never leaves it."""
 
-    def __init__(self, mk: Any) -> None:
+    def __init__(self, mk: Any, local_owner: str | None = None) -> None:
         self._mk = mk
+        #: a relay-less workspace makes its own epochs (``MembershipKeys.advance_local``); ``None``: the relay path
+        #: (the publisher) makes them and a rotation is only requested through the gate
+        self._local_owner = local_owner
+
+    def ensure_epoch(self) -> None:
+        """The genesis epoch of a relay-less workspace, at its first full join (no-op when one exists)."""
+        if self._local_owner is not None and self._mk.current_epoch() < 1:
+            self._mk.advance_local(self._local_owner)
 
     def current_epoch(self) -> int:
         return int(self._mk.current_epoch())
@@ -337,18 +345,29 @@ class _Epochs:
             raise HubRefused("no_epoch") from None
 
     def rotate(self) -> None:
-        self._mk.raise_gate("", "rotate")  # the explicit rotation of v2 5.4: the membership machinery makes the epoch
+        if self._local_owner is not None:
+            self._mk.advance_local(self._local_owner)  # relay-less: the next epoch, now
+        else:
+            self._mk.raise_gate("", "rotate")  # v2 5.4 explicit rotation: the membership machinery makes the epoch
 
 
-def epochs_for(service: WorkspaceService) -> Any:
-    """The key store of a workspace that has one (``membership/head.json`` exists), else ``None``: a workspace
-    without epoch keys has nothing to seal, and asking must not create the key store."""
-    from . import relayr6
+def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
+    """The key store of a workspace that has one (``membership/head.json`` exists), else ``None``: asking must not
+    create the key store. ``create`` (a full join only) lets a workspace that never had a relay open one: it then
+    makes its own genesis epoch locally (:meth:`_Epochs.ensure_epoch`). A relay-linked workspace never does."""
+    from orch import crypto
 
-    if not (relayr6.membership_path(service) / "head.json").is_file():
+    from . import relayr3, relayr6
+
+    exists = (relayr6.membership_path(service) / "head.json").is_file()
+    if not exists and not create:
         return None
     try:
-        return _Epochs(relayr6.keys_for(service))
+        mk = relayr6.keys_for(service)
+        owner = None
+        if not mk.previously_linked:
+            owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
+        return _Epochs(mk, owner)
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
         return None
 
@@ -407,6 +426,17 @@ def _audit(call: Call, event: str, **more: Any) -> None:
     )
 
 
+def _reseal_needed(service: WorkspaceService, state: Any) -> bool:
+    """A bound full hub whose newest sealed epoch is older than the committed one (a routine rotation happened): it
+    cannot read new content until ``orch hub connect`` seals the new epoch to it."""
+    if state is None or state.mode != "full" or state.status != "bound":
+        return False
+    epochs = epochs_for(service)
+    if epochs is None:
+        return False
+    return int(epochs.current_epoch()) > (state.sealed["epoch"] if state.sealed else 0)
+
+
 def _rotation(service: WorkspaceService, state: Any) -> str:
     """``none`` | ``pending`` (a leave from full mode owes a new epoch) | ``done`` is never kept: it clears itself."""
     if state is None or state.rotate_after is None:
@@ -451,6 +481,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "member": bool(model.get("member")),  # full mode: the hub is a member of kind hub
                 "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],
                 "rotation": _rotation(service, state),
+                "reseal_needed": _reseal_needed(service, state),
                 "link": None if state is None else state.status,
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -581,10 +612,16 @@ def _connect(
     from orch.hubclient import join_full, seal_to_hub, switch_full
 
     if model["mode"] == "selective":
-        return _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases).state
-    epochs = epochs_for(service)
+        # an earlier FULL state is retired inside the join (rotation owed); selective itself never touches epochs
+        old_epochs = epochs_for(service) if state is not None and state.mode == "full" else None
+        return _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases, old_epochs).state
+    epochs = epochs_for(service, create=True)
     if epochs is None:
         raise _refused("no_epoch")
+    try:
+        epochs.ensure_epoch()  # relay-less: the workspace's own first epoch; relay-linked without one: no_epoch below
+    except Exception:  # noqa: BLE001 - the key store refused (unsafe, linked, exposed): nothing to give the hub
+        raise _refused("no_epoch") from None
     if plan["kind"] == "seal":
         seal_to_hub(
             state=state, hub_card=plan["card"], workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=plan["dev"],
@@ -619,6 +656,7 @@ def _join(
     save: Any,
     transport: Any,
     aliases: list[dict[str, str]],
+    epochs: Any = None,
 ) -> Any:
     from orch.crypto.encoding import unb64u
     from orch.hubclient import join_selective
@@ -629,7 +667,7 @@ def _join(
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
         save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
-        old_transport=_transport_for(service, wsk_pub, sign),
+        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs,
     )  # fmt: skip
 
 
@@ -648,16 +686,18 @@ def _unbind(
             now_ms=now, transport_for=tf, record_left=lambda _p: None, save=save, epochs=epochs,
         )  # fmt: skip
     else:
-        flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)
-        if (
-            state.rotate_after is not None
-        ):  # a leave from full mode owes a new epoch: ask again, record when it is there
-            from orch.hubclient import settle_rotation
+        from orch.hubclient import retire_full_state, settle_rotation
 
+        if state.status == "bound" and state.mode == "full" and model.get("binding_seq", 0) > state.binding_seq:
+            retire_full_state(state, epochs, save, "unbind")  # the log moved on to a newer binding: this one ended
+        flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)
+        if state.rotate_after is not None:  # a full hub was left: ask again, record when the new epoch is there
             settle_rotation(state=state, epochs=epochs, save=save, request=True)
+    owed = state.rotate_after is not None
     out = {
-        "hub_id": state.hub_id, "unbound": True, "delivered": not state.outbox, "owed": sorted(state.outbox),
-        "rotation": "pending" if state.rotate_after is not None else "none",
+        # not "unbound" while a key rotation is owed: the leave is not finished until the hub's key is replaced
+        "hub_id": state.hub_id, "unbound": not owed, "binding_ended": True, "delivered": not state.outbox,
+        "owed": sorted(state.outbox), "rotation": "pending" if owed else "none",
     }  # fmt: skip
     _audit(call, "hub.unbind", hub_id=state.hub_id, delivered=out["delivered"])
     return out

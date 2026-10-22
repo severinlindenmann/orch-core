@@ -465,7 +465,7 @@ def keystore(monkeypatch, served, tmp_path):
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
     R6Gate(mk).install(lambda: r6kit.KitStore())
     r6kit.rotate(mk)
-    monkeypatch.setattr(hubops, "epochs_for", lambda service: hubops._Epochs(mk))
+    monkeypatch.setattr(hubops, "epochs_for", lambda service, create=False: hubops._Epochs(mk))
     yield mk
     mk.close()
 
@@ -497,7 +497,7 @@ def test_a_full_join_through_the_host_seals_wk_to_the_hub_and_shows_the_member(h
 
 
 def test_a_full_join_without_an_epoch_key_sends_nothing(human, served, stub, monkeypatch):
-    monkeypatch.setattr(hubops, "epochs_for", lambda service: None)
+    monkeypatch.setattr(hubops, "epochs_for", lambda service, create=False: None)
     human.run("hub.join", join_args(mode="full"))
     assert err(served.client().req("hub.connect", connect_args(), idem=True)) == "hub.no_epoch"
     assert stub.sent == []
@@ -547,7 +547,8 @@ def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owe
     human.run("hub.leave", {})
     assert "member" not in hub_state(served)[0]
     got = ok(c.req("hub.unbind", {}, idem=True))["data"]
-    assert got["unbound"] and got["rotation"] == "pending" and keystore.gate_up()
+    assert got["binding_ended"] and got["rotation"] == "pending" and keystore.gate_up()
+    assert got["unbound"] is False  # not finished while the key the hub must never get is not replaced
     assert ok(c.req("hub.status", {}, idem=False))["data"]["rotation"] == "pending"
     n = len(stub.sent)
     human.run("hub.join", join_args(mode="full"))  # the owner may sign a new full join at once ...
@@ -561,3 +562,55 @@ def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owe
     sealed = [m for m in stub.sent if m["o"]["op"] == "wk_seal"]
     assert len(sealed) == 1 and _unwrap(sealed[0], served.wid, 1) == keystore.wk(1)  # the new key is never sent
     assert keystore.wk(2) != keystore.wk(1)
+
+
+def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, served, stub, keystore):
+    """The leave is logged but `hub.unbind` never ran: the next connect must not re-seal the SAME epoch."""
+    from tests.host.dispatch_helpers import ok
+    from tests.relay import r6kit
+
+    c = served.client()
+    human.run("hub.join", join_args(mode="full"))
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    human.run("hub.leave", {})  # no hub.unbind
+    human.run("hub.join", join_args(mode="full"))  # binding 2
+    n = len(stub.sent)
+    assert err(c.req("hub.connect", connect_args(invite="invite-2"), idem=True)) == "hub.rotation_pending"
+    assert len(stub.sent) == n and keystore.gate_up()  # nothing sent; the retire asked for the rotation
+    r6kit.rotate(keystore)
+    ok(c.req("hub.connect", connect_args(invite="invite-2"), idem=True))
+    sealed = [m for m in stub.sent if m["o"]["op"] == "wk_seal"]
+    assert [m["o"]["body"]["epoch"] for m in sealed] == [1, 2]
+    assert _unwrap(sealed[1], served.wid, 2) == keystore.wk(2)
+
+
+def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human, served, stub, keystore):
+    from tests.host.dispatch_helpers import ok
+    from tests.relay import r6kit
+
+    c = served.client()
+    human.run("hub.join", join_args(mode="full"))
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    human.run("hub.leave", {})  # no hub.unbind
+    human.run("hub.join", join_args())  # full -> selective
+    ok(c.req("hub.connect", connect_args(invite="invite-2"), idem=True))
+    status = ok(c.req("hub.status", {}, idem=False))["data"]
+    assert status["mode"] == "selective" and status["rotation"] == "pending"
+    assert [m["o"]["op"] for m in stub.sent].count("wk_seal") == 1  # nothing new was sealed
+    r6kit.rotate(keystore)
+    assert ok(c.req("hub.status", {}, idem=False))["data"]["rotation"] == "none"
+
+
+def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, stub, keystore):
+    from tests.host.dispatch_helpers import ok
+    from tests.relay import r6kit
+
+    c = served.client()
+    human.run("hub.join", join_args(mode="full"))
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
+    r6kit.rotate(keystore)  # a routine rotation while the hub is bound
+    assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is True
+    ok(c.req("hub.connect", {"hub_card": copy.deepcopy(CARD)}, idem=True))
+    assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
+    assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)

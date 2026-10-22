@@ -54,10 +54,10 @@ class Wire:
 class Epochs:
     """The host's adapter over a real membership key store (``orch.host.hubops._Epochs``)."""
 
-    def __init__(self, mk) -> None:
+    def __init__(self, mk, local_owner=None) -> None:
         from orch.host.hubops import _Epochs
 
-        self._e = _Epochs(mk)
+        self._e = _Epochs(mk, local_owner)
 
     def __getattr__(self, name):
         return getattr(self._e, name)
@@ -77,9 +77,9 @@ def mk(tmp_path):
 
 
 class Host:
-    def __init__(self, hub: FakeHub, mk) -> None:
+    def __init__(self, hub: FakeHub, mk, local_owner=None) -> None:
         self.hub, self.wire, self.state, self.log, self.mk = hub, Wire(hub), None, [], mk
-        self.epochs = Epochs(mk)
+        self.epochs = Epochs(mk, local_owner)
         self.kw = dict(
             invite="invite-1", hub_card=V["objects"]["card"], v2_card=V["objects"]["v2_card_a"],
             pk_pub=pub("pk_alice"), workspace_id=WS, wsk_pub=pub("wsk_a"), sign_wsk=sign_wsk, dev_mode=True,
@@ -315,3 +315,55 @@ def test_only_the_committed_epoch_is_ever_sealed(host, mk):
     with pytest.raises(HubRefused):
         e.seal_to_hub(2, pub("hxk"), HUB_ID)
     assert e.seal_to_hub(1, pub("hxk"), HUB_ID)
+
+
+def test_leave_then_rejoin_over_an_unended_binding_retires_the_full_state(host, mk):
+    """hub.left was logged but no unbind ran: a full rejoin must not re-seal the epoch the hub already holds, and a
+    selective rejoin must still owe the rotation."""
+    host.join_full()
+    for rejoin in ("full", "selective"):
+        st = copy.deepcopy(host.state.to_json())
+        h2 = Host(FakeHub(), mk)
+        h2.state = HubState.from_json(st)
+        with pytest.raises(HubRefused) if rejoin == "full" else _nothing():
+            (h2.join_full if rejoin == "full" else h2.join_selective)(binding_seq=2, invite="invite-2")
+        assert h2.state.rotate_after == 1 and h2.state.sealed is None
+        if rejoin == "full":
+            assert h2.wire.sent == []  # nothing reached the hub
+
+
+class _nothing:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(tmp_path):
+    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+
+    own = MembershipKeys(tmp_path / "m3", WS, now_ms=lambda: NOW)
+    R6Gate(own).install(lambda: r6kit.KitStore())
+    owner = V["ids"]["person_alice"]
+    h = Host(FakeHub(), own, local_owner=owner)
+    with pytest.raises(HubRefused):  # without ensure_epoch there is nothing to seal
+        h.join_full()
+    h = Host(FakeHub(), own, local_owner=owner)
+    h.epochs.ensure_epoch()
+    assert own.current_epoch() == 1
+    h.join_full()
+    assert h.hub.workspaces[WS].wk == {1: own.wk(1)}
+    r = h.leave()
+    assert r.rotation_done and h.state.rotate_after is None and own.current_epoch() == 2  # rotated at once
+    assert list(h.hub.workspaces[WS].wk) == [1] and own.wk(2) != own.wk(1)
+    own.close()
+
+
+def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
+    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, MembershipUnsafe
+
+    linked = MembershipKeys(tmp_path / "m4", WS, now_ms=lambda: NOW, previously_linked=True)
+    with pytest.raises((CustodyRefused, MembershipUnsafe)):  # a linked store with no head is unsafe too
+        linked.advance_local(V["ids"]["person_alice"])
+    linked.close()

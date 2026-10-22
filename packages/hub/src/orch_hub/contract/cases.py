@@ -255,6 +255,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             item_id=a["item_id"],
             members=a["members"],
             wsk_pubs={w: unb64u(k, 65) for w, k in a["wsk_pubs"].items()},
+            hub_id=a["hub_id"],
             dev_mode=dev,
         )
         return {"author": o["workspace_id"]}

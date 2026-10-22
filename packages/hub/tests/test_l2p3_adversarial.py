@@ -49,6 +49,7 @@ def test_l2p1_space_item_signature_commits_to_epoch_and_hub():
             item_id=iid,
             members=[G.WS_A, WS_C],
             wsk_pubs={G.WS_A: G.K.pub["wsk_a"]},
+            hub_id=G.HUB_ID,  # L2P-1 fix: verify_item now takes the reader's hub (call-signature change, attack kept)
             **DEV,
         )
 

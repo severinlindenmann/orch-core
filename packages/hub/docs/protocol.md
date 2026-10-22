@@ -145,6 +145,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_space` | `orch/v2/hub-space\|` | `HK_op` | `cj(o)` of `hub.space` | 10.4 |
 | `sig_hub_space_wrap` | `orch/v2/hub-space-wrap\|` | `HK_op` | `cj(o)` of `hub.space_wrap` | 10.4 |
 | `sig_space_item` | `orch/v2/sig/space-item\|` | `WSK` | `cj(o)` of `space.item` | 10.4 |
+| `h_space_members` | `orch/v2/hub-space-members\|` | hash | the member list of one space epoch, signed into an item | 10.4 |
 | `h_sk_commit` | `orch/v2/hub-sk-commit\|` | hash | the commitment to `SK_e` in `hub.space` | 10.4 |
 | `aad_space` | `orch/v2/space-aad\|` | AAD | one sealed space item | 10.4 |
 | `h_hub_id` | `orch/v2/id/hub\|` | hash | `hub_id` | 2.3 |
@@ -624,8 +625,9 @@ hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, e
                 signed by HK_op, label sig_hub_space
 hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
                 wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
-space.item     {v, suite, kind: "space.item", hv, space_id, item_id, workspace_id (the author), created_ms,
-                body: object (opaque to the contract), dev}                 signed by the author's WSK, sig_space_item
+space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, members_hash: b64u(32), item_id,
+                workspace_id (the author), created_ms, body: object (opaque to the contract), dev}
+                                                                            signed by the author's WSK, sig_space_item
 ```
 
 - `sk_commit = b64u(H("orch/v2/hub-sk-commit|" || suite || space_id || u32(epoch) || SK_e))`: in the signed record, so
@@ -636,6 +638,14 @@ space.item     {v, suite, kind: "space.item", hv, space_id, item_id, workspace_i
   workspace-recipient counterpart of the device purpose `sk`: recipient = the member's `WXK` of `wxk_version`, recipient id = `workspace_id`, `object_id = space_id`,
   `epoch = space epoch`, `extra = hub_id || u32(wxk_version)`, plaintext `SK_e`. A sealed blob proves nothing about its
   sender (v2 §5.3); that is why the wrap object is signed by `HK_op`.
+- **An item signs the hub, the epoch and the member set it is shared with (L2P-1).** `members_hash =
+  b64u(H("orch/v2/hub-space-members|" || cj(sorted member list of that epoch)))`. The AAD alone is not enough: the hub
+  writes the AAD (it holds every `SK_e`), so only the author's signature can carry the author's consent to one epoch's
+  member set. The hub (at `space_put`) and every reader check `hub_id` (`other_hub`), `epoch`, `space_id`, `item_id` and
+  `members_hash` against the `hub.space` of that epoch (`malformed`). An item re-sealed by the hub into a later epoch,
+  into a space of another hub, or shown to another member set fails (vectors `space_item_resealed_into_later_epoch`,
+  `space_item_from_other_hub`, `space_item_members_hash_mismatch`); a hub that shows two member lists for one epoch is
+  caught by the author's own hash. "No backfill" is therefore enforced by the authors' signatures, not only by hub policy.
 - **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
   `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
   `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,

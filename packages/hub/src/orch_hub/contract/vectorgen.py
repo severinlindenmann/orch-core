@@ -469,10 +469,24 @@ def space_wrap(
     return signed(signer, "sig_hub_space_wrap", o)
 
 
-def space_item_obj(ws: str = WS_A, item_id: str | None = None, space: str = SPACE, key: str | None = None, **kw: Any):
+DEFAULT_MEMBERS = {1: [WS_A, WS_B], 2: [WS_A, WS_B, WS_C]}
+
+
+def space_item_obj(
+    ws: str = WS_A,
+    item_id: str | None = None,
+    space: str = SPACE,
+    key: str | None = None,
+    epoch: int = 1,
+    members: list[str] | None = None,
+    **kw: Any,
+):
     o = {
         **hdr("space.item"),
+        "hub_id": HUB_ID,
         "space_id": space,
+        "epoch": epoch,
+        "members_hash": SP.members_hash(sorted(members if members is not None else DEFAULT_MEMBERS[epoch])),
         "item_id": item_id or fake16("item_1"),
         "workspace_id": ws,
         "created_ms": NOW - 1000,
@@ -487,7 +501,7 @@ def sealed_item(
     ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, sk: bytes | None = None, **kw: Any
 ) -> str:
     iid = item_id or fake16("item_1")
-    obj = space_item_obj(ws, iid, space, **kw)
+    obj = space_item_obj(ws, iid, space, epoch=epoch, **kw)
     return SP.seal_item(sk or SK[epoch], space, epoch, iid, obj, salt=S.fake_seed("hub/salt/" + iid + ws)[:16])
 
 
@@ -1753,6 +1767,7 @@ def build() -> dict[str, Any]:
         "item_id": fake16("item_1"),
         "members": sorted([WS_A, WS_B]),
         "wsk_pubs": sp_pubs,
+        "hub_id": HUB_ID,
     }
     good = sealed_item()
     case("space_item_valid", "space_item", {**it, "sealed": good}, {"ok": {"author": WS_A}}, 3)
@@ -1823,6 +1838,42 @@ def build() -> dict[str, Any]:
         3,
     )
 
+    iid1 = fake16("item_1")
+
+    def seal_obj(obj: dict[str, Any], epoch: int = 1) -> str:
+        return SP.seal_item(SK[epoch], SPACE, epoch, iid1, obj, salt=S.fake_seed("hub/salt/l2p1")[:16])
+
+    case(
+        "space_item_resealed_into_later_epoch",
+        "space_item",
+        {
+            **it,
+            "sealed": seal_obj(space_item_obj(epoch=1), 2),
+            "sk_hex": SK[2].hex(),
+            "epoch": 2,
+            "members": sorted([WS_A, WS_C]),
+        },
+        {"error": "malformed"},
+        3,
+        "the hub re-seals A's epoch-1 item for a later member set: the author signed epoch 1",
+    )
+    case(
+        "space_item_from_other_hub",
+        "space_item",
+        {**it, "sealed": seal_obj(space_item_obj(hub_id=ROGUE_HUB_ID))},
+        {"error": "other_hub"},
+        3,
+        "an item replayed from another hub's space with the same id",
+    )
+    case(
+        "space_item_members_hash_mismatch",
+        "space_item",
+        {**it, "sealed": seal_obj(space_item_obj(members=[WS_A, WS_B, WS_C]))},
+        {"error": "malformed"},
+        3,
+        "the author consented to another member set",
+    )
+
     # the hub's rules over one space (steps build the state, final is the call under test)
     s1 = {"space": e1}
     put_a = {"put": {"ws": WS_A, "body": put_body()}}
@@ -1831,6 +1882,12 @@ def build() -> dict[str, Any]:
     def flow(name: str, steps: list[Any], final: dict[str, Any], expect: dict[str, Any], note: str = "") -> None:
         case(name, "space_flow", {**sp, "steps": steps, "final": final}, expect, 3, note)
 
+    flow(
+        "space_put_item_signed_for_other_member_set",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(members=[WS_A, WS_B, WS_C])}},
+        {"error": "malformed"},
+    )
     flow("space_put_ok", [s1], put_a, {"ok": {"seq": 1}})
     flow("space_put_same_again_is_idempotent", [s1, put_a], put_a, {"ok": {"seq": 1}})
     flow(
@@ -1943,7 +2000,7 @@ def build() -> dict[str, Any]:
             s1,
             put_a,
             {"space": e2},
-            {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"))}},
+            {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"), members=[WS_A])}},
             {"space": space_rec(3, [WS_A, WS_B])},
         ],
         {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},

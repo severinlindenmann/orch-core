@@ -56,6 +56,14 @@ def sk_commit(space_id: str, epoch: int, sk: bytes) -> str:
     return b64u(S.sha256(L["h_sk_commit"] + bytes([S.SUITE_ID]) + unhex(space_id, 16) + _u32(epoch) + sk))
 
 
+def members_hash(members: list[str]) -> str:
+    """b64u(H("orch/v2/hub-space-members|" || cj(members))) of a sorted member list (L2P-1)."""
+    try:
+        return b64u(S.sha256(L["h_space_members"] + cj(list(members))))
+    except CanonError:
+        raise Refused("malformed") from None
+
+
 def _item_aad(space_id: str, epoch: int, item_id: str) -> bytes:
     return L["aad_space"] + bytes([S.SUITE_ID]) + unhex(space_id, 16) + _u32(epoch) + unhex(item_id, 16)
 
@@ -246,14 +254,21 @@ def verify_item(
     item_id: str,
     members: list[str],
     wsk_pubs: Mapping[str, bytes],
+    hub_id: str,
     dev_mode: bool,
 ) -> dict[str, Any]:
-    """Open an item and check its author: the inner ``space.item`` is for this space and item id, its author was a
-    member at this epoch (``members`` of that epoch) and its ``WSK`` signature verifies under the author's pinned key."""
+    """Open an item and check its author: the inner ``space.item`` is for this hub, space, epoch and item id, signs the
+    hash of this epoch's member list (so it is the author's consent to exactly this set, L2P-1), its author was a
+    member at this epoch (``members`` of that epoch) and its ``WSK`` signature verifies under the author's pinned key.
+    ``wsk_pubs`` must come from the reader's own pins of the co-members' v2 cards, never from the hub (L2P-7)."""
     signed = open_item(sk, space_id, epoch, item_id, sealed)
     o = _envelope(signed, "space.item")
     _fields(o, "space.item")
-    if o["space_id"] != space_id or o["item_id"] != item_id:
+    if o["hub_id"] != hub_id:
+        raise Refused("other_hub")
+    if o["space_id"] != space_id or o["item_id"] != item_id or o["epoch"] != epoch:
+        raise Refused("malformed")
+    if o["members_hash"] != members_hash(members):
         raise Refused("malformed")
     if o["workspace_id"] not in members:
         raise Refused("not_member")
@@ -331,6 +346,7 @@ def space_put(
         item_id=body["item_id"],
         members=st["space"]["members"],
         wsk_pubs=wsk_pubs,
+        hub_id=st["space"]["hub_id"],
         dev_mode=dev_mode,
     )
     if o["workspace_id"] != ws:

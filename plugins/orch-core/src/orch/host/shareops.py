@@ -9,8 +9,9 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
   the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
 * ``share.revoke {ref}``: withdraw one item now (a ticket key or a ``logical`` id from ``share.preview``); it stays
   withdrawn while it still matches a rule.
-* ``share.sync {}``: evaluate the rules against the tickets now and make the hub's copy equal (``share_put`` /
-  ``share_revoke``). Also run after every rule change and revoke.
+* ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
+  (the ``share.preview`` plan, checked like a rule change) the current selection is confirmed; without it a sync only
+  retries what was already confirmed. Also run after every rule change and revoke.
 
 Selective workspaces only: in full mode every op is refused (``hub.refused: wrong_mode``), as the hub refuses the link
 operations there. A rule change is saved before the hub is asked; if the hub cannot be reached the answer says
@@ -73,7 +74,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["ref"],
         "additionalProperties": False,
     },  # fmt: skip
-    "share.sync": {"type": "object", "properties": {}, "additionalProperties": False},
+    "share.sync": {"type": "object", "properties": {"expect": _PLAN}, "additionalProperties": False},
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
@@ -338,16 +339,28 @@ def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[
         closer.close()
 
 
-def sync_now(service: WorkspaceService) -> dict[str, Any]:
+def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str | None = None) -> dict[str, Any]:
     """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
     ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
-    ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent)."""
+    ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent).
+
+    C6fu2-3: the owner's confirmation covers what they were shown. With ``expect`` (the ``share.preview`` plan) the
+    current selection is checked against it and then confirmed; without it a sync only retries the confirmed set
+    (:meth:`ShareState.auto_wanted`) and confirms nothing new."""
     from orch.hubclient import shares as S
 
     with _MU:
         st = _load(service)
-        wanted = S.select(st.rules, tickets_for(service))
-        st.confirm(wanted)  # an explicit sync is the owner's own act: this selection is the confirmed one
+        facts = tickets_for(service, viewer)
+        if expect is None:
+            wanted = st.auto_wanted(S.select(st.rules, facts))
+        else:
+            wanted = _after(st, facts)[2]
+            if _plan(wanted) != expect:
+                raise HostError(
+                    "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
+                )
+            st.confirm(wanted)
         return _sync_locked(service, st, wanted)
 
 
@@ -368,7 +381,25 @@ def auto_sync(service: WorkspaceService) -> dict[str, Any] | None:
         st = _load(service)
         service.store.refresh()
         wanted = st.auto_wanted(S.select(st.rules, tickets_for(service)))
-        return _sync_locked(service, st, wanted)
+        before = {lg: v.get("digest") for lg, v in st.sent.items()}
+        got = _sync_locked(service, st, wanted)
+        _audit_auto(service, before, st)
+        return got
+
+
+def _audit_auto(service: WorkspaceService, before: dict[str, Any], st: Any) -> None:
+    """C6fu2-2: one host audit entry (the channel of the manual share ops) per pass that changed the hub's copy:
+    logical ids only, never content."""
+    from . import securitylog
+
+    after = {lg: v.get("digest") for lg, v in st.sent.items()}
+    revoked = sorted(set(before) - set(after))
+    put = sorted(lg for lg, d in after.items() if before.get(lg) != d)
+    if revoked or put:
+        securitylog.record(
+            service.state_dir, service.host_uid, service.clock(), "share.auto",
+            workspace_id=service.workspace_id, principal="host:auto", put=put, revoked=revoked,
+        )  # fmt: skip
 
 
 def _find(st: Any, ref: str, facts: list[Any]) -> str:
@@ -392,8 +423,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     op, args, service = plan["op"], plan["args"], call.service
     try:
         if op == "share.sync":
-            got = sync_now(service)
-            hubops._audit(call, "share.sync", synced=got["synced"])  # noqa: SLF001
+            got = sync_now(service, call.viewer, args.get("expect"))
+            hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args)  # noqa: SLF001
             return ok_result(got)
         with _MU:
             st = _load(service)

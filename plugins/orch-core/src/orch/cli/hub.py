@@ -320,7 +320,23 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         _emit(out, as_json, d, f"The hub sees:\n{text}\n{d['shared']} item(s) are on the hub now.{_refused_lines(d)}")
         return 0
     if words == ["sync"]:
-        d = _call(target, "share.sync", {}, env)
+        args: dict[str, Any] = {}
+        prev = _call(target, "share.preview", {}, env)
+        if prev["new"]:  # something the owner has not been shown: show it and confirm, then sync exactly that
+            from orch.cli.publish import _confirm
+
+            lines = "".join(f"  {i['line']}\n" for i in prev["items"]) + (
+                f"  ... and {prev['more']} more\n" if prev["more"] else ""
+            )
+            if not _confirm(
+                f"The hub will see {prev['count']} item(s) ({prev['new']} new, {prev['revoked']} withdrawn):\n"
+                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n"
+                "Type 'share' to confirm: ",
+                "share",
+            ):
+                raise PubError("invalid.input", "not confirmed; nothing changed", 5)
+            args["expect"] = prev["plan"]
+        d = _call(target, "share.sync", args, env)
         _emit(out, as_json, d, _sync_line(d))
         return 0
     if words[0] == "revoke":
@@ -340,7 +356,8 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
     verb = "will also share" if key == "add" else "will stop sharing"
     if not _confirm(
         f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
-        f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\nType 'share' to confirm: ",
+        f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
+        "Later changes to these items are sent automatically.\nType 'share' to confirm: ",
         "share",
     ):
         raise PubError("invalid.input", "not confirmed; nothing changed", 5)

@@ -93,6 +93,12 @@ def req(served, op, args=None, **kw):
     return served.client().req(op, args or {}, idem=True if op not in ("share.rules", "share.preview") else None, **kw)
 
 
+def sync_shown(served):
+    """The owner's explicit sync: preview first, then sync exactly the plan that was shown."""
+    prev = ok(req(served, "share.preview"))["data"]
+    return ok(req(served, "share.sync", {"expect": prev["plan"]}))["data"]
+
+
 def agent(served, op, args):
     return served.client().req(op, args, grant=served.grant, session=SESSION, idem=True)
 
@@ -221,7 +227,7 @@ def test_revoke_withdraws_one_item_and_it_stays_withdrawn(served, selective, mon
 def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(served, selective, monkeypatch):
     _, key = served.ticket("Savings")
     ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
-    got = ok(req(served, "share.sync"))["data"]
+    got = sync_shown(served)
     assert got["put"] == 1 and selective.opened[0]["item_kind"] == "needs_you"
     assert (
         selective.opened[0]["content"]["type"] == "question"
@@ -241,7 +247,7 @@ def test_a_rule_survives_an_unreachable_hub_and_the_next_sync_finishes(served, s
     from orch.host import hubops
 
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    assert ok(req(served, "share.sync"))["data"]["put"] == 1
+    assert ok(req(served, "share.sync"))["data"]["put"] == 1  # the rule was confirmed; a plain sync finishes it
 
 
 class _Down:
@@ -256,7 +262,7 @@ def test_the_item_version_grows_with_every_change_and_revoke_twice_is_the_same_a
     uid, key = labelled(served, "Public note", "public")
     ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
     ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
-    assert ok(req(served, "share.sync"))["data"]["put"] == 1
+    assert sync_shown(served)["put"] == 1
     assert [i["item_version"] for i in selective.opened] == [1, 2]
     assert selective.opened[1]["content"]["title"] == "Renamed note"
     assert selective.opened[0]["item_id"] == selective.opened[1]["item_id"]
@@ -383,7 +389,7 @@ def test_a_ticket_that_starts_matching_after_the_confirmation_is_not_auto_shared
     settle(served, quick_auto)
     assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed"]
     assert selective.count("share_put") == 2
-    got = ok(req(served, "share.sync"))["data"]  # the owner's next confirm shares what matches now
+    got = sync_shown(served)  # the owner's next confirm shares what matches now
     assert got["put"] == 3 and selective.count("share_put") == 5
     ok(agent(served, "set", {"ref": plain, "pairs": ["title=Plain, edited"]}))  # now confirmed: it follows
     settle(served, quick_auto)
@@ -514,3 +520,54 @@ def test_l2_c6fu_1_a_ticket_restricted_after_the_confirmation_is_not_auto_sent(s
     settle(served, quick_auto)
     sent_titles = [i["content"].get("title") for i in selective.opened]
     assert "Merger with ACME, price 4.2M" not in sent_titles, sent_titles
+
+
+# --- c6fu2: restricted-after-confirm withdrawal, audit of automatic passes, share.sync needs the shown plan --------------
+
+
+def _audit_lines(served, event):
+    import json
+
+    path = served.lab.state / "host" / "audit-security.jsonl"
+    rows = [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+    return [r for r in rows if r["event"] == event]
+
+
+def test_a_ticket_restricted_after_the_confirmation_is_revoked_and_needs_a_new_confirm(served, selective, quick_auto):
+    uid, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    served.restrict(uid, [served.lab.owner])
+    _, other = served.ticket("Unrelated")
+    ok(agent(served, "set", {"ref": other, "pairs": ["title=Unrelated, edited"]}))  # any commit wakes the pass
+    settle(served, quick_auto)
+    assert selective.count("share_revoke") == 1  # withdrawn at the hub, no owner act
+    served.restrict(uid, None)  # shareable again
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Public again"]}))
+    settle(served, quick_auto)
+    assert selective.count("share_put") == 1 and selective.count("share_revoke") == 1  # waits for the owner
+    assert sync_shown(served)["put"] == 1 and selective.opened[-1]["content"]["title"] == "Public again"
+
+
+def test_an_automatic_pass_that_changes_the_hubs_copy_writes_an_audit_entry(served, selective, quick_auto):
+    uid, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    assert _audit_lines(served, "share.auto") == []
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    settle(served, quick_auto)
+    (row,) = _audit_lines(served, "share.auto")
+    assert row["put"] == [f"ticket:{uid}"] and row["revoked"] == [] and "Renamed" not in str(row)
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=private"]}))
+    settle(served, quick_auto)
+    assert [r["revoked"] for r in _audit_lines(served, "share.auto")][-1] == [f"ticket:{uid}"]
+
+
+def test_a_plain_sync_confirms_nothing_new_and_a_stale_plan_is_refused(served, selective):
+    labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    labelled(served, "Brand new public", "public")
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0  # not shown to the owner: not sent
+    prev = ok(req(served, "share.preview"))["data"]
+    labelled(served, "Another public", "public")  # appears after the preview
+    assert err(req(served, "share.sync", {"expect": prev["plan"]})) == "invalid.input"
+    assert selective.count("share_put") == 1
+    assert sync_shown(served)["put"] == 2  # the two new ones, now shown

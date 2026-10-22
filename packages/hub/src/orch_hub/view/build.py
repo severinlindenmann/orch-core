@@ -62,6 +62,10 @@ class StoreWorkspaceView:
         try:
             with self._svc.store.lock:  # one consistent read: heads and pages cannot move between the two
                 return self._build(keys, workspace_id, user_id, event_id, action)
+        except Refused:
+            raise
+        except Exception:  # noqa: BLE001 - a view shape the projection did not expect: refuse, never raise
+            raise Refused("malformed") from None
         finally:
             keys.close()
 
@@ -101,7 +105,7 @@ class StoreWorkspaceView:
             for k in ("option", "text"):
                 if k in action:
                     core[k] = action[k]
-            keys_ = {o.get("key") for o in (q2.obj.get("options") or [])}
+            keys_ = {o.get("key") for o in (q2.obj.get("options") or []) if type(o) is dict}
             if "option" in action and action["option"] not in keys_:
                 raise Refused("malformed")
         else:

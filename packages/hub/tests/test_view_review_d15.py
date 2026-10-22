@@ -40,7 +40,6 @@ def kit(tmp_path):
 # There is no ticket-owner clause: an owner or maintainer may restrict a ticket to a list without its ticket owner.
 
 
-@pytest.mark.xfail(strict=True, reason="L2-D15-1: visible_to lets the off-list TICKET OWNER see a restricted ticket")
 def test_d15_1_needs_hides_restricted_ticket_from_off_list_ticket_owner(kit):
     kit.host.ask(text="secret plan?")
     kit.host.append(LOG, "visibility.changed", visibility={"restricted": [OTHER]}, roster_v=1)
@@ -49,7 +48,6 @@ def test_d15_1_needs_hides_restricted_ticket_from_off_list_ticket_owner(kit):
     assert kit.r.needs_you(WS, USER) == []
 
 
-@pytest.mark.xfail(strict=True, reason="L2-D15-1: build lets the off-list ticket owner prepare on a restricted ticket")
 def test_d15_1_build_refuses_off_list_ticket_owner(env):  # noqa: F811
     me = "u_" + env.user
     env.host.append(LOG, "people.changed", role="owner", add=[me], remove=[OWNER], roster_v=2)
@@ -61,14 +59,12 @@ def test_d15_1_build_refuses_off_list_ticket_owner(env):  # noqa: F811
 # --- L2-D15-2 (P2): unexpected exception types escape the "any failure is nothing / Refused" boundary -------------
 
 
-@pytest.mark.xfail(strict=True, reason="L2-D15-2: a non-object option raises AttributeError out of needs_you")
 def test_d15_2_non_object_option_reads_as_nothing(kit):
     kit.host.ask(options=["csv"])  # host-signed, hash consistent, but not an option object
     kit.push()
     kit.r.needs_you(WS, USER)  # must not raise (the Protocol has no error channel)
 
 
-@pytest.mark.xfail(strict=True, reason="L2-D15-2: an unhashable restricted entry raises TypeError out of build")
 def test_d15_2_unhashable_restricted_entry_is_refused(env):  # noqa: F811
     env.host.append(LOG, "visibility.changed", visibility={"restricted": [{"p": OTHER}]}, roster_v=2)
     env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))

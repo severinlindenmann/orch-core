@@ -18,7 +18,6 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from ..contract import phase4 as P4
-from ..contract.hub import Refused
 from . import project as PR
 from .service import Keyring, ViewService
 
@@ -63,7 +62,7 @@ class StoreViewReader:
         try:
             with self._svc.store.lock:
                 return self._scan_open(ws, user_id, keys)
-        except Refused, KeyError, TypeError, ValueError:
+        except Exception:  # noqa: BLE001 - the Protocol has no error channel: any failure reads as nothing
             return []
         finally:
             keys.close()
@@ -97,7 +96,7 @@ class StoreViewReader:
                     "text": P4.render_text(q.obj.get("text", "")),
                     "why": P4.render_text(q.obj.get("why", "")),
                     "options": [
-                        {k: P4.render_text(v) for k, v in o.items() if type(v) is str}
+                        {k: P4.render_text(o[k]) for k in ("key", "label") if type(o.get(k)) is str}
                         for o in q.obj.get("options") or []
                     ],
                     "recommended": _recommended(q.obj),

@@ -144,6 +144,12 @@ def project_ticket(lines: list[dict[str, Any]], workspace_id: str, uid: str) -> 
                 qn = q["id"]
                 if not _QUESTION.fullmatch(qn):
                     raise _bad()
+                opts = q.get("options")
+                if opts is not None and not (
+                    type(opts) is list
+                    and all(type(o) is dict and type(o.get("key")) is str and type(o.get("label")) is str for o in opts)
+                ):
+                    raise _bad()  # closed shape: options are {key, label} objects with string values
                 qid = question_id(workspace_id, uid, qn)
                 h = question_hash(qid, uid, q["text"], q.get("options"))
                 if e.get("qid") != qid or e.get("hash") != h:  # the host's own derived values must agree

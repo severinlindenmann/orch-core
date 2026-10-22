@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from orch.crypto.encoding import unb64u
+from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient import HubLink, HubRefused, HubState, wire
 from orch.hubclient import snapshot as snap
 
@@ -248,3 +248,72 @@ def test_state_json_roundtrip_is_strict():
     for bad in ({**d, "snapshot": "x"}, {**d, "card": []}, {**d, "revoked_op_certs": ["nothex"]}):
         with pytest.raises(HubRefused):
             HubState.from_json(bad)
+
+
+# --- op-cert rotation ----------------------------------------------------------------------------------------------
+
+
+def pin(n: int) -> str:
+    return b64u(bytes([n]) * 32)
+
+
+def rotated_card(*, card_seq: int = 1, spki: str | None = None) -> dict[str, Any]:
+    """The vector hub's card after a rotation: op_seq 2, HK_op_next, signed by the vector HK_root / HK_op_next."""
+    old = V["objects"]["card"]
+    op = {
+        **old["op_cert"]["o"],
+        "cert_id": "ee" * 16,
+        "op_seq": 2,
+        "hk_op_pub": V["keys"]["hk_op_next"]["pub"],
+    }
+    o = {**old["o"], "card_seq": card_seq, "tls_spki_sha256": spki or pin(1)}
+    return {
+        "o": o,
+        "op_cert": F.sign_with(F.private_key("hk_root"), "sig_hub_op_cert", op),
+        "sig": F.sign_with(F.private_key("hk_op_next"), "sig_hub_card", o)["sig"],
+    }
+
+
+def rotate(r: Rig, card: dict[str, Any]) -> None:
+    r.hub.card = card
+    r.hub._hk_op = F.private_key("hk_op_next")  # noqa: SLF001
+    r.hub.hk_op_pub = F.pub("hk_op_next")
+
+
+def test_rotation_with_the_old_op_cert_revoked_adopts_the_new_card_and_replies_verify_under_the_new_key():
+    r = Rig()
+    r.hub.set_snapshot(WS, {ADMIN: "admin"})
+    r.refresh()
+    assert snap.record_revoked_op(r.state, V["objects"]["op_revoked"]) is True  # the old op cert is revoked
+    new = rotated_card(spki=pin(2))
+    rotate(r, new)
+    r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "read"})
+    assert r.refresh(hub_card=new) is True  # a link still holding the OLD op key must be re-keyed by the refresh
+    assert r.state.card == new and r.state.tls_spki == pin(2)
+    assert r.state.hk_op_pub == V["keys"]["hk_op_next"]["pub"]
+    assert snap.pinned_view(r.state)["version"] == 3
+    assert [r.role(ADMIN), r.role(READER)] == ["admin", "read"]
+    r.restart()
+    assert r.role(READER) == "read"
+
+
+def test_without_adopting_the_rotated_card_replies_under_the_new_key_are_refused():
+    r = Rig()
+    rotate(r, rotated_card())
+    with pytest.raises(HubRefused):
+        r.refresh()
+
+
+def test_a_revoked_new_card_and_a_stale_one_are_refused():
+    r = Rig()
+    new = rotated_card()
+    snap.record_revoked_op(r.state, {**V["objects"]["op_revoked"]})  # old cert revoked: fine for the new card
+    r.state.revoked_op_certs.append("ee" * 16)  # but the new cert itself is revoked
+    with pytest.raises(HubRefused) as e:
+        snap.adopt_card(r.state, new, now_ms=NOW, dev_mode=True)
+    assert e.value.code == "revoked"
+    r2 = Rig()
+    snap.adopt_card(r2.state, new, now_ms=NOW, dev_mode=True)
+    with pytest.raises(HubRefused) as e:
+        snap.adopt_card(r2.state, V["objects"]["card"], now_ms=NOW, dev_mode=True)  # op_seq 1 after 2
+    assert e.value.code == "stale_op_cert"

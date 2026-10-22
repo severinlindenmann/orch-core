@@ -296,3 +296,19 @@ def test_a_leave_during_a_refresh_is_not_undone(human, served, monkeypatch):
     assert hubops._load_state(service).status == "unbound"  # noqa: SLF001
     assert hubops._load_state(service).snapshot["o"]["version"] == 1  # noqa: SLF001 - nothing from the late refresh
     assert hubops.hub_role(service, "11" * 16) is None  # an unbound workspace has no hub roles
+
+
+def test_an_equal_card_with_other_content_does_not_overwrite_the_disk(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+    from tests.hub.test_snapshot import pin, rotated_card
+
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    a, b = started_now(), started_now()
+    a.card = rotated_card(spki=pin(2))
+    a.hk_op_pub, a.tls_spki = a.card["op_cert"]["o"]["hk_op_pub"], pin(2)
+    hubops._save_snapshot(service, a)  # noqa: SLF001
+    assert hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001 - a newer card (op_seq 2) is adopted
+    b.card = rotated_card(spki=pin(3))  # same op_seq and card_seq, other bytes
+    with pytest.raises(HubRefused) as e:
+        hubops._save_snapshot(service, b)  # noqa: SLF001
+    assert e.value.code == "stale_card" and hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001

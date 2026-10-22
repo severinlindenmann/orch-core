@@ -180,11 +180,11 @@ def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
             cur.revoked_op_certs, changed = revoked, True
         if fetched.card is not None and cur.card != fetched.card:
             on_disk, mine = cur.card, fetched.card
-            if on_disk is None or (mine["op_cert"]["o"]["op_seq"], mine["o"]["card_seq"]) >= (
-                on_disk["op_cert"]["o"]["op_seq"],
-                on_disk["o"]["card_seq"],
-            ):
-                cur.card, cur.hk_op_pub, changed = mine, fetched.hk_op_pub, True
+            order = lambda c: (c["op_cert"]["o"]["op_seq"], c["o"]["card_seq"])  # noqa: E731
+            if on_disk is None or order(mine) > order(on_disk):
+                cur.card, cur.hk_op_pub, cur.tls_spki, changed = mine, fetched.hk_op_pub, fetched.tls_spki, True
+            elif order(mine) == order(on_disk):  # same place, other bytes: keep the disk, say so
+                raise HubRefused("stale_card")
         if changed:
             _write_state(service, cur)
 
@@ -564,11 +564,14 @@ def _refresh(
     from orch.hubclient import snapshot
 
     service = call.service
+    adopted = False
+    if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
+        adopted = snapshot.adopt_card(state, plan["hub_card"], now_ms=now(), dev_mode=plan["dev"])
     hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, plan["dev"])
     try:
         changed = snapshot.refresh(
             state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
-            save=lambda fetched: _save_snapshot(service, fetched), hub_card=plan.get("hub_card"),
+            save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
         )  # fmt: skip
     finally:
         getattr(transport, "close", lambda: None)()

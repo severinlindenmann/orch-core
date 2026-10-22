@@ -40,8 +40,22 @@ def _held(state: HubState, now_ms: int, dev_mode: bool, card: Any = None) -> dic
         then = max(state.card["o"]["issued_ms"], state.card["op_cert"]["o"]["issued_ms"])
     except (KeyError, TypeError):
         raise HubRefused("malformed") from None
-    old = wire.verify_card(state.card, **{**kw, "now_ms": then})
+    # the ordering base is the held card as it was: usually the very op cert the new card replaces, and that one is
+    # revoked by now, so the revoked set applies to the NEW card only
+    old = wire.verify_card(state.card, **{**kw, "now_ms": then, "revoked_op_certs": frozenset()})
     return wire.verify_card(card, **kw, held=old)
+
+
+def adopt_card(state: HubState, hub_card: Any, *, now_ms: int, dev_mode: bool) -> bool:
+    """Replace the held card by a newer one of the same hub (a rotated op cert, L2-1): ordered by ``op_seq`` then
+    ``card_seq``, checked against the revoked set, dev marker and time. Updates the op key and the TLS pin the next
+    link uses. True when something changed (an identical card is a no-op). The caller saves."""
+    held = _held(state, now_ms, dev_mode, hub_card)
+    if state.card == hub_card:
+        return False
+    state.card, state.hk_op_pub = hub_card, wire.b64u(held["hk_op_pub"])
+    state.tls_spki = held["card"]["tls_spki_sha256"]
+    return True
 
 
 def verify_snapshot(
@@ -114,16 +128,19 @@ def refresh(
     now_ms: Callable[[], int],
     save: Callable[[HubState], None],
     hub_card: Any = None,
+    card_adopted: bool = False,
 ) -> bool:
     """``snapshot_get`` over ``link``, verify, pin, save. ``hub_card`` (optional) is a newer hub card to adopt first
-    (a rotated op cert). Returns True when the pin moved. A refusal leaves the old pin untouched."""
+    (a rotated op cert): the link then verifies replies under the NEW op key (the TLS pin of the new card matters for
+    the next dial; a caller that dials after the swap should call :func:`adopt_card` itself and pass
+    ``card_adopted=True``). Returns True when the state changed. A refusal leaves the old pin untouched."""
     if state.status != "bound":
         raise HubRefused("not_joined")
-    changed = False
+    changed = card_adopted
     if hub_card is not None:
-        held = _held(state, now_ms(), dev_mode, hub_card)
-        state.card, state.hk_op_pub = hub_card, wire.b64u(held["hk_op_pub"])
-        changed = True
+        changed = adopt_card(state, hub_card, now_ms=now_ms(), dev_mode=dev_mode) or changed
+    if changed:
+        link.set_hk_op(wire.unb64u(state.hk_op_pub, 65))
     body = link.call("snapshot_get", {})
     if set(body) != {"snapshot"}:
         raise HubRefused("malformed")

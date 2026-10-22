@@ -135,32 +135,20 @@ def test_cert_expiry_script(tmp_path):
     assert run("2026-10-22T00:00:00Z").returncode == 1  # unreadable fails closed
 
 
-def test_refresh_script_changes_only_times(tmp_path):
-    doc = {
-        "format": "orch.release/1",
-        "channel": "develop",
-        "seq": 7,
-        "issued_at": "2026-01-01T00:00:00Z",
-        "expires_at": "2026-01-22T00:00:00Z",
-        "version": "2.0.0.dev7",
-    }
-    payload = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
-    env = {"format": "orch.release-envelope/1", "payload": base64.b64encode(payload).decode()}
-    (tmp_path / "e.json").write_text(json.dumps(env))
-    args = [
-        sys.executable,
-        "-I",
-        str(SCRIPTS / "refresh.py"),
-        "--envelope",
-        str(tmp_path / "e.json"),
-        "--issued-at",
-        "2026-02-01T00:00:00Z",
-        "--expires-at",
-        "2026-02-22T00:00:00Z",
-        "--out",
-        str(tmp_path / "o"),
-    ]
-    assert subprocess.run([*args, "--channel", "develop"]).returncode == 0
-    new = json.loads((tmp_path / "o").read_bytes())
-    assert new == {**doc, "issued_at": "2026-02-01T00:00:00Z", "expires_at": "2026-02-22T00:00:00Z"}
-    assert subprocess.run([*args, "--channel", "main"], capture_output=True).returncode == 1
+def test_publish_pointer_verifies_and_fails_loudly_on_lower_seq(wf):
+    step = next(s for s in wf["jobs"]["publish"]["steps"] if s.get("name") == "Move the channel pointer")
+    run = step["run"]
+    assert "channel_seq.py" in run and "-gt" in run
+    assert "exit 0" not in run  # a pointer that is not moved fails the job
+    assert re.search(r'-gt "\$SEQ" \]; then\n.*::error::.*\n\s+exit 1', run)
+
+
+def test_refresh_never_signs_the_published_channel_json(wf):
+    job = wf["jobs"]["refresh"]
+    text = json.dumps(job)
+    assert "curl" not in text and "current.json" not in text
+    run = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "gh release download" in run and "refresh.py --candidates" in run
+    assert run.index("refresh.py") < run.index("sign.py")
+    sign = next(s for s in job["steps"] if s.get("name") == "Sign the manifest")
+    assert "steps.retime.outputs.exists" in sign["if"]

@@ -8,8 +8,12 @@ One page for the owner. Design: `docs/design/install-update.md` (sections 3 and 
   check them, write the manifest (seq = run number, expires in 21 days), sign it, and publish two things:
   an immutable release `v<version>` (wheels, `constraints.txt`, `release.json`) and the fixed release
   `channel-<main|develop>` whose `channel.json` is replaced (never moved back to an older seq).
-- Every Monday 04:17 UTC the workflow re-signs the current `channel.json` of both channels with fresh
-  `issued_at`/`expires_at`. Nothing is rebuilt and `seq` stays.
+- Every Monday 04:17 UTC the workflow re-signs both channels with fresh `issued_at`/`expires_at`. It never reads
+  `channel.json` (anyone with write access could replace it). It rebuilds the payload from the newest immutable
+  `v<version>` release, verified with the core verifier against the embedded root and the current
+  `release/keys/revocations.json`, and cross-checked with the git tag (version, seq, commit). Any failure fails the job
+  and nothing is signed. The publish step likewise only trusts the published `channel.json` seq after it verifies;
+  a lower seq or an unverifiable file fails the job (inspect and delete that asset).
 - Manual test channel: Actions, "release", Run workflow, channel `test-<name>`. It uses the test key and environment.
 
 ## One-time setup (owner)

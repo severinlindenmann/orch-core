@@ -262,14 +262,21 @@ jobs:
       - name: Move the channel pointer
         run: |
           set -euo pipefail
+          # The published channel.json is attacker-writable: its seq counts only after it verifies.
           url="https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
-          cur=0
-          if curl -fsSL --max-time 30 -o prev.json "$url"; then
-            cur=$(python3 -I -c 'import base64, json; print(json.loads(base64.b64decode(json.load(open("prev.json"))["payload"]))["seq"])' 2>/dev/null || echo 0)
-          fi
+          code=$(curl -sSL --max-time 30 -o prev.json -w '%{http_code}' "$url")
+          case "$code" in
+            200)
+              cur=$(uv run --project plugins/orch-core --frozen python -I scripts/release/channel_seq.py prev.json \
+                --channel "$CHANNEL" --revocations release/keys/revocations.json) \
+                || { echo "::error::the published channel-${CHANNEL}/channel.json does not verify: not trusting it, not moving the pointer (inspect and delete that asset)"; exit 1; }
+              ;;
+            404) cur=0 ;;
+            *) echo "::error::cannot fetch channel.json (HTTP ${code})"; exit 1 ;;
+          esac
           if [ "$cur" -gt "$SEQ" ]; then
-            echo "::notice::channel-${CHANNEL} already points at seq ${cur}, newer than ${SEQ}; not moving it back"
-            exit 0
+            echo "::error::channel-${CHANNEL} already points at verified seq ${cur}, newer than ${SEQ}: the pointer was NOT moved"
+            exit 1
           fi
           if ! gh release view "channel-${CHANNEL}" >/dev/null 2>&1; then
             gh release create "channel-${CHANNEL}" --prerelease --latest=false --target "$SHA" \
@@ -302,28 +309,35 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-      - name: Fetch the current manifest
-        id: cur
-        run: |
-          url="https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
-          if curl -fsSL --max-time 30 -o current.json "$url"; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::channel-${CHANNEL} has no channel.json yet; nothing to refresh"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Re-time the manifest
-        if: steps.cur.outputs.exists == 'true'
+      - name: Fetch the immutable version releases
         run: |
           set -euo pipefail
+          # Never channel.json (mutable, writable by anyone with access): only per-version releases, verified next.
+          mkdir candidates
+          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$' | sort -t. -k4.4nr | head -30); do
+            gh release download "$tag" --pattern release.json --dir "candidates/${tag}"
+          done
+      - name: Rebuild and verify the manifest
+        id: retime
+        run: |
+          set -uo pipefail
           issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           expires=$(date -u -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
-          python3 -I scripts/release/refresh.py --envelope current.json --channel "$CHANNEL" \
+          uv run --project plugins/orch-core --frozen python -I scripts/release/refresh.py --candidates candidates \
+            --channel "$CHANNEL" --revocations release/keys/revocations.json \
             --issued-at "$issued" --expires-at "$expires" --out manifest.json
+          rc=$?
+          case "$rc" in
+            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::notice::no release for channel ${CHANNEL} yet; nothing to refresh"; echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::refresh refused: a published manifest failed verification, nothing was signed"; exit 1 ;;
+          esac
       - name: Sign the manifest
-        if: steps.cur.outputs.exists == 'true'
+        if: steps.retime.outputs.exists == 'true'
         env:
           ORCH_RELEASE_SIGNING_KEY: ${{ secrets.ORCH_RELEASE_KEY }}
         run: |
@@ -332,5 +346,5 @@ jobs:
             --key-cert "release/keys/${KEY_ID}.cert.json" --revocations release/keys/revocations.json \
             --out channel.json
       - name: Replace channel.json
-        if: steps.cur.outputs.exists == 'true'
+        if: steps.retime.outputs.exists == 'true'
         run: gh release upload "channel-${CHANNEL}" channel.json --clobber

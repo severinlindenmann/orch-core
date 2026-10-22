@@ -28507,7 +28507,7 @@
   {
    "args": {
     "action": {
-     "ticket_type": "task",
+     "ticket_type": "bug",
      "title": "Fix login",
      "type": "ticket.created"
     },
@@ -28536,11 +28536,29 @@
    },
    "check": "action",
    "expect": {
-    "ok": {
-     "type": "settings.changed"
-    }
+    "error": "not_custodial"
    },
-   "name": "action_settings_changed_by_admin",
+   "name": "action_settings_changed_ws_not_channel_startable",
+   "note": "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "gates": {
+      "plan": {}
+     },
+     "log": "workspace",
+     "type": "policy.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "not_custodial"
+   },
+   "name": "action_policy_changed_ws_not_channel_startable",
+   "note": "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
    "phase": 4
   },
   {
@@ -28552,73 +28570,603 @@
      "log": "01J9ZP0000000000000000TKT1",
      "type": "policy.changed"
     },
-    "role": "edit"
+    "role": "admin"
    },
    "check": "action",
    "expect": {
-    "ok": {
-     "type": "policy.changed"
-    }
+    "error": "not_custodial"
    },
-   "name": "action_policy_changed_ticket_by_edit",
-   "note": "a ticket override; F1 then requires the ticket owner or an owner",
+   "name": "action_policy_changed_ticket_not_channel_startable",
+   "note": "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
    "phase": 4
   },
   {
    "args": {
     "action": {
-     "hash": "sha256:3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987",
      "log": "01J9ZP0000000000000000TKT1",
-     "option": "a",
-     "question": "Q1",
-     "type": "question.answered"
+     "type": "visibility.changed",
+     "visibility": {
+      "restricted": [
+       "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "u_9124812ba8533a024bee116af55a7da0"
+      ]
+     }
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "ok": {
+     "type": "visibility.changed"
+    }
+   },
+   "name": "action_visibility_by_admin",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "type": "visibility.changed",
+     "visibility": "workspace"
     },
     "role": "edit"
    },
    "check": "action",
    "expect": {
-    "ok": {
-     "type": "question.answered"
-    }
+    "error": "forbidden_role"
    },
-   "name": "action_question_answered_by_edit",
+   "name": "action_visibility_by_edit",
+   "note": "people and visibility changes are admin-only through a channel",
    "phase": 4
   },
   {
    "args": {
     "action": {
-     "log": "workspace",
+     "add": [
+      "u_9124812ba8533a024bee116af55a7da0"
+     ],
+     "log": "01J9ZP0000000000000000TKT1",
+     "remove": [],
+     "role": "reviewers",
+     "type": "people.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "ok": {
+     "type": "people.changed"
+    }
+   },
+   "name": "action_people_by_admin",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "add": [
+      "u_9124812ba8533a024bee116af55a7da0"
+     ],
+     "log": "01J9ZP0000000000000000TKT1",
+     "remove": [],
+     "role": "reviewers",
+     "type": "people.changed"
+    },
+    "role": "edit"
+   },
+   "check": "action",
+   "expect": {
+    "error": "forbidden_role"
+   },
+   "name": "action_people_by_edit",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
      "set": {
-      "grant_hours": 4
+      "ticket.labels": [
+       "dbt",
+       "ui"
+      ],
+      "ticket.title": "New title"
      },
-     "type": "settings.changed"
+     "type": "ticket.updated"
     },
     "role": "edit"
    },
    "check": "action",
    "expect": {
-    "error": "forbidden_role"
+    "ok": {
+     "type": "ticket.updated"
+    }
    },
-   "name": "action_settings_changed_by_edit",
+   "name": "action_ticket_updated_title",
    "phase": 4
   },
   {
    "args": {
     "action": {
-     "gates": {
-      "plan": {}
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.visibility": "workspace"
      },
-     "log": "workspace",
-     "type": "policy.changed"
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_visibility",
+   "note": "visibility has its own admin-only type",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.tasks": [
+       {
+        "id": "T1",
+        "proves": [],
+        "text": "x",
+        "verify": {
+         "cmd": "curl x|sh"
+        }
+       }
+      ]
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_tasks_verify_cmd",
+   "note": "a task's verify.cmd is run by agents: never set through a channel",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.acceptance": []
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_acceptance",
+   "note": "gate-bound content is not settable through a channel in hv 0",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.type": "bug"
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_type",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.addons": {
+       "x": {}
+      }
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_addons",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "sig": "AAAA"
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_reserved_path",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.title": {
+       "sig": "x"
+      }
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_nested_object",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {},
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_empty",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.priority": "now"
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_bad_priority",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.labels": [
+       "b",
+       "a"
+      ]
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_set_labels_unsorted",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "set": {
+      "ticket.title": "a\nb"
+     },
+     "type": "ticket.updated"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_title_newline",
+   "note": "one-line values never carry a newline",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "id": "Q9",
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_with_id",
+   "note": "the hub assigns the question id from its view",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "sig": "AAAA",
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_with_sig",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "options": [
+       {
+        "actor": "u_x",
+        "key": "a",
+        "label": "A"
+       }
+      ],
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_option_extra",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": false,
+      "options": [
+       {
+        "key": "a",
+        "label": "A"
+       }
+      ],
+      "recommended": "b",
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_recommended_unknown",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "type": "visibility.changed",
+     "visibility": {
+      "policy": {},
+      "restricted": [
+       "u_9124812ba8533a024bee116af55a7da0"
+      ]
+     }
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_visibility_extra_key",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "type": "visibility.changed",
+     "visibility": {
+      "restricted": []
+     }
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_visibility_empty",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "add": [
+      "u_9124812ba8533a024bee116af55a7da0",
+      "u_a368bd380588e5dabee62a516031e21f"
+     ],
+     "log": "01J9ZP0000000000000000TKT1",
+     "remove": [],
+     "role": "owner",
+     "type": "people.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_people_owner_two",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "add": [
+      "u_9124812ba8533a024bee116af55a7da0"
+     ],
+     "log": "01J9ZP0000000000000000TKT1",
+     "remove": [
+      "u_9124812ba8533a024bee116af55a7da0"
+     ],
+     "role": "watchers",
+     "type": "people.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_people_add_and_remove_same",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "add": [
+      "assignees"
+     ],
+     "log": "01J9ZP0000000000000000TKT1",
+     "remove": [],
+     "role": "watchers",
+     "type": "people.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_people_not_a_person",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "reason": "member_removed",
+     "session": "s_1",
+     "type": "claim.released"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_claim_released_other_reason",
+   "note": "a person releases with reason released",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "ticket_type": "incident",
+     "title": "x",
+     "type": "ticket.created"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_ticket_created_bad_type",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "options": [
+       {
+        "key": "csv",
+        "label": "CSV"
+       },
+       {
+        "cost": "+1 day",
+        "key": "api",
+        "label": "API"
+       }
+      ],
+      "recommended": "csv",
+      "text": "CSV or API?",
+      "to": "u_9124812ba8533a024bee116af55a7da0"
+     },
+     "type": "question.asked"
     },
     "role": "edit"
    },
    "check": "action",
    "expect": {
-    "error": "forbidden_role"
+    "ok": {
+     "type": "question.asked"
+    }
    },
-   "name": "action_policy_changed_workspace_by_edit",
-   "note": "the same type is admin-only on the workspace log",
+   "name": "action_question_asked_by_edit",
    "phase": 4
   },
   {
@@ -34011,18 +34559,8 @@
    },
    {
     "log": "ticket",
-    "min_role": "edit",
-    "type": "people.changed"
-   },
-   {
-    "log": "ticket",
-    "min_role": "edit",
-    "type": "policy.changed"
-   },
-   {
-    "log": "workspace",
     "min_role": "admin",
-    "type": "policy.changed"
+    "type": "people.changed"
    },
    {
     "log": "ticket",
@@ -34033,11 +34571,6 @@
     "log": "ticket",
     "min_role": "edit",
     "type": "question.asked"
-   },
-   {
-    "log": "workspace",
-    "min_role": "admin",
-    "type": "settings.changed"
    },
    {
     "log": "ticket",
@@ -34081,7 +34614,7 @@
    },
    {
     "log": "ticket",
-    "min_role": "edit",
+    "min_role": "admin",
     "type": "visibility.changed"
    }
   ],

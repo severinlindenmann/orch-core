@@ -48,14 +48,40 @@ from .hub import (
 from .labels import KDF_HUB_VIEW, KDF_HUB_VIEW_MSG, L
 
 # --- §8.5 actions: what a channel may ask for -------------------------------------------------------------------------
+#
+# Every action field has an explicit schema: exact keys, value types and limits. There is no free-form object anywhere
+# in an action, so nothing can carry a nested reserved key or a field owned by another type (security review of
+# 28e767d, field smuggling).
 
 _HASH = re.compile(r"sha256:[0-9a-f]{64}")
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
+_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
+_LABEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
+_TOKEN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+_PERSON = re.compile(r"[pu]_[0-9a-f]{32}")
+_DATE = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])")
+_ADDON = re.compile(r"[a-z][a-z0-9-]{0,31}")
 GATES = ("requirements", "plan", "code")
+TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
+PRIORITIES = ("low", "medium", "high", "urgent")
+SIZES = ("xs", "s", "m", "l", "xl")
+TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
+MAX_LIST = 32
 
 
-def _str(n: int) -> Any:
-    return lambda x: type(x) is str and 0 < len(x.encode()) <= n
+def _text(n: int, *, multiline: bool = False) -> Any:
+    """1..n UTF-8 bytes; no control characters (only LF in multi-line text), no leading/trailing space."""
+
+    def ok(x: Any) -> bool:
+        if type(x) is not str or not 0 < len(x.encode()) <= n or x != x.strip():
+            return False
+        return all(c == "\n" and multiline or (ord(c) >= 32 and ord(c) != 127) for c in x)
+
+    return ok
+
+
+def _re(rx: re.Pattern[str]) -> Any:
+    return lambda x: type(x) is str and rx.fullmatch(x) is not None
 
 
 def _hash(x: Any) -> bool:
@@ -66,47 +92,117 @@ def _enum(*v: str) -> Any:
     return lambda x: type(x) is str and x in v
 
 
-def _obj(x: Any) -> bool:
-    return type(x) is dict and len(x) > 0
+def _or_null(ok: Any) -> Any:
+    return lambda x: x is None or ok(x)
 
 
-def _ids(x: Any) -> bool:
-    return type(x) is list and all(type(i) is str and 0 < len(i) <= 64 for i in x)
+def _sorted_unique(item: Any, lo: int = 0, hi: int = MAX_LIST) -> Any:
+    return lambda x: type(x) is list and lo <= len(x) <= hi and all(item(i) for i in x) and x == sorted(set(x))
+
+
+#: ``ticket.updated`` ``set``: the leaf paths a channel may change, and their values (ticket-format §3). Everything
+#: else (type, acceptance, tasks with their ``verify.cmd``, links, addons, visibility, questions) is not settable
+#: through a channel in hv 0.
+SET_PATHS: dict[str, Any] = {
+    "ticket.title": _text(200),
+    "ticket.priority": _enum(*PRIORITIES),
+    "ticket.size": _or_null(_enum(*SIZES)),
+    "ticket.labels": _sorted_unique(_re(_LABEL)),
+    "ticket.due": _or_null(_re(_DATE)),
+    "ticket.parent": _or_null(_re(_KEY)),
+    "ticket.blocked_by": _sorted_unique(_re(_KEY)),
+}
+
+
+def _set(x: Any) -> bool:
+    return (
+        type(x) is dict
+        and 0 < len(x) <= len(SET_PATHS)
+        and all(k in SET_PATHS and SET_PATHS[k](v) for k, v in x.items())
+    )
+
+
+def _option(x: Any) -> bool:
+    return (
+        type(x) is dict
+        and {"key", "label"} <= set(x) <= {"key", "label", "cost"}
+        and _re(_TOKEN)(x["key"])
+        and _text(200)(x["label"])
+        and ("cost" not in x or _text(64)(x["cost"]))
+    )
+
+
+def _question(x: Any) -> bool:
+    """The question a person asks (the hub assigns its ``Q`` id from its view)."""
+    if type(x) is not dict or not {"to", "text", "blocking"} <= set(x) <= {
+        "to",
+        "text",
+        "why",
+        "options",
+        "recommended",
+        "blocking",
+    }:
+        return False
+    opts = x.get("options", [])
+    keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
+    return (
+        (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
+        and _text(2000, multiline=True)(x["text"])
+        and ("why" not in x or _text(1000, multiline=True)(x["why"]))
+        and keys is not None
+        and len(opts) <= 8
+        and len(keys) == len(set(keys))
+        and ("options" not in x or len(opts) > 0)
+        and ("recommended" not in x or x["recommended"] in keys)
+        and type(x["blocking"]) is bool
+    )
+
+
+def _visibility(x: Any) -> bool:
+    return x == "workspace" or (
+        type(x) is dict and set(x) == {"restricted"} and _sorted_unique(_re(_PERSON), 1, 64)(x["restricted"])
+    )
 
 
 #: type -> (required fields, optional fields). ``type`` and ``log`` are always present (``ticket.created`` has no
 #: ``log``: the hub makes the new ticket's uid). Decisions carry the ``hash`` the person reviewed: the hub refuses with
 #: ``event_changed`` when its view no longer has that hash. Every other envelope or custodial field is the hub's.
 ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
-    "ticket.created": ({"ticket_type": _str(64), "title": _str(500)}, {}),
-    "ticket.updated": ({"set": _obj}, {}),
-    "status.changed": ({"to": _enum("backlog", "open")}, {"reason": _str(500)}),
+    "ticket.created": ({"ticket_type": _enum(*TICKET_TYPES), "title": _text(200)}, {}),
+    "ticket.updated": ({"set": _set}, {}),
+    "status.changed": ({"to": _enum("backlog", "open")}, {"reason": _text(500)}),
     "ticket.submitted": ({}, {}),
     "ticket.closed": (
         {"resolution": _enum("wont_do", "duplicate", "obsolete", "other")},
-        {"duplicate_of": _str(64), "text": _str(4096)},
+        {"duplicate_of": _re(_KEY), "text": _text(4096, multiline=True)},
     ),
-    "ticket.reopened": ({}, {"text": _str(4096)}),
-    "ticket.moved": ({"to": _enum("backlog", "open"), "reason": _str(500)}, {}),
-    "visibility.changed": ({"visibility": _str(32)}, {}),
+    "ticket.reopened": ({}, {"text": _text(4096, multiline=True)}),
+    "ticket.moved": ({"to": _enum("backlog", "open"), "reason": _text(500)}, {}),
+    "visibility.changed": ({"visibility": _visibility}, {}),
     "people.changed": (
-        {"role": _enum("owner", "assignees", "reviewers", "watchers"), "add": _ids, "remove": _ids},
+        {
+            "role": _enum("owner", "assignees", "reviewers", "watchers"),
+            "add": _sorted_unique(_re(_PERSON), 0, 16),
+            "remove": _sorted_unique(_re(_PERSON), 0, 16),
+        },
         {},
     ),
-    "policy.changed": ({"gates": _obj}, {}),
-    "claim.released": ({"session": _str(64), "reason": _str(64)}, {}),
-    "log.added": ({"text": _str(4096)}, {}),
-    "handoff.written": ({"text": _str(2048)}, {}),
-    "question.asked": ({"question": _obj}, {}),
-    "question.answered": ({"question": _str(64), "hash": _hash}, {"option": _str(64), "text": _str(4096)}),
+    "claim.released": ({"session": _text(64), "reason": _enum("released")}, {}),
+    "log.added": ({"text": _text(4096, multiline=True)}, {}),
+    "handoff.written": ({"text": _text(2048, multiline=True)}, {}),
+    "question.asked": ({"question": _question}, {}),
+    "question.answered": (
+        {"question": _re(re.compile(r"Q[1-9][0-9]{0,5}")), "hash": _hash},
+        {"option": _re(_TOKEN), "text": _text(4096, multiline=True)},
+    ),
     "gate.approved": ({"gate": _enum(*GATES), "hash": _hash}, {}),
-    "gate.changes_requested": ({"gate": _enum(*GATES), "hash": _hash, "text": _str(4096)}, {}),
-    "verdict.given": ({"outcome": _enum("pass", "fail"), "hash": _hash}, {"text": _str(4096)}),
-    "settings.changed": ({"set": _obj}, {}),
-    "addon.disabled": ({"name": _str(64)}, {}),
-    "addon.purged": ({"name": _str(64)}, {}),
+    "gate.changes_requested": ({"gate": _enum(*GATES), "hash": _hash, "text": _text(4096, multiline=True)}, {}),
+    "verdict.given": ({"outcome": _enum("pass", "fail"), "hash": _hash}, {"text": _text(4096, multiline=True)}),
+    "addon.disabled": ({"name": _re(_ADDON)}, {}),
+    "addon.purged": ({"name": _re(_ADDON)}, {}),
 }
-#: Names an action can never carry: the envelope, the custodial fields and the host fields are built by the hub/host.
+#: Names an action can never carry at its top level: the envelope, the custodial fields and the host fields are built
+#: by the hub/host. (Nested objects have exact schemas above, so they cannot carry them either.)
 RESERVED = frozenset(
     {
         "v",
@@ -159,6 +255,12 @@ def check_action(action: Any, *, role: Any) -> dict[str, Any]:
         raise Refused("malformed")
     if typ == "ticket.closed" and ("duplicate_of" in keys) != (action["resolution"] == "duplicate"):
         raise Refused("malformed")
+    if typ == "people.changed":
+        add, rem = action["add"], action["remove"]
+        if set(add) & set(rem) or not (add or rem):
+            raise Refused("malformed")
+        if action["role"] == "owner" and (len(add) != 1 or rem):
+            raise Refused("malformed")
     return action
 
 

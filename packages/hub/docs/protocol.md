@@ -504,11 +504,14 @@ nothing (D70: read = see). Unknown or unlisted → `not_custodial`.
 
 | Lowest role | Ticket log | Workspace log |
 |---|---|---|
-| `edit` | `ticket.created`, `ticket.updated` (`set` only), `status.changed`, `ticket.submitted`, `ticket.closed`, `ticket.reopened`, `visibility.changed`, `people.changed`, `policy.changed` (override), `claim.released`, `log.added`, `handoff.written`, `question.asked`, `question.answered`, `gate.approved`, `gate.changes_requested`, `verdict.given` | — |
-| `admin` | `ticket.moved` | `policy.changed`, `settings.changed`, `addon.disabled`, `addon.purged` |
+| `edit` | `ticket.created`, `ticket.updated` (`set` of the paths below only), `status.changed`, `ticket.submitted`, `ticket.closed`, `ticket.reopened`, `claim.released`, `log.added`, `handoff.written`, `question.asked`, `question.answered`, `gate.approved`, `gate.changes_requested`, `verdict.given` | — |
+| `admin` | `ticket.moved`, `people.changed`, `visibility.changed` | `addon.disabled`, `addon.purged` |
 
 The role is the floor; the F1 rules decide the rest (eligible approvers, ticket owner, D59 independence; §8.3 step 9).
-**Not custodial in hv 0, and why:** `workspace.created`, `member.*`, `role.changed` (members and roles come from
+**Not channel-startable in V3:** `policy.changed` (ticket override and workspace) and `settings.changed`: they
+change who may approve and how signatures are made, and their payloads are free-form policy and settings objects.
+People and visibility changes are `admin`-only through a channel, with exact schemas. **Not custodial in hv 0, and
+why:** `workspace.created`, `member.*`, `role.changed` (members and roles come from
 grants and snapshots); `device.*` (hub users have no device keys); `hub.joined`, `hub.left` (owner's local key at the
 terminal, break-glass); `grant.issued`, `grant.revoked` (see §16 open points); `addon.granted` (the host derives the
 manifest fields); `restore`, `invalid.acknowledged` (owner recovery); `artifact.*` and `ticket.updated` with
@@ -521,24 +524,30 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 
 | Type | Fields |
 |---|---|
-| `ticket.created` | `ticket_type`, `title` |
-| `ticket.updated` | `set` (object, leaf paths) |
-| `status.changed`, `ticket.moved` | `to`, `reason?` (`reason` required on `ticket.moved`) |
+| `ticket.created` | `ticket_type` (ticket type list), `title` (one line, ≤ 200 bytes) |
+| `ticket.updated` | `set`: 1–7 of exactly these paths: `ticket.title` (one line), `ticket.priority` (priority list), `ticket.size` (size list or null), `ticket.labels` (sorted unique label tokens, ≤ 32), `ticket.due` (`YYYY-MM-DD` or null), `ticket.parent` (key or null), `ticket.blocked_by` (sorted unique keys, ≤ 32) |
+| `status.changed` | `to` (`backlog`, `open`), `reason?` (one line) |
+| `ticket.moved` | `to`, `reason` |
 | `ticket.submitted` | — |
-| `ticket.closed` | `resolution`, `duplicate_of?` (only and always with `duplicate`), `text?` |
+| `ticket.closed` | `resolution` (close list), `duplicate_of?` (a key; only and always with `duplicate`), `text?` |
 | `ticket.reopened` | `text?` |
-| `visibility.changed` | `visibility` |
-| `people.changed` | `role`, `add`, `remove` |
-| `policy.changed` | `gates` |
-| `claim.released` | `session`, `reason` |
-| `log.added`, `handoff.written` | `text` |
-| `question.asked` | `question` (the question object) |
-| `question.answered` | `question`, `hash`, `option?`, `text?` (at least one of the two) |
+| `visibility.changed` | `visibility`: `"workspace"` or exactly `{"restricted": [1–64 sorted unique person ids]}` |
+| `people.changed` | `role` (ticket people list), `add`, `remove` (sorted unique person ids `p_…`/`u_…`, ≤ 16 each, disjoint, not both empty; `owner`: `add` exactly one, `remove` empty) |
+| `claim.released` | `session`, `reason` (`released`) |
+| `log.added`, `handoff.written` | `text` (≤ 4096 / 2048 bytes) |
+| `question.asked` | `question`: exactly `{to, text, why?, options?, recommended?, blocking}` (no `id`: the hub assigns it); `to` a person id or a question role; `options` 1–8 of exactly `{key, label, cost?}` with unique token keys; `recommended` one of the keys |
+| `question.answered` | `question` (`Q<n>`), `hash`, `option?` (token), `text?` (at least one of the two) |
 | `gate.approved` | `gate` (`requirements`, `plan`, `code`), `hash` |
 | `gate.changes_requested` | `gate`, `hash`, `text` |
 | `verdict.given` | `outcome`, `hash`, `text?` (required on `fail`) |
-| `settings.changed` | `set` |
-| `addon.disabled`, `addon.purged` | `name` |
+| `addon.disabled`, `addon.purged` | `name` (addon name) |
+
+**No free-form object anywhere in an action** (security review of 28e767d, field smuggling): every nested value has
+an exact schema, so no action can carry a reserved field or a field owned by another type at any depth (vectors
+`action_smuggle_*`: `set` of `ticket.visibility`, `ticket.tasks` with a `verify.cmd`, `ticket.acceptance`, `ticket.type`,
+`ticket.addons`, a reserved path, a nested object, a question with its own `id` or a `sig`, extra option or visibility
+keys, …). Text values are UTF-8, without control characters (multi-line texts allow LF only), without leading or
+trailing space; one-line values never contain a newline.
 
 **A decision names the hash the person reviewed** (`hash` on `gate.*`, `verdict.given`, `question.answered`): the hub
 refuses with `event_changed` when its view's current hash differs, so a decision never lands on content the person did
@@ -1359,7 +1368,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the custodial type table; the `space.accept` built from the vector proposal |
-| `cases` | 474 cases (101 positive, 373 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 500 cases (102 positive, 398 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1400,7 +1409,7 @@ and the host side of `log_sync` (it builds the pages the vectors open); orch-pub
 | 22 | Audit | chain over event hashes (workspaces verify all, read their own events); `audit_get` added; acks recorded not enforced | D4, L7 |
 | 23 | Admin read | F3's layout (`lp16`, raw query signed), no nonce store, held card re-verified per request | orchestrator, 22 Oct |
 | 24 | Workspace view for custodial events (gap 1) | `log_sync` w2h, full mode: exact log lines sealed under `K_view(WK_e, epoch)` with AAD over ws/epoch/log/range/head/reset; every line's `host_sig` under the pinned `WSK` and the event chain verified; gap/fork codes; reset on restore is a SHORTCUT | spec §5 "own WK_e view", D29 |
-| 25 | Custodial types and roles (gap 2) | closed `(type, log) → lowest role` table (§8.5), checked by hub and host (step 7b); `read` signs nothing; actions per type, never event bytes; decisions carry the reviewed hash | D70, D72, F1 §5.4.2 |
+| 25 | Custodial types and roles (gap 2) | closed `(type, log) → lowest role` table (§8.5), checked by hub and host (step 7b); `read` signs nothing; policy/settings not channel-startable in V3, people/visibility admin-only; actions per type with exact nested schemas (no free-form object), never event bytes; decisions carry the reviewed hash | D70, D72, F1 §5.4.2 |
 | 26 | Registration proof (gap 3) | dedicated label `orch/v2/hub-channel-reg\|` over `hub.channel_register` (not D7's reuse of the proof label) | spec §5 one domain per object |
 | 27 | Channel audit (gap 4) | audit type `channel` `{channel_id, user_id, change, factor, actor_user_id, nonce}`, hub-wide; revocation permanent | D4, L2P-4 nonce rule |
 | 28 | Phone attestation (gap 5) | dev: `se-unlocked` only through an operator pairing code (gate-derived factor); hardening: App Attest under its own value | V3-D23 |
@@ -1421,6 +1430,9 @@ transport in the action).
   `secret_hash` from the host via the channel (the host shows the person a one-time handle), (b) the host makes the
   secret and the channel only signs; (c) keep owner-local signing for `grant.*` as a fourth break-glass power. Needs an
   orchestrator decision before C10/H5.
+- **Policy and settings changes in a full-mode hub workspace.** Not channel-startable in V3 (§8.5); with no local
+  human signing in full mode after H5 (D78/D81), they then need either an admin-only custodial type with an exact
+  policy/settings schema and a full review screen, or a break-glass power. Decide together with agent grants.
 - **Selective custodial signing (C6).** `log_sync` is full mode only. A selective workspace's custodial events over
   shared items (spec §8a "a custodial digest binds the item hash") need the item format of C6; not specified here.
 

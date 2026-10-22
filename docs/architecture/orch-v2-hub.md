@@ -51,6 +51,7 @@ people sign in to it once, and admins work in it.
 | D79 | Standalone core | orch core always works as a standalone workspace with none of the hub, relay, publish or phone: tickets, agents, skills, Mission Control and local signing (D64). Everything in this document is an addition on top and never a dependency. orch core imports no hub code; the hub path lives behind the host↔hub link and a hub add-on. CI keeps a standalone suite and an e2e scenario that run with no hub configured, and every hub step (§10) must leave them green. |
 | D80 | Selective join | A workspace may join a hub in **selective** mode instead of full mode; meant for personal workspaces, open to any. The hub is then not a `WK_e` member: the workspace seals to `HXK` only the items its owner selects (§8a), and the hub, and every channel, sees only those. Full mode (D74) stays the default for team workspaces. Chosen at join. Switching selective → full is a human-only verb at the host terminal, signed by the owner's local key; D71 does not reach the mode switch or a selective workspace (§8a). |
 | D81 | Local Mission Control in hub mode | In a full-mode workspace, and for items the hub holds in a selective one, local Mission Control holds no hub session that can sign. A click that needs a human signature hands off to a strongly bound channel (phone or passkey prompt, §7). One user, one key. |
+| D82 | Where things run | Every component can run on its own machine, and all of them may share one machine; neither is required. Ideal split: each workspace on its own Linux, Windows or Mac machine (D63), the hub on a Linux machine, orch-relay and orch-publish on a VPS. A one-VPS install (workspaces, hub, relay, publish together) is supported for one person or a small team, with the co-location rules in §4a. Hub to hub always goes through a relay service (D77), never directly. |
 
 Later, not now: **hub agents** over shared spaces (summaries, routing; needs its own scope and guard section); **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
 then); Slack and other channels after the phone and browser.
@@ -80,6 +81,29 @@ then); Slack and other channels after the phone and browser.
 | orch-relay | None: routing ids and ciphertext |
 | orch-publish | Its TLS keys; verifies `HK` against the hub card |
 | iPhone app | A channel key in the Secure Enclave, bound to one hub session; no `UK`, no `WK_e` |
+
+## 4a. Deployment (D82)
+
+| Layout | Workspaces | Hub | Relay + publish |
+|---|---|---|---|
+| **Split** (recommended for companies) | each on its own machine: Linux, Windows or macOS | its own Linux machine | a VPS at the edge |
+| **One VPS** (one person, small team) | Linux, on the VPS | the same VPS | the same VPS |
+| Mixed | any of the above | Linux | VPS |
+
+The hub runs on Linux only. Workspaces keep every platform the core supports (D63).
+
+**Co-location rules.** These apply whenever the hub shares a machine with workspaces or edge services:
+- the hub process runs as its own OS user, `orch-hub`. Its key store is a 0700 directory owned by that user, or a
+  hardware or OS key store where one exists;
+- each workspace host keeps its own `orch-host-<ws>` user (§5.5). Agents never run as `orch-hub` or as a host user,
+  and the hub's directory is not readable by them;
+- the host↔hub link uses a local socket with a peer-UID check, or TLS when the two are on different machines;
+- relay and publish keep their own system users (`DynamicUser`, §10), as today;
+- `orch hub doctor` reports the layout. A co-located hub is shown on the hub's front page as "shares a machine with
+  workspaces: weaker isolation".
+
+Co-location is weaker than the split layout. Any local privilege escalation from an agent reaches the hub's keys,
+and with them every full-mode workspace. That is why the split layout is the recommendation for companies.
 
 ## 5. Identity and signatures in hub mode
 
@@ -237,7 +261,7 @@ charter. Public access still needs a custodial human signature, carried in the r
 
 | Threat | Result | Mitigation |
 |---|---|---|
-| Hub server or key store taken over | Attacker can read every full-mode workspace and the shared items of selective ones, and sign as any user there | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host, a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
+| Hub server or key store taken over | Attacker can read every full-mode workspace and the shared items of selective ones, and sign as any user there | Hub keys in a hardware or OS key store, hub process as its own OS user, no agents on the hub host in the split layout and no agents under the hub's user when co-located (§4a), a hash-chained audit acknowledged by the workspaces, `HK_op` rotation, break-glass leave and rotate (§8) |
 | Hostile or client-hosted workspace host | Could try to get events signed for other workspaces | The hub signs only payloads it builds itself; signatures are bound to `workspace_id`; the link has no signing request (§5, §8) |
 | Agent steals a hub session or cookie | Can show and route, cannot sign | Every signature needs a fresh channel-key proof (§7) |
 | Malicious or careless hub admin | Can grant themselves `admin` in any full-mode workspace (D71) | Accepted for now; every grant and membership change is signed by the acting admin's `UK` and audited; a workspace-side veto is an open question |
@@ -276,5 +300,5 @@ Every step keeps the standalone suite and the standalone e2e scenario green (D79
 Decided 22 Oct 2026: local Mission Control hands signing to a channel (D81); personal workspaces may join
 selectively (D80); hub agents later; the review additions (channel proof, break-glass, `repin` needs `PK`) kept.
 
-1. **Workspace-side veto on admin grants** (D71), to revisit before the first real company.
-2. **Hub hosting for one person or a small team.** Same machine as the workspaces, or always a separate host?
+1. **Workspace-side veto on admin grants** (D71): an optional per-workspace setting "granting `admin` here needs the
+   owner's signature", with hub admins still able to remove access. To decide before the first real company.

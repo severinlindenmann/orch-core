@@ -21,3 +21,4 @@ details { margin:8px 0; } summary { cursor:pointer; }
 .dialog { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:flex-start; justify-content:center; padding:16px; overflow:auto; }
 .dialog > .card { background:var(--bg); width:100%; max-width:600px; margin-top:6vh; }
 .top { margin-top:12px; }
+@media (max-width: 520px) { dl.facts { grid-template-columns:1fr; gap:0; } dl.facts dd { margin:0 0 10px; min-width:0; } .sentence { font-size:17px; } }

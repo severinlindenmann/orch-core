@@ -144,8 +144,8 @@ function registerView(err) {
       state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
       await home();
     },
-  }, h("p", { class: "muted small", text: "Type your password and a fresh 6-digit code again. A code that signed you in cannot be used twice; wait for the next one." }), field("Name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", text: "Create key" })));
-  show(h("h1", { text: "Let this browser sign for you" }), err ? banner("bad", "Not registered, nothing kept", err) : null, form);
+  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", text: "Register this browser" })));
+  show(h("h1", { text: "Register this browser" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 
 /** Returns an error text, or null on success. The key is stored only after the certificate checked out. */
@@ -237,8 +237,8 @@ function factsList(rows) {
 }
 
 function promptView(me, p, digest, d) {
-  const sign = h("button", { class: "pri", id: "sign", disabled: true, text: "Sign" });
-  const arm = () => { sign.disabled = true; setTimeout(() => { if (document.visibilityState === "visible") sign.disabled = false; }, 1000); };
+  const sign = h("button", { class: "pri", id: "sign", disabled: true, text: "Please review…" });
+  const arm = () => { sign.disabled = true; sign.textContent = "Please review…"; setTimeout(() => { if (document.visibilityState === "visible") { sign.disabled = false; sign.textContent = "Sign and send"; } }, 1000); };
   const onVis = () => arm();
   document.addEventListener("visibilitychange", onVis);
   window.addEventListener("focus", onVis);
@@ -254,17 +254,17 @@ function promptView(me, p, digest, d) {
         if (r.body.error === "channel_revoked") await deleteChannel().catch(() => {}); // only the hub's own word removes the key
         return nothingSigned(r.body.error);
       }
-      dialog(banner("ok", "Signed and sent", "Your decision is recorded as you, via the hub."), h("dl", { class: "facts" }, h("dt", { text: "Fingerprint" }), h("dd", { class: "fp", text: d.fingerprint })), h("div", { class: "row" }, h("button", { class: "pri", text: "Back to home", onclick: async () => { closeDialog(); await home(); } })));
+      dialog(banner("ok", "Signed and sent", "Recorded on behalf of " + renderText(state.user.name ?? "you") + ", via the hub."), h("p", { class: "sentence", text: d.sentence }), h("dl", { class: "facts" }, h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint })), h("div", { class: "row" }, h("button", { class: "pri", text: "Back to home", onclick: async () => { closeDialog(); await home(); } })));
     } catch {
       nothingSigned("unavailable");
     }
   });
   dialog(
-    h("h1", { text: "You are signing" }),
+    h("h1", { text: "Review your answer" }),
     h("p", { class: "sentence", text: d.sentence }),
-    h("dl", { class: "facts" }, h("dt", { text: "Fingerprint" }), h("dd", { class: "fp", text: d.fingerprint }), d.contentHash ? [h("dt", { text: "Content" }), h("dd", { class: "fp", text: d.contentHash })] : null, h("dt", { text: "Signed as" }), h("dd", { text: renderText(state.user.name ?? "you") + ", by the hub after you confirm with this browser" })),
-    h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),
-    h("p", { class: "small muted", text: "The hub signs only what it built. Check the words, then confirm." }),
+    h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
+    h("details", {}, h("summary", { text: "Technical details" }), factsList(d.fields)),
+    h("p", { class: "small muted", text: "Check the answer above. When you confirm, the hub signs and sends it on your behalf." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );
   arm();

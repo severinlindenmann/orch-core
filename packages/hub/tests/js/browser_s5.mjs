@@ -41,15 +41,15 @@ try {
 
   // register: needs password + a later code again
   await page.getByRole("button", { name: "Register this browser" }).click();
-  await page.getByRole("heading", { name: "Let this browser sign for you" }).waitFor();
+  await page.getByRole("heading", { name: "Register this browser" }).waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_SIGNIN); // the code that signed us in must be refused
-  await page.getByRole("button", { name: "Create key" }).click();
-  await page.getByText("Not registered, nothing kept").waitFor();
+  await page.getByRole("button", { name: "Register this browser" }).click();
+  await page.getByText("Browser not registered").waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_REGISTER);
   await shot("register");
-  await page.getByRole("button", { name: "Create key" }).click();
+  await page.getByRole("button", { name: "Register this browser" }).click();
   await page.getByText("This browser holds a signing key for you").waitFor();
 
   // the key is non-extractable and in IndexedDB
@@ -66,9 +66,9 @@ try {
   await page.getByText("CSV or API?").first().waitFor();
   await page.getByRole("button", { name: "Review" }).first().click();
   await page.getByRole("button", { name: "Answer" }).first().click();
-  const sign = page.getByRole("button", { name: "Sign", exact: true });
+  const sign = page.locator("#sign");
   await sign.waitFor();
-  await page.getByText("You are signing").waitFor();
+  await page.getByText("Review your answer").waitFor();
   const sentence = await page.locator("#dlg .sentence").innerText();
   assert(/I answer question Q1 on ticket .* with .csv/.test(sentence), "sentence: " + sentence);
   await shot("sign-prompt");
@@ -77,8 +77,9 @@ try {
   // a script's click never signs (isTrusted) and a disabled button cannot be clicked
   await page.evaluate(() => document.getElementById("sign").click());
   await page.waitForTimeout(300);
-  assert(await page.getByText("You are signing").isVisible(), "a synthetic click must not sign");
+  assert(await page.getByText("Review your answer").isVisible(), "a synthetic click must not sign");
   await page.waitForTimeout(1100);
+  assert((await sign.innerText()) === "Sign and send", "button reads Sign and send once armed");
   await sign.click();
   await page.getByText("Signed and sent").waitFor();
   await shot("signed");

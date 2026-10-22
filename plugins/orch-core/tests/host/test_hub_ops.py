@@ -192,13 +192,16 @@ class StubHub:
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.snapshot_gets: list[dict] = []
 
     def send(self, message):
         from tests.hub.fake import sign_with
         from tests.hub.vec import private_key
 
-        self.sent.append(copy.deepcopy(message))
         m = message["o"]
+        # connect fetches the first snapshot; the stub answers {}, which the host refuses and audits (the op itself is
+        # covered by tests/hub/test_snapshot.py and test_hub_join_real.py), so it is kept apart from what join sends
+        (self.snapshot_gets if m["op"] == "snapshot_get" else self.sent).append(copy.deepcopy(message))
         o = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": m["hub_id"], "workspace_id": m["workspace_id"],
             "dir": "h2w", "seq": 1, "ts_ms": m["ts_ms"], "op": m["op"], "re": m["seq"], "body": {},

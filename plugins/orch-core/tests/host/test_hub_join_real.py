@@ -120,7 +120,7 @@ def test_join_and_leave_over_the_real_tls_link(human, served, tls_hub):
     got = ok(served.client().req("hub.connect", args, idem=True))["data"]
     assert got["status"] == "bound" and got["hub_id"] == tls_hub.hub_id
     assert tls_hub.auth_verified.is_set() and "wsk_pub" in tls_hub.auth_frames[0]  # the first link of a join
-    assert [r["o"]["op"] for r in tls_hub.requests] == ["join"]
+    assert [r["o"]["op"] for r in tls_hub.requests] == ["join", "snapshot_get"]  # then the first snapshot
     body = tls_hub.requests[0]["o"]["body"]
     assert body["binding"]["o"]["mode"] == "selective" and body["card"]["o"]["workspace_id"] == served.wid
     status = ok(served.client().req("hub.status", {}, idem=False))["data"]
@@ -179,3 +179,136 @@ def test_a_bad_address_is_malformed(bad):
         parse_addr(bad)
     assert parse_addr("hub.dev.example:8443") == ("hub.dev.example", 8443)
     assert parse_addr("[::1]:9") == ("::1", 9)
+
+
+# --- C3: the group snapshot is fetched, pinned and readable on the host ---------------------------------------------
+
+
+def _service(served):
+    return next(iter(served.h.host.services.values()))
+
+
+def test_snapshot_is_fetched_on_connect_refreshed_on_demand_and_roles_are_readable(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    got = ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))["data"]
+    assert got["snapshot_version"] == 1
+    status = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert status["snapshot"] == {"version": 1, "roles": {}}
+    admin, reader = "11" * 16, "22" * 16
+    hub.set_snapshot(served.wid, {admin: "admin", reader: "read"})
+    r = ok(served.client().req("hub.refresh", {}, idem=True))["data"]
+    assert r["changed"] is True and r["snapshot"]["version"] == 2
+    status = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert status["snapshot"] == {"version": 2, "roles": {admin: "admin", reader: "read"}}
+    service = _service(served)
+    assert [hubops.hub_role(service, u) for u in (admin, reader, "33" * 16)] == ["admin", "read", None]
+    # a replay of the older snapshot is refused and the pin stays
+    hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 1, {reader: "admin"}, [])  # noqa: SLF001
+    assert err(served.client().req("hub.refresh", {}, idem=True)) == "hub.refused"
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"]["version"] == 2
+    assert hubops.hub_role(service, reader) == "read"
+
+
+def test_refresh_before_a_connect_is_refused(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    assert err(served.client().req("hub.refresh", {}, idem=True)) == "hub.not_joined"
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"] is None
+
+
+def test_a_snapshot_that_does_not_verify_does_not_undo_the_connect(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    real = hub._op_snapshot_get  # noqa: SLF001
+    monkeypatch.setattr(hub, "_op_snapshot_get", lambda body, ws_id, ws: {"snapshot": {"o": {}, "sig": ""}})
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    got = ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))["data"]
+    assert got["status"] == "bound" and got["snapshot_version"] is None
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"] is None
+    monkeypatch.setattr(hub, "_op_snapshot_get", real)
+    assert ok(served.client().req("hub.refresh", {}, idem=True))["data"]["snapshot"]["version"] == 1
+
+
+def _race_rig(human, served, monkeypatch):
+    from orch.hubclient import HubState, snapshot
+
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))
+    service = _service(served)
+    wsk_pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
+
+    def fetch(copy_of_state):
+        """One refresh that started from ``copy_of_state`` (loaded earlier), saving through the host's merge."""
+        link, transport = hubops._snapshot_link(service, copy_of_state, wsk_pub, sign, True)  # noqa: SLF001
+        try:
+            return snapshot.refresh(
+                state=copy_of_state, link=link, workspace_id=service.workspace_id, dev_mode=True,
+                now_ms=lambda: int(service.clock() * 1000),
+                save=lambda f: hubops._save_snapshot(service, f),  # noqa: SLF001
+            )  # fmt: skip
+        finally:
+            transport.close() if hasattr(transport, "close") else None
+
+    def started_now():
+        return HubState.from_json(hubops._load_state(service).to_json())  # noqa: SLF001
+
+    return hub, service, fetch, started_now
+
+
+def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch):
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    a, b = started_now(), started_now()  # both read hub.json before either fetched
+    hub.set_snapshot(served.wid, {"11" * 16: "admin"})
+    fetch(a)  # the slow one's rival finishes with version 2 ...
+    hub.set_snapshot(served.wid, {"11" * 16: "admin", "22" * 16: "read"})
+    fetch(b)  # ... and this one with version 3
+    assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
+    # now a refresh that fetched version 2 earlier but saves last: it must not win
+    hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
+    stale = started_now()
+    stale.snapshot = None  # as if it started before any pin
+    fetch(stale)  # its own view says "newer" (no pin), but the merge under the lock sees version 3 on disk: no write
+    assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
+    assert hubops.hub_role(service, "22" * 16) == "read"
+
+
+def test_a_leave_during_a_refresh_is_not_undone(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    started = started_now()  # the refresh read a bound state ...
+    hub.set_snapshot(served.wid, {"11" * 16: "admin"})
+    human.run("hub.leave", {})  # ... and the owner leaves while it is on the network
+    assert ok(served.client().req("hub.unbind", {}, idem=True))["data"]["delivered"]
+    assert hubops._load_state(service).status == "unbound"  # noqa: SLF001
+    with pytest.raises(HubRefused):  # the hub itself says not_bound; if it did not, the merge says not_joined
+        fetch(started)
+    started.snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
+    with pytest.raises(HubRefused):  # the merge alone, as if the hub had still answered
+        hubops._save_snapshot(service, started)  # noqa: SLF001
+    assert hubops._load_state(service).status == "unbound"  # noqa: SLF001
+    assert hubops._load_state(service).snapshot["o"]["version"] == 1  # noqa: SLF001 - nothing from the late refresh
+    assert hubops.hub_role(service, "11" * 16) is None  # an unbound workspace has no hub roles
+
+
+def test_an_equal_card_with_other_content_does_not_overwrite_the_disk(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+    from tests.hub.test_snapshot import pin, rotated_card
+
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    a, b = started_now(), started_now()
+    a.card = rotated_card(spki=pin(2))
+    a.hk_op_pub, a.tls_spki = a.card["op_cert"]["o"]["hk_op_pub"], pin(2)
+    hubops._save_snapshot(service, a)  # noqa: SLF001
+    assert hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001 - a newer card (op_seq 2) is adopted
+    b.card = rotated_card(spki=pin(3))  # same op_seq and card_seq, other bytes
+    with pytest.raises(HubRefused) as e:
+        hubops._save_snapshot(service, b)  # noqa: SLF001
+    assert e.value.code == "stale_card" and hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001

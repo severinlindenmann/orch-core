@@ -494,3 +494,114 @@ def test_cli_needs_state():
         env={k: v for k, v in os.environ.items() if k != "ORCH_HUB_STATE"} | {"PYTHONPATH": "src"},
     )
     assert r.returncode == 1 and "no_state_dir" in r.stderr
+
+
+# --- crash consistency (review of PR 3) ---------------------------------------------------------------------------
+
+
+def _crash_at(monkeypatch, suffix):
+    real = os.replace
+
+    def boom(src, dst):
+        if str(dst).endswith(suffix):
+            raise OSError("simulated crash")
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", boom)
+
+
+def test_crash_between_card_and_meta_never_reuses_card_seq(state, monkeypatch):
+    keys, _ = _fresh(state)
+    _crash_at(monkeypatch, "card.json")  # meta (the reservation) is already written, card.json is not
+    with pytest.raises(OSError):
+        keys.reissue_card(relay_url="https://relay.dev.severin.io")
+    monkeypatch.undo()
+    again = HubKeys.open(state)
+    assert again.card()["o"]["card_seq"] == 1  # old card still served
+    nxt = again.reissue_card(relay_url="https://relay2.dev.severin.io")
+    assert nxt["o"]["card_seq"] == 3  # seq 2 was reserved by the crashed attempt, never reused
+
+
+def test_crash_after_meta_commit_old_op_key_is_pruned_on_open(state, monkeypatch):
+    keys, _ = _fresh(state)
+    monkeypatch.setattr("orch_hub.keys.store.shutil.rmtree", lambda *a, **k: (_ for _ in ()).throw(OSError("crash")))
+    with pytest.raises(OSError):
+        keys.rotate_op()
+    monkeypatch.undo()
+    assert (state / "op" / "1" / "key").exists()  # the crash left the old op key behind
+    again = HubKeys.open(state)
+    assert again.op_seq == 2
+    assert not (state / "op" / "1").exists()
+    assert [p.name for p in (state / "op").iterdir()] == ["2"]
+
+
+def test_prune_ignores_symlinks_and_odd_names(state, tmp_path):
+    keys, _ = _fresh(state)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("x")
+    (state / "op" / "7").symlink_to(outside)
+    (state / "op" / "notes").mkdir(mode=0o700)
+    HubKeys.open(state)
+    assert (outside / "keep").exists() and (state / "op" / "7").is_symlink() and (state / "op" / "notes").exists()
+    assert keys.op_seq == 1
+
+
+def test_leftover_temp_files_do_not_break_rotation(state):
+    keys, _ = _fresh(state)
+    uid = keys.issue_uk()["o"]["user_id"]
+    keys.issue_channel(uid, G.K.pub["channel_alice_phone"], "se-unlocked")
+    gen = state / "op" / "1"
+    for d in ("ch", "uk"):
+        junk = gen / d / f".{'a' * 32}.json.deadbeef.tmp"
+        junk.write_text("{partial")
+        os.chmod(junk, 0o600)
+    assert len(keys.channel_certs()) == 1 and keys.users() == [uid]
+    assert keys.rotate_op()["o"]["card_seq"] == 2
+
+
+def test_new_dirs_are_fsynced_before_meta_commit(state, monkeypatch):
+    keys, _ = _fresh(state)
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(
+        os, "fsync", lambda fd: (events.append(("fsync", os.fstat(fd).st_mode & 0o170000)), real_fsync(fd))[1]
+    )
+
+    def rep(src, dst):
+        events.append(("replace", str(dst).rsplit("/", 1)[-1]))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", rep)
+    mk = []
+    from orch_hub.keys import fsutil
+
+    real_fd = fsutil.fsync_dir
+    monkeypatch.setattr(fsutil, "fsync_dir", lambda p: (mk.append(Path(p).name), real_fd(p))[1])
+    keys.rotate_op()
+    # the parents of op/2, op/2/uk and op/2/ch (op/ and op/2) were fsynced, and that happened before meta.json
+    assert "op" in mk and "2" in mk
+    assert ("replace", "meta.json") in events
+
+
+def test_open_verifies_op_cert_signature(state):
+    _fresh(state)
+    p = state / "op" / "1" / "cert.json"
+    cert = json.loads(p.read_text())
+    cert["o"]["expires_ms"] += 1  # tampered, pubkey and op_seq unchanged
+    p.write_bytes(cj(cert) + b"\n")
+    with pytest.raises(KeysError) as e:
+        HubKeys.open(state)
+    assert e.value.code == "bad_state"
+
+
+def test_make_dir_checks_symlink_before_chmod(state, tmp_path):
+    from orch_hub.keys import fsutil
+
+    target = tmp_path / "t"
+    target.mkdir(mode=0o755)
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    with pytest.raises(fsutil.StateError):
+        fsutil.make_dir(link)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755

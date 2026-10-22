@@ -38,14 +38,24 @@ def check_dir(path: Path) -> None:
         raise StateError("bad_mode", f"{path.name} must be 0700")
 
 
+def fsync_dir(path: Path) -> None:
+    dfd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
 def make_dir(path: Path) -> None:
-    """Create one directory (parents must exist or be created by the caller) as 0700."""
+    """Create one directory as 0700 (the parent must exist) and fsync the parent, so the entry is durable before
+    anything is committed that refers to it. A pre-existing path is checked (lstat) before any chmod."""
     try:
         os.mkdir(path, DIR_MODE)
     except FileExistsError:
-        pass
+        check_dir(path)  # lstat: refuses a symlink or foreign owner before we touch its mode
     os.chmod(path, DIR_MODE)  # the umask may have narrowed it, never widens
     check_dir(path)
+    fsync_dir(path.parent)
 
 
 def read_file(path: Path) -> bytes:
@@ -88,8 +98,4 @@ def write_atomic(path: Path, data: bytes) -> None:
         except FileNotFoundError:
             pass
         raise
-    dfd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+    fsync_dir(path.parent)

@@ -34,6 +34,10 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, cj, unb64u
 from .fsutil import StateError, check_dir, make_dir, read_file, write_atomic
 
+_CH_FILE = re.compile(r"[0-9a-f]{32}\.json")
+_UK_FILE = re.compile(r"[0-9a-f]{32}\.json")
+_GEN_DIR = re.compile(r"[0-9]{1,15}")
+
 DEV = True  # V3: every hub object is dev-only (protocol §2.4)
 DAY_MS = 86_400_000
 OP_LIFETIME_MS = 366 * DAY_MS  # matches the H0 vectors (issued NOW-1d, expires NOW+365d)
@@ -195,7 +199,19 @@ class HubKeys:
                 or cert["o"].get("op_seq") != m["op_seq"]
             ):
                 raise KeysError("bad_state", "the op key does not match its certificate")
+            try:
+                H.verify_op_cert(
+                    cert,
+                    S.public_bytes(root),
+                    now_ms=self._now(),
+                    dev_mode=DEV,
+                    revoked_op_certs=self.revoked_op_certs(),
+                )
+            except H.Refused as r:
+                if r.code not in ("cert_expired", "revoked"):  # those are handled at use; rotate-op must still work
+                    raise KeysError("bad_state", f"op certificate: {r.code}") from None
             self._op = self._sc["op"](op_key)
+            self._prune_gens()
         except StateError as e:
             raise KeysError(e.code, str(e)) from None
         return self
@@ -280,11 +296,11 @@ class HubKeys:
         return self._read_obj(p)
 
     def channel_certs(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        out = [self._read_obj(p) for p in sorted((self._gen_dir() / "ch").iterdir())]
+        out = [self._read_obj(p) for p in sorted((self._gen_dir() / "ch").iterdir()) if _CH_FILE.fullmatch(p.name)]
         return [c for c in out if user_id is None or c["o"]["user_id"] == user_id]
 
     def users(self) -> list[str]:
-        return sorted(p.stem for p in (self._gen_dir() / "uk").iterdir() if p.suffix == ".json")
+        return sorted(p.stem for p in (self._gen_dir() / "uk").iterdir() if _UK_FILE.fullmatch(p.name))
 
     def hxk_exchange(self, peer_pub: bytes) -> bytes:
         """ECDH with HXK (raw shared secret; the caller applies the key derivation of the wrap format)."""
@@ -374,7 +390,6 @@ class HubKeys:
         cert = self._sign_op_cert(new_op.public, seq, now)
         card_seq = self._meta["card_seq"] + 1
         card = self._sign_card(new_op, cert, card_seq, now, self._meta["relay_url"], self._meta["tls_spki_sha256"])
-        old_gen = None if first else self._gen_dir()
         users: list[str] = [] if first else self.users()
         old_ch = [] if first else self.channel_certs()
         write_atomic(gen / "key", _key_bytes(op_key))
@@ -395,8 +410,16 @@ class HubKeys:
         self._meta = {**self._meta, "op_seq": seq, "card_seq": card_seq}
         write_atomic(self.state / "meta.json", _json_bytes(self._meta))  # the commit point
         self._op = new_op
-        if old_gen is not None:
-            shutil.rmtree(old_gen, ignore_errors=True)  # the old op key must not outlive its generation
+        self._prune_gens()  # the old op key must not outlive its generation
+
+    def _prune_gens(self) -> None:
+        """Remove every ``op/<n>`` that is not the committed generation (old keys, uncommitted leftovers). Only plain
+        directories named by digits directly under ``op/``; symlinks are never followed."""
+        keep = str(self._meta["op_seq"])
+        with os.scandir(self.state / "op") as it:
+            for e in list(it):
+                if e.name != keep and _GEN_DIR.fullmatch(e.name) and e.is_dir(follow_symlinks=False):
+                    shutil.rmtree(e.path)
 
     def rotate_op(self) -> dict[str, Any]:
         """New HK_op under the next op_seq (root-signed, L2-1), a new card (card_seq + 1), and every UK and channel
@@ -452,8 +475,10 @@ class HubKeys:
         self._held(card)
         meta["card_seq"] += 1
         try:
-            write_atomic(self._gen_dir() / "card.json", _json_bytes(card))
+            # meta first: it reserves the card_seq. A crash between the two leaves a gap in card_seq (the old card
+            # stays served), never one seq for two different cards.
             write_atomic(self.state / "meta.json", _json_bytes(meta))
+            write_atomic(self._gen_dir() / "card.json", _json_bytes(card))
         except StateError as e:
             raise KeysError(e.code, str(e)) from None
         self._meta = meta

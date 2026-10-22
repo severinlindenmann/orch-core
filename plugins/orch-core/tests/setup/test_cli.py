@@ -176,7 +176,7 @@ def test_the_whole_command_over_the_socket(tmp):
         rc, out, err = run_main(tmp, ports=ports, open_browser=browser)
     finally:
         flow_mod.SetupFlow = real  # type: ignore[misc]
-    driver[0].join(10)  # the command may exit as soon as finish is answered; the driver still records what it read (#949)
+    driver[0].join(10)  # the command exits once finish is answered; the driver still has to record it (#949)
     assert not driver[0].is_alive()
     assert "error" not in result, result
     assert rc == 0, (err, result)

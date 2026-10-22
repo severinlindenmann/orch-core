@@ -27,6 +27,7 @@ Fail closed: unreadable state, an unknown rule or a malformed stored value is ``
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -141,6 +142,9 @@ class TicketFact:
     needs: tuple[NeedFact, ...] = ()
     gates: tuple[GateFact, ...] = ()  # the gates whose hash can be built now
     roster_v: int | None = None  # the workspace member-roster version (WorkspaceView.roster_v); None: no f1
+    #: ``(seq, head)`` of the ticket's log, read in the same locked snapshot as the fields above (C6r3-2): the chain
+    #: claim of an item then always describes the content it carries. ``None``: not known (the builder refuses).
+    chain: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +158,7 @@ class ShareItem:
     f1: dict[str, Any] | None = field(default=None, compare=False)  # the 10.2b f1 block (None: shared without one)
     shown: str = field(default="", compare=False)  # b64u SHA-256 of what the owner is shown (payload + decision data)
     data: tuple[str, ...] = field(default=(), compare=False)  # decision data lines (repos and refs of f1), C6b-3
+    chain: tuple[int, str] | None = field(default=None, compare=False)  # the snapshot's (seq, head); not in the digest
 
     def line(self) -> str:
         """One line for the owner's review."""
@@ -239,7 +244,7 @@ def _item(
     data = decision_data(f1)
     shown = b64u(suite.sha256(wire.cj(payload if not data else {"payload": payload, "decision_data": data})))
     digest = shown if f1 is None else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1})))
-    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data))
+    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data), t.chain)
 
 
 def _valid_labels(labels: Iterable[str]) -> list[str]:
@@ -324,13 +329,15 @@ def make_builder(
     sign: Callable[[bytes], bytes],
     dev: bool,
     now_ms: Callable[[], int],
-    chain_of: Callable[[str], tuple[int, str] | None],
+    chain_of: Callable[[str], tuple[int, str] | None] | None = None,
 ) -> SealedItemBuilder:
-    """The 10.2b builder for one hub binding. ``chain_of(ticket_uid)`` is ``(seq, head)`` of that ticket's log now
-    (``None``: the log is unreadable or empty, which refuses: an item without its chain head is never sent)."""
+    """The 10.2b builder for one hub binding. The chain claim is the item's own ``chain``, read with its content in
+    one snapshot (C6r3-2). ``chain_of(ticket_uid)`` is only the fallback for an item without one (``(seq, head)`` of
+    that ticket's log now); with neither, or when it answers ``None`` (unreadable or empty log), the builder refuses:
+    an item without its chain head is never sent."""
 
     def build(item_id: str, item: ShareItem, version: int) -> tuple[str, str]:
-        head = chain_of(item.ticket_uid)
+        head = item.chain if item.chain is not None else (chain_of(item.ticket_uid) if chain_of else None)
         if head is None:
             raise HubRefused("malformed")
         signed = sharefmt.build_signed_item(
@@ -358,6 +365,18 @@ def make_builder(
 # --- state ----------------------------------------------------------------------------------------------------------
 
 
+def plan_of(items: Iterable[ShareItem]) -> str:
+    """The digest of a selection (logical id and content digest of every item): what ``share.preview`` hands the owner
+    and what a confirming op must present back."""
+    h = hashlib.sha256()
+    for i in items:
+        h.update(f"{i.logical}\0{i.shown or i.digest}\n".encode())
+    return b64u(h.digest())
+
+
+_STATE_KEYS = frozenset({"rules", "sent", "withdrawn", "refused", "confirmed"})
+
+
 @dataclass
 class ShareState:
     """``rules``: the owner's rules. ``sent``: logical id -> ``{"item_id", "digest", "version", "item_hash"}``
@@ -365,18 +384,63 @@ class ShareState:
     never came: the next sync re-sends under the same id and a higher ``version``;
     the version only grows, it is the hub's order of an item's puts, 10.2b). ``withdrawn``: logical ids the owner
     revoked by hand: never re-shared while they match, forgotten once they stop matching or a ``ticket`` rule names
-    them again."""
+    them again. ``refused`` (C6r3-1): logical id -> ``{"code", "line"}`` of the items the contract or the hub refused on
+    the last sync that tried them (``line`` is the owner-facing one-liner); it is shown to the owner until the item is
+    sent, or stops matching. An item that is in ``sent`` with a ``digest`` AND refused is **stale**: the hub still
+    serves its older version."""
 
     rules: list[dict[str, str]] = field(default_factory=lambda: [dict(r) for r in DEFAULT_RULES])
     sent: dict[str, dict[str, Any]] = field(default_factory=dict)
     withdrawn: list[str] = field(default_factory=list)
+    refused: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: logical ids of the selection the owner last confirmed (a rule change, ``share.sync``, ``share.revoke``): the
+    #: only items an automatic pass may send or update. ``None``: a state from before this field: its ``sent`` items.
+    confirmed: list[str] | None = None
+
+    def confirm(self, selected: Iterable[ShareItem], expect: str) -> None:
+        """The owner confirmed this selection: remember it for the automatic passes.
+
+        Invariant (C6fud-1): a selection is confirmed only against the plan the owner was shown (``expect``, see
+        :func:`plan_of`); no other path may widen what an automatic pass sends. Withdrawn items are not part of what
+        was shown. A different selection raises :class:`HubRefused` (``plan_changed``) and changes nothing."""
+        items = [i for i in selected if i.logical not in self.withdrawn]
+        if not isinstance(expect, str) or plan_of(items) != expect:
+            raise HubRefused("plan_changed")
+        self.confirmed = sorted({i.logical for i in items})
+
+    def auto_wanted(self, selected: Iterable[ShareItem]) -> list[ShareItem]:
+        """What an automatic pass may send: the confirmed items that still match, with their CURRENT content.
+
+        C6 follow-up rule: the owner confirmed the rules, not each content change, so a changed ticket that is already
+        in the confirmed selection is re-sent (a new version) and one that stops matching is revoked (it is missing
+        here, so :func:`sync` withdraws it). A ticket, question or need that starts matching AFTER the confirmation
+        is not in the confirmed set and is never sent by a pass: it waits for the owner's next confirm (what was shown
+        is what is sent, C6-2). The confirmed set also shrinks to what still matches, so an item that left and comes
+        back needs a new confirm. An agent changing tickets therefore cannot widen what the hub sees."""
+        known = set(self.sent) if self.confirmed is None else set(self.confirmed)
+        out = [i for i in selected if i.logical in known]
+        self.confirmed = sorted(i.logical for i in out)
+        return out
+
+    def refused_items(self) -> list[dict[str, Any]]:
+        """What the owner is told about refused items: ``{"item", "code", "stale"}``, sorted by logical id.
+        ``stale``: the hub holds an older version of this item that this refusal kept from being replaced."""
+        return [
+            {"item": r["line"], "code": r["code"], "stale": (self.sent.get(lg) or {}).get("digest") is not None}
+            for lg, r in sorted(self.refused.items())
+        ]
 
     def to_json(self) -> dict[str, Any]:
-        return {"rules": self.rules, "sent": self.sent, "withdrawn": sorted(self.withdrawn)}
+        return {
+            "rules": self.rules,
+            "sent": self.sent,
+            "withdrawn": sorted(self.withdrawn),
+            "refused": self.refused,
+        } | ({} if self.confirmed is None else {"confirmed": sorted(self.confirmed)})
 
     @classmethod
     def from_json(cls, d: Any) -> ShareState:
-        if type(d) is not dict or set(d) != {"rules", "sent", "withdrawn"}:
+        if type(d) is not dict or not {"rules", "sent", "withdrawn"} <= set(d) <= _STATE_KEYS:
             raise HubRefused("malformed")
         if type(d["rules"]) is not list or type(d["sent"]) is not dict or type(d["withdrawn"]) is not list:
             raise HubRefused("malformed")
@@ -398,7 +462,22 @@ class ShareState:
             }  # fmt: skip
         if any(type(x) is not str for x in d["withdrawn"]):
             raise HubRefused("malformed")
-        return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]))
+        refused: dict[str, dict[str, str]] = {}
+        raw = d.get("refused", {})
+        if type(raw) is not dict:
+            raise HubRefused("malformed")
+        for lg, r in raw.items():
+            if (
+                type(lg) is not str or type(r) is not dict or set(r) != {"code", "line"}
+                or type(r["code"]) is not str or not 0 < len(r["code"]) <= 64
+                or type(r["line"]) is not str or len(r["line"]) > 1000
+            ):  # fmt: skip
+                raise HubRefused("malformed")
+            refused[lg] = {"code": r["code"], "line": r["line"]}
+        confirmed = d.get("confirmed")
+        if confirmed is not None and (type(confirmed) is not list or any(type(x) is not str for x in confirmed)):
+            raise HubRefused("malformed")
+        return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]), refused=refused, confirmed=confirmed)
 
     def add_rule(self, rule: Mapping[str, str]) -> bool:
         r = normalize_rule(dict(rule))
@@ -434,15 +513,17 @@ def sync(
 ) -> dict[str, Any]:
     """Make the hub's copy equal ``wanted`` minus the owner's withdrawn items. Revokes first, then puts; ``save`` runs
     after every link call that succeeded, so a crash or an unreachable hub loses nothing and repeats nothing. Returns
-    the counts ``{"put", "revoke", "kept"}``, plus ``"refused"`` (logical id -> code) when items were skipped. One item
-    the contract or the hub refuses as such (``malformed``, ``too_large``) is skipped and reported, and the rest goes
-    on; any other refusal (hub not reachable, wrong mode, ...) stops the sync (the state stays as far as it got)."""
+    the counts ``{"put", "revoke", "kept"}``, plus ``"refused"`` (logical id -> code) and ``"refused_items"``
+    (:meth:`ShareState.refused_items`) when items were skipped. One item the contract or the hub refuses as such
+    (``malformed``, ``too_large``) is skipped and reported, and the rest goes on; any other refusal (hub not reachable,
+    wrong mode, ...) stops the sync (the state stays as far as it got)."""
     items = {i.logical: i for i in wanted}
     if len(items) > MAX_ITEMS:
         raise HubRefused("too_many_items")  # before anything is sent
     # a withdrawal ends when the item no longer matches
     state.withdrawn = [lg for lg in state.withdrawn if lg in items]
     live = {lg: i for lg, i in items.items() if lg not in state.withdrawn}
+    state.refused = {lg: r for lg, r in state.refused.items() if lg in live}  # an item that left is not refused
     counts: dict[str, Any] = {"put": 0, "revoke": 0, "kept": 0}
     refused: dict[str, str] = {}
     for lg in sorted(set(state.sent) - set(live)):
@@ -453,6 +534,7 @@ def sync(
     for lg, item in sorted(live.items()):
         have = state.sent.get(lg)
         if have is not None and have["digest"] == item.digest:
+            state.refused.pop(lg, None)  # the hub holds this very version
             counts["kept"] += 1
             continue
         item_id = new_id() if have is None else have["item_id"]
@@ -463,6 +545,7 @@ def sync(
             if exc.code not in ITEM_REFUSALS:
                 raise
             refused[lg] = exc.code
+            state.refused[lg] = {"code": exc.code, "line": item.line()}
             continue
         if have is None:
             have = state.sent[lg] = {"item_id": item_id, "digest": None, "version": version, "item_hash": None}
@@ -476,12 +559,15 @@ def sync(
             if exc.code not in ITEM_REFUSALS:
                 raise
             refused[lg] = exc.code
+            state.refused[lg] = {"code": exc.code, "line": item.line()}
             continue
+        state.refused.pop(lg, None)
         have["digest"] = item.digest
         have["item_hash"] = ihash  # what a custodial event about this item binds (10.2b), for the return check
         counts["put"] += 1
         save(state)
     if refused:
         counts["refused"] = refused
+        counts["refused_items"] = state.refused_items()  # for the owner's text output (with the stale flag)
     save(state)
     return counts

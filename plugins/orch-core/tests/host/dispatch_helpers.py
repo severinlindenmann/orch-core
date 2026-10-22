@@ -120,15 +120,15 @@ class Served:
         res = ok(self._maker.req("new", {"title": title}, grant=self.grant, session=SESSION, idem=True))
         return self.lab.ws.uid(res["key"]), res["key"]
 
-    def restrict(self, uid: str, people: list[str]) -> None:
+    def restrict(self, uid: str, people: list[str] | None) -> None:
+        """Restrict the ticket to ``people`` (``None``: back to workspace-visible)."""
         ws = self.lab.ws
         ws.tick()
+        visibility: Any = "workspace" if people is None else {"restricted": people}
 
         def run(store: Any) -> None:
             store.ticket(uid)
-            store.append(
-                ws.person_event(ws.owner, uid, "visibility.changed", visibility={"restricted": people}), log=uid
-            )
+            store.append(ws.person_event(ws.owner, uid, "visibility.changed", visibility=visibility), log=uid)
 
         self.append(run)
 

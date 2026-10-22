@@ -33,12 +33,19 @@ def hub(world):
         h.close()
 
 
+def confirm_sync(w):
+    """``share.sync`` confirming the selection the owner was just shown (C6 follow-up: a sync without ``expect`` only
+    retries what was confirmed)."""
+    plan = ok(req(w, "share.preview"))["data"]["plan"]
+    return ok(req(w, "share.sync", {"expect": plan}))["data"]
+
+
 def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
     from orch import canon
 
     _, key = world.ticket("Savings")
     ok(agent(world, "ask", {"ref": key, "text": "which bank?"}))
-    assert ok(req(world, "share.sync"))["data"]["put"] == 1
+    assert confirm_sync(world)["put"] == 1
     (item,) = hub.opened
     roster = world.service.store.state.workspace.roster_v
     q = world.service.store.state.tickets[item["chain"]["log"]].questions[0]
@@ -50,7 +57,9 @@ def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
 def test_a_member_change_re_puts_every_item_under_a_higher_version(world, hub):
     _, key = world.ticket("Savings")
     ok(agent(world, "ask", {"ref": key, "text": "which bank?"}))
-    ok(req(world, "share.rule_add", {"rule": {"kind": "questions"}}))
+    rule = {"kind": "questions"}
+    plan = ok(req(world, "share.preview", {"add": rule}))["data"]["plan"]
+    ok(req(world, "share.rule_add", {"rule": rule, "expect": plan}))
     assert hub.count("share_put") == 2
     before = world.service.store.state.workspace.roster_v
     assert ok(req(world, "share.sync"))["data"]["put"] == 0  # nothing changed: nothing re-sent

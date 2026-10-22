@@ -62,6 +62,7 @@ class LinkServer:
         publish: ops.PublishForwarder | None = None,
         downstream: ops.Downstream | None = None,
         router: Router | None = None,
+        access: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool = True,
@@ -79,6 +80,7 @@ class LinkServer:
         self._publish = publish or ops.NoPublish()
         self._down = downstream or ops.NoDownstream()
         self._router = router
+        self._access = access
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
@@ -316,6 +318,7 @@ class LinkServer:
                 now_ms=now,
                 dev_mode=self._dev,
                 router=self._router,
+                access=self._access,
             )
             return handler(ctx)
         except Refused as e:

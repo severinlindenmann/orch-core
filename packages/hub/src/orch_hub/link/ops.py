@@ -104,6 +104,7 @@ class OpContext:
     now_ms: int
     dev_mode: bool
     router: Router | None = None
+    access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:

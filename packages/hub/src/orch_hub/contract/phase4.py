@@ -435,15 +435,18 @@ def seal_view_page(
     salt: bytes,
     *,
     reset: bool = False,
+    proj: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The host's ``log_sync`` body: the exact log lines ``from_seq ..`` sealed with SALTED-AEAD (v2 §5.1) under the
-    view key of ``epoch``. Test/host helper; ``salt`` is 16 fresh bytes in real use."""
+    view key of ``epoch``, with the ticket projection ``proj`` (D15b) when given. Test/host helper; ``salt`` is 16
+    fresh bytes in real use."""
     head = event_head(lines[-1])
     aad = view_aad(workspace_id, epoch, log, from_seq, len(lines), head, reset)
     k = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=KDF_HUB_VIEW_MSG).derive(
         view_key(wk_e, workspace_id, epoch)
     )
-    sealed = salt + AESGCM(k).encrypt(bytes(12), cj({"lines": lines}), aad)
+    doc: dict[str, Any] = {"lines": lines} if proj is None else {"lines": lines, "proj": dict(proj)}
+    sealed = salt + AESGCM(k).encrypt(bytes(12), cj(doc), aad)
     return {
         "epoch": epoch,
         "log": log,
@@ -456,6 +459,13 @@ def seal_view_page(
 
 
 def open_view_page(wk_e: bytes, workspace_id: str, body: Mapping[str, Any]) -> list[Any]:
+    """The lines of one sealed page (its ``proj``, if any, is read by :func:`open_view_doc`)."""
+    return open_view_doc(wk_e, workspace_id, body)[0]
+
+
+def open_view_doc(wk_e: bytes, workspace_id: str, body: Mapping[str, Any]) -> tuple[list[Any], Any]:
+    """``(lines, proj)`` of one sealed page; ``proj`` is None when the page carries none (D15b, §10.7). The plaintext
+    is exactly ``{"lines"}`` or ``{"lines", "proj"}``; ``proj`` is only shape-free here (:func:`check_view_proj`)."""
     try:
         raw = unb64u(body["sealed"])
     except CanonError:
@@ -478,9 +488,9 @@ def open_view_page(wk_e: bytes, workspace_id: str, body: Mapping[str, Any]) -> l
         doc = loads_strict(pt)
     except CanonError:
         raise Refused("malformed") from None
-    if type(doc) is not dict or set(doc) != {"lines"} or type(doc["lines"]) is not list:
+    if type(doc) is not dict or set(doc) not in ({"lines"}, {"lines", "proj"}) or type(doc["lines"]) is not list:
         raise Refused("malformed")
-    return doc["lines"]
+    return doc["lines"], doc.get("proj")
 
 
 def apply_view_page(
@@ -494,6 +504,51 @@ def apply_view_page(
     """The hub's check of one ``log_sync`` body, in order (§10.7). ``views`` maps each log to the event heads it holds
     (index ``i`` = seq ``i + 1``); ``wk_epochs`` the ``WK_e`` the hub can open (from its sealed wraps). Returns the new
     ``views``. Nothing is built from a page that did not pass every step."""
+    return apply_view_page_proj(views, {}, body, workspace_id=workspace_id, wsk_pub=wsk_pub, wk_epochs=wk_epochs)[0]
+
+
+def apply_view_page_proj(
+    views: Mapping[str, list[str]],
+    projs: Mapping[str, Mapping[str, Any]],
+    body: Any,
+    *,
+    workspace_id: str,
+    wsk_pub: bytes,
+    wk_epochs: Mapping[int, bytes],
+) -> tuple[dict[str, list[str]], dict[str, Mapping[str, Any]]]:
+    """:func:`apply_view_page` plus the ticket projections (D15b): ``projs`` maps a ticket log to the newest ``proj``
+    the hub holds for it. Returns ``(views, projs)``. A page's ``proj`` is checked after its lines
+    (:func:`check_view_proj`); the newer by ``(seq, ws_seq)`` is kept (ties: this page's). A reset of a log drops its
+    ``proj``; a reset of the workspace log drops every one, as it drops every ticket view."""
+    views2 = _apply_view_page(views, body, workspace_id=workspace_id, wsk_pub=wsk_pub, wk_epochs=wk_epochs)
+    log = body["log"]
+    lines, proj = open_view_doc(wk_epochs[body["epoch"]], workspace_id, body)  # opened and checked above
+    out = {} if (log == "workspace" and body["reset"]) else dict(projs)
+    if body["reset"]:
+        out.pop(log, None)
+    if proj is not None:
+        check_view_proj(
+            proj,
+            log=log,
+            seq=body["from_seq"] + body["count"] - 1,
+            head=body["head"],
+            line_ws_seq=lines[-1].get("ws_seq"),
+            ws_heads=views2.get("workspace", []),
+        )
+        held = out.get(log)
+        if held is None or (proj["seq"], proj["ws_seq"]) >= (held["seq"], held["ws_seq"]):
+            out[log] = proj
+    return views2, out
+
+
+def _apply_view_page(
+    views: Mapping[str, list[str]],
+    body: Any,
+    *,
+    workspace_id: str,
+    wsk_pub: bytes,
+    wk_epochs: Mapping[int, bytes],
+) -> dict[str, list[str]]:
     if type(body) is not dict or set(body) != {"epoch", "log", "from_seq", "count", "head", "reset", "sealed"}:
         raise Refused("malformed")
     if (
@@ -947,13 +1002,17 @@ __all__ = [
     "FACTOR_OF",
     "accept_from_proposal",
     "apply_view_page",
+    "apply_view_page_proj",
+    "build_from_proj",
     "check_action",
     "check_built",
     "check_prepared",
     "check_relay_request",
+    "check_view_proj",
     "event_head",
     "host_sig_bytes",
     "log_kind",
+    "open_view_doc",
     "open_view_page",
     "parse_relay_target",
     "relay_request_bytes",
@@ -1094,6 +1153,75 @@ def build_selective(action: Any, item: Mapping[str, Any]) -> tuple[str, dict[str
             core["source_sha"] = g["source_sha"]
     check_built(rest, log, core)
     return log, core
+
+
+# --- §10.7 the ticket projection of a full-mode view (D15b) --------------------------------------------------------------
+
+VIEW_PROJ_KEYS = frozenset({"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"})
+
+
+def check_view_proj(
+    proj: Any, *, log: str, seq: int, head: str, line_ws_seq: Any, ws_heads: list[str]
+) -> None:
+    """The hub's check of a page's ``proj`` (§10.7 "The ticket projection"), after the page's lines passed. ``seq`` /
+    ``head`` are the page's last line, ``line_ws_seq`` that line's ``ws_seq``, ``ws_heads`` the workspace view the hub
+    holds. Exact keys at every depth; the gate entries are the §10.2b ``f1`` gate schema."""
+    if (
+        log == "workspace"
+        or type(proj) is not dict
+        or set(proj) != VIEW_PROJ_KEYS
+        or not _int0(proj["seq"])
+        or not _hash(proj["head"])
+        or not _int0(proj["ws_seq"])
+        or proj["ws_seq"] < 1
+        or not _hash(proj["ws_head"])
+        or proj["status"] not in STATUSES
+        or not _int0(proj["roster_v"])
+        or type(proj["gates"]) is not dict
+        or not all(k in F1_GATES and _f1_gate(k, v) for k, v in proj["gates"].items())
+    ):
+        raise Refused("malformed")
+    if proj["seq"] != seq or proj["head"] != head or type(line_ws_seq) is not int or proj["ws_seq"] < line_ws_seq:
+        raise Refused("malformed")  # it describes the page's last line, at a workspace position not before that line's
+    if proj["ws_seq"] > len(ws_heads):
+        raise Refused("view_gap")  # sync the workspace log first
+    if ws_heads[proj["ws_seq"] - 1] != proj["ws_head"]:
+        raise Refused("view_fork")
+
+
+#: the full-mode types whose derived fields come from the projection (the rest come from the lines, §8.5)
+PROJ_TYPES = ("gate.approved", "gate.changes_requested", "verdict.given", "status.changed", "ticket.moved")
+
+
+def build_from_proj(
+    action: Mapping[str, Any], proj: Any, *, ticket_seq: int, ticket_head: str | None, roster_v: int
+) -> dict[str, Any]:
+    """§8.5 / §10.7 (D15b): the fields a full-mode hub copies from the held projection of the action's ticket log, for
+    a checked action of :data:`PROJ_TYPES`. ``ticket_seq`` / ``ticket_head`` are the hub's held view of that log,
+    ``roster_v`` its own count from the workspace lines. Never computes an F1 value: a missing or stale projection is
+    ``unavailable``, a gate the host left out ``unknown_item``, another hash ``event_changed``."""
+    typ = action["type"]
+    if typ not in PROJ_TYPES:
+        raise Refused("not_custodial")
+    if (
+        type(proj) is not dict
+        or proj.get("seq") != ticket_seq
+        or proj.get("head") != ticket_head
+        or proj.get("roster_v") != roster_v
+    ):
+        raise Refused("unavailable")  # no projection of the held head yet: the host sends one (sender rule 7)
+    if typ in ("status.changed", "ticket.moved"):
+        return {"from": proj["status"]}
+    gate = "verify" if typ == "verdict.given" else action["gate"]
+    g = proj["gates"].get(gate)
+    if g is None:
+        raise Refused("unknown_item")
+    if g["hash"] != action["hash"]:
+        raise Refused("event_changed")
+    out: dict[str, Any] = {"gate_gen": g["gen"], "hash": g["hash"], "policy_hash": g["policy_hash"]}
+    if typ == "verdict.given" or (typ == "gate.approved" and gate == "code"):
+        out["source_sha"] = g["source_sha"]
+    return out
 
 
 #: §8.7: the ``event_deliver`` replies after which the hub resends the same event bytes; every other code is final.

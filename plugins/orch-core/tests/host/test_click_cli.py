@@ -135,7 +135,7 @@ def _with_passphrase(create, passphrase):
 def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_through_a_symlink(
     served, monkeypatch, tmp_path
 ):
-    """The hint a person may copy must not be steerable: a planted symlink (logical $PWD != real cwd) gets the placeholder."""
+    """A copyable hint must not be steerable: a planted symlink ($PWD != real cwd) gets the placeholder."""
     state = str(served.lab.state)
     link = tmp_path / "link"
     link.symlink_to(served.service.entry.root)

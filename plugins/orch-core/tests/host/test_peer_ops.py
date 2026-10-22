@@ -3,8 +3,6 @@ pin, send (a route_out on the wire), the status, and who may do what."""
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from orch import crypto
@@ -148,7 +146,6 @@ def test_a_pinned_peer_survives_a_restart_of_the_runtime(served, joined):
     ok(req(served, "peer.add", {"card": PEER_CARD, "owner_pk": PEER_OWNER_PK}))
     for svc in list(served.h.host.services.values()) if hasattr(served.h.host, "services") else []:
         peerops.stop(svc)
-    time.sleep(0.1)
     assert len(ok(req(served, "peer.list"))["data"]["peers"]) == 1  # reloaded from hub/mailbox.json (0600)
 
 
@@ -171,10 +168,7 @@ def test_after_unbind_the_runtime_and_thread_are_gone_and_sends_are_refused(serv
 def test_a_rebinding_builds_a_new_runtime_and_closes_the_old_link(served, joined, monkeypatch):
     ok(req(served, "peer.list"))
     old = _rt(served)
-    for _ in range(100):  # the receive thread opens the host's one link
-        if old.svc._link is not None:
-            break
-        time.sleep(0.05)
+    old.svc._ensure()  # the host's one link (shared with the receive thread, never a second dial)
     assert old.svc._link is not None
     real = peerops._hub_state
 

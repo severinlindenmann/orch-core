@@ -12,6 +12,7 @@ Output (``--json``)::
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
         "snapshot": {"version": N, "roles": {"<user_id>": "read"|"edit"|"admin"}},   # last issued (0, {} if none yet)
         "ops": {"<op>": {"accepted": N, "refused": N}, ...},  # always includes "wk_seal", "route_out", "route_in"
+        "wk_epochs": [N, ...]         # epochs of wk_seal wraps held for the live full binding (no key bytes)
         "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
                                       # envelopes the router took where this workspace is sender or recipient
     }},
@@ -30,6 +31,7 @@ from .contract.canon import unb64u
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
+WK_SEAL_FILE = "wk-seal.db"
 ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
@@ -96,6 +98,26 @@ def _routes(state: Path) -> list[dict[str, str]]:
     return [{"id": i, "from": f, "to": t, "sha256": bytes(d).hex()} for i, f, t, d in rows]
 
 
+def _wk_epochs(state: Path) -> dict[str, list[int]]:
+    """``{workspace_id: [epoch, ...]}`` of the non-retired wk_seal rows. Epoch numbers only: the wrap column is never
+    selected."""
+    path = state / WK_SEAL_FILE
+    if not path.is_file():
+        return {}
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT ws, epoch FROM wk_seal WHERE retired=0 ORDER BY ws, epoch").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        db.close()
+    out: dict[str, list[int]] = {}
+    for ws, e in rows:
+        out.setdefault(ws, []).append(e)
+    return out
+
+
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     card = _hub_card(state)
     if card.get("dev") is not True:
@@ -115,6 +137,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
         db.close()
     snaps = _snapshots(state)
     routes = _routes(state)
+    wk_epochs = _wk_epochs(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
@@ -138,6 +161,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "binding": binding_view,
             "ops": ops,
             "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
+            "wk_epochs": wk_epochs.get(ws, []),
             "routes": [r for r in routes if ws in (r["from"], r["to"])],
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}

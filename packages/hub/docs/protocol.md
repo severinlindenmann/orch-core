@@ -589,6 +589,17 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
+#### 10.2a `wk_seal` (phase 3, hub-wkseal)
+
+Served only while the workspace's live binding is `full`; the body is exactly `{"epoch", "wrap"}` (`epoch` 1..2^32−1,
+`wrap` canonical base64url). The wrap is v2 §5.3 `seal_to(HXK, purpose "wk", recipient = hub_id, object = workspace_id,
+epoch, WK_e)`, 113 bytes (`eph_pub || AES-256-GCM(32-byte key)`); the hub opens it with `HXK` only to check the binding
+(hub, workspace, epoch → else `bad_wrap`), drops the plaintext at once and stores the SEALED wrap per (workspace, epoch)
+in its private `wk-seal.db`. Per workspace epochs only grow: the same epoch with identical bytes is an idempotent `{}`,
+the same epoch with other bytes `bad_wrap`, a lower epoch `bad_epoch`. On `hub.unbound` or a switch to selective the
+stored wraps are retired (kept, never served, not counted); a later full binding may seal any epoch again. The hub never
+logs key material; `orch-hub inspect` shows `wk_epochs` (numbers only) per workspace.
+
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
 The envelope is the v2 §11.1 layout, forwarded as the sender's exact bytes (the hub never opens, re-signs or edits it,
@@ -758,17 +769,21 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
 - **The record signs the event's hash, not the event** (`event_hash = b64u(H("orch/v2/hub-audit-event|" || cj(event)))`),
   so a workspace can verify the whole chain, including records about others, and sees the events only of its own
   scope. **The scope is blinded (L2P-4):** `scope_tag = b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) ||
-  scope_nonce (16)))`, where the 16 random bytes `scope_nonce` are a field **inside the event**. Only the workspace the
+  nonce (32)))`, where the 32 random bytes `nonce` are a field **inside the event**. Only the workspace the
   event is about receives the event, so only it can compute and check the tag; every other tenant sees an opaque value
   and learns neither the `workspace_id` (also the TOFU key of §9.5) nor which records are the same workspace's.
   `scope_tag` is `null` for hub-wide events (memberships). `audit_mismatch` when the tag does not match. **What stays
   visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
   memberships and space changes and when they happened, not whose).
-- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, scope_nonce}` (the
-  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, scope_nonce}`; `membership`
-  `{group, user_id, added, actor_user_id}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
-  workspace_id | null, actor_user_id | null, scope_nonce}`. The acting admin's `UK` signature on a grant or membership change is
-  the custodial event it came from (spec §10); the audit record points at it, it does not replace it.
+- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, nonce}` (the
+  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
+  `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
+  the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
+  inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
+  could be confirmed by guessing its low-entropy fields (a user id and a group name). With the nonce the hash reveals
+  nothing, and for events with a workspace the same nonce blinds the `scope_tag`. An event without a 32-byte `nonce` is
+  `malformed` (vectors `audit_event_without_nonce_*`, `audit_event_short_nonce_*`).
 
 **Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
 verifies under the op certificate **it names** (`op_cert_id`): the held card's current one, or an earlier one that this
@@ -1020,6 +1035,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `wsk_mismatch`, `not_yet_valid`, `binding_conflict`, `stale_binding`, `unbound` | binding store | §9 |
 | `alias_repointed` | `hub.joined` | §9.1 |
 | `unknown_op`, `wrong_mode` | link | §10 |
+| `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
+| `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `not_allowed`, `queue_full`, `too_large` | `route_out` reply | §10.3; `too_large` is the v2 code, reused |
@@ -1050,7 +1067,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
-| `cases` | 348 cases (81 positive, 267 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 361 cases (81 positive, 280 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

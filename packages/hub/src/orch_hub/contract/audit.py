@@ -42,7 +42,7 @@ def _opt_hex16(x: Any) -> bool:
 
 
 #: Exact event fields per record type. The record's ``scope_tag`` blinds the event's ``workspace_id`` with the event's
-#: own ``scope_nonce`` (L2P-4): only the workspace the event is about receives the event and can check the tag; every
+#: own ``nonce`` (L2P-4): only the workspace the event is about receives the event and can check the tag; every
 #: other workspace sees an opaque tag. ``None`` for hub-wide events.
 EVENT_FIELDS: dict[str, dict[str, Any]] = {
     # every custodial signature (§8): who signed what, over which digest
@@ -53,7 +53,6 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "user_id": _hex16,
         "channel_id": _hex16,
         "digest": _b64u_n(32),
-        "scope_nonce": _b64u_n(16),
     },
     # a group's role in a workspace changed (role None = removed); the acting admin
     "grant": {
@@ -61,7 +60,6 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "workspace_id": _hex16,
         "role": lambda x: x in ROLES_OR_NONE,
         "actor_user_id": _hex16,
-        "scope_nonce": _b64u_n(16),
     },
     # a user joined or left a group; the acting admin
     "membership": {"group": _text, "user_id": _hex16, "added": _bool, "actor_user_id": _hex16},
@@ -72,9 +70,16 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "change": _enum("create", "add", "remove", "unbind", "delete"),
         "workspace_id": _opt_hex16,
         "actor_user_id": _opt_hex16,
-        "scope_nonce": _b64u_n(16),
     },
 }
+
+
+def _with_nonce(spec: dict[str, Any]) -> dict[str, Any]:
+    return {**spec, "nonce": _b64u_n(32)}
+
+
+for _t in list(EVENT_FIELDS):  # ONE rule, no type exempt: every event carries 32 random bytes inside it
+    EVENT_FIELDS[_t] = _with_nonce(EVENT_FIELDS[_t])
 
 
 def event_hash(event: Mapping[str, Any]) -> str:
@@ -106,14 +111,14 @@ def scope_of(event: Mapping[str, Any]) -> str | None:
 
 
 def scope_tag_of(event: Mapping[str, Any]) -> str | None:
-    """``b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) || scope_nonce (16)))``, or None for a hub-wide event.
+    """``b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) || nonce (32)))``, or None for a hub-wide event.
     The nonce is inside the event, which only the scope's workspace receives, so a co-tenant cannot test a guessed
     ``workspace_id`` against the tag."""
     ws = scope_of(event)
     if ws is None:
         return None
     try:
-        return b64u(S.sha256(L["h_hub_audit_scope"] + unhex(ws, 16) + unb64u(event["scope_nonce"], 16)))
+        return b64u(S.sha256(L["h_hub_audit_scope"] + unhex(ws, 16) + unb64u(event["nonce"], 32)))
     except CanonError, KeyError:
         raise Refused("malformed") from None
 

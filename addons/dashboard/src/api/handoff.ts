@@ -103,6 +103,7 @@ export interface HandoffMaterial {
   question?: Record<string, unknown>
   texts?: Record<string, string>
   before?: Record<string, unknown>
+  grants?: Record<string, unknown>
   /** B11: the whole intent of a sequence (bound by `review_digest`); the first request of one signer's run. */
   sequence?: { digest: string; of: number; intent: Record<string, unknown> }
   /** #740: the manual acceptance statement file of `ac.accept` / `ac.unaccept` (bound by `review_digest`). */
@@ -204,7 +205,7 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
   gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants']],
 }
 /** The only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`). */
 const STATEMENT_OPS = ['ac.accept', 'ac.unaccept']

@@ -16,6 +16,7 @@ secret on the person's own terminal.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import os
 import re
@@ -429,7 +430,10 @@ _MATERIAL_KEYS = {
         {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence", "statement"}),
+    "payload": (
+        {"kind", "ticket", "review"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
+    ),
     # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
     pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
@@ -478,6 +482,7 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     elif kind == pairdevice.MATERIAL_KIND:
         _pair_device(material, events, workspace_id, log)
     _before(material, events)
+    _grants(material, events)
 
 
 def _pair_device(material: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str, log: str) -> None:
@@ -536,6 +541,25 @@ def _question(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: 
         _refuse(f"the question cannot be hashed: {exc}")
     if ev.get("hash") != bound:
         _refuse("the question hash of the event is not the hash of the question shown")
+
+
+def _grants(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["grants"]`` is the host's word (unsigned, labelled in the review) about each access a
+    ``grant.revoked`` of the request takes back: exactly those ids, each with four short strings. A key without such an
+    event, or any other shape, is refused."""
+    grants = material.get("grants")
+    if grants is None:
+        return
+    revoked = {e.get("grant") for e in events if e.get("type") == "grant.revoked"}
+    if not isinstance(grants, dict) or not set(grants) <= revoked:
+        _refuse("material.grants names an access the request does not take back")
+    for info in grants.values():
+        if (
+            not isinstance(info, dict)
+            or set(info) != {"label", "scope", "expires_at", "person"}
+            or not all(isinstance(v, str) and len(v) <= 200 for v in info.values())
+        ):
+            _refuse("material.grants is malformed")
 
 
 def _before(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -768,6 +792,11 @@ def render(
         out.append(f"question {_clean(q['id'])}:")
         out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
         out += [f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}" for o in q.get("options") or []]
+    for gid, info in sorted((material.get("grants") or {}).items()):  # the host's word on each access taken back
+        out.append(
+            f"access {_clean(gid)} taken back (per host, not signed): label {_clean(info['label']) or '(none)'}, "
+            f"tickets {_clean(info['scope'])}, ends {_clean(info['expires_at'])}, person {_clean(info['person'])}"
+        )
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
@@ -924,15 +953,24 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
     events = copy.deepcopy(prepared["events"])
     secret: str | None = None
     out = []
-    for ev in events:
-        if ev["type"] == "grant.issued":
-            import secrets as _secrets
+    with contextlib.ExitStack() as stack:
+        be = backend
+        if len(events) > 1:
+            # ONE passphrase for the events of one reviewed request (an Extend is two): the person saw every event in
+            # the one review and typed its word. The key signs this log's event label and nothing else (D65 stays the
+            # rule for anything that was not reviewed as one batch). The unlock itself lives in sequence_terminal.
+            from .sequence_terminal import request_backend
 
-            token = GrantToken(ev["grant"], _secrets.token_bytes(32))
-            ev["secret_hash"] = canon.grant_secret_hash(token.secret)
-            secret = format_grant(token)
-        ev["sig"] = sign_person_event(backend, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
-        out.append(ev)
+            be = stack.enter_context(request_backend(backend, key_id, prepared, events, workspace_id))
+        for ev in events:
+            if ev["type"] == "grant.issued":
+                import secrets as _secrets
+
+                token = GrantToken(ev["grant"], _secrets.token_bytes(32))
+                ev["secret_hash"] = canon.grant_secret_hash(token.secret)
+                secret = format_grant(token)
+            ev["sig"] = sign_person_event(be, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
+            out.append(ev)
     return Signed(out, secret)
 
 

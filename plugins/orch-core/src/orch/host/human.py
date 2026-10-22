@@ -773,6 +773,14 @@ class HumanOps:
                     before.setdefault(key, now)
         if before:
             material["before"] = before
+        taken = [ev["grant"] for ev in events if ev["type"] == "grant.revoked"]
+        if taken:  # which access is taken back, as the host's log knows it (unsigned, labelled): the plain words
+            known = store.state.workspace.grants
+            material["grants"] = {
+                gid: {"label": g.label or "", "scope": g.scope, "expires_at": g.expires_at, "person": g.person}
+                for gid in taken
+                if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
+            }
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}

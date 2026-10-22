@@ -262,7 +262,6 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
       </p>
       {runnerGrant && (
         <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
-          {extending && <p className="font-medium">Running agents will stop.</p>}
           <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in Terminal to give the new access to this Mac’s agent runner.</p>
           <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this Mac that starts agents for you.</p>
         </div>

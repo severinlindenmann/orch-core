@@ -992,32 +992,30 @@ def _stop(grant: str, reason: str | None = None) -> dict:
     return {**ev, "reason": reason} if reason else ev
 
 
-def test_f8_a_stop_names_the_access_by_its_first_and_last_characters():
+def test_f8_a_stop_keeps_the_access_id_out_of_the_plain_words():
     gid = "gr_01M57ABCDEFGHJKMNPQRZMPS4"
     ev = _stop(gid)
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
-    assert c["headline"] == "Take back the agent access gr_…" + gid[-10:]
-    assert {r["field"]: r["after"] for r in c["fields_changed"]}["access taken back"] == "gr_…" + gid[-10:]
-    assert gid not in "\n".join(signcontent.text(c, signer._clean)) + c["headline"]  # the full id is in the details
+    assert c["headline"] == "Take back agent access"
+    shown = "\n".join(signcontent.text(c, signer._clean)) + c["headline"] + repr(c)
+    assert "gr_" not in shown and gid[-10:] not in shown  # the id is in the technical details (the full review)
+    assert "technical details" in shown
 
 
 def test_f8_an_extend_shows_both_accesses_and_refuses_the_plain_view_for_the_same_id():
     new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA"}
     old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
     c = build({"op": "grant", "events": [new, old], "material": material_for("grant.issued", new)})
-    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert (
-        rows["new access"] == "gr_…" + new["grant"][-10:] and rows["access taken back"] == "gr_…" + old["grant"][-10:]
-    )
+    assert "gr_" not in repr(c)  # neither id is in the plain view: both are in the technical details
     same = _stop(new["grant"], "extended")
     with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
         build({"op": "grant", "events": [new, same], "material": material_for("grant.issued", new)})
 
 
-def test_f8_a_stop_without_a_usable_id_shows_the_value_as_it_is():
+def test_f8_a_stop_without_a_usable_id_says_the_same_words():
     ev = _stop("x")
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
-    assert c["headline"] == "Take back the agent access x"
+    assert c["headline"] == "Take back agent access"
 
 
 def test_f8_two_different_accesses_with_one_short_form_are_refused_in_the_plain_view():
@@ -1106,16 +1104,16 @@ def _extend(**over):
 
 def test_v4_an_extend_is_titled_and_says_running_agents_stop():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
-    assert c["headline"].startswith("Extend agent access: ") and c["summary"]["title"] == "Extend agent access"
+    assert c["headline"].startswith("Extend agent access ") and c["summary"]["title"] == "Extend agent access"
     joined = "\n".join(c["summary"]["lines"])
-    assert (
-        "Running agents will stop." in joined
-        and "per host, not signed" in joined
-        and "3 days" in joined
-        and "ends " in joined
-        and "gr_…" in joined
-    )
-    assert any(r["field"] == "access taken back" for r in c["fields_changed"])  # the exact rows stay
+    assert "per host, not signed" in joined and "3 days" in joined and "ends " in joined
+    everything = repr(c) + "\n".join(signcontent.text(c, signer._clean))
+    assert "gr_" not in everything  # ids are in the technical details only (issue 788)
+    assert c["headline"].startswith("Extend agent access for this Mac's runner, for 3 days")
+    # the warning is said once, in the notes (the terminal prints no summary lines; the dashboard shows both)
+    assert repr(c).count("Running agents will stop.") == 1
+    assert "\n".join(signcontent.text(c, signer._clean)).count("Running agents will stop.") == 1
+    assert "Running agents will stop." in "\n".join(c["notes"])
 
 
 def test_v4_an_extend_with_other_scope_verbs_or_label_keeps_the_generic_review():
@@ -1136,7 +1134,7 @@ def test_v4_only_one_share_event_of_the_share_op_is_summarised():
 def test_v4_the_terminal_view_of_an_extend_keeps_the_length_and_the_end():
     c = _extend(expires_at="2026-10-21T12:00:00Z")
     first = signcontent.text(c, signer._clean)[0]
-    assert "3 days" in first and "until " in first and "your time" in first and "gr_…" in first
+    assert "3 days" in first and "until " in first and "your time" in first and "gr_" not in first
 
 
 def test_g2_an_estimate_says_points_and_that_it_cancels_approvals(human, served):
@@ -1289,3 +1287,34 @@ def test_gate_material_lists_only_live_authorised_manual_acceptances():
     )
     assert material["manual_acceptances"] == [{"ac": "AC1", "name": "accept-AC1-3.md", "by": w.people["sev"]}]
     assert all("label" not in a and "by" not in a for a in material["input"]["artifacts"].values())
+
+
+def test_788_an_extend_is_signed_with_one_unlock_of_the_workspace_event_label_only():
+    """Issue 788: the two events of one reviewed Extend are signed with ONE passphrase; the batch may sign the
+    workspace event label and nothing else; one event alone still signs with its own prompt."""
+    import contextlib
+
+    from orch import canon
+
+    opened, singles = [], []
+
+    class Fake:
+        name, person_capable, auth = "test", True, "passphrase"
+
+        def sign(self, key_id, payload, *, action):
+            singles.append(action)
+            return b"\x01" * 64
+
+        @contextlib.contextmanager
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            opened.append((action, labels, fields))
+            yield lambda payload: b"\x02" * 64
+
+    new = {**sample("grant.issued"), "grant": "gr_0NEWAAAAAAAAAAAAAAAAAAAAA", "auth": "passphrase", "hash_v": 1}
+    old = {**_stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended"), "auth": "passphrase", "hash_v": 1}
+    prepared = {"op": "grant", "log": "workspace", "events": [new, old]}
+    signed = signer.sign(prepared, backend=Fake(), key_id="dk", workspace_id="7" * 32)
+    assert len(signed.events) == 2 and all(e["sig"] for e in signed.events) and singles == []
+    assert len(opened) == 1 and opened[0][1] == (canon.LABELS["sig_ws_event"].encode("ascii"),)
+    signer.sign({**prepared, "events": [new]}, backend=Fake(), key_id="dk", workspace_id="7" * 32)
+    assert len(opened) == 1 and len(singles) == 1  # a single event keeps its own prompt

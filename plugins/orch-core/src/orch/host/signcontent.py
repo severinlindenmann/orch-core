@@ -262,6 +262,9 @@ def _views_line(views: int) -> str:
     return f"Link: a show-once link: it opens at most {views} time{'' if views == 1 else 's'}"
 
 
+_EXTEND_WARNING = "Running agents will stop. New agents use the extended access (per host, not signed)."
+
+
 def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
     """The plain lead of an Extend (the ordinary runner grant plus the take-back of the access it replaces, B8).
     Only for exactly that shape; anything else keeps the generic review (nothing here may claim less than is signed)."""
@@ -283,16 +286,12 @@ def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
     lines = [
         f"New access: agents working for you, for {span(hours)}.",
         *([f"The new access ends {until} (your time)."] if until else []),
-        f"It replaces the access {_grant_short(old.get('grant'))}, which is taken back when you sign.",
+        "It replaces the agent access this Mac's runner has now, which is taken back when you sign.",
         "Affected: agents working for you (per host, not signed).",
-        "Running agents will stop. New agents use the extended access (per host, not signed).",
     ]
-    # the headline is all the terminal's plain view prints first: it keeps the length, the end and the replaced access
-    head = (
-        f"Extend agent access: agents working for you, for {span(hours)}"
-        + (f" (until {until}, your time)" if until else "")
-        + f"; takes back {_grant_short(old.get('grant'))}"
-    )
+    # the headline is all the terminal's plain view prints first: it keeps the length and the end; the ids of the new
+    # and the replaced access are in the technical details (the full review), never in the plain words
+    head = f"Extend agent access for this Mac's runner, for {span(hours)}" + (f" (until {until}, your time)" if until else "")
     return {"title": "Extend agent access", "lines": lines, "headline": head}
 
 
@@ -1024,8 +1023,6 @@ def _payload(
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
         if set(issued) & set(revoked):
             raise PlainUnavailable("the access to be taken back is the one being given")
-        for new in issued:
-            _row(out, "new access", _grant_short(new))
     shown = {}
     for gid in [*issued, *revoked]:
         if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
@@ -1097,15 +1094,16 @@ def _event(
     if typ == "grant.issued":
         return _grant_issued(ev, out)
     if typ == "grant.revoked":
-        _row(out, "access taken back", _grant_short(ev.get("grant")))
-        note = "The full access id is in the technical details."
+        # the id of the access is in the technical details only (DETAILS_ONLY), never in the plain words
+        note = "The access id is in the technical details."
         if note not in out.setdefault("notes", []):
             out["notes"].append(note)
-        if ev.get("reason") == "extended":  # B8: the old half of an Extend
-            out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
+        if ev.get("reason") == "extended":  # B8: the old half of an Extend; said ONCE (see _EXTEND_WARNING)
+            if _EXTEND_WARNING not in out["notes"]:
+                out["notes"].append(_EXTEND_WARNING)
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
-        return f"Take back the agent access {_grant_short(ev.get('grant'))}"
+        return "Take back agent access"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):

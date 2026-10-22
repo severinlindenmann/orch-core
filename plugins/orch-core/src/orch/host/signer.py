@@ -16,7 +16,9 @@ secret on the person's own terminal.
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import hashlib
 import os
 import re
 import unicodedata
@@ -924,15 +926,34 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
     events = copy.deepcopy(prepared["events"])
     secret: str | None = None
     out = []
-    for ev in events:
-        if ev["type"] == "grant.issued":
-            import secrets as _secrets
+    with contextlib.ExitStack() as stack:
+        be = backend
+        if len(events) > 1 and getattr(backend, "unlocked", None) is not None:
+            # ONE passphrase for the events of one reviewed request (an Extend is two): the person saw every event in
+            # the one review and typed its word. The key signs this log's event label and nothing else (D65 stays the
+            # rule for anything that was not reviewed as one batch).
+            from .sequence_terminal import unlocked_backend
 
-            token = GrantToken(ev["grant"], _secrets.token_bytes(32))
-            ev["secret_hash"] = canon.grant_secret_hash(token.secret)
-            secret = format_grant(token)
-        ev["sig"] = sign_person_event(backend, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
-        out.append(ev)
+            label = "sig_ws_event" if log == "workspace" else "sig_ticket_event"
+            be = stack.enter_context(
+                unlocked_backend(
+                    backend,
+                    key_id,
+                    digest=hashlib.sha256(canon.dumps(events)).hexdigest(),
+                    fields=(("signatures", str(len(events))), ("workspace", workspace_id)),
+                    action=f"{prepared['op']}: {len(events)} signatures, one review",
+                    labels=(canon.LABELS[label].encode("ascii"),),
+                )
+            )
+        for ev in events:
+            if ev["type"] == "grant.issued":
+                import secrets as _secrets
+
+                token = GrantToken(ev["grant"], _secrets.token_bytes(32))
+                ev["secret_hash"] = canon.grant_secret_hash(token.secret)
+                secret = format_grant(token)
+            ev["sig"] = sign_person_event(be, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
+            out.append(ev)
     return Signed(out, secret)
 
 

@@ -34,11 +34,31 @@ def _parser() -> argparse.ArgumentParser:
     ch.add_argument("--user", required=True)
     ch.add_argument("--key-pub", required=True, help="b64u 65-byte P-256 public key")
     ch.add_argument("--factor", required=True, choices=FACTORS)
+    sv = sub.add_parser("serve", help="run the dev hub: link server + publish forwarding (loopback only)")
+    sv.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    sv.add_argument("--listen", required=True, help="loopback host:port, e.g. 127.0.0.1:0")
+    sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
+    sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
+    sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     return p
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.group == "serve":
+        from .serve import serve
+
+        try:
+            return serve(
+                Path(args.state) if args.state else default_state_dir(),
+                args.listen,
+                args.publish_url,
+                args.invite,
+                api_host=args.api_host,
+            )
+        except (ValueError, KeysError) as e:
+            print(f"orch-hub: refused: {e}", file=sys.stderr)
+            return 1
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":

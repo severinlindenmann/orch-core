@@ -29,10 +29,10 @@ class Invites:
 
 
 class Hub:
-    def __init__(self, **server_kw):
+    def __init__(self, registry=None, **server_kw):
         self.identity = TlsIdentity.generate()
         self.op = KS.OpSigner(G.K.priv["hk_op"])
-        self.registry = Registry()
+        self.registry = registry or Registry()
         self.invites = Invites(inv1=None, inv2=None, inv3=None, invB=G.WS_B)
         self.clients: list[LinkClient] = []
         self.server = LinkServer(

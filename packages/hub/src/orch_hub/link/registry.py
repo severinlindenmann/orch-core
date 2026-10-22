@@ -16,7 +16,7 @@ from ..contract.canon import cj
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspace (
   workspace_id TEXT PRIMARY KEY, owner_person_id TEXT NOT NULL, wsk_pub TEXT NOT NULL, pk_pub TEXT NOT NULL,
-  card TEXT NOT NULL, binding_state TEXT NOT NULL
+  card TEXT NOT NULL, binding_state TEXT NOT NULL, binding_obj TEXT
 )
 """
 
@@ -26,6 +26,8 @@ class Registry:
         self.lock = threading.RLock()
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.execute(_SCHEMA)
+        if "binding_obj" not in {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}:
+            self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11
         self._db.commit()
 
     def close(self) -> None:
@@ -72,6 +74,7 @@ class Registry:
         pk_pub: str,
         card: Mapping[str, Any],
         state: Mapping[str, Any],
+        binding_obj: Mapping[str, Any] | None = None,
     ) -> None:
         """Pin (first come) or re-confirm the pin, store card and binding state, in one transaction. The caller holds
         :attr:`lock` and has already checked the pin against :meth:`pins`."""
@@ -80,9 +83,19 @@ class Registry:
             if r is not None and (r[0], r[1]) != (owner_person_id, wsk_pub):
                 raise RuntimeError("pin conflict")  # the caller's check inside the lock makes this unreachable
             self._db.execute(
-                "INSERT INTO workspace VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET "
-                "pk_pub=excluded.pk_pub, card=excluded.card, binding_state=excluded.binding_state",
-                (ws, owner_person_id, wsk_pub, pk_pub, cj(dict(card)).decode(), cj(dict(state)).decode()),
+                "INSERT INTO workspace(workspace_id, owner_person_id, wsk_pub, pk_pub, card, binding_state, binding_obj) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET "
+                "pk_pub=excluded.pk_pub, card=excluded.card, binding_state=excluded.binding_state, "
+                "binding_obj=COALESCE(excluded.binding_obj, binding_obj)",
+                (
+                    ws,
+                    owner_person_id,
+                    wsk_pub,
+                    pk_pub,
+                    cj(dict(card)).decode(),
+                    cj(dict(state)).decode(),
+                    None if binding_obj is None else cj(dict(binding_obj)).decode(),
+                ),
             )
 
     def put_card(self, ws: str, pk_pub: str, card: Mapping[str, Any]) -> None:
@@ -91,8 +104,17 @@ class Registry:
                 "UPDATE workspace SET pk_pub=?, card=? WHERE workspace_id=?", (pk_pub, cj(dict(card)).decode(), ws)
             )
 
-    def set_binding_state(self, ws: str, state: Mapping[str, Any]) -> None:
+    def set_binding_state(
+        self, ws: str, state: Mapping[str, Any], binding_obj: Mapping[str, Any] | None = None
+    ) -> None:
         with self.lock, self._db:
             self._db.execute(
-                "UPDATE workspace SET binding_state=? WHERE workspace_id=?", (cj(dict(state)).decode(), ws)
+                "UPDATE workspace SET binding_state=?, binding_obj=COALESCE(?, binding_obj) WHERE workspace_id=?",
+                (cj(dict(state)).decode(), None if binding_obj is None else cj(dict(binding_obj)).decode(), ws),
             )
+
+    def binding_objects(self) -> dict[str, dict[str, Any]]:
+        """``{workspace_id: the newest accepted signed hub.binding / hub.unbound}``, to re-push after a restart."""
+        with self.lock:
+            rows = self._db.execute("SELECT workspace_id, binding_obj FROM workspace WHERE binding_obj IS NOT NULL")
+            return {ws: json.loads(o) for ws, o in rows.fetchall()}

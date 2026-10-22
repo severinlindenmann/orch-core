@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,7 @@ from publish_helpers import NOW, binding, host_request, make_hub, new_wsk, unbou
 
 from orch_hub.contract.canon import cj
 from orch_hub.contract.hub import Refused
-from orch_hub.publish import HubPublish, PublishConfig, PublishSyncError
+from orch_hub.publish import HttpPublishSync, HubPublish, PublishConfig
 
 SRC = os.environ.get("ORCH_PUBLISH_SRC")
 pytestmark = [
@@ -27,28 +26,6 @@ pytestmark = [
     ),
     pytest.mark.slow,
 ]
-
-
-class PipeSync:
-    """PublishSync against the server process (the in-test stand-in for the F2 endpoints)."""
-
-    def __init__(self, proc: subprocess.Popen) -> None:
-        self.p, self.lock = proc, threading.Lock()
-
-    def ask(self, cmd: str, obj) -> None:
-        with self.lock:
-            assert self.p.stdin and self.p.stdout
-            self.p.stdin.write(json.dumps({"cmd": cmd, "obj": obj}) + "\n")
-            self.p.stdin.flush()
-            r = json.loads(self.p.stdout.readline())
-        if "error" in r:
-            raise PublishSyncError(r["error"])
-
-    def put_hub_card(self, card):
-        self.ask("card", card)
-
-    def put_binding(self, workspace_id, obj):
-        self.ask("unbound" if obj["o"]["kind"] == "hub.unbound" else "binding", obj)
 
 
 @pytest.fixture
@@ -66,6 +43,7 @@ def pub():
         assert first[0] == "PORT", first
         yield p, int(first[1]), first[3]
     finally:
+        p.stdin.close()
         p.terminate()  # our own child
         p.wait(10)
 
@@ -76,7 +54,7 @@ def env(tmp_path, pub):
     hub = make_hub(tmp_path)
     wsk = wsk_key(json.loads((Path(SRC) / "tests/vectors/publish_v2.json").read_text())["keys"]["wsk_a.sig"]["seed"])
     host = f"127.0.0.1:{port}"
-    fw = HubPublish(hub, PipeSync(proc), PublishConfig(f"http://{host}", host, timeout_s=10))
+    fw = HubPublish(hub, HttpPublishSync(f"http://{host}"), PublishConfig(f"http://{host}", host, timeout_s=10))
     return type("E", (), {"hub": hub, "wsk": wsk, "ws": ws, "fw": fw, "host": host, "proc": proc})()
 
 
@@ -138,3 +116,21 @@ def test_binding_by_another_key_is_refused_at_sync(env):
     with pytest.raises(Refused) as x:
         status(e)
     assert x.value.code == "bad_signature"
+
+
+def test_revoked_op_cert_is_refused_by_orch_publish(env):
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws))
+    assert status(e)[0] == 200
+    old_signer, old_card, hub_id = e.hub.op_signer, e.hub.card(), e.hub.hub_id
+    e.hub.revoke_op()
+    fw = HubPublish(
+        lambda: (old_signer, old_card, hub_id),
+        e.fw._sync,
+        e.fw._cfg,
+        revocations=e.hub.revocations,
+    )
+    fw.binding(e.ws, binding(e.wsk, e.hub, e.ws))
+    out = fw.forward(e.ws, host_request(e.wsk, hub_id, e.ws, host=e.host))
+    assert out["status"] in (401, 403)
+    assert json.loads(bytes.fromhex(out["body_hex"]))["error"] in ("revoked", "unknown_hub", "bad_hub_signature")

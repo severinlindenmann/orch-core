@@ -2,12 +2,9 @@
 
 Started by tests/test_publish_e2e.py with orch-publish's own python and cwd = an orch-publish checkout
 ($ORCH_PUBLISH_SRC). It registers a workspace through orch-publish's test helpers (vector keys), prints
-``PORT <n>``, then serves JSON lines on stdin: {"cmd": "card"|"binding"|"unbound", ...} -> one JSON line reply.
-It is the stand-in for the F2 endpoints: the commands call the same store functions (accept_hub_card, accept_binding,
-accept_unbound).
+``PORT <n>``, then serves HTTP (including orch-publish's /v2/hub/ admin endpoints) until stdin closes.
 """
 
-import json
 import socket
 import sys
 import tempfile
@@ -16,8 +13,6 @@ import threading
 import uvicorn
 
 sys.path.insert(0, ".")
-from pubsrv import db
-from pubsrv import hub_path as H
 from pubsrv.app import create_app
 from tests.test_publish_api_auth import NOW, WS_A, Env
 
@@ -43,22 +38,7 @@ def main() -> None:
     while not srv.started:
         threading.Event().wait(0.02)
     print(f"PORT {port} WS {WS_A} NOW {NOW}", flush=True)
-    for line in sys.stdin:
-        msg = json.loads(line)
-        conn = db.connect(e.path)
-        try:
-            if msg["cmd"] == "card":
-                H.accept_hub_card(conn, msg["obj"], NOW, True)
-            elif msg["cmd"] == "binding":
-                H.accept_binding(conn, WS_A, msg["obj"], NOW, True)
-            elif msg["cmd"] == "unbound":
-                H.accept_unbound(conn, WS_A, msg["obj"], NOW, True)
-            out = {"ok": True}
-        except H.Refused as r:
-            out = {"error": r.code}
-        finally:
-            conn.close()
-        print(json.dumps(out), flush=True)
+    sys.stdin.read()  # lives until the test closes stdin
     srv.should_exit = True
 
 

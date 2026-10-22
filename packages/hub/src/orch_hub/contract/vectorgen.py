@@ -497,12 +497,21 @@ def space_item_obj(
     return signed(key or WSK_OF[ws], "sig_space_item", o)
 
 
-def space_accept_obj(ws: str = WS_B, members: list[str] | None = None, key: str | None = None, **kw: Any):
+def space_accept_obj(
+    ws: str = WS_B,
+    members: list[str] | None = None,
+    key: str | None = None,
+    epoch: int = 1,
+    prev: list[str] | None = None,
+    **kw: Any,
+):
     o = {
         **hdr("space.accept"),
         "hub_id": HUB_ID,
         "space_id": SPACE,
         "workspace_id": ws,
+        "epoch": epoch,
+        "prev_members_hash": SP.members_hash(sorted(prev or [])),
         "members_hash": SP.members_hash(sorted(members if members is not None else [WS_A, WS_B])),
         "dev": True,
         **kw,
@@ -1953,6 +1962,46 @@ def build() -> dict[str, Any]:
         "space_add_selective_accept_for_other_hub",
         "space_flow",
         {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(hub_id=ROGUE_HUB_ID)}}},
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_add_selective_accept_replayed_at_later_epoch",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {"space": space_rec(3, [WS_A, WS_B]), "accepts": {WS_B: acc_b}},
+        },
+        {"error": "not_accepted"},
+        3,
+        "B was removed and listed again with the same member set: the old accept is for epoch 1 only",
+    )
+    case(
+        "space_add_selective_readded_with_new_accept",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {
+                "space": space_rec(3, [WS_A, WS_B]),
+                "accepts": {WS_B: space_accept_obj(epoch=3, prev=[WS_A])},
+            },
+        },
+        {"ok": {}},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_prior_set",
+        "space_flow",
+        {
+            **sp_sel,
+            "steps": [{"space": e1, "accepts": {WS_B: acc_b}}, {"space": e2}],
+            "final": {
+                "space": space_rec(3, [WS_A, WS_B]),
+                "accepts": {WS_B: space_accept_obj(epoch=3, prev=[WS_A, WS_C])},
+            },
+        },
         {"error": "not_accepted"},
         3,
     )

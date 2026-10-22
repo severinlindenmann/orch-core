@@ -229,6 +229,8 @@ FIELDS: dict[str, dict[str, Check]] = {
         "hub_id": _hex16,
         "space_id": _hex16,
         "workspace_id": _hex16,
+        "epoch": _int_min(1),
+        "prev_members_hash": _b64u_n(32),
         "members_hash": _b64u_n(32),
         "dev": _bool,
     },

@@ -440,7 +440,9 @@ def check_added_members(
     """Hub side, before it signs a ``hub.space`` that lists a workspace that was not listed before. A full-mode
     workspace is added by the hub-side authority (admin in every member workspace). A **selective** workspace (or one
     whose mode is unknown) is added only with its own ``space.accept``, signed by its ``WSK`` (made by the owner's
-    human-only host verb) for exactly this member set; a hub-admin can remove it, never add it (D71, D80)."""
+    human-only host verb) for exactly this transition: the epoch the addition creates, the member set before it
+    (``prev_members_hash``; the empty list for a new space) and the set after it, so an old accept cannot be replayed
+    when the same set recurs (a workspace removed and later re-added needs a new owner decision); a hub-admin can remove it, never add it (D71, D80)."""
     for ws in space["members"]:
         if old_members is not None and ws in old_members:
             continue
@@ -463,6 +465,8 @@ def check_added_members(
             o["hub_id"] != space["hub_id"]
             or o["space_id"] != space["space_id"]
             or o["workspace_id"] != ws
+            or o["epoch"] != space["epoch"]
+            or o["prev_members_hash"] != members_hash(old_members if old_members is not None else [])
             or o["members_hash"] != members_hash(space["members"])
         ):
             raise Refused("not_accepted")

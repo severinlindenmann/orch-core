@@ -601,8 +601,11 @@ hub-admin, or a user with `admin` in **every** member workspace (D3's `Access`).
 
 - **A selective workspace is added only by its owner.** D71: the hub-admin has no role in a selective workspace; §8a: only
   its owner, at the host terminal, decides what is shared. The owner's host signs a `space.accept`
-  `{hub_id, space_id, workspace_id, members_hash, dev}` with its `WSK` (reference label `sig_space_accept`; made only by a
-  human-only host verb, never by an agent) for exactly the member set it accepts, and sends it with `space_accept
+  `{hub_id, space_id, workspace_id, epoch, prev_members_hash, members_hash, dev}` with its `WSK` (reference label
+  `sig_space_accept`; made only by a human-only host verb, never by an agent) for exactly one transition: the `epoch` the
+  addition creates, the member set before it (`prev_members_hash`; the hash of the empty list for a new space) and the
+  set after it. An old accept cannot be replayed when the same set recurs, so a workspace that was removed and is listed
+  again needs a new owner decision (vector `space_add_selective_accept_replayed_at_later_epoch`), and sends it with `space_accept
   {accept}`. The hub must hold it before it signs a `hub.space` that lists that workspace (`not_accepted` otherwise;
   `check_added_members`). A hub-admin can **remove** a selective workspace and can never add one. A workspace whose mode
   is unknown is treated like a selective one.

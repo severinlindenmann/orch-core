@@ -9,6 +9,7 @@ orch-publish after a restart. One ready line is printed on stdout once the port 
 from __future__ import annotations
 
 import ipaddress
+import re
 import signal
 import sys
 import threading
@@ -22,18 +23,32 @@ from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .publish import HttpPublishSync, HubPublish, PublishConfig
-from .router import RouteQueue, Router
+from .router import AccessAuthz, RouteQueue, Router
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
 
 
+_HEX16 = re.compile(r"[0-9a-f]{32}")
+
+
 class FixedInvites:
-    """Invite codes given on the command line: not bound to a workspace, single use."""
+    """Invite codes given on the command line: not bound to a workspace, single use. ``CODE=USER_ID`` also aliases the
+    joining workspace's owner to that hub user (V3-D19): the hub admin says who the owner is, the host cannot."""
 
     def __init__(self, codes: list[str]) -> None:
-        self._codes = set(codes)
+        self._codes, self._owner = set(), {}
+        for c in codes:
+            code, sep, user = c.rpartition("=")
+            if sep and _HEX16.fullmatch(user):
+                self._codes.add(code)
+                self._owner[code] = user
+            else:
+                self._codes.add(c)
         self._lock = threading.Lock()
+
+    def owner_user(self, invite: str) -> str | None:
+        return self._owner.get(invite)
 
     def check(self, invite: str, now_ms: int) -> str | None:
         with self._lock:
@@ -77,7 +92,7 @@ def serve(
     access = Access(str(state / ACCESS_FILE))
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
-    router = Router(registry, queue)
+    router = Router(registry, queue, AccessAuthz(registry, access))
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -88,6 +103,7 @@ def serve(
         publish=fw,
         downstream=fw,
         router=router,
+        access=access,
         host=host,
         port=port,
     )

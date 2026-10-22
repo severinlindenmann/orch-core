@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS workspace (
   workspace_id TEXT PRIMARY KEY, owner_person_id TEXT NOT NULL, wsk_pub TEXT NOT NULL, pk_pub TEXT NOT NULL,
   card TEXT NOT NULL, binding_state TEXT NOT NULL, binding_obj TEXT
 );
+CREATE TABLE IF NOT EXISTS owner_alias (
+  workspace_id TEXT PRIMARY KEY, user_id TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS op_counts (
   ws TEXT NOT NULL, op TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome IN ('accepted','refused')),
   count INTEGER NOT NULL, PRIMARY KEY (ws, op, outcome)
@@ -38,6 +41,21 @@ class Registry:
     def close(self) -> None:
         with self.lock:
             self._db.close()
+
+    def set_owner_alias(self, ws: str, user_id: str) -> None:
+        """The hub user that is this workspace's owner (V3-D19). Set from the hub admin's invite at join, never from
+        what the host says about itself."""
+        with self.lock, self._db:
+            self._db.execute(
+                "INSERT INTO owner_alias(workspace_id, user_id) VALUES (?,?) "
+                "ON CONFLICT(workspace_id) DO UPDATE SET user_id=excluded.user_id",
+                (ws, user_id),
+            )
+
+    def owner_alias(self, ws: str) -> str | None:
+        with self.lock:
+            r = self._db.execute("SELECT user_id FROM owner_alias WHERE workspace_id=?", (ws,)).fetchone()
+        return None if r is None else r[0]
 
     def count_op(self, ws: str, op: str, accepted: bool) -> None:
         """Aggregate counter (one row per ws/op/outcome, never per op) read by ``orch-hub inspect`` (dev). The caller

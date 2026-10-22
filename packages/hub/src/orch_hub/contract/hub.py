@@ -1230,9 +1230,6 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
 # --- hub admin read for orch-publish (F3, §10.6) ---------------------------------------------------------------------
 
 ADMIN_READ_WINDOW_MS = 120_000
-_SEG = re.compile(r"[a-z0-9][a-z0-9_-]*")
-_QKEY = re.compile(r"[a-z][a-z_]*")
-_QVAL = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 ADMIN_TARGET_MAX = 2048
 #: The metadata an admin read may return per release, and nothing else (never content or secrets).
@@ -1249,34 +1246,27 @@ ADMIN_READ_ROW: dict[str, Check] = {
 }
 
 
+ADMIN_READ_PATH = "/v2/hub/releases"
+
+
 def parse_admin_target(target: Any) -> str | None:
-    """The target of an admin read must be canonical or it is ``malformed`` (L2P-5): ASCII, starts with ``/``, no ``%``
-    (no percent-encoding at all), a path of non-empty lower-case segments ``[a-z0-9][a-z0-9_-]*`` (so no ``//``, ``.``,
-    ``..``, trailing slash or upper case), and an optional query of unique ``key=value`` pairs with lower-case keys and
-    values from the same segment alphabet (no ``#``, ``+``, ``;``). Returns the workspace the target names, from the
-    path (``/v1/ws/<id>/...``) or the single ``workspace=`` query key, which must be 32 lower-case hex digits and equal
-    when both are present; None when it names none. The scope check applies to that workspace."""
-    if type(target) is not str or not target.isascii() or not target.startswith("/") or len(target) > ADMIN_TARGET_MAX:
+    """The target of an admin read is exactly orch-publish's route ``GET|HEAD /v2/hub/releases[?workspace=<id>]``
+    (F3), in canonical form, or it is ``malformed`` (L2P-5): ASCII, no ``%`` (no percent-encoding at all), the path
+    byte for byte :data:`ADMIN_READ_PATH` (so no ``//``, ``.``, ``..``, trailing slash or upper case), and an optional
+    query that is the single key ``workspace`` with 32 lower-case hex digits (no other key, no repeat, no ``#``,
+    ``+``, ``;``). Returns the workspace the target names, or None (all workspaces in scope). The scope check applies
+    to that workspace."""
+    if type(target) is not str or not target.isascii() or len(target) > ADMIN_TARGET_MAX:
         raise Refused("malformed")
     path, sep, query = target.partition("?")
-    segs = path[1:].split("/")
-    if not all(_SEG.fullmatch(x) for x in segs):
+    if path != ADMIN_READ_PATH:
         raise Refused("malformed")
-    named: list[str] = []
-    if len(segs) >= 3 and segs[0] == "v1" and segs[1] == "ws":
-        named.append(segs[2])
-    if sep:
-        keys: set[str] = set()
-        for pair in query.split("&"):
-            k, eq, v = pair.partition("=")
-            if not eq or not _QKEY.fullmatch(k) or not _QVAL.fullmatch(v) or k in keys:
-                raise Refused("malformed")
-            keys.add(k)
-            if k == "workspace":
-                named.append(v)
-    if not all(_HEX32.fullmatch(x) for x in named) or len(set(named)) > 1:
+    if not sep:
+        return None
+    k, eq, v = query.partition("=")
+    if k != "workspace" or not eq or not _HEX32.fullmatch(v):
         raise Refused("malformed")
-    return named[0] if named else None
+    return v
 
 
 def check_admin_rows(rows: list[Any], scope: list[str]) -> list[dict[str, Any]]:

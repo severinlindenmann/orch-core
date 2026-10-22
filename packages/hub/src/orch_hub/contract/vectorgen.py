@@ -616,7 +616,7 @@ def audit_chain(n: int = 4) -> list[dict[str, Any]]:
     return out
 
 
-ADMIN_TARGET = "/v1/admin/releases?state=active"
+ADMIN_TARGET = "/v2/hub/releases"
 
 
 def admin_req(
@@ -2639,7 +2639,7 @@ def build() -> dict[str, Any]:
         "bindings": {WS_A: [{"binding": binding(mode="full")}]},
     }
     ok_ar = {"ok": {"hub": HUB_ID, "workspaces": [WS_A]}}
-    ws_path = f"/v1/ws/{WS_A}/releases?state=active"
+    ws_path = f"/v2/hub/releases?workspace={WS_A}"
     case("admin_read_valid", "admin_read", {**ab, "request": admin_req()}, ok_ar, 3)
     case("admin_read_workspace_path_in_scope", "admin_read", {**ab, "request": admin_req(target=ws_path)}, ok_ar, 3)
     case("admin_read_head", "admin_read", {**ab, "request": admin_req("HEAD")}, ok_ar, 3)
@@ -2697,7 +2697,7 @@ def build() -> dict[str, Any]:
     case(
         "admin_read_swapped_query",
         "admin_read",
-        {**ab, "request": admin_req(target="/v1/admin/releases?workspace=" + WS_B, signed_target=ADMIN_TARGET)},
+        {**ab, "request": admin_req(target="/v2/hub/releases?workspace=" + WS_B, signed_target=ADMIN_TARGET)},
         {"error": "bad_hub_signature"},
         3,
         "the raw query is signed",
@@ -2761,22 +2761,28 @@ def build() -> dict[str, Any]:
         {"error": "unknown_hub"},
         3,
     )
-    # canonical targets only (L2P-5): every spelling a router might resolve to an unbound workspace
+    # canonical targets only (L2P-5): non-canonical forms of /v2/hub/releases and other keys
     for name, tgt, code in (
-        ("upper_case_id", f"/v1/ws/{WS_C.upper()}/releases", "malformed"),
-        ("empty_segment", f"//v1/ws/{WS_C}/releases", "malformed"),
-        ("dot_segment", f"/v1/./ws/{WS_C}/releases", "malformed"),
-        ("dot_dot_segment", f"/v1/x/../ws/{WS_C}/releases", "malformed"),
-        ("percent_encoded_id", f"/v1/ws/%{ord(WS_C[0]):02x}{WS_C[1:]}/releases", "malformed"),
-        ("trailing_slash", f"/v1/ws/{WS_C}/", "malformed"),
-        ("query_workspace_unbound", f"/v1/admin/releases?workspace={WS_C}", "not_bound"),
-        ("query_workspace_upper_case", f"/v1/admin/releases?workspace={WS_A.upper()}", "malformed"),
-        ("query_workspace_twice", f"/v1/admin/releases?workspace={WS_A}&workspace={WS_C}", "malformed"),
-        ("query_other_than_path", f"/v1/ws/{WS_A}/releases?workspace={WS_C}", "malformed"),
-        ("query_without_value", "/v1/admin/releases?state", "malformed"),
-        ("query_plus", "/v1/admin/releases?state=a+b", "malformed"),
-        ("fragment", "/v1/admin/releases?state=active#x", "malformed"),
-        ("short_workspace_id", "/v1/ws/abcd/releases", "malformed"),
+        ("upper_case_id", f"/v2/hub/releases?workspace={WS_C.upper()}", "malformed"),
+        ("upper_case_path", "/V2/hub/releases", "malformed"),
+        ("empty_segment", "//v2/hub/releases", "malformed"),
+        ("double_slash_inside", "/v2//hub/releases", "malformed"),
+        ("dot_segment", "/v2/./hub/releases", "malformed"),
+        ("dot_dot_segment", "/v2/x/../hub/releases", "malformed"),
+        ("percent_encoded_path", "/v2/hub/%72eleases", "malformed"),
+        ("percent_encoded_id", f"/v2/hub/releases?workspace=%{ord(WS_C[0]):02x}{WS_C[1:]}", "malformed"),
+        ("trailing_slash", "/v2/hub/releases/", "malformed"),
+        ("other_path", f"/v1/ws/{WS_C}/releases", "malformed"),
+        ("workspace_unbound", f"/v2/hub/releases?workspace={WS_C}", "not_bound"),
+        ("workspace_twice", f"/v2/hub/releases?workspace={WS_A}&workspace={WS_C}", "malformed"),
+        ("other_key", f"/v2/hub/releases?workspac={WS_A}", "malformed"),
+        ("extra_key", f"/v2/hub/releases?workspace={WS_A}&state=active", "malformed"),
+        ("other_key_only", "/v2/hub/releases?state=active", "malformed"),
+        ("query_without_value", "/v2/hub/releases?workspace", "malformed"),
+        ("empty_workspace", "/v2/hub/releases?workspace=", "malformed"),
+        ("plus", f"/v2/hub/releases?workspace={WS_A}+", "malformed"),
+        ("fragment", f"/v2/hub/releases?workspace={WS_A}#x", "malformed"),
+        ("short_workspace_id", "/v2/hub/releases?workspace=abcd", "malformed"),
     ):
         case(
             f"admin_read_target_{name}",
@@ -2789,14 +2795,14 @@ def build() -> dict[str, Any]:
     case(
         "admin_read_query_workspace_in_scope",
         "admin_read",
-        {**ab, "request": admin_req(target=f"/v1/admin/releases?workspace={WS_A}&state=active")},
+        {**ab, "request": admin_req(target=f"/v2/hub/releases?workspace={WS_A}")},
         ok_ar,
         3,
     )
     case(
         "admin_read_path_and_query_agree",
         "admin_read",
-        {**ab, "request": admin_req(target=f"/v1/ws/{WS_A}/releases?workspace={WS_A}")},
+        {**ab, "request": admin_req(target=f"/v2/hub/releases?workspace={WS_A}")},
         ok_ar,
         3,
     )
@@ -2834,7 +2840,7 @@ def build() -> dict[str, Any]:
     case(
         "admin_read_workspace_not_bound",
         "admin_read",
-        {**ab, "request": admin_req(target=f"/v1/ws/{WS_B}/releases")},
+        {**ab, "request": admin_req(target=f"/v2/hub/releases?workspace={WS_B}")},
         {"error": "not_bound"},
         3,
         "only workspaces with a current binding to this hub",

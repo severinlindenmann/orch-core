@@ -12,6 +12,7 @@ from .engine import (
     ChannelRegistry,
     CustodialEngine,
     Prepared,
+    SessionCheck,
     WorkspaceView,
     required_role,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "ChannelRegistry",
     "CustodialEngine",
     "Prepared",
+    "SessionCheck",
     "WorkspaceView",
     "required_role",
 ]

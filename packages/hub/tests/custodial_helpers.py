@@ -60,6 +60,14 @@ class Channels:
         return self.certs.get((user_id, channel_id))
 
 
+class Sessions:
+    def __init__(self) -> None:
+        self.ok = True
+
+    def valid(self, session, user_id, channel_id):
+        return self.ok and session == "sess"
+
+
 class Env:
     def __init__(self, tmp_path, *, role: str | None = "edit", mode: str = "full") -> None:
         self.keys = HubKeys.init(tmp_path / "hub")
@@ -85,6 +93,7 @@ class Env:
             op_cert_by_id=self.keys.op_cert_by_id,
         )
         self.view, self.channels, self.delivered = StubView(), Channels(), []
+        self.sessions = Sessions()
         self.mode = mode
         self.clock = [self.keys._now()]
         self.ch_priv = ec.generate_private_key(ec.SECP256R1())
@@ -95,6 +104,7 @@ class Env:
             seals=self.seals,
             view=self.view,
             channels=self.channels,
+            sessions=self.sessions,
             audit=self.audit,
             deliver=lambda ws, log, ev: self.delivered.append((ws, log, ev)),
             mode_of=lambda ws: self.mode,
@@ -115,7 +125,7 @@ class Env:
         return b64u(_S(priv or self.ch_priv).proof(digest))
 
     def prepare(self, action=None):
-        return self.engine.prepare(WS, self.user, self.channel, action or {"do": "note"})
+        return self.engine.prepare("sess", WS, self.user, self.channel, action or {"do": "note"})
 
     def close(self) -> None:
         self.seals.close()

@@ -38,7 +38,8 @@ from ..contract.labels import EVENT_TYPE
 from ..keys import HubKeys, KeysError
 
 TTL_MS = 120_000  # a prepared request lives two minutes: long enough to look at it, short enough to be a prompt
-MAX_PENDING = 256  # prepared requests held at once (bounded memory; oldest expired ones go first)
+MAX_PER_USER = 4  # outstanding prepared requests per user; over the cap the user's OLDEST is evicted
+MAX_PENDING = 4096  # global hard ceiling (memory guard only, far above users x MAX_PER_USER)
 _LOG = re.compile(r"workspace|[A-Za-z0-9_-]{1,64}")
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -85,6 +86,12 @@ def required_role(event_type: str) -> str:
         if event_type.startswith(p):
             return r
     return "admin"
+
+
+class SessionCheck(Protocol):
+    """D7's session read interface: True only for a live, authenticated session of THIS user on THIS channel."""
+
+    def valid(self, session: Any, user_id: str, channel_id: str) -> bool: ...
 
 
 class ChannelRegistry(Protocol):
@@ -154,6 +161,7 @@ class CustodialEngine:
         seals: Any,  # WkSeals: ``open_current(ws) -> (epoch, bytearray)``
         view: WorkspaceView,
         channels: ChannelRegistry,
+        sessions: SessionCheck,
         audit: AuditLog,
         deliver: Callable[[str, str, dict[str, Any]], None],
         mode_of: Callable[[str], str | None],
@@ -162,7 +170,8 @@ class CustodialEngine:
         dev_mode: bool = True,
     ) -> None:
         self._keys, self._snaps, self._seals, self._view = keys, snapshots, seals, view
-        self._channels, self._audit, self._deliver, self._mode_of = channels, audit, deliver, mode_of
+        self._channels, self._sessions = channels, sessions
+        self._audit, self._deliver, self._mode_of = audit, deliver, mode_of
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._ttl, self._dev = ttl_ms, dev_mode
         self._lock = threading.Lock()
@@ -250,7 +259,9 @@ class CustodialEngine:
 
     # --- prepare -----------------------------------------------------------------------------------------------------
 
-    def prepare(self, workspace_id: str, user_id: str, channel_id: str, action: Mapping[str, Any]) -> Prepared:
+    def prepare(
+        self, session: Any, workspace_id: str, user_id: str, channel_id: str, action: Mapping[str, Any]
+    ) -> Prepared:
         """Build the event for ``action`` as ``user_id`` on ``channel_id``. Returns the context the channel must show
         and the digest it signs. ``action`` is the user's request (what to do), never event bytes."""
         for x in (workspace_id, user_id, channel_id):
@@ -258,6 +269,8 @@ class CustodialEngine:
                 raise Refused("malformed")
         if type(action) is not dict:
             raise Refused("malformed")
+        if not self._sessions.valid(session, user_id, channel_id):  # only the user's own session may prepare
+            raise Refused("unauthorized")
         now = self._now()
         event_id = _ulid(now)
         log, event, _ = self._build(workspace_id, user_id, channel_id, event_id, action)
@@ -266,6 +279,9 @@ class CustodialEngine:
         prepared = Prepared(secrets.token_hex(16), workspace_id, log, ctx, digest, now + self._ttl)
         with self._lock:
             self._gc(now)
+            mine = [k for k, q in self._pending.items() if q.user_id == user_id]  # insertion order = oldest first
+            for k in mine[: max(0, len(mine) - MAX_PER_USER + 1)]:
+                del self._pending[k]  # only this user's own oldest ones
             if len(self._pending) >= MAX_PENDING:
                 raise Refused("unavailable")
             self._pending[prepared.prepared_id] = _Pending(prepared, user_id, channel_id, dict(action), event_id)

@@ -171,7 +171,9 @@ def test_channel_deregistered_between_prepare_and_sign(env):
 def test_channel_of_another_user_is_refused(env):
     other_user = env.keys.issue_uk()["o"]["user_id"]
     cid = env.new_channel(ec.generate_private_key(ec.SECP256R1()), user=other_user)
-    assert code(env.engine.prepare, WS, env.user, cid, {"do": "x"}) == "channel_revoked"  # not this user's: not active
+    assert (
+        code(env.engine.prepare, "sess", WS, env.user, cid, {"do": "x"}) == "channel_revoked"
+    )  # not this user's: not active
 
 
 def test_selective_workspace_is_refused_without_opening_wk(env):
@@ -228,6 +230,7 @@ def test_no_entry_point_takes_event_bytes():
     assert sorted(public) == ["prepare", "sign"]
     assert list(inspect.signature(CustodialEngine.sign).parameters)[1:] == ["prepared_id", "channel_id", "proof"]
     assert list(inspect.signature(CustodialEngine.prepare).parameters)[1:] == [
+        "session",
         "workspace_id",
         "user_id",
         "channel_id",
@@ -260,18 +263,40 @@ def test_audit_failure_blocks_delivery(env):
 
 
 def test_malformed_ids_and_action_are_refused(env):
-    assert code(env.engine.prepare, "zz", env.user, env.channel, {}) == "malformed"
-    assert code(env.engine.prepare, WS, env.user, env.channel, "not a dict") == "malformed"
+    assert code(env.engine.prepare, "sess", "zz", env.user, env.channel, {}) == "malformed"
+    assert code(env.engine.prepare, "sess", WS, env.user, env.channel, "not a dict") == "malformed"
 
 
-def test_pending_requests_are_bounded(env):
+def test_per_user_cap_evicts_only_that_users_oldest(env):
     from orch_hub.custodial import engine as E
 
-    for _ in range(E.MAX_PENDING):
+    first = env.prepare()
+    for _ in range(E.MAX_PER_USER + 2):
         env.prepare()
-    assert code(env.prepare) == "unavailable"
-    env.clock[0] += E.TTL_MS + 1
-    env.prepare()  # expired ones are collected
+    assert code(env.engine.sign, first.prepared_id, env.channel, env.proof(first.digest)) == "unknown_prepared"
+    assert len(env.engine._pending) == E.MAX_PER_USER
+
+
+def test_one_user_filling_the_cap_does_not_affect_another(tmp_path, env):
+    from orch_hub.custodial import engine as E
+
+    b_priv = ec.generate_private_key(ec.SECP256R1())
+    bob = env.keys.issue_uk()["o"]["user_id"]
+    env.access.add_user(bob, "bob")
+    env.access.add_member("team", bob)
+    bch = env.new_channel(b_priv, user=bob)
+    pb = env.engine.prepare("sess", WS, bob, bch, {"do": "x"})
+    for _ in range(E.MAX_PER_USER * 3):
+        env.prepare()
+    env.engine.sign(pb.prepared_id, bch, env.proof(pb.digest, b_priv))
+    assert len(env.delivered) == 1
+
+
+def test_prepare_needs_the_users_own_session(env):
+    assert code(env.engine.prepare, "stolen", WS, env.user, env.channel, {"do": "x"}) == "unauthorized"
+    env.sessions.ok = False
+    assert code(env.prepare) == "unauthorized"
+    assert env.view.calls == 0
 
 
 def test_built_event_type_is_checked(env):

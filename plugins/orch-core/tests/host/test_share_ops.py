@@ -572,3 +572,22 @@ def test_a_plain_sync_confirms_nothing_new_and_a_stale_plan_is_refused(served, s
     assert err(req(served, "share.sync", {"expect": prev["plan"]})) == "invalid.input"
     assert selective.count("share_put") == 1
     assert sync_shown(served)["put"] == 2  # the two new ones, now shown
+
+
+# --- l2-c6fud adversarial (Opus delta of core#1030 052da4f5, 23 Oct) --------------------------------------------------
+
+
+def test_l2_c6fud_1_revoking_one_item_does_not_confirm_unseen_new_matches(served, selective, quick_auto):
+    """L2-C6fud-1: the owner revokes one shared item. A ticket that started matching after the last confirm (an agent
+    labelled it) was never shown to the owner; the revoke must not confirm or send it (same class as L2-C6fu-3)."""
+    _, first = labelled(served, "Public note", "public")
+    labelled(served, "Second public", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    assert selective.count("share_put") == 2
+    _, unseen = served.ticket("Agent wrote this later")
+    ok(agent(served, "set", {"ref": unseen, "pairs": ["labels=public"]}))
+    settle(served, quick_auto)
+    assert selective.count("share_put") == 2  # the auto pass holds it back (correct)
+    ok(req(served, "share.revoke", {"ref": first}))
+    titles = [i["content"].get("title") for i in selective.opened]
+    assert "Agent wrote this later" not in titles, titles

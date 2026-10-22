@@ -114,6 +114,11 @@ def world() -> Iterator[tuple[Hub, Host, Host, Host]]:
         hub.close()
 
 
+def members_of(host: Host, sid: str) -> list[str]:
+    """What the owner is shown when they look at the space right now (the verified record)."""
+    return sorted(next(x for x in host.client.list_spaces() if x["space_id"] == sid)["members"])
+
+
 def make_space(hub: Hub, *members: Host) -> str:
     rec = hub.admin(cmd="create", members=[m.ws for m in members])
     assert "error" not in rec, rec
@@ -123,7 +128,7 @@ def make_space(hub: Hub, *members: Host) -> str:
 def test_put_then_get_gives_the_same_bytes_and_a_non_member_is_refused(world) -> None:
     hub, a, b, c = world
     sid = make_space(hub, a, b)
-    assert a.client.share(sid) == sorted([a.ws, b.ws])
+    assert a.client.share(sid, sorted([a.ws, b.ws])) == sorted([a.ws, b.ws])
     data = os.urandom(5000)
     put = a.client.put(sid, "report.bin", data)
     items, refused = b.client.read_items(sid)
@@ -146,7 +151,7 @@ def test_put_then_get_gives_the_same_bytes_and_a_non_member_is_refused(world) ->
 def test_an_author_the_reader_never_pinned_is_refused_not_delivered(world) -> None:
     hub, a, b, _ = world
     sid = make_space(hub, a, b)
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     a.client.put(sid, "x.txt", b"hello")
     del b.pins[a.ws]  # no pin for the author: the item cannot be verified
     items, refused = b.client.read_items(sid)
@@ -159,13 +164,13 @@ def test_put_needs_a_share_rule_and_a_grown_member_set_is_members_changed(world)
     with pytest.raises(HubRefused) as e:
         a.client.put(sid, "x", b"1")
     assert e.value.code == "not_shared"
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     a.client.put(sid, "ok", b"1")
     assert "error" not in hub.admin(cmd="add", space_id=sid, ws=c.ws)
     with pytest.raises(HubRefused) as e:
         a.client.put(sid, "late", b"2")  # a member the owner never approved: refused locally, nothing sent
     assert e.value.code == "members_changed"
-    a.client.share(sid)  # the owner re-approves the grown set
+    a.client.share(sid, members_of(a, sid))  # the owner re-approves the grown set
     a.client.put(sid, "late", b"2")
     assert [i["body"]["name"] for i in c.client.read_items(sid)[0]] == ["late"]  # c: no backfill of epoch 1
 
@@ -173,13 +178,13 @@ def test_put_needs_a_share_rule_and_a_grown_member_set_is_members_changed(world)
 def test_revoke_and_a_removed_member_loses_later_epochs(world) -> None:
     hub, a, b, _ = world
     sid = make_space(hub, a, b)
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     first = a.client.put(sid, "one", b"1")
     a.client.revoke(sid, first["item_id"])
     items, _ = b.client.read_items(sid)
     assert [i for i in items if not i["revoked"]] == []
     assert "error" not in hub.admin(cmd="remove", space_id=sid, ws=b.ws)
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     second = a.client.put(sid, "two", b"2")
     assert second["epoch"] == 2
     for call in (lambda: b.client.read_items(sid), lambda: b.client.put(sid, "x", b"y")):
@@ -191,10 +196,10 @@ def test_revoke_and_a_removed_member_loses_later_epochs(world) -> None:
 def test_a_stale_epoch_put_is_refreshed_and_resealed(world) -> None:
     hub, a, b, c = world
     sid = make_space(hub, a, b)
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     a.client.put(sid, "one", b"1")
     hub.admin(cmd="remove", space_id=sid, ws=b.ws)  # epoch 2 behind a's back
-    a.client.share(sid)
+    a.client.share(sid, members_of(a, sid))
     assert a.client.put(sid, "two", b"2")["epoch"] == 2
 
 
@@ -214,11 +219,26 @@ def test_selective_workspace_joins_a_space_only_with_the_owners_accept() -> None
         b.client.accept(sid, epoch=2, prev_members=[a.ws], members=sorted([a.ws, b.ws]))
         added = hub.admin(cmd="add", space_id=sid, ws=b.ws)
         assert "error" not in added and added["members"] == sorted([a.ws, b.ws])
-        b.client.share(sid)
+        b.client.share(sid, members_of(b, sid))
         b.client.put(sid, "from-selective", b"s")
-        a.client.share(sid)
+        a.client.share(sid, members_of(a, sid))
         assert [i["body"]["name"] for i in a.client.read_items(sid)[0]] == ["from-selective"]
     finally:
         a.close()
         b.close()
         hub.close()
+
+
+def test_share_stores_what_the_owner_was_shown_not_what_the_hub_has_now(world) -> None:
+    hub, a, b, c = world
+    sid = make_space(hub, a, b)
+    shown = members_of(a, sid)  # the owner looks: a and b
+    assert "error" not in hub.admin(cmd="add", space_id=sid, ws=c.ws)  # the hub adds c before the owner confirms
+    with pytest.raises(HubRefused) as e:
+        a.client.share(sid, shown)
+    assert e.value.code == "members_changed" and sid not in a.client.st.rules
+    with pytest.raises(HubRefused) as e:
+        a.client.put(sid, "x", b"1")
+    assert e.value.code == "not_shared"
+    a.client.share(sid, members_of(a, sid))  # looked again: now a, b and c
+    assert a.client.st.rules[sid]["members"] == sorted([a.ws, b.ws, c.ws])

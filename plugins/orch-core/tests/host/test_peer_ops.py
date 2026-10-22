@@ -94,10 +94,21 @@ def joined_selective(human, served):
 
 
 def test_selective_workspaces_do_not_route_ws_to_ws(served, joined_selective):
-    for op, args in (("peer.card", {}), ("peer.inbox", {}), ("peer.add", {"card": PEER_CARD})):
+    for op, args in (
+        ("peer.inbox", {}),
+        ("peer.send", {"to": PEER_WS, "title": "x"}),
+        ("peer.accept", {"id": "aa" * 16 + "/" + "bb" * 16}),
+    ):
         res = req(served, op, args)
         assert err(res) == "hub.not_joined" and "needs full mode" in res["error"]["message"]
     assert peerops._RUNTIMES == {} and [r for r in joined_selective.requests if r["o"]["op"] == "route_out"] == []
+
+
+def test_a_selective_workspace_can_still_pin_peers_for_shared_spaces(served, joined_selective):
+    assert ok(req(served, "peer.card"))["data"]["card"]["o"]["workspace_id"] == served.wid
+    assert ok(_add(served, PEER_CARD))["data"]["how"] == "new"
+    assert ok(req(served, "peer.list"))["data"]["peers"] == [{"workspace_id": PEER_WS}]
+    assert peerops._RUNTIMES == {}  # pins only: no receive thread, no ws->ws link
 
 
 def req(served, op, args=None, **kw):
@@ -178,8 +189,8 @@ def test_a_rebinding_builds_a_new_runtime_and_closes_the_old_link(served, joined
     assert old.svc._link is not None
     real = peerops._hub_state
 
-    def other_hub(service):
-        st = real(service)
+    def other_hub(service, **kw):
+        st = real(service, **kw)
         st.binding_seq += 1
         return st
 

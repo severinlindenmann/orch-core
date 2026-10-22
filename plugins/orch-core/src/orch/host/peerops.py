@@ -107,7 +107,7 @@ def _dir(service: WorkspaceService) -> Path:
 # -- the runtime ---------------------------------------------------------------------------------------------------
 
 
-def _hub_state(service: WorkspaceService) -> Any:
+def _hub_state(service: WorkspaceService, *, full: bool = True) -> Any:
     """The bound hub of the log and ``hub.json``; anything else is ``hub.not_joined`` (no fallback to another path)."""
     from . import hubops
 
@@ -122,7 +122,7 @@ def _hub_state(service: WorkspaceService) -> Any:
         or state.binding_seq != model.get("binding_seq")
     ):
         raise HostError("hub.not_joined", "this workspace is not connected to a hub: orch hub status")
-    if state.mode != "full" or model.get("mode") != "full":
+    if full and (state.mode != "full" or model.get("mode") != "full"):
         raise HostError(
             "hub.not_joined",
             "workspace-to-workspace needs full mode: this workspace is joined to the hub in selective mode",
@@ -263,6 +263,28 @@ def _loop(service: WorkspaceService, rt: _Runtime) -> None:
     rt.svc.close()
 
 
+def pins_service(service: WorkspaceService) -> Any:
+    """The service that holds the address book: the live runtime in full mode; in selective mode (no ws->ws routing)
+    a transient one over the same mailbox file, so a selective workspace can still pin the co-members whose shared-space
+    items it reads. Needs a bound hub in either mode."""
+    from orch.hubclient.peerservice import PeerService
+
+    from . import hubops
+
+    state = _hub_state(service, full=False)
+    if state.mode == "full":
+        return _runtime(service).svc
+    _, sign = hubops._wsk_sign(service)  # noqa: SLF001
+
+    def no_link() -> Any:
+        raise OSError("selective mode: no ws->ws link")
+
+    return PeerService(
+        me=service.workspace_id, sign=sign, wxk_for=lambda v: None, wxk_current=1, mailbox=_load_box(service),
+        save=_saver(service), connect=no_link, now_ms=lambda: int(service.clock() * 1000),
+    )  # fmt: skip
+
+
 def maybe_start(service: WorkspaceService) -> None:
     """At workspace open: start the receive thread when this workspace has a mailbox (it has used peers). Never fails
     the open."""
@@ -332,10 +354,12 @@ def serve(call: Call) -> dict[str, Any]:
     op, args = _check(call)
     service = call.service
     if op == "peer.card":
-        _hub_state(service)
+        _hub_state(service, full=False)  # any bound hub: the pin of a workspace is also what shared spaces verify
         return ok_result({"card": hubops.local_card(service)})
-    rt = _runtime(service)
-    svc = rt.svc
+    if op in ("peer.list", "peer.add"):
+        svc = pins_service(service)
+    else:
+        svc = _runtime(service).svc
     if op == "peer.list":
         return ok_result({"peers": [{"workspace_id": w} for w in sorted(svc.mb.peers)]})
     if op == "peer.inbox":

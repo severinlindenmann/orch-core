@@ -226,12 +226,19 @@ class SpaceClient:
 
     # --- writes -----------------------------------------------------------------------------------------------------
 
-    def share(self, sid: str) -> list[str]:
-        """The owner approves the space's CURRENT member set (replaces a smaller or grown rule). Returns the members."""
+    def share(self, sid: str, members: list[str]) -> list[str]:
+        """The owner approves exactly ``members``, the list they were SHOWN. The hub's current set must equal it: if
+        the hub added (or removed) anyone since, nothing is stored (``members_changed``) and the owner looks again.
+        The rule stored is the caller's list, never the hub's."""
+        want = sorted(set(members))
+        if not want or len(want) != len(members) or any(not wire.hex16(w) for w in want):
+            raise HubRefused("malformed")
         cur = self.sync_current(sid)
-        self.st.rules[sid] = {"members": list(cur["members"])}
+        if sorted(cur["members"]) != want:
+            raise HubRefused("members_changed")
+        self.st.rules[sid] = {"members": want}
         self._save(self.st)
-        return list(cur["members"])
+        return want
 
     def put(self, sid: str, name: str, data: bytes) -> dict[str, Any]:
         """Share one named file. Refused locally, before anything is sent: ``not_shared`` (no rule), ``members_changed``

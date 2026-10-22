@@ -50,6 +50,7 @@ class TlsHub:
         self.on_request = on_request or (lambda hub, o: hub.reply(o))
         self.exporter_override: bytes | None = None  # make the hub verify auth against another exporter
         self.challenge_hub_id: str | None = None
+        self.challenge_delay = 0.0
         self.app_bytes = bytearray()  # every byte received from the client after the handshake
         self.auth_frames: list[dict[str, Any]] = []
         self.auth_verified = threading.Event()

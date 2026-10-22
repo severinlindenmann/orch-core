@@ -25,8 +25,8 @@ class FrameError(Exception):
 def write_frame(conn: TlsConn, obj: dict, *, timeout: float, max_bytes: int = MAX_FRAME) -> None:
     try:
         payload = dumps(obj)
-    except JcsError as e:
-        raise FrameError(str(e)) from None
+    except JcsError:
+        raise FrameError("not canonical json") from None
     if len(payload) > max_bytes:
         raise FrameError("frame too large")
     conn.send_all(len(payload).to_bytes(HEADER, "big") + payload, time.monotonic() + timeout)

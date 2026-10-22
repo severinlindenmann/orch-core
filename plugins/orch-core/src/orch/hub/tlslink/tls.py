@@ -12,6 +12,7 @@ from __future__ import annotations
 import hmac
 import select
 import socket
+import threading
 import time
 from functools import partial
 
@@ -123,6 +124,49 @@ def client_context() -> SSL.Context:
     return ctx
 
 
+def _dial(host: str, port: int, deadline: float) -> socket.socket:
+    """Resolve and connect within the overall deadline (the resolver itself cannot be interrupted, so it runs in a
+    helper thread that is abandoned on timeout; a socket it opens late is closed)."""
+    out: list[socket.socket | BaseException] = []
+    done = threading.Event()
+    abandoned = threading.Event()
+
+    def work() -> None:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            err: BaseException = OSError("no address")
+            for fam, typ, proto, _, addr in infos:
+                left = deadline - time.monotonic()
+                if left <= 0 or abandoned.is_set():
+                    break
+                s = socket.socket(fam, typ, proto)
+                try:
+                    s.settimeout(left)
+                    s.connect(addr)
+                    if abandoned.is_set():
+                        s.close()
+                        return
+                    out.append(s)
+                    return
+                except OSError as e:
+                    s.close()
+                    err = e
+            out.append(err)
+        except BaseException as e:  # noqa: BLE001
+            out.append(e)
+        finally:
+            done.set()
+
+    threading.Thread(target=work, daemon=True).start()
+    if not done.wait(max(deadline - time.monotonic(), 0)):
+        abandoned.set()
+        raise LinkTimeout
+    r = out[0]
+    if isinstance(r, socket.socket):
+        return r
+    raise LinkClosed(type(r).__name__)
+
+
 def connect_pinned(host: str, port: int, pinned_spki_sha256: str, *, timeout: float = 10.0) -> TlsConn:
     """Dial, handshake TLS 1.3 and compare the peer certificate's SPKI hash with the pin. Raises
     :class:`PinMismatch` (connection closed, nothing sent) on any difference; a malformed pin is refused before
@@ -132,10 +176,7 @@ def connect_pinned(host: str, port: int, pinned_spki_sha256: str, *, timeout: fl
     except EncodingError:
         raise PinMismatch from None
     deadline = time.monotonic() + timeout
-    try:
-        sock = socket.create_connection((host, port), timeout=timeout)
-    except OSError as e:
-        raise LinkClosed(type(e).__name__) from None
+    sock = _dial(host, port, deadline)
     sock.setblocking(False)
     c = SSL.Connection(client_context(), sock)
     c.set_connect_state()

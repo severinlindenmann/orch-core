@@ -135,9 +135,14 @@ class LinkClient:
         certificate is not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
         if mode not in MODES:
             raise LinkError("malformed")
+        end = time.monotonic() + timeout  # one overall deadline for dial, handshake, challenge and auth
+
+        def left() -> float:
+            return max(end - time.monotonic(), 0.001)
+
         conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
         try:
-            ch = framing.read_frame(conn, timeout=timeout, max_bytes=max_frame)
+            ch = framing.read_frame(conn, timeout=left(), max_bytes=max_frame)
             if ch.get("t") == "error":
                 raise LinkError(_code(ch.get("error")))
             if set(ch) != {"t", "hub_id", "challenge"} or ch["t"] != "challenge":
@@ -148,8 +153,8 @@ class LinkClient:
             auth: dict[str, Any] = {"t": "auth", "workspace_id": workspace_id, "sig": b64u(sign(msg))}
             if wsk_pub is not None:
                 auth["wsk_pub"] = b64u(wsk_pub)
-            framing.write_frame(conn, auth, timeout=timeout, max_bytes=max_frame)
-            r = framing.read_frame(conn, timeout=timeout, max_bytes=max_frame)
+            framing.write_frame(conn, auth, timeout=left(), max_bytes=max_frame)
+            r = framing.read_frame(conn, timeout=left(), max_bytes=max_frame)
             if r.get("t") == "error":
                 raise LinkError(_code(r.get("error")))
             if r != {"t": "ready", "hub_id": hub_id}:
@@ -201,6 +206,8 @@ class LinkClient:
         if type(o) is not dict or set(m) != {"o", "sig"} or set(o) != _HEAD_FIELDS:
             raise LinkError("malformed")
         if o["kind"] != "hub.link" or o["dir"] != "w2h" or o["re"] is not None or type(o["seq"]) is not int:
+            raise LinkError("malformed")
+        if type(o["op"]) is not str:
             raise LinkError("malformed")
         if o["op"] not in W2H_OPS:
             raise LinkError("unknown_op")

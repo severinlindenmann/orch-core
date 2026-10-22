@@ -296,3 +296,21 @@ def test_selective_ops_are_refused_in_full_mode(make_hub) -> None:
         with pytest.raises(LinkError) as e:
             link.send(request(link, "share_put", {"item_id": "x", "sealed": "y"}))
         assert e.value.code == "wrong_mode"
+
+
+def test_unhashable_op_is_malformed_not_a_crash(make_hub) -> None:
+    hub = make_hub()
+    with open_link(hub) as link:
+        with pytest.raises(LinkError) as e:
+            link.send(request(link, op=["snapshot_get"]))
+        assert e.value.code == "malformed"
+        assert hub.requests == []
+
+
+def test_overall_deadline_bounds_a_hub_that_never_answers(make_hub) -> None:
+    hub = make_hub()
+    hub.challenge_delay = 3.0
+    started = time.monotonic()
+    with pytest.raises(LinkTimeout):
+        open_link(hub, timeout=0.5)
+    assert time.monotonic() - started < 1.5

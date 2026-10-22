@@ -282,3 +282,34 @@ def test_list_and_sync_report_without_a_terminal(share_host):
     assert code == 0 and "1 now" in out
     code, out = run(["share", "sync"], {})
     assert code == 0 and "not updated yet (hub_unreachable)" in out
+
+
+def test_refused_share_items_show_in_the_normal_output_and_a_stale_one_says_so(share_host, monkeypatch):
+    refused = [{"item": "ticket K-1: Public note", "code": "too_large", "stale": True},
+               {"item": "ticket K-2: Other", "code": "malformed", "stale": False}]  # fmt: skip
+    sync = {"synced": True, "put": 0, "revoke": 0, "kept": 1, "refused": {}, "refused_items": refused}
+    rules = {"rules": [], "shared": 1, "withdrawn": [], "refused_items": refused, "new": 0}
+    monkeypatch.setattr(hub, "_call", lambda t, op, args, env: sync if op == "share.sync" else rules)
+    for argv in (["share", "sync"], ["share", "rule", "list"]):
+        code, out = run(argv, {})
+        assert code == 0
+        assert "not sent (too_large): ticket K-1: Public note\n    the hub has an older version" in out
+        assert "not sent (malformed): ticket K-2: Other" in out and out.count("older version") == 1
+    code, out = run(["share", "sync"], {}, as_json=True)
+    assert json.loads(out)["data"]["refused_items"] == refused
+
+
+def test_sync_shows_what_is_new_and_binds_the_plan(share_host):
+    code, _ = run(["share", "sync"], {}, as_json=True)
+    assert code == 0 and "ticket K-1: Public note" in share_host.asked[0][0]
+    assert share_host.called == [("share.preview", {}), ("share.sync", {"expect": "p" * 43})]
+    share_host.called.clear()
+    share_host.yes = False
+    assert run(["share", "sync"], {}, as_json=True)[0] == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+
+
+def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
+    from orch.cli import hub as H
+
+    prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
+    assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001

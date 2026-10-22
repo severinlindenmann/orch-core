@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch.canon.text import clean_line
 from orch.cli.publish import PubError, _call, _sign, _tty_ok
 
 __all__ = ["main"]
@@ -284,9 +285,28 @@ def _rule_of(a: argparse.Namespace) -> dict[str, str]:
     return picked[0]
 
 
+def _refused_lines(d: Mapping[str, Any]) -> str:
+    """C6r3-1: items the share rules or the hub refused are never silent. One whose update was refused is marked: the
+    hub still serves the older version, which is not what the owner just changed."""
+    out = []
+    for r in d.get("refused_items") or ():
+        line, code = clean_line(str(r.get("item", ""))), clean_line(str(r.get("code", "")))
+        out.append(f"  not sent ({code}): {line}")
+        if r.get("stale"):
+            out.append("    the hub has an older version of this item")
+    return "".join(f"\n{x}" for x in out)
+
+
+def _confirm_word(prev: Mapping[str, Any]) -> str:
+    """What the owner types to confirm: 'share', or 'all N' when the list above was cut off (they confirm what they
+    did not see, so they must say how many)."""
+    return f"all {prev['count']}" if prev.get("more") else "share"
+
+
 def _sync_line(d: Mapping[str, Any]) -> str:
     if d.get("synced"):
-        return f"sent to the hub: {d['put']} shared, {d['revoke']} withdrawn, {d['kept']} unchanged"
+        text = f"sent to the hub: {d['put']} shared, {d['revoke']} withdrawn, {d['kept']} unchanged"
+        return text + _refused_lines(d)
     return f"saved; the hub was not updated yet ({d.get('pending')}): run orch hub share sync"
 
 
@@ -303,10 +323,27 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
     if words == ["rule", "list"]:
         d = _call(target, "share.rules", {}, env)
         text = "\n".join(f"  {r['describes']}: {r['count']} now" for r in d["rules"]) or "  (nothing is shared)"
-        _emit(out, as_json, d, f"The hub sees:\n{text}\n{d['shared']} item(s) are on the hub now.")
+        _emit(out, as_json, d, f"The hub sees:\n{text}\n{d['shared']} item(s) are on the hub now.{_refused_lines(d)}")
         return 0
     if words == ["sync"]:
-        d = _call(target, "share.sync", {}, env)
+        args: dict[str, Any] = {}
+        prev = _call(target, "share.preview", {}, env)
+        if prev["new"]:  # something the owner has not been shown: show it and confirm, then sync exactly that
+            from orch.cli.publish import _confirm
+
+            lines = "".join(f"  {i['line']}\n" for i in prev["items"]) + (
+                f"  ... and {prev['more']} more\n" if prev["more"] else ""
+            )
+            word = _confirm_word(prev)
+            if not _confirm(
+                f"The hub will see {prev['count']} item(s) ({prev['new']} new, {prev['revoked']} withdrawn):\n"
+                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n"
+                f"Type '{word}' to confirm: ",
+                word,
+            ):
+                raise PubError("invalid.input", "not confirmed; nothing changed", 5)
+            args["expect"] = prev["plan"]
+        d = _call(target, "share.sync", args, env)
         _emit(out, as_json, d, _sync_line(d))
         return 0
     if words[0] == "revoke":
@@ -324,10 +361,13 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         f"  ... and {prev['more']} more\n" if prev["more"] else ""
     )
     verb = "will also share" if key == "add" else "will stop sharing"
+    word = _confirm_word(prev)
     if not _confirm(
         f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
-        f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\nType 'share' to confirm: ",
-        "share",
+        f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
+        "Later changes to these items are sent automatically.\n"
+        f"Type '{word}' to confirm: ",
+        word,
     ):
         raise PubError("invalid.input", "not confirmed; nothing changed", 5)
     d = _call(target, op, {"rule": rule, "expect": prev["plan"]}, env)

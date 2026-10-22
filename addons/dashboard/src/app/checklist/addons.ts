@@ -596,7 +596,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W3',
         title: 'The dialog closes by itself',
         text: 'Open Extend on the agent access pill, cancel in the Terminal once, then press Extend again. Later sign an add-on switch or a ticket edit.',
-        see: 'The second Extend gives a new request. Known (fix in progress, do not report again): after a cancel, pressing the same action again may first show the old "Cancelled" (here, and also for Estimate and add-on switches); press "Try again" (once or twice) and a new request appears. After signing an add-on switch or a ticket edit, the dialog closes by itself.',
+        see: 'The second Extend gives a new request. After a cancel, pressing the same action again gives a NEW request right away (here, and also for Estimate and add-on switches; fixed in #793). If it still first shows the old "Cancelled", report it. After signing an add-on switch or a ticket edit, the dialog closes by itself.',
       },
       {
         id: 'W4',

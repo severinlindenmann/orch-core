@@ -303,6 +303,10 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["hub"]:  # join and leave a hub, selective mode (V3 C2a): a host client, not a registry op
+        from orch.cli.hub import main as hub_main
+
+        return hub_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["publish"]:  # the Publish add-on (P5): a host client, not a registry op
         from orch.cli.publish import main as publish_main
 

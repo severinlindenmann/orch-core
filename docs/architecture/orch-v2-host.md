@@ -523,6 +523,10 @@ drops. The host never sends it.
 | `publish.changed` | 3 | no | stays | a staged file or its record changed since `publish.prepare` (size, hash, link, owner, mode), or the staged copy is not valid (P5); prepare again | — |
 | `publish.server_refused` | 3 | no | stays | the publish server answered no, or the workspace's genesis delegation could not be read; `detail.reason` is `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation` or `rejected` (P5) | — |
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
+| `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
+| `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
+| `hub.state_mismatch` | 3 | no | stays | the host's `hub.json` cannot be read: the host refuses to guess (V3 C2a) | — |
+| `hub.not_joined` | 3 | no | stays | `hub.connect` or `hub.unbind` while the log has no `hub.joined` / no `hub.left` for them (V3 C2a) | — |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
 attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;

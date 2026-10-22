@@ -529,6 +529,8 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
 | `addon.disabled` | P | `name` | Data stays untouched. A new `addon.granted` enables it again. |
 | `addon.purged` | P | `name` | Deletes the addon's data. |
+| `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id` | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key at the host terminal. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
+| `hub.left` | P | `hub_id`; `binding_seq` | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. |
 
 The **member-list version** is the number of `workspace.created`, `member.added`, `member.removed` and
 `role.changed` events in the workspace log so far (so 1 right after the genesis). **Authorization is evaluated at
@@ -552,7 +554,7 @@ with an old role.
 
 **Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `task`, `handoff`,
 `log`, `question`, `gate`, `verdict`, `branch`, `artifact`, `edit`, `projection`, `restore`, `workspace`, `member`,
-`role`, `device`, `settings`, `grant`, `addon` and `invalid` are reserved: no addon may take one of these names, and an
+`role`, `device`, `settings`, `grant`, `addon`, `invalid` and `hub` are reserved: no addon may take one of these names, and an
 unknown type under one of them is refused. Custom `<addon>.<verb>` events are deferred (A5); in P1 they are
 refused.
 
@@ -1852,6 +1854,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
 | `validation.event` | §5.11 step 0 malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2); replay breaks the chain at that line |
 | `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
+| `hub.invalid` | §5.4.2 `hub.joined` or `hub.left` the model refuses: not the owner, a mode other than selective, a hub already joined, a `binding_seq` that is not higher, a re-pointed alias, or a `hub.left` that names no joined hub and binding |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |

@@ -69,6 +69,8 @@ SHOWN: dict[str, frozenset[str]] = {
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
+    "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
+    "hub.left": frozenset({"hub_id", "binding_seq"}),
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -1166,6 +1168,32 @@ def _event(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
         return "Change the workspace settings"
+    if typ == "hub.joined":  # V3 C2a: selective only; the words say what the hub does and does not get
+        hub = _short(ev.get("hub_id"))
+        _row(out, "hub", ev.get("hub_id"))
+        _row(out, "hub key fingerprint", _fp(ev.get("hk_root_pub")))
+        _row(out, "mode", ev.get("mode"))
+        _row(out, "binding", ev.get("binding_seq"))
+        aliases = ev.get("aliases") if isinstance(ev.get("aliases"), list) else []
+        for a in aliases:
+            if not isinstance(a, dict) or set(a) != {"person_id", "user_id"}:
+                raise PlainUnavailable("hub.joined alias is not a pair")
+            _row(out, "hub name for you", f"{one(a['person_id'])} is {one(a['user_id'])} on the hub")
+        out.setdefault("notes", []).append(
+            "Selective: the hub sees only what you choose to share. It never gets the workspace key and is not a "
+            "member of the workspace. You can leave at any time (orch hub leave), also while the hub is down."
+        )
+        if ev.get("mode") != "selective":
+            raise PlainUnavailable("only the selective mode has plain words")
+        return f"Join hub {hub} in selective mode: the hub sees only what you share"
+    if typ == "hub.left":
+        _row(out, "hub", ev.get("hub_id"))
+        _row(out, "binding", ev.get("binding_seq"))
+        out.setdefault("notes", []).append(
+            "The workspace tells the hub and publish that it is no longer bound. This does not take back what the "
+            "hub already read."
+        )
+        return f"Leave hub {_short(ev.get('hub_id'))}"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []

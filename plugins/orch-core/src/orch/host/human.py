@@ -402,6 +402,8 @@ class HumanOps:
         store.refresh()
         if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
+        if signer is not None:
+            convenience.refuse_hub_op(name, signer["auth"])  # V3 C2a: a hub op is never click-to-sign
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
@@ -435,6 +437,10 @@ class HumanOps:
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
+        if name == "hub.join":  # V3 C2a: the host's clock and dev state, never the request's
+            from . import hubops
+
+            capture.hub = hubops.facts_for(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -1065,6 +1071,8 @@ class HumanOps:
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             self._recheck_needs(store, record, events)
+            for e in events:
+                convenience.refuse_hub_op(record["op"], e.get("auth"))  # V3 C2a, again at submit
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

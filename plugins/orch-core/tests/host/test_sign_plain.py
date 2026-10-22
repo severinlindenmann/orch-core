@@ -286,7 +286,9 @@ VALUES = {
     "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "q1", "option": "a", "qid": "q9",
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
-    "gates": {"plan": POLICY}, "set": {"grant_hours": 5}, "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
+    "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
+    "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
 
 
@@ -354,7 +356,7 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
         needles = []
         if isinstance(value, str) and value.startswith("sha256:"):
             needles.append(value[7:19])  # a digest is shown short
-        elif key in ("pk_pub", "cert", "device_cert"):
+        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub"):
             needles.append(signcontent._fp(value))  # a key or certificate is shown by its fingerprint
         elif key in ("sections", "set", "gates", "source_sha"):
             needles.append(
@@ -366,6 +368,8 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
                     "source_sha": "aaaaaaaaaaaa",
                 }[key]
             )
+        elif key == "aliases":
+            needles.append("a" * 32)  # the hub name of the person
         elif key in ("gate", "question"):
             needles.append("plan" if key == "gate" else "marker question")
         elif key == "ticket_type":

@@ -431,3 +431,57 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
                 generations.void_device(ws, ticket, dev_id)
                 generations.settle(ws, ticket, before, raise_gates=False)
     return None
+
+
+# --- the hub (hub contract H0 section 9.1; C2a: selective mode only) -----------------------------------------------
+
+#: modes the model accepts: full mode (``WK_e`` sealed to the hub, a ``hub`` member) is C2b, phase 3
+HUB_MODES = ("selective",)
+
+
+def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. Never a ``hub`` member and never
+    ``WK_e``: this event adds nothing to the member list. ``binding_seq`` is strictly higher than any earlier one
+    (across joins, mode switches and rejoins, 9.2); an earlier join must have ended with ``hub.left``; aliases are
+    never re-pointed, in either direction (9.1)."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    h = ws.hub
+    if e["mode"] not in HUB_MODES:
+        return Refusal(Code.HUB_INVALID, "only the selective mode is supported; the full mode comes later (C2b)")
+    if h and h["status"] == "joined":
+        return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
+    if e["binding_seq"] <= h.get("binding_seq", 0):
+        return Refusal(Code.HUB_INVALID, "binding_seq must be higher than every earlier binding of this workspace")
+    aliases = dict(h.get("aliases", {}))
+    users = {u: p for p, u in aliases.items()}
+    for a in e["aliases"]:
+        pid, uid = a["person_id"], a["user_id"]
+        if aliases.get(pid, uid) != uid or users.get(uid, pid) != pid:
+            return Refusal(Code.HUB_INVALID, "an alias is never re-pointed")
+        aliases[pid], users[uid] = uid, pid
+    if any("p_" + pid not in ws.members for pid in aliases):
+        return Refusal(Code.HUB_INVALID, "an alias names a person who is not a member")
+    ws.hub = {
+        "hub_id": e["hub_id"],
+        "hk_root_pub": e["hk_root_pub"],
+        "mode": e["mode"],
+        "binding_seq": e["binding_seq"],
+        "status": "joined",
+        "aliases": aliases,
+    }
+    return None
+
+
+def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``hub.left`` (owner only): ends the binding it names. It must name the hub and binding that are joined;
+    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    h = ws.hub
+    if not h or h["status"] != "joined":
+        return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
+    if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
+        return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
+    ws.hub = {**h, "status": "left"}
+    return None

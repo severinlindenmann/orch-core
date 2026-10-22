@@ -156,6 +156,9 @@ class WsCore:
     settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))
     repos: dict[str, dict[str, str]] = field(default_factory=dict)
     addons: dict[str, Addon] = field(default_factory=dict)
+    # The one hub of this workspace (hub contract 9.1): {hub_id, hk_root_pub, mode, binding_seq, status:
+    # "joined" | "left", aliases: {person_id: user_id}}; empty until the first hub.joined. ``binding_seq`` only grows.
+    hub: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
 
 

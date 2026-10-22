@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.unverified",
+    "message": "the release or catalog could not be verified",
+    "hint": "nothing was changed; do not install it",
+    "fix": {
+      "argv": [
+        "orch",
+        "doctor"
+      ]
+    },
+    "retryable": false
+  }
+}

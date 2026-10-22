@@ -220,6 +220,46 @@ def unbound(ws: str = WS_A, wsk: str = "wsk_a", seq: int = 1, **kw: Any) -> dict
     return signed(wsk, "sig_hub_unbound", o)
 
 
+def _h(name: str) -> str:
+    return "sha256:" + S.fake_seed("hub/ev/" + name).hex()
+
+
+NEW_TICKET = "01J9ZP0000000000000000TKT9"
+SOURCES = [
+    {"repo": "https://github.com/demo/api", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/ev/src").hex()[:40]}
+]
+#: §8.5 event side: per custodial type, the log and the exact payload AFTER the hub derived its fields (core runs its
+#: step-1 exact-payload check on these, L2-C3-1). The gate types keep the fields of the default event.
+EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
+    "ticket.created": (NEW_TICKET, {"key": "DEMO-0044", "ticket_type": "feature", "title": "Load tariff tables",
+                                    "owner": "u_" + U_ALICE}),
+    "ticket.updated": (TICKET, {"set": {"ticket.priority": "high", "ticket.title": "Tariffs v2"},
+                                "base_rev": {"ticket.priority": _h("rev_prio"), "ticket.title": _h("rev_title")}}),
+    "status.changed": (TICKET, {"from": "in_progress", "to": "open", "reason": "waiting for data"}),
+    "ticket.submitted": (TICKET, {}),
+    "ticket.closed": (TICKET, {"resolution": "duplicate", "duplicate_of": "DEMO-0012"}),
+    "ticket.reopened": (TICKET, {"text": "Still broken on Safari"}),
+    "claim.released": (TICKET, {"session": "s_7f3a", "reason": "released"}),
+    "log.added": (TICKET, {"text": "Checked with finance.\nOK to proceed."}),
+    "handoff.written": (TICKET, {"text": "Importer done; API next."}),
+    "question.asked": (TICKET, {"question": {"id": "Q2", "to": "ticket_owner", "text": "CSV or API?", "blocking": True,
+                                             "options": [{"key": "api", "label": "API"}, {"key": "csv", "label": "CSV"}],
+                                             "recommended": "csv"},
+                                "qid": S.fake_seed("hub/ev/qid").hex()[:32], "hash": _h("question")}),
+    "question.answered": (TICKET, {"question": "Q1", "hash": _h("q1"), "option": "csv"}),
+    "gate.approved": (TICKET, None),
+    "gate.changes_requested": (TICKET, {"gate": "plan", "gate_gen": 2, "hash": _h("plan"),
+                                        "policy_hash": _h("policy"), "text": "Split the importer"}),
+    "verdict.given": (TICKET, {"outcome": "pass", "gate_gen": 1, "hash": _h("verify"), "policy_hash": _h("policy"),
+                               "source_sha": SOURCES}),
+    "ticket.moved": (TICKET, {"from": "testing", "to": "backlog", "reason": "Parked until Q1"}),
+    "visibility.changed": (TICKET, {"visibility": {"restricted": ["p_" + fake16("person_alice"), "u_" + U_BOB]}}),
+    "people.changed": (TICKET, {"role": "reviewers", "add": ["u_" + U_BOB], "remove": []}),
+    "addon.disabled": ("workspace", {"name": "wiki"}),
+    "addon.purged": ("workspace", {"name": "wiki"}),
+}  # fmt: skip
+
+
 def custodial(
     user_key: str = "uk_alice",
     ch_key: str = "channel_alice_phone",
@@ -230,8 +270,15 @@ def custodial(
     tamper_after_sign: dict[str, Any] | None = None,
     typ: str = "gate.approved",
     snapshot_version: int = 3,
+    item_hash: str | None = None,
+    log: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """A signed custodial event of ``typ`` with the exact payload the hub builds for it (:data:`EVENT_PAYLOADS`, §8.5
+    event side); an unlisted type keeps the gate payload (it is refused at step 7b before its payload matters)."""
     chan = H.channel_id(K.pub[ch_key])
+    elog, table = EVENT_PAYLOADS.get(typ, (TICKET, None))
+    log, payload = log or elog, payload if payload is not None else table
     e = {
         "v": 2,
         "id": "01J9ZP0000000000000000EVT1",
@@ -252,9 +299,17 @@ def custodial(
         "channel_cert": ch if ch is not None else channel_cert(user=user, key=ch_key, factor=factor),
         "uk_cert": uk if uk is not None else uk_cert(user=user, key=user_key),
     }
-    digest = H.event_digest(WS_A, TICKET, e)
+    if payload is not None:
+        for k in ("gate", "hash", "policy_hash", "gate_gen"):
+            del e[k]
+        e.update(payload)
+        if typ == "ticket.created":
+            e["based_on"] = None
+    if item_hash is not None:  # selective mode only (C3b addendum, §8.1)
+        e["item_hash"] = item_hash
+    digest = H.event_digest(WS_A, log, e)
     e["channel_proof"] = b64u(S.sign(K.priv[ch_key], H.channel_proof_bytes(digest), deterministic=True))
-    sig = S.sign(K.priv[user_key], H.custodial_bytes(WS_A, TICKET, e), deterministic=True)
+    sig = S.sign(K.priv[user_key], H.custodial_bytes(WS_A, log, e), deterministic=True)
     out = {**e, "sig": b64u(sig)}
     if tamper_after_sign:
         out.update(tamper_after_sign)
@@ -1162,47 +1217,130 @@ def build() -> dict[str, Any]:
         {"error": "unknown_snapshot"},
         4,
     )
+    # selective mode (§8.3 step 7, §8.6): the real f1 item of the vectors, a decision on a gate it carries
+    from . import phase4 as P4
+    from .vectorgen_p4 import CHAIN, F1, HASH_P, HASH_Q, f1_item
+
+    item = f1_item()
+    h_item = P4.item_hash(item)
+    plan = F1["gates"]["plan"]
+    on_plan = {"gate": "plan", "gate_gen": plan["gen"], "hash": plan["hash"], "policy_hash": plan["policy_hash"],
+               "based_on": CHAIN["head"]}  # fmt: skip
+    ev_sel = custodial(item_hash=h_item, payload=on_plan)
+    LIVE = {h_item: {"chain": CHAIN, "f1": F1}}
+    HEADS = {TICKET: ["sha256:" + S.fake_seed("hub/ev/head1").hex(), CHAIN["head"]]}
+    sel_ok = {
+        **cus,
+        "mode": "selective",
+        "live_items": LIVE,
+        "log_heads": HEADS,
+        "granted_users": [U_ALICE],
+        "member_roles": {U_ALICE: "owner"},
+    }
+    q_only = f1_item(f1={**F1, "gates": {}}, item_id=fake16("share_item_q"))
+    h_q = P4.item_hash(q_only)
+    for nm, args, exp, why in (
+        ("custodial_selective_item_not_live", {**sel_ok, "event": ev_sel, "live_items": {}}, "not_granted",
+         "the item check at admission: the event's item_hash is a live shared item"),
+        ("custodial_selective_item_superseded", {**sel_ok, "event": ev_sel, "live_items": {},
+         "superseded_items": [h_item]}, "event_changed",
+         "an earlier version of a live item (a re-put raced the decision): the person may sign again (L2-ADD-3)"),
+        ("custodial_selective_item_of_other_log", {**sel_ok, "event": ev_sel,
+         "live_items": {h_item: {"chain": {**CHAIN, "log": "01J9ZP0000000000000000TKT2"}, "f1": F1}}},
+         "not_granted", "the item's chain.log is the event's log"),
+        ("custodial_selective_gate_not_in_item_f1", {**sel_ok, "event": custodial(item_hash=h_item)}, "not_granted",
+         "L2-ADD-1: the decision's gate is in the f1 of the item the person was shown"),
+        ("custodial_selective_question_not_in_item_f1", {**sel_ok, "event": custodial(typ="question.answered",
+         item_hash=h_item, payload={"question": "Q7", "hash": HASH_Q, "text": "yes", "based_on": CHAIN["head"]})}, "not_granted",
+         "L2-ADD-1: the question is in the item's f1"),
+        ("custodial_selective_question_item_gate_decision", {**sel_ok,
+         "live_items": {h_q: {"chain": CHAIN, "f1": q_only["o"]["f1"]}},
+         "event": custodial(item_hash=h_q, payload=on_plan)}, "not_granted",
+         "a question item's hash never admits a gate decision"),
+        ("custodial_selective_head_fork", {**sel_ok, "event": ev_sel,
+         "log_heads": {TICKET: [HEADS[TICKET][0], HASH_P]}}, "view_fork",
+         "the item's chain.head is not on the host's log at chain.seq"),
+        ("custodial_selective_log_added", {**sel_ok, "event": custodial(typ="log.added", item_hash=h_item)},
+         "not_custodial", "only the four decisions in selective mode"),
+        ("custodial_selective_workspace_log", {**sel_ok, "log": "workspace",
+         "event": custodial(typ="addon.disabled", item_hash=h_item)}, "not_custodial",
+         "no selective workspace-log types"),
+        ("custodial_selective_answer_with_option",
+         {**sel_ok, "event": custodial(typ="question.answered", item_hash=h_item)}, "malformed",
+         "text-only answers in selective mode (options are not shared)"),
+        ("custodial_selective_without_item_hash", {**sel_ok, "event": custodial(payload=on_plan)}, "malformed",
+         "C3b addendum: a selective custodial event names the shared item it was built on (item_hash)"),
+        ("custodial_full_with_item_hash", {**cus, "event": ev_sel}, "malformed", "item_hash exists only in selective mode"),
+        ("custodial_selective_not_granted", {**sel_ok, "event": ev_sel, "granted_users": [U_BOB]}, "not_granted",
+         "D80: hub roles do not reach a selective workspace"),
+        ("custodial_selective_people_changed_not_selective", {**sel_ok, "member_roles": {U_ALICE: "member"},
+         "event": custodial(typ="people.changed", item_hash=h_item)}, "not_custodial",
+         "selective mode builds only the four decision types (§8.6)"),
+    ):  # fmt: skip
+        case(nm, "custodial", args, {"error": exp}, 4, why)
+    case("custodial_selective_granted_owner", "custodial", {**sel_ok, "event": ev_sel}, ok_cus, 4)
+    # the event is bound to the item's values (§8.3 step 7 (ii)): one vector per field
+    code_g, ver_g = F1["gates"]["code"], F1["gates"]["verify"]
+    on_code = {"gate": "code", "gate_gen": code_g["gen"], "hash": code_g["hash"], "policy_hash": code_g["policy_hash"],
+               "source_sha": code_g["source_sha"], "based_on": CHAIN["head"]}  # fmt: skip
+    case("custodial_selective_code_approval_in_item", "custodial",
+         {**sel_ok, "event": custodial(item_hash=h_item, payload=on_code)}, ok_cus, 4)  # fmt: skip
+    on_ver = {"outcome": "pass", "gate_gen": ver_g["gen"], "hash": ver_g["hash"], "policy_hash": ver_g["policy_hash"],
+              "source_sha": ver_g["source_sha"], "based_on": CHAIN["head"]}  # fmt: skip
+    case("custodial_selective_verdict_in_item", "custodial",
+         {**sel_ok, "event": custodial(typ="verdict.given", item_hash=h_item, payload=on_ver)}, ok_cus, 4)  # fmt: skip
+    q1 = {"question": "Q1", "hash": HASH_Q, "text": "CSV", "based_on": CHAIN["head"]}
+    other = "sha256:" + S.fake_seed("hub/ev/other_value").hex()
+    for nm, typ, pl in (
+        ("gate_hash", "gate.approved", {**on_plan, "hash": other}),
+        ("gate_gen", "gate.approved", {**on_plan, "gate_gen": plan["gen"] + 1}),
+        ("policy_hash", "gate.approved", {**on_plan, "policy_hash": other}),
+        ("source_sha", "gate.approved", {**on_code, "source_sha": code_g["source_sha"][:1]}),
+        ("based_on", "gate.approved", {**on_plan, "based_on": other}),
+        ("question_hash", "question.answered", {**q1, "hash": other}),
+        ("question_based_on", "question.answered", {**q1, "based_on": other}),
+    ):
+        case(f"custodial_selective_value_{nm}_differs", "custodial",
+             {**sel_ok, "event": custodial(typ=typ, item_hash=h_item, payload=pl)}, {"error": "event_changed"}, 4,
+             "the event is built on exactly the values of the item the person was shown")  # fmt: skip
+    case("custodial_selective_value_roster_v_differs", "custodial",
+         {**sel_ok, "event": custodial(item_hash=h_item, payload={**on_plan, "roster_v": F1["roster_v"] + 1})},
+         {"error": "event_changed"}, 4, "roster_v is the item's f1.roster_v")  # fmt: skip
     case(
-        "custodial_selective_not_granted",
+        "custodial_selective_answer_in_item",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_BOB]},
-        {"error": "not_granted"},
-        4,
-        "D80: hub roles do not reach a selective workspace",
-    )
-    case(
-        "custodial_selective_granted_owner",
-        "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
+        {**sel_ok, "event": custodial(typ="question.answered", item_hash=h_item,
+                                      payload={"question": "Q1", "hash": HASH_Q, "text": "CSV",
+                                               "based_on": CHAIN["head"]})},
         ok_cus,
         4,
-    )
-    # L2P4-1: selective mode floors on the canonical person's F1 member role, not a fixed admin
-    case(
-        "custodial_selective_granted_member_cannot_people_changed",
-        "custodial",
-        {
-            **cus,
-            "event": custodial(typ="people.changed"),
-            "mode": "selective",
-            "granted_users": [U_ALICE],
-            "member_roles": {U_ALICE: "member"},
-        },
-        {"error": "forbidden_role"},
-        4,
-        "a granted member is edit, not admin",
-    )
+    )  # fmt: skip
     case(
         "custodial_selective_granted_member_decides",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "member"}},
+        {
+            **cus,
+            "event": ev_sel,
+            "mode": "selective",
+            "live_items": LIVE,
+            "log_heads": HEADS,
+            "granted_users": [U_ALICE],
+            "member_roles": {U_ALICE: "member"},
+        },
         ok_cus,
         4,
     )
     case(
         "custodial_selective_granted_unaliased_is_viewer",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE]},
+        {
+            **cus,
+            "event": ev_sel,
+            "mode": "selective",
+            "live_items": LIVE,
+            "log_heads": HEADS,
+            "granted_users": [U_ALICE],
+        },
         {"error": "forbidden_role"},
         4,
         "a granted user without an alias to a member is a viewer and signs nothing",

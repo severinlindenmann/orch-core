@@ -17,6 +17,7 @@ from .canon import b64u, cj
 from .vectorgen import (
     CH_ALICE,
     DAY,
+    EVENT_PAYLOADS,
     HUB_ID,
     NOW,
     OP_CERT_ID,
@@ -219,6 +220,32 @@ ITEM = fake16("share_item_1")
 NEEDS_YOU = {"type": "question", "title": "CSV or API for tariffs?", "deadline": "2026-10-30"}
 CHAIN = {"log": TICKET, "seq": 2, "head": "sha256:" + S.fake_seed("hub/share_chain_head").hex()}
 T_SHARED = NOW - 60_000
+HASH_A = "sha256:" + S.fake_seed("hub/f1_gate_hash").hex()
+HASH_P = "sha256:" + S.fake_seed("hub/f1_policy_hash").hex()
+HASH_Q = "sha256:" + S.fake_seed("hub/f1_question_hash").hex()
+SRC = [
+    {"repo": "https://github.com/demo/api", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/src_api").hex()[:40]},
+    {"repo": "https://github.com/demo/web", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/src_web").hex()[:40]},
+]
+TICKET_CONTENT = {
+    "key": "DEMO-0043",
+    "type": "feature",
+    "title": "Load tariff tables",
+    "status": "testing",
+    "labels": ["dbt", "tariffs"],
+    "deadline": None,
+}
+#: C3b addendum (§10.2b): the F1 values the host puts into a ticket item so a selective hub can build decisions
+F1 = {
+    "roster_v": 4,
+    "gates": {
+        "plan": {"gen": 2, "hash": "sha256:" + S.fake_seed("hub/f1_plan").hex(), "policy_hash": HASH_P},
+        "code": {"gen": 1, "hash": HASH_A, "policy_hash": HASH_P, "source_sha": SRC},
+        "verify": {"gen": 1, "hash": "sha256:" + S.fake_seed("hub/f1_verify").hex(), "policy_hash": HASH_P,
+                   "source_sha": SRC},
+    },
+    "questions": {"Q1": {"hash": HASH_Q}},
+}  # fmt: skip
 
 
 def share_item(version: int = 1, wsk: str = "wsk_a", label: str = "sig_share_item", **kw: Any) -> dict[str, Any]:
@@ -236,6 +263,11 @@ def share_item(version: int = 1, wsk: str = "wsk_a", label: str = "sig_share_ite
         **kw,
     }
     return signed(wsk, label, o)
+
+
+def f1_item(**kw: Any) -> dict[str, Any]:
+    """The ticket item with the vector ``f1`` block (§10.2b), signed by ``wsk_a``."""
+    return share_item(item_kind="ticket", content=TICKET_CONTENT, **{"f1": F1, **kw})
 
 
 def share_body(item: dict[str, Any] | None = None, hxk: str = "hxk", item_id: str | None = None) -> dict[str, Any]:
@@ -598,6 +630,56 @@ def build_p4(
         {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "edit"}},
         4,
     )
+
+    # ---- §8.5 event side: one event-shaped vector per custodial type (the payload after the hub derived its fields),
+    # so the host runs the exact-payload check in §8.3 step 1 against the same bytes as the hub (L2-C3-1)
+    adm = {**cus, "snapshot": snapshot(roles={U_ALICE: "admin"})["o"]}
+    ok_adm = {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "admin"}}
+    for (typ, _lk), _r in sorted(H.CUSTODIAL_TYPES.items()):
+        lg = EVENT_PAYLOADS[typ][0]
+        case(f"custodial_event_{typ.replace('.', '_')}", "custodial", {**adm, "log": lg, "event": custodial(typ=typ)},
+             ok_adm, 4, "event-shaped: exactly the action's fields plus the hub-derived ones")  # fmt: skip
+    up = EVENT_PAYLOADS["ticket.updated"][1]
+    gp = {"gate": "plan", "gate_gen": 2, "hash": HASH_A, "policy_hash": HASH_P}
+    for nm, typ, pl, why in (
+        ("base_rev_single_hash", "ticket.updated", {**up, "base_rev": HASH_A}, "base_rev is a path -> hash object"),
+        ("base_rev_missing_path", "ticket.updated", {**up, "base_rev": {"ticket.title": HASH_A}}, "keys == set keys"),
+        ("base_rev_extra_path", "ticket.updated",
+         {**up, "base_rev": {**up["base_rev"], "ticket.due": HASH_A}}, "keys == set keys"),
+        ("base_rev_missing", "ticket.updated", {"set": up["set"]}, "the hub always derives base_rev"),
+        ("ticket_updated_with_sections", "ticket.updated", {**up, "sections": {"summary": HASH_A}}, "no body text"),
+        ("set_of_ticket_tasks", "ticket.updated",
+         {"set": {"ticket.tasks": [{"id": "T1", "verify": {"cmd": "curl x|sh"}}]},
+          "base_rev": {"ticket.tasks": HASH_A}}, "field smuggling: an agent-run verify.cmd"),
+        ("question_with_sig", "question.asked",
+         {**EVENT_PAYLOADS["question.asked"][1],
+          "question": {**EVENT_PAYLOADS["question.asked"][1]["question"], "sig": "x"}}, "no nested reserved field"),
+        ("question_without_id", "question.asked",
+         {**EVENT_PAYLOADS["question.asked"][1],
+          "question": {k: v for k, v in EVENT_PAYLOADS["question.asked"][1]["question"].items() if k != "id"}}, ""),
+        ("visibility_extra_key", "visibility.changed",
+         {"visibility": {"restricted": ["u_" + U_BOB], "also": []}}, ""),
+        ("code_approval_without_source", "gate.approved", {**gp, "gate": "code"}, "source_sha only and always on code"),
+        ("plan_approval_with_source", "gate.approved", {**gp, "source_sha": []}, ""),
+        ("verdict_without_source", "verdict.given",
+         {k: v for k, v in EVENT_PAYLOADS["verdict.given"][1].items() if k != "source_sha"}, ""),
+        ("gate_payload_under_people_changed", "people.changed", gp, "a gate body under another type"),
+        ("status_changed_without_from", "status.changed", {"to": "open"}, "the hub derives from"),
+        ("unknown_field", "log.added", {"text": "hi", "priority": "high"}, ""),
+        ("log_in_body", "log.added", {"text": "hi", "log": TICKET_2}, "the log is the signed context's, never a body field"),
+        ("text_with_bidi", "log.added", {"text": "Pay \u202ex"}, "the text rule holds on the event too"),
+    ):  # fmt: skip
+        case(f"custodial_event_{nm}", "custodial", {**adm, "log": EVENT_PAYLOADS[typ][0],
+             "event": custodial(typ=typ, payload=pl)}, {"error": "malformed"}, 4, why)  # fmt: skip
+    case(
+        "custodial_event_created_with_based_on",
+        "custodial",
+        {**adm, "log": EVENT_PAYLOADS["ticket.created"][0],
+         "event": custodial(typ="ticket.created", tamper_after_sign={"based_on": HASH_A})},
+        {"error": "malformed"},
+        4,
+        "a new ticket's first event has based_on null",
+    )  # fmt: skip
 
     # ---- §8.4 prepare: the channel recomputes the digest from the context it shows
     ev = custodial()
@@ -1185,6 +1267,50 @@ def build_p4(
     rt("relay_route_mailbox_get", RR.mailbox_get_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_get", id=mid2))
     rt("relay_route_mailbox_delete", RR.mailbox_delete_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_delete", id=mid2))
     rt("relay_route_mailbox_purge", RR.mailbox_delete_request(HUB_ID, CH_ALICE), ok_("mailbox_purge"))
+    # ---- §10.8.3 cut-over (relay E3): the hub's signed requests and the state rules on both sides
+    co_put, co_get, co_del = (RR.cutover_request(HUB_ID, WS_A, m_) for m_ in ("PUT", "GET", "DELETE"))
+    rt("relay_route_cutover_put", co_put, {"ok": {"route": "cutover_put", "workspace_id": WS_A}})
+    rt("relay_route_cutover_get", co_get, {"ok": {"route": "cutover_get", "workspace_id": WS_A}})
+    rt("relay_route_cutover_delete", co_del, {"error": "not_allowed"}, "a hub never reverses a cut-over")
+    rt("relay_route_cutover_put_empty_body", (co_put[0], co_put[1], b""), {"error": "malformed"})
+    rt("relay_route_cutover_put_pending", (co_put[0], co_put[1], cj({"v": 2, "state": "pending"})),
+       {"error": "malformed"}, "a hub only confirms")  # fmt: skip
+    rt("relay_route_cutover_put_names_hub", (co_put[0], co_put[1], cj({"v": 2, "state": "cut_over", "hub_id": HUB_ID})),
+       {"error": "malformed"}, "the hub is the signer, never a body field")  # fmt: skip
+    rt("relay_route_cutover_bad_ws", (co_get[0], co_get[1].replace(WS_A, WS_A.upper()), b""), {"error": "malformed"})
+    rt("relay_route_cutover_post", ("POST", co_put[1], co_put[2]), {"error": "not_found"})
+    hub_b = fake16("hub_b")
+    pend, cut = {"state": "pending", "hub_id": HUB_ID}, {"state": "cut_over", "hub_id": HUB_ID}
+
+    def co(name: str, side: str, row: Any, req: tuple[str, str, bytes], expect: dict[str, Any], note: str = "",
+           regs: list[str] | None = None) -> None:  # fmt: skip
+        m_, t_, b_ = req
+        a = {"side": side, "row": row, "method": m_, "target": t_, "hub_id": HUB_ID, "body_hex": b_.hex()}
+        if side == "workspace":
+            a["registered_hubs"] = sorted(regs if regs is not None else [HUB_ID, hub_b])
+        case(name, "cutover", a, expect, 4, note)
+
+    co("cutover_hub_confirms_pending", "hub", pend, co_put, {"ok": cut})
+    co("cutover_hub_confirm_is_idempotent", "hub", cut, co_put, {"ok": cut})
+    co("cutover_hub_reads_state", "hub", pend, co_get, {"ok": pend})
+    co("cutover_hub_unknown_workspace", "hub", None, co_put, {"error": "other_hub"},
+       "unknown, not named and another hub's workspace are one answer")  # fmt: skip
+    co("cutover_hub_other_hub_named", "hub", {"state": "pending", "hub_id": hub_b}, co_put, {"error": "other_hub"})
+    co("cutover_hub_get_other_hub", "hub", {"state": "cut_over", "hub_id": hub_b}, co_get, {"error": "other_hub"})
+    ws_req = lambda st, h=HUB_ID: ("PUT", "", cj({"v": 2, "hub_id": h, "state": st}))
+    co("cutover_workspace_names_hub", "workspace", None, ws_req("pending"), {"ok": {"row": pend}})
+    co("cutover_workspace_cuts_over_directly", "workspace", None, ws_req("cut_over"), {"ok": {"row": cut}})
+    co("cutover_workspace_renames_pending", "workspace", pend, ws_req("pending", hub_b),
+       {"ok": {"row": {"state": "pending", "hub_id": hub_b}}})  # fmt: skip
+    co("cutover_workspace_pending_after_cut_over", "workspace", cut, ws_req("pending"), {"error": "cut_over"},
+       "naming a hub never weakens a cut-over: DELETE first")  # fmt: skip
+    co("cutover_workspace_reverses", "workspace", cut, ("DELETE", "", b""), {"ok": {"row": None}})
+    co("cutover_workspace_bad_state", "workspace", None, ws_req("direct"), {"error": "malformed"})
+    co("cutover_workspace_unregistered_hub", "workspace", None, ws_req("pending", fake16("hub_never_registered")),
+       {"error": "unknown_hub"}, "a workspace names only a hub registered at this relay (403, L2-ADD-2)")  # fmt: skip
+    co("cutover_workspace_renames_to_unregistered_hub", "workspace", pend, ws_req("pending", hub_b),
+       {"error": "unknown_hub"}, regs=[HUB_ID])  # fmt: skip
+
     m, t, b = put_req
     rt(
         "relay_route_push_put_bad_env",
@@ -1254,14 +1380,7 @@ def build_p4(
         return {"ok": {"item_version": it["o"]["item_version"], "hash": P4.item_hash(it), "new": new}}
 
     shr("share_item_needs_you", share_body(), okv(it1))
-    tk = {
-        "key": "DEMO-0043",
-        "type": "feature",
-        "title": "Load tariff tables",
-        "status": "testing",
-        "labels": ["dbt", "tariffs"],
-        "deadline": None,
-    }
+    tk = TICKET_CONTENT
     it_t = share_item(item_kind="ticket", content=tk)
     shr("share_item_ticket", share_body(it_t), okv(it_t))
     qn = {
@@ -1476,6 +1595,216 @@ def build_p4(
             "exact fields per share change",
         )
 
+    # ---- C3b addendum: share.item f1 (§10.2b), selective build (§8.6), delivery acks (§8.7), user ids (§9.1)
+    it_f1 = f1_item()
+    h_f1 = P4.item_hash(it_f1)
+    shr("share_item_with_f1", share_body(it_f1), okv(it_f1), "additive: an item may carry the F1 values of its ticket")
+    for nm, f1, why in (
+        ("f1_extra_key", {**F1, "policy": {}}, "exact keys, no free object"),
+        ("f1_source_on_plan", {**F1, "gates": {"plan": {**F1["gates"]["plan"], "source_sha": []}}}, "plan: no list"),
+        ("f1_code_without_source", {**F1, "gates": {"code": {"gen": 1, "hash": HASH_A, "policy_hash": HASH_P}}}, ""),
+        ("f1_unsorted_sources", {**F1, "gates": {"code": {**F1["gates"]["code"], "source_sha": SRC[::-1]}}}, ""),
+        ("f1_unknown_gate", {**F1, "gates": {"design": F1["gates"]["plan"]}}, ""),
+        ("f1_question_extra_key", {**F1, "questions": {"Q1": {"hash": HASH_Q, "text": "x"}}}, ""),
+        ("f1_negative_roster_v", {**F1, "roster_v": -1}, ""),
+    ):
+        shr(
+            f"share_item_{nm}",
+            share_body(share_item(item_kind="ticket", content=tk, f1=f1)),
+            {"error": "malformed"},
+            why,
+        )
+    shr(
+        "share_item_f1_on_workspace_chain",
+        share_body(share_item(f1=F1, chain={**CHAIN, "log": "workspace"})),
+        {"error": "malformed"},
+        "no selective workspace-log types",
+    )
+
+    def sel(name: str, action: dict[str, Any], expect: dict[str, Any], note: str = "", item: Any = None) -> None:
+        case(name, "selective_build", {"item": item or it_f1, "action": action}, expect, 4, note)
+
+    base = {"based_on": CHAIN["head"], "roster_v": F1["roster_v"], "hash_v": 1, "item_hash": h_f1}
+    g_code, g_plan, g_ver = F1["gates"]["code"], F1["gates"]["plan"], F1["gates"]["verify"]
+    sel(
+        "selective_build_gate_approved_code",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "code", "hash": g_code["hash"]},
+        {"ok": {"log": TICKET, "event": {**base, "type": "gate.approved", "gate": "code", "gate_gen": g_code["gen"],
+                "hash": g_code["hash"], "policy_hash": g_code["policy_hash"], "source_sha": g_code["source_sha"]}}},
+    )  # fmt: skip
+    sel(
+        "selective_build_gate_approved_plan",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "plan", "hash": g_plan["hash"]},
+        {"ok": {"log": TICKET, "event": {**base, "type": "gate.approved", "gate": "plan", "gate_gen": g_plan["gen"],
+                "hash": g_plan["hash"], "policy_hash": g_plan["policy_hash"]}}},
+    )  # fmt: skip
+    sel(
+        "selective_build_changes_requested_code",
+        {"type": "gate.changes_requested", "log": TICKET, "item": ITEM, "gate": "code", "hash": g_code["hash"],
+         "text": "Split the importer"},
+        {"ok": {"log": TICKET, "event": {**base, "type": "gate.changes_requested", "gate": "code",
+                "gate_gen": g_code["gen"], "hash": g_code["hash"], "policy_hash": g_code["policy_hash"],
+                "text": "Split the importer"}}},
+        "a change request carries no source list (ticket-format §5.4)",
+    )  # fmt: skip
+    sel(
+        "selective_build_verdict_pass",
+        {"type": "verdict.given", "log": TICKET, "item": ITEM, "outcome": "pass", "hash": g_ver["hash"]},
+        {"ok": {"log": TICKET, "event": {**base, "type": "verdict.given", "outcome": "pass", "gate_gen": g_ver["gen"],
+                "hash": g_ver["hash"], "policy_hash": g_ver["policy_hash"], "source_sha": g_ver["source_sha"]}}},
+    )  # fmt: skip
+    sel(
+        "selective_build_question_answered",
+        {"type": "question.answered", "log": TICKET, "item": ITEM, "question": "Q1", "hash": HASH_Q, "text": "CSV"},
+        {"ok": {"log": TICKET, "event": {**base, "type": "question.answered", "question": "Q1", "hash": HASH_Q,
+                "text": "CSV"}}},
+    )  # fmt: skip
+    sel(
+        "selective_build_answer_with_option",
+        {"type": "question.answered", "log": TICKET, "item": ITEM, "question": "Q1", "hash": HASH_Q, "option": "a"},
+        {"error": "malformed"},
+        "options are not shared in V3, so the person cannot have seen them",
+    )
+    sel(
+        "selective_build_stale_gate_hash",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "plan", "hash": HASH_Q},
+        {"error": "event_changed"},
+        "the person reviewed another hash than the item holds",
+    )
+    sel(
+        "selective_build_stale_question_hash",
+        {"type": "question.answered", "log": TICKET, "item": ITEM, "question": "Q1", "hash": HASH_A, "text": "x"},
+        {"error": "event_changed"},
+    )
+    sel(
+        "selective_build_gate_not_in_item",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "requirements", "hash": HASH_A},
+        {"error": "unknown_item"},
+    )
+    sel(
+        "selective_build_question_not_in_item",
+        {"type": "question.answered", "log": TICKET, "item": ITEM, "question": "Q2", "hash": HASH_Q, "text": "x"},
+        {"error": "unknown_item"},
+    )
+    sel(
+        "selective_build_other_log",
+        {"type": "gate.approved", "log": TICKET_2, "item": ITEM, "gate": "plan", "hash": g_plan["hash"]},
+        {"error": "unknown_item"},
+        "the event's log is the item's chain.log",
+    )
+    sel(
+        "selective_build_other_item",
+        {"type": "gate.approved", "log": TICKET, "item": fake16("share_item_2"), "gate": "plan",
+         "hash": g_plan["hash"]},
+        {"error": "unknown_item"},
+    )  # fmt: skip
+    sel(
+        "selective_build_item_without_f1",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "plan", "hash": g_plan["hash"]},
+        {"error": "unavailable"},
+        "an item shared without f1 cannot be built on",
+        item=share_item(item_kind="ticket", content=tk),
+    )
+    sel(
+        "selective_build_not_a_decision",
+        {"type": "log.added", "log": TICKET, "item": ITEM, "text": "hello"},
+        {"error": "not_custodial"},
+        "selective mode builds only the four decision types",
+    )
+    sel(
+        "selective_build_smuggles_gate_gen",
+        {"type": "gate.approved", "log": TICKET, "item": ITEM, "gate": "plan", "hash": g_plan["hash"], "gate_gen": 9},
+        {"error": "malformed"},
+    )
+    sel(
+        "selective_build_without_item",
+        {"type": "gate.approved", "log": TICKET, "gate": "plan", "hash": g_plan["hash"]},
+        {"error": "malformed"},
+    )
+
+    def dlv(name: str, reply: Any, expect: dict[str, Any], attempt: int = 1, age_ms: int = 0, note: str = "") -> None:
+        args = {"reply": reply, "attempt": attempt, "first_sent_ms": NOW - age_ms, "now_ms": NOW}
+        case(name, "deliver_next", args, expect, 4, note)
+
+    dlv("deliver_ack_done", {}, {"ok": {"done": True}}, note="also the reply to a duplicate (the host dedups by id)")
+    dlv("deliver_unavailable_resends", {"error": "unavailable"}, {"ok": {"resend_in_ms": 1000}})
+    dlv("deliver_unknown_snapshot_backs_off", {"error": "unknown_snapshot"}, {"ok": {"resend_in_ms": 8000}}, 4)
+    dlv("deliver_backoff_capped", {"error": "unavailable"}, {"ok": {"resend_in_ms": 300000}}, 30)
+    dlv("deliver_no_reply_resends", None, {"ok": {"resend_in_ms": 2000}}, 2, note="link drop or timeout")
+    dlv("deliver_garbled_reply_resends", {"error": 7}, {"ok": {"resend_in_ms": 1000}}, note="not a refusal")
+    dlv("deliver_gives_up_after_24h", {"error": "unavailable"}, {"ok": {"drop": "unavailable"}}, 40, DAY)
+    dlv("deliver_no_reply_gives_up_after_24h", None, {"ok": {"drop": "unavailable"}}, 40, DAY)
+    for code in (
+        "malformed", "not_bound", "wrong_mode", "replay", "event_changed", "forbidden_role", "not_granted",
+        "foreign_user", "channel_revoked", "not_custodial", "factor_too_weak", "view_fork", "internal", "bad_signature",
+    ):  # fmt: skip
+        dlv(f"deliver_final_{code}", {"error": code}, {"ok": {"drop": code}}, note="final: drop and tell the channel")
+
+    hub_b = fake16("hub_b")
+    p_alice = "p_" + fake16("person_alice")
+
+    def uh(name: str, user_hub: dict, aliases: dict, expect: dict, hub: str = HUB_ID, note: str = "") -> None:
+        args = {"user_hub": user_hub, "aliases": aliases, "hub_id": hub, "user_id": U_ALICE}
+        case(name, "user_hub", args, expect, 4, note)
+
+    ok_uh = {"ok": {"belongs": True}}
+    uh("user_id_first_recorded_under_this_hub", {U_ALICE: HUB_ID}, {}, ok_uh)
+    uh("user_id_seen_for_the_first_time", {}, {}, ok_uh, note="the event records it under this hub")
+    uh("user_id_aliased_under_another_hub", {}, {hub_b: {U_ALICE: p_alice}}, {"error": "foreign_user"})
+    uh(
+        "unaliased_user_id_first_recorded_under_another_hub",
+        {U_ALICE: hub_b},
+        {},
+        {"error": "foreign_user"},
+        note="L2-C3-2: hub B cannot mint an id hub A's user used unaliased",
+    )
+    uh(
+        "same_person_aliased_on_both_hubs",
+        {U_ALICE: hub_b},
+        {hub_b: {U_ALICE: p_alice}, HUB_ID: {U_ALICE: p_alice}},
+        ok_uh,
+        note="C4: one person may keep one id on two hubs",
+    )
+    uh(
+        "aliased_here_but_first_recorded_unaliased_elsewhere",
+        {U_ALICE: hub_b},
+        {HUB_ID: {U_ALICE: p_alice}},
+        {"error": "foreign_user"},
+    )
+    uh(
+        "aliased_to_different_persons",
+        {},
+        {hub_b: {U_ALICE: "p_" + fake16("person_bob")}, HUB_ID: {U_ALICE: p_alice}},
+        {"error": "foreign_user"},
+        note="fail closed (alias_repointed already refuses this at join)",
+    )
+
+    # §10.7 sender rules (C14): rotation keeps old pages; the resume probe; state loss shows as a gap
+    sync(
+        "log_sync_rotation_continues_under_new_epoch",
+        [page("workspace", WS_LINES[:1]), {"wk_seal": {"2": WK[2].hex()}}, page("workspace", WS_LINES[1:], 2, 2)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+        "the hub keeps the old pages and wraps; the host never resends old lines after a rotation",
+    )
+    sync(
+        "log_sync_rotation_old_epoch_refused",
+        [page("workspace", WS_LINES[:1]), {"wk_seal": {"2": WK[2].hex()}}, page("workspace", WS_LINES[1:], 2, 1)],
+        {"error": "bad_epoch"},
+        "a page sealed before the rotation is resent under the newest epoch",
+    )
+    sync(
+        "log_sync_resume_probe_matches",
+        [ws_p, page("workspace", WS_LINES[1:], from_seq=2)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+        "the probe at link open: the last acknowledged line again, an idempotent overlap",
+    )
+    sync(
+        "log_sync_resume_probe_after_hub_lost_its_view",
+        [page("workspace", WS_LINES[1:], from_seq=2)],
+        {"error": "view_gap"},
+        "the host then resends every log from seq 1 (no reset)",
+    )
+
     # ---- signatures and objects
     reg_o, prop_o = register(), proposal()
     sig_entry("channel_register_alice_phone", "channel_alice_phone", "sig_hub_channel_register", reg_o)
@@ -1506,6 +1835,8 @@ def build_p4(
             "push_put": _rr_entry(put_req),
             "push_send": _rr_entry(send_req),
             "mailbox_put": _rr_entry(mb_put),
+            "cutover_put": _rr_entry(RR.cutover_request(HUB_ID, WS_A)),
+            "cutover_get": _rr_entry(RR.cutover_request(HUB_ID, WS_A, "GET")),
             "push_seal": {
                 "channel_key": "channel_alice_phone",
                 "channel_id": CH_ALICE,
@@ -1526,6 +1857,7 @@ def build_p4(
             "aad_hex": P4.share_aad(HUB_ID, WS_A, ITEM, 1).hex(),
             "body": share_body(),
         },
+        "share_item_f1": {"item": it_f1, "item_hash": h_f1},
     }
     assert cj(section["space_accept_from_proposal"])  # canonical
     return {"objects": objects, "section": section}

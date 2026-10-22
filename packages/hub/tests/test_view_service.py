@@ -76,17 +76,25 @@ def test_vector_replay(tmp_path, case):
     ws = a["workspace_id"]
     seals = make_seals(tmp_path, ws, {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()})
     s = services(tmp_path, seals)
+
+    def step(body):
+        if set(body) == {"wk_seal"}:  # a rotation between pages: the host seals the new epoch to the hub
+            for e, k in body["wk_seal"].items():
+                seals.accept(ws, int(e), core_seal(bytes.fromhex(k), G.HUB_ID, ws, int(e), HXK_PUB))
+        else:
+            s.service.accept(ws, unb64u(a["wsk_pub"], 65), body)
+
     try:
         want = case["expect"]
         if "error" in want:
             got = None
             with pytest.raises(Refused) as r:
                 for body in a["pages"]:
-                    s.service.accept(ws, unb64u(a["wsk_pub"], 65), body)
+                    step(body)
             got = {"error": r.value.code}
         else:
             for body in a["pages"]:
-                s.service.accept(ws, unb64u(a["wsk_pub"], 65), body)
+                step(body)
             got = {
                 "ok": {
                     lg: {"seq": len(s.store.heads(ws, lg)), "head": s.store.heads(ws, lg)[-1]}

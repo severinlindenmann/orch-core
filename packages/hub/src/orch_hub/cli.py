@@ -46,6 +46,10 @@ def _parser() -> argparse.ArgumentParser:
     ins.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     ins.add_argument("--workspace", help="only this workspace id")
     ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
+    dr = sub.add_parser("doctor", help="dev: check the state dir, card, registry, TLS pin and publish route")
+    dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
+    dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
     return p
 
 
@@ -65,6 +69,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
+    if args.group == "doctor":
+        from .doctor import run
+
+        try:
+            state = Path(args.state) if args.state else default_state_dir()
+        except KeysError as e:
+            print(f"orch-hub: {e}", file=sys.stderr)
+            return 1
+        return 1 if run(state, listen=args.listen, publish_url=args.publish_url, out=sys.stdout) else 0
     if args.group == "inspect":
         from .inspect import InspectError, inspect
 

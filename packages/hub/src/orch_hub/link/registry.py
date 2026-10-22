@@ -18,9 +18,9 @@ CREATE TABLE IF NOT EXISTS workspace (
   workspace_id TEXT PRIMARY KEY, owner_person_id TEXT NOT NULL, wsk_pub TEXT NOT NULL, pk_pub TEXT NOT NULL,
   card TEXT NOT NULL, binding_state TEXT NOT NULL, binding_obj TEXT
 );
-CREATE TABLE IF NOT EXISTS op_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, ws TEXT NOT NULL, op TEXT NOT NULL, ts INTEGER NOT NULL,
-  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','refused'))
+CREATE TABLE IF NOT EXISTS op_counts (
+  ws TEXT NOT NULL, op TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome IN ('accepted','refused')),
+  count INTEGER NOT NULL, PRIMARY KEY (ws, op, outcome)
 )
 """
 
@@ -38,14 +38,16 @@ class Registry:
         with self.lock:
             self._db.close()
 
-    def log_op(self, ws: str, op: str, ts_ms: int, accepted: bool) -> None:
-        """Append-only record of one op seen on a link (name and outcome only: no body, no key). Read by
-        ``orch-hub inspect`` (dev). Never raises into the link."""
+    def count_op(self, ws: str, op: str, accepted: bool) -> None:
+        """Aggregate counter (one row per ws/op/outcome, never per op) read by ``orch-hub inspect`` (dev). The caller
+        passes only a pinned ``ws`` (or ``""`` for unjoined links) and an op from the closed list (or ``other``), so
+        the table cannot grow with attacker input. Never raises into the link."""
         try:
             with self.lock, self._db:
                 self._db.execute(
-                    "INSERT INTO op_log(ws, op, ts, outcome) VALUES (?,?,?,?)",
-                    (ws, op, ts_ms, "accepted" if accepted else "refused"),
+                    "INSERT INTO op_counts(ws, op, outcome, count) VALUES (?,?,?,1) "
+                    "ON CONFLICT(ws, op, outcome) DO UPDATE SET count = count + 1",
+                    (ws, op, "accepted" if accepted else "refused"),
                 )
         except sqlite3.Error:
             pass

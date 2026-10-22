@@ -261,17 +261,25 @@ class LinkServer:
             }
             self._send(conn, self._signer.sign_object(reply))
 
+    def _count(self, ws: str, op: object, accepted: bool) -> None:
+        """Dev-only aggregate op counters. Pinned workspaces get their own row; unjoined links share ws ``""``; an op
+        outside the closed list is ``other``. Bounded: pinned workspaces x closed ops x 2, plus the fixed bucket."""
+        if not self._dev:
+            return
+        name = op if type(op) is str and op in H.LINK_OPS else "other"
+        self._reg.count_op(ws if self._reg.pin(ws) is not None else "", name, accepted)
+
     def _log_refused(self, ws: str, signed: Any, code: str, now: int) -> None:
-        """Record a refused attempt of a known op (e.g. ``wk_seal`` in selective mode) for ``orch-hub inspect``.
-        Not when the signature failed: that is not the workspace speaking."""
+        """Count a refused attempt of a known op (e.g. ``wk_seal`` in selective mode). Not when the signature failed:
+        that is not the workspace speaking."""
         o = signed.get("o") if type(signed) is dict else None
         op = o.get("op") if type(o) is dict else None
         if code not in ("bad_signature", "wrong_suite") and type(op) is str and op in H.LINK_OPS:
-            self._reg.log_op(ws, op, now, False)
+            self._count(ws, op, False)
 
     def _dispatch(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:
         body = self._run(ws, wsk, o, now)
-        self._reg.log_op(ws, o["op"], now, "error" not in body)
+        self._count(ws, o["op"], "error" not in body)
         return body
 
     def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:

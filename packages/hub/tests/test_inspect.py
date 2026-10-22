@@ -92,7 +92,7 @@ def test_read_only_while_server_holds_db(make_hub, state):
     # the inspect connection itself cannot write
     db = sqlite3.connect(f"{reg_path.resolve().as_uri()}?mode=ro", uri=True)
     with pytest.raises(sqlite3.OperationalError):
-        db.execute("INSERT INTO op_log(ws, op, ts, outcome) VALUES ('x','wk_seal',0,'accepted')")
+        db.execute("INSERT INTO op_counts(ws, op, outcome, count) VALUES ('x','wk_seal','accepted',1)")
     db.close()
     # and the live server still works after inspecting
     assert hub.registry.pin(G.WS_A) is not None
@@ -102,7 +102,7 @@ def test_output_has_only_public_fields(make_hub, state):
     hub = make_hub(registry=Registry(str(state / "registry.db")))
     joined(hub)
     d = inspect(state)
-    assert set(d) == {"dev", "hub_id", "workspaces"}
+    assert set(d) == {"dev", "hub_id", "workspaces", "unjoined_ops"}
     assert set(d["workspaces"][G.WS_A]) == {
         "workspace_id", "owner_person_id", "wsk_pub", "wsk_fingerprint", "mode", "binding", "ops",
     }  # fmt: skip
@@ -130,3 +130,24 @@ def test_old_registry_without_op_log(state):
     db.commit()
     db.close()
     assert inspect(state)["workspaces"] == {}
+
+
+def test_unjoined_link_does_not_grow_the_table(make_hub, state):
+    hub = make_hub(registry=Registry(str(state / "registry.db")))
+    c = hub.open(first=True)
+    db = sqlite3.connect(state / "registry.db")
+
+    def rows():
+        return db.execute("SELECT COUNT(*) FROM op_counts").fetchone()[0]
+
+    for _ in range(3):
+        with pytest.raises(LinkError):
+            c.request("snapshot_get", {})
+    base = rows()
+    for _ in range(200):
+        with pytest.raises(LinkError):
+            c.request("snapshot_get", {})
+    assert rows() == base
+    d = inspect(state)
+    assert d["workspaces"] == {} and d["unjoined_ops"]["snapshot_get"]["refused"] == 203
+    db.close()

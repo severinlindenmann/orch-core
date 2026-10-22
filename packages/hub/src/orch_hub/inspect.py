@@ -11,7 +11,8 @@ Output (``--json``)::
         "mode": "selective" | "full" | null,
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
         "ops": {"<op>": {"accepted": N, "refused": N}, ...}   # always includes "wk_seal"
-    }}}
+    }},
+     "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
 """
 
 from __future__ import annotations
@@ -56,8 +57,8 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
         db.execute("PRAGMA query_only=ON")
         rows = db.execute("SELECT workspace_id, owner_person_id, wsk_pub, binding_state FROM workspace").fetchall()
         try:
-            counts = db.execute("SELECT ws, op, outcome, COUNT(*) FROM op_log GROUP BY ws, op, outcome").fetchall()
-        except sqlite3.OperationalError:  # registry from before the op log
+            counts = db.execute("SELECT ws, op, outcome, count FROM op_counts").fetchall()
+        except sqlite3.OperationalError:  # registry from before the op counters
             counts = []
     finally:
         db.close()
@@ -80,4 +81,8 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "binding": {"state": st["status"], "binding_seq": st["binding_seq"]},
             "ops": ops,
         }
-    return {"dev": True, "hub_id": card.get("hub_id"), "workspaces": out}
+    unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
+    for cws, op, outcome, n in counts:
+        if cws == "":
+            unjoined.setdefault(op, {"accepted": 0, "refused": 0})[outcome] = n
+    return {"dev": True, "hub_id": card.get("hub_id"), "workspaces": out, "unjoined_ops": unjoined}

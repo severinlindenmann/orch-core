@@ -88,7 +88,7 @@ def _canon(ws: WsCore, person: str | None) -> str | None:
     return None if person is None else identity.canonical(ws, person)
 
 
-def _verify_authors(ws: WsCore, t: TCore, new_tasks: list[dict[str, Any]], actor: dict[str, Any]) -> None:
+def _verify_authors(t: TCore, new_tasks: list[dict[str, Any]], actor: dict[str, Any], ws: WsCore | None = None) -> None:
     """Who made the last change to each task's ``verify`` (F1 "Receipts"): a task whose ``verify`` this edit sets or
     changes gets the edit's actor and, for an agent, its grant; an unchanged one keeps its author (never the editor:
     an unchanged command without a recorded author stays without one); a task without ``verify`` has none."""
@@ -97,7 +97,9 @@ def _verify_authors(ws: WsCore, t: TCore, new_tasks: list[dict[str, Any]], actor
         "kind": actor["kind"],
         "id": actor["id"],
         "session": actor.get("session"),
-        "person": _canon(ws, actor_person(actor)),  # a hub user aliased to a member is that member (D59)
+        "person": actor_person(actor)
+        if ws is None
+        else _canon(ws, actor_person(actor)),  # a hub user aliased to a member is that member (D59)
         "grant": actor.get("grant") if actor["kind"] == "agent" else None,
     }
     authors: dict[str, dict[str, Any]] = {}
@@ -158,7 +160,7 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if (r := _check_fields(core, t, fields, set(sets), e)) is not None:
         return r
     if "ticket.tasks" in sets:
-        _verify_authors(core.ws, t, fields["tasks"], e["actor"])
+        _verify_authors(t, fields["tasks"], e["actor"], core.ws)
     t.fields = fields
     for sid, v in secs.items():
         if v is None:

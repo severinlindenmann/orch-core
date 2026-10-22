@@ -186,4 +186,4 @@ def signer(ws: WsCore, e: Mapping[str, Any]) -> Signer | Refusal:
         if isinstance(who, Refusal):
             return who
         return Signer(who, role_of(ws, a["id"]), f"hub:{e['hub_id']}/{e['channel']}")
-    return Signer(a["id"], role_of(ws, a["id"]), a.get("device", ""))
+    return Signer(canonical(ws, a["id"]), role_of(ws, a["id"]), a.get("device", ""))

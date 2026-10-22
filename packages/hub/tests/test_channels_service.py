@@ -178,32 +178,40 @@ def test_same_key_cannot_register_twice(env):
     v = env.user("bob")
     t = env.sign_in(v)
     begun = env.svc.begin_registration(t, s.public)
+    refused("key_in_use", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))  # one key, one user
+    t = env.sign_in(u)  # the same user again: not a second channel either
+    begun = env.svc.begin_registration(t, s.public)
     refused("channel_exists", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))
 
 
 def test_phone_pairing_gives_se_unlocked_once_with_code(env):
     u = env.user("ann")
     s = new_channel()
-    refused("bad_pairing_code", env.svc.begin_phone_registration, u, "0000-0000-0000", s.public)
+    t = env.sign_in(u)
+    refused("bad_pairing_code", env.svc.begin_phone_registration, u, "0000-0000-0000", s.public, token=t)
     code = env.svc.create_pairing_code(u)["code"]
     v = env.user("bob")
-    refused("bad_pairing_code", env.svc.begin_phone_registration, v, code, s.public)  # another user's code
-    begun = env.svc.begin_phone_registration(u, code, s.public, "iPhone")
+    refused(
+        "bad_pairing_code", env.svc.begin_phone_registration, v, code, s.public, token=env.sign_in(v)
+    )  # another user's code
+    begun = env.svc.begin_phone_registration(u, code, s.public, "iPhone", token=t)
     cert = env.svc.complete_registration(begun["challenge_id"], prove(s, begun))
     assert cert["o"]["factor"] == "se-unlocked"
     H.verify_channel_cert(cert, held(env), now_ms=env.clock(), dev_mode=True)
-    refused("bad_pairing_code", env.svc.begin_phone_registration, u, code, new_channel().public)  # pairs once
+    refused("bad_pairing_code", env.svc.begin_phone_registration, u, code, new_channel().public, token=t)  # pairs once
 
 
 def test_pairing_attempts_are_rate_limited_and_code_expires(env):
     u = env.user("ann")
     s = new_channel()
     code = env.svc.create_pairing_code(u)["code"]
+    t = env.sign_in(u)
     for _ in range(5):
-        refused("bad_pairing_code", env.svc.begin_phone_registration, u, "1111-1111-1111", s.public)
-    refused("rate_limited", env.svc.begin_phone_registration, u, code, s.public)
+        refused("bad_pairing_code", env.svc.begin_phone_registration, u, "1111-1111-1111", s.public, token=t)
+    refused("rate_limited", env.svc.begin_phone_registration, u, code, s.public, token=t)
     env.clock.advance(16 * 60_000)
-    refused("bad_pairing_code", env.svc.begin_phone_registration, u, code, s.public)  # expired after 10 min
+    t = env.sign_in(u)  # the session itself lasts 15 min
+    refused("bad_pairing_code", env.svc.begin_phone_registration, u, code, s.public, token=t)  # expired after 10 min
 
 
 def test_a_password_session_cannot_mint_a_phone_factor(env):
@@ -282,7 +290,8 @@ def test_parallel_wrong_attempts_cannot_exceed_the_failure_limit(env):
 def test_parallel_pairing_guesses_are_limited(env):
     u = env.user("ann")
     s = new_channel()
-    out = _race(10, lambda: env.svc.begin_phone_registration(u, "1111-1111-1111", s.public))
+    t = env.sign_in(u)
+    out = _race(10, lambda: env.svc.begin_phone_registration(u, "1111-1111-1111", s.public, token=t))
     codes = [v for _, v in out]
     assert codes.count("bad_pairing_code") == 5 and codes.count("rate_limited") == 5, codes
 
@@ -320,7 +329,7 @@ def test_factor_follows_the_gate_the_hub_checked_not_the_claim(env):
     )
     # a phone paired by code that claims the session gate: factor_mismatch, no cert
     code = env.svc.create_pairing_code(u)["code"]
-    begun = env.svc.begin_phone_registration(u, code, s.public)
+    begun = env.svc.begin_phone_registration(u, code, s.public, token=env.sign_in(u))
     refused(
         "factor_mismatch",
         env.svc.complete_registration,
@@ -330,7 +339,7 @@ def test_factor_follows_the_gate_the_hub_checked_not_the_claim(env):
     assert env.svc.channels(u) == [] and env.keys.channel_certs(u) == []
     # the honest phone path (a fresh code, the first was spent by its begin) gets se-unlocked
     code = env.svc.create_pairing_code(u)["code"]
-    begun = env.svc.begin_phone_registration(u, code, s.public)
+    begun = env.svc.begin_phone_registration(u, code, s.public, token=env.sign_in(u))
     cert = env.svc.complete_registration(begun["challenge_id"], prove(s, begun))
     assert cert["o"]["factor"] == "se-unlocked"
 
@@ -353,3 +362,45 @@ def test_register_and_revoke_are_on_the_audit_chain(env):
     assert all(r[1]["o"]["scope_tag"] is None for r in rows)  # hub-wide
     for e in ev:
         AU.check_event("channel", e)
+
+
+def test_pairing_code_alone_is_not_enough_it_needs_a_live_session_of_the_user(env):
+    u = env.user("ann")
+    v = env.user("bob")
+    s = new_channel()
+    code = env.svc.create_pairing_code(u)["code"]
+    refused("no_session", env.svc.begin_phone_registration, u, code, s.public)  # no token at all
+    refused("no_session", env.svc.begin_phone_registration, u, code, s.public, token=env.sign_in(v))  # another user's
+    # a begun phone registration dies with the session that opened it
+    t = env.sign_in(u)
+    begun = env.svc.begin_phone_registration(u, code, s.public, token=t)
+    env.svc.sign_out(t)
+    refused("no_session", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))
+    assert env.svc.channels(u) == [] and env.keys.channel_certs(u) == []
+
+
+def test_the_challenge_carries_the_key_and_a_foreign_key_is_challenge_invalid(env):
+    u = env.user("ann")
+    s, other = new_channel(), new_channel()
+    begun = env.svc.begin_registration(env.sign_in(u), s.public)
+    assert begun["challenge"]["key_pub"] == b64u(s.public)
+    # the other key signs the same nonce and expiry: nobody who sees the nonce can race their own key into the gate
+    refused(
+        "challenge_invalid",
+        env.svc.complete_registration,
+        begun["challenge_id"],
+        _forged(other, begun, key_pub=b64u(other.public)),
+    )
+
+
+def test_a_failing_audit_issues_nothing_and_says_internal(env):
+    u = env.user("ann")
+    s = new_channel()
+    begun = env.svc.begin_registration(env.sign_in(u), s.public)
+
+    def boom(**_kw):
+        raise OSError("disk")
+
+    env.svc.audit = type("A", (), {"channel_change": staticmethod(boom)})()
+    refused("internal", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))
+    assert env.svc.channels(u) == [] and env.keys.channel_certs(u) == []

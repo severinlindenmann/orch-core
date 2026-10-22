@@ -4,7 +4,8 @@ Flow, browser: ``sign_in`` (user id + password + TOTP; rate limited) -> short-li
 ``begin_registration(token, key_pub)`` -> the channel signs the returned digest -> ``complete_registration`` issues a
 ``hub.channel_cert`` with factor ``password+totp`` (protocol.md §6.2, SHORTCUT #908).
 Flow, phone: the operator creates a one-time pairing code (``create_pairing_code``, a state-dir-owner action) and the
-user enters it on the phone; ``begin_phone_registration`` / ``complete_registration`` issue factor ``se-unlocked``.
+user enters it on the phone, inside a live session of the same user (``token=``, §6.3); ``begin_phone_registration`` /
+``complete_registration`` issue factor ``se-unlocked``.
 A password session can never mint ``se-unlocked``: the hub has no Secure Enclave attestation, so the factor is gated by
 a code that only the state-dir owner can create (enforce by who can act, not by a label the caller picks).
 
@@ -298,12 +299,16 @@ class Channels:
     def begin_registration(self, token: str, key_pub: bytes, label: str = "") -> dict[str, Any]:
         """Browser channel, inside a session."""
         u = self.session_user(token)
-        return self._begin(u, "browser", key_pub, _sha(token), label)
+        return self._begin(u, "browser", key_pub, _sha(token), label, _sha(token))
 
     def begin_phone_registration(
-        self, user_id: str, pairing_code: str, key_pub: bytes, label: str = ""
+        self, user_id: str, pairing_code: str, key_pub: bytes, label: str = "", *, token: str = ""
     ) -> dict[str, Any]:
+        """A phone needs the operator's pairing code AND a live session of the same user (§6.3, L2P4-D7a): the code
+        alone is no bearer credential for ``se-unlocked``."""
         u = self._user(user_id)
+        if self.session_user(token) != u:  # ``no_session``; before the code is looked at or any attempt is counted
+            raise ChannelError("no_session")
         if type(pairing_code) is not str or len(pairing_code) > 64:
             raise ChannelError("bad_pairing_code")
         rid = self._guard(lambda: self._reserve("pair", u))
@@ -311,13 +316,13 @@ class Channels:
             raise ChannelError("bad_pairing_code")  # the reserved attempt stays counted
         with self._tx() as db:
             self._succeed(db, "pair", u, rid)
-        return self._begin(u, "phone", key_pub, _sha(pairing_code), label)
+        return self._begin(u, "phone", key_pub, _sha(pairing_code), label, _sha(token))
 
     def _pairing_valid(self, u: str, code_hash: str) -> bool:
         rows = self._guard(lambda: self.db.q("SELECT user_id, expires_ms FROM pairing WHERE code_hash=?", (code_hash,)))
         return bool(rows) and rows[0][0] == u and rows[0][1] > self._now()
 
-    def _begin(self, u: str, kind: str, key_pub: bytes, binding: str, label: str) -> dict[str, Any]:
+    def _begin(self, u: str, kind: str, key_pub: bytes, binding: str, label: str, session: str) -> dict[str, Any]:
         if not S.valid_public_key(key_pub):
             raise ChannelError("malformed", "key_pub is not a valid P-256 public key")
         if type(label) is not str or len(label) > 60 or any(ord(c) < 32 or ord(c) == 127 for c in label):
@@ -330,8 +335,8 @@ class Channels:
         def go() -> None:
             self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))
             self.db.w(
-                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?)",
-                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS),
+                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?,?)",
+                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS, session),
             )
 
         self._guard(go)
@@ -345,35 +350,52 @@ class Channels:
         now = self._now()
         with self._tx() as db:  # consumed and committed before any check, so a refused attempt cannot be retried
             rows = db.execute(
-                "SELECT user_id, kind, key_pub, binding, label, expires_ms FROM challenges WHERE challenge_id=?",
+                "SELECT user_id, kind, key_pub, binding, label, expires_ms, session FROM challenges WHERE challenge_id=?",
                 (challenge_id,),
             ).fetchall()
             db.execute("DELETE FROM challenges WHERE challenge_id=?", (challenge_id,))
         if not rows or rows[0][5] <= now:
             raise ChannelError("challenge_invalid")
-        u, kind, key_b64, binding, label, exp = rows[0]
+        u, kind, key_b64, binding, label, exp, session = rows[0]
         with self._tx() as db:
             self._binding_alive(db, u, kind, binding, now)
-            # the gate is the one the hub checked just above (session or pairing code), not anything the caller sent
-            gate = {"user_id": u, "nonce": challenge_id, "expires_ms": exp, "gate": GATE_OF[kind]}
+            # the challenge is what the hub stored when it opened the registration (§6.3): this user, this key, the gate
+            # it checked (session or pairing code) and whether a live session of the user opened it
+            live = db.execute(
+                "SELECT expires_ms FROM sessions WHERE token_hash=? AND user_id=?", (session, u)
+            ).fetchall()
+            key_pub = unb64u(key_b64, 65)
+            cid0 = H.channel_id(key_pub)
+            owner = db.execute("SELECT user_id FROM channels WHERE channel_id=?", (cid0,)).fetchall()
+            gate = {
+                "user_id": u,
+                "key_pub": key_b64,
+                "nonce": challenge_id,
+                "expires_ms": exp,
+                "gate": GATE_OF[kind],
+                "session": bool(live) and live[0][0] > now,
+            }
             try:
                 got = P4.verify_channel_register(
-                    signed, hub_id=self.keys.hub_id, challenge=gate, now_ms=now, dev_mode=True
+                    signed,
+                    hub_id=self.keys.hub_id,
+                    challenge=gate,
+                    now_ms=now,
+                    dev_mode=True,
+                    revoked_channels=self.acc.revoked_channels(),
+                    registered={cid0: owner[0][0]} if owner else None,
                 )
             except H.Refused as r:
                 raise ChannelError(r.code) from None
-            if got["key_pub"] != key_b64:  # the key the gate was opened for (stricter than the contract's challenge)
-                raise ChannelError("challenge_invalid", "other key")
             factor, cid = got["factor"], got["channel_id"]
-            key_pub = unb64u(key_b64, 65)
             old = db.execute("SELECT revoked_ms FROM channels WHERE channel_id=?", (cid,)).fetchall()
             if old:
                 raise ChannelError("channel_revoked" if old[0][0] is not None else "channel_exists")
-            if cid in self.acc.revoked_channels():  # revoked at the terminal before it ever registered: still permanent
-                raise ChannelError("channel_revoked")
             (n,) = db.execute("SELECT COUNT(*) FROM channels WHERE user_id=? AND revoked_ms IS NULL", (u,)).fetchone()
             if n >= self.max_channels:
                 raise ChannelError("too_many_channels")
+            # fail closed: the chain record comes first, so a chain that cannot be written issues nothing (§6.3)
+            self._audit(cid, u, "register", factor, u if kind == "browser" else None)
             try:
                 cert = self.keys.issue_channel(u, key_pub, factor)
             except KeysError as e:
@@ -388,7 +410,6 @@ class Channels:
                 "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
                 (now, "register", u, cid, f"u_{u}" if kind == "browser" else "pairing"),
             )
-            self._audit(cid, u, "register", factor, u if kind == "browser" else None)
         return cert
 
     def _audit(self, channel_id: str, user_id: str, change: str, factor: str, actor: str | None) -> None:
@@ -401,7 +422,7 @@ class Channels:
                 channel_id=channel_id, user_id=user_id, change=change, factor=factor, actor_user_id=actor
             )
         except Exception as e:  # noqa: BLE001 - fail closed on any chain error
-            raise ChannelError("audit_failed", type(e).__name__) from None
+            raise ChannelError("internal", type(e).__name__) from None
 
     def _tx(self):
         return self.db.tx()
@@ -479,10 +500,11 @@ class Channels:
             raise ChannelError("store_error", e.code) from None
         if not allowed:
             raise ChannelError("forbidden")
+        if not rows:  # only the operator gets here for an id this hub never registered (§6.3, L2P4-D7b)
+            raise ChannelError("unknown_channel")
         now = self._now()
         try:
-            self.acc.revoke_channel(cid)  # first: the snapshot source and active_channel's check; the operator may
-            # revoke an id this hub never registered (a key known to be compromised). Permanent: nothing lifts it.
+            self.acc.revoke_channel(cid)  # first: the snapshot source and active_channel's check. Permanent.
         except AccessError as e:
             raise ChannelError("store_error", e.code) from None
         if rows and rows[0][1] is None:

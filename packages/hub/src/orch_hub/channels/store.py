@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS challenges (
   challenge_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, key_pub TEXT NOT NULL,
-  binding TEXT NOT NULL, label TEXT NOT NULL, expires_ms INTEGER NOT NULL
+  binding TEXT NOT NULL, label TEXT NOT NULL, expires_ms INTEGER NOT NULL, session TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS pairing (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS channels (
@@ -46,6 +46,9 @@ class ChannelsDB:
         try:
             self.db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self.db.executescript(SCHEMA)
+            if "session" not in {r[1] for r in self.db.execute("PRAGMA table_info(challenges)")}:
+                self.db.execute("DROP TABLE challenges")  # open challenges live 120 s: drop, do not migrate
+                self.db.executescript(SCHEMA)
         except PrivateFileError as e:
             raise StoreError(f"bad_private_file: {e}") from None
         except (sqlite3.Error, OSError) as e:

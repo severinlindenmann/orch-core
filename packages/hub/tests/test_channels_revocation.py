@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 
 import pytest
 from channels_helpers import PW, Env, register
 from test_channels_service import held, refused
 
 from orch_hub.access import ADMIN_GROUP
+from orch_hub.channels.service import totp_code
 from orch_hub.cli import main
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u
@@ -126,7 +129,7 @@ def test_revoke_as_session_and_list_for_session(env):
 
 
 def test_revocation_is_permanent_and_the_key_never_registers_again(env):
-    from channels_helpers import new_channel, prove
+    from channels_helpers import prove
 
     assert not hasattr(env.svc, "unrevoke") and not hasattr(env.acc, "unrevoke_channel")
     u = env.user("ann")
@@ -136,14 +139,19 @@ def test_revocation_is_permanent_and_the_key_never_registers_again(env):
     assert env.svc.active_channel(u, cid) is None
     begun = env.svc.begin_registration(env.sign_in(u), s.public)
     refused("channel_revoked", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))
-    # the operator may revoke an id this hub never registered; that key can never register either
-    t = new_channel()
+    assert env.svc.channels(u)[0]["status"] == "revoked" and len(env.svc.channels(u)) == 1
+
+
+def test_revoking_an_unregistered_channel_is_refused(env):
+    from channels_helpers import new_channel
+
     from orch_hub.contract.hub import channel_id
 
-    env.svc.revoke(channel_id(t.public))
-    begun = env.svc.begin_registration(env.sign_in(u), t.public)
-    refused("channel_revoked", env.svc.complete_registration, begun["challenge_id"], prove(t, begun))
-    assert env.svc.channels(u)[0]["status"] == "revoked" and len(env.svc.channels(u)) == 1
+    u = env.user("ann")
+    cid = channel_id(new_channel().public)
+    refused("unknown_channel", env.svc.revoke, cid)  # the operator
+    refused("forbidden", env.svc.revoke, cid, actor=u)  # a user cannot probe ids
+    assert env.acc.revoked_channels() == [] and env.audit.store.after(0, 10) == []
 
 
 def run(state, capsys, *argv, stdin=None, code=0, monkeypatch=None):
@@ -178,7 +186,15 @@ def test_cli_password_totp_list_revoke_and_pairing(tmp_path, capsys, monkeypatch
     acc = Access(str(st / "access.db"))
     svc = Channels(keys, acc, st / "channels.db")
     s = new_channel()
-    begun = svc.begin_phone_registration(u, code, s.public, "iPhone")
+    begun = svc.begin_phone_registration(
+        u,
+        code,
+        s.public,
+        "iPhone",
+        token=svc.sign_in(
+            u, PW, totp_code(base64.b32decode(secret + "=" * (-len(secret) % 8)), int(time.time()) // 30)
+        )["token"],
+    )
     cert = svc.complete_registration(begun["challenge_id"], prove(s, begun))
     cid = cert["o"]["channel_id"]
     svc.close()

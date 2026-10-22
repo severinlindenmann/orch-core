@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from publish_helpers import FakeUpstream, binding
+from publish_helpers import FakeUpstream, _signed, binding
 from test_publish_serve import link, start, stop
 
 from orch_hub import cli
@@ -107,3 +107,47 @@ def test_serve_snapshot_get_over_real_link(tmp_path, capsys, up):
         c.close()
     finally:
         stop(p)
+
+
+def test_scenario_forms_and_access_check(tmp_path, capsys, up):
+    """The flag forms the e2e scenarios use, ``access check`` (exit 0 / 3) and ``inspect`` snapshot data."""
+    st = tmp_path / "hub"
+    HubKeys.init(st)
+    ann = run(st, capsys, "users", "add", "--name", "ann", "--json")["user_id"]
+    bob = run(st, capsys, "users", "add", "--name", "bob", "--json")["user_id"]
+    assert run(st, capsys, "groups", "add", "--name", "devs", "--json")["group_id"] == "devs"
+    run(st, capsys, "groups", "add", "--name", "viewers", "--json")
+    run(st, capsys, "groups", "member-add", "--group", "devs", "--user", ann, "--json")
+    run(st, capsys, "groups", "member-add", "--group", "viewers", "--user", bob)
+    run(st, capsys, "grants", "add", "--workspace", WS, "--group", "devs", "--role", "edit", "--json")
+    run(st, capsys, "grants", "add", "--workspace", WS, "--group", "viewers", "--role", "read")
+
+    def check(user, action):
+        rc = cli.main(["access", "--state", str(st), "check", "--user", user, "--workspace", WS, "--action", action])
+        return rc, json.loads(capsys.readouterr().out)
+
+    # the workspace is not joined yet: unknown mode fails closed
+    assert check(ann, "read") == (3, {"allowed": False, "role": "edit", "reason": "selective_workspace"})
+    p, port, pin, hub_id = start(st, up, "inv1")
+    try:
+        keys = HubKeys.open(st)
+        wsk = G.K.priv["wsk_a"]
+        c = link(port, pin, hub_id, keys.op_signer.public, True)
+        body = {
+            "invite": "inv1",
+            "card": G.v2_card(),
+            "pk_pub": b64u(G.K.pub["pk_alice"]),
+            "binding": _signed(wsk, "sig_hub_binding", {**binding(wsk, keys, WS)["o"], "mode": "full"}),
+        }
+        assert c.request("join", body) == {}
+        c.request("snapshot_get", {})
+        c.close()
+    finally:
+        stop(p)
+    mode = run(st, capsys, "inspect", "--json")["workspaces"][WS]
+    assert mode["snapshot"]["version"] == 1 and mode["snapshot"]["roles"] == {ann: "edit", bob: "read"}
+    assert mode["mode"] == "full"
+    assert check(ann, "route") == (0, {"allowed": True, "role": "edit", "reason": "ok"})
+    assert check(bob, "read")[0] == 0
+    assert check(bob, "route") == (3, {"allowed": False, "role": "read", "reason": "forbidden_role"})
+    assert check("ee" * 16, "read") == (3, {"allowed": False, "role": None, "reason": "not_granted"})

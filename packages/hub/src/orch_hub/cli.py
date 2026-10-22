@@ -72,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
-    if args.group in ("users", "groups", "grants", "channels"):
+    if args.group in ("users", "groups", "grants", "channels", "access"):
         from .access.cli import run as run_access
 
         return run_access(args)

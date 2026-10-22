@@ -10,6 +10,7 @@ Output (``--json``)::
         "workspace_id": "...", "owner_person_id": "...", "wsk_pub": "<b64u>", "wsk_fingerprint": "<sha256 hex>",
         "mode": "selective" | "full" | null,
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
+        "snapshot": {"version": N, "roles": {"<user_id>": "read"|"edit"|"admin"}},   # last issued (0, {} if none yet)
         "ops": {"<op>": {"accepted": N, "refused": N}, ...}   # always includes "wk_seal"
     }},
      "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
@@ -45,6 +46,31 @@ def _hub_card(state: Path) -> dict[str, Any]:
         raise InspectError("no readable hub card in the state dir") from None
 
 
+def workspace_mode(state: Path, workspace: str) -> str | None:
+    """The binding mode of one workspace from the registry (read-only), or None if unknown / unreadable."""
+    try:
+        w = inspect(state, workspace)["workspaces"].get(workspace)
+    except InspectError, sqlite3.Error, OSError, ValueError:
+        return None
+    return w["mode"] if w else None
+
+
+def _snapshots(state: Path) -> dict[str, dict[str, Any]]:
+    """Per workspace ``{version, roles}`` of the last issued snapshot (access.db, read-only); empty if none."""
+    path = state / "access.db"
+    if not path.is_file():
+        return {}
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT workspace_id, version, signed FROM snapshots").fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        db.close()
+    return {ws: {"version": v, "roles": json.loads(sg)["o"]["roles"]} for ws, v, sg in rows}
+
+
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     card = _hub_card(state)
     if card.get("dev") is not True:
@@ -62,6 +88,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             counts = []
     finally:
         db.close()
+    snaps = _snapshots(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
@@ -80,6 +107,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "mode": b.get("mode") if type(b) is dict else None,
             "binding": {"state": st["status"], "binding_seq": st["binding_seq"]},
             "ops": ops,
+            "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
     for cws, op, outcome, n in counts:

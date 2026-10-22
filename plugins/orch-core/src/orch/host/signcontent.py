@@ -1184,10 +1184,10 @@ def _event(
             _row(out, "hub name for you", f"{one(a['person_id'])} is {one(a['user_id'])} on the hub")
         if mode == "full":
             out.setdefault("notes", []).append(
-                "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes a "
-                "member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later starts a new key "
-                "the hub never gets, but it cannot take back what the hub already read. Only you can sign this, with "
-                "your own key at this terminal."
+                "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes "
+                "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
+                "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
+                " sign this, with your own key at this terminal."
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(

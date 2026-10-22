@@ -297,5 +297,5 @@ def serve(call: Call) -> dict[str, Any]:
         apply,
         planned=None,
         session=(call.frame.get("auth") or {}).get("session"),
-        redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
+        redactor=Redactor((call.frame.get("auth") or {}).get("grant"), op),
     )

@@ -220,7 +220,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "seq": _int_min(1),
         "prev": _b64u_n(32),
         "ts_ms": _int_min(0),
-        "type": _enum("custodial", "grant", "membership", "space", "channel"),
+        "type": _enum("custodial", "grant", "membership", "space", "channel", "share"),
         "scope_tag": lambda x: x is None or _b64u_n(32)(x),
         "event_hash": _b64u_n(32),
         "dev": _bool,
@@ -266,6 +266,18 @@ FIELDS: dict[str, dict[str, Check]] = {
         "expires_ms": _int_min(1),
         "dev": _bool,
     },
+    # p4 (§10.2b, C6/D9): one item a selective workspace shares with its hub (signed by its WSK, sealed to HXK)
+    "share.item": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "item_id": _hex16,
+        "item_kind": _enum("needs_you", "ticket", "question"),
+        "item_version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "chain": lambda x: type(x) is dict,
+        "content": lambda x: type(x) is dict,
+        "dev": _bool,
+    },
     # p4 (§10.4, #1020): a proposed member transition of a space, shown to the invited workspace before it accepts
     "hub.space_proposal": {
         "hub_id": _hex16,
@@ -304,6 +316,7 @@ LABEL_OF_KIND = {
     "space.item": "sig_space_item",
     "space.accept": "sig_space_accept",
     "hub.channel_register": "sig_hub_channel_register",
+    "share.item": "sig_share_item",
     "hub.space_proposal": "sig_hub_space_proposal",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)
 }

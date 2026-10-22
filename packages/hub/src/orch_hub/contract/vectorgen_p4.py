@@ -204,6 +204,44 @@ def relay_req(
     }
 
 
+# --- §10.2b shared item (C6/D9) ---------------------------------------------------------------------------------------
+
+ITEM = fake16("share_item_1")
+NEEDS_YOU = {"type": "question", "title": "CSV or API for tariffs?", "deadline": "2026-10-30"}
+CHAIN = {"log": TICKET, "seq": 2, "head": "sha256:" + S.fake_seed("hub/share_chain_head").hex()}
+T_SHARED = NOW - 60_000
+
+
+def share_item(version: int = 1, wsk: str = "wsk_a", label: str = "sig_share_item", **kw: Any) -> dict[str, Any]:
+    o = {
+        **hdr("share.item"),
+        "hub_id": HUB_ID,
+        "workspace_id": WS_A,
+        "item_id": ITEM,
+        "item_kind": "needs_you",
+        "item_version": version,
+        "issued_ms": T_SHARED,
+        "chain": CHAIN,
+        "content": NEEDS_YOU,
+        "dev": True,
+        **kw,
+    }
+    return signed(wsk, label, o)
+
+
+def share_body(item: dict[str, Any] | None = None, hxk: str = "hxk", item_id: str | None = None) -> dict[str, Any]:
+    it = item or share_item()
+    v = it["o"]["item_version"]
+    sealed = P4.seal_share_item(
+        it,
+        hxk_pub=K.pub[hxk],
+        ik=S.fake_seed(f"hub/share_ik/{v}"),
+        eph_seed=S.fake_seed(f"hub/share_eph/{v}"),
+        salt=S.fake_seed(f"hub/share_salt/{v}")[:16],
+    )
+    return {"item_id": item_id or it["o"]["item_id"], "sealed": sealed}
+
+
 def build_p4(
     case: Callable[..., None],
     sig_entry: Callable[[str, str, str, dict[str, Any]], None],
@@ -983,11 +1021,210 @@ def build_p4(
     rel("relay_request_bad_method", relay_req("PATCH"), {"error": "malformed"})
     rel("relay_request_missing_nonce", relay_req(**{"Orch-Hub-Nonce": None}), {"error": "malformed"})
 
+    # ---- §10.2b selective share_put content (C6/D9)
+    sh = {
+        "hub_id": HUB_ID,
+        "workspace_id": WS_A,
+        "hxk_seed": K.seed["hxk"].hex(),
+        "wsk_pub": K.b("wsk_a"),
+        "dev_mode": True,
+    }
+    it1 = share_item()
+    h1 = P4.item_hash(it1)
+
+    def shr(name: str, body: dict[str, Any], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "share_item", {**sh, **kw, "body": body}, expect, 4, note)
+
+    def okv(it: dict[str, Any], new: bool = True) -> dict[str, Any]:
+        return {"ok": {"item_version": it["o"]["item_version"], "hash": P4.item_hash(it), "new": new}}
+
+    shr("share_item_needs_you", share_body(), okv(it1))
+    tk = {
+        "key": "DEMO-0043",
+        "type": "feature",
+        "title": "Load tariff tables",
+        "status": "testing",
+        "labels": ["dbt", "tariffs"],
+        "deadline": None,
+    }
+    it_t = share_item(item_kind="ticket", content=tk)
+    shr("share_item_ticket", share_body(it_t), okv(it_t))
+    qn = {
+        "key": "DEMO-0043",
+        "type": "feature",
+        "id": "Q1",
+        "title": "Load tariff tables",
+        "text": "Which export is the source of truth?\nThe two differ for 3 tariffs.",
+        "deadline": None,
+    }
+    it_q = share_item(item_kind="question", content=qn)
+    shr("share_item_question", share_body(it_q), okv(it_q))
+    held1 = {"item_version": 1, "hash": h1}
+    shr("share_item_resend_is_idempotent", share_body(), okv(it1, False), held=held1)
+    it2 = share_item(2, content={**NEEDS_YOU, "title": "Still open"})
+    shr(
+        "share_item_newer_replaces",
+        share_body(it2),
+        okv(it2),
+        "a higher item_version replaces the held item",
+        held=held1,
+    )
+    shr("share_item_older_refused", share_body(), {"error": "stale_version"}, held={"item_version": 2, "hash": h1})
+    shr(
+        "share_item_same_version_other_bytes",
+        share_body(share_item(content={**NEEDS_YOU, "title": "Other"})),
+        {"error": "stale_version"},
+        "equal or older is refused",
+        held=held1,
+    )
+    shr(
+        "share_item_reshare_after_revoke",
+        share_body(it2),
+        okv(it2),
+        "a revoked id may be shared again, with a higher item_version than its tombstone",
+        held={**held1, "revoked": True},
+    )
+    shr(
+        "share_item_revoked_replayed",
+        share_body(),
+        {"error": "stale_version"},
+        "the revoked version itself never comes back",
+        held={**held1, "revoked": True},
+    )
+    shr("share_item_over_item_cap", share_body(), {"error": "too_many_items"}, live_items=1000)
+    shr(
+        "share_item_replace_at_cap",
+        share_body(it2),
+        okv(it2),
+        "replacing a live id is not a new item",
+        held=held1,
+        live_items=1000,
+    )
+    shr(
+        "share_item_sealed_to_other_key",
+        share_body(hxk="wxk_a"),
+        {"error": "bad_wrap"},
+        "only this hub's HXK opens the item key",
+    )
+    shr(
+        "share_item_moved_to_other_item_id",
+        share_body(item_id=fake16("share_item_2")),
+        {"error": "bad_wrap"},
+        "item id, time, hub and workspace are bound by the wrap and the AAD",
+    )
+    shr("share_item_opened_for_other_workspace", share_body(), {"error": "bad_wrap"}, workspace_id=WS_B)
+    shr("share_item_signed_by_other_wsk", share_body(share_item(wsk="wsk_b")), {"error": "bad_signature"})
+    shr(
+        "share_item_under_space_item_label",
+        share_body(share_item(label="sig_space_item")),
+        {"error": "bad_signature"},
+        "a shared item is not a space item (own label)",
+    )
+    shr(
+        "share_item_title_with_newline",
+        share_body(share_item(content={**NEEDS_YOU, "title": "a\nb"})),
+        {"error": "malformed"},
+        "a summary is one line (it reaches the phone)",
+    )
+    for nm, kind, content in (
+        ("needs_you_extra_field", "needs_you", {**NEEDS_YOU, "body": "secret"}),
+        ("needs_you_nested_object", "needs_you", {**NEEDS_YOU, "title": {"sig": "x"}}),
+        ("needs_you_unknown_type", "needs_you", {**NEEDS_YOU, "type": "approve_everything"}),
+        ("ticket_missing_status", "ticket", {k: v for k, v in tk.items() if k != "status"}),
+        ("ticket_labels_unsorted", "ticket", {**tk, "labels": ["tariffs", "dbt"]}),
+        ("ticket_as_needs_you", "needs_you", tk),
+        ("question_with_options", "question", {**qn, "options": [{"key": "a", "label": "A"}]}),
+        ("question_bad_deadline", "question", {**qn, "deadline": "30.10.2026"}),
+    ):
+        shr(
+            f"share_item_{nm}",
+            share_body(share_item(item_kind=kind, content=content)),
+            {"error": "malformed"},
+            "exact content per item kind, no free objects",
+        )
+    shr(
+        "share_item_bad_chain_head",
+        share_body(share_item(chain={**CHAIN, "head": "sha256:00"})),
+        {"error": "malformed"},
+    )
+    shr("share_item_dev_at_real_hub", share_body(), {"error": "dev_refused"}, dev_mode=False)
+    shr("share_item_truncated", {"item_id": ITEM, "sealed": b64u(bytes(40))}, {"error": "bad_wrap"})
+    case(
+        "share_revoke_is_idempotent",
+        "share_revoke",
+        {"body": {"item_id": ITEM}},
+        {"ok": {}},
+        4,
+        "an unknown or already revoked id is {} too",
+    )
+    case("share_revoke_bad_id", "share_revoke", {"body": {"item_id": ITEM.upper()}}, {"error": "malformed"}, 4)
+    # one text rule for every title and text field (display spoofing): Cc, Cf, Zl, Zp refused; LF in multi-line only
+    for cname, ch in (
+        ("rlo_u202e", "\u202e"),
+        ("line_sep_u2028", "\u2028"),
+        ("nel_u0085", "\u0085"),
+        ("lrm_u200e", "\u200e"),
+        ("zwsp_u200b", "\u200b"),
+        ("para_sep_u2029", "\u2029"),
+    ):
+        shr(
+            f"share_item_title_{cname}",
+            share_body(share_item(content={**NEEDS_YOU, "title": "Pay " + ch + "x"})),
+            {"error": "malformed"},
+            "display spoofing characters are refused in every title and text",
+        )
+        act(
+            f"action_text_{cname}",
+            {"type": "log.added", "log": TICKET, "text": "ok " + ch + "x"},
+            "edit",
+            {"error": "malformed"},
+            "one text rule for every action text",
+        )
+    act(
+        "action_multiline_text_lf_ok",
+        {"type": "log.added", "log": TICKET, "text": "line 1\nline 2"},
+        "edit",
+        ok("log.added"),
+    )
+    act(
+        "action_title_lf_refused",
+        {"type": "ticket.created", "ticket_type": "bug", "title": "a\nb"},
+        "edit",
+        {"error": "malformed"},
+    )
+    # share audit event (scoped to the workspace)
+    sh_ev = {
+        "workspace_id": WS_A,
+        "item_id": ITEM,
+        "change": "put",
+        "item_version": 1,
+        "item_hash": h1,
+        "nonce": nonce32("share"),
+    }
+    rec_sh = audit_rec(1, AU.GENESIS_PREV, "share", sh_ev)
+    case(
+        "audit_share_put",
+        "audit",
+        {**with_card, "signed": rec_sh, "event": sh_ev},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_sh)}},
+        4,
+    )
+    sh_rv = {**sh_ev, "change": "revoke", "item_hash": None, "nonce": nonce32("share_revoke")}
+    rec_shr = audit_rec(1, AU.GENESIS_PREV, "share", sh_rv)
+    case(
+        "audit_share_revoke",
+        "audit",
+        {**with_card, "signed": rec_shr, "event": sh_rv},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_shr)}},
+        4,
+    )
+
     # ---- signatures and objects
     reg_o, prop_o = register(), proposal()
     sig_entry("channel_register_alice_phone", "channel_alice_phone", "sig_hub_channel_register", reg_o)
     sig_entry("space_proposal_c_e2", "hk_op", "sig_hub_space_proposal", prop_o)
-    objects = {"channel_register_alice_phone": reg_o, "space_proposal_c_e2": prop_o}
+    sig_entry("share_item_a_1", "wsk_a", "sig_share_item", it1)
+    objects = {"channel_register_alice_phone": reg_o, "space_proposal_c_e2": prop_o, "share_item_a_1": it1}
     rr = relay_req()
     section = {
         "log_sync": {
@@ -1010,6 +1247,13 @@ def build_p4(
         },
         "custodial_types": [{"type": t, "log": lk, "min_role": r} for (t, lk), r in sorted(H.CUSTODIAL_TYPES.items())],
         "space_accept_from_proposal": P4.accept_from_proposal(prop_o["o"]),
+        "share_item": {
+            "item": it1,
+            "item_hash": h1,
+            "ik_hex": S.fake_seed("hub/share_ik/1").hex(),
+            "aad_hex": P4.share_aad(HUB_ID, WS_A, ITEM, 1).hex(),
+            "body": share_body(),
+        },
     }
     assert cj(section["space_accept_from_proposal"])  # canonical
     return {"objects": objects, "section": section}

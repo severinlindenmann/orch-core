@@ -328,6 +328,21 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
                 views, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
             )
         return {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+    if check == "share_item":
+        r = P4.open_share_item(
+            a["body"],
+            hub_id=a["hub_id"],
+            workspace_id=a["workspace_id"],
+            hxk_priv=S.key_from_seed(bytes.fromhex(a["hxk_seed"])),
+            wsk_pub=unb64u(a["wsk_pub"], 65),
+            held=a.get("held"),
+            live_items=a.get("live_items", 0),
+            dev_mode=dev,
+        )
+        return {"item_version": r["item"]["item_version"], "hash": r["hash"], "new": r["new"]}
+    if check == "share_revoke":
+        P4.check_share_revoke(a["body"])
+        return {}
     if check == "channel_register":
         r = P4.verify_channel_register(
             a["signed"], hub_id=a["hub_id"], challenge=a["challenge"], now_ms=now, dev_mode=dev

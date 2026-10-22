@@ -71,6 +71,14 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "workspace_id": _opt_hex16,
         "actor_user_id": _opt_hex16,
     },
+    # p4 (§10.2b): a selective workspace shared, replaced or revoked an item (scoped to that workspace)
+    "share": {
+        "workspace_id": _hex16,
+        "item_id": _hex16,
+        "change": _enum("put", "revoke"),
+        "item_version": _int_min(1),
+        "item_hash": lambda x: x is None or (type(x) is str and len(x) == 71 and x.startswith("sha256:")),
+    },
     # p4 (§10.5): a channel key was registered or revoked (revocation is permanent); hub-wide, so no scope tag.
     # actor_user_id: the user who registered or revoked it, or None for the operator at the hub terminal.
     "channel": {

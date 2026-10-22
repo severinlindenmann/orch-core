@@ -48,6 +48,10 @@ HUB_LABELS: dict[str, str] = {
     "h_sk_commit": "orch/v2/hub-sk-commit|",  # V3-D8: commitment to SK_e inside the signed space record
     # AAD of a sealed space item
     "aad_space": "orch/v2/space-aad|",
+    # p4 (§10.2b, C6/D9): a selective workspace's shared item, its AAD and its hash
+    "sig_share_item": "orch/v2/sig/share-item|",
+    "aad_hub_share": "orch/v2/hub-share-aad|",
+    "h_share_item": "orch/v2/hub-share-item|",
     # AAD of a sealed workspace-view page (p4, log_sync)
     "aad_hub_view": "orch/v2/hub-view-aad|",
 }
@@ -58,6 +62,8 @@ KDF_SPACE_ITEM = b"orch/v2/space-item"  # HKDF(SK_e, "", label|space|epoch) -> t
 KDF_SPACE_ITEM_MSG = b"orch/v2/space-item-msg"  # HKDF(item key, salt16, label) -> one item's AEAD key
 KDF_HUB_VIEW = b"orch/v2/hub-view"  # p4: HKDF(WK_e, "", label|ws|epoch) -> the view key of one epoch
 KDF_HUB_VIEW_MSG = b"orch/v2/hub-view-msg"  # p4: SALTED-AEAD msg label of one view page
+KDF_HUB_SHARE_MSG = b"orch/v2/hub-share-msg"  # p4: SALTED-AEAD msg label of one shared item under its item key
+PURPOSE_HUB_SHARE = "hub-share"  # p4: seal_to purpose: a shared item's key to the hub's HXK (amends v2 §5.3)
 PURPOSE_SPACE_SK = (
     "space-sk"  # seal_to purpose: SK_e to a member workspace's WXK (an addition to v2 §5.3's closed list)
 )

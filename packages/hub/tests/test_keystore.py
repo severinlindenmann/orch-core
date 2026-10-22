@@ -36,6 +36,7 @@ SAMPLES = {
     "hub.publish_approval": G.approval()["o"],
     "hub.channel_register": G4.register()["o"],
     "hub.space_proposal": G4.proposal()["o"],
+    "share.item": G4.share_item()["o"],
     "link.w2h": G.link("snapshot_get", {})["o"],
     "link.h2w": G.link("route_in", {"envelope": "eA"}, direction="h2w", key="hk_op")["o"],
 }
@@ -54,7 +55,7 @@ ALLOWED = {
     },
     KS.UkSigner: set(),
     KS.ChannelSigner: {"hub.channel_register"},
-    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "link.w2h"},
+    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "share.item", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
 KEY = {

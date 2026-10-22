@@ -152,6 +152,9 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
 | `aad_hub_view` | `orch/v2/hub-view-aad\|` | AAD | one sealed `log_sync` page | 10.7 |
+| `sig_share_item` | `orch/v2/sig/share-item\|` | `WSK` | `cj(o)` of `share.item` (selective `share_put`) | 10.2b |
+| `aad_hub_share` | `orch/v2/hub-share-aad\|` | AAD | one sealed shared item | 10.2b |
+| `h_share_item` | `orch/v2/hub-share-item\|` | hash | a signed shared item (what a custodial event about it binds) | 10.2b |
 | `sig_hub_binding` | `orch/v2/sig/hub-binding\|` | `WSK` | `cj(o)` of `hub.binding` | 9 |
 | `sig_hub_unbound` | `orch/v2/sig/hub-unbound\|` | `WSK` | `cj(o)` of `hub.unbound` | 9 |
 | `sig_hub_link` | `orch/v2/sig/hub-link\|` | `WSK` | `cj(o)` of a host→hub `hub.link` | 10 |
@@ -170,7 +173,7 @@ literal `orch/v2/hub-…|` names.
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
 
-HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
+HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page) and `orch/v2/hub-share-msg` (one shared item under its item key). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
 
 **The custodial family.** `UK` signs only under `"orch/v2/hub-custodial|" || type || "|"`, and `type` must match
@@ -178,7 +181,7 @@ HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label 
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
 `HK_root` under the two root labels, `HK_op` under the `hub-*` labels the table gives it (now including
 `hub-space-proposal|` and `hub-relay-req|`), `UK` under the custodial family, a channel
-key under `hub-channel-proof` and, once, `hub-channel-reg` (its own registration), `WSK` under its four `sig/hub-*` labels, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
+key under `hub-channel-proof` and, once, `hub-channel-reg` (its own registration), `WSK` under its four `sig/hub-*` labels, `sig/share-item|`, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
 device key under `sig/hub-publish-approval|`.
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
@@ -546,8 +549,15 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 an exact schema, so no action can carry a reserved field or a field owned by another type at any depth (vectors
 `action_smuggle_*`: `set` of `ticket.visibility`, `ticket.tasks` with a `verify.cmd`, `ticket.acceptance`, `ticket.type`,
 `ticket.addons`, a reserved path, a nested object, a question with its own `id` or a `sig`, extra option or visibility
-keys, …). Text values are UTF-8, without control characters (multi-line texts allow LF only), without leading or
-trailing space; one-line values never contain a newline.
+keys, …).
+
+**One text rule for every title and text field of the contract** (actions, shared items, summaries): 1 to n UTF-8
+bytes, no leading or trailing white space, and **no character of the Unicode categories `Cc`, `Cf`, `Zl`, `Zp`**
+(controls including C1 such as U+0085 NEL; format characters such as the bidi overrides U+202A–202E and U+2066–2069,
+U+200E/200F and U+200B; the separators U+2028/2029) and no lone surrogates; LF is the one exception, in multi-line
+texts only. A one-line value (a title, a reason) never contains LF. Anything else is `malformed` (vectors
+`action_text_*`, `share_item_title_*`): a phone or browser shows these texts next to a signature prompt, so a
+display-spoofing character could make one text look like another.
 
 **A decision names the hash the person reviewed** (`hash` on `gate.*`, `verdict.given`, `question.answered`): the hub
 refuses with `event_changed` when its view's current hash differs, so a decision never lands on content the person did
@@ -749,6 +759,63 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
+#### 10.2b The content of a selective `share_put` (phase 4, C6/D9)
+
+The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, merged from C6 (orch-core #1022) and D9
+(orch-hub #23) (DECIDED HERE where they differed):
+
+```
+share.item {v, suite, kind: "share.item", hv, hub_id, workspace_id, item_id, item_kind: "needs_you" | "ticket" | "question",
+            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, dev}
+            signed by the workspace's WSK, label sig_share_item
+IK        = 32 fresh random bytes per put
+wrap      = seal_to(HXK, purpose "hub-share", recipient id hub_id, object_id item_id, epoch item_version,
+                    extra workspace_id (16); IK)                                         (v2 §5.3, 113 bytes)
+ct        = SALTED-AEAD(IK, "orch/v2/hub-share-msg",
+                        AAD = "orch/v2/hub-share-aad|" || suite || hub_id || workspace_id || item_id || u32(item_version),
+                        cj(signed share.item))                                           (v2 §5.1)
+sealed    = b64u(u32(item_version) || wrap || ct)
+item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)))
+```
+
+- **Sealing (C6 1, D9 seal).** The per-item key is sealed to the hub's `HXK` with the v2 §5.3 construction; its AAD binds
+  the purpose, hub, workspace, item id and version, and the content AAD binds them again. **Amendment to v2 §5.3's
+  closed purpose list** (with `space-sk`): `hub-share` | recipient: the hub (`HXK`), recipient id `hub_id` | `object_id`
+  item_id | `epoch` item_version | `extra` workspace_id | plaintext `IK` (32). D9's `{v, epk, nonce, ct}` JSON seal is
+  replaced by this binary form: the contract has one sealing construction (v2), and the zero nonce is safe because `IK`
+  and the ephemeral key are fresh per put.
+- **The signed item (C6 2, D9 plaintext).** `WSK` signs the whole item including its content (stronger than signing a
+  digest of it). `item_hash` is computed by both sides, never carried. `issued_ms` is the host's clock at share time.
+- **The chain head (C6 3).** `chain` = `{log, seq, head}`: the log the item comes from (`"workspace"` or the ticket
+  ULID), its `seq` and event head (ticket-format §5.5) when the host made the item. **When a custodial event about a
+  shared item comes back** (selective mode, C6), the event carries the `item_hash` inside its signed payload (so the
+  channel proof binds it), and the host checks before §8.3 step 9: the hash is of an item it shared and has not
+  revoked (`not_granted` otherwise), and `chain.head` is the head of `chain.log` at `chain.seq` in its own log (else
+  `view_fork`: the hub or the link changed the item). The exact field name in the event comes with C6's event types.
+- **Content per kind (C6 4, D9).** Exact keys, no free objects, the text rule of §8.5:
+  - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
+  - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
+    deadline}`;
+  - `question` `{key, type (the ticket's type), id (Q<n>), title (the ticket's title), text (≤ 2000 bytes, multi-line),
+    deadline}`;
+  - `title` one line ≤ 200 bytes; `deadline` `YYYY-MM-DD` or null (C6's date; D9's `deadline_ms` is replaced: the
+    source is the ticket's `due` date). C6's kind names win (`ticket`, not D9's `item`); D9's `item_type` is `content.type`.
+- **Replace and revoke (C6 5, D9).** `item_id` is 16 host-chosen bytes. A put with a **higher** `item_version` replaces
+  the held item; the same version with the same bytes is an idempotent `{}` (a resend); the same version with other
+  bytes or a lower one is `stale_version` (D9's monotonic counter wins over C6's timestamp: no clock in the order).
+  `share_revoke {item_id}` deletes the item and is idempotent: an unknown or already revoked id is `{}` too (D9). The
+  hub keeps a tombstone `{item_id, item_version}`, so the id may be **shared again** only with a higher
+  `item_version`, and a revoked version never comes back.
+- **Limits (C6 6, D9).** 16 KiB sealed per item (`too_large`; summaries are small, D9's 256 KiB is not needed), at most
+  **1000** live items per workspace (`too_many_items`; C6's 500 and D9's 1000: one number), so at most 16 MiB sealed per
+  workspace.
+- **The hub's check, in order** (reference `open_share_item`, vectors `share_item_*`, `share_revoke_*`): body fields
+  (`malformed`); size (`too_large`); the wrap opens under `HXK` and the content under `IK` with their AADs for this hub,
+  the link's workspace and the item id (`bad_wrap`); strict parse; `WSK` signature under the pinned key
+  (`bad_signature`); field set (`malformed`); `hub_id` (`other_hub`); `workspace_id` (`other_workspace`); `item_id` and
+  `item_version` equal the body's and the prefix (`malformed`); chain and content (`malformed`); dev marker; the version
+  rule; the item cap. Each accepted put or revoke is a `share` audit event (§10.5).
+
 #### 10.2a `wk_seal` (phase 3, hub-wkseal)
 
 Served only while the workspace's live binding is `full`; the body is exactly `{"epoch", "wrap"}` (`epoch` 1..2^32−1,
@@ -944,7 +1011,7 @@ workspaces verify and acknowledge it (`audit_ack`), admins read it in full.
 
 ```
 hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev: b64u(32), ts_ms,
-           type: "custodial" | "grant" | "membership" | "space" | "channel", scope_tag: b64u(32) | null,
+           type: "custodial" | "grant" | "membership" | "space" | "channel" | "share", scope_tag: b64u(32) | null,
            event_hash: b64u(32), dev}                       signed by HK_op, label sig_hub_audit
 ```
 
@@ -961,7 +1028,9 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
   memberships and space changes and when they happened, not whose).
 - **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, nonce}` (the
-  custodial event digest of §8.2); `channel` (p4) `{channel_id, user_id, change: register | revoke, factor,
+  custodial event digest of §8.2); `share` (p4) `{workspace_id, item_id, change: put | revoke, item_version,
+  item_hash | null, nonce}`, scoped to the workspace (D9's local `share_log` stays; the chain record is what other
+  parties can check); `channel` (p4) `{channel_id, user_id, change: register | revoke, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
   `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
@@ -1342,6 +1411,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `view_gap`, `view_fork` (p4) | `log_sync` reply | §10.7: a page that leaves a hole (or a ticket line ahead of the workspace log the hub holds); a line that contradicts the chain the hub holds. Reused there: `bad_wrap`, `bad_epoch`, `too_large`, `wrong_mode` |
 | `not_custodial` (p4) | action, custodial | §8.5: the type is not in the custodial table for that log |
 | `event_changed` (p4) | channel, hub `sign` | §8.4: the digest does not match the shown context, or the hub's view moved since `prepare` |
+| `stale_version`, `too_many_items` (p4) | selective `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`) |
@@ -1368,7 +1438,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the custodial type table; the `space.accept` built from the vector proposal |
-| `cases` | 500 cases (102 positive, 398 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 546 cases (113 positive, 433 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1416,6 +1486,9 @@ and the host side of `log_sync` (it builds the pages the vectors open); orch-pub
 | 29 | Space proposal (gap 6) | `hub.space_proposal` signed by `HK_op`, served by `space_proposals`; the host builds `space.accept` from it | #1020, L2P-2 |
 | 30 | Hub → relay auth (gap 7) | E1's label `orch/v2/hub-relay-req\|`, bytes in the §10.6 style plus `op_cert_id` and a nonce store | E1 (orch-relay#85), §10.6 |
 | 31 | Prepare / WYSIWYS (gaps 1–2) | the channel recomputes the digest from the context it shows (`event_changed`) | L2-5, D81 |
+| 32 | Selective `share_put` content (C6, D9) | `share.item` WSK-signed with exact content per kind, `IK` sealed to `HXK` (new v2 §5.3 purpose `hub-share`), monotonic `item_version`, idempotent revoke with tombstone, 16 KiB / 1000 items | C6 orch-core#1022, D9 orch-hub#23, spec §8a |
+| 33 | Text fields | one rule: no `Cc`, `Cf`, `Zl`, `Zp`; LF only in multi-line texts | security review (display spoofing) |
+| 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no
 App Attest)` (§6.3, D7 → hardening: App Attest); `log_sync reset on the host's word` (§10.7, D6/C-side → hardening: tie

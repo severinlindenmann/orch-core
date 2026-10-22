@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import struct
+import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -45,7 +46,7 @@ from .hub import (
     log_kind,
     verify_card,
 )
-from .labels import KDF_HUB_VIEW, KDF_HUB_VIEW_MSG, L
+from .labels import KDF_HUB_SHARE_MSG, KDF_HUB_VIEW, KDF_HUB_VIEW_MSG, PURPOSE_HUB_SHARE, L
 
 # --- §8.5 actions: what a channel may ask for -------------------------------------------------------------------------
 #
@@ -70,12 +71,17 @@ MAX_LIST = 32
 
 
 def _text(n: int, *, multiline: bool = False) -> Any:
-    """1..n UTF-8 bytes; no control characters (only LF in multi-line text), no leading/trailing space."""
+    """1..n UTF-8 bytes, no leading or trailing white space, and no character of the Unicode categories Cc, Cf, Zl or
+    Zp (controls incl. C1 such as U+0085, format characters such as the bidi overrides U+202A-202E, U+2066-2069, U+200E
+    and U+200B, line and paragraph separators U+2028/2029); LF is the one exception, in multi-line text only. One
+    rule for every title and text field the contract carries (display spoofing, §8.5)."""
 
     def ok(x: Any) -> bool:
         if type(x) is not str or not 0 < len(x.encode()) <= n or x != x.strip():
             return False
-        return all(c == "\n" and multiline or (ord(c) >= 32 and ord(c) != 127) for c in x)
+        return all(
+            (c == "\n" and multiline) or unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp", "Cs") for c in x
+        )
 
     return ok
 
@@ -466,6 +472,167 @@ def apply_view_page(
     if len(held) > len(out):  # an overlap that matched keeps the longer held view
         out = held
     return {**views, log: out}
+
+
+# --- §10.2b the content of a selective share_put (C6/D9) -------------------------------------------------------------
+
+SHARE_MAX_SEALED = 16 * 1024  # bytes of one sealed item (before b64u)
+SHARE_MAX_ITEMS = 1000  # live items per workspace (so at most 16 MiB sealed per workspace)
+_WRAP_LEN = 65 + 32 + 16
+NEEDS_YOU_TYPES = ("question", "gate", "verdict", "review", "handoff")
+STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
+
+#: item_kind -> the exact content fields (C6's lists, orch-core #1022). No free objects.
+SHARE_CONTENT: dict[str, dict[str, Any]] = {
+    "needs_you": {"type": _enum(*NEEDS_YOU_TYPES), "title": _text(200), "deadline": _or_null(_re(_DATE))},
+    "ticket": {
+        "key": _re(_KEY),
+        "type": _enum(*TICKET_TYPES),
+        "title": _text(200),
+        "status": _enum(*STATUSES),
+        "labels": _sorted_unique(_re(_LABEL)),
+        "deadline": _or_null(_re(_DATE)),
+    },
+    "question": {
+        "key": _re(_KEY),
+        "type": _enum(*TICKET_TYPES),
+        "id": _re(re.compile(r"Q[1-9][0-9]{0,5}")),
+        "title": _text(200),
+        "text": _text(2000, multiline=True),
+        "deadline": _or_null(_re(_DATE)),
+    },
+}
+
+
+def _chain_head(x: Any) -> bool:
+    return (
+        type(x) is dict
+        and set(x) == {"log", "seq", "head"}
+        and _log_ok(x["log"])
+        and type(x["seq"]) is int
+        and x["seq"] >= 1
+        and _hash(x["head"])
+    )
+
+
+def share_aad(hub_id: str, workspace_id: str, item_id: str, item_version: int) -> bytes:
+    return (
+        L["aad_hub_share"]
+        + bytes([S.SUITE_ID])
+        + unhex(hub_id, 16)
+        + unhex(workspace_id, 16)
+        + unhex(item_id, 16)
+        + _u32(item_version)
+    )
+
+
+def item_hash(signed: Mapping[str, Any]) -> str:
+    """``"sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)))``: what a custodial event about a shared
+    item binds (spec §8a "a custodial digest binds the item hash")."""
+    try:
+        return "sha256:" + S.sha256(L["h_share_item"] + cj(dict(signed))).hex()
+    except CanonError:
+        raise Refused("malformed") from None
+
+
+def seal_share_item(signed: Mapping[str, Any], *, hxk_pub: bytes, ik: bytes, eph_seed: bytes, salt: bytes) -> str:
+    """The host side: ``sealed = u32(item_version) || seal_to(HXK, "hub-share", recipient hub_id, object item_id,
+    epoch item_version, extra workspace_id; IK) || SALTED-AEAD(IK, "orch/v2/hub-share-msg", AAD, cj(signed item))``.
+    ``ik``, ``eph_seed`` and ``salt`` are fresh for every put in real use."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    o = signed["o"]
+    eph = S.key_from_seed(eph_seed)
+    eph_pub = S.public_bytes(eph)
+    ss = eph.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), hxk_pub))
+    k = SP._seal_key(ss, eph_pub, hxk_pub, PURPOSE_HUB_SHARE, o["hub_id"])
+    aad = SP._seal_aad(PURPOSE_HUB_SHARE, unhex(o["item_id"], 16), o["item_version"], unhex(o["workspace_id"], 16))
+    wrap = eph_pub + AESGCM(k).encrypt(bytes(12), ik, aad)
+    mk = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=KDF_HUB_SHARE_MSG).derive(ik)
+    ct = salt + AESGCM(mk).encrypt(
+        bytes(12), cj(dict(signed)), share_aad(o["hub_id"], o["workspace_id"], o["item_id"], o["item_version"])
+    )
+    return b64u(_u32(o["item_version"]) + wrap + ct)
+
+
+def open_share_item(
+    body: Any,
+    *,
+    hub_id: str,
+    workspace_id: str,
+    hxk_priv: Any,
+    wsk_pub: bytes,
+    held: Mapping[str, Any] | None,
+    live_items: int,
+    dev_mode: bool,
+) -> dict[str, Any]:
+    """The hub's check of a selective ``share_put`` (§10.2b), in order. ``held`` is ``{item_version, hash, revoked}``
+    of what it holds under this ``item_id`` (a revoked item stays as a tombstone; None if never seen); ``live_items``
+    the workspace's live item count. Returns ``{"item": o, "hash": item_hash, "new": bool}``; a higher
+    ``item_version`` replaces the held item (or re-shares a revoked id)."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    if type(body) is not dict or set(body) != {"item_id", "sealed"} or not _hex16(body["item_id"]):
+        raise Refused("malformed")
+    try:
+        raw = unb64u(body["sealed"])
+    except CanonError:
+        raise Refused("malformed") from None
+    if len(raw) > SHARE_MAX_SEALED:
+        raise Refused("too_large")
+    if len(raw) < 4 + _WRAP_LEN + 16 + 16:
+        raise Refused("bad_wrap")
+    version = struct.unpack(">I", raw[:4])[0]
+    if version < 1:
+        raise Refused("malformed")
+    eph_pub, wct, ct = raw[4:69], raw[69 : 4 + _WRAP_LEN], raw[4 + _WRAP_LEN :]
+    try:
+        if not S.valid_public_key(eph_pub):
+            raise Refused("bad_wrap")
+        ss = hxk_priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pub))
+        k = SP._seal_key(ss, eph_pub, S.public_bytes(hxk_priv), PURPOSE_HUB_SHARE, hub_id)
+        aad = SP._seal_aad(PURPOSE_HUB_SHARE, unhex(body["item_id"], 16), version, unhex(workspace_id, 16))
+        ik = AESGCM(k).decrypt(bytes(12), wct, aad)
+        mk = HKDF(algorithm=hashes.SHA256(), length=32, salt=ct[:16], info=KDF_HUB_SHARE_MSG).derive(ik)
+        pt = AESGCM(mk).decrypt(bytes(12), ct[16:], share_aad(hub_id, workspace_id, body["item_id"], version))
+    except InvalidTag, ValueError:
+        raise Refused("bad_wrap") from None
+    try:
+        signed = loads_strict(pt)
+    except CanonError:
+        raise Refused("malformed") from None
+    o = _envelope(signed, "share.item")
+    _signature(signed, L["sig_share_item"], wsk_pub)
+    _fields(o, "share.item")
+    if o["hub_id"] != hub_id:
+        raise Refused("other_hub")
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if o["item_id"] != body["item_id"] or o["item_version"] != version or not _chain_head(o["chain"]):
+        raise Refused("malformed")
+    spec = SHARE_CONTENT[o["item_kind"]]
+    c = o["content"]
+    if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
+        raise Refused("malformed")
+    _dev(o, dev_mode)
+    h = item_hash(signed)
+    if held is not None:
+        if version < held["item_version"]:
+            raise Refused("stale_version")
+        if version == held["item_version"]:
+            if h != held["hash"] or held.get("revoked"):
+                raise Refused("stale_version")
+            return {"item": o, "hash": h, "new": False}
+    if (held is None or held.get("revoked")) and live_items >= SHARE_MAX_ITEMS:
+        raise Refused("too_many_items")
+    return {"item": o, "hash": h, "new": True}
+
+
+def check_share_revoke(body: Any) -> None:
+    """``share_revoke {item_id}`` is idempotent: an unknown or already revoked id is ``{}`` too. The hub deletes the
+    item and keeps a tombstone ``{item_id, item_version}``, so a re-share needs a higher ``item_version``."""
+    if type(body) is not dict or set(body) != {"item_id"} or not _hex16(body["item_id"]):
+        raise Refused("malformed")
 
 
 # --- §6.3 channel registration ---------------------------------------------------------------------------------------

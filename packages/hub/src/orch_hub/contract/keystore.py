@@ -170,6 +170,7 @@ class WskSigner(_Signer):
             "hub.unbound": "sig_hub_unbound",
             "space.item": "sig_space_item",
             "space.accept": "sig_space_accept",
+            "share.item": "sig_share_item",
         }
     )
     LINK_DIR = "w2h"

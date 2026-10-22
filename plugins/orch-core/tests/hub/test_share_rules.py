@@ -194,7 +194,8 @@ def test_one_refused_item_is_skipped_and_reported_and_the_rest_goes_on():
 
     got = S.sync(st, S.select(st.rules, tickets), link=link, build=build, save=lambda s: None,
                  new_id=lambda: f"{next(n):032x}")  # fmt: skip
-    assert got == {"put": 2, "revoke": 0, "kept": 0, "refused": {"ticket:b": "malformed"}}
+    assert got["refused"] == {"ticket:b": "malformed"} and (got["put"], got["revoke"], got["kept"]) == (2, 0, 0)
+    assert got["refused_items"] == [{"item": "ticket K-2: A title", "code": "malformed", "stale": False}]
     assert [b["item_id"] for o, b in link.calls if o == "share_put"] == [f"{1:032x}", f"{3:032x}"]
     assert "ticket:b" not in st.sent  # nothing was recorded for the refused item
 
@@ -229,3 +230,45 @@ def test_c6r3_2_an_item_carries_the_chain_of_its_own_snapshot_not_a_later_read()
     other = dataclasses.replace(t, chain=(5, "x"))
     assert item.digest == S.select([{"kind": "tag", "tag": "public"}], [other])[0].digest  # the chain is not content
     assert seen == []
+
+
+def test_c6r3_1_a_refused_update_of_a_shared_item_is_stale_and_stays_visible_in_the_state():
+    st, link = S.ShareState(), FakeLink()
+    st.add_rule({"kind": "tag", "tag": "public"})
+    assert run(st, [T("a", labels=["public"], title="Old")], link)["put"] == 1
+    hub_has = st.sent["ticket:a"]["digest"]
+    refuse = {"on": True}
+
+    def build(item_id, item, version):
+        if refuse["on"]:
+            raise HubRefused("too_large")
+        return fake_build(item_id, item, version)
+
+    new = [T("a", labels=["public"], title="New")]
+    got = S.sync(st, S.select(st.rules, new), link=link, build=build, save=lambda s: None)
+    assert got["refused_items"] == [{"item": "ticket K-1: New", "code": "too_large", "stale": True}]
+    assert st.sent["ticket:a"]["digest"] == hub_has  # the hub still has the old version
+    again = S.ShareState.from_json(st.to_json())  # persisted: `share rule list` shows it later
+    assert again.refused_items() == got["refused_items"]
+    refuse["on"] = False  # fixed: the next sync sends it and the refusal is gone
+    assert S.sync(st, S.select(st.rules, new), link=link, build=build, save=lambda s: None)["put"] == 1
+    assert st.refused == {} and "refused_items" not in S.sync(
+        st, S.select(st.rules, new), link=link, build=build, save=lambda s: None
+    )
+
+
+def test_c6r3_1_a_refusal_ends_when_the_item_stops_matching_and_a_damaged_entry_is_refused():
+    st, link = S.ShareState(), FakeLink()
+    st.add_rule({"kind": "tag", "tag": "public"})
+
+    def build(item_id, item, version):
+        raise HubRefused("malformed")
+
+    S.sync(st, S.select(st.rules, [T("a", labels=["public"])]), link=link, build=build, save=lambda s: None)
+    assert list(st.refused) == ["ticket:a"]
+    S.sync(st, S.select(st.rules, [T("a", labels=[])]), link=link, build=build, save=lambda s: None)
+    assert st.refused == {}
+    bad = st.to_json() | {"refused": {"ticket:a": {"code": "x"}}}
+    with pytest.raises(HubRefused):
+        S.ShareState.from_json(bad)
+    assert S.ShareState.from_json({k: v for k, v in st.to_json().items() if k != "refused"}).refused == {}  # legacy

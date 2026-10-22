@@ -250,7 +250,8 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     try:
         if op == "share.rules":
             rules = [{**r, "count": len(S.select([r], facts)), "describes": S.describe(r)} for r in st.rules]
-            return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn)})
+            return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
+                              "refused_items": st.refused_items()})  # fmt: skip
         rules, _w, want = _after(
             st, facts,
             add=S.normalize_rule(args["add"]) if "add" in args else None,

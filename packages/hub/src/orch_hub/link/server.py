@@ -70,6 +70,7 @@ class LinkServer:
         wk_seals: WkSeals | None = None,
         views: Any = None,
         shares: Any = None,
+        deliveries: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool = True,
@@ -93,6 +94,7 @@ class LinkServer:
         self._wk_seals = wk_seals
         self._views = views
         self._shares = shares
+        self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
@@ -246,11 +248,15 @@ class LinkServer:
         finally:
             if self._router is not None and port.live is not None:
                 self._router.detach(ws, port.live)
+            if self._deliveries is not None and port.delivery is not None:
+                self._deliveries.detach(ws, port.delivery)
 
     def _attach(self, ws: str, port: _Port) -> None:
         """Join the router's live set once the workspace is pinned and bound (queued ``route_in`` goes out now)."""
         if self._router is not None and port.live is None and self._reg.mode(ws) is not None:
             port.live = self._router.attach(ws, port)
+        if self._deliveries is not None and port.delivery is None and self._reg.mode(ws) is not None:
+            port.delivery = self._deliveries.attach(ws, port)
 
     def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
         self._attach(ws, port)
@@ -281,6 +287,8 @@ class LinkServer:
             if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
                 if self._router is not None and port.live is not None:
                     self._router.on_reply(ws, port.live, o)
+                if self._deliveries is not None and port.delivery is not None:
+                    self._deliveries.on_reply(ws, port.delivery, o)
                 continue
             body = self._dispatch(ws, wsk, o, now)
             port.send_signed(
@@ -365,6 +373,7 @@ class _Port:
         self._lock = threading.Lock()
         self._seq = 0
         self.live = None
+        self.delivery = None
 
     def _send(self, op: str, re: int | None, body: dict[str, Any]) -> int:
         with self._lock:

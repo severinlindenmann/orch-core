@@ -259,3 +259,28 @@ def test_custodial_selective_vectors_replay_through_the_engines_verifier(name, t
             assert run() == exp["ok"]
     finally:
         env.close()
+
+
+# --- the engine hands the signed event to the delivery queue -------------------------------------------------------
+
+
+def test_sign_queues_the_signed_event_durably(st):
+    from orch_hub.contract.canon import cj
+    from orch_hub.custodial.deliver import DeliveryQueue
+
+    q = DeliveryQueue()
+    st.env.engine._deliver = q
+    p = st.env.prepare(dict(CODE))
+    signed = st.env.engine.sign(p.prepared_id, st.env.channel, st.env.proof(p.digest))
+    row = q._db.execute("SELECT event, ws, log FROM deliver").fetchone()
+    assert bytes(row[0]) == cj(signed) and row[1:] == (G.WS_A, V4.TICKET)
+    q.close()
+
+
+def test_a_queue_that_cannot_store_refuses_and_sends_nothing(st):
+    def broken(ws, log, ev):
+        raise OSError("disk full")
+
+    st.env.engine._deliver = broken
+    p = st.env.prepare(dict(CODE))
+    assert code(st.env.engine.sign, p.prepared_id, st.env.channel, st.env.proof(p.digest)) == "unavailable"

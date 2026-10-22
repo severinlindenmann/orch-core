@@ -59,6 +59,7 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "addon.purged": "P",
         "hub.joined": "P",
         "hub.left": "P",
+        "hub.pinned": "H",
     }.items()
 }
 

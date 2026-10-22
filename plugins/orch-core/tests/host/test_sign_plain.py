@@ -260,10 +260,18 @@ def signable_types() -> list[str]:
     return sorted(out)
 
 
+HUB_ONLY = {
+    "channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert", "channel_proof", "item_hash",
+}  # fmt: skip
+
+
 def schema_properties(typ: str) -> set[str]:
     from orch import schema
 
-    return set(schema.load(f"event.{typ}")["properties"]) - review.ENVELOPE - SCHEMA_STAMPS
+    props = set(schema.load(f"event.{typ}")["properties"]) - review.ENVELOPE - SCHEMA_STAMPS
+    # C3b: the hub fields (auth "hub" only) are never part of an event a person signs here; the hub's two signatures
+    # cover them. An unknown key in a locally signed event still falls back to the full review.
+    return props - HUB_ONLY if "channel_proof" in props else props
 
 
 @pytest.mark.parametrize("typ", signable_types())

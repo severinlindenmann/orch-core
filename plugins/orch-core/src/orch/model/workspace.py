@@ -13,7 +13,7 @@ from typing import Any
 
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
-from . import addon_rules, authz, generations, policies
+from . import addon_rules, authz, generations, hubledger, policies
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -467,11 +467,24 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if aliases.get(pid, uid) != uid or users.get(uid, pid) != pid:
             return Refusal(Code.HUB_INVALID, "an alias is never re-pointed")
         aliases[pid], users[uid] = uid, pid
+    ledger = {k: dict(v) for k, v in h.get("ledger", {}).items()}
+    if e["hub_id"] in ledger and ledger[e["hub_id"]]["root"] != e["hk_root_pub"]:
+        return Refusal(Code.HUB_INVALID, "root_mismatch")  # the hub id is derived from the root: it never changes
+    ledger.setdefault(e["hub_id"], hubledger.new_ledger(e["hk_root_pub"]))
     # the union over all hubs must stay a function: a user id another hub aliased to someone else is refused (L2P4-C1b)
     other = {u: p for hid, al in book.items() if hid != e["hub_id"] for p, u in al.items()}
     for a in e["aliases"]:
         if other.get(a["user_id"], a["person_id"]) != a["person_id"]:
             return Refusal(Code.HUB_INVALID, "this user id is already aliased to another person under another hub")
+    # C3b-5 (§15.6): a u_ id belongs to the hub it first appeared under. An alias on this hub may not take an id that
+    # first appeared under another hub, unless that hub's own book maps the id to the same person.
+    user_hub = dict(h.get("user_hub", {}))
+    for a in e["aliases"]:
+        first = user_hub.get(a["user_id"])
+        if first is not None and first != e["hub_id"] and book.get(first, {}).get(a["person_id"]) != a["user_id"]:
+            return Refusal(Code.HUB_INVALID, "foreign_user")
+    for a in e["aliases"]:
+        user_hub.setdefault(a["user_id"], e["hub_id"])
     if any("p_" + pid not in ws.members for pid in aliases):
         return Refusal(Code.HUB_INVALID, "an alias names a person who is not a member")
     ws.hub = {
@@ -482,6 +495,8 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "status": "joined",
         "aliases": aliases,
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
+        "ledger": ledger,
+        "user_hub": user_hub,
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None

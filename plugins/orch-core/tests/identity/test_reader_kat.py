@@ -148,7 +148,9 @@ def test_the_view_auth_values_are_the_event_schema_values():
     from orch.custody.base import AUTH_VALUES
     from orch.schema import load
 
-    assert tuple(load("common")["$defs"]["auth"]["enum"]) == AUTH_VALUES == reader.auth_values()
+    # "hub" (C3b, 15.1) is custody by the hub's signatures, not a backend a key can sign with: not in AUTH_VALUES
+    enum = tuple(load("common")["$defs"]["auth"]["enum"])
+    assert enum == (*AUTH_VALUES, "hub") == reader.auth_values()
 
 
 def test_a_corpus_without_every_reader_view_is_refused():

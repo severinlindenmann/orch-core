@@ -97,6 +97,17 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
+    # C3b (ticket-format 15.8): the hub checks are injected by the host (orch.hubclient); this verifier has none, so it
+    # refuses every hub signature, pin and actor (fail closed, D79).
+    def verify_custodial_sigs(self, event: Mapping[str, Any], *, workspace_id: str, log: str) -> bool:
+        return False
+
+    def verify_hub_pin(self, obj: Mapping[str, Any], **kw: Any) -> str | None:
+        return "unavailable"
+
+    def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        return "unavailable"
+
     def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
         """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,
         ``genesis.bad_sig``), or ``None`` when all hold. Lets the model give check 6 its own refusal code."""

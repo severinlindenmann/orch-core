@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import visibility
+from . import hubledger, identity, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -68,6 +68,7 @@ ACTOR_RULES: dict[str, str] = {
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
+    "hub.pinned": "H",
 }
 OPERATE = frozenset(
     {
@@ -182,6 +183,78 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
         return Refusal(Code.SIG_INVALID, "person event without sig")
     if not v.verify_person(e, SigContext(ws.workspace_id, log, cert)):
         return Refusal(Code.SIG_INVALID, "person signature does not verify")
+    return None
+
+
+#: the hub contract codes by where they arise in section 15.3 (the verifier returns the contract code only)
+_HUB_INVALID_CODES = frozenset({"malformed", "unavailable", "other_hub", "other_workspace", "not_joined", "wrong_mode"})
+_HUB_UNKNOWN_SNAPSHOT = "unknown_snapshot"
+_HUB_DENIED_CODES = frozenset(
+    {"channel_revoked", "forbidden_role", "not_granted", "not_custodial", "factor_too_weak"}
+)  # step 5; everything else the verifier refuses is the certificate chain (step 2)
+_HUB_FACTORS = ("password+totp", "se-unlocked", "passkey")
+_HUB_FIELDS = ("channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert", "channel_proof")
+
+
+def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: bool = False) -> Refusal | None:
+    """Step 5 "Signer" for a hub actor (ticket-format 15.3), each check against the ledger and workspace state AT THE
+    LINE'S POSITION and with ``at`` as the time: 1 ``hub.invalid`` (joined, shape, ``item_hash`` by mode), 2
+    ``hub.cert_invalid``, 3 ``hub.unknown_snapshot``, 4 ``hub.foreign_user``, 5 ``hub.denied``; then the shared person
+    rules on the effective role (a viewer, ``roster_v``) and the two signatures. ``dev`` is the reader's own dev
+    marking (never a field of the event)."""
+    ws, a, typ = core.ws, e["actor"], e["type"]
+    h = ws.hub
+    hub_id = e.get("hub_id")
+    if not h or h.get("status") != "joined" or h.get("hub_id") != hub_id:
+        return Refusal(Code.HUB_INVALID, "not_joined")
+    led = hubledger.ledger_of(ws, hub_id)
+    if led is None:
+        return Refusal(Code.HUB_INVALID, "not_joined")
+    mode = h.get("mode")
+    if (
+        any(k not in e for k in _HUB_FIELDS)
+        or a.get("via") != e["channel"]
+        or e["channel_factor"] not in _HUB_FACTORS
+        or ("item_hash" in e) != (mode == "selective")
+    ):
+        return Refusal(Code.HUB_INVALID, "malformed")
+    user = a["id"][2:]
+    member_role = None
+    if mode == "selective":  # 15.7: the grant is the alias in the owner-signed hub.joined
+        person = next((p for p, u in h.get("alias_book", {}).get(hub_id, {}).items() if u == user), None)
+        member_role = identity.role_of(ws, "p_" + person) if person is not None else None
+    check = getattr(v, "verify_hub_actor", None)
+    code = (
+        "unavailable"
+        if check is None
+        else check(
+            e, workspace_id=ws.workspace_id, log=log, card=led["card"], revoked=frozenset(led["revoked_op_certs"]),
+            snapshot=led["snapshot"], revoked_channels=frozenset(led["revoked_channels"]), at_ms=ts(e["at"]) * 1000,
+            dev=dev, mode=mode, member_role=member_role,
+        )
+    )  # fmt: skip
+    if code is not None and code != _HUB_UNKNOWN_SNAPSHOT and code not in _HUB_DENIED_CODES:
+        return Refusal(Code.HUB_INVALID if code in _HUB_INVALID_CODES else Code.HUB_CERT_INVALID, code)
+    if code == _HUB_UNKNOWN_SNAPSHOT:
+        return Refusal(Code.HUB_UNKNOWN_SNAPSHOT, code)
+    # step 4 runs after the certificate chain and the snapshot, so an unauthenticated event never learns the id map
+    who = identity.hub_actor(ws, hub_id, user)
+    if isinstance(who, Refusal):
+        return who
+    if code is not None:
+        return Refusal(Code.HUB_DENIED, code)
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    if sg.role is None:  # aliased to a person who is no member now, or no role in the snapshot
+        return Refusal(Code.HUB_DENIED, "forbidden_role")
+    if sg.role == "viewer" and typ not in VIEWER_MAY:
+        return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
+    if e["roster_v"] != ws.roster_v:
+        return Refusal(Code.MEMBERS_STALE, f"roster_v {e['roster_v']} is not current ({ws.roster_v})")
+    sigs = getattr(v, "verify_custodial_sigs", None)
+    if "sig" not in e or sigs is None or not sigs(e, workspace_id=ws.workspace_id, log=log):
+        return Refusal(Code.SIG_INVALID, "the hub signatures do not verify")
     return None
 
 

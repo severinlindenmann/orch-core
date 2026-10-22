@@ -74,17 +74,50 @@ def test_cli_version_plain_and_json(cli):
     assert data["version"] == "2.0.0.dev0" and data["development"] is True and data["commit"] is None
 
 
-def test_stamp_writes_all_three_files(tmp_path):
-    core = tmp_path / "core"
+DASH = 'dependencies = ["fastapi==1", "orch-core>=2.0.0.dev0"]'
+
+
+def _tree(tmp_path, dash_body=None):
+    core, dash = tmp_path / "core", tmp_path / "dash"
     (core / "src" / "orch").mkdir(parents=True)
+    dash.mkdir()
     (core / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "2.0.0.dev0"\n')
     (core / "src" / "orch" / "__init__.py").write_text('"""x."""\n\n__version__ = "2.0.0.dev0"\n')
-    _stamp_module().stamp("2.0.0.dev7", "main", "abcdef1234", core=core)
+    body = dash_body if dash_body is not None else f'[project]\nversion = "0.1.0"\n{DASH}\n'
+    (dash / "pyproject.toml").write_text(body)
+    return core, dash
+
+
+def test_stamp_writes_all_files(tmp_path):
+    core, dash = _tree(tmp_path)
+    _stamp_module().stamp("2.0.0.dev7", "main", "abcdef1234", core=core, dashboard=dash)
     assert 'version = "2.0.0.dev7"' in (core / "pyproject.toml").read_text()
     assert '__version__ = "2.0.0.dev7"' in (core / "src" / "orch" / "__init__.py").read_text()
+    d = (dash / "pyproject.toml").read_text()
+    assert 'version = "2.0.0.dev7"' in d and '"orch-core==2.0.0.dev7"' in d and "fastapi==1" in d
     stamp = json.loads((core / "src" / "orch" / "_build.json").read_text())
     assert stamp["version"] == "2.0.0.dev7" and stamp["channel"] == "main" and stamp["commit"] == "abcdef1234"
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp["built_at"])
+
+
+@pytest.mark.parametrize(
+    "body, what",
+    [
+        (f"[project]\n{DASH}\n", "dashboard pyproject.toml version"),  # zero version lines
+        (f'[project]\nversion = "0.1.0"\nversion = "0.2.0"\n{DASH}\n', "dashboard pyproject.toml version"),  # two
+        ('[project]\nversion = "0.1.0"\ndependencies = ["fastapi==1"]\n', "orch-core dependency"),  # zero pins
+        (
+            f'[project]\nversion = "0.1.0"\n{DASH}\nextra = ["orch-core>=1"]\n',
+            "orch-core dependency",
+        ),  # two pins
+    ],
+)
+def test_stamp_refuses_zero_or_two_matches_and_writes_nothing(tmp_path, body, what):
+    core, dash = _tree(tmp_path, body)
+    with pytest.raises(ValueError, match=what):
+        _stamp_module().stamp("2.0.0.dev7", "main", "abcdef1234", core=core, dashboard=dash)
+    assert 'version = "2.0.0.dev0"' in (core / "pyproject.toml").read_text()
+    assert not (core / "src" / "orch" / "_build.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -98,7 +131,7 @@ def test_stamp_writes_all_three_files(tmp_path):
 )
 def test_stamp_rejects_bad_input(tmp_path, args):
     with pytest.raises(ValueError):
-        _stamp_module().stamp(*args, core=tmp_path)
+        _stamp_module().stamp(*args, core=tmp_path, dashboard=tmp_path)
 
 
 @pytest.mark.slow
@@ -111,7 +144,7 @@ def test_wheel_contains_build_json(tmp_path):
     core = Path(__file__).resolve().parents[2]
     src = tmp_path / "core"
     shutil.copytree(core, src, ignore=shutil.ignore_patterns(".venv", "__pycache__", "tests", "dist", ".pytest_cache"))
-    _stamp_module().stamp("2.0.0.dev9", "develop", "abcdef1", core=src)
+    _stamp_module().stamp("2.0.0.dev9", "develop", "abcdef1", core=src, dashboard=_tree(tmp_path / "t")[1])
     out = tmp_path / "dist"
     r = subprocess.run(["uv", "build", "--wheel", "--out-dir", str(out), str(src)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr

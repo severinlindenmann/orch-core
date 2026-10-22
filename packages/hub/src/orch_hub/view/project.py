@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..contract import phase4 as P4
 from ..contract import suite as S
 from ..contract.canon import CanonError, cj
 from ..contract.hub import Refused
@@ -174,10 +175,6 @@ def identities(w: Workspace, user_id: str, owner_alias: str | None) -> set[str]:
 
 
 def visible_to(t: Ticket, me: set[str]) -> bool:
-    """The ONE visibility rule (needs-you AND build): a workspace-visible ticket is visible; a restricted one only to
-    listed persons or its owner; any other value is invisible (fail closed)."""
-    if t.visibility == "workspace":
-        return True
-    if type(t.visibility) is dict and type(t.visibility.get("restricted")) is list:
-        return bool(me & set(t.visibility["restricted"])) or bool(me & set(t.people["ticket_owner"]))
-    return False
+    """The ONE visibility rule (needs-you AND build), core's ``can_see`` without membership: protocol.md §10.7
+    "Visibility", vectors ``visible_*``. The ticket owner has no special standing."""
+    return P4.visible(t.visibility, me)

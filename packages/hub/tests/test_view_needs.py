@@ -137,8 +137,11 @@ def test_restricted_ticket_is_invisible_to_a_user_not_on_the_list(kit):
     kit.host.ask()
     kit.host.append(LOG, "visibility.changed", visibility={"restricted": ["p_" + "22" * 16]}, roster_v=1)
     kit.push()
-    # the question is addressed to OWNER, who is the ticket owner: still visible to them
-    assert len(kit.r.needs_you(WS, USER)) == 1
+    # core's can_see: only the persons on the list; being the ticket owner (OWNER, aliased to USER) does not count
+    assert kit.r.needs_you(WS, USER) == []
+    kit.host.append(LOG, "visibility.changed", visibility={"restricted": ["p_" + "22" * 16, OWNER]}, roster_v=1)
+    kit.push()
+    assert [r["title"] for r in kit.r.needs_you(WS, USER)] == ["CSV or API?"]
     kit.host.ticket(TK2, "DEMO-0002", "Other")
     kit.host.append(TK2, "people.changed", role="owner", add=["p_" + "33" * 16], remove=[], roster_v=1)
     kit.host.ask(TK2, to="u_" + USER, text="hidden")

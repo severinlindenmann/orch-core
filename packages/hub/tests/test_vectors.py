@@ -60,9 +60,20 @@ def test_case(case):
 def test_every_case_has_a_phase_and_negatives_cover_the_brief():
     names = {c["name"] for c in V["cases"]}
     assert all(c["phase"] in (2, 3, 4) for c in V["cases"])
-    for must in ("card_under_snapshot_label", "uk_cert_signed_by_root", "uk_cert_expired", "publish_binding_of_other_workspace",
-                 "binding_replayed_after_leave", "publish_after_leave", "card_missing_dev_marker", "card_extra_field",
-                 "card_b64u_padding", "card_text_duplicate_key", "card_dev_at_real_verifier", "link_sign_request_refused"):
+    for must in (
+        "card_under_snapshot_label",
+        "uk_cert_signed_by_root",
+        "uk_cert_expired",
+        "publish_binding_of_other_workspace",
+        "binding_replayed_after_leave",
+        "publish_after_leave",
+        "card_missing_dev_marker",
+        "card_extra_field",
+        "card_b64u_padding",
+        "card_text_duplicate_key",
+        "card_dev_at_real_verifier",
+        "link_sign_request_refused",
+    ):
         assert must in names
 
 
@@ -125,8 +136,9 @@ def test_publish_bytes():
 
 def test_link_auth_bytes():
     a = V["link_auth"]
-    msg = H.link_auth_bytes(a["hub_id"], a["workspace_id"], bytes.fromhex(a["challenge_hex"]),
-                            bytes.fromhex(a["exporter_hex"]))
+    msg = H.link_auth_bytes(
+        a["hub_id"], a["workspace_id"], bytes.fromhex(a["challenge_hex"]), bytes.fromhex(a["exporter_hex"])
+    )
     assert msg.hex() == a["signed_hex"]
     assert S.verify(pub(a["signer"]), unb64u(a["sig"], 64), msg)
 

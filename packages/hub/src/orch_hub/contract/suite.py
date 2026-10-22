@@ -63,7 +63,8 @@ def verify(pub: bytes, sig: bytes, msg: bytes) -> bool:
         return False
     try:
         ec.EllipticCurvePublicKey.from_encoded_point(_CURVE, pub).verify(
-            encode_dss_signature(r, s), msg, ec.ECDSA(hashes.SHA256()))
+            encode_dss_signature(r, s), msg, ec.ECDSA(hashes.SHA256())
+        )
     except InvalidSignature:
         return False
     return True

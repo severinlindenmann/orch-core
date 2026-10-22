@@ -14,8 +14,13 @@ from orch_hub.contract.canon import unb64u
 NOW = G.NOW
 SAMPLES = {
     "hub.op_cert": G.op_cert()["o"],
-    "hub.op_revoked": {**G.hdr("hub.op_revoked"), "hub_id": G.HUB_ID, "cert_id": G.OP_CERT_ID, "revoked_ms": NOW,
-                       "dev": True},
+    "hub.op_revoked": {
+        **G.hdr("hub.op_revoked"),
+        "hub_id": G.HUB_ID,
+        "cert_id": G.OP_CERT_ID,
+        "revoked_ms": NOW,
+        "dev": True,
+    },
     "hub.card": G.card()["o"],
     "hub.uk_cert": G.uk_cert()["o"],
     "hub.channel_cert": G.channel_cert()["o"],
@@ -34,8 +39,14 @@ ALLOWED = {
     KS.WskSigner: {"hub.binding", "hub.unbound", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
-KEY = {KS.RootSigner: "hk_root", KS.OpSigner: "hk_op", KS.UkSigner: "uk_alice", KS.ChannelSigner: "channel_alice_phone",
-       KS.WskSigner: "wsk_a", KS.OwnerDeviceSigner: "dk_alice_mac.sig"}
+KEY = {
+    KS.RootSigner: "hk_root",
+    KS.OpSigner: "hk_op",
+    KS.UkSigner: "uk_alice",
+    KS.ChannelSigner: "channel_alice_phone",
+    KS.WskSigner: "wsk_a",
+    KS.OwnerDeviceSigner: "dk_alice_mac.sig",
+}
 EVERY_LABEL = sorted(H.L.values())
 
 
@@ -89,8 +100,9 @@ def test_channel_signs_only_digests():
 
 def test_op_publish_transport_only_over_hub_path_bytes():
     op = KS.OpSigner(G.K.priv["hk_op"])
-    hb = H.hub_path_signed_bytes(bytes.fromhex(G.WS_A), NOW, G.NONCE, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY,
-                                 G.HUB_ID, None)
+    hb = H.hub_path_signed_bytes(
+        bytes.fromhex(G.WS_A), NOW, G.NONCE, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY, G.HUB_ID, None
+    )
     assert S.verify(op.public, op.publish_transport(G.HUB_ID, hb), H.hub_publish_bytes(G.HUB_ID, hb))
     direct = H.publish_signed_bytes(bytes.fromhex(G.WS_A), NOW, G.NONCE, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY)
     with pytest.raises(KS.KeyUseError):

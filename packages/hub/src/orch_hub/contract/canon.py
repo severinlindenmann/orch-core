@@ -118,8 +118,9 @@ def loads_strict(data: bytes | str) -> Any:
     if not isinstance(data, str):
         raise CanonError("JSON text must be str or bytes")
     try:
-        obj = json.loads(data, object_pairs_hook=_pairs, parse_float=_no_float, parse_int=_int,
-                         parse_constant=_no_const)
+        obj = json.loads(
+            data, object_pairs_hook=_pairs, parse_float=_no_float, parse_int=_int, parse_constant=_no_const
+        )
     except CanonError:
         raise
     except (ValueError, RecursionError) as e:

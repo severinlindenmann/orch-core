@@ -59,10 +59,19 @@ def test_publish_request_with_core_primitives():
         return struct.pack(">H", len(s)) + s.encode()
 
     appr = core_jcs.loads_strict(core_enc.unb64u(h["Orch-Owner-Approval"]))
-    signed = (b"orch/v2/publish-hub|" + bytes([2]) + bytes.fromhex(h["Orch-Workspace"]) + struct.pack(">Q", int(h["Orch-Ts"]))
-              + bytes.fromhex(h["Orch-Nonce"]) + lp16(r["method"]) + lp16(r["host"]) + lp16(r["target"])
-              + core_suite.sha256(bytes.fromhex(r["body_hex"])) + bytes.fromhex(h["Orch-Hub"])
-              + core_suite.sha256(core_jcs.dumps(appr)))
+    signed = (
+        b"orch/v2/publish-hub|"
+        + bytes([2])
+        + bytes.fromhex(h["Orch-Workspace"])
+        + struct.pack(">Q", int(h["Orch-Ts"]))
+        + bytes.fromhex(h["Orch-Nonce"])
+        + lp16(r["method"])
+        + lp16(r["host"])
+        + lp16(r["target"])
+        + core_suite.sha256(bytes.fromhex(r["body_hex"]))
+        + bytes.fromhex(h["Orch-Hub"])
+        + core_suite.sha256(core_jcs.dumps(appr))
+    )
     assert signed.hex() == p["wsk_signed_hex"]
     assert core_suite.verify(pub("wsk_a"), core_enc.unb64u(h["Orch-Signature"], 64), signed)
     hub_bytes = b"orch/v2/hub-publish|" + bytes([2]) + bytes.fromhex(h["Orch-Hub"]) + core_suite.sha256(signed)
@@ -84,7 +93,7 @@ def test_custodial_context_is_core_signed_context():
     c = V["custodial"]
     e = {k: v for k, v in c["event"].items() if k != "sig"}
     ticket = core_hash.signed_context("sig_ticket_event", c["workspace_id"], c["log"], e)
-    body = ticket[len(b"orch/v2/sig/ticket-event|"):]
+    body = ticket[len(b"orch/v2/sig/ticket-event|") :]
     assert bytes.fromhex(c["uk_signed_hex"]) == c["uk_label"].encode() + body
 
 

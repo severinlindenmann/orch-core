@@ -126,28 +126,91 @@ def _relay_url(x: Any) -> bool:
 HEADER = {"v": _const(2), "suite": _const(S.SUITE_ID), "kind": None, "hv": _const(HV)}
 
 FIELDS: dict[str, dict[str, Check]] = {
-    "hub.op_cert": {"hub_id": _hex16, "cert_id": _hex16, "op_seq": _int_min(1), "hk_op_pub": _pub, "issued_ms": _int_min(0),
-                    "expires_ms": _int_min(1), "dev": _bool},
+    "hub.op_cert": {
+        "hub_id": _hex16,
+        "cert_id": _hex16,
+        "op_seq": _int_min(1),
+        "hk_op_pub": _pub,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
     "hub.op_revoked": {"hub_id": _hex16, "cert_id": _hex16, "revoked_ms": _int_min(0), "dev": _bool},
-    "hub.card": {"hub_id": _hex16, "hk_root_pub": _pub, "hxk_pub": _pub, "relay_url": _relay_url,
-                 "tls_spki_sha256": _b64u_n(32), "card_seq": _int_min(1), "issued_ms": _int_min(0), "dev": _bool},
-    "hub.uk_cert": {"hub_id": _hex16, "op_cert_id": _hex16, "user_id": _hex16, "uk_pub": _pub,
-                    "issued_ms": _int_min(0), "expires_ms": _int_min(1), "dev": _bool},
-    "hub.channel_cert": {"hub_id": _hex16, "op_cert_id": _hex16, "channel_id": _hex16, "user_id": _hex16,
-                         "key_pub": _pub, "factor": _enum(*FACTORS), "issued_ms": _int_min(0),
-                         "expires_ms": _int_min(1), "dev": _bool},
-    "hub.snapshot": {"hub_id": _hex16, "op_cert_id": _hex16, "workspace_id": _hex16, "generation": _const(0),
-                     "version": _int_min(1), "issued_ms": _int_min(0), "roles": lambda x: type(x) is dict,
-                     "revoked_channels": lambda x: type(x) is list, "dev": _bool},
-    "hub.binding": {"workspace_id": _hex16, "wsk_pub": _pub, "hub_id": _hex16, "hk_root_pub": _pub,
-                    "mode": _enum(*MODES), "binding_seq": _int_min(1), "valid_from_ms": _int_min(0), "dev": _bool},
-    "hub.unbound": {"workspace_id": _hex16, "hub_id": _hex16, "binding_seq": _int_min(1), "unbound_ms": _int_min(0),
-                    "dev": _bool},
-    "hub.link": {"hub_id": _hex16, "workspace_id": _hex16, "dir": _enum("w2h", "h2w"), "seq": _int_min(1),
-                 "ts_ms": _int_min(0), "op": lambda x: type(x) is str, "re": lambda x: x is None or _int_min(1)(x),
-                 "body": lambda x: type(x) is dict},
-    "hub.publish_approval": {"workspace_id": _hex16, "hub_id": _hex16, "device_id": _hex16,
-                             "request_hash": _b64u_n(32), "access": _enum("public")},
+    "hub.card": {
+        "hub_id": _hex16,
+        "hk_root_pub": _pub,
+        "hxk_pub": _pub,
+        "relay_url": _relay_url,
+        "tls_spki_sha256": _b64u_n(32),
+        "card_seq": _int_min(1),
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
+    "hub.uk_cert": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "user_id": _hex16,
+        "uk_pub": _pub,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
+    "hub.channel_cert": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "channel_id": _hex16,
+        "user_id": _hex16,
+        "key_pub": _pub,
+        "factor": _enum(*FACTORS),
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
+    "hub.snapshot": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "generation": _const(0),
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "roles": lambda x: type(x) is dict,
+        "revoked_channels": lambda x: type(x) is list,
+        "dev": _bool,
+    },
+    "hub.binding": {
+        "workspace_id": _hex16,
+        "wsk_pub": _pub,
+        "hub_id": _hex16,
+        "hk_root_pub": _pub,
+        "mode": _enum(*MODES),
+        "binding_seq": _int_min(1),
+        "valid_from_ms": _int_min(0),
+        "dev": _bool,
+    },
+    "hub.unbound": {
+        "workspace_id": _hex16,
+        "hub_id": _hex16,
+        "binding_seq": _int_min(1),
+        "unbound_ms": _int_min(0),
+        "dev": _bool,
+    },
+    "hub.link": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "dir": _enum("w2h", "h2w"),
+        "seq": _int_min(1),
+        "ts_ms": _int_min(0),
+        "op": lambda x: type(x) is str,
+        "re": lambda x: x is None or _int_min(1)(x),
+        "body": lambda x: type(x) is dict,
+    },
+    "hub.publish_approval": {
+        "workspace_id": _hex16,
+        "hub_id": _hex16,
+        "device_id": _hex16,
+        "request_hash": _b64u_n(32),
+        "access": _enum("public"),
+    },
 }
 
 LABEL_OF_KIND = {
@@ -245,8 +308,9 @@ def parse(text: bytes | str) -> Any:
 # --- HK_root: op certificate and its revocation -------------------------------------------------------------------
 
 
-def verify_op_cert(signed: Any, hk_root_pub: bytes, *, now_ms: int, dev_mode: bool,
-                   revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_op_cert(
+    signed: Any, hk_root_pub: bytes, *, now_ms: int, dev_mode: bool, revoked_op_certs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     o = _envelope(signed, "hub.op_cert")
     _signature(signed, L["sig_hub_op_cert"], hk_root_pub)
     _fields(o, "hub.op_cert")
@@ -272,8 +336,15 @@ def verify_op_revoked(signed: Any, hk_root_pub: bytes, *, dev_mode: bool) -> dic
 # --- HK_op: the hub card --------------------------------------------------------------------------------------------
 
 
-def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | None = None,
-                revoked_op_certs: frozenset[str] = frozenset(), held: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def verify_card(
+    card: Any,
+    *,
+    now_ms: int,
+    dev_mode: bool,
+    pinned_root: bytes | None = None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+    held: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Returns ``{"card": o, "op_cert": op_o, "hk_op_pub": bytes, "hk_root_pub": bytes}``.
 
     ``held`` is the card the verifier holds (the result of an earlier call), if any. Order between cards (L2-1): the
@@ -307,8 +378,9 @@ def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | 
     return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
 
 
-def _under_card(signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool,
-                revoked_op_certs: frozenset[str]) -> dict[str, Any]:
+def _under_card(
+    signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool, revoked_op_certs: frozenset[str]
+) -> dict[str, Any]:
     """Objects signed by HK_op: verified under the op key of a card the verifier already verified (``held`` is the
     result of :func:`verify_card`). H0: only the card's current op certificate is accepted. The held card's op cert is
     checked against the CURRENT revoked set at every use (L2-1), not only when the card was admitted."""
@@ -325,15 +397,17 @@ def _under_card(signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool,
     return o
 
 
-def verify_uk_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool,
-                   revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_uk_cert(
+    signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool, revoked_op_certs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     o = _under_card(signed, "hub.uk_cert", held, dev_mode, revoked_op_certs)
     _cert_time(o, now_ms)
     return o
 
 
-def verify_channel_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool,
-                        revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_channel_cert(
+    signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool, revoked_op_certs: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     o = _under_card(signed, "hub.channel_cert", held, dev_mode, revoked_op_certs)
     if o["channel_id"] != channel_id(unb64u(o["key_pub"], 65)):
         raise Refused("cert_invalid")
@@ -344,8 +418,15 @@ def verify_channel_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, de
 # --- HK_op: the group snapshot --------------------------------------------------------------------------------------
 
 
-def verify_snapshot(signed: Any, held: Mapping[str, Any], *, workspace_id: str, dev_mode: bool,
-                    pinned: Mapping[str, Any] | None, revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_snapshot(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """``pinned`` is the snapshot object the host holds (or None). Returns the object to hold next; an identical
     re-send of the pinned version is a no-op (returns the pinned object)."""
     o = _under_card(signed, "hub.snapshot", held, dev_mode, revoked_op_certs)
@@ -368,8 +449,16 @@ def verify_snapshot(signed: Any, held: Mapping[str, Any], *, workspace_id: str, 
 
 # --- UK: the custodial event ----------------------------------------------------------------------------------------
 
-CUSTODIAL_FIELDS = ("auth", "channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert",
-                    "channel_proof")
+CUSTODIAL_FIELDS = (
+    "auth",
+    "channel",
+    "channel_factor",
+    "hub_id",
+    "snapshot_version",
+    "channel_cert",
+    "uk_cert",
+    "channel_proof",
+)
 NOT_SIGNED = ("seq", "at", "prev", "ws_seq", "sig", "host_sig")  # ticket-format §5.3
 _USER_ACTOR = re.compile(r"u_[0-9a-f]{32}")
 FACTOR_RANK = {"password+totp": 0, "se-unlocked": 1, "passkey": 2}  # D66 mapping, spec §5
@@ -392,7 +481,7 @@ def event_digest(workspace_id: str, log: str, e_signed: Mapping[str, Any]) -> by
 def custodial_bytes(workspace_id: str, log: str, e_signed: Mapping[str, Any]) -> bytes:
     try:
         return custodial_label(e_signed.get("type")) + cj(signed_context(workspace_id, log, e_signed))
-    except (ValueError, CanonError):
+    except ValueError, CanonError:
         raise Refused("malformed") from None
 
 
@@ -400,9 +489,20 @@ def channel_proof_bytes(digest: bytes) -> bytes:
     return L["sig_hub_channel_proof"] + digest
 
 
-def verify_custodial(event: Any, *, workspace_id: str, log: str, held: Mapping[str, Any], snapshot: Mapping[str, Any],
-                     now_ms: int, dev_mode: bool, mode: str = "full", granted_users: frozenset[str] = frozenset(),
-                     min_factor: str | None = None, revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_custodial(
+    event: Any,
+    *,
+    workspace_id: str,
+    log: str,
+    held: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+    now_ms: int,
+    dev_mode: bool,
+    mode: str = "full",
+    granted_users: frozenset[str] = frozenset(),
+    min_factor: str | None = None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
     The F1 checks of the event type itself (gate hash, roles of the ticket, ...) run after this one, as for any person
@@ -415,11 +515,21 @@ def verify_custodial(event: Any, *, workspace_id: str, log: str, held: Mapping[s
     actor, typ = event["actor"], event["type"]
     if type(typ) is not str or not EVENT_TYPE.fullmatch(typ):
         raise Refused("malformed")
-    if (type(actor) is not dict or set(actor) != {"kind", "id", "via"} or actor["kind"] != "person"
-            or type(actor["id"]) is not str or not _USER_ACTOR.fullmatch(actor["id"]) or actor["via"] != event["channel"]):
+    if (
+        type(actor) is not dict
+        or set(actor) != {"kind", "id", "via"}
+        or actor["kind"] != "person"
+        or type(actor["id"]) is not str
+        or not _USER_ACTOR.fullmatch(actor["id"])
+        or actor["via"] != event["channel"]
+    ):
         raise Refused("malformed")
-    if (not _hex16(event["channel"]) or event["channel_factor"] not in FACTORS or not _hex16(event["hub_id"])
-            or not _int_min(1)(event["snapshot_version"])):
+    if (
+        not _hex16(event["channel"])
+        or event["channel_factor"] not in FACTORS
+        or not _hex16(event["hub_id"])
+        or not _int_min(1)(event["snapshot_version"])
+    ):
         raise Refused("malformed")
     user = actor["id"][2:]
     # 2. the hub this workspace is bound to
@@ -430,8 +540,9 @@ def verify_custodial(event: Any, *, workspace_id: str, log: str, held: Mapping[s
     if uk["user_id"] != user:
         raise Refused("other_user")
     # 4. the channel certificate
-    ch = verify_channel_cert(event["channel_cert"], held, now_ms=now_ms, dev_mode=dev_mode,
-                             revoked_op_certs=revoked_op_certs)
+    ch = verify_channel_cert(
+        event["channel_cert"], held, now_ms=now_ms, dev_mode=dev_mode, revoked_op_certs=revoked_op_certs
+    )
     if ch["user_id"] != user or ch["channel_id"] != event["channel"]:
         raise Refused("other_user")
     if ch["factor"] != event["channel_factor"]:
@@ -514,25 +625,58 @@ def apply_unbound(state: Mapping[str, Any] | None, u: Mapping[str, Any]) -> dict
     """An unbound at ``binding_seq`` ends that binding and every lower one, also one not yet seen."""
     if state is not None and u["binding_seq"] < state["binding_seq"]:
         raise Refused("stale_binding")
-    if (state is not None and state["status"] == "bound" and u["binding_seq"] == state["binding_seq"]
-            and u["hub_id"] != state["binding"]["hub_id"]):
+    if (
+        state is not None
+        and state["status"] == "bound"
+        and u["binding_seq"] == state["binding_seq"]
+        and u["hub_id"] != state["binding"]["hub_id"]
+    ):
         raise Refused("other_hub")
-    return {"binding_seq": u["binding_seq"], "status": "unbound", "binding": None if state is None else state["binding"]}
+    return {
+        "binding_seq": u["binding_seq"],
+        "status": "unbound",
+        "binding": None if state is None else state["binding"],
+    }
 
 
 # --- the hub's trust in a workspace at join (L2-3) ------------------------------------------------------------------
 
-V2_DELEGATION_FIELDS = {"v", "suite", "kind", "workspace_id", "wsk_pub", "owner_person_id", "client_hosted",
-                        "issued_ms"}
-V2_CARD_FIELDS = {"v", "suite", "kind", "workspace_id", "wsk_pub", "wxk_pub", "wxk_version", "owner_person_id",
-                  "relay_url", "card_seq", "issued_ms", "sealed_hash", "ck_commit"}
+V2_DELEGATION_FIELDS = {
+    "v",
+    "suite",
+    "kind",
+    "workspace_id",
+    "wsk_pub",
+    "owner_person_id",
+    "client_hosted",
+    "issued_ms",
+}
+V2_CARD_FIELDS = {
+    "v",
+    "suite",
+    "kind",
+    "workspace_id",
+    "wsk_pub",
+    "wxk_pub",
+    "wxk_version",
+    "owner_person_id",
+    "relay_url",
+    "card_seq",
+    "issued_ms",
+    "sealed_hash",
+    "ck_commit",
+}
 
 
 def verify_v2_card(card: Any, pk_pub: bytes, *, now_ms: int) -> dict[str, Any]:
     """A workspace's v2 directory card (protocol-v2 §7.1): the owner's PK-signed delegation names ``WSK`` once, the
     card is ``WSK``-signed. The sealed part is not opened; ``sealed_hash`` binds it. Returns the card's ``o``."""
-    if (type(card) is not dict or set(card) != {"delegation", "o", "sig", "sealed"} or type(card["delegation"]) is not dict
-            or set(card["delegation"]) != {"o", "sig"}):
+    if (
+        type(card) is not dict
+        or set(card) != {"delegation", "o", "sig", "sealed"}
+        or type(card["delegation"]) is not dict
+        or set(card["delegation"]) != {"o", "sig"}
+    ):
         raise Refused("malformed")
     d, o = card["delegation"]["o"], card["o"]
     if type(d) is not dict or type(o) is not dict or set(d) != V2_DELEGATION_FIELDS or set(o) != V2_CARD_FIELDS:
@@ -541,14 +685,24 @@ def verify_v2_card(card: Any, pk_pub: bytes, *, now_ms: int) -> dict[str, Any]:
         raise Refused("malformed")
     if d["suite"] != S.SUITE_ID or o["suite"] != S.SUITE_ID:
         raise Refused("wrong_suite")
-    if not (_hex16(d["workspace_id"]) and _pub(d["wsk_pub"]) and _hex16(d["owner_person_id"]) and _pub(o["wxk_pub"])
-            and _int_min(1)(o["card_seq"]) and _b64u_n(32)(o["sealed_hash"]) and _b64u_n(32)(o["ck_commit"])):
+    if not (
+        _hex16(d["workspace_id"])
+        and _pub(d["wsk_pub"])
+        and _hex16(d["owner_person_id"])
+        and _pub(o["wxk_pub"])
+        and _int_min(1)(o["card_seq"])
+        and _b64u_n(32)(o["sealed_hash"])
+        and _b64u_n(32)(o["ck_commit"])
+    ):
         raise Refused("malformed")
     if person_id(pk_pub) != d["owner_person_id"]:
         raise Refused("other_person")
     _signature(card["delegation"], L["sig_ws_delegation"], pk_pub)
-    if (o["workspace_id"], o["wsk_pub"], o["owner_person_id"]) != (d["workspace_id"], d["wsk_pub"],
-                                                                    d["owner_person_id"]):
+    if (o["workspace_id"], o["wsk_pub"], o["owner_person_id"]) != (
+        d["workspace_id"],
+        d["wsk_pub"],
+        d["owner_person_id"],
+    ):
         raise Refused("delegation_mismatch")
     _signature(card, L["sig_card_wsk"], unb64u(d["wsk_pub"], 65))
     try:
@@ -561,8 +715,15 @@ def verify_v2_card(card: Any, pk_pub: bytes, *, now_ms: int) -> dict[str, Any]:
     return o
 
 
-def check_hub_join(join: Any, *, hub_id_: str, pins: Mapping[str, Mapping[str, str]], now_ms: int, dev_mode: bool,
-                   invite_workspace_id: str | None = None) -> dict[str, str]:
+def check_hub_join(
+    join: Any,
+    *,
+    hub_id_: str,
+    pins: Mapping[str, Mapping[str, str]],
+    now_ms: int,
+    dev_mode: bool,
+    invite_workspace_id: str | None = None,
+) -> dict[str, str]:
     """The hub's check of a workspace joining (L2-3). ``join`` = {card (v2 directory card), pk_pub (the owner's PK),
     binding}. ``pins`` = {workspace_id: {owner_person_id, wsk_pub}}, first come (TOFU per workspace_id). Returns the
     pin for this workspace. The binding is self-signed by the key it names, so without the card it proves nothing."""
@@ -576,8 +737,9 @@ def check_hub_join(join: Any, *, hub_id_: str, pins: Mapping[str, Mapping[str, s
     ws = co["workspace_id"]
     if invite_workspace_id is not None and ws != invite_workspace_id:
         raise Refused("other_workspace")
-    b = verify_binding(join["binding"], workspace_id=ws, wsk_pub=unb64u(co["wsk_pub"], 65), now_ms=now_ms,
-                       dev_mode=dev_mode)
+    b = verify_binding(
+        join["binding"], workspace_id=ws, wsk_pub=unb64u(co["wsk_pub"], 65), now_ms=now_ms, dev_mode=dev_mode
+    )
     if b["hub_id"] != hub_id_:
         raise Refused("other_hub")
     pin = pins.get(ws)
@@ -597,8 +759,13 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
     ``orch/v2/sig/ws-event|``). Returns the alias map person_id -> user_id after it. Aliases are never re-pointed."""
     if type(p) is not dict or set(p) != {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}:
         raise Refused("malformed")
-    if not (_pub(p["hk_root_pub"]) and _hex16(p["hub_id"]) and p["mode"] in MODES and _int_min(1)(p["binding_seq"])
-            and type(p["aliases"]) is list):
+    if not (
+        _pub(p["hk_root_pub"])
+        and _hex16(p["hub_id"])
+        and p["mode"] in MODES
+        and _int_min(1)(p["binding_seq"])
+        and type(p["aliases"]) is list
+    ):
         raise Refused("malformed")
     if p["hub_id"] != hub_id(unb64u(p["hk_root_pub"], 65)):
         raise Refused("hub_id_mismatch")
@@ -606,7 +773,11 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
     users = {u: pid for pid, u in prior_aliases.items()}
     pids = []
     for a in p["aliases"]:
-        if type(a) is not dict or set(a) != {"person_id", "user_id"} or not (_hex16(a["person_id"]) and _hex16(a["user_id"])):
+        if (
+            type(a) is not dict
+            or set(a) != {"person_id", "user_id"}
+            or not (_hex16(a["person_id"]) and _hex16(a["user_id"]))
+        ):
             raise Refused("malformed")
         pid, uid = a["person_id"], a["user_id"]
         pids.append(pid)
@@ -628,8 +799,16 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "route_in": ("h2w", None, {"envelope": _b64u_any}),
     "wk_seal": ("w2h", "full", {"epoch": _int_min(1), "wrap": _b64u_any}),
     "publish_out": ("w2h", None, {"request": lambda x: type(x) is dict}),
-    "join": ("w2h", None, {"invite": lambda x: type(x) is str, "card": lambda x: type(x) is dict, "pk_pub": _pub,
-                           "binding": lambda x: type(x) is dict}),
+    "join": (
+        "w2h",
+        None,
+        {
+            "invite": lambda x: type(x) is str,
+            "card": lambda x: type(x) is dict,
+            "pk_pub": _pub,
+            "binding": lambda x: type(x) is dict,
+        },
+    ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
     "binding_put": ("w2h", None, {"object": lambda x: type(x) is dict}),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
@@ -642,8 +821,9 @@ def link_label(direction: str) -> bytes:
     return L["sig_hub_link"] if direction == "w2h" else L["sig_hub_route"]
 
 
-def verify_link(signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes,
-                now_ms: int) -> dict[str, Any]:
+def verify_link(
+    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes, now_ms: int
+) -> dict[str, Any]:
     """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host). Requests are
     messages with ``re: null`` in the op's request direction; a reply has ``re`` = the request's ``seq`` and the other
     direction, and its body is either the op's reply body or ``{"error": code}`` (not validated in H0)."""
@@ -677,8 +857,14 @@ def link_auth_bytes(hub_id_: str, workspace_id: str, challenge: bytes, exporter:
     (label ``EXPORTER-orch-hub-link``, empty context)."""
     if len(challenge) != 32 or len(exporter) != 32:
         raise Refused("malformed")
-    return (L["sig_hub_link_auth"] + bytes([S.SUITE_ID]) + unhex(hub_id_, 16) + unhex(workspace_id, 16) + challenge
-            + exporter)
+    return (
+        L["sig_hub_link_auth"]
+        + bytes([S.SUITE_ID])
+        + unhex(hub_id_, 16)
+        + unhex(workspace_id, 16)
+        + challenge
+        + exporter
+    )
 
 
 # --- publish through the hub (phase 2, D76, V3-D4) ------------------------------------------------------------------
@@ -690,18 +876,35 @@ def _lp16(b: bytes) -> bytes:
     return struct.pack(">H", len(b)) + b
 
 
-def publish_signed_bytes(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str,
-                         body: bytes) -> bytes:
+def publish_signed_bytes(
+    ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes
+) -> bytes:
     """protocol-v2 §12.1, unchanged."""
-    return (L["sig_publish"] + bytes([S.SUITE_ID]) + ws + struct.pack(">Q", ts_ms) + nonce
-            + _lp16(method.encode("ascii")) + _lp16(host.encode("ascii")) + _lp16(target.encode("ascii"))
-            + S.sha256(body))
+    return (
+        L["sig_publish"]
+        + bytes([S.SUITE_ID])
+        + ws
+        + struct.pack(">Q", ts_ms)
+        + nonce
+        + _lp16(method.encode("ascii"))
+        + _lp16(host.encode("ascii"))
+        + _lp16(target.encode("ascii"))
+        + S.sha256(body)
+    )
 
 
 def _request_fields(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes) -> bytes:
     """The v2 §12.1 fields after the label, in v2 order."""
-    return (bytes([S.SUITE_ID]) + ws + struct.pack(">Q", ts_ms) + nonce + _lp16(method.encode("ascii"))
-            + _lp16(host.encode("ascii")) + _lp16(target.encode("ascii")) + S.sha256(body))
+    return (
+        bytes([S.SUITE_ID])
+        + ws
+        + struct.pack(">Q", ts_ms)
+        + nonce
+        + _lp16(method.encode("ascii"))
+        + _lp16(host.encode("ascii"))
+        + _lp16(target.encode("ascii"))
+        + S.sha256(body)
+    )
 
 
 def approval_hash(approval: Mapping[str, Any] | None) -> bytes:
@@ -714,13 +917,26 @@ def approval_hash(approval: Mapping[str, Any] | None) -> bytes:
         raise Refused("malformed") from None
 
 
-def hub_path_signed_bytes(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes,
-                          hub_id_: str, approval: Mapping[str, Any] | None) -> bytes:
+def hub_path_signed_bytes(
+    ws: bytes,
+    ts_ms: int,
+    nonce: bytes,
+    method: str,
+    host: str,
+    target: str,
+    body: bytes,
+    hub_id_: str,
+    approval: Mapping[str, Any] | None,
+) -> bytes:
     """What WSK signs on the hub path (L2-2): its own label, the v2 §12.1 fields, the hub, and the approval the host
     attaches (or none). A hub-path signature never verifies as a direct request, the host commits to the hub that
     forwards it, and nobody can add, swap or strip an approval after the host signed."""
-    return (L["sig_publish_hub"] + _request_fields(ws, ts_ms, nonce, method, host, target, body) + unhex(hub_id_, 16)
-            + approval_hash(approval))
+    return (
+        L["sig_publish_hub"]
+        + _request_fields(ws, ts_ms, nonce, method, host, target, body)
+        + unhex(hub_id_, 16)
+        + approval_hash(approval)
+    )
 
 
 def hub_publish_bytes(hub_id_: str, wsk_bytes: bytes) -> bytes:
@@ -728,17 +944,30 @@ def hub_publish_bytes(hub_id_: str, wsk_bytes: bytes) -> bytes:
     return L["sig_hub_publish"] + bytes([S.SUITE_ID]) + unhex(hub_id_, 16) + S.sha256(wsk_bytes)
 
 
-def publish_request_hash(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes,
-                         hub_id_: str) -> bytes:
+def publish_request_hash(
+    ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes, hub_id_: str
+) -> bytes:
     """What the owner's approval names (L2-2): the one exact request, ts and nonce included, through this hub. The
     host draws ts and nonce first and the owner signs after, so an approval is good for one request (the nonce store)
     within the 120 s window."""
-    return S.sha256(L["h_hub_publish_request"] + _request_fields(ws, ts_ms, nonce, method, host, target, body)
-                    + unhex(hub_id_, 16))
+    return S.sha256(
+        L["h_hub_publish_request"] + _request_fields(ws, ts_ms, nonce, method, host, target, body) + unhex(hub_id_, 16)
+    )
 
 
-DEVICE_CERT_FIELDS = {"v", "suite", "kind", "device_id", "person_id", "dk_sig_pub", "dk_kx_pub", "label_sealed",
-                      "created_ms", "expires_ms", "scopes_max"}
+DEVICE_CERT_FIELDS = {
+    "v",
+    "suite",
+    "kind",
+    "device_id",
+    "person_id",
+    "dk_sig_pub",
+    "dk_kx_pub",
+    "label_sealed",
+    "created_ms",
+    "expires_ms",
+    "scopes_max",
+}
 _LEVELS = ["look", "decide", "operate", "type"]
 
 
@@ -755,10 +984,18 @@ def verify_device_cert(signed: Any, pk_pub: bytes, *, now_ms: int, revoked_devic
     if not ok or set(o) != DEVICE_CERT_FIELDS or o["v"] != 2 or o["suite"] != S.SUITE_ID or o["kind"] != "device_cert":
         raise Refused("cert_invalid")
     sc = o["scopes_max"]
-    if (not _pub(o["dk_sig_pub"]) or not _pub(o["dk_kx_pub"]) or o["person_id"] != person_id(pk_pub)
-            or o["device_id"] != device_id(unb64u(o["dk_sig_pub"], 65)) or type(sc) is not list or not sc
-            or sc != _LEVELS[:len(sc)] or "decide" not in sc or type(o["created_ms"]) is not int
-            or o["created_ms"] > now_ms + CLOCK_SKEW_MS):
+    if (
+        not _pub(o["dk_sig_pub"])
+        or not _pub(o["dk_kx_pub"])
+        or o["person_id"] != person_id(pk_pub)
+        or o["device_id"] != device_id(unb64u(o["dk_sig_pub"], 65))
+        or type(sc) is not list
+        or not sc
+        or sc != _LEVELS[: len(sc)]
+        or "decide" not in sc
+        or type(o["created_ms"]) is not int
+        or o["created_ms"] > now_ms + CLOCK_SKEW_MS
+    ):
         raise Refused("cert_invalid")
     exp = o["expires_ms"]
     if exp is not None and (type(exp) is not int or exp <= o["created_ms"]):
@@ -770,8 +1007,17 @@ def verify_device_cert(signed: Any, pk_pub: bytes, *, now_ms: int, revoked_devic
     return o
 
 
-def verify_approval(raw: Any, *, workspace_id: str, hub_id_: str, owner_person_id: str, request_hash: bytes,
-                    access: str, now_ms: int, revoked_devices: frozenset[str] = frozenset()) -> dict[str, Any]:
+def verify_approval(
+    raw: Any,
+    *,
+    workspace_id: str,
+    hub_id_: str,
+    owner_person_id: str,
+    request_hash: bytes,
+    access: str,
+    now_ms: int,
+    revoked_devices: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """The owner's local-key approval carried by a hub-forwarded publish request (V3-D4)."""
     if type(raw) is not dict or set(raw) != {"o", "sig", "device_cert", "pk_pub"}:
         raise Refused("malformed")
@@ -799,11 +1045,26 @@ def verify_approval(raw: Any, *, workspace_id: str, hub_id_: str, owner_person_i
 
 
 _TS = re.compile(r"0|[1-9][0-9]{0,15}")
-STATUS = {"malformed": 400, "stale_timestamp": 401, "unknown_workspace": 401, "bad_signature": 401,
-          "not_bound": 403, "other_hub": 403, "unknown_hub": 401, "bad_hub_signature": 401, "replay": 401,
-          "approval_required": 403, "bad_approval": 403, "other_person": 403,
-          "other_workspace": 403, "cert_invalid": 400, "cert_expired": 400, "revoked": 403, "dev_refused": 403,
-          "dev_mismatch": 403}
+STATUS = {
+    "malformed": 400,
+    "stale_timestamp": 401,
+    "unknown_workspace": 401,
+    "bad_signature": 401,
+    "not_bound": 403,
+    "other_hub": 403,
+    "unknown_hub": 401,
+    "bad_hub_signature": 401,
+    "replay": 401,
+    "approval_required": 403,
+    "bad_approval": 403,
+    "other_person": 403,
+    "other_workspace": 403,
+    "cert_invalid": 400,
+    "cert_expired": 400,
+    "revoked": 403,
+    "dev_refused": 403,
+    "dev_mismatch": 403,
+}
 
 
 def check_direct_publish(req: Mapping[str, Any], wsk_pub: bytes) -> dict[str, Any]:
@@ -815,10 +1076,11 @@ def check_direct_publish(req: Mapping[str, Any], wsk_pub: bytes) -> dict[str, An
         if type(h["orch-ts"]) is not str or not _TS.fullmatch(h["orch-ts"]):
             raise CanonError("ts")
         ts, nonce, sig = int(h["orch-ts"]), unhex(h["orch-nonce"], 16), unb64u(h["orch-signature"], 64)
-    except (KeyError, CanonError):
+    except KeyError, CanonError:
         raise Refused("malformed") from None
-    if not S.verify(wsk_pub, sig, publish_signed_bytes(ws, ts, nonce, req["method"], req["host"], req["target"],
-                                                       req["body"])):
+    if not S.verify(
+        wsk_pub, sig, publish_signed_bytes(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"])
+    ):
         raise Refused("bad_signature")
     return {"workspace": ws.hex()}
 
@@ -848,7 +1110,7 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
                 raise CanonError("method, host and target are ASCII (L2-10)")
         if type(req["body"]) is not bytes:
             raise CanonError("body")
-    except (KeyError, CanonError, Refused):
+    except KeyError, CanonError, Refused:
         raise Refused("malformed") from None
     wsx = ws.hex()
     # 2. window
@@ -888,9 +1150,14 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
         if req.get("access") == "public":
             raise Refused("approval_required")
         return {"workspace": wsx, "hub": hub, "approved": False}
-    verify_approval(approval, workspace_id=wsx, hub_id_=hub, owner_person_id=card["owner_person_id"],
-                    request_hash=publish_request_hash(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"],
-                                                      hub),
-                    access=req.get("access") or "", now_ms=now_ms, revoked_devices=st.get("revoked_devices",
-                                                                                           frozenset()))
+    verify_approval(
+        approval,
+        workspace_id=wsx,
+        hub_id_=hub,
+        owner_person_id=card["owner_person_id"],
+        request_hash=publish_request_hash(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"], hub),
+        access=req.get("access") or "",
+        now_ms=now_ms,
+        revoked_devices=st.get("revoked_devices", frozenset()),
+    )
     return {"workspace": wsx, "hub": hub, "approved": True}

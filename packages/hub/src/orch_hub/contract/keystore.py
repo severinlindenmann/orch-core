@@ -75,8 +75,14 @@ class RootSigner(_Signer):
 class OpSigner(_Signer):
     """``HK_op``: the card, UK and channel certificates, snapshots, hub->host link messages, publish transport."""
 
-    KINDS = MappingProxyType({"hub.card": "sig_hub_card", "hub.uk_cert": "sig_hub_uk_cert",
-             "hub.channel_cert": "sig_hub_channel_cert", "hub.snapshot": "sig_hub_snapshot"})
+    KINDS = MappingProxyType(
+        {
+            "hub.card": "sig_hub_card",
+            "hub.uk_cert": "sig_hub_uk_cert",
+            "hub.channel_cert": "sig_hub_channel_cert",
+            "hub.snapshot": "sig_hub_snapshot",
+        }
+    )
     LINK_DIR = "h2w"
 
     def sign_card(self, o: Mapping[str, Any], op_cert: Mapping[str, Any]) -> dict[str, Any]:
@@ -134,8 +140,18 @@ class WskSigner(_Signer):
         except H.Refused as r:
             raise KeyUseError(r.code) from None
 
-    def publish_hub(self, ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes,
-                    hub_id: str, approval: Mapping[str, Any] | None) -> bytes:
+    def publish_hub(
+        self,
+        ws: bytes,
+        ts_ms: int,
+        nonce: bytes,
+        method: str,
+        host: str,
+        target: str,
+        body: bytes,
+        hub_id: str,
+        approval: Mapping[str, Any] | None,
+    ) -> bytes:
         return self._sig(H.hub_path_signed_bytes(ws, ts_ms, nonce, method, host, target, body, hub_id, approval))
 
 

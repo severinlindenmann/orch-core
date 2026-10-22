@@ -729,7 +729,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
-| `cases` | 125 cases (24 positive, 101 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 156 cases (30 positive, 126 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -737,7 +737,7 @@ encoding (b64u padding, upper-case hex, duplicate key, float), wrong suite, futu
 
 Every implementation runs the cases of the checks it implements: the hub all of them; orch-core `card`, `op_*`,
 `snapshot`, `uk_cert`, `channel_cert`, `custodial`, `joined_payload`, `link` (h2w); orch-publish `binding_store`,
-`publish`, `card`, `v2_card`. The hub also runs `hub_join`. The cross-repo contract job (V3-D8) runs from phase 2.
+`publish`, `card`, `v2_card`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 

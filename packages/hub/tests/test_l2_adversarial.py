@@ -20,6 +20,7 @@ def _held(card):
 
 # ---- L2-1: HK_op rotation rollback ----------------------------------------------------------------------------------
 
+
 def _rotated_and_rollback():
     new_op = G.op_cert(cert_id=G.OP_CERT_NEXT, key="hk_op_next")
     new_card = G.card(op=new_op, op_key="hk_op_next", card_seq=2)
@@ -54,27 +55,44 @@ def test_l2_1_held_card_rechecked_against_later_revocation():
 
 # ---- L2-2: publish approval reuse / attach / cross-path ---------------------------------------------------------------
 
+
 def _req(nonce: bytes, appr, ts: int = NOW):
     # L2-2 fix API: the host signs the hub-path bytes (own label, hub_id, the approval it attaches); `pb` stays the
     # v2 §12.1 direct bytes so the cross-path test checks the hub-path signature against them.
     ws = bytes.fromhex(G.WS_A)
     pb = H.publish_signed_bytes(ws, ts, nonce, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY)
     hb = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY, G.HUB_ID, appr)
-    h = {"Orch-Workspace": G.WS_A, "Orch-Ts": str(ts), "Orch-Nonce": nonce.hex(),
-         "Orch-Signature": b64u(S.sign(G.K.priv["wsk_a"], hb)), "Orch-Hub": G.HUB_ID,
-         "Orch-Hub-Signature": b64u(S.sign(G.K.priv["hk_op"], H.hub_publish_bytes(G.HUB_ID, hb)))}
+    h = {
+        "Orch-Workspace": G.WS_A,
+        "Orch-Ts": str(ts),
+        "Orch-Nonce": nonce.hex(),
+        "Orch-Signature": b64u(S.sign(G.K.priv["wsk_a"], hb)),
+        "Orch-Hub": G.HUB_ID,
+        "Orch-Hub-Signature": b64u(S.sign(G.K.priv["hk_op"], H.hub_publish_bytes(G.HUB_ID, hb))),
+    }
     if appr is not None:
         h["Orch-Owner-Approval"] = b64u(cj(appr))
-    return {"method": "PUT", "host": G.PUB_HOST, "target": G.PUB_TARGET, "headers": h, "body": G.PUB_BODY,
-            "access": "public"}, pb
+    return {
+        "method": "PUT",
+        "host": G.PUB_HOST,
+        "target": G.PUB_TARGET,
+        "headers": h,
+        "body": G.PUB_BODY,
+        "access": "public",
+    }, pb
 
 
 def _state():
     held = _held(G.card())
-    b = H.apply_binding(None, H.verify_binding(G.binding(), workspace_id=G.WS_A, wsk_pub=G.K.pub["wsk_a"],
-                                               now_ms=NOW, dev_mode=True))
-    return {"cards": {G.WS_A: {"wsk_pub": G.K.b("wsk_a"), "owner_person_id": G.P_ALICE}},
-            "bindings": {G.WS_A: b}, "hub_cards": {G.HUB_ID: held}, "nonces": {}}
+    b = H.apply_binding(
+        None, H.verify_binding(G.binding(), workspace_id=G.WS_A, wsk_pub=G.K.pub["wsk_a"], now_ms=NOW, dev_mode=True)
+    )
+    return {
+        "cards": {G.WS_A: {"wsk_pub": G.K.b("wsk_a"), "owner_person_id": G.P_ALICE}},
+        "bindings": {G.WS_A: b},
+        "hub_cards": {G.HUB_ID: held},
+        "nonces": {},
+    }
 
 
 def test_l2_2_approval_is_single_use():
@@ -105,9 +123,11 @@ def test_l2_2_hub_path_signature_not_valid_on_direct_path():
 
 # ---- L2-4: typed key store ------------------------------------------------------------------------------------------
 
+
 def test_l2_4_contract_ships_a_typed_signer():
     """L2-4: the contract must offer one signer per key kind with its labels hard-wired."""
     import importlib
+
     try:
         ks = importlib.import_module("orch_hub.contract.keystore")
     except ModuleNotFoundError:
@@ -117,15 +137,19 @@ def test_l2_4_contract_ships_a_typed_signer():
 
 # ---- L2-8: revocations are accepted regardless of dev marker -------------------------------------------------------
 
+
 def test_l2_8_revocation_not_dropped_on_dev_mismatch():
     """L2-8: refusing a root-signed revocation fails OPEN; a revocation only removes authority."""
-    rv = G.signed("hk_root", "sig_hub_op_revoked",
-                  {**G.hdr("hub.op_revoked"), "hub_id": G.HUB_ID, "cert_id": G.OP_CERT_ID, "revoked_ms": NOW,
-                   "dev": False})
+    rv = G.signed(
+        "hk_root",
+        "sig_hub_op_revoked",
+        {**G.hdr("hub.op_revoked"), "hub_id": G.HUB_ID, "cert_id": G.OP_CERT_ID, "revoked_ms": NOW, "dev": False},
+    )
     assert H.verify_op_revoked(rv, G.K.pub["hk_root"], dev_mode=True)["cert_id"] == G.OP_CERT_ID
 
 
 # ---- L2-10: publish robustness ---------------------------------------------------------------------------------------
+
 
 def test_l2_10_non_ascii_method_is_refused_not_crash():
     """L2-10: every input path fails closed with a Refused code, never an uncaught exception."""

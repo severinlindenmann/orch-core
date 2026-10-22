@@ -49,8 +49,10 @@ people sign in to it once, and admins work in it.
 | D77 | Hub to hub | One hub per company. Companies, and subsidiaries of one group, link hub to hub through a relay. Only hub-to-hub objects cross (handoffs, shared spaces); nobody gets direct access to another hub's workspaces. |
 | D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. No human-only verb works while the hub is down, except the break-glass operations (§8). No second hub instance for now. |
 | D79 | Standalone core | orch core always works as a standalone workspace with none of the hub, relay, publish or phone: tickets, agents, skills, Mission Control and local signing (D64). Everything in this document is an addition on top and never a dependency. orch core imports no hub code; the hub path lives behind the host↔hub link and a hub add-on. CI keeps a standalone suite and an e2e scenario that run with no hub configured, and every hub step (§10) must leave them green. |
+| D80 | Selective join | A workspace may join a hub in **selective** mode instead of full mode; meant for personal workspaces, open to any. The hub is then not a `WK_e` member: the workspace seals to `HXK` only the items its owner selects (§8a), and the hub, and every channel, sees only those. Full mode (D74) stays the default for team workspaces. Chosen per workspace at join and changeable later by its admin. |
+| D81 | Local Mission Control in hub mode | Local Mission Control holds no hub session that can sign. A click that needs a human signature hands off to a strongly bound channel (phone or passkey prompt, §7). One user, one key. |
 
-Later, not now: **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
+Later, not now: **hub agents** over shared spaces (summaries, routing; needs its own scope and guard section); **Entra ID / OIDC** sign-in and group sync (a must for companies, D70 keeps groups hub-local until
 then); Slack and other channels after the phone and browser.
 
 ## 4. Components
@@ -207,6 +209,23 @@ with `WSK`, as in §10 today, and sends it over `publish_out`. orch-publish veri
 only a transport signature (`hub-publish`). The agent `publish(...)` path (§5.5) is unchanged: the host evaluates the
 charter. Public access still needs a custodial human signature, carried in the request.
 
+## 8a. Selective join (D80)
+
+- **What is shared.** The workspace admin picks share rules: whole ticket types, single tickets, or tagged items, plus
+  "questions to me" and "needs-you" summaries. Nothing else leaves the host. The default for a selective join is
+  nothing but needs-you summaries.
+- **How.** The host seals each selected item to `HXK` under a per-item key and sends it over the link (`share_put`,
+  `share_revoke`). These two link operations exist only in selective mode. The hub never receives `WK_e`, so the member
+  list gets no `hub` member and `wk_seal` is refused.
+- **Signing.** The hub builds custodial events only for items it holds (§5). A decision on anything else is made
+  locally, with the owner's local key (D64), in Mission Control or the terminal. D81 does not apply to items the hub
+  cannot see.
+- **Revoking a share** deletes the item on the hub and stops updates. It cannot take back what the hub already
+  read; the UI says so.
+- **Switching mode.** Selective → full seals `WK_e` to the hub (the normal join, §8 step 3). Full → selective is a
+  leave plus rotation plus a selective join, so the hub loses `WK_e` from the new epoch on.
+- **The card shows the mode:** "hub can read everything" (full) or "hub sees only what you share" (selective).
+
 ## 9. Threat model in hub mode
 
 | Threat | Result | Mitigation |
@@ -247,12 +266,9 @@ Every step keeps the standalone suite and the standalone e2e scenario green (D79
 
 ## 11. Open questions
 
-1. **Mission Control on the person's own laptop in hub mode.** Proposal (from the Opus check): local Mission Control
-   holds no hub session that can sign; a click hands the signature to a strongly bound channel (passkey prompt or
-   phone). One user, one key, and no bearer token on a machine where agents run as the person.
-2. **Personal workspaces.** A person's own workspace (Anna / personal) joined to the company hub is readable by the hub
-   (D74). Is that wanted, or do personal workspaces stay in direct mode and give up the phone?
-3. **Hub agents.** May the hub run agents over shared spaces (summaries, routing)? Option B allows it; the scope and
-   guard for hub-side agents need their own section.
-4. **Workspace-side veto on admin grants** (D71), to revisit before the first real company.
-5. **Hub hosting for one person or a small team.** Same machine as the workspaces, or always a separate host?
+Decided 22 Oct 2026: local Mission Control hands signing to a channel (D81); personal workspaces may join
+selectively (D80); hub agents later; the review additions (channel proof, break-glass, `repin` needs `PK`) kept.
+
+
+1. **Workspace-side veto on admin grants** (D71), to revisit before the first real company.
+2. **Hub hosting for one person or a small team.** Same machine as the workspaces, or always a separate host?

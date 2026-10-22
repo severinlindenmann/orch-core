@@ -7,6 +7,11 @@
     orch hub connect INVITE --hub-card FILE   a person: finish a join the hub could not take yet
     orch hub unbind                           a person: tell the hub about a leave it has not heard yet
     orch hub status [--refresh]               a person: the joined hub, the link state and the pinned snapshot
+    orch hub share rule list                  a person: what a selective workspace shares (rules and counts)
+    orch hub share rule add|remove (--tag T | --type T | --ticket KEY | --questions | --needs-you)
+                                              a person: change what the hub may see (shown, then typed confirmation)
+    orch hub share revoke REF                 a person: withdraw one shared item now
+    orch hub share sync                       a person: send what changed (also done after every change above)
 
 ``join``, ``mode`` and ``leave`` are signed with the owner's own key on the owner's terminal and are refused to agents
 (``ORCH_GRANT`` set: ``op.not_allowed``; the host refuses them again). The default join is **selective**: the hub sees
@@ -36,7 +41,8 @@ _USAGE = (
     "usage: orch hub {join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| status [--refresh [--hub-card FILE]]} [--json]"
+    "| status [--refresh [--hub-card FILE]] | share rule list | share rule add|remove RULE | share revoke REF "
+    "| share sync} [--json]"
 )
 _CARD_MAX = 64 * 1024
 
@@ -47,7 +53,12 @@ def _parser() -> argparse.ArgumentParser:
             raise PubError("invalid.input", f"{message}\n{_USAGE}", 2)
 
     p = Quiet(prog="orch hub", add_help=False)
-    p.add_argument("cmd", choices=("join", "mode", "leave", "connect", "unbind", "status"))
+    p.add_argument("cmd", choices=("join", "mode", "leave", "connect", "unbind", "status", "share"))
+    p.add_argument("--tag")
+    p.add_argument("--type", dest="ttype")
+    p.add_argument("--ticket")
+    p.add_argument("--questions", action="store_true")
+    p.add_argument("--needs-you", dest="needs_you", action="store_true")
     p.add_argument("rest", nargs="*")
     p.add_argument("--hub-card")
     p.add_argument("--hub-addr")
@@ -211,6 +222,8 @@ def main(
         a = _parser().parse_intermixed_args(argv)
         if env.get("ORCH_GRANT") or env.get("ORCH_SESSION"):
             raise PubError("op.not_allowed", "a person does this at their own terminal; an agent never joins a hub")
+        if a.cmd == "share":
+            return _share(a, env, out, as_json)
         _check_shape(a)
         target = _target(env)
         if a.cmd == "status":
@@ -247,6 +260,79 @@ def main(
         return fail(exc)
     except OrchError as exc:
         return fail(PubError(exc.code, str(exc.message), getattr(exc, "wire_exit", 3), getattr(exc, "hint", None)))
+
+
+_CANNOT_UNREAD = "What the hub has already read cannot be taken back; revoking deletes it there and stops updates."
+
+
+def _rule_of(a: argparse.Namespace) -> dict[str, str]:
+    picked = [
+        r
+        for r in (
+            {"kind": "tag", "tag": a.tag} if a.tag is not None else None,
+            {"kind": "type", "type": a.ttype} if a.ttype is not None else None,
+            {"kind": "ticket", "ticket": a.ticket} if a.ticket is not None else None,
+            {"kind": "questions"} if a.questions else None,
+            {"kind": "needs_you"} if a.needs_you else None,
+        )
+        if r is not None
+    ]
+    if len(picked) != 1:
+        raise PubError(
+            "invalid.input", "name exactly one rule: --tag T | --type T | --ticket KEY | --questions | --needs-you", 2
+        )
+    return picked[0]
+
+
+def _sync_line(d: Mapping[str, Any]) -> str:
+    if d.get("synced"):
+        return f"sent to the hub: {d['put']} shared, {d['revoke']} withdrawn, {d['kept']} unchanged"
+    return f"saved; the hub was not updated yet ({d.get('pending')}): run orch hub share sync"
+
+
+def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
+    words = a.rest
+    shape = (
+        words == ["rule", "list"] or words == ["sync"] or (len(words) == 2 and words[0] == "revoke")
+        or words in (["rule", "add"], ["rule", "remove"])
+    )  # fmt: skip
+    has_rule = any((a.tag is not None, a.ttype is not None, a.ticket is not None, a.questions, a.needs_you))
+    if not shape or has_rule != (words[:1] == ["rule"] and words[1:] in (["add"], ["remove"])):
+        raise PubError("invalid.input", _USAGE, 2)
+    target = _target(env)
+    if words == ["rule", "list"]:
+        d = _call(target, "share.rules", {}, env)
+        text = "\n".join(f"  {r['describes']}: {r['count']} now" for r in d["rules"]) or "  (nothing is shared)"
+        _emit(out, as_json, d, f"The hub sees:\n{text}\n{d['shared']} item(s) are on the hub now.")
+        return 0
+    if words == ["sync"]:
+        d = _call(target, "share.sync", {}, env)
+        _emit(out, as_json, d, _sync_line(d))
+        return 0
+    if words[0] == "revoke":
+        d = _call(target, "share.revoke", {"ref": words[1]}, env)
+        _emit(out, as_json, d, f"{d['note']}\n{_sync_line(d)}\n{_CANNOT_UNREAD}")
+        return 0
+    from orch.cli.publish import _confirm
+
+    rule, op = _rule_of(a), "share.rule_" + words[1]
+    key = "add" if words[1] == "add" else "remove"
+    prev = _call(target, "share.preview", {key: rule}, env)
+    from orch.hubclient.shares import describe
+
+    lines = "".join(f"  {i['line']}\n" for i in prev["items"]) + (
+        f"  ... and {prev['more']} more\n" if prev["more"] else ""
+    )
+    verb = "will also share" if key == "add" else "will stop sharing"
+    if not _confirm(
+        f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
+        f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\nType 'share' to confirm: ",
+        "share",
+    ):
+        raise PubError("invalid.input", "not confirmed; nothing changed", 5)
+    d = _call(target, op, {"rule": rule, "expect": prev["plan"]}, env)
+    _emit(out, as_json, d, f"{d['note']}\n{_sync_line(d)}")
+    return 0
 
 
 def _status_text(d: Mapping[str, Any]) -> str:

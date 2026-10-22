@@ -69,14 +69,14 @@ def test_r2_get_prepared_is_the_owners_only(w):
 
 
 def test_r3_ipv6_normalised_and_v4_mapped(w):
-    assert w.api._source({}, "2001:db8:0:1::5") == w.api._source({}, "2001:db8:0:ffff::1") == "2001:db8::/48"
+    assert w.api._source({}, "2001:db8:0:1::5") == w.api._source({}, "2001:db8:0:1:ffff::1") == "2001:db8:0:1::/64"
     assert w.api._source({}, "::ffff:203.0.113.9") == "203.0.113.9"
     assert w.api._source({}, "203.0.113.9") == "203.0.113.9"
 
 
-def test_r3_xff_ipv6_client_through_edge_is_its_48(w):
+def test_r3_xff_ipv6_client_through_edge_is_its_64(w):
     w.api.d.trusted_peers = frozenset({"10.0.0.1"})
-    assert w.api._source({"x-forwarded-for": "2001:db8:0:1::7"}, "10.0.0.1") == "2001:db8::/48"
+    assert w.api._source({"x-forwarded-for": "2001:db8:0:1::7"}, "10.0.0.1") == "2001:db8:0:1::/64"
 
 
 def test_r3_totp_lock_is_per_user_and_not_an_oracle(w):
@@ -99,20 +99,43 @@ def test_r3_wrong_password_and_tripped_lock_answer_identically(w):
     assert wrong[0] == tripped[0] == 401 and wrong[1] == tripped[1]
 
 
-def test_r3_password_backoff_is_per_user_never_a_hard_lock(w):
+def _clock(w):
     ch = w.api.d.channels
     t = [ch._now()]
     ch._now = lambda: t[0]
     w.api.d.now_ms = lambda: t[0]
-    for i in range(6):  # a distributed password guess: 6 sources, one try each (free tries, then delay)
-        assert _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")[1] == {"error": "bad_credentials"}
+    return t
+
+
+def test_r3_password_backoff_is_per_user_and_source(w):
+    t = _clock(w)
+    for _ in range(3):  # 3 free tries, then a delay for this source
+        _try(w, w.ann, "203.0.113.1", password="wrong wrong wrong")
         t[0] += 1
-    # inside the backoff even the right credentials get the generic answer
-    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.50")
-    assert (s, o) == (401, {"error": "bad_credentials"})
-    t[0] += 61_000  # after the cap the real user signs in
-    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="192.0.2.51")
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="203.0.113.1")
+    assert (s, o) == (401, {"error": "bad_credentials"})  # inside the backoff, same generic answer
+    t[0] += 61_000
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="203.0.113.1")
     assert s == 200, o
+
+
+def test_r3_stranger_without_the_password_cannot_delay_or_lock_the_user_from_another_source(w):
+    _clock(w)
+    for i in range(60):  # a distributed password spray at one user from many sources
+        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="198.51.100.200")
+    assert s == 200, o
+
+
+def test_r3_ipv6_neighbour_64_cannot_exhaust_ours_but_the_48_is_capped(w, monkeypatch):
+    monkeypatch.setattr(A, "SIGNIN_NET_LIMIT", (30, 60_000))
+    for i in range(1, 20):  # 19 other /64s inside the same /48, a few tries each
+        for j in range(2):
+            _try(w, "0" * 32, f"2001:db8:0:{i:x}::{j + 1}")
+    # the neighbours did not touch the bucket of a /64 outside this /48 (or our own /64)
+    assert _try(w, "0" * 32, "2001:db9:0:1::1")[1].get("error") == "bad_credentials"
+    codes = [_try(w, "0" * 32, f"2001:db8:0:{i:x}::9")[1].get("error") for i in range(20, 40)]
+    assert "rate_limited" in codes  # the /48 aggregate binds a spray across /64s
 
 
 def test_r3_source_is_never_empty(w):

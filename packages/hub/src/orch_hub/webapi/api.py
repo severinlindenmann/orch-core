@@ -49,7 +49,8 @@ COOKIE = "orch_hub_session"
 CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
-SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source, counted before any password hashing
+SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source (IPv6: per /64), counted before any password hashing
+SIGNIN_NET_LIMIT = (200, 60_000)  # looser aggregate per IPv6 /48 so one allocation cannot spray via many /64s
 # No global request bucket, by design: any hub-wide bucket is a lockout lever a few sources can hold. What bounds the
 # load is the concurrency cap below (refuse, never queue) plus the per-source cap; per-user guessing is bounded in
 # Channels.sign_in (per (user, source) and per user for "password right, TOTP wrong").
@@ -286,12 +287,12 @@ class _Limiter:
 
 
 def _norm_ip(addr: str) -> str:
-    """One source per network that a host can freely pick addresses in: an IPv6 /48 is one source."""
+    """One source per network that a host can freely pick addresses in: an IPv6 /64 is one source."""
     ip = ipaddress.ip_address(addr)  # ValueError for "" and anything that is not an address
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             return str(ip.ipv4_mapped)
-        return str(ipaddress.ip_network(f"{ip}/48", strict=False))
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
     return str(ip)
 
 
@@ -359,7 +360,7 @@ class WebApi:
     def _source(self, headers: dict[str, str], peer: str) -> str:
         """The client address: the socket peer, or, only when that peer is the configured edge, the rightmost
         ``X-Forwarded-For`` entry that is not itself a trusted proxy (so a chain of trusted proxies works; entries
-        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /48 and an
+        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /64 and an
         IPv4-mapped one its IPv4. Anything that is not an IP address is the peer."""
         if peer in self.d.trusted_peers:
             for entry in reversed(headers.get("x-forwarded-for", "").split(",")):
@@ -526,6 +527,9 @@ class WebApi:
             raise ApiError("not_allowed")
         # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
+        if ":" in c.source:  # IPv6: also the /48 aggregate (a neighbour /64 cannot exhaust ours, ours cannot spray)
+            net = ipaddress.ip_network(c.source, strict=False).supernet(new_prefix=48)
+            self._limit.hit("signin-net", str(net), SIGNIN_NET_LIMIT)
         if not self._hashing.acquire(blocking=False):
             raise ApiError("rate_limited")
         try:

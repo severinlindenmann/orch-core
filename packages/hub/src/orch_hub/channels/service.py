@@ -55,8 +55,9 @@ FAIL_WINDOW_MS = 15 * 60_000
 #: While it is tripped a sign-in is answered ``bad_credentials`` like any other failure (never a distinct code), so it is
 #: no oracle for the password; it ends by time-out (rolling FAIL_WINDOW_MS) or ``Channels.unlock``.
 MAX_TOTP_FAILURES = 10
-#: failed PASSWORDS per user across all sources: free tries, then a delay that doubles per failure up to the cap during
-#: which a sign-in is answered ``bad_credentials`` (never a hard lockout, and no distinct answer).
+#: failed PASSWORDS per (user, source) only: free tries, then a delay that doubles per failure up to the cap during which
+#: a sign-in from that source is answered ``bad_credentials``. Never across sources: sign-in needs password AND TOTP,
+#: so a stranger's wrong passwords must not be able to delay or lock the real user coming from another address.
 PW_FREE_TRIES = 3
 PW_BACKOFF_CAP_MS = 60_000
 MIN_PASSWORD = 10
@@ -224,21 +225,24 @@ class Channels:
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, now)
             ).lastrowid
 
-    def _judge(self, user: str, ok_pw: bool, ok_totp: bool) -> bool:
+    def _judge(self, user: str, subject: str, ok_pw: bool, ok_totp: bool) -> bool:
         """After the full password and TOTP check: is this sign-in blocked by the per-user TOTP lock or the password
-        backoff? One transaction with exactly one insert in every case (same work whatever the outcome). A blocked
-        attempt is not counted, so a stranger cannot extend the block."""
+        backoff for this (user, source)? One transaction with exactly one insert in every case (same work whatever
+        the outcome). A blocked attempt is not counted, so a stranger cannot extend the block."""
         now = self._now()
         with self._tx() as db:
             db.execute("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
             (nt,) = db.execute("SELECT COUNT(*) FROM failures WHERE kind='totp' AND subject=?", (user,)).fetchone()
             npw, last = db.execute(
-                "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND subject=?", (user,)
+                "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND subject=?", (subject,)
             ).fetchone()
             delay = 0 if npw < PW_FREE_TRIES else min(PW_BACKOFF_CAP_MS, 1000 * 2 ** (npw - PW_FREE_TRIES))
             blocked = nt >= MAX_TOTP_FAILURES or now < last + delay
             kind = "noop" if (blocked or (ok_pw and ok_totp)) else ("pw" if not ok_pw else "totp")
-            rid = db.execute("INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, user, now)).lastrowid
+            rid = db.execute(
+                "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)",
+                (kind, subject if kind == "pw" else user, now),
+            ).lastrowid
             if kind == "noop":
                 db.execute("DELETE FROM failures WHERE id=?", (rid,))
             elif kind == "totp" and nt + 1 == MAX_TOTP_FAILURES:
@@ -251,7 +255,9 @@ class Channels:
 
         def go() -> None:
             with self._tx() as db:
-                db.execute("DELETE FROM failures WHERE subject=? AND kind IN ('totp','pw')", (u,))
+                db.execute(
+                    "DELETE FROM failures WHERE kind IN ('totp','pw') AND (subject=? OR subject LIKE ?)", (u, u + "|%")
+                )
 
         self._guard(go)
 
@@ -291,7 +297,7 @@ class Channels:
             for c in (counter - 1, counter, counter + 1):
                 if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
                     match = c
-        blocked = self._guard(lambda: self._judge(u, ok_pw, bool(match)))
+        blocked = self._guard(lambda: self._judge(u, subject, ok_pw, bool(match)))
         if blocked or not (
             ok_pw and match
         ):  # one answer for all: wrong password, wrong TOTP, or a tripped lock/backoff
@@ -309,7 +315,9 @@ class Channels:
                 ):
                     raise ChannelError("bad_credentials")
                 self._succeed(db, "login", subject, rid)
-                db.execute("DELETE FROM failures WHERE kind IN ('totp','pw') AND subject=?", (u,))
+                db.execute(
+                    "DELETE FROM failures WHERE kind IN ('totp','pw') AND (subject=? OR subject LIKE ?)", (u, u + "|%")
+                )
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",

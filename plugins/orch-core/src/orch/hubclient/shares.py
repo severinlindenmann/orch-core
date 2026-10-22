@@ -106,6 +106,19 @@ class QuestionFact:
     qid: str  # the question id within the ticket
     text: str
     to_owner: bool  # addressed to an owner of this workspace
+    hash: str | None = None  # the question hash (ticket-format 5.6) now; for the item's f1
+
+
+@dataclass(frozen=True)
+class GateFact:
+    """One gate of a ticket as the F1 values of ``f1.gates`` (hub contract 10.2b): the current generation, the gate hash
+    and policy hash, and (``code``, ``verify`` only) the source list as ``(repo, ref, sha)`` triples."""
+
+    gate: str
+    gen: int
+    hash: str
+    policy_hash: str
+    source_sha: tuple[tuple[str, str, str], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +139,8 @@ class TicketFact:
     due: str | None
     questions: tuple[QuestionFact, ...] = ()
     needs: tuple[NeedFact, ...] = ()
+    gates: tuple[GateFact, ...] = ()  # the gates whose hash can be built now
+    roster_v: int | None = None  # the workspace member-roster version (WorkspaceView.roster_v); None: no f1
 
 
 @dataclass(frozen=True)
@@ -135,7 +150,9 @@ class ShareItem:
     ticket_uid: str
     ticket_key: str
     payload: dict[str, Any]  # the exact 10.2b content of this kind (shown to the owner; the builder signs and seals it)
-    digest: str  # b64u SHA-256 of the canonical payload: a change re-sends
+    digest: str  # b64u SHA-256 of the canonical payload and f1: a change of either re-sends (a new item_version)
+    f1: dict[str, Any] | None = field(default=None, compare=False)  # the 10.2b f1 block (None: shared without one)
+    shown: str = field(default="", compare=False)  # b64u SHA-256 of the payload alone: what ``share.preview`` plans
 
     def line(self) -> str:
         """One line for the owner's review."""
@@ -168,14 +185,47 @@ ITEM_REFUSALS = frozenset({"malformed", "too_large"})
 ITEM_KIND = {"summary": "needs_you", "ticket": "ticket", "question": "question"}
 
 
-def _item(logical: str, kind: str, t: TicketFact, payload: dict[str, Any]) -> ShareItem | None:
+def make_f1(t: TicketFact, gates: Iterable[str] = (), questions: Iterable[str] = ()) -> dict[str, Any] | None:
+    """The ``f1`` block of one item (hub contract 10.2b): ``roster_v``, and for each named gate / question the F1
+    values the host has NOW (a gate whose hash cannot be built, or whose entry the contract cannot express, is left
+    out: the hub then answers ``unknown_item`` for it, never a wrong value). ``None`` when the ticket carries no
+    roster version."""
+    if t.roster_v is None:
+        return None
+    want_g, want_q = set(gates), set(questions)
+    out_g: dict[str, Any] = {}
+    for g in t.gates:
+        if g.gate not in want_g:
+            continue
+        entry: dict[str, Any] = {"gen": g.gen, "hash": g.hash, "policy_hash": g.policy_hash}
+        if g.gate in sharefmt.F1_SOURCE_GATES:
+            entry["source_sha"] = [{"repo": r, "ref": f, "sha": s} for r, f, s in (g.source_sha or ())]
+        if sharefmt.f1_gate_ok(g.gate, entry):
+            out_g[g.gate] = entry
+    out_q = {q.qid: {"hash": q.hash} for q in t.questions if q.qid in want_q and q.hash is not None}
+    f1 = {"roster_v": t.roster_v, "gates": out_g, "questions": dict(sorted(out_q.items())[: sharefmt.F1_MAX_QUESTIONS])}
+    try:
+        sharefmt.check_f1(f1, {"log": t.uid})
+    except HubRefused:
+        return None
+    return f1
+
+
+def _item(
+    logical: str, kind: str, t: TicketFact, payload: dict[str, Any], f1: dict[str, Any] | None = None
+) -> ShareItem | None:
     """The item, or ``None`` when the contract cannot express it (a key, label or text outside its rules, a question
-    over 2000 bytes): it is then not offered and nothing of it is sent."""
+    over 2000 bytes): it is then not offered and nothing of it is sent. ``f1`` is part of the digest, so a change of
+    any of its values (a member change raises ``roster_v``, a new generation, a changed policy or source list, a
+    re-asked question) re-sends the item under a higher ``item_version``; the plan the owner is shown covers the
+    payload only (``shown``): those values are not content."""
     try:
         sharefmt.check_content(ITEM_KIND[kind], payload)
     except HubRefused:
         return None
-    return ShareItem(logical, kind, t.uid, t.key, payload, b64u(suite.sha256(wire.cj(payload))))
+    shown = b64u(suite.sha256(wire.cj(payload)))
+    digest = shown if f1 is None else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1})))
+    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown)
 
 
 def _valid_labels(labels: Iterable[str]) -> list[str]:
@@ -204,6 +254,10 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
                 f"ticket:{t.uid}", "ticket", t,
                 {"key": t.key, "type": t.type, "title": _line(t.title), "status": t.status,
                  "labels": _valid_labels(t.labels), "deadline": t.due},
+                make_f1(
+                    t, {n.ref for n in t.needs if n.kind == "approve" and n.to_owner and n.ref},
+                    {q.qid for q in t.questions if q.to_owner},
+                ),
             ))  # fmt: skip
         if "questions" in kinds:
             for q in t.questions:
@@ -212,6 +266,7 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
                         f"question:{t.uid}:{q.qid}", "question", t,
                         {"key": t.key, "type": t.type, "id": q.qid, "title": _line(q.text),
                          "text": _multiline(q.text), "deadline": t.due},
+                        make_f1(t, (), {q.qid}),
                     ))  # fmt: skip
         if "needs_you" in kinds:
             for n in t.needs:
@@ -223,6 +278,8 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
                 put(_item(
                     f"summary:{t.uid}:{n.kind}:{n.ref or ''}", "summary", t,
                     {"type": NEED_TYPES[n.kind], "title": _line(title), "deadline": t.due},
+                    make_f1(t, {n.ref} if n.kind == "approve" and n.ref else (),
+                            {n.ref} if n.kind == "question" and n.ref else ()),
                 ))  # fmt: skip
     return [out[k] for k in sorted(out)]
 
@@ -256,6 +313,18 @@ def make_builder(
         head = chain_of(item.ticket_uid)
         if head is None:
             raise HubRefused("malformed")
+        signed = sharefmt.build_signed_item(
+            hub_id=hub_id, workspace_id=workspace_id, item_id=item_id, item_kind=ITEM_KIND[item.kind],
+            item_version=version, issued_ms=now_ms(), chain={"log": item.ticket_uid, "seq": head[0], "head": head[1]},
+            content=item.payload, dev=dev, sign=sign, f1=item.f1,
+        )  # fmt: skip
+        try:
+            return sharefmt.seal_share_item(signed, hxk_pub=hxk_pub), sharefmt.item_hash(signed)
+        except HubRefused as exc:
+            if exc.code != "too_large" or item.f1 is None:
+                raise
+        # the F1 values do not fit the 16 KiB: share the item without them (the hub then cannot build on it:
+        # ``unavailable``, fail closed) rather than not at all
         signed = sharefmt.build_signed_item(
             hub_id=hub_id, workspace_id=workspace_id, item_id=item_id, item_kind=ITEM_KIND[item.kind],
             item_version=version, issued_ms=now_ms(), chain={"log": item.ticket_uid, "seq": head[0], "head": head[1]},

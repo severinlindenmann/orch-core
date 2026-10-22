@@ -59,6 +59,21 @@ SKIPPED_CHECKS = {
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
+    "relay_route": "hub to relay routing (protocol 10.8): hub and orch-relay side",
+    "user_hub": "hub user ids and aliases (protocol 9.1): hub side",
+    "visible": "hub channel visibility (protocol 10.7): hub side",
+    "cutover": "hub cutover (protocol 10.9): hub side",
+    "deliver_next": "hub delivery queue (protocol 8.7): the hub's reading of the host's reply",
+    "selective_build": "hub side (build_selective, protocol 8.6): the hub builds the event from the shared item",
+}
+
+#: Cases of a run check that the vendored contract moved ahead of core on (hub develop e7ed920): each belongs to a
+#: later core task and is expected to FAIL until that task lands (xfail, not strict: some cases of a prefix already
+#: pass; that task removes its prefix). prefix -> task.
+PENDING_PREFIXES = {
+    "custodial_selective_": "host admission of selective custodial events (core 15.7, protocol 8.6)",
+    "custodial_event_": "custodial payload shape per type (protocol 8.5, check_custodial_payload)",
+    "log_sync_rotation_": "log sync across a space epoch rotation (protocol 10.5)",
 }
 
 

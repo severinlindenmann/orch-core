@@ -184,7 +184,7 @@ def _shareable(state: Any, viewer: str | None) -> dict[str, Any]:
 def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[Any]:
     """The owner's visible tickets as :class:`~orch.hubclient.shares.TicketFact` (restricted tickets the owners cannot
     see are never offered). A question or need is "to me" when an owner of this workspace is an addressee."""
-    from orch.hubclient.shares import NeedFact, QuestionFact, TicketFact
+    from orch.hubclient.shares import GateFact, NeedFact, QuestionFact, TicketFact
 
     state = service.store.state
     owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
@@ -193,15 +193,24 @@ def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[An
     for uid, t in sorted(seen.items()):
         texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
         qs = tuple(
-            QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)))
+            QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)), q.hash)
             for q in t.questions
         )
         needs = tuple(NeedFact(n.kind, n.ref, bool(set(n.who) & set(owners))) for n in t.needs)
         due = t.fields.get("due")
+        gates = tuple(
+            GateFact(
+                g.gate, g.gen, g.hash, g.policy_hash,
+                tuple((e["repo"], e["ref"], e["sha"]) for e in g.input["source_sha"])
+                if g.gate in ("code", "verify") else None,
+            )
+            for g in t.gates.values()
+            if g.hash is not None and g.input is not None
+        )  # fmt: skip
         out.append(
             TicketFact(
                 uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
-                due if isinstance(due, str) else None, qs, needs,
+                due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
             )
         )  # fmt: skip
     return out
@@ -212,7 +221,7 @@ def _plan(items: list[Any]) -> str:
 
     h = hashlib.sha256()
     for i in items:
-        h.update(f"{i.logical}\0{i.digest}\n".encode())
+        h.update(f"{i.logical}\0{i.shown or i.digest}\n".encode())
     return b64u(h.digest())
 
 

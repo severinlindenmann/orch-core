@@ -39,9 +39,14 @@ class LogHub:
         self.pages: list[dict[str, Any]] = []
         self.calls: list[str] = []
         self._mu = threading.Lock()
+        self.hold: threading.Event | None = None  # a slow hub: the next page waits here until released
+        self.entered = threading.Event()
 
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
         m = message["o"]
+        if self.hold is not None:
+            self.entered.set()
+            self.hold.wait(10)
         with self._mu:
             self.calls.append(m["op"])
             body: dict[str, Any]
@@ -162,6 +167,24 @@ def test_a_leave_and_unbind_end_the_sender(human, served, stub, loghub):  # noqa
     human.ticket("after the leave")
     time.sleep(0.4)
     assert len(loghub.calls) == n
+
+
+def test_l2_c14_1_a_leave_stops_a_pass_that_a_slow_hub_keeps_alive(monkeypatch, human, served, stub, loghub):  # noqa: F811
+    monkeypatch.setattr(logsyncops, "STOP_WAIT_S", 0.3)
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    n = len(loghub.pages)
+    loghub.hold = threading.Event()
+    human.ticket("before the leave")
+    assert loghub.entered.wait(8)  # a pass is on the network, the hub is not answering
+    human.ticket("written after the leave started")
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))  # stops the sender and waits (bounded) before the op is sent
+    loghub.hold.set()
+    time.sleep(0.6)
+    assert len(loghub.pages) <= n + 1  # the page already on the wire, nothing after it
+    assert loghub.view.summary() != local_summary(served)
 
 
 def test_the_position_is_kept_in_a_private_file_and_survives_a_restart(human, served, stub, loghub):  # noqa: F811

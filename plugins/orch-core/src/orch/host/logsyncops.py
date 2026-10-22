@@ -30,6 +30,9 @@ LOG = logging.getLogger("orch.host.logsync")
 DEBOUNCE_S = 0.5
 IDLE_S = 30.0
 MAX_BACKOFF_S = 60.0
+STOP_WAIT_S = 5.0  # how long a leave/switch/unbind waits for a pass that is on the network
+RESEND_LIMIT = 6  # hub-forced resends from seq 1 per hour (L2-C14-3)
+RESEND_WINDOW_MS = 3_600_000
 _MU = threading.Lock()
 #: the seam for the link: ``(service) -> object with call(op, body) and close()``; ``None``: the ws->ws path's TLS link
 OPEN_LINK: Any = None
@@ -146,17 +149,22 @@ def start(service: WorkspaceService) -> bool:
         return False
 
 
-def stop(service: WorkspaceService) -> None:
+def stop(service: WorkspaceService, wait: float = 0.0) -> None:
+    """End the sender. With ``wait`` (a leave, a mode switch or an unbind, BEFORE its op is sent) also wait up to that
+    many seconds for a pass that is on the network; the pass checks ``stop`` before every page, so once this returns
+    (or the wait ran out) no further page goes out (L2-C14-1)."""
     k = _key(service)
     with _MU:
         rt = _RUNTIMES.get(k)
         if rt is not None:
             _retire(k, rt)
+    if rt is not None and wait > 0 and rt.thread is not None and rt.thread is not threading.current_thread():
+        rt.thread.join(wait)
 
 
 def _retire(k: tuple[str, str], rt: _Runtime) -> None:
-    """Forget ``rt`` and ask its thread to end (the caller holds ``_MU``; the thread is not joined: a pass may be on
-    the network, and it checks ``stop`` before every page)."""
+    """Forget ``rt`` and ask its thread to end (the caller holds ``_MU``; the thread is not joined here: a pass may be
+    on the network, and it checks ``stop`` before every page; :func:`stop` can wait)."""
     if _RUNTIMES.get(k) is rt:
         del _RUNTIMES[k]
     rt.stop.set()
@@ -188,6 +196,12 @@ def _loop(service: WorkspaceService, rt: _Runtime) -> None:
         except Exception as exc:  # noqa: BLE001 - the hub is down or refused: back off, never die
             code = getattr(exc, "code", None)
             rt.last_error = code if isinstance(code, str) else type(exc).__name__
+            if code == "resend_limited":  # the hub keeps forcing full resends: slow down to the longest pause, say why
+                LOG.warning("logsync of %s: the hub forced too many resends; backing off", service.workspace_id)
+                rt.stop.wait(MAX_BACKOFF_S)
+                backoff = MAX_BACKOFF_S
+                rt.wake.set()
+                continue
             if code in ("not_joined", "wrong_mode", "not_bound"):
                 with _MU:  # left, unbound or switched: no more sending (a new connect starts a new runtime)
                     _retire(_key(service), rt)
@@ -212,11 +226,38 @@ def _pass(service: WorkspaceService, rt: _Runtime) -> None:
     source = StoreSource(store)
     if not pending(source, rt.position):
         return
+    epoch = int(state.sealed["epoch"])
+
+    def live() -> bool:
+        """Before every page, under the hub-state lock on freshly read state: still full, joined, the same hub and
+        binding, the same sealed epoch, and this runtime not stopped (L2-C14-1)."""
+        if rt.stop.is_set():
+            return False
+        with hubops._MU:  # noqa: SLF001
+            cur = hubops._load_state(service)  # noqa: SLF001
+        return (
+            _eligible(cur)
+            and (cur.hub_id, cur.binding_seq) == (rt.hub_id, rt.binding_seq)
+            and int(cur.sealed["epoch"]) == epoch
+            and not rt.stop.is_set()
+        )
+
+    def allow_resend() -> bool:
+        now = int(service.clock() * 1000)
+        recent = [t for t in rt.position.forced if now - t < RESEND_WINDOW_MS]
+        if len(recent) >= RESEND_LIMIT:
+            rt.position.forced = recent
+            return False
+        rt.position.forced = [*recent, now]
+        _save_position(service, rt.position)
+        return True
+
     link = (OPEN_LINK or peerops._open_link)(service)  # noqa: SLF001 - the same dial as the ws->ws link
     try:
         sync_logs(
             state=state, workspace_id=service.workspace_id, call=link.call, source=source,
             view_key=epochs.view_key, position=rt.position, save=lambda p: _save_position(service, p),
+            live=live, allow_resend=allow_resend,
         )  # fmt: skip
     finally:
         link.close()

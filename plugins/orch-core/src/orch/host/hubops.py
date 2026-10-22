@@ -667,6 +667,10 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
+    if plan["op"] == "hub.unbind" or plan.get("kind") == "switch":
+        from . import logsyncops
+
+        logsyncops.stop(service, wait=logsyncops.STOP_WAIT_S)  # L2-C14-1: no more log pages once a leave/switch is sent
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]

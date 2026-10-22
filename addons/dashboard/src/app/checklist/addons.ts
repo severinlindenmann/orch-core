@@ -278,7 +278,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'N3',
         title: 'Give a ticket a file',
         text: 'Add a file to the ticket RA-0001. This needs a grant in that Terminal (export ORCH_GRANT and ORCH_SESSION as in D2).',
-        commands: ['cd ~/orch-run3-a', 'echo "A short test report" > report.md', 'orch artifact add report.md --kind report --ref RA-0001'],
+        commands: ['cd ~/orch-run4-a', 'echo "A short test report" > report.md', 'orch artifact add report.md --kind report --ref RA-0001'],
         see: 'The ticket\'s right column has a "Shares" box with "Share files".',
       },
       {
@@ -323,7 +323,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'N10',
         title: 'The server does not know the workspace',
         text: 'Start the server without --workspace, then in Settings, Add-ons press "Check now".',
-        see: 'A plain message: ask the server\'s admin to allow this workspace. Under Technical details the command orch-publish admin ws allow ... with the ids.',
+        see: 'A plain message: ask the server\'s admin to allow this workspace. Under Technical details the command orch-publish admin ws allow ... with the ids. On a server that is not started with --owner/--workspace (a real or dev server), the admin needs BOTH commands: "orch-publish admin --data DIR ws allow WS OWNER" and "orch-publish admin --data DIR owners add OWNER"; WS and OWNER are the 32 hex characters without the p_ prefix (with p_ the command says "expected 32 lower-case hex characters"). "orch publish register" keeps saying the server does not know the workspace until both are done.',
       },
     ],
   },
@@ -620,7 +620,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W7',
         title: 'New ticket review',
         text: 'Open New ticket, fill title and requirements, press Create.',
-        see: 'The dialog title reads "New ticket KEY: title". Requirements are normal text (not monospace). Details show "Type: Feature" and "Owner: your name" without person ids, and no "This cancels any existing approval" line. One short sentence "One confirmation signs all N steps...", and exactly one "Technical details" expander with key, signed id, person ids and fingerprint inside.',
+        see: 'The dialog title reads "New ticket KEY: title". Requirements are normal text (not monospace). Details show "Type: Feature" and "Owner: your name" followed by a shortened person id (like "p_fba4d7d53586…"; the full ids are in Technical details), and no "This cancels any existing approval" line. One short sentence "One confirmation signs all N steps...", and exactly one "Technical details" expander with key, signed id, person ids and fingerprint inside.',
       },
       {
         id: 'W8',
@@ -632,7 +632,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W9',
         title: 'Only create (simpler dialog)',
         text: 'New ticket, "Only create": open the review.',
-        see: 'The button says "Sign and create ticket". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
+        see: 'With one-click signing the button says "Sign and create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for your signature". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
       },
       {
         id: 'W10',
@@ -644,7 +644,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W11',
         title: 'Approvals and extending access',
         text: 'Approve requirements on a ticket, then approve the plan. Then extend agent access.',
-        see: '"Sign requirements", and the steps say the plan still needs approval. Approve plan reads "Sign and start building". Extend: the steps say running agents stop and must be started again.',
+        see: 'The button reads "Sign requirements" with one-click signing ("Sign in Terminal" with Terminal signing), and the steps say the plan still needs approval. Approve plan reads "Sign and start building" (or "Sign in Terminal"). Extend: the steps say running agents stop and must be started again.',
       },
       {
         id: 'W12',
@@ -657,13 +657,13 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W13',
         title: 'Plain Terminal reviews',
         text: 'Settings, Add-ons: turn on Terminals (or Worktrees) and press Sign in Terminal. Then create a new ticket and sign in the Terminal.',
-        see: 'The review starts "Turn on Terminals: it may open terminals on this computer, as you", then the version. No digest, no "fields: {}" (press d to see the package digest and raw capabilities). A new ticket says "owner: your name" and never a long raw p_ id.',
+        see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (press d to see the package digest and raw capabilities). A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
         id: 'W14',
         title: 'Questions, runner and local times',
         text: 'Answer an agent question (orch ask with options) on Today and sign. Run setup with the agent runner option on and read its review. Run `orch status` while an agent grant is live.',
-        see: 'The question review shows the question, "Why it was asked (per host, not signed)", the options, "your choice" and the ticket. Setup says "This Mac\'s agent runner may work on all open tickets for 3 days", with no "(scope workable, verbs agent)" on the main screen. Times read like "until Wed 11:10 CEST" in your local time, never "...Z" (`orch status --json` keeps UTC).',
+        see: 'The question review shows the question, "Why it was asked (per host, not signed)", the options, "your choice" and the ticket. Setup says "This Mac’s agent runner may work on any ticket you can see, as you, for 3 days", with no "(scope workable, verbs agent)" on the main screen. Times read like "until Wed 11:10 CEST" in your local time, never "...Z" (`orch status --json` keeps UTC).',
       },
       {
         id: 'W15',
@@ -675,7 +675,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W16',
         title: 'Extend agent access wording',
         text: 'Open Extend next to agent access.',
-        see: 'The review is titled "Extend agent access", says "Running agents will stop." once, and shows when the new access ends (your local time). It tells you to type GRANT, shows no gr_ id, and says to choose r in Terminal for this Mac\'s agent runner with a one-line explanation. After signing, choose r: agents start again with the new access.',
+        see: 'The review is titled "Extend agent access", says "Running agents will stop." (it appears three times today, known), and shows when the new access ends (your local time). It tells you to type GRANT. Today the headline and body show raw access ids ("takes back gr_…", "It replaces the access gr_…", "Access taken back: gr_…", "New access: gr_…"): known, filed as an issue; do not report it again. It says to choose r in Terminal for this Mac\'s agent runner with a one-line explanation. In the Terminal you are asked for the passphrase twice (old access taken back, new one issued). After signing, choose r: agents start again with the new access.',
       },
       {
         id: 'W17',
@@ -712,7 +712,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'X4',
         title: 'Activity wording',
         text: 'Open Activity after starting an agent, editing a repo and making a worktree.',
-        see: 'Agent rows read "an agent for you" (or Claude Code). Adding, editing and removing a repo reads "updated repo X" / "removed repo X". A worktree adds "saw the ticket\'s branch in the repository".',
+        see: 'Agent rows read "an agent for you" (or Claude Code). Adding, editing and removing a repo reads "updated the repository “X”" / "removed the repository “X”". A worktree adds "saw the ticket\'s branch in the repository".',
       },
       {
         id: 'X5',
@@ -779,7 +779,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Y7',
         title: 'An acceptance check you did not add',
         text: 'New ticket: type an acceptance check in the box without pressing Add, then Create. Then open the Guide.',
-        see: 'The review lists the check. The Guide has pages Repositories, Worktrees, Shares and Publish.',
+        see: 'The review lists the check. The Guide has pages Repositories, Worktrees and one page "Shares and Publish".',
       },
       {
         id: 'Y8',
@@ -815,8 +815,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z2',
         title: 'Start an agent on a ticket with no repo',
-        text: 'Create a ticket with no repo linked and start an agent on it. In the start dialog look at "where it works".',
-        see: '"the work folder of TICKET" (not "the workspace root"). After the start the folder `.orch-work/TICKET/` exists inside your project and is private to you.',
+        text: 'Create a ticket with no repo linked and start an agent on it. In the start dialog open Details (where it works is shown only there, not on the main dialog).',
+        see: 'Details say "In the work folder of TICKET" (not "the workspace root"). After the start the folder `.orch-work/TICKET/` exists inside your project and is private to you.',
       },
       {
         id: 'Z3',
@@ -845,7 +845,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z7',
         title: 'Paste a screenshot',
-        text: 'New ticket (one-click signing on): click into Context and paste a screenshot from the clipboard.',
+        text: 'Needs one-click signing (with Terminal signing the picture is added in the form but refused only at Create: "Pictures can only be signed with one click in the dashboard"; then mark Z7 to Z9 as not testable). New ticket (one-click signing on): click into Context and paste a screenshot from the clipboard.',
         see: 'A small picture appears under the box and the text gets a line with the picture.',
       },
       {
@@ -857,7 +857,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z9',
         title: 'Sign a ticket with a picture',
-        text: 'Create the ticket. Then open it.',
+        text: 'Needs one-click signing (not testable with Terminal signing). Create the ticket. Then open it.',
         see: 'The review shows the picture with "matches what you sign"; sign. The picture shows in Context on the ticket Overview.',
       },
       {
@@ -876,7 +876,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z12',
         title: 'Accept a criterion by hand',
-        text: 'On a real workspace (not the demo), open a ticket that is not Done as its owner, a reviewer or the workspace owner, on the Acceptance tab. Under a check that has no receipt press "Accept manually". In the window "Accept manually" read the text, type a short note (optional) and press "Accept manually" (or Sign).',
+        text: 'On a real workspace (not the demo), open a ticket that is not Done as its owner, a reviewer or the workspace owner, on the Acceptance tab. Under a check that has no receipt press "Accept manually". In the window "Accept manually" read the text, type a short note (optional) and press "Sign in Terminal" (with one-click signing: the one-click sign button).',
         see: 'The window shows the check\'s words, "No automated check backs this: you vouch for it yourself." and the field "Note (optional)". The review is headed "Accept AC1 of KEY manually" with a "Statement" section holding the full statement. Afterwards the line under the check reads "Accepted manually by NAME · time · one click (or the method you used) · “your note”", the check has a person icon (not a receipt tick), with no "No evidence yet" label. The button changes to "Withdraw". History says "accepted AC1 manually". When you later sign the Verify verdict, its review lists "AC1: accepted manually by NAME (no automated check)".',
       },
       {
@@ -889,7 +889,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Z14',
         title: 'Withdraw, and mark a task done',
         text: 'On an accepted check press "Withdraw". The window "Withdraw acceptance" asks for a "Reason (required)": the confirm button stays disabled with "Give a reason to continue" until you type one. Confirm and sign. Then, on a task that is not done, press "Mark done" and confirm in the window "Mark done".',
-        see: 'Withdraw: the review is headed "Withdraw the acceptance of AC1 of KEY"; afterwards the check is no longer accepted (the "Accept manually" button is back) and History says "withdrew the manual acceptance of AC1". Mark done: the window says "No receipt is recorded, so this proves no criterion. Accepting a criterion is a separate step." (plus "An agent is working on it; marking it done ends its lease." when a lease exists) and the review says "No receipt: marking this task done proves no criterion." Afterwards the task shows "Done"; under "How it\'s verified" it reads "Marked done, no receipt"; none of its checks becomes proven.',
+        see: 'Withdraw: the review is headed "Withdraw the acceptance of AC1 of KEY"; afterwards the check is no longer accepted (the "Accept manually" button is back) and History says "withdrew the manual acceptance of AC1". Mark done: the window says "No receipt is recorded, so this proves no criterion. Accepting a criterion is a separate step." (plus "An agent is working on it; marking it done ends its lease." when a lease exists) and the review says "No receipt: marking this task done proves no criterion." Afterwards the task shows "Done"; open "How it\'s verified" on the task row (it is closed until you press it) and it reads "Marked done, no receipt" (History says the same); none of its checks becomes proven.',
       },
       {
         id: 'Z15',

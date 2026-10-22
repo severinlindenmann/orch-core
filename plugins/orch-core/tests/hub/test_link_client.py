@@ -344,3 +344,122 @@ def test_frame_cap_is_the_hubs_1_5_mb_and_a_1_mib_envelope_round_trips() -> None
     pipe.buf += (framing.MAX_FRAME + 1).to_bytes(4, "big")
     with pytest.raises(framing.FrameError):  # over the cap: refused from the header, no payload allocated
         framing.read_frame(pipe, timeout=5)  # type: ignore[arg-type]
+
+
+# --- event_deliver (phase 4, custodial events) --------------------------------------------------------------------
+
+
+def _push_event(hub: TlsHub, body: dict, *, key: Any = None, **fields: Any) -> None:
+    from orch.hubclient.tlslink import framing
+
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
+        "dir": "h2w", "seq": 7, "ts_ms": int(time.time() * 1000), "op": "event_deliver", "re": None, "body": body,
+    }  # fmt: skip
+    o.update(fields)
+    sig = suite.sign(key or hub.hk_op, C.SIG_ROUTE + cj(o))
+    framing.write_frame(hub._conns[-1], {"o": o, "sig": b64u(sig)}, timeout=5)  # noqa: SLF001
+
+
+def test_event_deliver_is_taken_during_a_request_handed_out_once_and_acked_with_its_code(make_hub) -> None:
+    seen: list[dict] = []
+
+    def on_request(hub: TlsHub, o: dict):
+        if o["op"] == "snapshot_get":
+            _push_event(hub, {"log": "workspace", "event": {"type": "x"}})  # arrives before the reply
+            return hub.reply(o)
+        seen.append(o)  # the host's ack of the event
+        return b""
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        link.request("snapshot_get", {}, sign=sign, seq=1)
+        assert link.next_route_in(0) is None  # an event is not a route_in
+        assert link.next_event_deliver(0) == ("workspace", {"type": "x"})
+        with pytest.raises(LinkError):  # one outstanding at most
+            link.next_event_deliver(0)
+    with open_link(hub) as link:
+        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.next_event_deliver(0)
+        link.ack_event_deliver("forbidden_role")
+        deadline = time.time() + 3
+        while not seen and time.time() < deadline:
+            time.sleep(0.02)
+    assert seen and seen[0]["op"] == "event_deliver" and seen[0]["re"] == 7
+    assert seen[0]["body"] == {"error": "forbidden_role"}
+
+
+_BAD_BODIES = [
+    {"log": "workspace"},
+    {"event": {}},
+    {"log": 1, "event": {}},
+    {"log": "w", "event": []},
+    {"log": "w", "event": {}, "x": 1},
+]
+
+
+@pytest.mark.parametrize("body", _BAD_BODIES)
+def test_event_deliver_with_a_bad_body_closes_the_link(make_hub, body) -> None:
+    def on_request(hub: TlsHub, o: dict):
+        _push_event(hub, body)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        with pytest.raises(LinkError) as e:
+            link.request("snapshot_get", {}, sign=sign, seq=1)
+        assert e.value.code == "malformed"
+
+
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [({"key": suite.generate_private_key()}, "bad_signature"), ({"ts_ms": 1}, "stale_timestamp")],
+)
+def test_event_deliver_must_be_signed_by_the_hub_op_key_and_fresh(make_hub, fields, code) -> None:
+    def on_request(hub: TlsHub, o: dict):
+        _push_event(hub, {"log": "workspace", "event": {}}, **fields)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link, pytest.raises(LinkError) as e:
+        link.request("snapshot_get", {}, sign=sign, seq=1)
+    assert e.value.code == code
+
+
+def test_the_h2w_queues_are_bounded_and_a_full_one_closes_the_link_with_queue_full(make_hub) -> None:
+    """L2-C3-5: the host drains only route_in while the hub floods event_deliver. The 65th is refused (nothing is
+    dropped; the hub resends what it never got an ack for) and the link closes."""
+    from orch.hubclient.tlslink.client import MAX_QUEUED
+
+    def on_request(hub: TlsHub, o: dict):
+        for i in range(MAX_QUEUED + 1):
+            _push_event(hub, {"log": "workspace", "event": {"type": "x"}}, seq=100 + i)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        with pytest.raises(LinkError) as e:
+            link.request("snapshot_get", {}, sign=sign, seq=1)
+        assert e.value.code == "queue_full"
+        with pytest.raises(LinkClosed):
+            link.next_event_deliver(0)
+
+
+def test_a_queue_at_its_limit_still_hands_out_every_entry(make_hub) -> None:
+    from orch.hubclient.tlslink.client import MAX_QUEUED
+
+    def on_request(hub: TlsHub, o: dict):
+        if o["op"] != "snapshot_get":
+            return b""  # the host's acks
+        for i in range(MAX_QUEUED):
+            _push_event(hub, {"log": "workspace", "event": {"n": i}}, seq=100 + i)
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link:
+        link.request("snapshot_get", {}, sign=sign, seq=1)
+        got = []
+        for _ in range(MAX_QUEUED):
+            got.append(link.next_event_deliver(0)[1]["n"])
+            link.ack_event_deliver()
+        assert got == list(range(MAX_QUEUED))

@@ -46,6 +46,8 @@ SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_LINK_AUTH = b"orch/v2/sig/hub-link-auth|"
 HV = 0
+#: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
+MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
 MODES = ("selective", "full")
 #: the closed w2h op list: op -> the mode it exists in (None: both); and the shape of its reply body
@@ -136,7 +138,9 @@ class LinkClient:
         self._seq = 0  # the highest w2h seq used on this link (requests carry the caller's, acks continue from here)
         self._push: list[dict[str, Any]] = []  # verified h2w ``route_in`` requests not yet handed out
         self._pending: dict[str, Any] | None = None  # the handed-out one, awaiting its ack
-        self._last_in = 0  # highest h2w route_in seq accepted
+        self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
+        self._pending_ev: dict[str, Any] | None = None
+        self._last_in = 0  # highest h2w request seq accepted (route_in and event_deliver share the hub's counter)
 
     @staticmethod
     def open(
@@ -258,19 +262,32 @@ class LinkClient:
     # --- route_in (h2w requests the hub pushes; protocol 10.3) -----------------------------------------------------
 
     def _take_push(self, frame: dict[str, Any]) -> bool:
-        """If ``frame`` is an h2w ``route_in`` request: verify it, keep it, return True. A frame that is not one
-        returns False (it is the reply being waited for)."""
+        """If ``frame`` is an h2w ``route_in`` or ``event_deliver`` request: verify it, keep it, return True. A frame
+        that is not one returns False (it is the reply being waited for). Only the link layer shape is checked here
+        (``{"log", "event"}`` for a custodial event); the event itself is verified by the host, never by the link."""
         o = frame.get("o")
         if type(o) is not dict or o.get("dir") != "h2w" or o.get("re") is not None:
             return False
         self._verify_signed(frame)
         body = frame["o"]["body"]
-        if o["op"] != "route_in" or set(body) != {"envelope"} or type(body["envelope"]) is not str:
+        if o["op"] == "route_in":
+            if set(body) != {"envelope"} or type(body["envelope"]) is not str:
+                raise LinkError("malformed")
+            queue = self._push
+        elif o["op"] == "event_deliver":
+            if set(body) != {"log", "event"} or type(body["log"]) is not str or type(body["event"]) is not dict:
+                raise LinkError("malformed")
+            queue = self._events
+        else:
             raise LinkError("malformed")
         if type(o["seq"]) is not int or o["seq"] <= self._last_in:
             raise LinkError("malformed")
+        if len(queue) >= MAX_QUEUED:
+            # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
+            # loses nothing; dropping the oldest would silently discard a request the hub still holds as undelivered.
+            raise LinkError("queue_full")
         self._last_in = o["seq"]
-        self._push.append(o)
+        queue.append(o)
         return True
 
     def next_route_in(self, wait: float = 0.0) -> bytes | None:
@@ -291,6 +308,8 @@ class LinkClient:
                         raise LinkError(_code(frame.get("error")))
                     if not self._take_push(frame):
                         raise LinkError("malformed")
+                    if not self._push:
+                        return None  # it was an event_deliver: next_event_deliver hands it out
                 self._pending = self._push.pop(0)
                 try:
                     return unb64u(self._pending["body"]["envelope"])
@@ -327,6 +346,64 @@ class LinkClient:
                 self.close()
                 raise
             self._pending = None
+
+    # --- event_deliver (h2w custodial events; protocol 8.4, 10.2) --------------------------------------------------
+
+    def next_event_deliver(self, wait: float = 0.0) -> tuple[str, dict[str, Any]] | None:
+        """The next custodial event the hub delivers, as ``(log, event)``, or ``None`` within ``wait`` seconds. The
+        link verified the signed message and its body shape only: NOTHING about the event is trusted (the host runs
+        :func:`orch.hubclient.custodial.verify_hub_event` and its own log checks). At most one is outstanding: call
+        :meth:`ack_event_deliver` once it was admitted or refused; the hub resends an unacknowledged one."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            if self._pending_ev is not None:
+                raise LinkError("malformed")  # a caller bug: the last one was never acknowledged
+            try:
+                if not self._events:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                    if not self._events:
+                        return None  # it was a route_in: next_route_in hands it out
+                self._pending_ev = self._events.pop(0)
+                b = self._pending_ev["body"]
+                return b["log"], b["event"]
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def ack_event_deliver(self, error: str | None = None) -> None:
+        """Answer the outstanding ``event_deliver`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``, protocol 10.2). A refused event is acknowledged WITH its code, so the hub learns why."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if self._pending_ev is None:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            self._seq += 1
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "op": "event_deliver", "re": self._pending_ev["seq"], "body": {} if error is None else {"error": error},
+            }  # fmt: skip
+            try:
+                framing.write_frame(
+                    self._c, {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}, timeout=self._t, max_bytes=self._max
+                )
+            except (FrameError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+            self._pending_ev = None
 
     def route_out(self, envelope: bytes) -> str:
         """Send one ws->ws envelope (the sender's exact bytes); returns ``"forwarded"`` or ``"queued"``. Raises

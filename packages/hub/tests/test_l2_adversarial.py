@@ -55,11 +55,14 @@ def test_l2_1_held_card_rechecked_against_later_revocation():
 # ---- L2-2: publish approval reuse / attach / cross-path ---------------------------------------------------------------
 
 def _req(nonce: bytes, appr, ts: int = NOW):
+    # L2-2 fix API: the host signs the hub-path bytes (own label, hub_id, the approval it attaches); `pb` stays the
+    # v2 §12.1 direct bytes so the cross-path test checks the hub-path signature against them.
     ws = bytes.fromhex(G.WS_A)
     pb = H.publish_signed_bytes(ws, ts, nonce, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY)
+    hb = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", G.PUB_HOST, G.PUB_TARGET, G.PUB_BODY, G.HUB_ID, appr)
     h = {"Orch-Workspace": G.WS_A, "Orch-Ts": str(ts), "Orch-Nonce": nonce.hex(),
-         "Orch-Signature": b64u(S.sign(G.K.priv["wsk_a"], pb)), "Orch-Hub": G.HUB_ID,
-         "Orch-Hub-Signature": b64u(S.sign(G.K.priv["hk_op"], H.hub_publish_bytes(G.HUB_ID, pb)))}
+         "Orch-Signature": b64u(S.sign(G.K.priv["wsk_a"], hb)), "Orch-Hub": G.HUB_ID,
+         "Orch-Hub-Signature": b64u(S.sign(G.K.priv["hk_op"], H.hub_publish_bytes(G.HUB_ID, hb)))}
     if appr is not None:
         h["Orch-Owner-Approval"] = b64u(cj(appr))
     return {"method": "PUT", "host": G.PUB_HOST, "target": G.PUB_TARGET, "headers": h, "body": G.PUB_BODY,
@@ -76,7 +79,7 @@ def _state():
 
 def test_l2_2_approval_is_single_use():
     """L2-2: one owner approval must authorise one request, not every later request with the same content."""
-    st, appr = _state(), G.approval()
+    st, appr = _state(), G.approval(nonce=b"\x01" * 16)  # L2-2 fix API: the owner approves one exact request
     first, _ = _req(b"\x01" * 16, appr)
     assert H.check_hub_publish(first, st, now_ms=NOW, dev_mode=True)["approved"]
     second, _ = _req(b"\x02" * 16, appr, ts=NOW + 60_000)  # new WSK-signed request (agent path / later re-publish)

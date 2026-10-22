@@ -163,26 +163,29 @@ PUB_BODY = b'{"access":"public","files":1}'
 NONCE = S.fake_seed("hub/publish_nonce")[:16]
 
 
-def approval(pk: str = "pk_alice", dk: str = "dk_alice_mac", body: bytes = PUB_BODY, **kw: Any) -> dict[str, Any]:
-    rh = H.publish_request_hash(bytes.fromhex(WS_A), "PUT", PUB_HOST, PUB_TARGET, body)
+def approval(pk: str = "pk_alice", dk: str = "dk_alice_mac", body: bytes = PUB_BODY, nonce: bytes = NONCE,
+             ts: int = NOW, **kw: Any) -> dict[str, Any]:
+    rh = H.publish_request_hash(bytes.fromhex(WS_A), ts, nonce, "PUT", PUB_HOST, PUB_TARGET, body, HUB_ID)
     o = {**hdr("hub.publish_approval"), "workspace_id": WS_A, "hub_id": HUB_ID,
-         "device_id": H.device_id(K.pub[dk + ".sig"]), "request_hash": b64u(rh), "access": "public",
-         "issued_ms": NOW - 60_000, "expires_ms": NOW + 3_600_000, **kw}
+         "device_id": H.device_id(K.pub[dk + ".sig"]), "request_hash": b64u(rh), "access": "public", **kw}
     s = signed(dk + ".sig", "sig_hub_publish_approval", o)
     return {"o": s["o"], "sig": s["sig"], "device_cert": device_cert(pk, dk), "pk_pub": K.b(pk)}
 
 
 def publish_request(*, ts: int = NOW, body: bytes = PUB_BODY, wsk: str = "wsk_a", op_key: str = "hk_op",
                     appr: dict[str, Any] | None | str = "default", access: str | None = "public",
-                    hub: str = HUB_ID) -> dict[str, Any]:
+                    hub: str = HUB_ID, nonce: bytes = NONCE, wsk_signs_approval: Any = "same") -> dict[str, Any]:
+    """A hub-path request. ``wsk_signs_approval`` is the approval the host's WSK signature commits to ("same" = the
+    one attached); a different value models a hub that attached or swapped an approval after the host signed."""
     ws = bytes.fromhex(WS_A)
-    pbytes = H.publish_signed_bytes(ws, ts, NONCE, "PUT", PUB_HOST, PUB_TARGET, body)
-    headers = {"Orch-Workspace": WS_A, "Orch-Ts": str(ts), "Orch-Nonce": NONCE.hex(),
+    if appr == "default":
+        appr = approval(body=body, nonce=nonce, ts=ts)
+    committed = appr if wsk_signs_approval == "same" else wsk_signs_approval
+    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", PUB_HOST, PUB_TARGET, body, hub, committed)
+    headers = {"Orch-Workspace": WS_A, "Orch-Ts": str(ts), "Orch-Nonce": nonce.hex(),
                "Orch-Signature": b64u(S.sign(K.priv[wsk], pbytes, deterministic=True)), "Orch-Hub": hub,
                "Orch-Hub-Signature": b64u(S.sign(K.priv[op_key], H.hub_publish_bytes(hub, pbytes),
                                                  deterministic=True))}
-    if appr == "default":
-        appr = approval()
     if appr is not None:
         headers["Orch-Owner-Approval"] = b64u(cj(appr))
     return {"method": "PUT", "host": PUB_HOST, "target": PUB_TARGET, "headers": headers, "body_hex": body.hex(),
@@ -547,8 +550,23 @@ def build() -> dict[str, Any]:
     case("publish_approval_for_other_body", "publish",
          {**pb, "request": publish_request(appr=approval(body=b'{"access":"public","files":2}'))},
          {"error": "bad_approval"}, 2, "the approval names the exact request")
-    case("publish_approval_expired", "publish",
-         {**pb, "request": publish_request(appr=approval(expires_ms=NOW))}, {"error": "approval_expired"}, 2)
+    other_nonce = S.fake_seed("hub/publish_nonce_2")[:16]
+    case("publish_approval_reused_on_second_request", "publish",
+         {**pb, "request": publish_request(nonce=other_nonce, appr=approval())}, {"error": "bad_approval"}, 2,
+         "L2-2: an approval names one exact request (ts and nonce); the host cannot reuse it")
+    case("publish_approval_replayed_with_its_request", "publish",
+         {**pb, "nonces": {WS_A: {NONCE.hex(): NOW + 1000}}, "request": publish_request()}, {"error": "replay"}, 2)
+    case("publish_approval_attached_by_hub", "publish",
+         {**pb, "request": publish_request(wsk_signs_approval=None)}, {"error": "bad_signature"}, 2,
+         "L2-2: the host signed without an approval; the hub attached one (V3-D4: inside the WSK-signed request)")
+    case("publish_approval_stripped_by_hub", "publish",
+         {**pb, "request": publish_request(appr=None, wsk_signs_approval=approval())}, {"error": "bad_signature"}, 2)
+    case("publish_hub_request_replayed_direct", "publish", {**pb, "path": "direct", "request": publish_request()},
+         {"error": "bad_signature"}, 2, "L2-2: a hub-path WSK signature never verifies on the direct path")
+    case("publish_approval_for_other_hub", "publish",
+         {**pb, "request": publish_request(appr=approval(hub_id=ROGUE_HUB_ID))}, {"error": "other_hub"}, 2)
+    case("publish_approval_extra_field", "publish",
+         {**pb, "request": publish_request(appr=approval(expires_ms=NOW + 1))}, {"error": "malformed"}, 2)
     case("publish_approval_device_revoked", "publish",
          {**pb, "revoked_devices": [H.device_id(K.pub["dk_alice_mac.sig"])], "request": publish_request()},
          {"error": "revoked"}, 2)
@@ -602,9 +620,13 @@ def build() -> dict[str, Any]:
 
     # publish through the hub: the exact bytes
     req = publish_request()
-    pbytes = H.publish_signed_bytes(bytes.fromhex(WS_A), NOW, NONCE, "PUT", PUB_HOST, PUB_TARGET, PUB_BODY)
-    publish_vec = {"request": req, "wsk_signed_hex": pbytes.hex(), "hub_signed_hex": H.hub_publish_bytes(HUB_ID, pbytes).hex(),
-                   "request_hash": b64u(H.publish_request_hash(bytes.fromhex(WS_A), "PUT", PUB_HOST, PUB_TARGET, PUB_BODY))}
+    pbytes = H.hub_path_signed_bytes(bytes.fromhex(WS_A), NOW, NONCE, "PUT", PUB_HOST, PUB_TARGET, PUB_BODY, HUB_ID,
+                                     ap)
+    publish_vec = {"request": req, "wsk_signed_hex": pbytes.hex(),
+                   "approval_hash_hex": H.approval_hash(ap).hex(),
+                   "hub_signed_hex": H.hub_publish_bytes(HUB_ID, pbytes).hex(),
+                   "request_hash": b64u(H.publish_request_hash(bytes.fromhex(WS_A), NOW, NONCE, "PUT", PUB_HOST,
+                                                               PUB_TARGET, PUB_BODY, HUB_ID))}
 
     challenge, exporter = S.fake_seed("hub/link_challenge"), S.fake_seed("hub/tls_exporter")
     la = H.link_auth_bytes(HUB_ID, WS_A, challenge, exporter)

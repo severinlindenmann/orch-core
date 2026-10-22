@@ -25,6 +25,7 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    "sig_publish_hub": "orch/v2/publish-hub|",  # a publish request on the hub path (L2-2); v2 keeps orch/v2/publish|
     # signature by the workspace owner's device key (V3-D4)
     "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
     # hashes

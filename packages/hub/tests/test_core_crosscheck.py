@@ -58,14 +58,15 @@ def test_publish_request_with_core_primitives():
     def lp16(s: str) -> bytes:
         return struct.pack(">H", len(s)) + s.encode()
 
-    signed = (b"orch/v2/publish|" + bytes([2]) + bytes.fromhex(h["Orch-Workspace"]) + struct.pack(">Q", int(h["Orch-Ts"]))
+    appr = core_jcs.loads_strict(core_enc.unb64u(h["Orch-Owner-Approval"]))
+    signed = (b"orch/v2/publish-hub|" + bytes([2]) + bytes.fromhex(h["Orch-Workspace"]) + struct.pack(">Q", int(h["Orch-Ts"]))
               + bytes.fromhex(h["Orch-Nonce"]) + lp16(r["method"]) + lp16(r["host"]) + lp16(r["target"])
-              + core_suite.sha256(bytes.fromhex(r["body_hex"])))
+              + core_suite.sha256(bytes.fromhex(r["body_hex"])) + bytes.fromhex(h["Orch-Hub"])
+              + core_suite.sha256(core_jcs.dumps(appr)))
     assert signed.hex() == p["wsk_signed_hex"]
     assert core_suite.verify(pub("wsk_a"), core_enc.unb64u(h["Orch-Signature"], 64), signed)
     hub_bytes = b"orch/v2/hub-publish|" + bytes([2]) + bytes.fromhex(h["Orch-Hub"]) + core_suite.sha256(signed)
     assert core_suite.verify(pub("hk_op"), core_enc.unb64u(h["Orch-Hub-Signature"], 64), hub_bytes)
-    appr = core_jcs.loads_strict(core_enc.unb64u(h["Orch-Owner-Approval"]))
     assert core_verify_object(appr, "orch/v2/sig/hub-publish-approval|", "dk_alice_mac.sig")
     assert core_verify_object(appr["device_cert"], "orch/v2/sig/device-cert|", "pk_alice")
     assert core_suite.person_id(pub("pk_alice")).hex() == V["ids"]["person_alice"]

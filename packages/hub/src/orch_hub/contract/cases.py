@@ -90,6 +90,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         r = a["request"]
         req = {"method": r["method"], "host": r["host"], "target": r["target"], "headers": r["headers"],
                "body": bytes.fromhex(r["body_hex"]), "access": r.get("access")}
+        if a.get("path") == "direct":
+            return H.check_direct_publish(req, unb64u(a["cards"][a["workspace_id"]]["wsk_pub"], 65))
         return H.check_hub_publish(req, st, now_ms=now, dev_mode=dev)
     raise ValueError(f"unknown check {check}")
 

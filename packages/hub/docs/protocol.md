@@ -134,13 +134,14 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_unbound` | `orch/v2/sig/hub-unbound\|` | `WSK` | `cj(o)` of `hub.unbound` | 9 |
 | `sig_hub_link` | `orch/v2/sig/hub-link\|` | `WSK` | `cj(o)` of a host→hub `hub.link` | 10 |
 | `sig_hub_link_auth` | `orch/v2/sig/hub-link-auth\|` | `WSK` | the link-open challenge, bound to TLS | 10 |
+| `sig_publish_hub` | `orch/v2/publish-hub\|` | `WSK` | a publish request on the hub path, with `hub_id` and the approval (L2-2) | 11 |
 | `sig_hub_publish_approval` | `orch/v2/sig/hub-publish-approval\|` | owner's `dk_sig` | `cj(o)` of `hub.publish_approval` | 11 |
 | `h_hub_id` | `orch/v2/id/hub\|` | hash | `hub_id` | 2.3 |
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
 
-Reused unchanged: `orch/v2/publish|` (`WSK`, v2 §12.1), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
+Reused unchanged: `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
 
 **The custodial family.** `UK` signs only under `"orch/v2/hub-custodial|" || type || "|"`, and `type` must match
@@ -530,62 +531,76 @@ carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in p
 
 ### 11.1 The request
 
-The host builds and signs the request **exactly as v2 §12.1** (headers `Orch-Workspace`, `Orch-Ts`, `Orch-Nonce`,
-`Orch-Signature`; `WSK` over `"orch/v2/publish|" || suite || workspace_id || u64(ts_ms) || nonce || lp16(METHOD) ||
-lp16(host) || lp16(request-target) || H(body)`), plus, when the request grants public access, the header
-`Orch-Owner-Approval: b64u(cj(approval))` (§11.3). It sends it over `publish_out`. The hub forwards it **unchanged**
-and adds two headers:
+The hub path has **its own `WSK` signed bytes** (L2-2). The host builds the request with the v2 §12.1 headers
+(`Orch-Workspace`, `Orch-Ts`, `Orch-Nonce`, `Orch-Signature`, same syntax) and, when the request grants public
+access, `Orch-Owner-Approval: b64u(cj(approval))` (§11.3), and signs
+
+```
+wsk_signed_bytes = "orch/v2/publish-hub|" || suite || workspace_id (16) || u64(ts_ms) || nonce (16)
+                   || lp16(METHOD) || lp16(host) || lp16(request-target) || H(body)
+                   || hub_id (16) || approval_hash
+approval_hash    = H(cj(approval)), or 32 zero bytes when the request carries no approval
+```
+
+So the host's signature commits to the hub that forwards the request and to the approval exactly as attached: nobody
+after the host can add, swap or strip an approval (`bad_signature`), and a hub-path signature never verifies as a v2
+§12.1 direct request (its label differs), so a hub cannot replay a hub request on the direct path. The host attaches
+an approval only to the request the owner signed it for; **the agent `publish(...)` path never carries one**. It
+sends the request over `publish_out`. The hub forwards it **unchanged** and adds two headers:
 
 ```
 Orch-Hub:           <hub_id hex>
 Orch-Hub-Signature: b64u(Sign(HK_op, "orch/v2/hub-publish|" || suite || hub_id (16) || H(wsk_signed_bytes)))
 ```
 
-`wsk_signed_bytes` are the exact v2 §12.1 bytes. The hub's signature is transport only (spec §8): it adds no
-authority, it only proves which hub delivered the request.
+The hub's signature is transport only (spec §8): it adds no authority, it only proves which hub delivered the request.
 
 ### 11.2 What orch-publish checks, in order
 
 | # | Check | Refusal |
 |---|---|---|
-| 1 | header syntax (v2 §12.1 plus `Orch-Hub`, `Orch-Hub-Signature`, and `Orch-Owner-Approval` strictly parsed when present) | 400 `malformed` |
+| 1 | header syntax (v2 §12.1 plus `Orch-Hub`, `Orch-Hub-Signature`, and `Orch-Owner-Approval` strictly parsed when present); method, host and target ASCII | 400 `malformed` |
 | 2 | `\|now − ts\| ≤ 120 s` | 401 `stale_timestamp` (`server_ms`) |
 | 3 | the workspace's card is known (v2 §12.1 step 3) | 401 `unknown_workspace` |
-| 4 | `Orch-Signature` under the card's `WSK` over the v2 §12.1 bytes | 401 `bad_signature` |
-| 5 | a binding for this workspace, status `bound` | 403 `not_bound` |
+| 4 | `Orch-Signature` under the card's `WSK` over the hub-path `wsk_signed_bytes` (§11.1), with `Orch-Hub` and the attached approval | 401 `bad_signature` |
+| 5 | a binding for this workspace, status `bound`, signed by the card's current `WSK` | 403 `not_bound` |
 | 5b | the binding's `hub_id` equals `Orch-Hub` | 403 `other_hub` |
 | 6 | a hub card for that `hub_id`, verified (§5) with `hk_root_pub` equal to the binding's, dev marker included | 401 `unknown_hub` (403 `dev_refused` at a real publish) |
 | 7 | `Orch-Hub-Signature` under that card's `HK_op` | 401 `bad_hub_signature` |
 | 8 | the nonce is unseen for this workspace; then recorded for 240 s | 401 `replay` |
-| 9 | public access: an approval is present and verifies (§11.3); an approval that is present is always verified | 403 `approval_required`, `bad_approval`, `approval_expired`, `other_person`, `other_workspace`, `other_hub`; 400/403 certificate codes |
+| 9 | public access: an approval is present and verifies (§11.3); an approval that is present is always verified | 403 `approval_required`, `bad_approval`, `other_person`, `other_workspace`, `other_hub`; 400/403 certificate codes |
 
 Every signature comes before the nonce store (v2 §12.1). Policy checks of orch-publish that are not part of this table
 (blocked workspace, owner allowlist, path workspace) come after step 8 as today. **Which requests grant public access**
 is orch-publish's route definition (`access: "public"` of a share or app); F1 fixes the list, and every such request
 needs step 9.
 
-**Direct requests.** A request without `Orch-Hub` is the v2 direct path and is checked as v2 §12.1 until the H6
-switch, binding or not (SHORTCUT `Direct relay / publish paths behind a flag until H5/H6`). From H6 on, orch-publish
-refuses direct requests for a workspace with a live binding.
+**Direct requests.** A request without `Orch-Hub` is the v2 direct path, signed under `orch/v2/publish|` and checked as
+v2 §12.1 until the H6 switch, binding or not (SHORTCUT `Direct relay / publish paths behind a flag until H5/H6`). A
+hub-path signature presented there is `bad_signature` (vector `publish_hub_request_replayed_direct`). From H6 on,
+orch-publish refuses direct requests for a workspace with a live binding.
 
 ### 11.3 `hub.publish_approval` (V3-D4)
 
-The owner's local-key authorisation, signed at the host terminal by the owner's device key (`dk_sig`, the key that
-signs the owner's person events; D64 custody):
+The owner's local-key authorisation of **one exact request**, signed at the host terminal by the owner's device key
+(`dk_sig`, the key that signs the owner's person events; D64 custody):
 
 ```
 approval = {"o": {"v": 2, "suite": 2, "kind": "hub.publish_approval", "hv": 0, "workspace_id", "hub_id",
-                  "device_id", "request_hash", "access": "public", "issued_ms", "expires_ms"},
+                  "device_id", "request_hash", "access": "public"},
             "device_cert": <v2 §6.1 device_cert, signed by the owner's PK>,
             "pk_pub": <b64u, the owner's PK>,
             "sig": b64u(Sign(dk_sig, "orch/v2/sig/hub-publish-approval|" || cj(o)))}
 
-request_hash = b64u(H("orch/v2/hub-publish-request|" || suite || workspace_id (16) || lp16(METHOD) || lp16(host)
-                      || lp16(request-target) || H(body)))
+request_hash = b64u(H("orch/v2/hub-publish-request|" || suite || workspace_id (16) || u64(ts_ms) || nonce (16)
+                      || lp16(METHOD) || lp16(host) || lp16(request-target) || H(body) || hub_id (16)))
 ```
 
-`request_hash` names the exact request without `ts` and `nonce` (the owner signs before the host draws them; the
-request's own nonce makes each use single). `expires_ms − issued_ms ≤ 24 h`.
+The host draws `ts` and `nonce` first, shows the owner the request, and the owner signs after (L2-2). An approval is
+therefore good for exactly one request: its nonce is single-use in the publish nonce store and its `ts` must be inside
+the 120 s window. The approval has no lifetime of its own; if the owner takes longer, the host draws a fresh `ts` and
+`nonce` and asks again. (`request_hash` cannot include the WSK-signed bytes, which contain `H(approval)`; it names the
+same fields instead.)
 
 **Verification (step 9), in order:**
 
@@ -597,17 +612,14 @@ request's own nonce makes each use single). `expires_ms − issued_ms ≤ 24 h`.
 4. `sig` under the certificate's `dk_sig_pub` → `bad_approval`;
 5. field set → `malformed`; `device_id` equals the certificate's → `bad_approval`;
 6. `workspace_id` is the request's → `other_workspace`; `hub_id` is `Orch-Hub` → `other_hub`;
-7. `request_hash` equals the hash of this request, and `access` equals what the request grants → `bad_approval`;
-8. `expires_ms > issued_ms`, at most 24 h apart → `malformed`; `issued_ms ≤ now + 300 s` and `now < expires_ms` →
-   `approval_expired`.
+7. `request_hash` equals the hash of this request (its `ts`, `nonce`, method, host, target, body and hub), and
+   `access` equals what the request grants → `bad_approval`.
 
-**How this meets V3-D4.** The decision says the owner's local key authorises publish "inside the WSK-signed
-request". **DECIDED HERE:** the approval rides beside the v2 §12.1 signature and is bound to the request the other way
-round: it names the exact method, host, target and body (`request_hash`), and the request's `WSK` signature and nonce
-make each use single. Stripping the approval only removes authority (public access is then refused), and an approval
-cannot be moved to another request, workspace or hub. Keeping the v2 §12.1 bytes unchanged lets orch-publish reuse its
-existing signature check. If the L2 reviewer requires `WSK` itself to cover the approval, the change is one extra
-`H(approval)` in a new signed-bytes variant; flagged in §16.
+**How this meets V3-D4** ("the owner's local key authorises publish inside the WSK-signed request"). The approval is
+inside the `WSK`-signed bytes (`approval_hash`, §11.1), and the approval in turn names the one exact request, nonce
+included. Vectors: `publish_approval_reused_on_second_request` (same body, fresh nonce → `bad_approval`),
+`publish_approval_replayed_with_its_request` (`replay`), `publish_approval_attached_by_hub` and
+`publish_approval_stripped_by_hub` (`bad_signature`), `publish_hub_request_replayed_direct` (`bad_signature`).
 
 Requests for `secret` or `sealed` access keep the v2 path: the host evaluates the charter (spec §5.5, §8 "the agent
 `publish(...)` path is unchanged") and no approval is needed. An approval on such a request is still verified, and its
@@ -658,7 +670,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `alias_repointed` | `hub.joined` | §9.1 |
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish | §11.2 |
-| `approval_required`, `bad_approval`, `approval_expired` (403) | publish | §11.3 |
+| `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
 `other_person`, `stale_timestamp`, `unknown_workspace`, `replay`, `stale_card`. HTTP statuses for publish are in §11.2;
@@ -676,7 +688,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `signatures` | per object: signer, label, `canonical_hex` = `cj(o)`, `signed_hex` = label ‖ `cj(o)`, `sig` |
 | `custodial` | an event with `digest_hex`, the proof's and the UK's signed bytes |
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes |
-| `publish` | a forwarded request: `wsk_signed_hex`, `hub_signed_hex`, `request_hash` |
+| `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `cases` | 125 cases (24 positive, 101 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
@@ -702,7 +714,7 @@ Every implementation runs the cases of the checks it implements: the hub all of 
 | 8 | Custodial actor | `{kind: person, id: "u_…", via}` | spec §5 `Actor("human", user_id, via)`; C3 amends F1 |
 | 9 | Browser channel factor before passkeys | `password+totp` | SHORTCUT #908, D66 conservative |
 | 10 | Where publish gets `WSK` | the v2 card store (§12.1 step 3) | D76 "verifies WSK"; namespaces per workspace |
-| 11 | V3-D4 "inside the WSK-signed request" | approval bound to the request by hash, v2 §12.1 bytes unchanged | V3-D4 intent; **L2 to confirm** |
+| 11 | V3-D4 "inside the WSK-signed request" | hub-path WSK bytes `orch/v2/publish-hub\|` cover `hub_id` and `H(approval)`; the approval names the exact request incl. ts and nonce (single use) | V3-D4; L2-2 (the first H0 draft bound only by a ts-less hash: rejected) |
 | 12 | Which publish requests need the approval | public access only; secret/sealed keep the charter path | spec §8 "public access still needs a human signature", §5.5 |
 | 13 | Owner key for the approval | owner's device key with its PK-signed certificate; PK must be the card delegation's owner | D64 local key; v2 §6.1, §7.1 |
 | 14 | Link replay | `seq` carried, not enforced | SHORTCUT (L7) |

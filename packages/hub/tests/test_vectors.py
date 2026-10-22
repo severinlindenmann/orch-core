@@ -107,16 +107,19 @@ def test_publish_bytes():
     h = r["headers"]
     ws = bytes.fromhex(h["Orch-Workspace"])
     body = bytes.fromhex(r["body_hex"])
-    pb = H.publish_signed_bytes(ws, int(h["Orch-Ts"]), bytes.fromhex(h["Orch-Nonce"]), r["method"], r["host"],
-                                r["target"], body)
-    assert pb.hex() == p["wsk_signed_hex"]
+    appr = loads_strict(unb64u(h["Orch-Owner-Approval"]))
+    ts, nonce = int(h["Orch-Ts"]), bytes.fromhex(h["Orch-Nonce"])
+    assert H.approval_hash(appr).hex() == p["approval_hash_hex"]
+    pb = H.hub_path_signed_bytes(ws, ts, nonce, r["method"], r["host"], r["target"], body, h["Orch-Hub"], appr)
+    assert pb.hex() == p["wsk_signed_hex"] and pb.startswith(b"orch/v2/publish-hub|")
+    direct = H.publish_signed_bytes(ws, ts, nonce, r["method"], r["host"], r["target"], body)
+    assert not S.verify(pub("wsk_a"), unb64u(h["Orch-Signature"], 64), direct)
     assert S.verify(pub("wsk_a"), unb64u(h["Orch-Signature"], 64), pb)
     hb = H.hub_publish_bytes(h["Orch-Hub"], pb)
     assert hb.hex() == p["hub_signed_hex"]
     assert S.verify(pub("hk_op"), unb64u(h["Orch-Hub-Signature"], 64), hb)
-    rh = H.publish_request_hash(ws, r["method"], r["host"], r["target"], body)
+    rh = H.publish_request_hash(ws, ts, nonce, r["method"], r["host"], r["target"], body, h["Orch-Hub"])
     assert b64u(rh) == p["request_hash"]
-    appr = loads_strict(unb64u(h["Orch-Owner-Approval"]))
     assert appr == V["objects"]["publish_approval"] and appr["o"]["request_hash"] == p["request_hash"]
 
 

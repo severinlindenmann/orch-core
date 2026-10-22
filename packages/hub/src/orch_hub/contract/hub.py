@@ -24,7 +24,6 @@ CLOCK_SKEW_MS = 300_000  # protocol-v2 §15: created/issued may be up to 300 s i
 LINK_WINDOW_MS = 120_000
 PUBLISH_WINDOW_MS = 120_000
 NONCE_RETENTION_MS = 240_000
-APPROVAL_MAX_MS = 24 * 3600 * 1000
 ROLES = ("read", "edit", "admin")
 FACTORS = ("se-unlocked", "passkey", "password+totp")
 MODES = ("selective", "full")
@@ -148,8 +147,7 @@ FIELDS: dict[str, dict[str, Check]] = {
                  "ts_ms": _int_min(0), "op": lambda x: type(x) is str, "re": lambda x: x is None or _int_min(1)(x),
                  "body": lambda x: type(x) is dict},
     "hub.publish_approval": {"workspace_id": _hex16, "hub_id": _hex16, "device_id": _hex16,
-                             "request_hash": _b64u_n(32), "access": _enum("public"), "issued_ms": _int_min(0),
-                             "expires_ms": _int_min(1)},
+                             "request_hash": _b64u_n(32), "access": _enum("public")},
 }
 
 LABEL_OF_KIND = {
@@ -631,15 +629,43 @@ def publish_signed_bytes(ws: bytes, ts_ms: int, nonce: bytes, method: str, host:
             + S.sha256(body))
 
 
-def hub_publish_bytes(hub_id_: str, publish_bytes: bytes) -> bytes:
-    """What HK_op signs when forwarding: the exact §12.1 signed bytes, by hash, bound to the hub."""
-    return L["sig_hub_publish"] + bytes([S.SUITE_ID]) + unhex(hub_id_, 16) + S.sha256(publish_bytes)
+def _request_fields(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes) -> bytes:
+    """The v2 §12.1 fields after the label, in v2 order."""
+    return (bytes([S.SUITE_ID]) + ws + struct.pack(">Q", ts_ms) + nonce + _lp16(method.encode("ascii"))
+            + _lp16(host.encode("ascii")) + _lp16(target.encode("ascii")) + S.sha256(body))
 
 
-def publish_request_hash(ws: bytes, method: str, host: str, target: str, body: bytes) -> bytes:
-    """What the owner's approval names: the request without ts and nonce."""
-    return S.sha256(L["h_hub_publish_request"] + bytes([S.SUITE_ID]) + ws + _lp16(method.encode("ascii"))
-                    + _lp16(host.encode("ascii")) + _lp16(target.encode("ascii")) + S.sha256(body))
+def approval_hash(approval: Mapping[str, Any] | None) -> bytes:
+    """``H(cj(approval))``, or 32 zero bytes when the request carries none."""
+    if approval is None:
+        return bytes(32)
+    try:
+        return S.sha256(cj(dict(approval)))
+    except CanonError:
+        raise Refused("malformed") from None
+
+
+def hub_path_signed_bytes(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes,
+                          hub_id_: str, approval: Mapping[str, Any] | None) -> bytes:
+    """What WSK signs on the hub path (L2-2): its own label, the v2 §12.1 fields, the hub, and the approval the host
+    attaches (or none). A hub-path signature never verifies as a direct request, the host commits to the hub that
+    forwards it, and nobody can add, swap or strip an approval after the host signed."""
+    return (L["sig_publish_hub"] + _request_fields(ws, ts_ms, nonce, method, host, target, body) + unhex(hub_id_, 16)
+            + approval_hash(approval))
+
+
+def hub_publish_bytes(hub_id_: str, wsk_bytes: bytes) -> bytes:
+    """What HK_op signs when forwarding: the exact hub-path WSK-signed bytes, by hash, bound to the hub."""
+    return L["sig_hub_publish"] + bytes([S.SUITE_ID]) + unhex(hub_id_, 16) + S.sha256(wsk_bytes)
+
+
+def publish_request_hash(ws: bytes, ts_ms: int, nonce: bytes, method: str, host: str, target: str, body: bytes,
+                         hub_id_: str) -> bytes:
+    """What the owner's approval names (L2-2): the one exact request, ts and nonce included, through this hub. The
+    host draws ts and nonce first and the owner signs after, so an approval is good for one request (the nonce store)
+    within the 120 s window."""
+    return S.sha256(L["h_hub_publish_request"] + _request_fields(ws, ts_ms, nonce, method, host, target, body)
+                    + unhex(hub_id_, 16))
 
 
 DEVICE_CERT_FIELDS = {"v", "suite", "kind", "device_id", "person_id", "dk_sig_pub", "dk_kx_pub", "label_sealed",
@@ -700,19 +726,32 @@ def verify_approval(raw: Any, *, workspace_id: str, hub_id_: str, owner_person_i
         raise Refused("other_hub")
     if unb64u(o["request_hash"], 32) != request_hash or o["access"] != access:
         raise Refused("bad_approval")
-    if o["expires_ms"] <= o["issued_ms"] or o["expires_ms"] - o["issued_ms"] > APPROVAL_MAX_MS:
-        raise Refused("malformed")
-    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or now_ms >= o["expires_ms"]:
-        raise Refused("approval_expired")
     return o
 
 
 _TS = re.compile(r"0|[1-9][0-9]{0,15}")
 STATUS = {"malformed": 400, "stale_timestamp": 401, "unknown_workspace": 401, "bad_signature": 401,
           "not_bound": 403, "other_hub": 403, "unknown_hub": 401, "bad_hub_signature": 401, "replay": 401,
-          "approval_required": 403, "bad_approval": 403, "approval_expired": 403, "other_person": 403,
+          "approval_required": 403, "bad_approval": 403, "other_person": 403,
           "other_workspace": 403, "cert_invalid": 400, "cert_expired": 400, "revoked": 403, "dev_refused": 403,
           "dev_mismatch": 403}
+
+
+def check_direct_publish(req: Mapping[str, Any], wsk_pub: bytes) -> dict[str, Any]:
+    """The v2 §12.1 direct path's signature step only (headers and WSK over the direct bytes). Used to show that a
+    hub-path signature is never valid here (L2-2)."""
+    h = {str(k).lower(): v for k, v in req["headers"].items()}
+    try:
+        ws = unhex(h["orch-workspace"], 16)
+        if type(h["orch-ts"]) is not str or not _TS.fullmatch(h["orch-ts"]):
+            raise CanonError("ts")
+        ts, nonce, sig = int(h["orch-ts"]), unhex(h["orch-nonce"], 16), unb64u(h["orch-signature"], 64)
+    except (KeyError, CanonError):
+        raise Refused("malformed") from None
+    if not S.verify(wsk_pub, sig, publish_signed_bytes(ws, ts, nonce, req["method"], req["host"], req["target"],
+                                                       req["body"])):
+        raise Refused("bad_signature")
+    return {"workspace": ws.hex()}
 
 
 def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
@@ -745,8 +784,8 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
     card = st["cards"].get(wsx)
     if card is None:
         raise Refused("unknown_workspace")
-    # 4. WSK over the §12.1 bytes
-    pbytes = publish_signed_bytes(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"])
+    # 4. WSK over the hub-path bytes: the request, this hub, and the approval exactly as attached (L2-2)
+    pbytes = hub_path_signed_bytes(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"], hub, approval)
     if not S.verify(unb64u(card["wsk_pub"], 65), wsig, pbytes):
         raise Refused("bad_signature")
     # 5. a live binding of this workspace to this hub
@@ -776,7 +815,8 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
             raise Refused("approval_required")
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(approval, workspace_id=wsx, hub_id_=hub, owner_person_id=card["owner_person_id"],
-                    request_hash=publish_request_hash(ws, req["method"], req["host"], req["target"], req["body"]),
+                    request_hash=publish_request_hash(ws, ts, nonce, req["method"], req["host"], req["target"], req["body"],
+                                                      hub),
                     access=req.get("access") or "", now_ms=now_ms, revoked_devices=st.get("revoked_devices",
                                                                                            frozenset()))
     return {"workspace": wsx, "hub": hub, "approved": True}

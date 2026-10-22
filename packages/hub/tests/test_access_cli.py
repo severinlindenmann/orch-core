@@ -46,8 +46,8 @@ def test_cli_roundtrip(tmp_path, capsys):
     run(st, capsys, "users", "remove", ann)
     assert run(st, capsys, "grants", "roles", WS) == {bob: "admin"}
     assert "unknown_group" in run(st, capsys, "grants", "set", WS, "nope", "read", code=1)
-    run(st, capsys, "channels", "revoke", "ab" * 16)
-    assert run(st, capsys, "channels", "list") == ["ab" * 16]
+    assert "unknown_channel" in run(st, capsys, "channels", "revoke", "ab" * 16, code=1)  # never registered here
+    assert run(st, capsys, "channels", "revoked") == []
     assert (st / "access.db").stat().st_mode & 0o077 == 0
 
 

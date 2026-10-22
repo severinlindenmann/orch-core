@@ -119,6 +119,21 @@ class AuditLog:
             },
         )
 
+    def channel_change(
+        self, *, channel_id: str, user_id: str, change: str, factor: str, actor_user_id: str | None
+    ) -> dict[str, Any]:
+        """A channel was registered or revoked (§10.5; revocation is permanent). ``actor_user_id`` None = the operator."""
+        return self.append(
+            "channel",
+            {
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "change": change,
+                "factor": factor,
+                "actor_user_id": actor_user_id,
+            },
+        )
+
     # --- the link ops --------------------------------------------------------------------------------------------
 
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:

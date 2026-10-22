@@ -3186,6 +3186,11 @@ def build() -> dict[str, Any]:
     sig_entry("publish_approval", "dk_alice_mac.sig", "sig_hub_publish_approval", ap)
     sig_entry("device_cert_alice_mac", "pk_alice", "sig_device_cert", ap["device_cert"])
 
+    # ---- phase 4 (V3-D23): protocol.md §6.3, §8.4-§8.5, §10.4 proposals, §10.5 channel events, §10.7, §10.8
+    from .vectorgen_p4 import build_p4
+
+    p4 = build_p4(case, sig_entry, with_card)
+
     # custodial: digest, proof, UK signature
     e_signed = {k: v for k, v in ev.items() if k != "sig"}
     digest = H.event_digest(WS_A, TICKET, e_signed)
@@ -3309,6 +3314,7 @@ def build() -> dict[str, Any]:
             "space_e1": space_rec(1),
             "space_wrap_b_e1": space_wrap(),
             "space_item_a": space_item_obj(),
+            **p4["objects"],
         },
         "signatures": sigs,
         "custodial": custodial_vec,
@@ -3329,6 +3335,7 @@ def build() -> dict[str, Any]:
             "request": admin_req(),
             "row": ADMIN_ROW,
         },
+        "phase4": p4["section"],
         "cases": cases,
     }
 

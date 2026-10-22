@@ -1,0 +1,1263 @@
+"""Phase-4 contract vectors (protocol.md §6.3, §8.4–§8.5, §10.4 proposals, §10.5 channel events, §10.7 log_sync,
+§10.8 relay requests). Called from :func:`orch_hub.contract.vectorgen.build`; same FAKE keys and fixed clock."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from . import audit as AU
+from . import hub as H
+from . import phase4 as P4
+from . import spaces as SP
+from . import suite as S
+from .canon import b64u, cj
+from .vectorgen import (
+    CH_ALICE,
+    DAY,
+    HUB_ID,
+    NOW,
+    OP_CERT_ID,
+    OP_CERT_NEXT,
+    SPACE,
+    TICKET,
+    U_ALICE,
+    U_BOB,
+    WS_A,
+    WS_B,
+    WS_C,
+    K,
+    audit_rec,
+    card,
+    custodial,
+    fake16,
+    hdr,
+    nonce32,
+    op_cert,
+    resign,
+    signed,
+    snapshot,
+    space_rec,
+)
+
+TICKET_2 = "01J9ZP0000000000000000TKT2"
+WK = {1: S.fake_seed("hub/wk_e1"), 2: S.fake_seed("hub/wk_e2")}
+
+# --- §10.7 a small workspace: two workspace-log lines, two ticket-log lines, host-signed and chained ----------------
+
+
+def _line(log: str, seq: int, prev: str | None, body: dict[str, Any], wsk: str = "wsk_a") -> dict[str, Any]:
+    e = {
+        "v": 2,
+        "id": f"01J9ZP00000000000000{log[-2:].upper() if log != 'workspace' else 'WS'}{seq:04d}",
+        "seq": seq,
+        "at": "2026-10-22T20:00:0" + str(seq) + "Z",
+        "prev": prev,
+        "hash_v": 1,
+        "actor": {"kind": "host"},
+        "based_on": prev,
+        **body,
+    }
+    e["host_sig"] = b64u(S.sign(K.priv[wsk], P4.host_sig_bytes(WS_A, log, e), deterministic=True))
+    return e
+
+
+def _chain(log: str, bodies: list[dict[str, Any]], wsk: str = "wsk_a") -> list[dict[str, Any]]:
+    out, prev = [], None
+    for i, b in enumerate(bodies):
+        e = _line(log, i + 1, prev, b, wsk)
+        out.append(e)
+        prev = P4.event_head(e)
+    return out
+
+
+WS_LINES = _chain(
+    "workspace",
+    [
+        {"type": "projection.repaired", "path": "workspace.json", "cause": "projection_mismatch"},
+        {"type": "projection.repaired", "path": "people.json", "cause": "projection_mismatch"},
+    ],
+)
+TK_LINES = _chain(
+    TICKET,
+    [
+        {"type": "projection.repaired", "path": "ticket.json", "cause": "projection_mismatch", "ws_seq": 1},
+        {"type": "projection.repaired", "path": "body.md", "cause": "projection_mismatch", "ws_seq": 2},
+    ],
+)
+
+
+def page(
+    log: str,
+    lines: list[dict[str, Any]],
+    from_seq: int = 1,
+    epoch: int = 1,
+    reset: bool = False,
+    wk: bytes | None = None,
+    **override: Any,
+) -> dict[str, Any]:
+    salt = S.fake_seed(f"hub/view_salt/{log}/{from_seq}/{epoch}/{len(lines)}")[:16]
+    b = P4.seal_view_page(wk or WK[epoch], WS_A, epoch, log, from_seq, lines, salt, reset=reset)
+    b.update(override)
+    return b
+
+
+# --- §6.3 registration ------------------------------------------------------------------------------------------------
+
+REG_NONCE = b64u(S.fake_seed("hub/reg_nonce"))
+
+
+def register(
+    key: str = "channel_alice_phone",
+    kind: str = "phone",
+    attestation: str = "pairing-code",
+    signer: str | None = None,
+    label: str = "sig_hub_channel_register",
+    **kw: Any,
+) -> dict[str, Any]:
+    o = {
+        **hdr("hub.channel_register"),
+        "hub_id": HUB_ID,
+        "user_id": U_ALICE,
+        "channel_kind": kind,
+        "key_pub": K.b(key),
+        "attestation": attestation,
+        "nonce": REG_NONCE,
+        "expires_ms": NOW + 60_000,
+        "dev": True,
+        **kw,
+    }
+    return signed(signer or key, label, o)
+
+
+CHALLENGE = {"user_id": U_ALICE, "nonce": REG_NONCE, "expires_ms": NOW + 60_000, "gate": "pairing-code"}
+
+# --- §10.4 proposal -----------------------------------------------------------------------------------------------------
+
+
+def proposal(
+    ws: str = WS_C,
+    epoch: int = 2,
+    prev: list[str] | None = None,
+    members: list[str] | None = None,
+    signer: str = "hk_op",
+    label: str = "sig_hub_space_proposal",
+    **kw: Any,
+) -> dict[str, Any]:
+    o = {
+        **hdr("hub.space_proposal"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "space_id": SPACE,
+        "epoch": epoch,
+        "prev_members": sorted(prev if prev is not None else [WS_A, WS_B]),
+        "members": sorted(members if members is not None else [WS_A, WS_B, WS_C]),
+        "workspace_id": ws,
+        "issued_ms": NOW - 60_000,
+        "expires_ms": NOW + DAY,
+        "dev": True,
+        **kw,
+    }
+    return signed(signer, label, o)
+
+
+# --- §10.8 relay request ----------------------------------------------------------------------------------------------
+
+RELAY_TARGET = f"/v2/hubs/{HUB_ID}/push"
+RELAY_BODY = b'{"to":"' + CH_ALICE.encode() + b'","sealed":"AAAA"}'
+RELAY_NONCE = S.fake_seed("hub/relay_nonce")[:16]
+
+
+def relay_req(
+    method: str = "POST",
+    target: str = RELAY_TARGET,
+    body: bytes = RELAY_BODY,
+    *,
+    ts: int = NOW,
+    key: str = "hk_op",
+    op_id: str = OP_CERT_ID,
+    hub: str = HUB_ID,
+    nonce: bytes = RELAY_NONCE,
+    signed_target: str | None = None,
+    signed_body: bytes | None = None,
+    label: str | None = None,
+    **hdr_kw: Any,
+) -> dict[str, Any]:
+    msg = P4.relay_request_bytes(
+        hub, op_id, ts, nonce, method, signed_target or target, body if signed_body is None else signed_body
+    )
+    if label is not None:  # wrong-domain vector: the same tail under another label
+        msg = label.encode() + msg[len(b"orch/v2/hub-relay-req|") :]
+    headers = {
+        "Orch-Hub": hub,
+        "Orch-Hub-Op-Cert": op_id,
+        "Orch-Hub-Ts": str(ts),
+        "Orch-Hub-Nonce": nonce.hex(),
+        "Orch-Hub-Signature": b64u(S.sign(K.priv[key], msg, deterministic=True)),
+    }
+    headers.update(hdr_kw)
+    return {
+        "method": method,
+        "target": target,
+        "headers": {k: v for k, v in headers.items() if v is not None},
+        "body_hex": body.hex(),
+    }
+
+
+# --- §10.2b shared item (C6/D9) ---------------------------------------------------------------------------------------
+
+ITEM = fake16("share_item_1")
+NEEDS_YOU = {"type": "question", "title": "CSV or API for tariffs?", "deadline": "2026-10-30"}
+CHAIN = {"log": TICKET, "seq": 2, "head": "sha256:" + S.fake_seed("hub/share_chain_head").hex()}
+T_SHARED = NOW - 60_000
+
+
+def share_item(version: int = 1, wsk: str = "wsk_a", label: str = "sig_share_item", **kw: Any) -> dict[str, Any]:
+    o = {
+        **hdr("share.item"),
+        "hub_id": HUB_ID,
+        "workspace_id": WS_A,
+        "item_id": ITEM,
+        "item_kind": "needs_you",
+        "item_version": version,
+        "issued_ms": T_SHARED,
+        "chain": CHAIN,
+        "content": NEEDS_YOU,
+        "dev": True,
+        **kw,
+    }
+    return signed(wsk, label, o)
+
+
+def share_body(item: dict[str, Any] | None = None, hxk: str = "hxk", item_id: str | None = None) -> dict[str, Any]:
+    it = item or share_item()
+    v = it["o"]["item_version"]
+    sealed = P4.seal_share_item(
+        it,
+        hxk_pub=K.pub[hxk],
+        ik=S.fake_seed(f"hub/share_ik/{v}"),
+        eph_seed=S.fake_seed(f"hub/share_eph/{v}"),
+        salt=S.fake_seed(f"hub/share_salt/{v}")[:16],
+    )
+    return {"item_id": item_id or it["o"]["item_id"], "sealed": sealed}
+
+
+def build_p4(
+    case: Callable[..., None],
+    sig_entry: Callable[[str, str, str, dict[str, Any]], None],
+    with_card: dict[str, Any],
+) -> dict[str, Any]:
+    """Adds the phase-4 cases and signature entries; returns ``(objects, section)`` for the file."""
+    snap_o = snapshot()["o"]
+
+    # ---- §8.5 actions (hub side, before it reads its view)
+    def act(name: str, action: dict[str, Any], role: str, expect: dict[str, Any], note: str = "") -> None:
+        case(name, "action", {"action": action, "role": role}, expect, 4, note)
+
+    h = "sha256:" + S.fake_seed("hub/gate_hash").hex()
+    ok = lambda t: {"ok": {"type": t}}
+    act(
+        "action_gate_approved_by_edit",
+        {"type": "gate.approved", "log": TICKET, "gate": "plan", "hash": h},
+        "edit",
+        ok("gate.approved"),
+    )
+    act(
+        "action_ticket_created_by_edit",
+        {"type": "ticket.created", "ticket_type": "bug", "title": "Fix login"},
+        "edit",
+        ok("ticket.created"),
+        "no log: the hub makes the new ticket's uid",
+    )
+    for t, lg in (("settings.changed", "workspace"), ("policy.changed", "workspace"), ("policy.changed", TICKET)):
+        act(
+            f"action_{t.replace('.', '_')}_{'ws' if lg == 'workspace' else 'ticket'}_not_channel_startable",
+            {"type": t, "log": lg, "set": {"grant_hours": 4}}
+            if t == "settings.changed"
+            else {"type": t, "log": lg, "gates": {"plan": {}}},
+            "admin",
+            {"error": "not_custodial"},
+            "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
+        )
+    vis_r = {"restricted": sorted(["p_" + "a" * 32, "u_" + U_BOB])}
+    act(
+        "action_visibility_by_admin",
+        {"type": "visibility.changed", "log": TICKET, "visibility": vis_r},
+        "admin",
+        ok("visibility.changed"),
+    )
+    act(
+        "action_visibility_by_edit",
+        {"type": "visibility.changed", "log": TICKET, "visibility": "workspace"},
+        "edit",
+        {"error": "forbidden_role"},
+        "people and visibility changes are admin-only through a channel",
+    )
+    act(
+        "action_people_by_admin",
+        {"type": "people.changed", "log": TICKET, "role": "reviewers", "add": ["u_" + U_BOB], "remove": []},
+        "admin",
+        ok("people.changed"),
+    )
+    act(
+        "action_people_by_edit",
+        {"type": "people.changed", "log": TICKET, "role": "reviewers", "add": ["u_" + U_BOB], "remove": []},
+        "edit",
+        {"error": "forbidden_role"},
+    )
+    act(
+        "action_ticket_updated_title",
+        {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": "New title", "ticket.labels": ["dbt", "ui"]}},
+        "edit",
+        ok("ticket.updated"),
+    )
+    # field smuggling through nested values (security review of 28e767d): every nested value has an exact schema
+    smuggle = [
+        (
+            "set_visibility",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.visibility": "workspace"}},
+            "visibility has its own admin-only type",
+        ),
+        (
+            "set_tasks_verify_cmd",
+            {
+                "type": "ticket.updated",
+                "log": TICKET,
+                "set": {"ticket.tasks": [{"id": "T1", "text": "x", "verify": {"cmd": "curl x|sh"}, "proves": []}]},
+            },
+            "a task's verify.cmd is run by agents: never set through a channel",
+        ),
+        (
+            "set_acceptance",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.acceptance": []}},
+            "gate-bound content is not settable through a channel in hv 0",
+        ),
+        ("set_type", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.type": "bug"}}, ""),
+        ("set_addons", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.addons": {"x": {}}}}, ""),
+        ("set_reserved_path", {"type": "ticket.updated", "log": TICKET, "set": {"sig": "AAAA"}}, ""),
+        ("set_nested_object", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": {"sig": "x"}}}, ""),
+        ("set_empty", {"type": "ticket.updated", "log": TICKET, "set": {}}, ""),
+        ("set_bad_priority", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.priority": "now"}}, ""),
+        ("set_labels_unsorted", {"type": "ticket.updated", "log": TICKET, "set": {"ticket.labels": ["b", "a"]}}, ""),
+        (
+            "title_newline",
+            {"type": "ticket.updated", "log": TICKET, "set": {"ticket.title": "a\nb"}},
+            "one-line values never carry a newline",
+        ),
+        (
+            "question_with_id",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {"id": "Q9", "to": "assignees", "text": "x", "blocking": True},
+            },
+            "the hub assigns the question id from its view",
+        ),
+        (
+            "question_with_sig",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {"to": "assignees", "text": "x", "blocking": True, "sig": "AAAA"},
+            },
+            "",
+        ),
+        (
+            "question_option_extra",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {
+                    "to": "assignees",
+                    "text": "x",
+                    "blocking": True,
+                    "options": [{"key": "a", "label": "A", "actor": "u_x"}],
+                },
+            },
+            "",
+        ),
+        (
+            "question_recommended_unknown",
+            {
+                "type": "question.asked",
+                "log": TICKET,
+                "question": {
+                    "to": "assignees",
+                    "text": "x",
+                    "blocking": False,
+                    "options": [{"key": "a", "label": "A"}],
+                    "recommended": "b",
+                },
+            },
+            "",
+        ),
+        (
+            "visibility_extra_key",
+            {"type": "visibility.changed", "log": TICKET, "visibility": {"restricted": ["u_" + U_BOB], "policy": {}}},
+            "",
+        ),
+        ("visibility_empty", {"type": "visibility.changed", "log": TICKET, "visibility": {"restricted": []}}, ""),
+        (
+            "people_owner_two",
+            {
+                "type": "people.changed",
+                "log": TICKET,
+                "role": "owner",
+                "add": sorted(["u_" + U_ALICE, "u_" + U_BOB]),
+                "remove": [],
+            },
+            "",
+        ),
+        (
+            "people_add_and_remove_same",
+            {
+                "type": "people.changed",
+                "log": TICKET,
+                "role": "watchers",
+                "add": ["u_" + U_BOB],
+                "remove": ["u_" + U_BOB],
+            },
+            "",
+        ),
+        (
+            "people_not_a_person",
+            {"type": "people.changed", "log": TICKET, "role": "watchers", "add": ["assignees"], "remove": []},
+            "",
+        ),
+        (
+            "claim_released_other_reason",
+            {"type": "claim.released", "log": TICKET, "session": "s_1", "reason": "member_removed"},
+            "a person releases with reason released",
+        ),
+        ("ticket_created_bad_type", {"type": "ticket.created", "ticket_type": "incident", "title": "x"}, ""),
+    ]
+    for nm, action, note in smuggle:
+        act(f"action_smuggle_{nm}", action, "admin", {"error": "malformed"}, note)
+    act(
+        "action_question_asked_by_edit",
+        {
+            "type": "question.asked",
+            "log": TICKET,
+            "question": {
+                "to": "u_" + U_BOB,
+                "text": "CSV or API?",
+                "options": [{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API", "cost": "+1 day"}],
+                "recommended": "csv",
+                "blocking": True,
+            },
+        },
+        "edit",
+        ok("question.asked"),
+    )
+    act(
+        "action_ticket_moved_by_edit",
+        {"type": "ticket.moved", "log": TICKET, "to": "open", "reason": "x"},
+        "edit",
+        {"error": "forbidden_role"},
+    )
+    act(
+        "action_read_role_signs_nothing",
+        {"type": "log.added", "log": TICKET, "text": "hi"},
+        "read",
+        {"error": "forbidden_role"},
+        "D70: read only sees",
+    )
+    act("action_no_role", {"type": "log.added", "log": TICKET, "text": "hi"}, None, {"error": "forbidden_role"})
+    for t, note in (
+        ("member.added", "members come from hub grants and snapshots"),
+        ("hub.left", "break-glass: owner's local key at the host terminal only"),
+        ("hub.joined", "owner's local key only"),
+        ("grant.issued", "the grant secret is the host's"),
+        ("addon.granted", "the host derives the manifest fields"),
+        ("restore", "owner-only recovery, not custodial in hv 0"),
+        ("device.added", "hub users have no device keys"),
+        ("task.done", "agent-only"),
+        ("artifact.added", "the file bytes are the host's"),
+        ("gate.invalidated", "host-only type"),
+        ("github.synced", "addon types are never custodial"),
+    ):
+        act(
+            f"action_{t.replace('.', '_')}_not_custodial",
+            {"type": t, "log": TICKET},
+            "admin",
+            {"error": "not_custodial"},
+            note,
+        )
+    for f, v in (
+        ("sig", "AAAA"),
+        ("actor", {"kind": "person"}),
+        ("based_on", None),
+        ("id", "01J9"),
+        ("channel_proof", "AAAA"),
+        ("roster_v", 1),
+        ("gate_gen", 3),
+        ("sections", {}),
+    ):
+        act(
+            f"action_smuggles_{f}",
+            {"type": "gate.approved", "log": TICKET, "gate": "plan", "hash": h, f: v},
+            "edit",
+            {"error": "malformed"},
+            "an action names what to do; every event field is the hub's (no host or channel event bytes)",
+        )
+    act(
+        "action_extra_field",
+        {"type": "log.added", "log": TICKET, "text": "x", "color": "red"},
+        "edit",
+        {"error": "malformed"},
+    )
+    act(
+        "action_decision_without_hash",
+        {"type": "gate.approved", "log": TICKET, "gate": "plan"},
+        "edit",
+        {"error": "malformed"},
+        "a decision names the hash the person reviewed",
+    )
+    act(
+        "action_verdict_fail_without_text",
+        {"type": "verdict.given", "log": TICKET, "outcome": "fail", "hash": h},
+        "edit",
+        {"error": "malformed"},
+    )
+    act(
+        "action_answer_without_option_or_text",
+        {"type": "question.answered", "log": TICKET, "question": "Q1", "hash": h},
+        "edit",
+        {"error": "malformed"},
+    )
+    act("action_bad_log", {"type": "log.added", "log": "../x", "text": "x"}, "edit", {"error": "malformed"})
+    act(
+        "action_ticket_type_on_workspace_log",
+        {"type": "log.added", "log": "workspace", "text": "x"},
+        "admin",
+        {"error": "not_custodial"},
+    )
+    act(
+        "action_ticket_updated_with_sections",
+        {"type": "ticket.updated", "log": TICKET, "sections": {"plan": "x"}},
+        "edit",
+        {"error": "malformed"},
+        "SHORTCUT: body sections are not custodial in hv 0 (no text transport)",
+    )
+    act(
+        "action_bad_gate",
+        {"type": "gate.approved", "log": TICKET, "gate": "verify", "hash": h},
+        "edit",
+        {"error": "malformed"},
+        "the verify gate's decision is verdict.given",
+    )
+
+    # ---- §8.5 the same table at the host (§8.3 step 7b)
+    cus = {**with_card, "workspace_id": WS_A, "log": TICKET, "snapshot": snap_o}
+    case(
+        "custodial_type_not_custodial",
+        "custodial",
+        {**cus, "event": custodial(typ="member.added")},
+        {"error": "not_custodial"},
+        4,
+        "a correctly signed hub event of a non-custodial type is refused",
+    )
+    case(
+        "custodial_read_role_refused",
+        "custodial",
+        {**cus, "snapshot": snapshot(roles={U_ALICE: "read"})["o"], "event": custodial()},
+        {"error": "forbidden_role"},
+        4,
+    )
+    case(
+        "custodial_admin_type_by_edit",
+        "custodial",
+        {**cus, "snapshot": snapshot(roles={U_ALICE: "edit"})["o"], "event": custodial(typ="ticket.moved")},
+        {"error": "forbidden_role"},
+        4,
+    )
+    case(
+        "custodial_edit_decision",
+        "custodial",
+        {**cus, "snapshot": snapshot(roles={U_ALICE: "edit"})["o"], "event": custodial()},
+        {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "edit"}},
+        4,
+    )
+
+    # ---- §8.4 prepare: the channel recomputes the digest from the context it shows
+    ev = custodial()
+    e_unsigned = {k: v for k, v in ev.items() if k not in ("sig", "channel_proof")}
+    ctx = H.signed_context(WS_A, TICKET, e_unsigned)
+    dg = H.event_digest(WS_A, TICKET, e_unsigned).hex()
+    case("prepared_digest_matches", "prepared", {"ctx": ctx, "digest_hex": dg}, {"ok": {"digest_hex": dg}}, 4)
+    case(
+        "prepared_digest_of_other_event",
+        "prepared",
+        {"ctx": {**ctx, "event": {**ctx["event"], "gate": "plan"}}, "digest_hex": dg},
+        {"error": "event_changed"},
+        4,
+        "WYSIWYS: a hub that shows one event and asks for a proof over another is caught by the channel",
+    )
+    case(
+        "prepared_other_workspace",
+        "prepared",
+        {"ctx": {**ctx, "workspace_id": WS_B}, "digest_hex": dg},
+        {"error": "event_changed"},
+        4,
+    )
+    case(
+        "prepared_with_proof_inside",
+        "prepared",
+        {"ctx": {**ctx, "event": {**ctx["event"], "channel_proof": "AAAA"}}, "digest_hex": dg},
+        {"error": "malformed"},
+        4,
+    )
+    case(
+        "prepared_not_hub_auth",
+        "prepared",
+        {"ctx": {**ctx, "event": {**ctx["event"], "auth": "passphrase"}}, "digest_hex": dg},
+        {"error": "malformed"},
+        4,
+    )
+
+    # ---- §10.7 log_sync
+    wk1 = {"1": WK[1].hex()}
+    wk12 = {"1": WK[1].hex(), "2": WK[2].hex()}
+    vs = {"workspace_id": WS_A, "wsk_pub": K.b("wsk_a"), "wk_epochs": wk1}
+    ws_p, tk_p = page("workspace", WS_LINES), page(TICKET, TK_LINES)
+    hw, ht = P4.event_head(WS_LINES[-1]), P4.event_head(TK_LINES[-1])
+
+    def sync(name: str, pages: list[dict[str, Any]], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "log_sync", {**vs, **kw, "pages": pages}, expect, 4, note)
+
+    sync(
+        "log_sync_workspace_then_ticket",
+        [ws_p, tk_p],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 2, "head": ht}}},
+    )
+    sync(
+        "log_sync_in_two_pages",
+        [page("workspace", WS_LINES[:1]), page("workspace", WS_LINES[1:], from_seq=2)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+    )
+    sync(
+        "log_sync_resend_is_idempotent",
+        [ws_p, ws_p],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+        "an overlapping page whose lines match changes nothing",
+    )
+    sync(
+        "log_sync_ticket_before_workspace",
+        [tk_p],
+        {"error": "view_gap"},
+        "a ticket line never runs ahead of the workspace log the hub holds",
+    )
+    sync("log_sync_gap", [page("workspace", WS_LINES[1:], from_seq=2)], {"error": "view_gap"})
+    forged = _chain("workspace", [{"type": "projection.repaired", "path": "x.json", "cause": "projection_mismatch"}])
+    sync(
+        "log_sync_fork_other_line_at_held_seq",
+        [ws_p, page("workspace", forged)],
+        {"error": "view_fork"},
+        "a host that rewrites a line the hub holds is refused (reset only through a full resync)",
+    )
+    sync(
+        "log_sync_reset_replaces_view",
+        [ws_p, page("workspace", forged, reset=True)],
+        {"ok": {"workspace": {"seq": 1, "head": P4.event_head(forged[0])}}},
+        "SHORTCUT: reset (after a host restore) is accepted on the host's word, hardening ties it to a restore event",
+    )
+    sync(
+        "log_sync_reset_not_from_one", [page("workspace", WS_LINES[1:], from_seq=2, reset=True)], {"error": "malformed"}
+    )
+    other_key = _chain(
+        "workspace",
+        [{"type": "projection.repaired", "path": "workspace.json", "cause": "projection_mismatch"}],
+        wsk="wsk_b",
+    )
+    sync("log_sync_line_not_signed_by_pinned_wsk", [page("workspace", other_key)], {"error": "bad_signature"})
+    broken = [WS_LINES[0], {**WS_LINES[1]}]
+    broken[1] = _line(
+        "workspace",
+        2,
+        "sha256:" + "00" * 32,
+        {"type": "projection.repaired", "path": "p.json", "cause": "projection_mismatch"},
+    )
+    sync("log_sync_broken_prev", [page("workspace", broken)], {"error": "view_fork"})
+    sync(
+        "log_sync_wrong_epoch_key",
+        [page("workspace", WS_LINES, wk=WK[2])],
+        {"error": "bad_wrap"},
+        "sealed under another WK_e than the epoch it names",
+    )
+    sync(
+        "log_sync_epoch_not_held",
+        [page("workspace", WS_LINES, epoch=2)],
+        {"error": "bad_epoch"},
+        "the host seals only after wk_seal of that epoch",
+    )
+    sync(
+        "log_sync_older_epoch_after_rotation",
+        [page("workspace", WS_LINES, epoch=1)],
+        {"error": "bad_epoch"},
+        "pages are sealed under the newest epoch the hub holds",
+        wk_epochs=wk12,
+    )
+    sync(
+        "log_sync_newest_epoch",
+        [page("workspace", WS_LINES, epoch=2)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+        wk_epochs=wk12,
+    )
+    sync(
+        "log_sync_range_swapped_in_aad",
+        [{**ws_p, "from_seq": 1, "count": 1}],
+        {"error": "bad_wrap"},
+        "range, log, head and reset are bound by the AAD",
+    )
+    sync("log_sync_moved_to_other_log", [{**ws_p, "log": TICKET_2}], {"error": "bad_wrap"})
+    sync("log_sync_head_lies", [page("workspace", WS_LINES, head="sha256:" + "11" * 32)], {"error": "bad_wrap"})
+    sync("log_sync_too_many_lines", [{**ws_p, "count": 257}], {"error": "malformed"})
+
+    # ---- §6.3 channel registration
+    reg = {"hub_id": HUB_ID, "challenge": CHALLENGE, "now_ms": NOW, "dev_mode": True}
+    from .hub import channel_id
+
+    ch_a = channel_id(K.pub["channel_alice_phone"])
+    case(
+        "channel_register_phone_pairing",
+        "channel_register",
+        {**reg, "signed": register()},
+        {"ok": {"channel_id": ch_a, "factor": "se-unlocked"}},
+        4,
+    )
+    ch_b = channel_id(K.pub["channel_bob_browser"])
+    case(
+        "channel_register_browser_session",
+        "channel_register",
+        {
+            **reg,
+            "challenge": {**CHALLENGE, "gate": "session"},
+            "signed": register("channel_bob_browser", "browser", "session"),
+        },
+        {"ok": {"channel_id": ch_b, "factor": "password+totp"}},
+        4,
+    )
+    case(
+        "channel_register_phone_from_password_session",
+        "channel_register",
+        {**reg, "challenge": {**CHALLENGE, "gate": "session"}, "signed": register()},
+        {"error": "factor_mismatch"},
+        4,
+        "a password session never mints se-unlocked; the factor follows the gate the hub checked",
+    )
+    case(
+        "channel_register_browser_claims_pairing",
+        "channel_register",
+        {**reg, "signed": register("channel_bob_browser", "browser", "pairing-code")},
+        {"error": "malformed"},
+        4,
+    )
+    case(
+        "channel_register_under_proof_label",
+        "channel_register",
+        {**reg, "signed": register(label="sig_hub_channel_proof")},
+        {"error": "bad_signature"},
+        4,
+        "a registration is never a custodial proof and vice versa",
+    )
+    case(
+        "channel_register_signed_by_other_key",
+        "channel_register",
+        {**reg, "signed": register(signer="channel_bob_browser")},
+        {"error": "bad_signature"},
+        4,
+        "proof of possession: the named key signs",
+    )
+    case(
+        "channel_register_other_user",
+        "channel_register",
+        {**reg, "signed": register(user_id=U_BOB)},
+        {"error": "other_user"},
+        4,
+    )
+    case(
+        "channel_register_other_hub",
+        "channel_register",
+        {**reg, "signed": register(hub_id=fake16("other_hub"))},
+        {"error": "other_hub"},
+        4,
+    )
+    case(
+        "channel_register_other_nonce",
+        "channel_register",
+        {**reg, "signed": register(nonce=b64u(S.fake_seed("hub/other_nonce")))},
+        {"error": "challenge_invalid"},
+        4,
+    )
+    case(
+        "channel_register_expired",
+        "channel_register",
+        {**reg, "now_ms": NOW + 60_000, "signed": register()},
+        {"error": "challenge_invalid"},
+        4,
+    )
+    case(
+        "channel_register_dev_at_real_hub",
+        "channel_register",
+        {**reg, "dev_mode": False, "signed": register()},
+        {"error": "dev_refused"},
+        4,
+    )
+    case(
+        "channel_register_passkey_claimed",
+        "channel_register",
+        {**reg, "signed": register(attestation="app-attest")},
+        {"error": "malformed"},
+        4,
+        "hv 0 knows two gates; App Attest is the hardening path, under its own contract",
+    )
+
+    # ---- §10.5 channel audit event
+    ch_ev = {
+        "channel_id": ch_a,
+        "user_id": U_ALICE,
+        "change": "register",
+        "factor": "se-unlocked",
+        "actor_user_id": U_ALICE,
+        "nonce": nonce32("channel"),
+    }
+    rec = audit_rec(1, AU.GENESIS_PREV, "channel", ch_ev)
+    case(
+        "audit_channel_register",
+        "audit",
+        {**with_card, "signed": rec, "event": ch_ev},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec)}},
+        4,
+    )
+    rv = {**ch_ev, "change": "revoke", "actor_user_id": None, "nonce": nonce32("channel_revoke")}
+    rec_rv = audit_rec(1, AU.GENESIS_PREV, "channel", rv)
+    case(
+        "audit_channel_revoke_by_operator",
+        "audit",
+        {**with_card, "signed": rec_rv, "event": rv},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_rv)}},
+        4,
+    )
+    bare = {k: v for k, v in ch_ev.items() if k != "nonce"}
+    case(
+        "audit_event_without_nonce_channel",
+        "audit",
+        {
+            **with_card,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "channel", bare, add_nonce=False, scope=None),
+            "event": bare,
+        },
+        {"error": "malformed"},
+        4,
+    )
+    unr = {**ch_ev, "change": "unrevoke"}
+    case(
+        "audit_channel_unrevoke_is_no_event",
+        "audit",
+        {**with_card, "signed": audit_rec(1, AU.GENESIS_PREV, "channel", unr, scope=None), "event": unr},
+        {"error": "malformed"},
+        4,
+        "channel revocation is permanent: there is no unrevoke",
+    )
+
+    # ---- §10.4 space proposal (#1020)
+    s1 = space_rec(1)
+    pr = {**with_card, "workspace_id": WS_C}
+    pmh = SP.members_hash([WS_A, WS_B])
+    mh = SP.members_hash(sorted([WS_A, WS_B, WS_C]))
+    case(
+        "space_proposal_valid",
+        "space_proposal",
+        {**pr, "signed": proposal()},
+        {"ok": {"epoch": 2, "members_hash": mh, "prev_members_hash": pmh}},
+        4,
+    )
+    case(
+        "space_proposal_new_space",
+        "space_proposal",
+        {**pr, "signed": proposal(epoch=1, prev=[], members=[WS_A, WS_C])},
+        {
+            "ok": {
+                "epoch": 1,
+                "members_hash": SP.members_hash(sorted([WS_A, WS_C])),
+                "prev_members_hash": SP.members_hash([]),
+            }
+        },
+        4,
+    )
+    case(
+        "space_proposal_for_other_workspace",
+        "space_proposal",
+        {**pr, "workspace_id": WS_B, "signed": proposal()},
+        {"error": "other_workspace"},
+        4,
+    )
+    case(
+        "space_proposal_invitee_not_added",
+        "space_proposal",
+        {**pr, "signed": proposal(prev=[WS_A, WS_C], members=[WS_A, WS_B, WS_C])},
+        {"error": "malformed"},
+        4,
+        "the invitee is in members and not in prev_members",
+    )
+    case(
+        "space_proposal_signed_as_space_record",
+        "space_proposal",
+        {**pr, "signed": proposal(label="sig_hub_space")},
+        {"error": "bad_signature"},
+        4,
+        "a proposal is not a space record (own label)",
+    )
+    case(
+        "space_proposal_by_rogue_key",
+        "space_proposal",
+        {**pr, "signed": proposal(signer="hk_op_rogue")},
+        {"error": "bad_signature"},
+        4,
+    )
+    case(
+        "space_proposal_expired",
+        "space_proposal",
+        {**pr, "now_ms": NOW + DAY, "signed": proposal()},
+        {"error": "cert_expired"},
+        4,
+    )
+    case(
+        "space_proposal_unsorted",
+        "space_proposal",
+        {**pr, "signed": resign("hk_op", "sig_hub_space_proposal", proposal(), members=[WS_C, WS_B, WS_A])},
+        {"error": "malformed"},
+        4,
+    )
+    case(
+        "space_proposal_epoch_1_with_prev",
+        "space_proposal",
+        {**pr, "signed": proposal(epoch=1)},
+        {"error": "malformed"},
+        4,
+    )
+    case(
+        "space_proposal_not_newer_than_held",
+        "space_proposal",
+        {**pr, "held_space": space_rec(2, [WS_A, WS_B, WS_C]), "signed": proposal()},
+        {"error": "stale_epoch"},
+        4,
+        "a rejoiner is offered only an epoch after the one it holds",
+    )
+    case(
+        "space_proposal_dev_at_real_host",
+        "space_proposal",
+        {**pr, "dev_mode": False, "card": card(), "signed": proposal()},
+        {"error": "dev_refused"},
+        4,
+    )
+    _ = s1
+
+    # ---- §10.8 relay requests (E1)
+    rb = {"now_ms": NOW, "dev_mode": True, "hub_id": HUB_ID, "hub_card": with_card["card"]}
+    ok_r = {"ok": {"hub": HUB_ID, "nonce": RELAY_NONCE.hex()}}
+
+    def rel(name: str, req: dict[str, Any], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "relay_request", {**rb, **kw, "request": req}, expect, 4, note)
+
+    rel("relay_request_valid", relay_req(), ok_r)
+    rel("relay_request_get_with_query", relay_req("GET", f"/v2/hubs/{HUB_ID}/mailbox?after=12&limit=16", b""), ok_r)
+    rel(
+        "relay_request_replayed_nonce",
+        relay_req(),
+        {"error": "replay"},
+        "state-changing: single-use nonce per hub for 240 s",
+        nonces={HUB_ID: {RELAY_NONCE.hex(): NOW - 1000}},
+    )
+    rel("relay_request_stale", relay_req(ts=NOW - 121_000), {"error": "stale_timestamp"})
+    rel(
+        "relay_request_body_swapped",
+        relay_req(body=b'{"to":"x"}', signed_body=RELAY_BODY),
+        {"error": "bad_hub_signature"},
+    )
+    rel(
+        "relay_request_target_swapped",
+        relay_req(target=f"/v2/hubs/{HUB_ID}/mailbox", signed_target=RELAY_TARGET),
+        {"error": "bad_hub_signature"},
+    )
+    rel(
+        "relay_request_other_hubs_account",
+        relay_req(target=f"/v2/hubs/{fake16('other_hub')}/push"),
+        {"error": "other_hub"},
+        "a hub acts only on its own account",
+    )
+    for tname, tgt in (
+        ("percent", f"/v2/hubs/{HUB_ID}/pu%73h"),
+        ("dot_segment", f"/v2/hubs/{HUB_ID}/./push"),
+        ("double_slash", f"/v2/hubs/{HUB_ID}//push"),
+        ("trailing_slash", f"/v2/hubs/{HUB_ID}/push/"),
+        ("upper_hub", f"/v2/hubs/{HUB_ID.upper()}/push"),
+        ("repeated_key", f"/v2/hubs/{HUB_ID}/mailbox?a=1&a=2"),
+        ("other_root", f"/v2/workspaces/{WS_A}/push"),
+    ):
+        rel(
+            f"relay_request_target_{tname}",
+            relay_req(target=tgt),
+            {"error": "malformed"},
+            "the target is canonical or refused (as §10.6)",
+        )
+    rel(
+        "relay_request_under_admin_read_label",
+        relay_req(label="orch/v2/hub-admin-read|"),
+        {"error": "bad_hub_signature"},
+        "wrong domain",
+    )
+    rel("relay_request_signed_by_root", relay_req(key="hk_root"), {"error": "bad_hub_signature"})
+    rel(
+        "relay_request_old_op_cert",
+        relay_req(),
+        {"error": "stale_op_cert"},
+        "after a rotation only the current op cert's key signs",
+        hub_card=card(op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next"), op_key="hk_op_next", card_seq=2),
+    )
+    rel("relay_request_revoked_op_cert", relay_req(), {"error": "unknown_hub"}, revoked_op_certs=[OP_CERT_ID])
+    rel("relay_request_unknown_hub", relay_req(), {"error": "unknown_hub"}, hub_id=fake16("other_hub"))
+    rel("relay_request_dev_hub_at_real_relay", relay_req(), {"error": "unknown_hub"}, dev_mode=False)
+    rel("relay_request_bad_method", relay_req("PATCH"), {"error": "malformed"})
+    rel("relay_request_missing_nonce", relay_req(**{"Orch-Hub-Nonce": None}), {"error": "malformed"})
+
+    # ---- §10.2b selective share_put content (C6/D9)
+    sh = {
+        "hub_id": HUB_ID,
+        "workspace_id": WS_A,
+        "hxk_seed": K.seed["hxk"].hex(),
+        "wsk_pub": K.b("wsk_a"),
+        "dev_mode": True,
+    }
+    it1 = share_item()
+    h1 = P4.item_hash(it1)
+
+    def shr(name: str, body: dict[str, Any], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "share_item", {**sh, **kw, "body": body}, expect, 4, note)
+
+    def okv(it: dict[str, Any], new: bool = True) -> dict[str, Any]:
+        return {"ok": {"item_version": it["o"]["item_version"], "hash": P4.item_hash(it), "new": new}}
+
+    shr("share_item_needs_you", share_body(), okv(it1))
+    tk = {
+        "key": "DEMO-0043",
+        "type": "feature",
+        "title": "Load tariff tables",
+        "status": "testing",
+        "labels": ["dbt", "tariffs"],
+        "deadline": None,
+    }
+    it_t = share_item(item_kind="ticket", content=tk)
+    shr("share_item_ticket", share_body(it_t), okv(it_t))
+    qn = {
+        "key": "DEMO-0043",
+        "type": "feature",
+        "id": "Q1",
+        "title": "Load tariff tables",
+        "text": "Which export is the source of truth?\nThe two differ for 3 tariffs.",
+        "deadline": None,
+    }
+    it_q = share_item(item_kind="question", content=qn)
+    shr("share_item_question", share_body(it_q), okv(it_q))
+    held1 = {"item_version": 1, "hash": h1}
+    shr("share_item_resend_is_idempotent", share_body(), okv(it1, False), held=held1)
+    it2 = share_item(2, content={**NEEDS_YOU, "title": "Still open"})
+    shr(
+        "share_item_newer_replaces",
+        share_body(it2),
+        okv(it2),
+        "a higher item_version replaces the held item",
+        held=held1,
+    )
+    shr("share_item_older_refused", share_body(), {"error": "stale_version"}, held={"item_version": 2, "hash": h1})
+    shr(
+        "share_item_same_version_other_bytes",
+        share_body(share_item(content={**NEEDS_YOU, "title": "Other"})),
+        {"error": "stale_version"},
+        "equal or older is refused",
+        held=held1,
+    )
+    shr(
+        "share_item_reshare_after_revoke",
+        share_body(it2),
+        okv(it2),
+        "a revoked id may be shared again, with a higher item_version than its tombstone",
+        held={**held1, "revoked": True},
+    )
+    shr(
+        "share_item_revoked_replayed",
+        share_body(),
+        {"error": "stale_version"},
+        "the revoked version itself never comes back",
+        held={**held1, "revoked": True},
+    )
+    shr("share_item_over_item_cap", share_body(), {"error": "too_many_items"}, live_items=1000)
+    shr(
+        "share_item_replace_at_cap",
+        share_body(it2),
+        okv(it2),
+        "replacing a live id is not a new item",
+        held=held1,
+        live_items=1000,
+    )
+    shr(
+        "share_item_sealed_to_other_key",
+        share_body(hxk="wxk_a"),
+        {"error": "bad_wrap"},
+        "only this hub's HXK opens the item key",
+    )
+    shr(
+        "share_item_moved_to_other_item_id",
+        share_body(item_id=fake16("share_item_2")),
+        {"error": "bad_wrap"},
+        "item id, time, hub and workspace are bound by the wrap and the AAD",
+    )
+    shr("share_item_opened_for_other_workspace", share_body(), {"error": "bad_wrap"}, workspace_id=WS_B)
+    shr("share_item_signed_by_other_wsk", share_body(share_item(wsk="wsk_b")), {"error": "bad_signature"})
+    shr(
+        "share_item_under_space_item_label",
+        share_body(share_item(label="sig_space_item")),
+        {"error": "bad_signature"},
+        "a shared item is not a space item (own label)",
+    )
+    shr(
+        "share_item_title_with_newline",
+        share_body(share_item(content={**NEEDS_YOU, "title": "a\nb"})),
+        {"error": "malformed"},
+        "a summary is one line (it reaches the phone)",
+    )
+    for nm, kind, content in (
+        ("needs_you_extra_field", "needs_you", {**NEEDS_YOU, "body": "secret"}),
+        ("needs_you_nested_object", "needs_you", {**NEEDS_YOU, "title": {"sig": "x"}}),
+        ("needs_you_unknown_type", "needs_you", {**NEEDS_YOU, "type": "approve_everything"}),
+        ("ticket_missing_status", "ticket", {k: v for k, v in tk.items() if k != "status"}),
+        ("ticket_labels_unsorted", "ticket", {**tk, "labels": ["tariffs", "dbt"]}),
+        ("ticket_as_needs_you", "needs_you", tk),
+        ("question_with_options", "question", {**qn, "options": [{"key": "a", "label": "A"}]}),
+        ("question_bad_deadline", "question", {**qn, "deadline": "30.10.2026"}),
+    ):
+        shr(
+            f"share_item_{nm}",
+            share_body(share_item(item_kind=kind, content=content)),
+            {"error": "malformed"},
+            "exact content per item kind, no free objects",
+        )
+    shr(
+        "share_item_bad_chain_head",
+        share_body(share_item(chain={**CHAIN, "head": "sha256:00"})),
+        {"error": "malformed"},
+    )
+    shr("share_item_dev_at_real_hub", share_body(), {"error": "dev_refused"}, dev_mode=False)
+    shr("share_item_truncated", {"item_id": ITEM, "sealed": b64u(bytes(40))}, {"error": "bad_wrap"})
+    case(
+        "share_revoke_is_idempotent",
+        "share_revoke",
+        {"body": {"item_id": ITEM}},
+        {"ok": {}},
+        4,
+        "an unknown or already revoked id is {} too",
+    )
+    case("share_revoke_bad_id", "share_revoke", {"body": {"item_id": ITEM.upper()}}, {"error": "malformed"}, 4)
+    # one text rule for every title and text field (display spoofing): Cc, Cf, Zl, Zp refused; LF in multi-line only
+    for cname, ch in (
+        ("rlo_u202e", "\u202e"),
+        ("line_sep_u2028", "\u2028"),
+        ("nel_u0085", "\u0085"),
+        ("lrm_u200e", "\u200e"),
+        ("zwsp_u200b", "\u200b"),
+        ("para_sep_u2029", "\u2029"),
+    ):
+        shr(
+            f"share_item_title_{cname}",
+            share_body(share_item(content={**NEEDS_YOU, "title": "Pay " + ch + "x"})),
+            {"error": "malformed"},
+            "display spoofing characters are refused in every title and text",
+        )
+        act(
+            f"action_text_{cname}",
+            {"type": "log.added", "log": TICKET, "text": "ok " + ch + "x"},
+            "edit",
+            {"error": "malformed"},
+            "one text rule for every action text",
+        )
+    act(
+        "action_multiline_text_lf_ok",
+        {"type": "log.added", "log": TICKET, "text": "line 1\nline 2"},
+        "edit",
+        ok("log.added"),
+    )
+    act(
+        "action_title_lf_refused",
+        {"type": "ticket.created", "ticket_type": "bug", "title": "a\nb"},
+        "edit",
+        {"error": "malformed"},
+    )
+    # share audit event (scoped to the workspace)
+    sh_ev = {
+        "workspace_id": WS_A,
+        "item_id": ITEM,
+        "change": "put",
+        "item_version": 1,
+        "item_hash": h1,
+        "nonce": nonce32("share"),
+    }
+    rec_sh = audit_rec(1, AU.GENESIS_PREV, "share", sh_ev)
+    case(
+        "audit_share_put",
+        "audit",
+        {**with_card, "signed": rec_sh, "event": sh_ev},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_sh)}},
+        4,
+    )
+    sh_rv = {**sh_ev, "change": "revoke", "item_hash": None, "nonce": nonce32("share_revoke")}
+    rec_shr = audit_rec(1, AU.GENESIS_PREV, "share", sh_rv)
+    case(
+        "audit_share_revoke",
+        "audit",
+        {**with_card, "signed": rec_shr, "event": sh_rv},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_shr)}},
+        4,
+    )
+
+    # ---- signatures and objects
+    reg_o, prop_o = register(), proposal()
+    sig_entry("channel_register_alice_phone", "channel_alice_phone", "sig_hub_channel_register", reg_o)
+    sig_entry("space_proposal_c_e2", "hk_op", "sig_hub_space_proposal", prop_o)
+    sig_entry("share_item_a_1", "wsk_a", "sig_share_item", it1)
+    objects = {"channel_register_alice_phone": reg_o, "space_proposal_c_e2": prop_o, "share_item_a_1": it1}
+    rr = relay_req()
+    section = {
+        "log_sync": {
+            "workspace_id": WS_A,
+            "wk_e1_hex": WK[1].hex(),
+            "view_key_e1_hex": P4.view_key(WK[1], WS_A, 1).hex(),
+            "workspace_lines": WS_LINES,
+            "ticket_lines": TK_LINES,
+            "heads": {"workspace": hw, TICKET: ht},
+            "host_sig_signed_hex_ws1": P4.host_sig_bytes(WS_A, "workspace", WS_LINES[0]).hex(),
+            "page_workspace": ws_p,
+            "aad_hex_workspace": P4.view_aad(WS_A, 1, "workspace", 1, 2, hw, False).hex(),
+        },
+        "prepare": {"ctx": ctx, "digest_hex": dg},
+        "relay_request": {
+            "request": rr,
+            "signed_hex": P4.relay_request_bytes(
+                HUB_ID, OP_CERT_ID, NOW, RELAY_NONCE, "POST", RELAY_TARGET, RELAY_BODY
+            ).hex(),
+        },
+        "custodial_types": [{"type": t, "log": lk, "min_role": r} for (t, lk), r in sorted(H.CUSTODIAL_TYPES.items())],
+        "space_accept_from_proposal": P4.accept_from_proposal(prop_o["o"]),
+        "share_item": {
+            "item": it1,
+            "item_hash": h1,
+            "ik_hex": S.fake_seed("hub/share_ik/1").hex(),
+            "aad_hex": P4.share_aad(HUB_ID, WS_A, ITEM, 1).hex(),
+            "body": share_body(),
+        },
+    }
+    assert cj(section["space_accept_from_proposal"])  # canonical
+    return {"objects": objects, "section": section}
+
+
+__all__ = ["build_p4"]
+_ = (resign, WS_B)

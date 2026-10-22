@@ -79,6 +79,16 @@ def test_every_case_has_a_phase_and_negatives_cover_the_brief():
         "admin_read_swapped_query",
         "admin_read_revoked_op_cert",
         "space_unbind_removes_member",
+        "action_smuggles_sig",
+        "custodial_type_not_custodial",
+        "prepared_digest_of_other_event",
+        "log_sync_fork_other_line_at_held_seq",
+        "log_sync_line_not_signed_by_pinned_wsk",
+        "channel_register_under_proof_label",
+        "channel_register_phone_from_password_session",
+        "space_proposal_for_other_workspace",
+        "relay_request_replayed_nonce",
+        "relay_request_body_swapped",
     ):
         assert must in names
 
@@ -182,3 +192,29 @@ def test_audit_chain_vector_links():
         assert r["o"]["event_hash"] == AU.event_hash(e["event"])
         assert AU.chain_hash(r) == h
         prev = h
+
+
+def test_phase4_view_page_opens_from_json():
+    from orch_hub.contract import phase4 as P4
+
+    p = V["phase4"]["log_sync"]
+    wk = bytes.fromhex(p["wk_e1_hex"])
+    assert P4.view_key(wk, p["workspace_id"], 1).hex() == p["view_key_e1_hex"]
+    lines = P4.open_view_page(wk, p["workspace_id"], p["page_workspace"])
+    assert lines == p["workspace_lines"]
+    assert P4.event_head(lines[-1]) == p["heads"]["workspace"] == p["page_workspace"]["head"]
+    msg = bytes.fromhex(p["host_sig_signed_hex_ws1"])
+    assert S.verify(pub("wsk_a"), unb64u(lines[0]["host_sig"], 64), msg)
+
+
+def test_phase4_relay_request_bytes():
+    r = V["phase4"]["relay_request"]
+    sig = unb64u(r["request"]["headers"]["Orch-Hub-Signature"], 64)
+    assert S.verify(pub("hk_op"), sig, bytes.fromhex(r["signed_hex"]))
+    assert bytes.fromhex(r["signed_hex"]).startswith(b"orch/v2/hub-relay-req|\x02")
+
+
+def test_phase4_prepared_digest():
+    pr = V["phase4"]["prepare"]
+    ctx = pr["ctx"]
+    assert H.event_digest(ctx["workspace_id"], ctx["log"], ctx["event"]).hex() == pr["digest_hex"]

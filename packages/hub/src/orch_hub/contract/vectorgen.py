@@ -497,6 +497,19 @@ def space_item_obj(
     return signed(key or WSK_OF[ws], "sig_space_item", o)
 
 
+def space_accept_obj(ws: str = WS_B, members: list[str] | None = None, key: str | None = None, **kw: Any):
+    o = {
+        **hdr("space.accept"),
+        "hub_id": HUB_ID,
+        "space_id": SPACE,
+        "workspace_id": ws,
+        "members_hash": SP.members_hash(sorted(members if members is not None else [WS_A, WS_B])),
+        "dev": True,
+        **kw,
+    }
+    return signed(key or WSK_OF[ws], "sig_space_accept", o)
+
+
 def sealed_item(
     ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, sk: bytes | None = None, **kw: Any
 ) -> str:
@@ -1872,6 +1885,100 @@ def build() -> dict[str, Any]:
         {"error": "malformed"},
         3,
         "the author consented to another member set",
+    )
+
+    # consent: the host's put guard and the hub's rule for adding selective workspaces (L2P-2)
+    rule = {"space_id": SPACE, "members": sorted([WS_A, WS_B])}
+    hp = {**with_card, "rule": rule}
+    case("host_put_unchanged_member_set", "host_put", {**hp, "space": e1}, {"ok": {"put": True}}, 3)
+    case(
+        "host_put_after_member_removed",
+        "host_put",
+        {**hp, "space": e2},
+        {"ok": {"put": True}},
+        3,
+        "a smaller set needs nothing",
+    )
+    case(
+        "host_put_after_member_added",
+        "host_put",
+        {**hp, "space": space_rec(2, [WS_A, WS_B, WS_C])},
+        {"error": "members_changed"},
+        3,
+        "C was added by the hub: the owner never approved a set with C",
+    )
+    case(
+        "host_put_after_member_replaced",
+        "host_put",
+        {**hp, "space": space_rec(2, [WS_A, WS_C])},
+        {"error": "members_changed"},
+        3,
+    )
+    case("host_put_other_space", "host_put", {**hp, "space": space_rec(1, space=SPACE_2)}, {"error": "malformed"}, 3)
+
+    sel = {"modes": {WS_B: "selective"}, "wsk_pubs": sp_pubs}
+    sp_sel = {**sp, **sel}
+    acc_b = space_accept_obj()
+    case(
+        "space_add_selective_without_accept",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1}},
+        {"error": "not_accepted"},
+        3,
+        "a hub-admin cannot list a selective workspace (D71, D80)",
+    )
+    case(
+        "space_add_selective_with_accept",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: acc_b}}},
+        {"ok": {}},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_member_set",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(members=[WS_B])}}},
+        {"error": "not_accepted"},
+        3,
+        "the owner approved a different set",
+    )
+    case(
+        "space_add_selective_accept_signed_by_other_key",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(key="wsk_a")}}},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "space_add_selective_accept_for_other_hub",
+        "space_flow",
+        {**sp_sel, "steps": [], "final": {"space": e1, "accepts": {WS_B: space_accept_obj(hub_id=ROGUE_HUB_ID)}}},
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_add_full_mode_needs_no_accept", "space_flow", {**sp, "steps": [], "final": {"space": e1}}, {"ok": {}}, 3
+    )
+    case(
+        "space_later_add_of_selective_member",
+        "space_flow",
+        {**sp, "modes": {WS_C: "selective"}, "steps": [{"space": e1}], "final": {"space": e2_abc}},
+        {"error": "not_accepted"},
+        3,
+    )
+    case(
+        "space_unknown_mode_member_refused",
+        "space_flow",
+        {**sp, "modes": {WS_B: None}, "steps": [], "final": {"space": e1}},
+        {"error": "unknown_workspace"},
+        3,
+    )
+    case(
+        "space_removing_a_selective_member_needs_nothing",
+        "space_flow",
+        {**sp_sel, "steps": [{"space": e1, "accepts": {WS_B: acc_b}}], "final": {"space": e2}},
+        {"ok": {}},
+        3,
     )
 
     # the hub's rules over one space (steps build the state, final is the call under test)

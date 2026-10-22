@@ -29,6 +29,7 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
     "sig_space_item": "orch/v2/sig/space-item|",  # V3-D8: a member workspace's item in a shared space
+    "sig_space_accept": "orch/v2/sig/space-accept|",  # L2P-2: a selective workspace's owner accepts a member set
     "sig_publish_hub": "orch/v2/publish-hub|",  # a publish request on the hub path (L2-2); v2 keeps orch/v2/publish|
     # signature by the workspace owner's device key (V3-D4)
     "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",

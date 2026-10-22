@@ -65,6 +65,7 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
     held = _held(a)
     sks = {int(e): bytes.fromhex(k) for e, k in a.get("sks", {}).items()}
     pubs = {w: unb64u(k, 65) for w, k in a.get("wsk_pubs", {}).items()}
+    modes = a.get("modes", {})
     states: dict[str, Any] = {}
 
     def step(st: dict[str, Any]) -> Any:
@@ -72,6 +73,14 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
             sid = st["space"]["o"]["space_id"]
             prior = states[sid]["space"] if sid in states else None
             o = SP.verify_space(st["space"], held, dev_mode=dev, prior=prior)
+            SP.check_added_members(
+                None if prior is None else prior["members"],
+                o,
+                modes={w: modes.get(w, "full") for w in o["members"]},
+                accepts=st.get("accepts", {}),
+                wsk_pubs=pubs,
+                dev_mode=dev,
+            )
             states[sid] = SP.apply_space(states[sid], o) if sid in states else SP.new_state(o)
             return None
         if "unbind" in st:
@@ -278,6 +287,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "admin_read_row":
         H.check_admin_read_row(a["row"])
         return {"row": True}
+    if check == "host_put":
+        space = SP.verify_space(a["space"], _held(a), dev_mode=dev)
+        SP.check_host_put(a["rule"], space)
+        return {"put": True}
     if check == "space_flow":
         return _space_flow(a)
     raise ValueError(f"unknown check {check}")

@@ -225,6 +225,13 @@ FIELDS: dict[str, dict[str, Check]] = {
         "event_hash": _b64u_n(32),
         "dev": _bool,
     },
+    "space.accept": {
+        "hub_id": _hex16,
+        "space_id": _hex16,
+        "workspace_id": _hex16,
+        "members_hash": _b64u_n(32),
+        "dev": _bool,
+    },
     "hub.space_wrap": {
         "hub_id": _hex16,
         "op_cert_id": _hex16,
@@ -269,6 +276,7 @@ LABEL_OF_KIND = {
     "hub.space_wrap": "sig_hub_space_wrap",
     "hub.audit": "sig_hub_audit",
     "space.item": "sig_space_item",
+    "space.accept": "sig_space_accept",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)
 }
 
@@ -865,6 +873,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)
     "space_list": ("w2h", None, {}),
     "space_put": ("w2h", None, {"space_id": _hex16, "epoch": _int_min(1), "item_id": _hex16, "sealed": _b64u_any}),
+    "space_accept": ("w2h", None, {"accept": lambda x: type(x) is dict}),
     "space_revoke": ("w2h", None, {"space_id": _hex16, "item_id": _hex16}),
     "space_get": ("w2h", None, {"space_id": _hex16, "since": _int_min(0)}),
 }

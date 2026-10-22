@@ -145,6 +145,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_space` | `orch/v2/hub-space\|` | `HK_op` | `cj(o)` of `hub.space` | 10.4 |
 | `sig_hub_space_wrap` | `orch/v2/hub-space-wrap\|` | `HK_op` | `cj(o)` of `hub.space_wrap` | 10.4 |
 | `sig_space_item` | `orch/v2/sig/space-item\|` | `WSK` | `cj(o)` of `space.item` | 10.4 |
+| `sig_space_accept` | `orch/v2/sig/space-accept\|` | `WSK` | `cj(o)` of `space.accept` | 10.4 |
 | `h_space_members` | `orch/v2/hub-space-members\|` | hash | the member list of one space epoch, signed into an item | 10.4 |
 | `h_sk_commit` | `orch/v2/hub-sk-commit\|` | hash | the commitment to `SK_e` in `hub.space` | 10.4 |
 | `aad_space` | `orch/v2/space-aad\|` | AAD | one sealed space item | 10.4 |
@@ -160,7 +161,7 @@ HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label 
 `[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}` (so it never contains `|`; anything else is `malformed`). All
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
 `HK_root` under the two root labels, `HK_op` under the eleven `hub-*` labels, `UK` under the custodial family, a channel
-key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels, `sig/space-item|` and `orch/v2/publish-hub|`, the owner's
+key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
 device key under `sig/hub-publish-approval|`.
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
@@ -559,6 +560,7 @@ unknown `op` is `unknown_op`.
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
 | `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
 | `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
@@ -594,13 +596,29 @@ generates and holds. **Option B (spec §2, D75): the hub holds every `SK_e`, ope
 it.** What the hub never holds is a workspace's own keys: items enter only because a member **host** put them (below),
 and workspace traffic outside spaces stays E2E sealed (§10.3 envelopes).
 
-**Who creates and changes a space** is hub-side policy, not a wire object: a hub-admin, or a user with `admin` in
-**every** member workspace (D3's `Access`; a selective workspace gives hub roles nothing, so only the hub-admin path or
-its owner's own host applies there). **Creating a space or adding a member pulls no data.** An item exists only if a
-member host chose to `space_put` it; a host puts only into spaces its owner allowed locally (share rules name the
-`space_id`), so being listed in a `hub.space` is necessary to read or write at the hub, never sufficient for a host to
-publish anything. In a selective workspace `space_put` is accepted (the op exists in both modes) and what may be put is
-the owner's share rules at the host; the hub cannot check them, which is why the host decides what leaves it.
+**Who creates and changes a space, and who consents (L2P-2).** Hub-side policy decides who may *ask* for a change: a
+hub-admin, or a user with `admin` in **every** member workspace (D3's `Access`). That is not consent to *join*:
+
+- **A selective workspace is added only by its owner.** D71: the hub-admin has no role in a selective workspace; §8a: only
+  its owner, at the host terminal, decides what is shared. The owner's host signs a `space.accept`
+  `{hub_id, space_id, workspace_id, members_hash, dev}` with its `WSK` (reference label `sig_space_accept`; made only by a
+  human-only host verb, never by an agent) for exactly the member set it accepts, and sends it with `space_accept
+  {accept}`. The hub must hold it before it signs a `hub.space` that lists that workspace (`not_accepted` otherwise;
+  `check_added_members`). A hub-admin can **remove** a selective workspace and can never add one. A workspace whose mode
+  is unknown is treated like a selective one.
+- **A host puts only into a space whose member set its owner approved.** The owner's share rule pins
+  `{space_id, members}`, not just the `space_id`. Before **every** `space_put` the host verifies the current `hub.space`
+  (signature, epoch not older than the one it holds) and refuses to put when the member set holds anyone the owner did
+  not approve: `members_changed` (local, never sent). A smaller set needs nothing; a grown set needs the owner to
+  re-approve at the host (an `admin` of that workspace in full mode), which replaces the rule (`check_host_put`,
+  vectors `host_put_*`). So a member added later by a compromised or careless hub reads **nothing** the host puts
+  after that, unless the owner approved the new set.
+- **Items of a space are untrusted input** to the agents of a member workspace (D29 rules for foreign content): an item
+  is data from another workspace, never an instruction.
+
+**Creating a space or adding a member pulls no data.** An item exists only if a member host chose to `space_put` it
+under the rules above. In a selective workspace `space_put` is accepted (the op exists in both modes) and what may be
+put is the owner's share rules at the host; the hub cannot check them.
 
 **Epochs and rotation.** `epoch` starts at 1 and **rises on every membership change** (add, remove, a workspace that
 unbinds). The hub makes a fresh `SK_e`, signs a new `hub.space` and issues one `hub.space_wrap` per current member. A
@@ -656,12 +674,15 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
   plant an item in another workspace's name (vectors `space_item_signed_by_other_member`, `…author_not_member`).
   An item is **immutable**: a change is a new `item_id` plus a `space_revoke` of the old one.
 
+`space.accept` is the fourth object: see the consent rules above (signed by the workspace's `WSK`).
+
 #### Operations (§10.2 table; w2h; both modes)
 
 | Op | Rules, in order | Refusals |
 |---|---|---|
 | `space_list` | returns the current `hub.space` of every space the link's workspace is a member of | — |
 | `space_put` | the workspace is a member of the current epoch; `epoch` = the current epoch; size ≤ 256 KiB sealed; the hub opens the item (option B) and checks it is for this space and `item_id`, written and signed by **the link's workspace**; the same `(space_id, item_id)` with the same bytes is idempotent (same `seq`) | `not_member`, `stale_epoch` (older: refresh with `space_get` and re-seal), `malformed` (newer), `too_large`, `malformed` / `bad_signature` / `unknown_workspace` (the item), `other_workspace` (author ≠ link), `replay` (same id, other bytes) |
+| `space_accept` | `{"accept": <space.accept>}`: stored if it verifies under the link workspace's pinned `WSK`, names this hub and this workspace (`other_workspace`, `other_hub`, `bad_signature`, `malformed`); used by the next listing of that workspace in a space | as listed |
 | `space_revoke` | member; the item exists; the link's workspace is its author (a leaver can no longer revoke: revoke before leaving). The revocation is a new `seq`, so pollers see it. Idempotent | `not_member`, `unknown_item`, `other_workspace` |
 | `space_get` | member of the current epoch. Entries with `seq` > `since`, **only items of epochs in which the caller was a member**, oldest first, at most 100 entries and 1 MiB of sealed data per page. Reply `{"space": <current hub.space>, "wraps": [<hub.space_wrap> of the caller for the current epoch and each epoch an entry belongs to], "entries": [{"seq", "item_id", "epoch", "revoked", "sealed"?}], "next"}` (`sealed` absent when `revoked`; `next` = the last `seq` returned, or `since`) | `not_member` |
 
@@ -909,7 +930,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `audit_gap`, `audit_fork`, `audit_mismatch` | audit chain | §10.5 |
-| `not_member`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
+| `not_member`, `not_accepted`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces |
+| `members_changed` | host, local | §10.4: the member set grew since the owner approved it; never sent on the link | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read | §11.2, §10.6 |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |

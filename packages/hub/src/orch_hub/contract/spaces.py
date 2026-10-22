@@ -405,3 +405,58 @@ def apply_unbind(state: dict[str, Any] | None, ws: str, space: Mapping[str, Any]
     ):
         raise Refused("malformed")
     return apply_space(state, space)
+
+
+# --- consent (L2P-2) ---------------------------------------------------------------------------------------------------
+
+
+def check_host_put(rule: Mapping[str, Any], space: Mapping[str, Any]) -> None:
+    """Host side, before EVERY ``space_put``. ``rule`` = the owner's share rule ``{"space_id", "members"}``: the space
+    AND the member set the owner approved. ``space`` = the current ``hub.space`` the host just verified (signature,
+    epoch not older than the one it holds). If the set holds anyone the owner did not approve (a member was added), the
+    host does not put: ``members_changed`` (local, never sent). A smaller set needs nothing. The owner re-approves a
+    grown set at the host terminal, which replaces the rule."""
+    if space["space_id"] != rule["space_id"]:
+        raise Refused("malformed")
+    if not set(space["members"]) <= set(rule["members"]):
+        raise Refused("members_changed")
+
+
+def check_added_members(
+    old_members: list[str] | None,
+    space: Mapping[str, Any],
+    *,
+    modes: Mapping[str, str | None],
+    accepts: Mapping[str, Any],
+    wsk_pubs: Mapping[str, bytes],
+    dev_mode: bool,
+) -> None:
+    """Hub side, before it signs a ``hub.space`` that lists a workspace that was not listed before. A full-mode
+    workspace is added by the hub-side authority (admin in every member workspace). A **selective** workspace (or one
+    whose mode is unknown) is added only with its own ``space.accept``, signed by its ``WSK`` (made by the owner's
+    human-only host verb) for exactly this member set; a hub-admin can remove it, never add it (D71, D80)."""
+    for ws in space["members"]:
+        if old_members is not None and ws in old_members:
+            continue
+        mode = modes.get(ws)
+        if mode is None:
+            raise Refused("unknown_workspace")
+        if mode == "full":
+            continue
+        signed = accepts.get(ws)
+        if signed is None:
+            raise Refused("not_accepted")
+        o = _envelope(signed, "space.accept")
+        pub = wsk_pubs.get(ws)
+        if pub is None:
+            raise Refused("unknown_workspace")
+        _signature(signed, L["sig_space_accept"], pub)
+        _fields(o, "space.accept")
+        _dev(o, dev_mode)
+        if (
+            o["hub_id"] != space["hub_id"]
+            or o["space_id"] != space["space_id"]
+            or o["workspace_id"] != ws
+            or o["members_hash"] != members_hash(space["members"])
+        ):
+            raise Refused("not_accepted")

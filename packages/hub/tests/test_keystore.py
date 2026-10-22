@@ -26,6 +26,7 @@ SAMPLES = {
     "hub.channel_cert": G.channel_cert()["o"],
     "hub.snapshot": G.snapshot()["o"],
     "hub.audit": G.audit_chain()[0]["o"],
+    "space.accept": G.space_accept_obj()["o"],
     "hub.space": G.space_rec()["o"],
     "hub.space_wrap": G.space_wrap()["o"],
     "space.item": G.space_item_obj()["o"],
@@ -49,7 +50,7 @@ ALLOWED = {
     },
     KS.UkSigner: set(),
     KS.ChannelSigner: set(),
-    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "link.w2h"},
+    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
 KEY = {

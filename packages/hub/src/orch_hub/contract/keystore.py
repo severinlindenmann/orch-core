@@ -144,7 +144,12 @@ class WskSigner(_Signer):
     """A workspace's ``WSK`` (host side): binding, unbound, host->hub link messages, link auth, publish requests."""
 
     KINDS = MappingProxyType(
-        {"hub.binding": "sig_hub_binding", "hub.unbound": "sig_hub_unbound", "space.item": "sig_space_item"}
+        {
+            "hub.binding": "sig_hub_binding",
+            "hub.unbound": "sig_hub_unbound",
+            "space.item": "sig_space_item",
+            "space.accept": "sig_space_accept",
+        }
     )
     LINK_DIR = "w2h"
 

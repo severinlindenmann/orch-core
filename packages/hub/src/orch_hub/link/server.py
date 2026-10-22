@@ -34,6 +34,7 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
+from ..keys import HubKeys
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
@@ -85,6 +86,26 @@ class LinkServer:
         self._listen.settimeout(0.2)
         self._threads: list[threading.Thread] = []
         self._accept_thread = threading.Thread(target=self._accept_loop, name="link-accept", daemon=True)
+
+    @classmethod
+    def from_keys(
+        cls,
+        keys: HubKeys,
+        *,
+        identity: tls.TlsIdentity | None = None,
+        snapshots: ops.SnapshotProvider | None = None,
+        now_ms: Callable[[], int] = _now_ms,
+        **kw: Any,
+    ) -> LinkServer:
+        """Start from a hub key store: ``HK_op`` signs the replies, the hub card pins the TLS key. If the held card
+        does not carry this TLS identity's SPKI hash, the card is re-issued with it (card_seq + 1), so the card the
+        hosts verify always names the certificate this server presents."""
+        identity = identity or tls.TlsIdentity.generate()
+        if keys.card()["o"]["tls_spki_sha256"] != identity.spki_sha256:
+            keys.reissue_card(tls_spki_sha256=identity.spki_sha256)
+        signer = keys.op_signer
+        snapshots = snapshots or ops.StubSnapshots(signer, keys.hub_id, keys.op_cert()["o"]["cert_id"], now_ms)
+        return cls(identity=identity, op_signer=signer, hub_id=keys.hub_id, snapshots=snapshots, now_ms=now_ms, **kw)
 
     @property
     def address(self) -> tuple[str, int]:

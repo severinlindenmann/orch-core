@@ -483,8 +483,8 @@ def test_stop_waits_for_the_request_that_ended_the_session_to_be_answered(srv):
     real_request_done, real_wait_for = srv.request_done, srv._idle.wait_for
 
     def request_done():
+        order.append("request done")  # before the real call: that call wakes stop(), which then records its own return
         real_request_done()
-        order.append("request done")
 
     def wait_for(predicate, timeout=None):
         stop_blocked.set()  # stop() is now waiting for the in-flight request

@@ -12,20 +12,43 @@ from tests.identity.helpers import Person
 from tests.store.helpers import WS
 
 
+def secret_free(text: str) -> bool:
+    """Whether the runtime's secret check (``Runtime.check_secret``) would let this text through."""
+    from orch.ops.runtime import GRANT_SHAPE
+    from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+    return not (GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text))
+
+
 def invite(ws, tmp, name="newbie"):
-    """What an invitee hands the owner: their public key and their first device certificate (a file)."""
-    p = Person()
+    """What an invitee hands the owner: their public key and their first device certificate (a file).
+
+    Random key material is base64url, so about one certificate in 13,000 holds a ``ghp_...``-shaped run and the
+    runtime refuses the file as ``grant.secret_in_args`` (#1041). The helper draws again until the file is clean, so
+    a test never depends on the dice."""
+    while True:
+        p = Person()
+        text = json.dumps(p.cert(created=ws.clock[0] * 1000))
+        if secret_free(text):
+            break
     cert = tmp / f"{name}.cert.json"
-    cert.write_text(json.dumps(p.cert(created=ws.clock[0] * 1000)))
+    cert.write_text(text)
     return p, crypto.b64u(p.pk_pub), str(cert)
 
 
 def reader_decl(ws, p, tmp, *, level=1, name="reader") -> str:
-    """The invitee's reader declaration file (``orch keys reader declare --enrol``, §0.8.6 item 9.4)."""
+    """The invitee's reader declaration file (``orch keys reader declare --enrol``, §0.8.6 item 9.4).
+    The signature depends on ``created_ms``; it moves by a ms until the file passes the secret check (#1041)."""
     from tests.identity.reader_helpers import decl
 
+    for bump in range(100):
+        text = json.dumps(decl(p, WS, level=level, via="enrol", created_ms=ws.clock[0] * 1000 + bump))
+        if secret_free(text):
+            break
+    else:  # pragma: no cover - 100 independent draws all unlucky: about 1e-400
+        raise AssertionError("no clean reader declaration")
     path = tmp / f"{name}.{level}.decl.json"
-    path.write_text(json.dumps(decl(p, WS, level=level, via="enrol", created_ms=ws.clock[0] * 1000)))
+    path.write_text(text)
     return str(path)
 
 
@@ -186,6 +209,21 @@ def _as_convenience(monkeypatch):
             return getattr(self._inner, name)
 
     monkeypatch.setattr(Human, "backend", property(lambda self: AsConvenience(real.fget(self))))
+
+
+def test_the_invite_helpers_never_hand_the_runtime_a_secret_shaped_file(hws, tmp_path, monkeypatch):
+    """#1041: a ``ghp_``-shaped run in random key material made a member test fail now and then."""
+    import tests.ops.test_member as me_mod
+
+    dirty = Person()
+    real = me_mod.Person
+    queue = [dirty]
+    real_cert = dirty.cert
+    dirty.cert = lambda **kw: {**real_cert(**kw), "label": "ghp_" + "A" * 30}  # the first draw is unlucky
+    monkeypatch.setattr(me_mod, "Person", lambda: queue.pop() if queue else real())
+    p, _pk, cert = invite(hws, tmp_path)
+    assert p is not dirty and secret_free(open(cert).read())
+    assert not secret_free("x ghp_" + "A" * 30) and not secret_free("gr_0" + "A" * 25 + "." + "B" * 43)
 
 
 def test_a_direct_convenience_append_sets_the_mark_first(hws, me, tmp_path, monkeypatch):

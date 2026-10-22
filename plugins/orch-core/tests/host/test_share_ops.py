@@ -334,6 +334,48 @@ def quick_auto(monkeypatch):
     return shareauto
 
 
+class _Manual:
+    """A manual clock for shareauto: nothing happens until the test steps it, and a step waits for its pass."""
+
+    def __init__(self, shareauto):
+        self.shareauto = shareauto
+        self.t = 1000.0
+
+    def now(self):
+        return self.t
+
+    def step(self, served, seconds):
+        a = self.shareauto.state_of(served.h.host.services[served.wid])
+        assert a is not None, "the auto thread is not armed"
+        with a.cv:
+            before, due = a.passes, a.dirty_since is not None
+        self.t += seconds
+        self.shareauto.tick()
+        if due:
+            with a.cv:  # a pass is due only if its deadline has been reached; wait for it, or for a quiet thread
+                a.cv.wait_for(lambda: a.passes > before or self._not_yet(a), timeout=30)
+        with a.cv:
+            return a
+
+    def _not_yet(self, a):
+        if a.dirty_since is None:
+            return False
+        due = max(
+            min(a.last_touch + self.shareauto.DEBOUNCE_S, a.dirty_since + self.shareauto.MAX_WAIT_S), a.not_before
+        )
+        return self.t < due
+
+
+@pytest.fixture
+def manual_auto(monkeypatch):
+    from orch.host import shareauto
+
+    m = _Manual(shareauto)
+    monkeypatch.setattr(shareauto, "_CLOCK", m.now)
+    monkeypatch.setattr(shareauto, "_TIMED", False)
+    return m
+
+
 def settle(served, quick, *, need=1, timeout=10.0):
     """Wait until the workspace's auto thread has finished ``need`` more passes (and is idle)."""
     import time
@@ -434,23 +476,21 @@ def test_no_pass_before_a_selective_join(served, quick_auto):
     assert a.parked and "hub.not_joined" in str(a.last)
 
 
-def test_an_unreachable_hub_is_retried_and_the_edit_arrives_later(served, selective, quick_auto, monkeypatch):
-    from orch.host import hubops, shareops
+def test_an_unreachable_hub_is_retried_and_the_edit_arrives_later(served, selective, manual_auto, monkeypatch):
+    from orch.host import hubops, shareauto, shareops
 
     _, key = labelled(served, "Public note", "public")
     ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
     real = shareops._link
     monkeypatch.setattr(shareops, "_link", lambda service: _Down())
     ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
-    a = settle(served, quick_auto)
+    a = manual_auto.step(served, shareauto.DEBOUNCE_S)  # the debounce elapses: one pass, the hub is down
     assert a.last["synced"] is False and selective.count("share_put") == 1
     monkeypatch.setattr(shareops, "_link", real)
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    import time
-
-    end = time.monotonic() + 15
-    while len(selective.opened) < 2 and time.monotonic() < end:  # the retry, after its backoff
-        time.sleep(0.05)
+    manual_auto.step(served, shareauto.RETRY_MIN_S - 1)  # still inside the backoff: no retry
+    assert len(selective.opened) == 1
+    manual_auto.step(served, 1)  # the backoff ends: the retry
     assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed note"]
 
 

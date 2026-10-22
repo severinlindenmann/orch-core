@@ -41,6 +41,21 @@ jobs:
           ORCH_TEST_SHARD: ${{ matrix.shard }}/3
           # The runtime must have Unicode 16.0, so the canon comparison tests can never skip silently.
           ORCH_REQUIRE_UNICODE16: "1"
+  standalone:
+    # D79: orch core always works standalone. No hub code imported anywhere in core or add-ons, and a fresh workspace
+    # works with the network down. Runs on drafts too (cheap, a few seconds); needs no secret and no network.
+    name: standalone (D79)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: plugins/orch-core/uv.lock
+      - run: uv sync --locked
+      - run: uv run pytest tests/test_standalone_d79.py -q -m ""
   perf-schema:
     # the slow marker holds, among others, the check that all 52 operation declarations validate against the
     # operation schema (startup does not validate); xdist, so it is quick

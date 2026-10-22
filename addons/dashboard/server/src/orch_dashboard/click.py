@@ -375,6 +375,7 @@ def register(app: FastAPI, gateway: Gateway):
             if state == "submitted":
                 # The signer drops the terminal request id. Replay the exact binding through our link to obtain
                 # the host record; opts.idem guarantees this cannot create another request.
+                signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
                 device = signer.status().get(ws, {}).get("device")
                 if not device:
                     raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
@@ -383,7 +384,7 @@ def register(app: FastAPI, gateway: Gateway):
                         ws,
                         "human.prepare",
                         {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
-                        idem=planned.idem(ws, body.retry),
+                        idem=planned.idem(ws, signed_retry),
                         files=files,
                     )
                 except HostError as exc:

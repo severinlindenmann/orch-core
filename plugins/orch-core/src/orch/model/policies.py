@@ -8,6 +8,7 @@ from typing import Any
 
 from orch.canon import canonical_policy, policy_hash
 
+from . import identity
 from .codes import Code, Refusal
 from .types import GATES, TCore, WsCore
 
@@ -91,14 +92,15 @@ def check_override(ws: WsCore, t: TCore, gates: dict[str, Any]) -> Refusal | Non
 
 def person_tokens(ws: WsCore, t: TCore, person: str) -> set[str]:
     """Approver tokens a person holds on a ticket; a viewer holds none (§5.7)."""
+    person = identity.canonical(ws, person)
     m = ws.members.get(person)
     if m is None or m.role == "viewer":
         return set()
     tokens = {m.role}
-    if t.owner == person:
+    if identity.canonical(ws, t.owner) == person:
         tokens.add("ticket_owner")
     for role in ("assignees", "reviewers", "watchers"):
-        if person in t.people[role]:
+        if person in identity.canonical_set(ws, t.people[role]):
             tokens.add(role)
     return tokens
 
@@ -117,6 +119,7 @@ def may_decide(ws: WsCore, t: TCore, gate: str, person: str, pol: dict[str, Any]
     gate, so a solo owner can give a verdict on a ticket they claimed. With two or more members the policy's
     ``approvers`` and ``not`` apply as written. ``independent`` is checked separately and is not relaxed."""
     pol = effective(ws, t, gate) if pol is None else pol
+    person = identity.canonical(ws, person)
     if solo(ws):
         m = ws.members.get(person)
         return m is not None and m.role != "viewer"

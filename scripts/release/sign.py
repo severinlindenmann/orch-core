@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 import sys
@@ -24,7 +25,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "plugins" / "orch-core" / "src"))
 from manifest import b64, jcs, need  # noqa: E402
+
+from orch.update.envelope import Malformed, check_catalog, check_manifest  # noqa: E402
 
 DEFAULT_KEY_ENV = "ORCH_RELEASE_SIGNING_KEY"
 DOMAIN = {"core": b"orch-release/1\n", "addon-catalog": b"orch-addon-catalog/1\n"}
@@ -47,13 +51,38 @@ def public_bytes(key: Ed25519PrivateKey) -> bytes:
     return key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
 
+def check_content(doc: dict[str, Any], purpose: str, files_dir: Path | None = None) -> None:
+    """The verifier's own content checks, run BEFORE signing: a payload the verifier would refuse is never signed.
+
+    With `files_dir`, every manifest file must be there with the manifest's size and sha256."""
+    try:
+        (check_manifest if purpose == "core" else check_catalog)(doc)
+    except Malformed:
+        raise ValueError("payload is malformed (exact keys, names, sizes, window, seq): refusing to sign") from None
+    if purpose == "core" and files_dir is not None:
+        for f in doc["files"]:
+            path = files_dir / f["name"]
+            need(path.is_file(), f"file {f['name']} is missing from {files_dir}")
+            data = path.read_bytes()
+            need(len(data) == f["size"], f"size of {f['name']} differs from the manifest")
+            need(hashlib.sha256(data).hexdigest() == f["sha256"], f"sha256 of {f['name']} differs from the manifest")
+
+
 def sign_envelope(
-    payload: bytes, *, purpose: str, key: Ed25519PrivateKey, key_id: str, key_cert: dict, revocations: dict
+    payload: bytes,
+    *,
+    purpose: str,
+    key: Ed25519PrivateKey,
+    key_id: str,
+    key_cert: dict,
+    revocations: dict,
+    files_dir: Path | None = None,
 ) -> bytes:
     need(purpose in DOMAIN, f"bad purpose: {purpose!r}")
     doc = json.loads(payload)
     need(doc.get("format") == PAYLOAD_FORMAT[purpose], f"payload is not a {PAYLOAD_FORMAT[purpose]} document")
     need(jcs(doc) == payload, "payload is not canonical (build it with manifest.py)")
+    check_content(doc, purpose, files_dir)
     cert = json.loads(base64.b64decode(key_cert["cert"], validate=True))
     need(cert["key_id"] == key_id, "key_cert is for another key id")
     need(cert["purpose"] == purpose, "key_cert purpose does not match --purpose")
@@ -80,6 +109,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--key-env", default=DEFAULT_KEY_ENV, help="NAME of the environment variable holding the key")
     ap.add_argument("--key-cert", type=Path, required=True)
     ap.add_argument("--revocations", type=Path, required=True)
+    ap.add_argument("--files-dir", type=Path, help="core: directory with the release files; sizes/hashes are checked")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     try:
@@ -91,6 +121,7 @@ def main(argv: list[str]) -> int:
             key_id=a.key_id,
             key_cert=json.loads(a.key_cert.read_text(encoding="utf-8")),
             revocations=json.loads(a.revocations.read_text(encoding="utf-8")),
+            files_dir=a.files_dir,
         )
     except (ValueError, KeyError, OSError) as exc:
         print(f"sign: {exc}", file=sys.stderr)

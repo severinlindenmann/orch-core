@@ -71,6 +71,21 @@ def build_revocations(*, min_serial: int, revoked: list[int], issued_at: str) ->
     }
 
 
+def check_successor(new: dict[str, Any], previous: dict[str, Any]) -> None:
+    """A new revocation list may only add to the previous one and may not be older (clients refuse an older list)."""
+    need(new["issued_at"] >= previous["issued_at"], "issued_at is older than the previous revocation list")
+    need(new["min_serial"] >= previous["min_serial"], "min_serial is lower than in the previous list")
+    dropped = set(previous["revoked"]) - set(new["revoked"])
+    need(not dropped, f"the new list drops revoked serials {sorted(dropped)}")
+
+
+def load_previous(path: Path) -> dict[str, Any]:
+    """The doc inside a `revocations` object (as written by `revoke`), or a bare doc."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    doc = json.loads(base64.b64decode(data["doc"], validate=True)) if "doc" in data else data
+    return build_revocations(min_serial=doc["min_serial"], revoked=doc["revoked"], issued_at=doc["issued_at"])
+
+
 def certify(root: Ed25519PrivateKey, root_key_id: str, cert: dict[str, Any]) -> dict[str, str]:
     body = jcs(cert)
     return {"cert": b64(body), "root_key_id": root_key_id, "sig": b64(root.sign(CERT_DOMAIN + body))}
@@ -101,6 +116,8 @@ def main(argv: list[str]) -> int:
     r.add_argument("--min-serial", type=int, required=True)
     r.add_argument("--revoked", default="", help="comma separated serials")
     r.add_argument("--issued-at", required=True)
+    r.add_argument("--previous", type=Path, help="the previous revocations object (file); required")
+    r.add_argument("--initial", action="store_true", help="the very first list: there is no previous one")
     a = ap.parse_args(argv)
     try:
         need(KEY_ID.fullmatch(a.root_key_id) is not None, f"bad root key id: {a.root_key_id!r}")
@@ -121,8 +138,11 @@ def main(argv: list[str]) -> int:
                 revoked=[int(x) for x in a.revoked.split(",") if x],
                 issued_at=a.issued_at,
             )
+            need((a.previous is None) != (not a.initial), "give exactly one of --previous FILE or --initial")
+            if a.previous is not None:
+                check_successor(doc, load_previous(a.previous))
             out = revoke(load_key(a.root_key_env), a.root_key_id, doc)
-    except ValueError as exc:
+    except (ValueError, KeyError, OSError) as exc:
         print(f"rootkey: {exc}", file=sys.stderr)
         return 1
     a.out.write_text(json.dumps(out, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")

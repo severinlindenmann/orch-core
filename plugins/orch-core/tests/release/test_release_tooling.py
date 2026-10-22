@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -44,16 +43,27 @@ def key(name: str, monkeypatch, env="ORCH_TEST_KEY"):
 
 
 def reference_verify(case: dict) -> str:
-    # TODO(U2): switch to orch.update.verify once release-verify lands; until then the contract's reference verifier.
-    spec = importlib.util.spec_from_file_location(
-        "ref_verifier", Path(__file__).resolve().parents[1] / "update" / "test_vectors_shape.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """Verify with the real verifier (orch.update.verify) against the TEST root; returns the reason."""
+    from datetime import datetime
+
+    from orch.update.verify import UpdateRefused, verify_envelope
+
+    st = case["state"]
+    roots = {k: base64.b64decode(v) for k, v in KEYS["trusted_roots"].items() if k in st["trusted_roots"]}
+    files = {f["name"]: base64.b64decode(f["content_b64"]) for f in case["files"]} if "files" in case else None
     try:
-        mod.verify(case)
-    except mod.Refuse as e:
-        return e.reason
+        verify_envelope(
+            case["envelope"].encode(),
+            purpose=case["purpose"],
+            channel=case["channel"],
+            now=datetime.fromisoformat(case["now"].replace("Z", "+00:00")),
+            seq_seen=st["seq_seen"],
+            revocations_issued_at=st["revocations_issued_at"],
+            files=files,
+            roots=roots,
+        )
+    except UpdateRefused as e:
+        return e.reason.value
     return "ok"
 
 
@@ -196,6 +206,7 @@ def test_cli_round_trip_and_files_match_manifest(tmp_path, monkeypatch):
         "2",
         "--revoked",
         "4",
+        "--initial",
         "--issued-at",
         KEYS["revocations"]["issued_at"],
         "--out",
@@ -362,6 +373,9 @@ def test_rootkey_validation():
     ]
 
 
+REL = ["--version", "2.0.0", "--channel", "main", "--commit", "a" * 7]
+
+
 def make_wheel(path: Path, files: dict[str, bytes]) -> Path:
     with zipfile.ZipFile(path, "w") as z:
         for n, d in files.items():
@@ -382,6 +396,14 @@ def test_check_wheels(tmp_path):
     assert check_wheels.check_core(ok_core) == [] and check_wheels.check_dashboard(ok_dash) == []
     assert "_build.json" in check_wheels.check_core(no_core)[0]
     assert "index.html" in check_wheels.check_dashboard(no_dash)[0]
-    assert check_wheels.main(["--core", str(ok_core), "--dashboard", str(ok_dash)]) == 0
-    assert check_wheels.main(["--core", str(no_core), "--dashboard", str(ok_dash)]) == 1
+    assert check_wheels.main(["--core", str(ok_core), "--dashboard", str(ok_dash), *REL]) == 0
+    assert check_wheels.main(["--core", str(no_core), "--dashboard", str(ok_dash), *REL]) == 1
+    assert check_wheels.main(["--core", str(ok_core), "--dashboard", str(ok_dash), *REL[:4], "--commit", "b" * 7]) == 1
+    assert (
+        check_wheels.main(
+            ["--core", str(ok_core), "--dashboard", str(ok_dash), *REL[:2], "--channel", "develop", *REL[4:]]
+        )
+        == 1
+    )
+    assert check_wheels.main(["--core", str(ok_core), "--dashboard", str(ok_dash), "--version", "2.0.1", *REL[2:]]) == 1
     assert check_wheels.check_core(tmp_path / "missing.whl")

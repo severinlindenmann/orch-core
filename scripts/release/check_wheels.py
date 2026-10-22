@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Check built wheels before they are signed: ``check_wheels.py --core X.whl --dashboard Y.whl``.
+"""Check built wheels before they are signed.
+
+    check_wheels.py --core X.whl --dashboard Y.whl --version V --channel C --commit SHA
 
 The core wheel must carry orch/_build.json (written by stamp.py), valid JSON with version, channel, commit and
-built_at. The dashboard wheel must carry the prebuilt page (orch_dashboard/static/index.html) and its add-on
+built_at; version, channel and commit must equal the release being built. The dashboard wheel must carry the prebuilt page (orch_dashboard/static/index.html) and its add-on
 manifest (orch_dashboard/orch-addon.json); see addons/dashboard/server/hatch_build.py.
 """
 
@@ -18,7 +20,7 @@ BUILD_KEYS = {"version", "channel", "commit", "built_at"}
 DASHBOARD_FILES = ("orch_dashboard/static/index.html", "orch_dashboard/orch-addon.json")
 
 
-def check_core(wheel: Path) -> list[str]:
+def check_core(wheel: Path, expect: dict[str, str] | None = None) -> list[str]:
     try:
         with zipfile.ZipFile(wheel) as z:
             if "orch/_build.json" not in z.namelist():
@@ -28,7 +30,11 @@ def check_core(wheel: Path) -> list[str]:
         return [f"{wheel.name}: cannot read the wheel or orch/_build.json: {exc}"]
     if not isinstance(data, dict) or not BUILD_KEYS <= set(data):
         return [f"{wheel.name}: orch/_build.json lacks one of {sorted(BUILD_KEYS)}"]
-    return []
+    return [
+        f"{wheel.name}: _build.json {k} is {data[k]!r}, the release being built has {v!r}"
+        for k, v in (expect or {}).items()
+        if data[k] != v
+    ]
 
 
 def check_dashboard(wheel: Path) -> list[str]:
@@ -48,8 +54,12 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--core", type=Path, required=True)
     ap.add_argument("--dashboard", type=Path, required=True)
+    for k in ("version", "channel", "commit"):
+        ap.add_argument(f"--{k}", required=True, help=f"the release's {k}; must equal the stamped _build.json")
     a = ap.parse_args(argv)
-    problems = check_core(a.core) + check_dashboard(a.dashboard)
+    problems = check_core(a.core, {k: getattr(a, k) for k in ("version", "channel", "commit")}) + check_dashboard(
+        a.dashboard
+    )
     for p in problems:
         print(f"check_wheels: {p}", file=sys.stderr)
     return 1 if problems else 0

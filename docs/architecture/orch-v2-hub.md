@@ -108,7 +108,9 @@ The hub runs on Linux only. Workspaces keep every platform the core supports (D6
 - **Local socket.** The hub accepts only registered `orch-host-<ws>` UIDs (peer-UID check), maps each UID to exactly one
   `workspace_id`, and refuses agent UIDs. The `WSK` challenge below is still required.
 - **Across machines: TLS with pinned keys, not WebPKI.** The hub card carries an `HK_op`-signed SPKI of the hub's TLS
-  key, and the host pins it. The host proves `WSK` by signing a hub challenge bound to the TLS exporter.
+  key, and the host pins it. The host proves `WSK` by signing a hub challenge bound to the TLS exporter. Rotating `HK_op`
+  changes that pin: the host takes the new SPKI from the new card through the `HK_root` chain, and drops pins issued
+  under a revoked `HK_op`.
 - **Every link message is signed as well**, `WSK` from the host and `hub-route` from the hub, with sequence numbers and
   a replay store. Link security does not rest on TLS alone.
 

@@ -370,3 +370,13 @@ def test_a_frozen_host_fails_closed(pkg, tmp_path, monkeypatch, host, code):
     monkeypatch.setattr(runner.sys, "executable", str(exe) if host is not None else "")
     refused(pkg, "ok", code)
     assert not marker.exists()
+
+
+def test_an_incompatible_addon_is_never_started(tmp_path):
+    from tests.addons.helpers import manifest
+
+    d = make_package(tmp_path, man=manifest(schema="orch.addon/3", api=">=2.0,<3"))
+    package = read_package(d)
+    p = (d, package, granted_for(package))
+    err = refused(p, "manual", "addon.incompatible")
+    assert "API" in err.detail

@@ -1,0 +1,103 @@
+"""Independent check with orch-core's own primitives (canonical JSON, suite-2 verify, b64u, F1 signing bytes, the live
+label table). Read-only import from an orch-core checkout; skipped when none is present (GitHub CI). Path:
+$ORCH_CORE_SRC, else ~/orch-dev/orch-core/plugins/orch-core/src."""
+
+from __future__ import annotations
+
+import importlib
+import itertools
+import json
+import os
+import struct
+import sys
+from pathlib import Path
+
+import pytest
+
+SRC = Path(os.environ.get("ORCH_CORE_SRC", Path.home() / "orch-dev/orch-core/plugins/orch-core/src"))
+if not (SRC / "orch" / "crypto" / "suite.py").is_file():
+    pytest.skip("orch-core source not present", allow_module_level=True)
+sys.path.insert(0, str(SRC))
+try:
+    core_suite = importlib.import_module("orch.crypto.suite")
+    core_enc = importlib.import_module("orch.crypto.encoding")
+    core_labels = importlib.import_module("orch.crypto.labels")
+    core_jcs = importlib.import_module("orch.canon.jcs")
+    core_hash = importlib.import_module("orch.canon.hashing")
+finally:
+    sys.path.remove(str(SRC))
+
+from orch_hub.contract.labels import HUB_LABELS
+
+V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+
+
+def pub(name: str) -> bytes:
+    return core_enc.unb64u(V["keys"][name]["pub"], 65)
+
+
+def core_verify_object(signed: dict, label: str, key: str) -> bool:
+    return core_suite.verify(pub(key), core_enc.unb64u(signed["sig"], 64), label.encode() + core_jcs.dumps(signed["o"]))
+
+
+def test_binding_and_unbound_with_core_primitives():
+    b, u = V["objects"]["binding_a_1"], V["objects"]["unbound_a_1"]
+    assert core_verify_object(b, "orch/v2/sig/hub-binding|", "wsk_a")
+    assert core_verify_object(u, "orch/v2/sig/hub-unbound|", "wsk_a")
+    assert not core_verify_object(b, "orch/v2/sig/hub-unbound|", "wsk_a")
+    assert not core_verify_object(b, "orch/v2/sig/hub-binding|", "wsk_b")
+    # the derived hub id, with core's hash
+    root = core_enc.unb64u(b["o"]["hk_root_pub"], 65)
+    assert core_suite.sha256(b"orch/v2/id/hub|" + bytes([2]) + root)[:16].hex() == b["o"]["hub_id"]
+
+
+def test_publish_request_with_core_primitives():
+    p = V["publish"]
+    r, h = p["request"], p["request"]["headers"]
+
+    def lp16(s: str) -> bytes:
+        return struct.pack(">H", len(s)) + s.encode()
+
+    signed = (b"orch/v2/publish|" + bytes([2]) + bytes.fromhex(h["Orch-Workspace"]) + struct.pack(">Q", int(h["Orch-Ts"]))
+              + bytes.fromhex(h["Orch-Nonce"]) + lp16(r["method"]) + lp16(r["host"]) + lp16(r["target"])
+              + core_suite.sha256(bytes.fromhex(r["body_hex"])))
+    assert signed.hex() == p["wsk_signed_hex"]
+    assert core_suite.verify(pub("wsk_a"), core_enc.unb64u(h["Orch-Signature"], 64), signed)
+    hub_bytes = b"orch/v2/hub-publish|" + bytes([2]) + bytes.fromhex(h["Orch-Hub"]) + core_suite.sha256(signed)
+    assert core_suite.verify(pub("hk_op"), core_enc.unb64u(h["Orch-Hub-Signature"], 64), hub_bytes)
+    appr = core_jcs.loads_strict(core_enc.unb64u(h["Orch-Owner-Approval"]))
+    assert core_verify_object(appr, "orch/v2/sig/hub-publish-approval|", "dk_alice_mac.sig")
+    assert core_verify_object(appr["device_cert"], "orch/v2/sig/device-cert|", "pk_alice")
+    assert core_suite.person_id(pub("pk_alice")).hex() == V["ids"]["person_alice"]
+    assert core_suite.device_id(pub("dk_alice_mac.sig")).hex() == appr["o"]["device_id"]
+
+
+def test_hub_joined_is_a_core_person_event():
+    j = V["hub_joined"]
+    msg = core_hash.person_signing_bytes(V["ids"]["workspace_a"], "workspace", j["event"])
+    assert msg.hex() == j["signed_hex"]
+    assert core_suite.verify(pub(j["signer"]), core_enc.unb64u(j["event"]["sig"], 64), msg)
+
+
+def test_custodial_context_is_core_signed_context():
+    c = V["custodial"]
+    e = {k: v for k, v in c["event"].items() if k != "sig"}
+    ticket = core_hash.signed_context("sig_ticket_event", c["workspace_id"], c["log"], e)
+    body = ticket[len(b"orch/v2/sig/ticket-event|"):]
+    assert bytes.fromhex(c["uk_signed_hex"]) == c["uk_label"].encode() + body
+
+
+def test_every_canonical_byte_string_is_core_cj():
+    for e in V["signatures"]:
+        raw = bytes.fromhex(e["canonical_hex"])
+        assert core_jcs.dumps(core_jcs.loads_strict(raw)) == raw
+
+
+def test_hub_labels_prefix_free_with_live_core_table():
+    live = {v for v in core_labels.LABELS.values() if v.endswith("|")}
+    live |= {v for v in core_labels.PLANNED_LABELS.values() if v.endswith("|")}
+    live |= set(core_hash.LABELS.values())
+    hub = set(HUB_LABELS.values()) | {"orch/v2/hub-custodial|gate.approved|"}
+    assert not hub & live
+    for a, b in itertools.permutations(sorted(live | hub), 2):
+        assert not b.startswith(a), (a, b)

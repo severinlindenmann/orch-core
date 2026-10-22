@@ -22,11 +22,13 @@ from .access.cli import ACCESS_FILE
 from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
+from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .router import AccessAuthz, RouteQueue, Router
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
+WK_SEAL_FILE = "wk-seal.db"
 
 
 _HEX16 = re.compile(r"[0-9a-f]{32}")
@@ -95,6 +97,7 @@ def serve(
     access = Access(str(state / ACCESS_FILE))
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
+    wk_seals = WkSeals(str(state / WK_SEAL_FILE), hub_id=keys.hub_id, hxk_pub=keys.hxk_pub, exchange=keys.hxk_exchange)
     router = Router(registry, queue, AccessAuthz(registry, access))
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
@@ -107,6 +110,7 @@ def serve(
         downstream=fw,
         router=router,
         access=access,
+        wk_seals=wk_seals,
         host=host,
         port=port,
     )
@@ -127,5 +131,6 @@ def serve(
         server.close()
         queue.close()
         registry.close()
+        wk_seals.close()
         access.close()
     return 0

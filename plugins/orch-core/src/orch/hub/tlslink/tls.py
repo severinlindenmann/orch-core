@@ -13,6 +13,7 @@ import hmac
 import select
 import socket
 import time
+from functools import partial
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -86,8 +87,7 @@ class TlsConn:
     def recv_exact(self, n: int, deadline: float) -> bytes:
         out = bytearray()
         while len(out) < n:
-            want = n - len(out)
-            chunk = self._run(lambda: self._c.recv(want), deadline)
+            chunk = self._run(partial(self._c.recv, n - len(out)), deadline)
             if not chunk:
                 raise LinkClosed("eof")
             out += chunk
@@ -96,7 +96,7 @@ class TlsConn:
     def send_all(self, data: bytes, deadline: float) -> None:
         view, off = memoryview(data), 0
         while off < len(view):
-            off += self._run(lambda part=view[off:]: self._c.send(part), deadline)
+            off += self._run(partial(self._c.send, view[off:]), deadline)
 
     def exporter(self) -> bytes:
         """The TLS 1.3 exporter: label ``EXPORTER-orch-hub-link``, empty context, 32 bytes (section 10.1)."""

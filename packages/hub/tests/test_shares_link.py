@@ -1,52 +1,152 @@
 # ruff: noqa: F811  (the `shub` fixture is imported then named as an argument)
-"""share_put / share_revoke over real links (protocol.md §10.2): selective only, replace, revoke, purge, caps."""
+"""share_put / share_revoke over real links (protocol.md §10.2, §10.2b): selective only, the version rule, tombstones,
+purge, limits, and the `share` events on the hub audit chain."""
 
 from __future__ import annotations
 
 import pytest
-from shares_helpers import IT1, IT2, OWNER, refused, sealed, shub  # noqa: F401
+from shares_helpers import IT1, IT2, IT3, OWNER, audit_records, body, refused, shub  # noqa: F401
 
+import orch_hub.contract.phase4 as P4
 from orch_hub.contract import vectorgen as G
+from orch_hub.contract import vectorgen_p4 as V4
 from orch_hub.contract.canon import b64u, unb64u
+from orch_hub.contract.hub import Refused
 from orch_hub.link import LinkError
-from orch_hub.shares import MAX_ITEM_BYTES, MAX_ITEMS, NotSpecified, open_shared_item
+from orch_hub.shares import MAX_ITEM_BYTES, MAX_ITEMS, open_shared_item
 
 
-def test_put_replace_revoke(shub):
+def test_limits_are_the_contracts():
+    assert MAX_ITEM_BYTES == 16 * 1024 and MAX_ITEMS == 1000 and OWNER
+
+
+def test_put_replace_stale_revoke_reshare(shub):
     h = shub()
     c = h.join()
-    assert c.request("share_put", {"item_id": IT1, "sealed": sealed("a")}) == {}
-    assert h.share_store.get(G.WS_A, IT1)[0] == unb64u(sealed("a"))
-    # replace: the later put wins
-    assert c.request("share_put", {"item_id": IT1, "sealed": sealed("b")}) == {}
-    assert h.share_store.get(G.WS_A, IT1)[0] == unb64u(sealed("b"))
-    assert h.share_store.usage(G.WS_A)[0] == 1
-    # identical bytes again: idempotent, no extra log row
+    b1 = body(IT1, 1)
+    assert c.request("share_put", b1) == {}
+    assert h.share_store.get(G.WS_A, IT1)[0] == unb64u(b1["sealed"])
     n = len(h.share_store.log())
-    assert c.request("share_put", {"item_id": IT1, "sealed": sealed("b")}) == {}
-    assert len(h.share_store.log()) == n
+    assert c.request("share_put", b1) == {}  # same version, same bytes: idempotent, nothing logged or audited
+    assert len(h.share_store.log()) == n and len(audit_records(h)) == 1
+    b2 = body(IT1, 2, title="Still open")
+    assert c.request("share_put", b2) == {}  # a higher version replaces
+    assert h.share_store.get(G.WS_A, IT1)[0] == unb64u(b2["sealed"])
+    assert h.share_store.usage(G.WS_A)[0] == 1
+    refused(c, "share_put", b1, "stale_version")  # lower
+    refused(c, "share_put", body(IT1, 2, title="Other"), "stale_version")  # equal version, other bytes
+    assert h.share_store.held(G.WS_A, IT1)["item_version"] == 2
     assert c.request("share_revoke", {"item_id": IT1}) == {}
     assert h.share_store.get(G.WS_A, IT1) is None
-    assert c.request("share_revoke", {"item_id": IT1}) == {}  # a retried revoke is an idempotent {}
-    assert [e["change"] for e in h.share_store.log()] == ["put", "replace", "revoke"]
-    assert [e["change"] for e in h.events] == ["put", "replace", "revoke"]
+    assert h.share_store.held(G.WS_A, IT1) == {
+        "item_version": 2,
+        "hash": P4.item_hash(V4.share_item(2, item_id=IT1, content={**V4.NEEDS_YOU, "title": "Still open"})),
+        "revoked": True,
+    }
+    assert c.request("share_revoke", {"item_id": IT1}) == {}  # idempotent
+    assert c.request("share_revoke", {"item_id": IT2}) == {}  # an id the hub never saw
+    refused(c, "share_put", b2, "stale_version")  # a revoked item cannot be replayed at its old version
+    refused(c, "share_put", b1, "stale_version")
+    assert c.request("share_put", body(IT1, 3)) == {}  # shared again with a higher version
+    assert h.share_store.usage(G.WS_A)[0] == 1
+    assert [e["change"] for e in h.share_store.log()] == ["put", "replace", "revoke", "put"]
+
+
+def test_every_accepted_change_is_a_share_event_on_the_chain(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_put", body(IT1, 1))
+    c.request("share_put", body(IT1, 2, title="v2"))
+    c.request("share_put", body(IT1, 2, title="v2"))  # resend: no event
+    c.request("share_revoke", {"item_id": IT1})
+    c.request("share_revoke", {"item_id": IT1})  # idempotent: no event
+    refused(c, "share_put", body(IT1, 1), "stale_version")  # refused: no event
+    recs = audit_records(h)
+    assert [(r["type"], ev["change"], ev["item_version"]) for r, ev in recs] == [
+        ("share", "put", 1),
+        ("share", "put", 2),
+        ("share", "revoke", 2),
+    ]
+    for r, ev in recs:
+        assert r["scope_tag"] is not None and ev["workspace_id"] == G.WS_A and ev["item_id"] == IT1
+        assert len(unb64u(ev["nonce"])) == 32
+    assert recs[0][1]["item_hash"] == P4.item_hash(V4.share_item(1, item_id=IT1)) and recs[2][1]["item_hash"] is None
+    # the chain holds hashes and tags only: no title anywhere in a record
+    assert all("tariffs" not in repr(r) for r, _ in recs)
+
+
+def test_a_failing_audit_sink_refuses_the_change(shub):
+    h = shub()
+    c = h.join()
+
+    def boom(_ev):
+        raise RuntimeError("audit down")
+
+    h.svc._on_change = boom
+    with pytest.raises(LinkError) as e:
+        c.request("share_put", body(IT1, 1))
+    assert e.value.code == "internal"
+    assert h.share_store.usage(G.WS_A) == (0, 0)  # audited BEFORE it commits: nothing stored
 
 
 def test_audit_log_holds_no_content(shub):
     h = shub()
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("secret-title")})
+    c.request("share_put", body(IT1, 1, title="secret-title"))
     for row in h.share_store.log():
         assert set(row) == {"ws", "item_id", "change", "digest", "count", "ts_ms"}
         assert "secret-title" not in repr(row)
 
 
+@pytest.mark.parametrize(
+    ("make", "code"),
+    [
+        (lambda: V4.share_body(V4.share_item(wsk="wsk_b")), "bad_signature"),
+        (lambda: V4.share_body(V4.share_item(label="sig_space_item")), "bad_signature"),
+        (lambda: V4.share_body(hxk="wxk_a"), "bad_wrap"),
+        (lambda: V4.share_body(item_id=IT2), "bad_wrap"),  # the item moved to another id
+        (lambda: {"item_id": V4.ITEM, "sealed": b64u(bytes(40))}, "bad_wrap"),
+        (lambda: body(title="a\nb"), "malformed"),  # the text rule
+        (lambda: body(title="x" * 201), "malformed"),
+        (lambda: V4.share_body(V4.share_item(workspace_id=G.WS_B)), "bad_wrap"),
+        (lambda: V4.share_body(V4.share_item(item_kind="ticket", content=V4.NEEDS_YOU)), "malformed"),
+        (lambda: V4.share_body(V4.share_item(content={**V4.NEEDS_YOU, "extra": 1})), "malformed"),
+        (lambda: {"item_id": V4.ITEM, "sealed": b64u(bytes(MAX_ITEM_BYTES + 1))}, "too_large"),
+    ],
+)
+def test_refusals_store_nothing(shub, make, code):
+    h = shub()
+    c = h.join()
+    refused(c, "share_put", make(), code)
+    assert h.share_store.usage(G.WS_A) == (0, 0) and audit_records(h) == []
+
+
+def test_dev_item_is_refused_at_a_real_hub(shub):
+    h = shub()
+    c = h.join()
+    h.svc._dev = False
+    refused(c, "share_put", body(), "dev_refused")
+
+
+def test_item_cap(shub, monkeypatch):
+    monkeypatch.setattr(P4, "SHARE_MAX_ITEMS", 2)
+    h = shub()
+    c = h.join()
+    c.request("share_put", body(IT1, 1))
+    c.request("share_put", body(IT2, 1))
+    refused(c, "share_put", body(IT3, 1), "too_many_items")
+    assert c.request("share_put", body(IT1, 2, title="replace at the cap")) == {}
+    c.request("share_revoke", {"item_id": IT2})  # a tombstone is not a live item
+    assert c.request("share_put", body(IT3, 1)) == {}
+    refused(c, "share_put", body(IT2, 2), "too_many_items")  # re-sharing a revoked id counts as a new live item
+
+
 def test_full_mode_refused(shub):
     h = shub()
     h.join("full")
-    for op, body in (("share_put", {"item_id": IT1, "sealed": sealed("a")}), ("share_revoke", {"item_id": IT1})):
+    for op, b in (("share_put", body()), ("share_revoke", {"item_id": IT1})):
         c = h.open()  # a refusal at the link drops it: one fresh link per op
-        c.send_raw(c.build(op, body))
+        c.send_raw(c.build(op, b))
         with pytest.raises(LinkError) as e:
             c.recv_reply()
         assert e.value.code == "wrong_mode"  # §10.2 step 3: refused at the link, never reaches the store
@@ -55,46 +155,45 @@ def test_full_mode_refused(shub):
 
 def test_service_itself_refuses_full_mode(shub):
     """Defence in depth: even if the link layer let it through, the handler checks the live binding's mode."""
-    from orch_hub.contract.hub import Refused
-
     h = shub()
     h.join("full")
     with pytest.raises(Refused) as e:
-        h.svc.put(G.WS_A, {"item_id": IT1, "sealed": sealed("a")})
+        h.svc.put(G.WS_A, body())
     assert e.value.code == "wrong_mode"
     with pytest.raises(Refused) as e:
-        h.svc.put(G.WS_B, {"item_id": IT1, "sealed": sealed("a")})  # never joined
+        h.svc.put(G.WS_B, body())  # never joined
     assert e.value.code == "unknown_workspace"
 
 
 def test_wk_seal_store_stays_empty_for_selective(shub):
     h = shub()
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("a")})
+    c.request("share_put", body())
     c.send_raw(c.build("wk_seal", {"epoch": 1, "wrap": "AA"}))
     with pytest.raises(LinkError) as e:
         c.recv_reply()
     assert e.value.code == "wrong_mode"
 
 
-def test_unbind_purges_every_item(shub):
+def test_unbind_purges_every_item_and_keeps_the_versions(shub):
     h = shub()
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("a")})
-    c.request("share_put", {"item_id": IT2, "sealed": sealed("b")})
+    c.request("share_put", body(IT1, 1))
+    c.request("share_put", body(IT2, 3))
     assert h.share_store.usage(G.WS_A)[0] == 2
     assert c.request("binding_put", {"object": G.unbound(seq=1)}) == {}
     assert h.share_store.usage(G.WS_A) == (0, 0)
     last = h.share_store.log(G.WS_A)[-1]
     assert last["change"] == "unbind" and last["count"] == 2 and last["item_id"] is None
-    assert [e["change"] for e in h.events][-1] == "unbind"
-    refused(c, "share_put", {"item_id": IT1, "sealed": sealed("a")}, "not_bound")
+    assert h.share_store.held(G.WS_A, IT2)["revoked"] and h.share_store.held(G.WS_A, IT2)["item_version"] == 3
+    assert len(audit_records(h)) == 2  # the chain has no unbind event (§10.5): only the puts
+    refused(c, "share_put", body(), "not_bound")
 
 
 def test_switch_to_full_purges(shub):
     h = shub()
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("a")})
+    c.request("share_put", body())
     assert c.request("binding_put", {"object": G.binding(seq=2, mode="full")}) == {}
     assert h.share_store.usage(G.WS_A) == (0, 0)
 
@@ -102,7 +201,7 @@ def test_switch_to_full_purges(shub):
 def test_reconcile_after_restart_drops_orphans(shub, tmp_path):
     h = shub(store_path=str(tmp_path / "shares.db"))
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("a")})
+    c.request("share_put", body())
     # simulate a crash between the unbind and the purge: flip the registry only
     h.registry.set_binding_state(G.WS_A, {"binding_seq": 1, "status": "unbound", "binding": None})
     assert h.share_store.usage(G.WS_A)[0] == 1
@@ -110,36 +209,11 @@ def test_reconcile_after_restart_drops_orphans(shub, tmp_path):
     assert h.share_store.usage(G.WS_A) == (0, 0)
 
 
-def test_size_caps(shub):
-    h = shub()
-    c = h.join()
-    refused(c, "share_put", {"item_id": IT1, "sealed": b64u(bytes(MAX_ITEM_BYTES + 1))}, "too_large")
-    assert c.request("share_put", {"item_id": IT1, "sealed": b64u(bytes(MAX_ITEM_BYTES))}) == {}
-    refused(c, "share_put", {"item_id": IT2, "sealed": ""}, "malformed")  # empty
-    assert h.share_store.usage(G.WS_A) == (1, MAX_ITEM_BYTES)
-
-
-def test_item_count_and_workspace_byte_caps(shub, monkeypatch):
-    import orch_hub.shares.service as SV
-
-    monkeypatch.setattr(SV, "MAX_ITEMS", 2)
-    monkeypatch.setattr(SV, "MAX_WS_BYTES", 100)
-    h = shub()
-    c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": sealed("a", 40)})
-    c.request("share_put", {"item_id": IT2, "sealed": sealed("b", 40)})
-    refused(c, "share_put", {"item_id": G.fake16("it3"), "sealed": sealed("c", 10)}, "too_large")  # third item
-    refused(c, "share_put", {"item_id": IT1, "sealed": sealed("z", 70)}, "too_large")  # 70 + 40 > 100
-    assert c.request("share_put", {"item_id": IT1, "sealed": sealed("z", 60)}) == {}  # replace within the cap
-    assert h.share_store.usage(G.WS_A) == (2, 100)
-    assert MAX_ITEMS == 1000
-
-
 def test_malformed_bodies(shub):
     h = shub()
     c = h.join()
-    for body in ({"item_id": "nothex", "sealed": sealed("a")}, {"item_id": IT1}, {"item_id": IT1, "sealed": "!!"}):
-        c.send_raw(c.build("share_put", body))
+    for b in ({"item_id": "nothex", "sealed": body()["sealed"]}, {"item_id": IT1}, {"item_id": IT1, "sealed": "!!"}):
+        c.send_raw(c.build("share_put", b))
         with pytest.raises(LinkError) as e:
             c.recv_reply()
         assert e.value.code == "malformed"
@@ -151,29 +225,45 @@ def test_workspaces_are_separate(shub):
     a = h.join()
     b = h.open(G.WS_B, "wsk_b", first=True)
     b.request("join", h.join_body("invB", G.WS_B, wsk="wsk_b"))
-    a.request("share_put", {"item_id": IT1, "sealed": sealed("a")})
-    b.request("share_put", {"item_id": IT1, "sealed": sealed("b")})  # same item id, other workspace
+    a.request("share_put", body(IT1, 1))
+    # B's item has the same id: signed by B's key and bound to B
+    ib = V4.share_item(1, wsk="wsk_b", workspace_id=G.WS_B, item_id=IT1)
+    b.request("share_put", V4.share_body(ib))
     assert h.share_store.get(G.WS_A, IT1)[0] != h.share_store.get(G.WS_B, IT1)[0]
     b.request("share_revoke", {"item_id": IT1})
     assert h.share_store.get(G.WS_A, IT1) is not None
+    refused(a, "share_put", V4.share_body(ib), "bad_wrap")  # B's item replayed on A's link
 
 
 def test_hub_stores_exactly_what_it_received(shub, tmp_path):
-    marker = b"PLAINTEXT-MARKER-0123456789"
-    raw = marker + bytes(range(64))  # stands in for an opaque sealed blob
     p = tmp_path / "shares.db"
     h = shub(store_path=str(p))
     c = h.join()
-    c.request("share_put", {"item_id": IT1, "sealed": b64u(raw)})
-    assert h.share_store.get(G.WS_A, IT1)[0] == raw  # byte for byte; no transformation, no extracted fields
-    assert h.share_store.items(G.WS_A)[0].keys() == {"item_id", "sealed", "digest", "size", "stored_ms"}
+    b = body(title="PLAINTEXT-MARKER-0123456789")
+    c.request("share_put", b)
+    assert h.share_store.get(G.WS_A, IT1)[0] == unb64u(b["sealed"])  # byte for byte
+    assert h.share_store.items(G.WS_A)[0].keys() == {"item_id", "sealed", "digest", "size", "stored_ms", "item_version"}
     assert (p.stat().st_mode & 0o077) == 0  # private db
+    h.share_store.close()
+    assert b"PLAINTEXT-MARKER" not in p.read_bytes()  # sealed at rest: the title is nowhere in the file
 
 
-def test_open_shared_item_is_not_specified():
-    with pytest.raises(NotSpecified):
-        open_shared_item(b"anything")
-
-
-def test_max_items_constant():
-    assert MAX_ITEMS == 1000 and OWNER
+def test_open_shared_item_verifies_signature_and_content():
+    b = body(title="Open me")
+    r = open_shared_item(
+        unb64u(b["sealed"]),
+        hub_id=G.HUB_ID,
+        workspace_id=G.WS_A,
+        item_id=IT1,
+        hxk=G.K.priv["hxk"],
+        wsk_pub=G.K.pub["wsk_a"],
+        dev_mode=True,
+    )
+    assert r["item"]["content"]["title"] == "Open me" and r["hash"].startswith("sha256:")
+    kw = {"hub_id": G.HUB_ID, "workspace_id": G.WS_A, "item_id": IT1, "hxk": G.K.priv["hxk"], "dev_mode": True}
+    with pytest.raises(Refused) as e:
+        open_shared_item(unb64u(b["sealed"]), wsk_pub=G.K.pub["wsk_b"], **kw)
+    assert e.value.code == "bad_signature"
+    with pytest.raises(Refused) as e:
+        open_shared_item(unb64u(b["sealed"])[:-1] + b"\x00", wsk_pub=G.K.pub["wsk_a"], **kw)
+    assert e.value.code == "bad_wrap"

@@ -119,6 +119,19 @@ class AuditLog:
             },
         )
 
+    def share_change(self, ev: dict[str, Any]) -> dict[str, Any]:
+        """The ``on_change`` hook of the share service (§10.2b): an accepted ``share_put`` or ``share_revoke``."""
+        return self.append(
+            "share",
+            {
+                "workspace_id": ev["workspace_id"],
+                "item_id": ev["item_id"],
+                "change": ev["change"],
+                "item_version": ev["item_version"],
+                "item_hash": ev["item_hash"],
+            },
+        )
+
     # --- the link ops --------------------------------------------------------------------------------------------
 
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:

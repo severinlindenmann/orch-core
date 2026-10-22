@@ -187,7 +187,7 @@ def _shares(state: Path) -> dict[str, dict[str, int]]:
     db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
     try:
         db.execute("PRAGMA query_only=ON")
-        rows = db.execute("SELECT ws, COUNT(*), SUM(size) FROM share_item GROUP BY ws").fetchall()
+        rows = db.execute("SELECT ws, COUNT(*), SUM(size) FROM share_item WHERE revoked=0 GROUP BY ws").fetchall()
     except sqlite3.OperationalError:
         rows = []
     finally:

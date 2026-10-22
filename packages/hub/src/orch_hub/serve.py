@@ -26,7 +26,7 @@ from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .router import AccessAuthz, RouteQueue, Router
-from .shares import ShareService, ShareStore
+from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 
 REGISTRY_FILE = "registry.db"
@@ -117,7 +117,13 @@ def serve(
         on_change=audit.space_change,
     )
     share_store = ShareStore(str(state / SHARES_FILE))
-    shares = ShareService(share_store, registry)
+    shares = ShareService(
+        share_store,
+        registry,
+        hub_id=keys.hub_id,
+        hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
+        on_change=audit.share_change,
+    )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(

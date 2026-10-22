@@ -158,11 +158,14 @@ def test_inspect_shows_share_counts_only(make_hub, state):
 
     store = ShareStore(str(state / "shares.db"))
     reg = Registry(str(state / "registry.db"))
-    hub = make_hub(registry=reg, shares=ShareService(store, reg))
+    hub = make_hub(registry=reg, shares=ShareService(store, reg, hub_id=G.HUB_ID, hxk=G.K.priv["hxk"]))
     c = joined(hub)
-    c.request("share_put", {"item_id": G.fake16("i1"), "sealed": "AAECAw"})
+    from orch_hub.contract import vectorgen_p4 as V4
+
+    b = V4.share_body(V4.share_item(item_id=G.fake16("i1")))
+    c.request("share_put", b)
     w = inspect(state)["workspaces"][G.WS_A]
-    assert w["shares"] == {"items": 1, "bytes": 4}
+    assert w["shares"] == {"items": 1, "bytes": len(unb64u(b["sealed"]))}
     assert w["ops"]["share_put"] == {"accepted": 1, "refused": 0}
     assert G.fake16("i1") not in json.dumps(inspect(state))
     store.close()

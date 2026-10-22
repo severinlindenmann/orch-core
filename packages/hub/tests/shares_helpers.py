@@ -6,8 +6,10 @@ import pytest
 from conftest import NOW, Hub
 
 from orch_hub.access import Access
+from orch_hub.audit import AuditLog, AuditStore
+from orch_hub.contract import keystore as KS
 from orch_hub.contract import vectorgen as G
-from orch_hub.contract.canon import b64u
+from orch_hub.contract import vectorgen_p4 as V4
 from orch_hub.link import LinkError, Registry
 from orch_hub.shares import ShareService, ShareStore
 
@@ -22,7 +24,27 @@ class ShHub(Hub):
         self.share_store = ShareStore(store_path)
         reg = registry or Registry()
         self.events: list[dict] = []
-        self.svc = ShareService(self.share_store, reg, now_ms=lambda: NOW, on_change=self.events.append)
+        self.audit = AuditLog(
+            AuditStore(),
+            KS.OpSigner(G.K.priv["hk_op"]),
+            G.HUB_ID,
+            lambda: G.OP_CERT_ID,
+            op_cert_by_id=lambda i: G.op_cert() if i == G.OP_CERT_ID else None,
+            now_ms=lambda: NOW,
+        )
+
+        def on_change(ev):
+            self.events.append(ev)
+            self.audit.share_change(ev)
+
+        self.svc = ShareService(
+            self.share_store,
+            reg,
+            hub_id=G.HUB_ID,
+            hxk=G.K.priv["hxk"],
+            now_ms=lambda: NOW,
+            on_change=on_change,
+        )
         super().__init__(registry=reg, shares=self.svc, **kw)
         self.invites.owner_user = lambda inv: OWNER  # V3-D19: the admin's invite names the owner
         self.joined: dict[str, object] = {}
@@ -54,9 +76,15 @@ def shub():
         h.close()
 
 
-def sealed(tag: str, n: int = 40) -> str:
-    """Opaque bytes standing in for a sealed item (the hub never parses them)."""
-    return b64u((tag.encode() * n)[:n])
+def body(item_id: str = IT1, version: int = 1, title: str = "CSV or API for tariffs?", **kw) -> dict:
+    """A real ``share_put`` body (contract §10.2b): a WSK-signed ``needs_you`` item sealed to the hub's HXK."""
+    c = {**V4.NEEDS_YOU, "title": title}
+    return V4.share_body(V4.share_item(version, item_id=item_id, content=c, **kw))
+
+
+def audit_records(h) -> list[tuple[dict, dict]]:
+    """``(record o, event)`` of every ``share`` record on the hub's audit chain."""
+    return [(s["o"], ev) for _q, s, ev in h.audit.store.after(0, 1000) if s["o"]["type"] == "share"]
 
 
 def refused(c, op, body, code):
@@ -65,4 +93,17 @@ def refused(c, op, body, code):
     assert e.value.code == code
 
 
-__all__ = ["ADMIN", "IT1", "IT2", "IT3", "OTHER", "OWNER", "Access", "ShHub", "refused", "sealed", "shub"]
+__all__ = [
+    "ADMIN",
+    "IT1",
+    "IT2",
+    "IT3",
+    "OTHER",
+    "OWNER",
+    "Access",
+    "ShHub",
+    "audit_records",
+    "body",
+    "refused",
+    "shub",
+]

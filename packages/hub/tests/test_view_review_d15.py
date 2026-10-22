@@ -81,7 +81,7 @@ def test_holds_unbind_drop_and_retired_epoch(kit):
     assert kit.r.needs_you(WS, USER)
     kit.seals.retire(WS)
     with pytest.raises(Refused) as r:
-        kit.seals.open_epoch(WS, 1)  # a retired epoch never opens
+        kit.seals.open_for_view(WS, 1)  # a retired epoch never opens
     assert r.value.code == "unavailable"
     assert kit.r.needs_you(WS, USER) == []
     kit.vs.store.drop(WS)
@@ -96,3 +96,16 @@ def test_holds_forged_line_and_fork_are_refused(kit):
     with pytest.raises(Refused) as r:
         kit.vs.service.accept(WS, WSK_PUB, other.page("workspace", 2))
     assert r.value.code in ("bad_signature", "view_fork")
+
+
+def test_keyring_close_wipes_its_copy_and_never_copies_a_borrowed_key(kit):
+    from orch_hub.view.service import Keyring
+
+    borrowed = bytearray(b"k" * 32)
+    ring = Keyring(kit.seals, WS, {7: borrowed})
+    assert ring.get(7) is borrowed  # borrowed, not copied
+    opened = ring.get(1)
+    assert any(opened)
+    ring.close()
+    assert not any(opened)  # the copy it opened is wiped
+    assert borrowed == bytearray(b"k" * 32)  # the caller's key is the caller's to wipe

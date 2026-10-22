@@ -572,6 +572,13 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 | `verdict.given` | `outcome`, `hash`, `text?` (required on `fail`) |
 | `addon.disabled`, `addon.purged` | `name` (addon name) |
 
+**A new ticket's uid and key (L2-D15-4).** For `ticket.created` the hub proposes the `key` and the new uid. The uid is
+any fresh ULID (its derivation is not normative). The host accepts only `key == next_key` (its own allocator, which may
+have seen numbers the hub's view does not hold) and an unused uid; otherwise it refuses with `ticket.exists` or
+`ticket.key_not_next`. On `ticket.key_not_next` the channel prepares again (a new digest) and the person sees the new
+key. The key number counts restricted tickets too, as on the host (restricted is not secret), so this leaks nothing.
+A hub that cannot read every ticket log answers `unavailable` to `ticket.created`.
+
 **No free-form object anywhere in an action** (security review of 28e767d, field smuggling): every nested value has
 an exact schema, so no action can carry a reserved field or a field owned by another type at any depth (vectors
 `action_smuggle_*`: `set` of `ticket.visibility`, `ticket.tasks` with a `verify.cmd`, `ticket.acceptance`, `ticket.type`,

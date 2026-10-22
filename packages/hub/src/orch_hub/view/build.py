@@ -58,7 +58,7 @@ class StoreWorkspaceView:
         typ = action["type"]
         if typ in UNBUILDABLE:
             raise Refused("unavailable")
-        keys = Keyring(self._svc.seals, workspace_id, {epoch: bytes(wk_e)})
+        keys = Keyring(self._svc.seals, workspace_id, {epoch: wk_e})
         try:
             with self._svc.store.lock:  # one consistent read: heads and pages cannot move between the two
                 return self._build(keys, workspace_id, user_id, event_id, action)

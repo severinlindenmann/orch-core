@@ -18,18 +18,18 @@ from .store import ViewStore
 
 
 class Keyring:
-    """``WK_e`` per epoch, opened on demand for ONE use and zeroised on ``close`` (also the key the caller was handed
-    for its own epoch is never kept: ``known`` only borrows it)."""
+    """``WK_e`` per epoch, opened on demand for ONE use; ``close`` zeroises every copy it opened. A key the caller
+    hands in (``known``) is only borrowed, never copied: the caller owns it and wipes it."""
 
-    def __init__(self, seals: WkSeals, ws: str, known: dict[int, bytes] | None = None) -> None:
+    def __init__(self, seals: WkSeals, ws: str, known: dict[int, bytes | bytearray] | None = None) -> None:
         self._seals, self._ws = seals, ws
         self._known = dict(known or {})
         self._own: list[bytearray] = []
 
-    def get(self, epoch: int) -> bytes:
+    def get(self, epoch: int) -> bytes | bytearray:
         k = self._known.get(epoch)
         if k is None:
-            b = self._seals.open_epoch(self._ws, epoch)
+            b = self._seals.open_for_view(self._ws, epoch)
             self._own.append(b)
             self._known[epoch] = k = b
         return k

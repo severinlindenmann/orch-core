@@ -307,6 +307,10 @@ def main(
         from orch.cli.hub import main as hub_main
 
         return hub_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["space"]:  # files shared through a hub space (V3 C13): a host client, not a registry op
+        from orch.cli.space import main as space_main
+
+        return space_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["peer"]:  # ws->ws through the hub (V3 C12): a host client, not a registry op
         from orch.cli.peer import main as peer_main
 

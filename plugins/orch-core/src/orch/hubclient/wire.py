@@ -78,6 +78,14 @@ def _b64u_n(n: int) -> Callable[[Any], bool]:
     return ok
 
 
+def _b64u_any(x: Any) -> bool:
+    try:
+        unb64u(x)
+        return True
+    except _CanonError:
+        return False
+
+
 def _int_min(lo: int) -> Callable[[Any], bool]:
     return lambda x: type(x) is int and x >= lo
 
@@ -121,6 +129,46 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "tls_spki_sha256": _b64u_n(32),
         "card_seq": _int_min(1),
         "issued_ms": _int_min(0),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.space": {
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "space_id": hex16,
+        "epoch": _int_min(1),
+        "members": lambda x: type(x) is list,
+        "sk_commit": _b64u_n(32),
+        "issued_ms": _int_min(0),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.space_wrap": {
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "space_id": hex16,
+        "epoch": _int_min(1),
+        "workspace_id": hex16,
+        "wxk_version": _int_min(1),
+        "sealed": lambda x: _b64u_any(x),
+        "dev": lambda x: type(x) is bool,
+    },
+    "space.item": {
+        "hub_id": hex16,
+        "space_id": hex16,
+        "epoch": _int_min(1),
+        "members_hash": _b64u_n(32),
+        "item_id": hex16,
+        "workspace_id": hex16,
+        "created_ms": _int_min(0),
+        "body": lambda x: type(x) is dict,
+        "dev": lambda x: type(x) is bool,
+    },
+    "space.accept": {
+        "hub_id": hex16,
+        "space_id": hex16,
+        "workspace_id": hex16,
+        "epoch": _int_min(1),
+        "prev_members_hash": _b64u_n(32),
+        "members_hash": _b64u_n(32),
         "dev": lambda x: type(x) is bool,
     },
     "hub.link": {

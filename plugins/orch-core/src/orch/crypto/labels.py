@@ -92,6 +92,13 @@ PLANNED_LABELS: dict[str, str] = {
     # V3 C7 (hub contract 11.1): the WSK signature of a publish request that goes through the hub (its own label, so it
     # never verifies as a direct v2 12.1 request).
     "sig_publish_hub": "orch/v2/publish-hub|",
+    # V3 C13 (hub contract 10.4, shared spaces): what the WSK signs (an item, an accept) and the hashes / AAD.
+    # The HK_op labels of hub.space and hub.space_wrap are the hub's and are only verified (hubclient/spaces.py).
+    "sig_space_item": "orch/v2/sig/space-item|",
+    "sig_space_accept": "orch/v2/sig/space-accept|",
+    "h_space_members": "orch/v2/hub-space-members|",
+    "h_sk_commit": "orch/v2/hub-sk-commit|",
+    "aad_space": "orch/v2/space-aad|",
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}

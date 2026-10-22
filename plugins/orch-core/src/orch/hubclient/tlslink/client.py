@@ -57,11 +57,27 @@ W2H_OPS: dict[str, str | None] = {
     "publish_out": None,
     "route_out": None,
     "audit_ack": None,
+    "space_list": None,
+    "space_accept": None,
+    "space_put": None,
+    "space_revoke": None,
+    "space_get": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
 }
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
+    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
+    "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
+    "space_get": lambda b: (
+        set(b) - {"records"} == {"space", "wraps", "entries", "next"}
+        and type(b["space"]) is dict
+        and type(b["wraps"]) is list
+        and type(b["entries"]) is list
+        and type(b["next"]) is int
+        and type(b.get("records", [])) is list
+    ),
     "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),
     "snapshot_get": lambda b: set(b) == {"snapshot"} and type(b["snapshot"]) is dict,
     "publish_out": lambda b: (
@@ -193,25 +209,49 @@ class LinkClient:
         for :meth:`next_route_in`."""
         o = self._check_request(message)
         with self._lock:
-            if not self._open:
-                raise LinkClosed("closed")
-            try:
-                framing.write_frame(self._c, message, timeout=self._t, max_bytes=self._max)
-                self._seq = max(self._seq, o["seq"])
-                while True:
-                    reply = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
-                    if reply.get("t") == "error":  # unsigned link-level refusal; the hub closes
-                        raise LinkError(_code(reply.get("error")))
-                    if self._take_push(reply):
-                        continue
-                    self._verify_reply(reply, o)
-                    return reply
-            except FrameError:
-                self.close()
-                raise LinkError("malformed") from None
-            except (LinkError, LinkClosed, LinkTimeout):
-                self.close()
-                raise
+            return self._exchange(message, o)
+
+    def _exchange(self, message: dict[str, Any], o: dict[str, Any]) -> dict[str, Any]:
+        """Write one request and read its reply. The caller holds ``_lock``."""
+        if not self._open:
+            raise LinkClosed("closed")
+        try:
+            framing.write_frame(self._c, message, timeout=self._t, max_bytes=self._max)
+            self._seq = max(self._seq, o["seq"])
+            while True:
+                reply = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                if reply.get("t") == "error":  # unsigned link-level refusal; the hub closes
+                    raise LinkError(_code(reply.get("error")))
+                if self._take_push(reply):
+                    continue
+                self._verify_reply(reply, o)
+                return reply
+        except FrameError:
+            self.close()
+            raise LinkError("malformed") from None
+        except (LinkError, LinkClosed, LinkTimeout):
+            self.close()
+            raise
+
+    def call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Sign and send one request with the link's own next ``seq`` (allocated under the link lock, so concurrent
+        callers on a shared link never reuse or invert a number); return the reply body or raise :class:`LinkError`
+        (a signed ``{"error": code}`` keeps the link open)."""
+        if self._sign is None:
+            raise LinkClosed("closed")
+        with self._lock:
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq + 1, "ts_ms": self._now(),
+                "op": op, "re": None, "body": body,
+            }  # fmt: skip
+            message = {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}
+            self._check_request(message)
+            reply = self._exchange(message, o)
+        rb = reply["o"]["body"]
+        if set(rb) == {"error"}:
+            raise LinkError(_code(rb["error"]))
+        return rb
 
     # --- route_in (h2w requests the hub pushes; protocol 10.3) -----------------------------------------------------
 
@@ -286,14 +326,10 @@ class LinkClient:
                 raise
             self._pending = None
 
-    def route_out(self, envelope: bytes, *, seq: int | None = None) -> str:
+    def route_out(self, envelope: bytes) -> str:
         """Send one ws->ws envelope (the sender's exact bytes); returns ``"forwarded"`` or ``"queued"``. Raises
         :class:`LinkError` with the hub's code (``not_allowed``, ``queue_full``, ``too_large``, ``replay``, ...)."""
-        if self._sign is None:
-            raise LinkClosed("closed")
-        return self.request("route_out", {"envelope": b64u(envelope)}, sign=self._sign, seq=seq or self._seq + 1)[
-            "state"
-        ]
+        return self.call("route_out", {"envelope": b64u(envelope)})["state"]
 
     def _check_request(self, m: Any) -> dict[str, Any]:
         """Never send anything outside the closed list or for another hub / workspace / mode."""

@@ -107,6 +107,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
                 typed = True
     else:
         os.kill(pid, 9)
+        os.close(tty)  # macOS: a killed child blocks in exit until the pty master is closed
         os.waitpid(pid, 0)
         raise AssertionError(f"the command did not finish; the terminal showed {shown!r}")
     _, status = os.waitpid(pid, 0)

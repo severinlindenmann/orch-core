@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..channels import ChannelError
 from ..channels.cli import add_channels_parsers, add_users_parsers
 from ..channels.cli import dispatch as channels_dispatch
 from ..keys import HubKeys, KeysError, default_state_dir
@@ -101,7 +102,7 @@ def run(args: argparse.Namespace, out=None) -> int:
             acc.close()
             if log is not None:
                 log.store.close()
-    except (AccessError, KeysError) as e:
+    except (AccessError, KeysError, ChannelError) as e:
         print(f"orch-hub: refused: {e.code}" + (f" ({e})" if str(e) != e.code else ""), file=sys.stderr)
         return 1
     print(json.dumps(res, sort_keys=True), file=out)

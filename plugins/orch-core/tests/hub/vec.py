@@ -39,6 +39,8 @@ RUN_CHECKS = frozenset(
         "space_item",
         "host_put",
         "custodial",  # V3 C3 phase 4: replayed against the PRODUCTION module orch.hubclient.custodial
+        "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
+        "share_revoke",
     }
 )
 SKIPPED_CHECKS = {
@@ -52,8 +54,6 @@ SKIPPED_CHECKS = {
     "relay_request": "hub to relay (protocol 10.8): orch-relay verifies",
     "log_sync": "phase 4 log_sync (protocol 10.7): its own core task",
     "space_proposal": "phase 4 space proposals (protocol 10.4): its own core task",
-    "share_item": "selective share_put content (protocol 10.2b): C6 (orch-core#1022)",
-    "share_revoke": "selective share_revoke (protocol 10.2b): C6 (orch-core#1022)",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
     "admin_read": "hub admin reads (D3/D4): hub side",
@@ -180,7 +180,25 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return _run_space(check, a)
     if check == "custodial":
         return _run_custodial(a)
+    if check in ("share_item", "share_revoke"):
+        return _run_share(check, a)
     raise ValueError(f"check {check} is not replayed by core")
+
+
+def _run_share(check: str, a: dict[str, Any]) -> dict[str, Any]:
+    from . import share_open as SO
+
+    if check == "share_revoke":
+        SO.check_share_revoke(a["body"])
+        return {}
+    seed = bytes.fromhex(a["hxk_seed"])
+    o = SO.open_share_item(
+        a["body"], hub_id=a["hub_id"], workspace_id=a["workspace_id"],
+        hxk_priv=S.private_key_from_scalar(int.from_bytes(seed, "big") % (S.P256_N - 1) + 1),
+        wsk_pub=unb64u(a["wsk_pub"], 65), held=a.get("held"), live_items=a.get("live_items", 0),
+        dev_mode=a.get("dev_mode", True),
+    )  # fmt: skip
+    return {"hash": o["hash"], "item_version": o["item"]["item_version"], "new": o["new"]}
 
 
 def _held_prod(a: dict[str, Any]) -> dict[str, Any]:
@@ -208,7 +226,7 @@ def _run_custodial(a: dict[str, Any]) -> dict[str, Any]:
         mode=a.get("mode", "full"),
         granted_users=frozenset(a.get("granted_users", [])),
         member_roles=a.get("member_roles", {}),
-        min_factor=a.get("min_factor"),
+        min_factor=a.get("min_factor", "password+totp"),  # required by core; the weakest value is "no requirement"
         revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
     )
     return {"channel": r["channel"], "role": r["role"], "user_id": r["user_id"]}

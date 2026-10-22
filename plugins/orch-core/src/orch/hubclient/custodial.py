@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from functools import cache
 from typing import Any
 
-from orch import schema
 from orch.canon.jcs import JcsError
 from orch.canon.jcs import dumps as cj
 from orch.crypto import suite as _suite
@@ -31,6 +29,7 @@ from orch.model import Refusal
 from orch.model.identity import hub_actor
 
 from . import wire
+from .custodial_shape import check_custodial_payload
 from .errors import HubRefused
 from .snapshot import ROLES, _held, verify_snapshot
 
@@ -130,26 +129,11 @@ def event_digest(workspace_id: str, log: str, e_signed: Mapping[str, Any]) -> by
     return _suite.sha256(_H_EVENT_DIGEST + _context(workspace_id, log, e))
 
 
-@cache
-def _payload_spec(typ: str) -> tuple[frozenset[str], frozenset[str]]:
-    """The exact payload of a custodial type, from core's own event schema (additionalProperties is false there, so a
-    field the schema does not list is a smuggled one): (allowed, required) top-level names."""
-    sch = schema.load("event." + typ)
-    return frozenset(sch["properties"]), frozenset(sch["required"])
-
-
 def _payload_shape(typ: str, event: Mapping[str, Any]) -> None:
-    """Exact field set of the event type, plus section 8.1's hub fields. A field the type does not carry, or a missing
-    one, is ``malformed`` (field smuggling); the VALUES are the ticket-format checks of step 9."""
-    try:
-        allowed, required = _payload_spec(typ)
-    except KeyError:
-        raise HubRefused("not_custodial") from None
-    host = frozenset(HOST_FIELDS)
-    if not set(event) <= (allowed | set(HUB_FIELDS)):
-        raise HubRefused("malformed")
-    if not (required - host) <= set(event):
-        raise HubRefused("malformed")
+    """The exact 8.5 payload of the type (:mod:`.custodial_shape`): allow-list of names and exact nested schemas.
+    Runs inside :func:`verify_custodial` before it returns (the shared vectors pin the order of the earlier codes);
+    the VALUES against the host's log are the ticket-format checks of step 9."""
+    check_custodial_payload(typ, event, frozenset(HUB_FIELDS) | {"sig"})
     if typ in DECISION_TYPES and type(event.get("hash")) is not str:
         raise HubRefused("malformed")  # L2P4-2a: the reviewed hash is always present
 
@@ -166,7 +150,7 @@ def verify_custodial(
     mode: str = "full",
     granted_users: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
-    min_factor: str | None = None,
+    min_factor: str,
     revoked_op_certs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Section 8.3 steps 1-8, in order. ``event`` is the event as delivered (``E`` plus ``sig``; no host fields).
@@ -260,9 +244,9 @@ def verify_custodial(
     # 7b. the closed list of custodial types and the lowest role per type
     check_custodial_role(typ, log, floor)
     # 8. D66 policy on the factor: secure-enclave policies are met by passkey only, D49 by se-unlocked or passkey
-    if min_factor is not None and (
-        min_factor not in _FACTOR_RANK or _FACTOR_RANK[event["channel_factor"]] < _FACTOR_RANK[min_factor]
-    ):
+    #    ``min_factor`` is required (L2-C3-3: no default, so no caller skips this step by forgetting it); the weakest
+    #    value, ``password+totp``, is "no requirement", and an unknown policy value refuses.
+    if min_factor not in _FACTOR_RANK or _FACTOR_RANK[event["channel_factor"]] < _FACTOR_RANK[min_factor]:
         raise HubRefused("factor_too_weak")
     _payload_shape(typ, event)
     return {
@@ -283,7 +267,7 @@ def verify_hub_event(
     dev_mode: bool,
     granted_users: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
-    min_factor: str | None = None,
+    min_factor: str,
 ) -> dict[str, Any]:
     """:func:`verify_custodial` for the hub this host is bound to. The card, the revoked set and the pinned snapshot
     are verified again NOW (fail closed: a missing snapshot, an expired or revoked op cert, or a card that no longer
@@ -320,7 +304,7 @@ def accept_event_deliver(
     dev_mode: bool,
     admit: Admit | None,
     granted_users: frozenset[str] = frozenset(),
-    min_factor: str | None = None,
+    min_factor: str,
 ) -> dict[str, Any]:
     """The host's answer to an h2w ``event_deliver`` (protocol 10.2): ``body`` is ``{"log", "event"}``. Verifies the
     custodial event fully (:func:`verify_hub_event`), resolves its actor through ``identity.hub_actor`` (a hub may not

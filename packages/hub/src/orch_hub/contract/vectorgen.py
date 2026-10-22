@@ -542,8 +542,8 @@ def put_body(
 # --- D4 audit chain, admin read (§10.5, §10.6) -------------------------------------------------------------------------
 
 
-def nonce16(label: str) -> str:
-    return b64u(S.fake_seed("hub/scope_nonce/" + label)[:16])
+def nonce32(label: str) -> str:
+    return b64u(S.fake_seed("hub/event_nonce/" + label))
 
 
 AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
@@ -556,7 +556,7 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "user_id": U_ALICE,
             "channel_id": CH_ALICE,
             "digest": b64u(S.fake_seed("hub/audit_digest")),
-            "scope_nonce": nonce16("custodial"),
+            "nonce": nonce32("custodial"),
         },
     ),
     (
@@ -566,10 +566,13 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "workspace_id": WS_A,
             "role": "edit",
             "actor_user_id": U_ALICE,
-            "scope_nonce": nonce16("grant"),
+            "nonce": nonce32("grant"),
         },
     ),
-    ("membership", {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE}),
+    (
+        "membership",
+        {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE, "nonce": nonce32("membership")},
+    ),
     (
         "space",
         {
@@ -578,17 +581,25 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "change": "remove",
             "workspace_id": WS_B,
             "actor_user_id": U_ALICE,
-            "scope_nonce": nonce16("space"),
+            "nonce": nonce32("space"),
         },
     ),
 ]
 
 
 def audit_rec(
-    seq: int, prev: str, typ: str, event: dict[str, Any], *, scope: Any = "auto", signer: str = "hk_op", **kw: Any
+    seq: int,
+    prev: str,
+    typ: str,
+    event: dict[str, Any],
+    *,
+    scope: Any = "auto",
+    signer: str = "hk_op",
+    add_nonce: bool = True,
+    **kw: Any,
 ) -> dict[str, Any]:
-    if "scope_nonce" not in event and typ in ("custodial", "grant", "space"):
-        event = {**event, "scope_nonce": nonce16(typ)}
+    if "nonce" not in event and add_nonce:
+        event = {**event, "nonce": nonce32(typ)}
     o = {
         **hdr("hub.audit"),
         "hub_id": HUB_ID,
@@ -2307,29 +2318,40 @@ def build() -> dict[str, Any]:
         {
             **au,
             "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1]),
-            "event": {**AUDIT_EVENTS[1][1], "scope_nonce": nonce16("other")},
+            "event": {**AUDIT_EVENTS[1][1], "nonce": nonce32("other")},
         },
         {"error": "audit_mismatch"},
         3,
         "the event does not hash to the record's event_hash",
     )
-    case(
-        "audit_event_without_nonce",
-        "audit",
-        {
-            **au,
-            "signed": audit_rec(
-                1,
-                AU.GENESIS_PREV,
-                "grant",
-                AUDIT_EVENTS[1][1],
-                event_hash=AU.event_hash({k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"}),
-            ),
-            "event": {k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"},
-        },
-        {"error": "malformed"},
-        3,
-    )
+    for a_typ, a_ev in AUDIT_EVENTS:
+        bare = {k: v for k, v in a_ev.items() if k != "nonce"}
+        case(
+            f"audit_event_without_nonce_{a_typ}",
+            "audit",
+            {
+                **au,
+                "signed": audit_rec(1, AU.GENESIS_PREV, a_typ, bare, add_nonce=False, scope=None),
+                "event": bare,
+            },
+            {"error": "malformed"},
+            3,
+            "no event type is exempt: its hash would be guessable from low-entropy fields",
+        )
+        case(
+            f"audit_event_short_nonce_{a_typ}",
+            "audit",
+            {
+                **au,
+                "signed": audit_rec(
+                    1, AU.GENESIS_PREV, a_typ, {**bare, "nonce": b64u(bytes(16))}, add_nonce=False, scope=None
+                ),
+                "event": {**bare, "nonce": b64u(bytes(16))},
+            },
+            {"error": "malformed"},
+            3,
+            "the nonce is 32 bytes",
+        )
     case(
         "audit_hub_wide_event_has_no_tag",
         "audit",

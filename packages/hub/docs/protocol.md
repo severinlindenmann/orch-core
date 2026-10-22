@@ -758,17 +758,21 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
 - **The record signs the event's hash, not the event** (`event_hash = b64u(H("orch/v2/hub-audit-event|" || cj(event)))`),
   so a workspace can verify the whole chain, including records about others, and sees the events only of its own
   scope. **The scope is blinded (L2P-4):** `scope_tag = b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) ||
-  scope_nonce (16)))`, where the 16 random bytes `scope_nonce` are a field **inside the event**. Only the workspace the
+  nonce (32)))`, where the 32 random bytes `nonce` are a field **inside the event**. Only the workspace the
   event is about receives the event, so only it can compute and check the tag; every other tenant sees an opaque value
   and learns neither the `workspace_id` (also the TOFU key of §9.5) nor which records are the same workspace's.
   `scope_tag` is `null` for hub-wide events (memberships). `audit_mismatch` when the tag does not match. **What stays
   visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
   memberships and space changes and when they happened, not whose).
-- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, scope_nonce}` (the
-  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, scope_nonce}`; `membership`
-  `{group, user_id, added, actor_user_id}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
-  workspace_id | null, actor_user_id | null, scope_nonce}`. The acting admin's `UK` signature on a grant or membership change is
-  the custodial event it came from (spec §10); the audit record points at it, it does not replace it.
+- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, nonce}` (the
+  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
+  `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
+  the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
+  inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
+  could be confirmed by guessing its low-entropy fields (a user id and a group name). With the nonce the hash reveals
+  nothing, and for events with a workspace the same nonce blinds the `scope_tag`. An event without a 32-byte `nonce` is
+  `malformed` (vectors `audit_event_without_nonce_*`, `audit_event_short_nonce_*`).
 
 **Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
 verifies under the op certificate **it names** (`op_cert_id`): the held card's current one, or an earlier one that this
@@ -1050,7 +1054,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
-| `cases` | 348 cases (81 positive, 267 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 361 cases (81 positive, 280 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

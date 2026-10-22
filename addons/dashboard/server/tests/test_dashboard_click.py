@@ -1210,7 +1210,12 @@ def test_n15_a_cancelled_or_expired_attempt_is_ended_and_pressing_again_is_a_fre
     fresh = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
     assert fresh.status_code == 200 and fresh.json()["request_id"] != REQ and script.prepared == 2
     # cancel that one too (expired reads the same): the next press is another fresh one
-    assert client.post(url(stub, "cancel"), json={"request_id": fresh.json()["request_id"]}, headers=hdr(token)).status_code == 200
+    assert (
+        client.post(
+            url(stub, "cancel"), json={"request_id": fresh.json()["request_id"]}, headers=hdr(token)
+        ).status_code
+        == 200
+    )
     third = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
     assert third.status_code == 200 and script.prepared == 3
     # an open request is the same one for a second press (double click, second tab)
@@ -1224,7 +1229,11 @@ def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client,
     second = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).json()["request_id"]
     script.states[second] = "submitted"  # signed
     again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
-    assert again.status_code == 409 and again.json()["error"]["code"] in ("intent.done", "intent.expired", "intent.blocked")
+    assert again.status_code == 409 and again.json()["error"]["code"] in (
+        "intent.done",
+        "intent.expired",
+        "intent.blocked",
+    )
     assert script.prepared == 2  # no third request
 
 

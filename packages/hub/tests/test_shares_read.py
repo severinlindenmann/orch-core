@@ -75,3 +75,13 @@ def test_no_alias_means_nobody(shub):
     h.join().request("share_put", body())
     assert h.registry.owner_alias(G.WS_A) is None
     assert h.svc.list_shared(OWNER, G.WS_A) == []
+
+
+def test_granted_user_without_member_alias_reads_nothing(shub):
+    """L2P4-1: a user the owner granted in a selective workspace but did not alias to a member is a viewer. The hub only
+    knows the owner alias (grants live at the host), so list_shared keeps the owner-alias-only rule: a granted user
+    reads nothing here, and the contract (§10.2b, §10.5) adds no hub-side read rule for grants."""
+    h = shub()
+    h.join().request("share_put", body())
+    assert h.svc.list_shared(OTHER, G.WS_A) == []
+    assert len(h.svc.list_shared(OWNER, G.WS_A)) == 1

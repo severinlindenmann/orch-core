@@ -108,6 +108,9 @@ def test_audit_log_holds_no_content(shub):
         (lambda: {"item_id": V4.ITEM, "sealed": b64u(bytes(40))}, "bad_wrap"),
         (lambda: body(title="a\nb"), "malformed"),  # the text rule
         (lambda: body(title="x" * 201), "malformed"),
+        (lambda: body(title="a" + chr(0xF8FF)), "malformed"),  # L2P4-3: private use, via the contract's text rule
+        (lambda: body(title="ㅤ"), "malformed"),  # L2P4-3: Default_Ignorable "blank"
+        (lambda: body(title="a\ud800b"), "malformed"),  # a lone surrogate is a refusal, not a crash
         (lambda: V4.share_body(V4.share_item(workspace_id=G.WS_B)), "bad_wrap"),
         (lambda: V4.share_body(V4.share_item(item_kind="ticket", content=V4.NEEDS_YOU)), "malformed"),
         (lambda: V4.share_body(V4.share_item(content={**V4.NEEDS_YOU, "extra": 1})), "malformed"),
@@ -186,7 +189,11 @@ def test_unbind_purges_every_item_and_keeps_the_versions(shub):
     last = h.share_store.log(G.WS_A)[-1]
     assert last["change"] == "unbind" and last["count"] == 2 and last["item_id"] is None
     assert h.share_store.held(G.WS_A, IT2)["revoked"] and h.share_store.held(G.WS_A, IT2)["item_version"] == 3
-    assert len(audit_records(h)) == 2  # the chain has no unbind event (§10.5): only the puts
+    recs = audit_records(h)
+    assert [ev["change"] for _r, ev in recs] == ["put", "put", "purge"]  # §10.5: one purge record, with the count
+    _r, ev = recs[-1]
+    assert (ev["item_id"], ev["item_version"], ev["item_hash"], ev["count"]) == (None, None, None, 2)
+    assert ev["workspace_id"] == G.WS_A and len(unb64u(ev["nonce"])) == 32
     refused(c, "share_put", body(), "not_bound")
 
 
@@ -196,6 +203,50 @@ def test_switch_to_full_purges(shub):
     c.request("share_put", body())
     assert c.request("binding_put", {"object": G.binding(seq=2, mode="full")}) == {}
     assert h.share_store.usage(G.WS_A) == (0, 0)
+    ev = audit_records(h)[-1][1]
+    assert (ev["change"], ev["count"]) == ("purge", 1)
+
+
+def test_purge_with_nothing_live_writes_no_record(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_put", body())
+    c.request("share_revoke", {"item_id": IT1})
+    assert [e["change"] for _r, e in audit_records(h)] == ["put", "revoke"]
+    c.request("binding_put", {"object": G.unbound(seq=1)})
+    assert [e["change"] for _r, e in audit_records(h)] == ["put", "revoke"]  # nothing live: no purge record
+
+
+def test_a_failing_audit_sink_refuses_the_purge(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_put", body())
+    c.request("share_put", body(IT2, 1))
+
+    def boom(_ev):
+        raise RuntimeError("audit down")
+
+    h.svc._on_change = boom
+    with pytest.raises(RuntimeError):
+        h.svc.purge(G.WS_A)
+    assert h.share_store.usage(G.WS_A)[0] == 2  # audited BEFORE it deletes: nothing purged
+    h.svc._on_change = lambda ev: h.audit.share_change(ev)
+    h.svc.purge(G.WS_A)
+    assert h.share_store.usage(G.WS_A)[0] == 0
+    assert audit_records(h)[-1][1]["count"] == 2
+
+
+def test_revoke_record_fields_and_no_record_for_a_noop(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_revoke", {"item_id": IT1})  # unknown id: {} and no record
+    assert audit_records(h) == []
+    c.request("share_put", body(IT1, 5))
+    c.request("share_revoke", {"item_id": IT1})
+    c.request("share_revoke", {"item_id": IT1})
+    (_p, put), (_r, rev) = audit_records(h)
+    assert put["change"] == "put" and put["count"] is None
+    assert (rev["change"], rev["item_version"], rev["item_hash"], rev["count"]) == ("revoke", 5, None, None)
 
 
 def test_reconcile_after_restart_drops_orphans(shub, tmp_path):

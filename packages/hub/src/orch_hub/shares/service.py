@@ -5,7 +5,7 @@
 * ``share_put`` follows protocol.md §10.2b: the hub opens ``sealed`` (:mod:`orch_hub.shares.open`), checks the WSK
   signature and content, and stores the SEALED bytes. A higher ``item_version`` replaces, the same version with the same
   bytes is an idempotent ``{}``, an equal or lower one (or a revoked one) is ``stale_version``. ``share_revoke`` is
-  idempotent and keeps a tombstone. Each accepted put or revoke is a ``share`` event on the hub audit chain, written
+  idempotent and keeps a tombstone. Each accepted put, revoke or purge is a ``share`` event on the hub audit chain, written
   BEFORE the change commits.
 * ``on_unbind`` / ``sync`` delete a workspace's items when its binding ends or leaves selective mode.
 * ``list_shared`` is the read API for the web view and the phone. Hub groups and the hub-admin group get no role in a
@@ -40,7 +40,7 @@ class ShareService:
         on_change: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         """``hxk`` is the hub's key-agreement key (an EC private key, or :func:`orch_hub.shares.hxk_handle`).
-        ``on_change`` receives the chain's ``share`` event of every accepted put and revoke (before it commits)."""
+        ``on_change`` receives the chain's ``share`` event of every accepted put, revoke and purge (before it commits)."""
         self.store, self._reg = store, registry
         self._hub, self._hxk, self._dev = hub_id, hxk, dev_mode
         self._now = now_ms or (lambda: int(time.time() * 1000))
@@ -116,12 +116,32 @@ class ShareService:
             self.store.revoke(ws, item_id, self._now())
         return {}
 
+    def purge(self, ws: str) -> None:
+        """Delete every live item of ``ws`` (unbind, switch to full). One ``purge`` record on the chain with the count,
+        written BEFORE the delete commits (fail closed: a failing sink leaves the items in place). Nothing live: no
+        record. The caller holds the registry lock."""
+        with self.store.lock:
+            n, _ = self.store.usage(ws)
+            if n == 0:
+                return
+            self._emit(
+                {
+                    "change": "purge",
+                    "workspace_id": ws,
+                    "item_id": None,
+                    "item_version": None,
+                    "item_hash": None,
+                    "count": n,
+                }
+            )
+            self.store.purge(ws, self._now())
+
     def sync(self, ws: str) -> None:
         """Items belong to a live SELECTIVE binding only: any other state deletes them. The caller holds the registry
         lock (binding_put / join) or startup."""
         st = self._reg.binding_state(ws)
         if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
-            self.store.purge(ws, self._now())  # local share_log only: the chain's share event has no unbind
+            self.purge(ws)
 
     def reconcile(self) -> None:
         """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash)."""

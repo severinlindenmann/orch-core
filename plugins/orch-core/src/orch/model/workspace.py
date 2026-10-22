@@ -13,7 +13,7 @@ from typing import Any
 
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
-from . import addon_rules, authz, generations, hubledger, policies
+from . import addon_rules, authz, generations, hubledger, identity, policies
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -39,8 +39,10 @@ def cross(
     return []
 
 
-def _role(ws: WsCore, e: dict[str, Any]) -> str:
-    return ws.members[e["actor"]["id"]].role
+def _role(ws: WsCore, e: dict[str, Any]) -> str | None:
+    """The effective role of the signer of ``e`` through ``identity.signer`` (``None``: none, fail closed)."""
+    sg = identity.signer(ws, e)
+    return None if isinstance(sg, Refusal) else sg.role
 
 
 def _owner_only(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -222,6 +224,24 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     return None
 
 
+def hub_pinned(core: Core, e: dict[str, Any], v: Verifier, *, dev: bool) -> Refusal | None:
+    """``hub.pinned`` (15.2) and its one effect on tickets (C3b-2): hub contract hv 0 carries no reason, so every
+    channel revocation is treated like a compromised device. At the pin that FIRST adds channel X to the ledger's
+    ``revoked_channels``, the counting decisions signed by ``hub:<hub_id>/X`` are voided (``void_signer``), on every
+    unsettled ticket, exactly as ``device.revoked`` voids a device's. An op-cert revocation, a new card and a snapshot
+    that drops a user or lowers a role void nothing (like ``role.changed`` for the decisions already taken)."""
+    ws, hub_id = core.ws, e["hub_id"]
+    led = hubledger.ledger_of(ws, hub_id)
+    before = set(led["revoked_channels"]) if led else set()
+    if (r := hubledger.apply_pin(ws, e, v, dev=dev)) is not None:
+        return r
+    led = hubledger.ledger_of(ws, hub_id)
+    keys = [f"hub:{hub_id}/{c}" for c in sorted(set(led["revoked_channels"]) - before)] if led else []
+    if keys:
+        cross(core, lambda: None, lambda t: [generations.void_signer(ws, t, k) for k in keys])
+    return None
+
+
 def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     ws = core.ws
     if (r := _owner_only(ws, e)) is not None:
@@ -234,7 +254,7 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
 
 
 #: the ways to sign, in the canonical order a stored ``sign_methods`` has (B6); ``touchid`` is reserved
-SIGN_METHODS = ("terminal", "click", "phone")
+SIGN_METHODS = ("terminal", "click", "phone", "hub")
 
 
 def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -291,6 +311,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 def grant_issued(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """D60 terms: the role decides scope and length; always for the signer; times are checked on every read."""
     role, hours = _role(ws, e), e["hours"]
+    if role is None:
+        return Refusal(Code.MEMBER_UNKNOWN, "the signer has no role")
     if role == "viewer":
         return Refusal(Code.GRANT_TERMS, "a viewer holds no grant")
     if role == "member" and (e["scope"] != "workable" or hours > ws.settings["grant_hours"]):

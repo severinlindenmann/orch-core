@@ -2828,6 +2828,7 @@ has an older one or none; its pinned snapshot **only when needed** (below). Then
   `unavailable`, retryable, §15.5): at most **64** op revocations and **16** cards per hub in the ledger; a snapshot
   object at most **64 KiB** (`cj`); at most **one** snapshot pin per **10 minutes** of `at` per hub, except a snapshot
   that only narrows (revokes a channel, removes or lowers a role, nothing else changed), which always pins.
+  The 10-minute limit is enforced at host admission (§15.5, task 5), not on replay: replay applies every pin line it finds.
 - Nothing is ever pruned: old lines are what make old events verifiable. The caps bound the ledger at
   64 + 16 + (one snapshot per 10 minutes + narrowing ones), each line ≤ 64 KiB.
 
@@ -2909,7 +2910,7 @@ The consumers:
 
 | Consumer | Rule |
 |---|---|
-| `authz` | `authorize_person` keeps the device path; a new `authorize_hub` is §15.3 steps 1–5; both end in the shared rules (viewer, `roster_v`, freeze) on `Signer.role`. `member.unknown` for a hub actor is `role_of` = `None`. |
+| `authz` | `authorize_person` keeps the device path; a new `authorize_hub` is §15.3 steps 1–5; both end in the shared rules (viewer, `roster_v`, freeze) on `Signer.role`. A hub actor with `role_of` = `None` (an alias to a person removed from the roster, or no snapshot role) is `hub.denied` `forbidden_role`, never `member.unknown`. Every admitted hub event records the `u_` ids it uses (actor and payload references) under its hub in `user_hub` (§15.6). |
 | `gates.decision` | `person = Signer.person`; the `Decision` column `device` becomes `signer` (`Signer.key`). `may_decide` and `person_tokens` take the role from `role_of`. D59 independence is unchanged: `person in canonical_set(ws, t.workers)`, so `u_x` aliased to `p_x` counts as one person (C4 union). |
 | `generations.counting` | one counting decision per canonical person (unchanged). **A channel revocation voids (C3b-2):** hv 0 carries no reason, so every channel revocation is treated like a compromised device: at the `hub.pinned` snapshot line that first adds channel X to the ledger's `revoked_channels`, the counting decisions whose `signer` is `hub:<hub_id>/X` in generations that are still open (not consumed) are voided exactly as `void_device` does for a `d_` key (`void_signer`; settled tickets list them and wait, as for devices). Deterministic on replay because the pin is a log line. An op-cert revocation, a rotation and a snapshot that drops a user or lowers a role void nothing (rotation and role changes, like `role.changed`). Vector `channel_revoked_voids_open_decisions_only`. |
 | claims | a hub actor may append `claim.released` (`released`) under the same rule as a person: ticket owner (canonical compare), owner or maintainer by `role_of`. It never takes a claim (agent-only). |

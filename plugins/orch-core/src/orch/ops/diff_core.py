@@ -75,7 +75,7 @@ def approvals_of(store: Any, view: Any, person: str | None) -> list[dict[str, st
     for d in reversed(gate.decisions):
         if d.kind != "approve" or d.person != person or not d.source_sha:
             continue
-        dev = ws.devices.get(d.device)
+        dev = ws.devices.get(d.signer)  # a hub key ("hub:...") is no device: fails closed
         if (
             d.voided
             or d.id in gate.revoked_flag

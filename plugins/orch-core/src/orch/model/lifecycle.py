@@ -12,7 +12,7 @@ from typing import Any
 
 from orch.canon import HashError, section_hash
 
-from . import claims, gates, generations, policies, source, tasks
+from . import claims, gates, generations, identity, policies, source, tasks
 from .codes import Code, Refusal
 from .types import GATES, Core, LogCore, TCore, WsCore, new_fields, position, ts
 
@@ -26,14 +26,22 @@ def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.TICKET_BAD_REFERENCE, f"{key} is not a key of workspace prefix {ws.prefix}")
     if key in core.keys:
         return Refusal(Code.TICKET_EXISTS, f"{key} is taken (keys are never reused)")
-    m = ws.members.get(e["owner"])
-    if m is None or m.role == "viewer":
+    if (r := identity.ref_refusal(ws, [e["owner"]])) is not None:
+        return r
+    role = identity.role_of(ws, e["owner"])
+    if role is None or role == "viewer":
         return Refusal(Code.MEMBER_UNKNOWN, "the owner must be a member who can own tickets")
     core.keys[key] = uid
     core.created_at[uid] = position(e, uid)
     t = TCore(uid=uid, key=key, owner=e["owner"], status="open", fields=new_fields(e["ticket_type"], e["title"]))
     core.tickets[uid] = t
     return None
+
+
+def _event_role(ws: WsCore, e: dict[str, Any]) -> str | None:
+    """The effective role of the person who signed ``e`` (``identity.signer``; ``None``: no role, fail closed)."""
+    sg = identity.signer(ws, e)
+    return None if isinstance(sg, Refusal) else sg.role
 
 
 def status_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
@@ -45,7 +53,7 @@ def status_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
 def moved(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     """F1 5.9: a workspace owner or maintainer may return unclaimed work to open/backlog."""
-    if ws.members[e["actor"]["id"]].role not in ("owner", "maintainer"):
+    if _event_role(ws, e) not in ("owner", "maintainer"):
         return Refusal(Code.ROLE_DENIED, "only workspace owners and maintainers move a ticket")
     if (
         e["from"] != t.status
@@ -93,7 +101,7 @@ def known_before(core: Core, t: TCore, key: str, e: dict[str, Any]) -> bool:
 
 
 def closed(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
-    if not claims.may_manage(core.ws, t, e["actor"]["id"]):
+    if not claims.signer_manages(core.ws, t, e):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers close a ticket")
     if t.status == "closed":
         return Refusal(Code.STATUS_TRANSITION, "already closed")
@@ -107,7 +115,7 @@ def closed(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
 
 def reopened(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
-    if not claims.may_manage(ws, t, e["actor"]["id"]):
+    if not claims.signer_manages(ws, t, e):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers reopen a ticket")
     if t.status not in ("done", "closed"):
         return Refusal(Code.STATUS_TRANSITION, f"ticket.reopened from {t.status}")
@@ -124,13 +132,15 @@ def _role_token(role: str) -> str:
 
 
 def people_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
-    if not claims.may_manage(ws, t, e["actor"]["id"]):
+    if not claims.signer_manages(ws, t, e):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers change people")
     role, token = e["role"], _role_token(e["role"])
     named = {g: policies.named_roles(policies.effective(ws, t, g)) for g in GATES}
     if t.status in ("done", "closed") and any(token in n for n in named.values()):
         return Refusal(Code.TICKET_FROZEN, f"{role} is named by a gate policy and the ticket is {t.status}")
-    unknown = [p for p in e["add"] if p not in ws.members]
+    if (r := identity.ref_refusal(ws, [*e["add"], *e["remove"]])) is not None:
+        return r
+    unknown = [p for p in e["add"] if not identity.known(ws, p)]
     if unknown:
         return Refusal(Code.MEMBER_UNKNOWN, f"not members: {unknown}")
     if role == "owner":
@@ -146,7 +156,7 @@ def people_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
 
 def policy_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
-    if not claims.may_manage(ws, t, e["actor"]["id"]):
+    if not claims.signer_manages(ws, t, e):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers set an override")
     if (r := policies.check_override(ws, t, e["gates"])) is not None:
         return r
@@ -168,7 +178,7 @@ def handoff(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
 
 def restore(ws: WsCore, t: TCore, lc: LogCore, e: dict[str, Any]) -> Refusal | None:
-    if ws.members[e["actor"]["id"]].role != "owner":
+    if _event_role(ws, e) != "owner":
         return Refusal(Code.ROLE_DENIED, "restore is owner only")
     if e["head"] != lc.head or e["from_seq"] != lc.seq:
         return Refusal(Code.RESTORE_BAD_HEAD, "from_seq/head must name the last event on disk")

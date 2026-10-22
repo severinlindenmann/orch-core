@@ -302,14 +302,15 @@ def test_every_event_vector_verifies_its_own_signatures() -> None:
 # crypto is injected through the three ``Verifier`` methods. ``HubAdapter`` is the test-side stand-in for the host
 # Verifier of task 5: it is built only from the production verifiers the reference above uses. It must agree with the
 # reference on every case. Not modelled here: the admission steps (dedup by id, the pins riding on a delivery, the
-# ``item_hash`` check of §15.7, task 6) are done by the runner exactly as ``RefLedger`` does them, and the voiding of
-# open decisions at a channel-revoking pin is task 4 (``generations``), so ``voids`` is not asserted here.
+# ``item_hash`` check of §15.7, task 6) are done by the runner exactly as ``RefLedger`` does them. The voiding of open
+# decisions at a channel-revoking pin is the model's (``workspace.hub_pinned`` -> ``generations.void_signer``, task 4):
+# the runner keeps one ticket ``T``, records each admitted decision on it and "consumes" a generation by raising it.
 
 import datetime  # noqa: E402
 
 from orch.model import authz, hubledger, workspace  # noqa: E402
 from orch.model import identity as ident  # noqa: E402
-from orch.model.types import Core, Member, WsCore  # noqa: E402
+from orch.model.types import Core, Decision, Member, TCore, WsCore, new_fields  # noqa: E402
 
 
 class HubAdapter:
@@ -415,21 +416,26 @@ class ModelLedger:
                 **({"member": {"kind": "hub", "hub_id": joined}} if hub["mode"] == "full" else {}),
             }  # fmt: skip
         self.v = HubAdapter()
+        self.t = TCore(uid="T", key="T-1", owner="p_" + "0" * 32, status="open", fields=new_fields("feature", "t"))
         self.ids: dict[str, bytes] = {}
         self.lines = 0
         self.info: dict[str, Any] = {}
 
-    def pin(self, obj: dict[str, Any], at: int, ws: WsCore | None = None) -> str:
-        ws = ws or self.ws
+    def pin(self, obj: dict[str, Any], at: int, ws: WsCore | None = None, t: TCore | None = None) -> str:
+        ws, t = ws or self.ws, t or self.t
         e = {"hub_id": X["hub_id"], "object": obj, "at": _stamp(at)}
-        r = hubledger.apply_pin(ws, e, self.v, dev=DEV)  # type: ignore[arg-type]
+        was = {d.id for g in t.gates.values() for d in g.decisions if d.voided}
+        r = workspace.hub_pinned(Core(ws=ws, tickets={"T": t}), e, self.v, dev=DEV)  # type: ignore[arg-type]
+        self.info["voids"] = sorted({d.id for g in t.gates.values() for d in g.decisions if d.voided} - was)
         if r is None:
             self.lines += ws is self.ws
             return "ok"
         return r.detail
 
-    def custodial(self, event: dict[str, Any], log: str, at: int, ws: WsCore | None = None) -> str:
-        ws = ws or self.ws
+    def custodial(
+        self, event: dict[str, Any], log: str, at: int, ws: WsCore | None = None, t: TCore | None = None
+    ) -> str:
+        ws, t = ws or self.ws, t or self.t
         signed = cj({k: v for k, v in event.items() if k not in C.NOT_SIGNED} | {"sig": event["sig"]})
         if ws.hub and event["id"] in self.ids:  # admission step 2: dedup before verification
             return "duplicate" if self.ids[event["id"]] == signed else "replay"
@@ -442,6 +448,13 @@ class ModelLedger:
         assert not hasattr(sg, "code")
         self.info = {"actor": sg.person, "role": sg.role}
         self.ids[event["id"]] = signed
+        if event["type"] in C.DECISION_TYPES:
+            gc = t.gates["requirements"]
+            gc.decisions.append(
+                Decision(
+                    event["id"], len(gc.decisions) + 1, "requirements", "approve", sg.person, sg.key, gc.gen, "h", "p"
+                )
+            )
         return "ok"
 
     def join(self, aliases: dict[str, str]) -> str:
@@ -459,14 +472,14 @@ class ModelLedger:
         return "ok"
 
     def deliver(self, event: dict[str, Any], holds: dict[str, Any], log: str, at: int) -> str:
-        tmp = copy.deepcopy(self.ws)
+        tmp, tt = copy.deepcopy(self.ws), copy.deepcopy(self.t)
         snap = hubledger.ledger_of(tmp, X["hub_id"])["snapshot"]  # type: ignore[index]
         if snap is None or event["snapshot_version"] > snap["o"]["version"]:
-            if self.pin(holds, at, tmp) not in ("ok", "already_pinned"):
+            if self.pin(holds, at, tmp, tt) not in ("ok", "already_pinned"):
                 return "unavailable"
-        r = self.custodial(event, log, at, tmp)
+        r = self.custodial(event, log, at, tmp, tt)
         if r == "ok":
-            self.ws = tmp
+            self.ws, self.t = tmp, tt
             self.lines += 1 if (snap is None or event["snapshot_version"] > snap["o"]["version"]) else 0
         return r
 
@@ -485,8 +498,11 @@ def run_model_case(case: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
                 r = led.deliver(X["events"][st["deliver"]], X["objects"][st["holds"]], X["ticket"], st["at_ms"])
         elif "join" in st:
             r = led.join(st["join"])
+        elif "consume" in st:
+            led.t.gates["requirements"].gen += 1  # the decisions taken so far are no longer in an open generation
+            r = "ok"
         else:
-            r = "ok"  # consume: task 4
+            r = "ok"
         led.info["ledger_lines"] = led.lines
         out.append((r, dict(led.info)))
     return out
@@ -505,7 +521,7 @@ def test_model_replay_case_agrees_with_the_reference(case: dict[str, Any]) -> No
     got = run_model_case(case)
     assert [g[0] for g in got] == [st["expect"] for st in case["steps"]]
     for (_, info), st in zip(got, case["steps"], strict=True):
-        for k in ("actor", "role", "ledger_lines"):  # "voids": task 4
+        for k in ("actor", "role", "voids", "ledger_lines"):
             if k in st:
                 assert info.get(k) == st[k], (st, k, info)
 

@@ -122,6 +122,53 @@ def role_of(ws: WsCore, ident: str) -> str | None:
     return _snapshot_role(ws, ident[2:]) if h.get("mode") == "full" else None
 
 
+LOOKUP: Any = object()  # "look the role up with role_of" (the default of the role parameters of the type rules)
+
+
+def known(ws: WsCore, ident: str) -> bool:
+    """``ident`` has a role now: a member, or a hub user the pinned snapshot gives one (``role_of`` is not ``None``)."""
+    return role_of(ws, ident) is not None
+
+
+def ref_refusal(ws: WsCore, idents: Iterable[str]) -> Refusal | None:
+    """A ``u_`` person reference (``personRef``, ticket-format 15.1) is accepted only while a hub is joined at this
+    position: ``hub.invalid`` otherwise, so a standalone workspace (D79) never holds one."""
+    h = ws.hub
+    if any(i.startswith("u_") for i in idents) and not (h and h.get("status") == "joined"):
+        return Refusal(Code.HUB_INVALID, "not_joined")
+    return None
+
+
+def u_refs(e: Mapping[str, Any]) -> list[str]:
+    """Every bare 32-hex hub user id an event uses: its actor and the ``u_`` person references of its payload
+    (``people.changed`` add/remove, ``visibility.changed`` restricted, ``question.asked`` ``to``)."""
+    out = [e["actor"]["id"]] if "via" in e["actor"] else []
+    out += [*e.get("add", ()), *e.get("remove", ())]
+    v = e.get("visibility")
+    if isinstance(v, Mapping):
+        out += v.get("restricted", ())
+    q = e.get("question")
+    if isinstance(q, Mapping):
+        out.append(q.get("to", ""))
+    return sorted({i[2:] for i in out if type(i) is str and i.startswith("u_")})
+
+
+def record_users(ws: WsCore, e: Mapping[str, Any]) -> Refusal | None:
+    """An admitted hub event records every ``u_`` id it uses under its hub in ``ws.hub["user_hub"]`` (append-only,
+    first writer wins), so a later event of ANOTHER hub that presents one of them is ``hub.foreign_user`` (L2P4-C1,
+    §15.6) without any state injected by a join. The same check runs on every reference first (``hub_actor``)."""
+    hub_id = e["hub_id"]
+    ids = u_refs(e)
+    for uid in ids:
+        who = hub_actor(ws, hub_id, uid)
+        if isinstance(who, Refusal):
+            return who
+    book = ws.hub.setdefault("user_hub", {})
+    for uid in ids:
+        book.setdefault(uid, hub_id)
+    return None
+
+
 def signer(ws: WsCore, e: Mapping[str, Any]) -> Signer | Refusal:
     """The :class:`Signer` of a person event. The ONE place a person actor's identity, role and key are derived: no
     consumer reads ``actor.id``, ``actor.device`` or ``ws.members[...]`` for a person actor directly (L2P4-C2)."""
@@ -131,4 +178,4 @@ def signer(ws: WsCore, e: Mapping[str, Any]) -> Signer | Refusal:
         if isinstance(who, Refusal):
             return who
         return Signer(who, role_of(ws, a["id"]), f"hub:{e['hub_id']}/{e['channel']}")
-    return Signer(a["id"], role_of(ws, a["id"]), a["device"])
+    return Signer(a["id"], role_of(ws, a["id"]), a.get("device", ""))

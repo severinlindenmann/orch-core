@@ -332,3 +332,17 @@ def test_a_leave_before_any_connect_has_nothing_to_tell_the_hub(human, served, s
     human.run("hub.leave", {})
     got = ok(served.client().req("hub.unbind", {}, idem=True))["data"]
     assert got["unbound"] is False and stub.sent == []
+
+
+def test_a_convenience_key_never_signs_a_hub_op(human, served):
+    from orch.host import convenience
+
+    for op in ("hub.join", "hub.leave"):
+        with pytest.raises(Exception) as e:
+            convenience.refuse_hub_op(op, "convenience")
+        assert getattr(e.value, "code", "") == "sign.convenience_unavailable"
+        convenience.refuse_hub_op(op, "passphrase")  # the owner's key at the terminal
+    convenience.refuse_hub_op("settings.set", "convenience")  # other ops keep their own rules
+    body = {"op": "hub.join", "args": join_args(), "signer": {**human.signer, "auth": "convenience"}}
+    assert err(human.c.req("human.prepare", body)) == "sign.convenience_unavailable"
+    assert hub_state(served)[0] == {}

@@ -93,6 +93,12 @@ class Registry:
         st = self.binding_state(ws)
         return st["binding"]["mode"] if st and st["status"] == "bound" else None
 
+    def last_mode(self, ws: str) -> str | None:
+        """The mode of the newest binding, bound or not (None if never joined)."""
+        st = self.binding_state(ws)
+        b = st.get("binding") if st else None
+        return b["mode"] if type(b) is dict else None
+
     def commit_join(
         self,
         ws: str,

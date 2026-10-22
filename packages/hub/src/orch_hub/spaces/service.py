@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -25,6 +26,7 @@ from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
 from .store import SpaceStore
 
+_log = logging.getLogger("orch_hub.spaces")
 PAGE_BYTES = 1 << 20  # sealed data per space_get page (protocol.md §10.4)
 
 
@@ -56,6 +58,7 @@ class SpaceService:
         self._dev = dev_mode
         self._on_change = on_change  # the audit chain hooks in here (D4)
         self._lock = threading.RLock()
+        self._unavailable: set[str] = set()
 
     # --- admin side: create, add, remove, unbind -----------------------------------------------------------------
 
@@ -100,12 +103,18 @@ class SpaceService:
         return self._signer.sign_object(o)
 
     def _wrap(self, space_id: str, epoch: int, ws: str, sk: bytes) -> dict[str, Any]:
-        card = self._reg.card(ws)
+        # Only the WXK of the VERIFIED v2 card in the registry (delegation by the owner's PK, card by the pinned WSK).
+        # Any other shape, or a card that does not verify, is refused: a wrap is never sealed to an unverified key.
+        pin = self._reg.pin(ws)
         try:
-            c = card.get("o", card)
+            if pin is None:
+                raise Refused("unknown_workspace")
+            c = H.verify_v2_card(self._reg.card(ws), unb64u(pin["pk_pub"], 65), now_ms=self._now())
+            if c["workspace_id"] != ws or c["wsk_pub"] != pin["wsk_pub"]:
+                raise Refused("other_workspace")
             wxk_pub, ver = unb64u(c["wxk_pub"], 65), int(c["wxk_version"])
-        except TypeError, KeyError, CanonError, ValueError:
-            raise SpaceError("unknown_workspace", "no usable v2 card (wxk) for a member") from None
+        except Refused, TypeError, KeyError, CanonError, ValueError:
+            raise SpaceError("unknown_workspace", "no verified v2 card (wxk) for a member") from None
         sealed = SP.seal_sk(
             sk,
             hub_id=self.hub_id,
@@ -185,7 +194,14 @@ class SpaceService:
             space_id = os.urandom(16).hex()
             return self._new_epoch(space_id, 1, None, members, name=name)
 
+    @staticmethod
+    def _sid(space_id: Any) -> str:
+        if not H._hex16(space_id):
+            raise SpaceError("malformed", "space id")
+        return space_id
+
     def _current(self, space_id: str) -> tuple[int, list[str]]:
+        self._sid(space_id)
         e = self.store.current_epoch(space_id)
         row = None if e is None else self.store.epoch_row(space_id, e)
         if row is None:
@@ -221,18 +237,57 @@ class SpaceService:
 
     def on_unbind(self, ws: str) -> None:
         """``hub.unbound`` of ``ws`` was accepted: it leaves every space it is in, one new epoch each, in the same
-        step (protocol.md §10.4). Also run at start-up for any workspace that is no longer bound."""
+        step (protocol.md §10.4). A space that cannot be rotated now is marked unavailable and retried (never raises
+        into the link: the unbind is already recorded)."""
+        self.on_mode_change(ws)
+
+    def on_mode_change(self, ws: str) -> None:
+        """``ws`` left the hub or went full -> selective: it leaves every space it is in (rotation), exactly like an
+        unbind. It comes back only through the add path, i.e. with its owner's ``space.accept`` for that transition."""
         with self._lock:
             for sid in self.store.spaces_of(ws):
-                self.remove(sid, ws, None)
+                self._reconcile_space(sid)
+
+    def _stale_member(self, sid: str, w: str) -> bool:
+        """A member that must not be one: no longer bound, or selective without the accept that put it there."""
+        m = self._reg.mode(w)
+        return m is None or (m != "full" and self.store.accept(sid, w) is None)
+
+    def _reconcile_space(self, sid: str) -> bool:
+        """Remove every stale member of one space. On failure the space is marked unavailable (its ops refuse with
+        ``unavailable``) until a later attempt succeeds. Returns whether the space is consistent."""
+        try:
+            while True:
+                if not self.store.exists(sid):
+                    break
+                _, members = self._current(sid)
+                stale = [w for w in members if self._stale_member(sid, w)]
+                if not stale:
+                    break
+                self.remove(sid, stale[0], None)
+        except Exception:  # noqa: BLE001  # logged without detail; the space stays closed
+            _log.exception("space %s: could not rotate out a departed member", sid)
+            self._unavailable.add(sid)
+            return False
+        self._unavailable.discard(sid)
+        return True
 
     def reconcile(self) -> None:
+        """Start-up (and retry) pass over all spaces. Never raises: the hub starts; a space that cannot be made
+        consistent refuses ops until a later pass does."""
         with self._lock:
             for sid in self.store.space_ids():
-                _, members = self._current(sid)
-                for w in members:
-                    if self._reg.mode(w) is None:
-                        self.remove(sid, w, None)
+                self._reconcile_space(sid)
+
+    def _gate_id(self, space_id: Any) -> None:
+        if not H._hex16(space_id):
+            raise Refused("malformed")
+        self._gate(space_id)
+
+    def _gate(self, space_id: str) -> None:
+        """Ops on a space that is waiting for reconciliation retry it once and otherwise refuse."""
+        if space_id in self._unavailable and not self._reconcile_space(space_id):
+            raise Refused("unavailable")
 
     def list_all(self) -> list[dict[str, Any]]:
         out = []
@@ -254,6 +309,8 @@ class SpaceService:
     # --- link side: the ops of §10.4 -----------------------------------------------------------------------------
 
     def _state(self, space_id: str) -> dict[str, Any] | None:
+        if not H._hex16(space_id):
+            raise Refused("malformed")  # before any lookup
         e = self.store.current_epoch(space_id)
         row = None if e is None else self.store.epoch_row(space_id, e)
         if row is None:
@@ -266,7 +323,11 @@ class SpaceService:
         }
 
     def list_for(self, ws: str) -> list[dict[str, Any]]:
-        return [self.store.epoch_row(sid, self.store.current_epoch(sid))[2] for sid in self.store.spaces_of(ws)]  # type: ignore[index]
+        return [
+            self.store.epoch_row(sid, self.store.current_epoch(sid))[2]  # type: ignore[index]
+            for sid in self.store.spaces_of(ws)
+            if sid not in self._unavailable
+        ]
 
     def accept(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         """Store a selective workspace's ``space.accept`` (checked again when it is used)."""
@@ -287,6 +348,7 @@ class SpaceService:
 
     def put(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            self._gate_id(body["space_id"])
             st = self._state(body["space_id"])
             sks = {}
             if st is not None:
@@ -301,6 +363,7 @@ class SpaceService:
 
     def revoke(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            self._gate_id(body["space_id"])
             st = self._state(body["space_id"])
             new, reply = SP.space_revoke(st, ws, body)
             if st is not None and new["next_seq"] != st["next_seq"]:
@@ -310,6 +373,7 @@ class SpaceService:
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             sid = body["space_id"]
+            self._gate_id(sid)
             st = self._state(sid)
             r = SP.space_get(st, ws, body)
             if st is None:  # unreachable: space_get raised not_member

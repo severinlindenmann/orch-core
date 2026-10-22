@@ -667,6 +667,9 @@ def test_ctrl_c_at_the_passphrase_prompt_is_a_calm_cancel_and_cancels_the_reques
     rc, doc, _ = cli(p["request"]["code"])
     assert rc != 0 and doc["error"]["code"] == "invalid.input", doc
     assert doc["error"]["message"] == "Cancelled, nothing was signed."
+    out = io.StringIO()  # the human line carries no error-code prefix; the exit code stays
+    assert handoff._fail(out, False, HostError("invalid.input", "Cancelled, nothing was signed."), plain=True) == rc
+    assert out.getvalue() == "orch sign: Cancelled, nothing was signed.\n"
     assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"
     assert backend.payloads == [] and logged(served, key)[-1].get("text") != "x"
 

@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { queries } from '@/api/queries'
 import type { RosterMember } from '@/api/settings'
+import { PREFIX_PLACEHOLDER, withPrefix } from '@/api/click'
 import { Inline, Raw } from './visible'
 
 export interface NamedDevice {
@@ -80,11 +81,16 @@ export function TechnicalDetails({ text }: { text: string }) {
 
 /** A click-to-sign problem as the sign panel and the hand-off dialog show it: title, sentence, the devices it names. */
 export function ClickProblemBox({ problem, ws }: { problem: { title: string; body: string; next?: string; signedAt?: string | null; details?: string; devices?: string[] }; ws: string | undefined }) {
+  // The sentences name the workspace as a placeholder: the real prefix goes in here, where the workspace is known.
+  const needsPrefix = problem.body.includes(PREFIX_PLACEHOLDER)
+  const workspaces = useQuery({ ...queries.workspacesAll(), enabled: needsPrefix })
+  const prefix = workspaces.data?.find((w) => w.id === ws || w.prefix === ws)?.prefix
+  const body = needsPrefix ? withPrefix(problem.body, prefix) : problem.body
   return (
     <div role="alert" data-testid="click-problem" data-click-next={problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
       <p className="font-medium text-text">{problem.title}</p>
       <p title={problem.signedAt ?? undefined} className="text-text-muted">
-        <Raw>{problem.body}</Raw>
+        <Raw>{body}</Raw>
       </p>
       {problem.details && <TechnicalDetails text={problem.details} />}
       {ws && problem.devices && <RefusalDevices ws={ws} ids={problem.devices} />}

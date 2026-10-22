@@ -451,7 +451,8 @@ def main(
             text += "; what was signed stays in the ticket as a draft"
         return _fail(out, args.json, HostError("human.request_mismatch", text))
     except signer.Cancelled:  # Ctrl-C before the signature existed: the request is cancelled
-        return _fail(out, args.json, HostError("invalid.input", "Cancelled, nothing was signed."))
+        # a person's own cancel is not an error to decode: no code prefix on the human line (the exit code stays)
+        return _fail(out, args.json, HostError("invalid.input", "Cancelled, nothing was signed."), plain=True)
     except KeyboardInterrupt:  # Ctrl-C after the signature: it may have landed, so no claim either way
         text = "Interrupted; what was signed may have landed: check the ticket with orch show"
         return _fail(out, args.json, HostError("invalid.input", text))
@@ -477,9 +478,11 @@ def main(
     return 0
 
 
-def _fail(out: TextIO, as_json: bool, exc: HostError, exit_code: int | None = None) -> int:
+def _fail(out: TextIO, as_json: bool, exc: HostError, exit_code: int | None = None, *, plain: bool = False) -> int:
     if as_json:
         out.write(json.dumps({"ok": False, "error": exc.error()}, sort_keys=True) + "\n")
+    elif plain:
+        out.write(f"orch sign: {exc.message}\n")
     else:
         out.write(f"orch sign: {exc.code}: {exc.message}\n")
     return exit_code if exit_code is not None else exc.exit

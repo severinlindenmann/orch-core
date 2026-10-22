@@ -561,6 +561,17 @@ describe('every error code and reason has an honest message', () => {
     expect(`${p.title} ${p.body}`).toMatch(text)
     expect(p.next).toBe(next)
   })
+  it('names the real workspace prefix in the switched-off text, never a literal <prefix>', async () => {
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { ClickProblemBox } = await import('./RefusalDevices')
+    const { render } = await import('@testing-library/react')
+    const w = (await api.getWorkspaces())[0]!
+    const problem = clickProblem(err('sign.convenience_unavailable', 'disabled'))
+    expect(problem.body).toContain('<prefix>')
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ClickProblemBox problem={problem} ws={w.id} /></QueryClientProvider>)
+    await waitFor(() => expect(screen.getByTestId('click-problem').textContent).toContain(`--workspace ${w.prefix} --in-place`), T)
+    expect(screen.getByTestId('click-problem').textContent).not.toContain('<prefix>')
+  })
   it('preserves the host reader fix', () => {
     const problem = clickProblem(new ApiError(409, { code: 'sign.convenience_readers', message: 'Reader refused', retryable: false, fix: 'HOST FIX \u202ehere' }))
     expect(problem.body).toContain('HOST FIX \u202ehere')

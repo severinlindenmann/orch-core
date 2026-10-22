@@ -370,10 +370,11 @@ def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
 
 
 def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
-    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
-    workspace log, signed by the owner at the host terminal. Selective mode only: ``full`` is refused here (C2b) and by
-    the model and the signer. The hub card is verified here against the host's own clock and dev state
-    (``ctx.prepare.hub``); the event adds no member and carries no key material beyond the hub's public root."""
+    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a/C2b, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
+    workspace log, signed by the owner at the host terminal. The hub card is verified here against the host's own
+    clock and dev state (``ctx.prepare.hub``). A selective join carries no key material beyond the hub's public root;
+    a full join says in its review that the hub will read everything, and the host then adds the ``hub`` member and
+    seals ``WK_e`` to the hub's ``HXK`` (``hub.connect``, never in this op)."""
     from orch.hubclient import wire
     from orch.hubclient.errors import HubRefused
 
@@ -382,20 +383,19 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
     facts = getattr(ctx.prepare, "hub", None)
     if facts is None or type(getattr(facts, "now_ms", None)) is not int:
         raise OrchError("human_only", "hub.join is prepared only by the host, with its own facts")
-    if args["mode"] != "selective":
-        raise OrchError("hub.full_mode_later", "a full join comes later (C2b); only the selective mode exists now")
+    mode = args["mode"]
     current = h.store.state.workspace.hub
     if current and current.get("status") == "joined":
         raise OrchError("hub.already_joined", "this workspace is already joined to a hub; leave it first")
     try:
         verified = wire.verify_card(args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode)
-        me = h.person.removeprefix("p_")  # the owner is the only person a selective join may alias (spec 8a)
+        me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
             raise HubRefused("malformed")
         payload = wire.joined_payload(
             hk_root_pub=verified["hk_root_pub"],
-            mode="selective",
+            mode=mode,
             binding_seq=int(current.get("binding_seq", 0)) + 1,
             aliases=aliases,
             prior_aliases=dict(current.get("aliases", {})),
@@ -403,8 +403,47 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
     except HubRefused as exc:
         raise OrchError("hub.refused", f"the hub is refused: {exc.code}") from None
     done = h.run({"type": "hub.joined", **payload}, "workspace", f"join hub {payload['hub_id']}", review=[])
-    data = {"hub_id": payload["hub_id"], "mode": "selective", "binding_seq": payload["binding_seq"]}
+    data = {"hub_id": payload["hub_id"], "mode": mode, "binding_seq": payload["binding_seq"]}
     return h.workspace_result(done, data, "orch hub join continues with the hub (orch host hub connect)")
+
+
+def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
+    """``hub.mode {hub_card, mode: "full"}`` (V3 C2b, spec 8a "Switching mode"): selective to full for the hub this
+    workspace is joined to. The owner's own key at the terminal signs a new ``hub.joined`` (mode full, the next
+    ``binding_seq``, no new aliases) whose review says the hub will be able to read everything; nobody else starts
+    it. The hub card must be the joined hub's (same ``HK_root``). Full to selective is not an op: it is
+    ``hub.leave`` (with an epoch rotation) and a selective ``hub.join``."""
+    from orch.crypto.encoding import unb64u
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "hub.mode")
+    _owner(h, "hub.mode")
+    facts = getattr(ctx.prepare, "hub", None)
+    if facts is None or type(getattr(facts, "now_ms", None)) is not int:
+        raise OrchError("human_only", "hub.mode is prepared only by the host, with its own facts")
+    current = h.store.state.workspace.hub
+    if not current or current.get("status") != "joined":
+        raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
+    if current.get("mode") != "selective":
+        raise OrchError("hub.already_joined", "this workspace is already in full mode with this hub")
+    try:
+        verified = wire.verify_card(
+            args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode,
+            pinned_root=unb64u(current["hk_root_pub"], 65),
+        )  # fmt: skip
+        payload = wire.joined_payload(
+            hk_root_pub=verified["hk_root_pub"],
+            mode="full",
+            binding_seq=int(current["binding_seq"]) + 1,
+            aliases=[],
+            prior_aliases=dict(current.get("aliases", {})),
+        )
+    except HubRefused as exc:
+        raise OrchError("hub.refused", f"the hub is refused: {exc.code}") from None
+    done = h.run({"type": "hub.joined", **payload}, "workspace", f"switch hub {payload['hub_id']} to full", review=[])
+    data = {"hub_id": payload["hub_id"], "mode": "full", "binding_seq": payload["binding_seq"]}
+    return h.workspace_result(done, data, "orch hub mode full continues with the hub (orch host hub connect)")
 
 
 def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
@@ -425,7 +464,8 @@ _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 HUB_JOIN = operation(
     "hub.join",
     "Human only",
-    "Join a hub in selective mode: the hub sees only what you share and never gets the workspace key.",
+    "Join a hub. Selective: the hub sees only what you share and never gets the workspace key. Full: the hub is a "
+    "member and can read everything in the workspace.",
     who="human",
     props={
         "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
@@ -446,13 +486,25 @@ HUB_JOIN = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(
-        err("role.denied"),
-        err("hub.refused"),
-        err("hub.full_mode_later"),
-        err("hub.already_joined"),
-    ),
+    errors=(err("role.denied"), err("hub.refused"), err("hub.already_joined")),
     handler=handle_hub_join,
+)
+HUB_MODE = operation(
+    "hub.mode",
+    "Human only",
+    "Switch the joined hub from selective to full mode: the hub becomes a member and can read everything in the "
+    "workspace. Only you can do this, with your own key at the terminal.",
+    who="human",
+    props={
+        "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
+        "mode": E("the new mode", "full"),
+    },
+    required=("hub_card", "mode"),
+    emits=("hub.joined",),
+    text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
+    data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
+    errors=(err("role.denied"), err("hub.refused"), err("hub.not_joined"), err("hub.already_joined")),
+    handler=handle_hub_mode,
 )
 HUB_LEAVE = operation(
     "hub.leave",
@@ -671,6 +723,7 @@ OPS: dict[str, Operation] = {
         PAIR_DEVICE,
         PUBLISH_SHARE,
         HUB_JOIN,
+        HUB_MODE,
         HUB_LEAVE,
         AC_ACCEPT,
         AC_UNACCEPT,

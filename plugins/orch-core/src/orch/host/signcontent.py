@@ -1168,30 +1168,40 @@ def _event(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
         return "Change the workspace settings"
-    if typ == "hub.joined":  # V3 C2a: selective only; the words say what the hub does and does not get
+    if typ == "hub.joined":  # V3 C2a/C2b: the words say what the hub does and does not get
         hub = _short(ev.get("hub_id"))
+        mode = ev.get("mode")
+        if mode not in ("selective", "full"):
+            raise PlainUnavailable("only the selective and full modes have plain words")
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "hub key fingerprint", _fp(ev.get("hk_root_pub")))
-        _row(out, "mode", ev.get("mode"))
+        _row(out, "mode", mode)
         _row(out, "binding", ev.get("binding_seq"))
         aliases = ev.get("aliases") if isinstance(ev.get("aliases"), list) else []
         for a in aliases:
             if not isinstance(a, dict) or set(a) != {"person_id", "user_id"}:
                 raise PlainUnavailable("hub.joined alias is not a pair")
             _row(out, "hub name for you", f"{one(a['person_id'])} is {one(a['user_id'])} on the hub")
+        if mode == "full":
+            out.setdefault("notes", []).append(
+                "Full: the hub will be able to read everything in this workspace. It becomes a member of the "
+                "workspace and gets the workspace key (sealed to the hub's own key). Leaving later starts a new key "
+                "the hub never gets, but it cannot take back what the hub already read. Only you can sign this, with "
+                "your own key at this terminal."
+            )
+            return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
             "Selective: the hub sees only what you choose to share. It never gets the workspace key and is not a "
             "member of the workspace. You can leave at any time (orch hub leave), also while the hub is down."
         )
-        if ev.get("mode") != "selective":
-            raise PlainUnavailable("only the selective mode has plain words")
         return f"Join hub {hub} in selective mode: the hub sees only what you share"
     if typ == "hub.left":
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "binding", ev.get("binding_seq"))
         out.setdefault("notes", []).append(
             "The workspace tells the hub and publish that it is no longer bound. This does not take back what the "
-            "hub already read."
+            "hub already read. If the hub was in full mode, the workspace key is replaced by a new one that the hub "
+            "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
     if typ == "people.changed":

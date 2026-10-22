@@ -106,6 +106,9 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     # V3 C2a, the hub (hub contract 9; host/hubops.py)
     "hub.unreachable": (9, True),
     "hub.no_card": (3, False),
+    "hub.no_epoch": (3, False),
+    "relay.local_epochs": (3, False),
+    "hub.rotation_pending": (9, True),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
     # H11c, start agent and the runner grant (§12.4)

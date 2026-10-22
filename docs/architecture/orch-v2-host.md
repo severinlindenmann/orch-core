@@ -479,6 +479,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `relay.not_linked` | 3 | no | stays | `host.relay_unlink` on a workspace with no `relay/link.json` (R5, §11A.6; 11A.15.9 lists it for R6's ops too) | — |
 | `relay.pair_open` | 3 | no | stays | a relay pairing offer while a live offer or an outstanding cert request exists (R6c, 11A.15.6 step 1, 11A.15.9A `offer`); cancel it or wait for it to end | — |
 | `relay.no_primary` | 3 | no | stays | a relay pairing offer without a verified `membership/primary.json` (R6c, 11A.15.1); `orch host relay primary set` | — |
+| `relay.local_epochs` | 3 | no | stays | `relay.link` on a workspace whose epoch keys were made locally for the hub: linking a relay comes with H5 (V3 C2b) | — |
 | `relay.quota` | 3 | no | stays | a relay pairing offer under the `membership_quota` alarm or with the relay-reachable device count at the member-list cap (R6c, 11A.15.6 step 1) | — |
 | `relay.pair_closed` | 3 | no | stays | a pairing step the offer's state does not allow: cancel of an allocated offer, an answer or certificate for an offer not waiting for it, `relay.pair_device` outside step 9 or within 2 minutes of the phone's deadline, or without a membership publisher (R6c, 11A.15.6, 11A.15.9A) | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
@@ -525,6 +526,8 @@ drops. The host never sends it.
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 | `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
 | `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
+| `hub.no_epoch` | 3 | no | stays | `hub.connect` in full mode on a workspace that holds no epoch key `WK_e` to give the hub (link a relay first) (V3 C2b) | — |
+| `hub.rotation_pending` | 9 | yes | stays | `hub.connect` in full mode while the new workspace key a leave from full mode owes is not committed yet: nothing is sent (V3 C2b) | — |
 | `hub.state_mismatch` | 3 | no | stays | the host's `hub.json` cannot be read: the host refuses to guess (V3 C2a) | — |
 | `hub.not_joined` | 3 | no | stays | `hub.connect` or `hub.unbind` while the log has no `hub.joined` / no `hub.left` for them (V3 C2a) | — |
 

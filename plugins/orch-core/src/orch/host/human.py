@@ -437,7 +437,7 @@ class HumanOps:
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
-        if name == "hub.join":  # V3 C2a: the host's clock and dev state, never the request's
+        if name in ("hub.join", "hub.mode"):  # V3 C2a: the host's clock and dev state, never the request's
             from . import hubops
 
             capture.hub = hubops.facts_for(service)

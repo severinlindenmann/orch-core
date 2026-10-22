@@ -58,11 +58,33 @@ def test_only_an_owner_signs_it(fn, ev):
     assert r is not None and r.code == Code.ROLE_DENIED
 
 
-def test_full_mode_is_refused_by_the_model_too():
+def test_full_mode_adds_the_hub_member_and_a_leave_removes_it():
     w = ws()
-    r = workspace.hub_joined(w, joined(mode="full"))
-    assert r is not None and r.code == Code.HUB_INVALID and "C2b" in r.detail
+    persons = copy.deepcopy(w.members)
+    assert workspace.hub_joined(w, joined(mode="full")) is None
+    assert w.hub["mode"] == "full" and w.hub["member"] == {"kind": "hub", "hub_id": HUB}
+    assert w.members == persons  # the hub is not a person member
+    assert workspace.hub_left(w, left()) is None
+    assert "member" not in w.hub and w.hub["status"] == "left"
+    assert workspace.hub_joined(w, joined(seq=2)) is None and "member" not in w.hub  # full -> selective: no member
+
+
+def test_an_unknown_mode_is_refused():
+    w = ws()
+    assert workspace.hub_joined(w, joined(mode="weird")).code == Code.HUB_INVALID
     assert w.hub == {}
+
+
+def test_only_selective_to_full_on_the_same_hub_switches_without_a_leave():
+    w = ws()
+    workspace.hub_joined(w, joined())
+    assert "member" not in w.hub
+    assert workspace.hub_joined(w, joined(seq=2, mode="full", hub="0" * 32)).code == Code.HUB_INVALID
+    assert workspace.hub_joined(w, joined(seq=1, mode="full")).code == Code.HUB_INVALID  # seq must grow
+    assert workspace.hub_joined(w, joined(seq=2, mode="full", aliases=[])) is None
+    assert w.hub["mode"] == "full" and w.hub["binding_seq"] == 2 and w.hub["member"]["kind"] == "hub"
+    assert workspace.hub_joined(w, joined(seq=3, mode="selective")).code == Code.HUB_INVALID  # no downgrade
+    assert workspace.hub_joined(w, joined(seq=3, mode="full")).code == Code.HUB_INVALID
 
 
 def test_a_second_join_needs_a_leave_and_a_higher_seq():

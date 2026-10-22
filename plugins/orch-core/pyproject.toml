@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-orch = "orch.cli.main:main"
+orch = "orch.cli.main:entry"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]

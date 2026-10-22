@@ -208,7 +208,7 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
   // Core's own prompt `[r] hand to the orch runner` follows the signature of a runner grant (the access is the signed
   // `label`); an Extend also takes back the access it replaces. Both are read from the SIGNED events, never from a host word.
   const runnerGrant = request.events.some(e => e.type === 'grant.issued' && e.label === 'runner')
-  const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
+  const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || !!Object.keys(material.grants ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   const preview = <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />
   // ONE "Technical details" expander: with core's review it is the content's own (ids), plus these facts and the preview.
   const technical = (

@@ -76,3 +76,10 @@ it('a plain runner grant gets the r note but not the stop warning; another grant
   render(<HandoffPanel request={{ ...fakeRequest({ events: issued('ci') }), content: { headline: 'g' } }} />)
   expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
 })
+
+it('says some values come from orch on this Mac when the host named the access taken back (material.grants)', () => {
+  const base = fakeRequest()
+  const request = { ...base, material: { ...base.material, grants: { gr_old: { label: 'runner', scope: 'workable', expires_at: '2026-10-25T00:37:00Z', person: 'p_x' } } }, content: { headline: 'Take back agent access' } }
+  render(<HandoffPanel request={request} />)
+  expect(screen.getByText('Some values come from orch on this Mac (see details)')).toBeVisible()
+})

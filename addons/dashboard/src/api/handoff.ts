@@ -103,6 +103,7 @@ export interface HandoffMaterial {
   question?: Record<string, unknown>
   texts?: Record<string, string>
   before?: Record<string, unknown>
+  grants?: Record<string, unknown>
   /** B11: the whole intent of a sequence (bound by `review_digest`); the first request of one signer's run. */
   sequence?: { digest: string; of: number; intent: Record<string, unknown> }
   /** #740: the manual acceptance statement file of `ac.accept` / `ac.unaccept` (bound by `review_digest`). */

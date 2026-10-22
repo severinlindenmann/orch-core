@@ -151,3 +151,18 @@ def test_unjoined_link_does_not_grow_the_table(make_hub, state):
     d = inspect(state)
     assert d["workspaces"] == {} and d["unjoined_ops"]["snapshot_get"]["refused"] == 203
     db.close()
+
+
+def test_inspect_shows_share_counts_only(make_hub, state):
+    from orch_hub.shares import ShareService, ShareStore
+
+    store = ShareStore(str(state / "shares.db"))
+    reg = Registry(str(state / "registry.db"))
+    hub = make_hub(registry=reg, shares=ShareService(store, reg))
+    c = joined(hub)
+    c.request("share_put", {"item_id": G.fake16("i1"), "sealed": "AAECAw"})
+    w = inspect(state)["workspaces"][G.WS_A]
+    assert w["shares"] == {"items": 1, "bytes": 4}
+    assert w["ops"]["share_put"] == {"accepted": 1, "refused": 0}
+    assert G.fake16("i1") not in json.dumps(inspect(state))
+    store.close()

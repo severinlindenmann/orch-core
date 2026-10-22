@@ -95,6 +95,8 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("hubops.py", "_owner"): (2, "unreachable (hub.* are not R ops); R is not P, so it would be refused"),
     ("peerops.py", "_owner"): (2, "unreachable (peer.* are not R ops); R is not P, so it would be refused"),
     ("peerops.py", "_check"): (2, "unreachable (peer.* are not R ops); a relay peer is not column P or G"),
+    ("spaceops.py", "_owner"): (2, "unreachable (space.* are not R ops); R is not P, so it would be refused"),
+    ("spaceops.py", "_check"): (2, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_plan"): (2, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_register"): (4, "unreachable (worktree.* are not R ops)"),

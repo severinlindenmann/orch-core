@@ -12,6 +12,7 @@ from typing import Any
 
 from orch.crypto import suite as S
 from orch.crypto.encoding import unb64u
+from orch.hubclient.errors import HubRefused
 
 from . import contract as H
 
@@ -33,11 +34,21 @@ RUN_CHECKS = frozenset(
         "link",
         "hub_join",
         "v2_card",
+        "space",  # V3 C13: replayed against the PRODUCTION module orch.hubclient.spaces
+        "space_wrap",
+        "space_item",
+        "host_put",
     }
 )
 SKIPPED_CHECKS = {
     "custodial": "phase 4: custodial events are verified by C3, not before",
     "publish": "orch-publish verifies section 11.2; core only builds the request",
+    "space_flow": "the hub's put / revoke / get rules over a space: hub side (orch_hub), core sees only the replies",
+    "audit": "hub audit chain (D4): hub side",
+    "audit_ack": "hub audit chain (D4): hub side",
+    "admin_read": "hub admin reads (D3/D4): hub side",
+    "admin_read_row": "hub admin reads (D3/D4): hub side",
+    "admin_read_rows": "hub admin reads (D3/D4): hub side",
 }
 
 
@@ -155,11 +166,59 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         )
     if check == "v2_card":
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
+    if check in ("space", "space_wrap", "space_item", "host_put"):
+        return _run_space(check, a)
     raise ValueError(f"check {check} is not replayed by core")
+
+
+def _held_prod(a: dict[str, Any]) -> dict[str, Any]:
+    """The hub card the verifier holds, through the production verifier (``held_card``: an earlier card)."""
+    from orch.hubclient import wire
+
+    pinned = unb64u(a["pinned_root"], 65) if a.get("pinned_root") else None
+    rev = frozenset(a.get("revoked_op_certs", []))
+    kw = {"now_ms": a["now_ms"], "dev_mode": a.get("dev_mode", True), "pinned_root": pinned, "revoked_op_certs": rev}
+    prior = wire.verify_card(a["held_card"], **kw) if a.get("held_card") else None
+    return wire.verify_card(a["card"], **kw, held=prior)
+
+
+def _run_space(check: str, a: dict[str, Any]) -> dict[str, Any]:
+    from orch.hubclient import spaces as SP
+
+    dev = a.get("dev_mode", True)
+    if check == "space":
+        prior = None
+        if a.get("prior"):
+            prior = SP.verify_space(
+                a["prior"], _held_prod({**a, "card": a.get("held_card", a["card"]), "held_card": None}), dev_mode=dev
+            )
+        later = frozenset(a.get("revoked_op_certs", [])) | frozenset(a.get("revoked_later", []))
+        o = SP.verify_space(a["signed"], _held_prod(a), dev_mode=dev, prior=prior, revoked_op_certs=later)
+        return {"epoch": o["epoch"], "members": o["members"]}
+    if check == "space_wrap":
+        held = _held_prod(a)
+        space = SP.verify_space(a["space"], held, dev_mode=dev)
+        seed = bytes.fromhex(a["wxk_seed"])
+        wxk = S.private_key_from_scalar(int.from_bytes(seed, "big") % (S.P256_N - 1) + 1)
+        o, sk = SP.verify_space_wrap(
+            a["signed"], held, space, workspace_id=a["workspace_id"], wxk_priv=wxk, wxk_version=a["wxk_version"],
+            dev_mode=dev,
+        )  # fmt: skip
+        return {"epoch": o["epoch"], "sk_hex": sk.hex()}
+    if check == "space_item":
+        o = SP.verify_item(
+            a["sealed"], sk=bytes.fromhex(a["sk_hex"]), space_id=a["space_id"], epoch=a["epoch"],
+            item_id=a["item_id"], members=a["members"], wsk_pubs={w: unb64u(k, 65) for w, k in a["wsk_pubs"].items()},
+            hub_id=a["hub_id"], dev_mode=dev,
+        )  # fmt: skip
+        return {"author": o["workspace_id"]}
+    space = SP.verify_space(a["space"], _held_prod(a), dev_mode=dev)
+    SP.check_host_put(a["rule"], space)
+    return {"put": True}
 
 
 def outcome(case: dict[str, Any]) -> dict[str, Any]:
     try:
         return {"ok": run(case["check"], case["args"])}
-    except H.Refused as r:
+    except (H.Refused, HubRefused) as r:
         return {"error": r.code}

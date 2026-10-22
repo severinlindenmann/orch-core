@@ -104,6 +104,8 @@ from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
+from .spaceops import NETWORK_OPS as SPACE_NETWORK_OPS
+from .spaceops import SPACE_OPS, SPACE_READS
 from .terms import TERM_CAPS, TERM_OPS
 from .visibility import Viewer
 from .workdirs import CAPS as WORKDIR_CAPS
@@ -228,6 +230,7 @@ def served_ops() -> dict[str, int]:
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
+    out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
     return out
@@ -283,6 +286,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name == "hub.status" else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
+    if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
+        return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -477,6 +482,10 @@ class RegistryBackend:
             from . import hubops
 
             return await hubops.execute(call, result)
+        if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
+            from . import spaceops
+
+            return await spaceops.execute(call, result)
         if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
             from . import peerops
 
@@ -673,6 +682,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in SPACE_OPS:
+                from . import spaceops
+
+                result = spaceops.serve(call)
             elif op in PEER_OPS:
                 from . import peerops
 

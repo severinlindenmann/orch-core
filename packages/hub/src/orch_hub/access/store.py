@@ -98,6 +98,10 @@ class Access:
     def __init__(self, path: str = ":memory:", *, now_ms: Callable[[], int] | None = None) -> None:
         self.lock = threading.RLock()
         self._now = now_ms or (lambda: int(time.time() * 1000))
+        #: called as ``observer(event)`` INSIDE the transaction of a grant / membership change, before it commits (D4:
+        #: the audit chain). If it raises, the change is rolled back; a failed commit after it leaves an audit record
+        #: for a change that did not happen, never the reverse.
+        self.observer: Callable[[dict], None] | None = None
         try:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
@@ -144,11 +148,20 @@ class Access:
 
     def remove_user(self, user_id: str, *, actor: str | None = None) -> None:
         _hex(user_id, "user_id")
-        with self.lock:
-            if self._admin_only_change(user_id, actor):
-                raise AccessError("forbidden", "only a hub-admin removes a hub-admin")
-            if self._w("DELETE FROM users WHERE user_id=?", (user_id,)) == 0:
-                raise AccessError("unknown_user")
+        try:
+            with self.tx() as db:
+                if self._admin_only_change(user_id, actor):
+                    raise AccessError("forbidden", "only a hub-admin removes a hub-admin")
+                if not db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone():
+                    raise AccessError("unknown_user")
+                # the cascade removes the user's group memberships: each one is a membership change and is audited
+                for (g,) in db.execute("SELECT grp FROM members WHERE user_id=? ORDER BY grp", (user_id,)).fetchall():
+                    self._observe(
+                        {"kind": "membership", "group": g, "user_id": user_id, "added": False, "actor_user_id": actor}
+                    )
+                db.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def users(self) -> list[dict[str, Any]]:
         return [
@@ -173,12 +186,27 @@ class Access:
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
-    def remove_group(self, name: str) -> None:
+    def remove_group(self, name: str, *, actor: str | None = None) -> None:
         _grp(name)
         if name == ADMIN_GROUP:
             raise AccessError("reserved_group")
-        if self._w("DELETE FROM groups WHERE name=?", (name,)) == 0:
-            raise AccessError("unknown_group")
+        try:
+            with self.tx() as db:
+                if not db.execute("SELECT 1 FROM groups WHERE name=?", (name,)).fetchone():
+                    raise AccessError("unknown_group")
+                # the cascade removes the group's grants and memberships: each row is a change and is audited, so a
+                # workspace's access cannot disappear without a record (D4)
+                for (w,) in db.execute("SELECT workspace_id FROM grants WHERE grp=? ORDER BY workspace_id", (name,)):
+                    self._observe(
+                        {"kind": "grant", "group": name, "workspace_id": w, "role": None, "actor_user_id": actor}
+                    )
+                for (u,) in db.execute("SELECT user_id FROM members WHERE grp=? ORDER BY user_id", (name,)).fetchall():
+                    self._observe(
+                        {"kind": "membership", "group": name, "user_id": u, "added": False, "actor_user_id": actor}
+                    )
+                db.execute("DELETE FROM groups WHERE name=?", (name,))
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def groups(self) -> list[dict[str, Any]]:
         return [
@@ -222,12 +250,19 @@ class Access:
                     db.execute("INSERT OR IGNORE INTO members VALUES (?,?)", (group, user_id))
                 else:
                     db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (group, user_id))
+                self._observe(
+                    {"kind": "membership", "group": group, "user_id": user_id, "added": add, "actor_user_id": actor}
+                )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
     # --- grants --------------------------------------------------------------------------------------------------
 
-    def grant(self, workspace_id: str, group: str, role: str) -> None:
+    def _observe(self, ev: dict) -> None:
+        if self.observer is not None:
+            self.observer(ev)
+
+    def grant(self, workspace_id: str, group: str, role: str, *, actor: str | None = None) -> None:
         """Set (or change) the role a group holds in a workspace. The hub-admin group is never a grantee."""
         _hex(workspace_id, "workspace_id")
         _grp(group)
@@ -243,17 +278,36 @@ class Access:
                     "INSERT INTO grants VALUES (?,?,?) ON CONFLICT(workspace_id, grp) DO UPDATE SET role=excluded.role",
                     (workspace_id, group, role),
                 )
+                self._observe(
+                    {
+                        "kind": "grant",
+                        "group": group,
+                        "workspace_id": workspace_id,
+                        "role": role,
+                        "actor_user_id": actor,
+                    }
+                )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
-    def revoke(self, workspace_id: str, group: str) -> None:
-        if (
-            self._w(
-                "DELETE FROM grants WHERE workspace_id=? AND grp=?", (_hex(workspace_id, "workspace_id"), _grp(group))
-            )
-            == 0
-        ):
-            raise AccessError("not_granted")
+    def revoke(self, workspace_id: str, group: str, *, actor: str | None = None) -> None:
+        _hex(workspace_id, "workspace_id")
+        _grp(group)
+        try:
+            with self.tx() as db:
+                if db.execute("DELETE FROM grants WHERE workspace_id=? AND grp=?", (workspace_id, group)).rowcount == 0:
+                    raise AccessError("not_granted")
+                self._observe(
+                    {
+                        "kind": "grant",
+                        "group": group,
+                        "workspace_id": workspace_id,
+                        "role": None,
+                        "actor_user_id": actor,
+                    }
+                )
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def grants_of_group(self, group: str) -> list[dict[str, str]]:
         return [

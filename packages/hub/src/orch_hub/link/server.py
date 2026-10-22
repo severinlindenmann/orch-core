@@ -65,6 +65,7 @@ class LinkServer:
         router: Router | None = None,
         access: Any = None,
         spaces: Any = None,
+        audit: Any = None,
         wk_seals: WkSeals | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
@@ -85,6 +86,7 @@ class LinkServer:
         self._router = router
         self._access = access
         self._spaces = spaces
+        self._audit = audit
         self._wk_seals = wk_seals
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
@@ -327,6 +329,7 @@ class LinkServer:
                 router=self._router,
                 access=self._access,
                 spaces=self._spaces,
+                audit=self._audit,
                 wk_seals=self._wk_seals,
             )
             return handler(ctx)

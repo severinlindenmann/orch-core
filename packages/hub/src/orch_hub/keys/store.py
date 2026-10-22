@@ -252,6 +252,20 @@ class HubKeys:
     def card(self) -> dict[str, Any]:
         return self._read_obj(self._gen_dir() / "card.json")
 
+    def op_cert_by_id(self, cert_id: str) -> dict[str, Any] | None:
+        """The root-signed ``hub.op_cert`` with this id among the generations still on disk (the audit chain serves the
+        ones its records name); None if unknown."""
+        if type(cert_id) is not str or not _HEX16.fullmatch(cert_id):
+            return None
+        for seq in range(self._meta["op_seq"], 0, -1):
+            try:
+                c = self._read_obj(self._gen_dir(seq) / "cert.json")
+            except KeysError:
+                continue
+            if c.get("o", {}).get("cert_id") == cert_id:
+                return c
+        return None
+
     def _read_obj(self, path: Path) -> dict[str, Any]:
         try:
             o = _load_json(path)

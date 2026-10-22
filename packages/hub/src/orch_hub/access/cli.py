@@ -90,10 +90,18 @@ def run(args: argparse.Namespace, out=None) -> int:
         state = Path(args.state) if args.state else default_state_dir()
         require_state_owner(state)
         acc = Access(str(state / ACCESS_FILE))
+        log = None
         try:
+            if args.group in ("users", "groups", "grants"):  # D4: grant and membership changes go into the audit chain
+                from ..audit import open_log
+
+                log = open_log(state, HubKeys.open(state))
+                acc.observer = log.access_change
             res = _dispatch(args, state, acc)
         finally:
             acc.close()
+            if log is not None:
+                log.store.close()
     except (AccessError, KeysError) as e:
         print(f"orch-hub: refused: {e.code}" + (f" ({e})" if str(e) != e.code else ""), file=sys.stderr)
         return 1

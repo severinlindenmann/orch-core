@@ -108,6 +108,7 @@ class OpContext:
     now_ms: int
     dev_mode: bool
     router: Router | None = None
+    audit: Any = None  # orch_hub.audit.AuditLog; None = audit ops not served (unknown_op)
     spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
@@ -268,6 +269,23 @@ def _spaces(c: OpContext) -> Any:
     return c.spaces
 
 
+def _audit(c: OpContext) -> Any:
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.audit is None:
+        raise Refused("unknown_op")
+    return c.audit
+
+
+def audit_get(c: OpContext) -> dict[str, Any]:
+    return _audit(c).get(c.workspace_id, c.body)
+
+
+def audit_ack(c: OpContext) -> dict[str, Any]:
+    return _audit(c).ack(c.workspace_id, c.body)
+
+
 def space_list(c: OpContext) -> dict[str, Any]:
     return {"spaces": _spaces(c).list_for(c.workspace_id)}
 
@@ -313,6 +331,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "snapshot_get": snapshot_get,
     "publish_out": publish_out,
     "route_out": route_out,
+    "audit_get": audit_get,
+    "audit_ack": audit_ack,
     "space_list": space_list,
     "space_put": space_put,
     "space_revoke": space_revoke,

@@ -218,14 +218,17 @@ class Channels:
 
     # --- sessions --------------------------------------------------------------------------------------------------
 
-    def sign_in(self, user_id: str, password: str, totp: str) -> dict[str, Any]:
+    def sign_in(self, user_id: str, password: str, totp: str, source: str = "") -> dict[str, Any]:
         """Password and TOTP together; any mismatch is one generic ``bad_credentials`` (no hint which part, none whether
-        the user exists). After :data:`MAX_FAILURES` failures in :data:`FAIL_WINDOW_MS` the user is ``rate_limited``
-        even with correct credentials, until the window passes."""
+        the user exists). After :data:`MAX_FAILURES` failures in :data:`FAIL_WINDOW_MS` the pair (user, ``source``) is
+        ``rate_limited`` even with correct credentials, until the window passes. ``source`` is the caller's network
+        address (the web layer's); the counter is per pair so a stranger who knows a user id cannot lock that user out
+        from the user's own address. Without a ``source`` the counter is per user."""
         u = self._user(user_id)
+        subject = u if not source else f"{u}|{str(source)[:64]}"
         if type(password) is not str or type(totp) is not str or len(password) > 1024:
             raise ChannelError("bad_credentials")
-        rid = self._guard(lambda: self._reserve("login", u))
+        rid = self._guard(lambda: self._reserve("login", subject))
         row = self._guard(
             lambda: self.db.q("SELECT pw_salt, pw_hash, totp_secret, totp_last FROM credentials WHERE user_id=?", (u,))
         )
@@ -257,7 +260,7 @@ class Channels:
                     != 1
                 ):
                     raise ChannelError("bad_credentials")
-                self._succeed(db, "login", u, rid)
+                self._succeed(db, "login", subject, rid)
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",

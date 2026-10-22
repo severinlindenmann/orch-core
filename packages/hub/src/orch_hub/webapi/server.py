@@ -35,7 +35,7 @@ class _Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(n)
             if len(body) != n:
                 return self._send(*self.api.error(400, "malformed"))
-        self._send(*self.api.handle(self.command, self.path, headers, body))
+        self._send(*self.api.handle(self.command, self.path, headers, body, self.client_address[0]))
 
     def _send(self, status: int, headers: list[tuple[str, str]], body: bytes) -> None:
         self.send_response(status)
@@ -50,11 +50,41 @@ class _Handler(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = _serve
 
 
+MAX_WORKERS = 32  # connections served at once; more are answered 503 and closed, never queued without bound
+
+
+class _BoundedServer(ThreadingHTTPServer):
+    """One thread per connection like the stdlib, but at most ``max_workers`` at a time: the (max_workers+1)th
+    connection gets a bare 503 on the accept thread and is closed."""
+
+    daemon_threads = True
+
+    def __init__(self, addr: Any, handler: Any, max_workers: int) -> None:
+        super().__init__(addr, handler)
+        self._slots = threading.BoundedSemaphore(max_workers)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 class WebServer:
-    def __init__(self, api: WebApi, host: str, port: int) -> None:
+    def __init__(self, api: WebApi, host: str, port: int, max_workers: int = MAX_WORKERS) -> None:
         handler = type("Handler", (_Handler,), {"api": api})
-        self._srv = ThreadingHTTPServer((host, port), handler)
-        self._srv.daemon_threads = True
+        self._srv = _BoundedServer((host, port), handler, max_workers)
         self._thread: threading.Thread | None = None
 
     @classmethod

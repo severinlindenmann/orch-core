@@ -24,6 +24,7 @@ Nothing secret is logged: this module does not log at all.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import threading
@@ -46,6 +47,9 @@ COOKIE = "orch_hub_session"
 CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
+SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source, counted before any password hashing
+SIGNIN_GLOBAL_LIMIT = (300, 60_000)  # all sources together
+SIGNIN_CONCURRENCY = 4  # sign-ins hashing at the same moment (scrypt is 16 MiB and ~50 ms each)
 MAX_PREPARED = 4096
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _ID = r"[0-9a-f]{32}"
@@ -162,6 +166,8 @@ class WebDeps:
     view: ViewReader | None = None
     #: exact origins the browser console is served from, e.g. ``{"http://127.0.0.1:8443"}``; also derives the allowed Hosts
     allowed_origins: frozenset[str] = frozenset()
+    #: addresses of the edge that may state the client address (``X-Forwarded-For``, last entry); any other peer is its own source
+    trusted_peers: frozenset[str] = frozenset()
     secure_cookies: bool = True  # the loopback dev server over plain http passes False
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
 
@@ -243,6 +249,7 @@ class Ctx:
     token: str = ""
     cookie: bool = False
     origin: str | None = None
+    source: str = ""
 
 
 class _Limiter:
@@ -302,6 +309,7 @@ class WebApi:
         self._limit = _Limiter(deps.now_ms)
         self._prepared: dict[str, tuple[str, str, str, str, int]] = {}  # id -> user, channel, workspace, log, expires
         self._plock = threading.Lock()
+        self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
 
     # --- the request pipeline ----------------------------------------------------------------------------------------
@@ -319,11 +327,22 @@ class WebApi:
         ]
         return status, h, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
 
+    def _source(self, headers: dict[str, str], peer: str) -> str:
+        """The client address: the socket peer, or, only when that peer is the configured edge, the last
+        ``X-Forwarded-For`` entry (the one the edge appended). Anything that is not an IP address is the peer."""
+        if peer in self.d.trusted_peers:
+            last = headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
+            try:
+                return str(ipaddress.ip_address(last))
+            except ValueError:
+                pass
+        return peer
+
     def handle(
-        self, method: str, target: str, headers: dict[str, str], body: bytes
+        self, method: str, target: str, headers: dict[str, str], body: bytes, peer: str = ""
     ) -> tuple[int, list[tuple[str, str]], bytes]:
         try:
-            return self._handle(method, target, headers, body)
+            return self._handle(method, target, headers, body, self._source(headers, peer))
         except ApiError as e:
             return self._fail(e.code)
         except (ChannelError, AccessError, Refused) as e:
@@ -337,7 +356,7 @@ class WebApi:
         return self.error(STATUS[code], code)
 
     def _handle(
-        self, method: str, target: str, headers: dict[str, str], raw: bytes
+        self, method: str, target: str, headers: dict[str, str], raw: bytes, source: str = ""
     ) -> tuple[int, list[tuple[str, str]], bytes]:
         u = urllib.parse.urlsplit(target)
         route, params = None, {}
@@ -355,7 +374,7 @@ class WebApi:
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
         if method != "GET":
             self._csrf(headers, bool(raw), use_cookie=not bearer and bool(cookie_token))
-        ctx = Ctx(origin=headers.get("origin"))
+        ctx = Ctx(origin=headers.get("origin"), source=source)
         if route.auth != "none":
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
             if not ctx.token:
@@ -456,7 +475,15 @@ class WebApi:
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
-        s = self.d.channels.sign_in(b["user_id"], b["password"], b["totp"])
+        # caps BEFORE any hashing: per source, all sources, and the sign-ins hashing right now (never queue: refuse)
+        self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
+        self._limit.hit("signin-all", "", SIGNIN_GLOBAL_LIMIT)
+        if not self._hashing.acquire(blocking=False):
+            raise ApiError("rate_limited")
+        try:
+            s = self.d.channels.sign_in(b["user_id"], b["password"], b["totp"], c.source)
+        finally:
+            self._hashing.release()
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]

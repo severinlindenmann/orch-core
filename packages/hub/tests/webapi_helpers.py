@@ -144,6 +144,7 @@ class Web:
         csrf: bool = True,
         ctype: str | None = "application/json",
         host: str | None = None,
+        peer: str = "",
     ):
         h: dict[str, str] = {}
         if host or self.api._hosts:
@@ -159,7 +160,7 @@ class Web:
         raw = b"" if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
         if raw and ctype:
             h["content-type"] = ctype
-        status, hdrs, out = self.api.handle(method, "/api/v1" + path, h, raw)
+        status, hdrs, out = self.api.handle(method, "/api/v1" + path, h, raw, peer)
         return status, json.loads(out), dict(hdrs)
 
     def login(self, user: str) -> str:

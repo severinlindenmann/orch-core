@@ -68,6 +68,7 @@ ACTOR_RULES: dict[str, str] = {
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
+    "hub.pinned": "H",
 }
 OPERATE = frozenset(
     {

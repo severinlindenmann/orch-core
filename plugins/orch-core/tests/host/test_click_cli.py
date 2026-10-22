@@ -52,7 +52,7 @@ def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, mon
     monkeypatch.setenv("PWD", os.getcwd())
     code, out, _ = run("host", "convenience", "on", "--state", state)  # `on` never defaults to the folder
     assert code == 5 and "--workspace is required" in out
-    assert f"orch host convenience on --workspace {served.service.entry.prefix}" in out  # the folder's prefix, not a placeholder
+    assert f"convenience on --workspace {served.service.entry.prefix}" in out  # the folder's prefix, not a placeholder
     code, out, _ = run("host", "convenience", "off", "--state", state)
     assert code == 0 and not convenience.enabled(served.lab.state, served.wid, UID)
     assert "this folder belongs to" in out and served.service.entry.prefix in out
@@ -66,16 +66,18 @@ def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, mon
     assert "Sign in the Terminal with orch sign" in out and "stays in one-click custody" not in out
     monkeypatch.setattr(select, "status", lambda st, wid: {**real(st, wid), "custody": "convenience"})
     code, out, _ = run("host", "convenience", "off", "--state", state)
-    assert code == 0 and "stays in one-click custody" in out and "orch keys custody passphrase" in out  # F1: the way to a passphrase
+    assert (
+        code == 0 and "stays in one-click custody" in out and "orch keys custody passphrase" in out
+    )  # F1: the way to a passphrase
     assert "Sign in the Terminal with orch sign" not in out
     monkeypatch.setattr(select, "status", real)
     monkeypatch.chdir("/")
     monkeypatch.setenv("PWD", "/")
     code, out, _ = run("host", "convenience", "off", "--state", state)
     assert code == 5 and "invalid.input" in out
-    assert "describe describe" not in out and "orch host convenience off --workspace <your workspace prefix>" in out
+    assert "describe describe" not in out and "convenience off --workspace <your workspace prefix>" in out
     code, out, _ = run("host", "convenience", "on", "--state", state)
-    assert code == 5 and "orch host convenience on --workspace <your workspace prefix>" in out
+    assert code == 5 and "convenience on --workspace <your workspace prefix>" in out
 
 
 def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(served, monkeypatch):

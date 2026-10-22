@@ -771,8 +771,9 @@ _clock = time.time  # the clock of request expiry for `convenience on` (tests se
 def _prefix_of(entries: list[dict[str, Any]], workspace_id: str | None) -> str | None:
     """The registered prefix of a workspace id (for a hint), else None."""
     for item in entries:
-        if workspace_id is not None and item.get("workspace_id") == workspace_id and isinstance(item.get("prefix"), str):
-            return item["prefix"]
+        prefix = item.get("prefix")
+        if workspace_id is not None and item.get("workspace_id") == workspace_id and isinstance(prefix, str):
+            return prefix
     return None
 
 

@@ -220,7 +220,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "seq": _int_min(1),
         "prev": _b64u_n(32),
         "ts_ms": _int_min(0),
-        "type": _enum("custodial", "grant", "membership", "space"),
+        "type": _enum("custodial", "grant", "membership", "space", "channel", "share"),
         "scope_tag": lambda x: x is None or _b64u_n(32)(x),
         "event_hash": _b64u_n(32),
         "dev": _bool,
@@ -255,6 +255,42 @@ FIELDS: dict[str, dict[str, Check]] = {
         "body": lambda x: type(x) is dict,
         "dev": _bool,
     },
+    # p4 (§6.3): what a new channel key signs to prove possession at registration (signed by that key)
+    "hub.channel_register": {
+        "hub_id": _hex16,
+        "user_id": _hex16,
+        "channel_kind": _enum("phone", "browser"),
+        "key_pub": _pub,
+        "attestation": _enum("pairing-code", "session"),
+        "nonce": _b64u_n(32),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
+    # p4 (§10.2b, C6/D9): one item a selective workspace shares with its hub (signed by its WSK, sealed to HXK)
+    "share.item": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "item_id": _hex16,
+        "item_kind": _enum("needs_you", "ticket", "question"),
+        "item_version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "chain": lambda x: type(x) is dict,
+        "content": lambda x: type(x) is dict,
+        "dev": _bool,
+    },
+    # p4 (§10.4, #1020): a proposed member transition of a space, shown to the invited workspace before it accepts
+    "hub.space_proposal": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "space_id": _hex16,
+        "epoch": _int_min(1),
+        "prev_members": lambda x: type(x) is list,
+        "members": lambda x: type(x) is list,
+        "workspace_id": _hex16,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
     "hub.publish_approval": {
         "workspace_id": _hex16,
         "hub_id": _hex16,
@@ -279,6 +315,9 @@ LABEL_OF_KIND = {
     "hub.audit": "sig_hub_audit",
     "space.item": "sig_space_item",
     "space.accept": "sig_space_accept",
+    "hub.channel_register": "sig_hub_channel_register",
+    "share.item": "sig_share_item",
+    "hub.space_proposal": "sig_hub_space_proposal",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)
 }
 
@@ -520,6 +559,52 @@ _USER_ACTOR = re.compile(r"u_[0-9a-f]{32}")
 FACTOR_RANK = {"password+totp": 0, "se-unlocked": 1, "passkey": 2}  # D66 mapping, spec §5
 
 
+#: The closed list of custodial event types (p4, protocol.md §8.5, spec D70): (type, log kind) -> the lowest hub role
+#: that may start it. ``read`` starts nothing. Everything else (break-glass verbs, members, devices, roles, grants,
+#: addon grants, restores, artifacts, agent-only types, host types, addon types) is ``not_custodial``: never built by
+#: the hub, never accepted with ``auth: "hub"``. Policy and settings changes are not channel-startable in V3; people
+#: and visibility changes are admin-only with exact schemas (phase4.ACTIONS). On top of this table the host applies ticket-format §5.4's "who may
+#: sign what" with the hub role mapped to the member role (admin -> owner, edit -> member, read -> viewer).
+CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
+    ("ticket.created", "ticket"): "edit",
+    ("ticket.updated", "ticket"): "edit",
+    ("status.changed", "ticket"): "edit",
+    ("ticket.submitted", "ticket"): "edit",
+    ("ticket.closed", "ticket"): "edit",
+    ("ticket.reopened", "ticket"): "edit",
+    ("claim.released", "ticket"): "edit",
+    ("log.added", "ticket"): "edit",
+    ("handoff.written", "ticket"): "edit",
+    ("question.asked", "ticket"): "edit",
+    ("question.answered", "ticket"): "edit",
+    ("gate.approved", "ticket"): "edit",
+    ("gate.changes_requested", "ticket"): "edit",
+    ("verdict.given", "ticket"): "edit",
+    ("ticket.moved", "ticket"): "admin",
+    ("visibility.changed", "ticket"): "admin",
+    ("people.changed", "ticket"): "admin",
+    ("addon.disabled", "workspace"): "admin",
+    ("addon.purged", "workspace"): "admin",
+}
+ROLE_RANK = {"read": 1, "edit": 2, "admin": 3}
+#: Selective mode (L2P4-1): the F1 member role of the canonical person -> the role floor of step 7b; full mode maps the
+#: other way for step 9 (admin -> owner, edit -> member, read -> viewer).
+MEMBER_ROLE_FLOOR = {"owner": "admin", "maintainer": "edit", "member": "edit", "viewer": "read"}
+
+
+def log_kind(log: str) -> str:
+    return "workspace" if log == "workspace" else "ticket"
+
+
+def check_custodial_role(event_type: Any, log: str, role: Any) -> None:
+    """Hub (before it builds) and host (§8.3 step 7): the type is custodial for this log, and the role reaches it."""
+    need = CUSTODIAL_TYPES.get((event_type, log_kind(log))) if type(event_type) is str else None
+    if need is None:
+        raise Refused("not_custodial")
+    if role not in ROLE_RANK or ROLE_RANK[role] < ROLE_RANK[need]:
+        raise Refused("forbidden_role")
+
+
 def signed_context(workspace_id: str, log: str, e: Mapping[str, Any]) -> dict[str, Any]:
     """ticket-format §5.3's signed-context object; E is the event without the NOT_SIGNED envelope fields."""
     return {"contract": 1, "suite": S.SUITE_ID, "workspace_id": workspace_id, "log": log, "event": dict(e)}
@@ -558,6 +643,7 @@ def verify_custodial(
     granted_users: frozenset[str] = frozenset(),
     min_factor: str | None = None,
     revoked_op_certs: frozenset[str] = frozenset(),
+    member_roles: Mapping[str, str] = {},
 ) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
@@ -625,6 +711,15 @@ def verify_custodial(
             raise Refused("not_granted")
     elif snapshot["roles"].get(user) not in ROLES:
         raise Refused("forbidden_role")
+    # 7b. the closed list of custodial types and the lowest role per type (p4, §8.5; selective: owner-granted users,
+    # and still only custodial types)
+    # L2P4-1: in selective mode there is no hub role; the floor comes from the F1 member role of the canonical person
+    # (the user's alias to a member p_, §9.1), and a granted user without an alias is a viewer (signs nothing).
+    if mode == "selective":
+        floor = MEMBER_ROLE_FLOOR.get(member_roles.get(user, "viewer"))  # unknown role -> None -> forbidden_role
+    else:
+        floor = snapshot["roles"].get(user)
+    check_custodial_role(typ, log, floor)
     # 8. D66 factor policy
     if min_factor is not None and FACTOR_RANK[event["channel_factor"]] < FACTOR_RANK[min_factor]:
         raise Refused("factor_too_weak")
@@ -878,6 +973,22 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "space_accept": ("w2h", None, {"accept": lambda x: type(x) is dict}),
     "space_revoke": ("w2h", None, {"space_id": _hex16, "item_id": _hex16}),
     "space_get": ("w2h", None, {"space_id": _hex16, "since": _int_min(0)}),
+    # p4 (§10.4, #1020): the pending hub.space_proposal objects that name the link's workspace
+    "space_proposals": ("w2h", None, {}),
+    # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
+    "log_sync": (
+        "w2h",
+        "full",
+        {
+            "epoch": _int_min(1),
+            "log": lambda x: type(x) is str,
+            "from_seq": _int_min(1),
+            "count": _int_min(1),
+            "head": lambda x: type(x) is str,
+            "reset": _bool,
+            "sealed": _b64u_any,
+        },
+    ),
 }
 
 

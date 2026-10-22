@@ -523,6 +523,17 @@ def _audit(call: Call, event: str, **more: Any) -> None:
     )
 
 
+def _log_sync_status(service: WorkspaceService) -> dict[str, Any] | None:
+    """The ``log_sync`` sender's state for ``hub.status`` (``None``: no sender), including a log it stopped syncing
+    because a line is bigger than a page (``stuck``: log -> seq of that line)."""
+    from . import logsyncops
+
+    st = logsyncops.status(service)
+    if st is None:
+        return None
+    return {"running": st["running"], "last_error": st["last_error"], "stuck": st["stuck"]}
+
+
 def _reseal_needed(service: WorkspaceService, state: Any) -> bool:
     """A bound full hub whose newest sealed epoch is older than the committed one (a routine rotation happened): it
     cannot read new content until ``orch hub connect`` seals the new epoch to it."""
@@ -583,6 +594,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "rotation": _rotation(service, state),
                 "reseal_needed": _reseal_needed(service, state),
                 "link": None if state is None else state.status,
+                "log_sync": _log_sync_status(service),
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
             }

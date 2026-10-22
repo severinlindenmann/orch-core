@@ -72,11 +72,21 @@ class PeerService:
                 self._link = self._connect()
             return self._link
 
-    def drop_link(self) -> None:
+    def current_link(self) -> RouteLink | None:
+        """The link as it is now (``None``: none open); never dials. For a second user of the shared link that must not
+        open one itself (the ``log_sync`` sender asks whether the link changed)."""
         with self._link_mu:
-            link, self._link = self._link, None
-        if link is not None:
-            link.close()
+            return self._link
+
+    def drop_link(self, only: RouteLink | None = None) -> None:
+        """Close and forget the link. With ``only``: just if that exact link is still the current one (a user whose
+        call failed must not drop a newer link another thread dialed meanwhile)."""
+        with self._link_mu:
+            link = self._link
+            if link is None or (only is not None and link is not only):
+                return
+            self._link = None
+        link.close()
 
     def close(self) -> None:
         self.drop_link()

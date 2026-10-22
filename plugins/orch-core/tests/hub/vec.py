@@ -59,22 +59,50 @@ SKIPPED_CHECKS = {
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
-    "relay_route": "hub to relay routing (protocol 10.8): hub and orch-relay side",
-    "user_hub": "hub user ids and aliases (protocol 9.1): hub side",
-    "visible": "hub channel visibility (protocol 10.7): hub side",
-    "cutover": "hub cutover (protocol 10.9): hub side",
-    "deliver_next": "hub delivery queue (protocol 8.7): the hub's reading of the host's reply",
-    "selective_build": "hub side (build_selective, protocol 8.6): the hub builds the event from the shared item",
+    # the hub contract moved ahead of core (orch-core#1036): not replayed yet
+    "visible": "core#1036: the host should replay these through model/visibility.can_see",
+    "user_hub": "core#1036: hub-side user/hub checks, not replayed by core yet",
+    "relay_route": "core#1036: hub to relay routing (10.8), orch-relay verifies",
+    "selective_build": "core#1036: the selective-mode build (8.6), not replayed by core yet",
+    "cutover": "core#1036: the relay cut-over (10.8.3), hub and relay side",
+    "deliver_next": "core#1036: the hub's event_deliver queue, hub side",
 }
-
-#: Cases of a run check that the vendored contract moved ahead of core on (hub develop e7ed920): each belongs to a
-#: later core task and is expected to FAIL until that task lands (xfail, not strict: some cases of a prefix already
-#: pass; that task removes its prefix). prefix -> task.
-PENDING_PREFIXES = {
-    "custodial_selective_": "host admission of selective custodial events (core 15.7, protocol 8.6)",
-    "custodial_event_": "custodial payload shape per type (protocol 8.5, check_custodial_payload)",
-    "log_sync_rotation_": "log sync across a space epoch rotation (protocol 10.5)",
-}
+#: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
+#: them and a fix turns them into XPASS
+PENDING_VECTORS = frozenset(
+    {
+        "custodial_event_base_rev_single_hash",
+        "custodial_event_code_approval_without_source",
+        "custodial_event_created_with_based_on",
+        "custodial_event_plan_approval_with_source",
+        "custodial_event_question_asked",
+        "custodial_event_question_without_id",
+        "custodial_selective_answer_in_item",
+        "custodial_selective_code_approval_in_item",
+        "custodial_selective_gate_not_in_item_f1",
+        "custodial_selective_granted_member_decides",
+        "custodial_selective_granted_owner",
+        "custodial_selective_head_fork",
+        "custodial_selective_item_not_live",
+        "custodial_selective_item_of_other_log",
+        "custodial_selective_item_superseded",
+        "custodial_selective_log_added",
+        "custodial_selective_people_changed_not_selective",
+        "custodial_selective_question_item_gate_decision",
+        "custodial_selective_question_not_in_item_f1",
+        "custodial_selective_value_based_on_differs",
+        "custodial_selective_value_gate_gen_differs",
+        "custodial_selective_value_gate_hash_differs",
+        "custodial_selective_value_policy_hash_differs",
+        "custodial_selective_value_question_based_on_differs",
+        "custodial_selective_value_question_hash_differs",
+        "custodial_selective_value_roster_v_differs",
+        "custodial_selective_value_source_sha_differs",
+        "custodial_selective_verdict_in_item",
+        "custodial_selective_without_item_hash",
+        "custodial_selective_workspace_log",
+    }
+)
 
 
 def private_key(name: str):
@@ -299,5 +327,8 @@ def _run_log_sync(a: dict[str, Any]) -> dict[str, Any]:
     view = logview.View()
     wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
     for page in a["pages"]:
+        if set(page) == {"wk_seal"}:  # a step, not a page: the host sealed a newer epoch to the hub (10.7 rule 1)
+            wk.update({int(e): bytes.fromhex(k) for e, k in page["wk_seal"].items()})
+            continue
         logview.apply_page(view, page, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk=wk)
     return view.summary()

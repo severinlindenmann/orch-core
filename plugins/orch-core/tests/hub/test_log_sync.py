@@ -262,6 +262,134 @@ def test_a_hub_that_lost_its_view_is_resent_from_one_without_a_reset(full):
     assert hub_view(full) == local_summary(logs)
 
 
+# --- the resume probe at a link open (10.7 sender rule 4) -------------------------------------------------------------
+
+
+def test_the_probe_sends_the_last_acknowledged_line_again_and_changes_nothing(full):
+    logs = Logs()
+    for _ in range(4):
+        logs.add("workspace")
+    s = Sender(full, logs)
+    s.run()
+    before, pos = len(s.pages()), dict(s.pos.logs)
+    r = s.run(probe=True)
+    sent = s.pages()[before:]
+    assert [(x["log"], x["from_seq"], x["count"], x["reset"]) for x in sent] == [("workspace", 4, 1, False)]
+    assert r.lines == 0 and s.pos.logs == pos and hub_view(full) == local_summary(logs)
+
+
+def test_the_probe_goes_first_and_the_new_lines_follow_it(full):
+    logs = Logs()
+    for _ in range(3):
+        logs.add("workspace")
+    s = Sender(full, logs)
+    s.run()
+    logs.add("workspace")
+    before = len(s.pages())
+    s.run(probe=True)
+    assert [(x["from_seq"], x["count"]) for x in s.pages()[before:]] == [(3, 1), (4, 1)]
+
+
+def test_a_probe_the_hub_answers_with_view_gap_resends_every_log_from_one_without_a_reset(full):
+    logs = Logs()
+    for _ in range(4):
+        logs.add("workspace")
+    logs.add(TKT)
+    s = Sender(full, logs)
+    s.run()
+    full.hub.workspaces[WS].view = logview.View()  # the hub lost its view; the host has nothing new to send
+    before = len(s.pages())
+    s.run(probe=True)
+    sent = s.pages()[before:]
+    assert [(x["log"], x["from_seq"], x["reset"]) for x in sent[:2]] == [
+        ("workspace", 4, False),
+        ("workspace", 1, False),
+    ]
+    assert (TKT, 1, False) in [(x["log"], x["from_seq"], x["reset"]) for x in sent]
+    assert hub_view(full) == local_summary(logs)
+
+
+def test_a_probe_gap_asks_the_resend_check_for_the_workspace_log(full):
+    logs = Logs()
+    for _ in range(3):
+        logs.add("workspace")
+    s = Sender(full, logs)
+    s.run()
+    full.hub.workspaces[WS].view = logview.View()
+    asked: list[str] = []
+    s.run(probe=True, allow_resend=lambda log: asked.append(log) or True)
+    assert asked == ["workspace"]
+
+
+def test_a_probe_that_meets_another_chain_is_a_restore_and_is_answered_with_one_reset(full):
+    logs = Logs()
+    for _ in range(3):
+        logs.add("workspace")
+    s = Sender(full, logs)
+    s.run()
+    other = Logs()
+    for _ in range(3):
+        other.add("workspace", "device.added")
+    view = logview.View()
+    view.logs["workspace"] = [(e, logview.head_of(e)) for e in other.lines["workspace"]]
+    full.hub.workspaces[WS].view = view
+    before = len(s.pages())
+    s.run(probe=True)
+    assert [(x["from_seq"], x["count"], x["reset"]) for x in s.pages()[before:]] == [(3, 1, False), (1, 3, True)]
+    assert hub_view(full) == local_summary(logs)
+
+
+def test_a_probe_with_nothing_acknowledged_sends_nothing_extra(full):
+    logs = Logs()
+    logs.add("workspace")
+    s = Sender(full, logs)
+    s.run(probe=True)
+    assert [(x["from_seq"], x["count"]) for x in s.pages()] == [(1, 1)]
+
+
+# --- core#1034: the live check and the per-log resend limit ----------------------------------------------------
+
+
+def test_core_1034_a_retryable_live_refusal_ends_the_pass_with_its_own_code(full):
+    logs = Logs()
+    logs.add("workspace")
+    logs.add(TKT)
+    s = Sender(full, logs)
+
+    def live() -> bool:
+        raise HubRefused("epoch_changed")
+
+    with pytest.raises(HubRefused) as e:
+        s.run(live=live)
+    assert e.value.code == "epoch_changed" and s.pages() == []
+    s.run()  # nothing was lost: the next pass sends it
+    assert hub_view(full) == local_summary(logs)
+
+
+def test_core_1034_the_resend_limit_is_asked_per_log(full):
+    logs = Logs()
+    for _ in range(3):
+        logs.add("workspace")
+    logs.add(TKT)
+    s = Sender(full, logs)
+    s.run()
+    full.hub.workspaces[WS].view.logs[TKT] = full.hub.workspaces[WS].view.logs[TKT][
+        :0
+    ]  # the hub lost the ticket log only
+    logs.add(TKT)
+    asked: list[str] = []
+    s.run(allow_resend=lambda log: asked.append(log) or True)
+    assert asked == [TKT]
+
+
+def test_core_1034_the_forced_times_are_kept_per_log_and_an_old_file_is_read_as_empty(full):
+    pos = Position(full.state.hub_id, full.state.binding_seq, forced={TKT: [5, 6], "workspace": [7]})
+    back = Position.from_json(pos.to_json(), hub_id=pos.hub_id, binding_seq=pos.binding_seq)
+    assert back.forced == {TKT: [5, 6], "workspace": [7]}
+    old = {"hub_id": pos.hub_id, "binding_seq": pos.binding_seq, "forced": [1, 2, 3], "logs": {}}
+    assert Position.from_json(old, hub_id=pos.hub_id, binding_seq=pos.binding_seq).forced == {}
+
+
 # --- reset after a restore -------------------------------------------------------------------------------------------
 
 
@@ -442,13 +570,49 @@ def test_an_unreadable_log_is_skipped_not_guessed(full):
     assert [x["log"] for x in s.pages()] == ["workspace"]
 
 
-def test_a_line_too_big_for_one_page_is_refused_locally(full):
+def test_a_line_bigger_than_a_page_stops_that_log_without_failing_the_pass(full):
+    """Rule 3: never skip the line, send nothing more of the log, report it; the pass does not fail or retry forever."""
     logs = Logs()
-    logs.add("workspace", "handoff.written", blob="x" * (LS.MAX_SEALED + 10))
+    logs.add("workspace", "member.added")
+    logs.add("workspace", "handoff.written", blob="x" * (LS.MAX_LINE + 10))
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created")
     s = Sender(full, logs)
-    with pytest.raises(HubRefused) as e:
-        s.run()
-    assert e.value.code == "too_large" and s.pages() == []
+    r = s.run()
+    assert r.stuck == {"workspace": 2} and s.pos.stuck == {"workspace": 2}
+    assert [(x["log"], x["from_seq"], x["count"]) for x in s.pages()] == [
+        ("workspace", 1, 1)
+    ]  # line 3 never skipped to
+    assert s.pos.logs["workspace"][0] == 1 and TKT not in s.pos.logs
+    assert not LS.pending(logs, s.pos)  # nothing to retry while the line stays broken
+    assert Position.from_json(s.pos.to_json(), hub_id=s.pos.hub_id, binding_seq=s.pos.binding_seq).stuck == {
+        "workspace": 2
+    }
+    n = len(s.pages())
+    s.run()
+    assert len(s.pages()) == n  # a second pass sends nothing more
+
+
+def test_a_stuck_log_is_worked_out_again_once_the_log_changes(full):
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add("workspace", "handoff.written", blob="x" * (LS.MAX_LINE + 10))
+    s = Sender(full, logs)
+    s.run()
+    logs.restore("workspace", keep=1)  # a restore takes the broken line out
+    logs.add("workspace", "member.added")
+    assert LS.pending(logs, s.pos)
+    r = s.run()
+    assert r.stuck == {} and hub_view(full) == local_summary(logs)
+
+
+def test_a_ticket_log_with_a_big_line_does_not_stop_the_workspace_log(full):
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created", blob="x" * (LS.MAX_LINE + 10))
+    s = Sender(full, logs)
+    r = s.run()
+    assert r.stuck == {TKT: 1} and hub_view(full) == {"workspace": local_summary(logs)["workspace"]}
 
 
 def test_page_size_shrinks_to_fit(full):
@@ -546,7 +710,7 @@ def test_l2_c14_3_forced_resends_are_rate_limited(full):
     logs.add("workspace")
     before = len(s.pages())
     with pytest.raises(HubRefused) as e:
-        s.run(allow_resend=lambda: False)
+        s.run(allow_resend=lambda log: False)
     assert e.value.code == "resend_limited" and len(s.pages()) == before + 1  # only the page that was refused
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import identity
 from .codes import Code, Refusal
 from .types import ClaimCore, TCore, WsCore, ts
 
@@ -119,5 +120,8 @@ def released(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
 def may_manage(ws: WsCore, t: TCore, person: str) -> bool:
     """The ticket owner, workspace owners and maintainers (§5.4.2 "who may sign what")."""
+    person = identity.canonical(ws, person)
     m = ws.members.get(person)
-    return m is not None and (m.role in ("owner", "maintainer") or (t.owner == person and m.role != "viewer"))
+    return m is not None and (
+        m.role in ("owner", "maintainer") or (identity.canonical(ws, t.owner) == person and m.role != "viewer")
+    )

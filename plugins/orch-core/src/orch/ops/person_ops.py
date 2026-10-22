@@ -369,6 +369,13 @@ def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
 
 
+def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
+    """The aliases an earlier binding of THIS hub made (a user id means something only on the hub that chose it)."""
+    from orch.hubclient import wire
+
+    return dict(hub.get("alias_book", {}).get(wire.hub_id(hk_root_pub), {}))
+
+
 def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
     """``hub.join {hub_card, mode, aliases?}`` (V3 C2a/C2b, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
     workspace log, signed by the owner at the host terminal. The hub card is verified here against the host's own
@@ -398,7 +405,7 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
             mode=mode,
             binding_seq=int(current.get("binding_seq", 0)) + 1,
             aliases=aliases,
-            prior_aliases=dict(current.get("aliases", {})),
+            prior_aliases=_prior_aliases(current, verified["hk_root_pub"]),
         )
     except HubRefused as exc:
         raise OrchError("hub.refused", f"the hub is refused: {exc.code}") from None
@@ -437,7 +444,7 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
             mode="full",
             binding_seq=int(current["binding_seq"]) + 1,
             aliases=[],
-            prior_aliases=dict(current.get("aliases", {})),
+            prior_aliases=_prior_aliases(current, verified["hk_root_pub"]),
         )
     except HubRefused as exc:
         raise OrchError("hub.refused", f"the hub is refused: {exc.code}") from None

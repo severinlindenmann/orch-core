@@ -127,7 +127,7 @@ def _relay_url(x: Any) -> bool:
 HEADER = {"v": _const(2), "suite": _const(S.SUITE_ID), "kind": None, "hv": _const(HV)}
 
 FIELDS: dict[str, dict[str, Check]] = {
-    "hub.op_cert": {"hub_id": _hex16, "cert_id": _hex16, "hk_op_pub": _pub, "issued_ms": _int_min(0),
+    "hub.op_cert": {"hub_id": _hex16, "cert_id": _hex16, "op_seq": _int_min(1), "hk_op_pub": _pub, "issued_ms": _int_min(0),
                     "expires_ms": _int_min(1), "dev": _bool},
     "hub.op_revoked": {"hub_id": _hex16, "cert_id": _hex16, "revoked_ms": _int_min(0), "dev": _bool},
     "hub.card": {"hub_id": _hex16, "hk_root_pub": _pub, "hxk_pub": _pub, "relay_url": _relay_url,
@@ -279,8 +279,13 @@ def verify_op_revoked(signed: Any, hk_root_pub: bytes, *, dev_mode: bool) -> dic
 
 
 def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | None = None,
-                revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Returns ``{"card": o, "op_cert": op_o, "hk_op_pub": bytes, "hk_root_pub": bytes}``."""
+                revoked_op_certs: frozenset[str] = frozenset(), held: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Returns ``{"card": o, "op_cert": op_o, "hk_op_pub": bytes, "hk_root_pub": bytes}``.
+
+    ``held`` is the card the verifier holds (the result of an earlier call), if any. Order between cards (L2-1): the
+    root-signed ``op_seq`` first, ``card_seq`` only within one op cert. A card under a lower ``op_seq``, or under
+    another op cert with the same ``op_seq``, is ``stale_op_cert`` whatever its ``card_seq``; accepting ``op_seq`` N
+    ends every op cert below N. A lower ``card_seq``, or the same with other content, is ``stale_card``."""
     o = _envelope(card, "hub.card", ("op_cert",))
     root = _key_field(o, "hk_root_pub")
     if pinned_root is not None and root != pinned_root:
@@ -294,12 +299,27 @@ def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | 
     _dev(o, dev_mode)
     if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
         raise Refused("cert_invalid")
-    return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root}
+    if held is not None:
+        if root != held["hk_root_pub"]:
+            raise Refused("other_hub")
+        hop = held["op_cert"]
+        if op["op_seq"] < hop["op_seq"] or (op["op_seq"] == hop["op_seq"] and op["cert_id"] != hop["cert_id"]):
+            raise Refused("stale_op_cert")
+        if op["op_seq"] == hop["op_seq"]:
+            if o["card_seq"] < held["card"]["card_seq"]:
+                raise Refused("stale_card")
+            if o["card_seq"] == held["card"]["card_seq"] and cj(card) != cj(held["signed"]):
+                raise Refused("stale_card")
+    return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
 
 
-def _under_card(signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool) -> dict[str, Any]:
+def _under_card(signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool,
+                revoked_op_certs: frozenset[str]) -> dict[str, Any]:
     """Objects signed by HK_op: verified under the op key of a card the verifier already verified (``held`` is the
-    result of :func:`verify_card`). H0: only the card's current op certificate is accepted."""
+    result of :func:`verify_card`). H0: only the card's current op certificate is accepted. The held card's op cert is
+    checked against the CURRENT revoked set at every use (L2-1), not only when the card was admitted."""
+    if held["op_cert"]["cert_id"] in revoked_op_certs:
+        raise Refused("revoked")
     o = _envelope(signed, kind)
     _signature(signed, L[LABEL_OF_KIND[kind]], held["hk_op_pub"])
     _fields(o, kind)
@@ -311,14 +331,16 @@ def _under_card(signed: Any, kind: str, held: Mapping[str, Any], dev_mode: bool)
     return o
 
 
-def verify_uk_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
-    o = _under_card(signed, "hub.uk_cert", held, dev_mode)
+def verify_uk_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool,
+                   revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+    o = _under_card(signed, "hub.uk_cert", held, dev_mode, revoked_op_certs)
     _cert_time(o, now_ms)
     return o
 
 
-def verify_channel_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
-    o = _under_card(signed, "hub.channel_cert", held, dev_mode)
+def verify_channel_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, dev_mode: bool,
+                        revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
+    o = _under_card(signed, "hub.channel_cert", held, dev_mode, revoked_op_certs)
     if o["channel_id"] != channel_id(unb64u(o["key_pub"], 65)):
         raise Refused("cert_invalid")
     _cert_time(o, now_ms)
@@ -329,10 +351,10 @@ def verify_channel_cert(signed: Any, held: Mapping[str, Any], *, now_ms: int, de
 
 
 def verify_snapshot(signed: Any, held: Mapping[str, Any], *, workspace_id: str, dev_mode: bool,
-                    pinned: Mapping[str, Any] | None) -> dict[str, Any]:
+                    pinned: Mapping[str, Any] | None, revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
     """``pinned`` is the snapshot object the host holds (or None). Returns the object to hold next; an identical
     re-send of the pinned version is a no-op (returns the pinned object)."""
-    o = _under_card(signed, "hub.snapshot", held, dev_mode)
+    o = _under_card(signed, "hub.snapshot", held, dev_mode, revoked_op_certs)
     roles, revoked = o["roles"], o["revoked_channels"]
     if any(not _hex16(u) or r not in ROLES or type(r) is not str for u, r in roles.items()):
         raise Refused("malformed")
@@ -386,7 +408,7 @@ def channel_proof_bytes(digest: bytes) -> bytes:
 
 def verify_custodial(event: Any, *, workspace_id: str, log: str, held: Mapping[str, Any], snapshot: Mapping[str, Any],
                      now_ms: int, dev_mode: bool, mode: str = "full", granted_users: frozenset[str] = frozenset(),
-                     min_factor: str | None = None) -> dict[str, Any]:
+                     min_factor: str | None = None, revoked_op_certs: frozenset[str] = frozenset()) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
     The F1 checks of the event type itself (gate hash, roles of the ticket, ...) run after this one, as for any person
@@ -410,11 +432,12 @@ def verify_custodial(event: Any, *, workspace_id: str, log: str, held: Mapping[s
     if event["hub_id"] != held["card"]["hub_id"]:
         raise Refused("other_hub")
     # 3. UK -> HK_op cert -> pinned HK_root (held was verified against the pin and the revocations)
-    uk = verify_uk_cert(event["uk_cert"], held, now_ms=now_ms, dev_mode=dev_mode)
+    uk = verify_uk_cert(event["uk_cert"], held, now_ms=now_ms, dev_mode=dev_mode, revoked_op_certs=revoked_op_certs)
     if uk["user_id"] != user:
         raise Refused("other_user")
     # 4. the channel certificate
-    ch = verify_channel_cert(event["channel_cert"], held, now_ms=now_ms, dev_mode=dev_mode)
+    ch = verify_channel_cert(event["channel_cert"], held, now_ms=now_ms, dev_mode=dev_mode,
+                             revoked_op_certs=revoked_op_certs)
     if ch["user_id"] != user or ch["channel_id"] != event["channel"]:
         raise Refused("other_user")
     if ch["factor"] != event["channel_factor"]:

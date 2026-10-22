@@ -74,7 +74,9 @@ DROP = object()
 
 
 def op_cert(cert_id: str = OP_CERT_ID, key: str = "hk_op", root: str = "hk_root", **kw: Any) -> dict[str, Any]:
-    o = {**hdr("hub.op_cert"), "hub_id": H.hub_id(K.pub[root]), "cert_id": cert_id, "hk_op_pub": K.b(key),
+    op_seq = 2 if cert_id == OP_CERT_NEXT else 1  # the rotated op cert is op_seq 2
+    o = {**hdr("hub.op_cert"), "hub_id": H.hub_id(K.pub[root]), "cert_id": cert_id, "op_seq": op_seq,
+         "hk_op_pub": K.b(key),
          "issued_ms": NOW - DAY, "expires_ms": NOW + 365 * DAY, "dev": True, **kw}
     return signed(root, "sig_hub_op_cert", o)
 
@@ -238,6 +240,24 @@ def build() -> dict[str, Any]:
     ok_card = {"ok": {"hub_id": HUB_ID, "op_cert_id": OP_CERT_ID}}
     case("card_valid", "card", with_card, ok_card, 2)
     case("card_valid_pinned", "card", {**with_card, "pinned_root": root}, ok_card, 2)
+    # L2-1: rotation order is the root-signed op_seq, never the HK_op-signed card_seq
+    rotated = card(op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next"), op_key="hk_op_next", card_seq=2)
+    ok_rot = {"ok": {"hub_id": HUB_ID, "op_cert_id": OP_CERT_NEXT}}
+    case("card_rotation_accepted", "card", {**base, "held_card": c, "card": rotated}, ok_rot, 2)
+    case("card_rollback_to_old_op_cert_higher_card_seq", "card",
+         {**base, "held_card": rotated, "card": card(card_seq=2**53 - 1)}, {"error": "stale_op_cert"}, 2,
+         "L2-1: the old HK_op cannot roll a rotation back with a huge card_seq")
+    case("card_same_op_seq_other_op_cert", "card",
+         {**base, "held_card": c, "card": card(op=op_cert(cert_id=fake16("op_cert_twin"), key="hk_op_next"),
+                                               op_key="hk_op_next", card_seq=5)}, {"error": "stale_op_cert"}, 2)
+    case("card_lower_card_seq", "card", {**base, "held_card": card(card_seq=3), "card": card(card_seq=2)},
+         {"error": "stale_card"}, 2)
+    case("card_same_card_seq_other_content", "card",
+         {**base, "held_card": c, "card": card(relay_url="https://relay.dev.severin.io")}, {"error": "stale_card"}, 2)
+    case("card_same_card_resent", "card", {**base, "held_card": c, "card": c}, ok_card, 2)
+    case("card_issued_in_future", "card", {**base, "card": card(issued_ms=NOW + 300_001)}, {"error": "cert_invalid"}, 2)
+    case("op_cert_issued_in_future", "op_cert",
+         {**base, "signed": op_cert(issued_ms=NOW + 300_001), "hk_root_pub": K.b("hk_root")}, {"error": "cert_invalid"}, 2)
     case("card_other_pinned_root", "card", {**with_card, "pinned_root": K.b("hk_root_rogue")}, {"error": "other_hub"}, 2)
     rogue = card(root="hk_root_rogue", op_key="hk_op_rogue")
     case("card_rogue_hub_against_pin", "card", {**base, "card": rogue, "pinned_root": root}, {"error": "other_hub"}, 2)
@@ -288,6 +308,12 @@ def build() -> dict[str, Any]:
 
     # ---- UK cert
     case("uk_cert_valid", "uk_cert", {**with_card, "signed": uk_cert()}, {"ok": {"user_id": U_ALICE}}, 4)
+    case("uk_cert_under_held_card_after_revocation", "uk_cert",
+         {**with_card, "signed": uk_cert(), "revoked_later": [OP_CERT_ID]}, {"error": "revoked"}, 4,
+         "L2-1: the revoked set is checked at every use of a held card")
+    case("snapshot_under_held_card_after_revocation", "snapshot",
+         {**with_card, "signed": snapshot(), "workspace_id": WS_A, "pinned": None, "revoked_later": [OP_CERT_ID]},
+         {"error": "revoked"}, 3)
     case("uk_cert_expired", "uk_cert", {**with_card, "signed": uk_cert(expires_ms=NOW)}, {"error": "cert_expired"}, 4)
     case("uk_cert_future", "uk_cert", {**with_card, "signed": uk_cert(issued_ms=NOW + 300_001)}, {"error": "cert_invalid"}, 4)
     case("uk_cert_signed_by_root", "uk_cert", {**with_card, "signed": uk_cert(signer="hk_root")},

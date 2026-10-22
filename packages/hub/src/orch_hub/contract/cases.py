@@ -15,9 +15,20 @@ from .canon import b64u, unb64u
 
 
 def _held(a: dict[str, Any]) -> dict[str, Any]:
+    """The card the verifier holds. ``held_card`` (optional) is an earlier card it already held; ``revoked_later``
+    are op cert ids revoked AFTER the card was admitted (checked at use)."""
     pinned = unb64u(a["pinned_root"], 65) if a.get("pinned_root") else None
+    rev = frozenset(a.get("revoked_op_certs", []))
+    prior = None
+    if a.get("held_card"):
+        prior = H.verify_card(a["held_card"], now_ms=a["now_ms"], dev_mode=a.get("dev_mode", True),
+                              pinned_root=pinned, revoked_op_certs=rev)
     return H.verify_card(a["card"], now_ms=a["now_ms"], dev_mode=a.get("dev_mode", True), pinned_root=pinned,
-                         revoked_op_certs=frozenset(a.get("revoked_op_certs", [])))
+                         revoked_op_certs=rev, held=prior)
+
+
+def _later(a: dict[str, Any]) -> frozenset[str]:
+    return frozenset(a.get("revoked_op_certs", [])) | frozenset(a.get("revoked_later", []))
 
 
 def _apply_store(steps: list[dict[str, Any]], ws: str, wsk: bytes, now_ms: int, dev_mode: bool) -> Any:
@@ -47,17 +58,19 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "card_text":
         return run("card", {**a, "card": H.parse(bytes.fromhex(a["text_hex"]))})
     if check == "uk_cert":
-        return {"user_id": H.verify_uk_cert(a["signed"], _held(a), now_ms=now, dev_mode=dev)["user_id"]}
+        return {"user_id": H.verify_uk_cert(a["signed"], _held(a), now_ms=now, dev_mode=dev, revoked_op_certs=_later(a))["user_id"]}
     if check == "channel_cert":
-        return {"channel_id": H.verify_channel_cert(a["signed"], _held(a), now_ms=now, dev_mode=dev)["channel_id"]}
+        return {"channel_id": H.verify_channel_cert(a["signed"], _held(a), now_ms=now, dev_mode=dev,
+                                                     revoked_op_certs=_later(a))["channel_id"]}
     if check == "snapshot":
         o = H.verify_snapshot(a["signed"], _held(a), workspace_id=a["workspace_id"], dev_mode=dev,
-                              pinned=a.get("pinned"))
+                              pinned=a.get("pinned"), revoked_op_certs=_later(a))
         return {"version": o["version"]}
     if check == "custodial":
         return H.verify_custodial(a["event"], workspace_id=a["workspace_id"], log=a["log"], held=_held(a),
                                   snapshot=a["snapshot"], now_ms=now, dev_mode=dev, mode=a.get("mode", "full"),
-                                  granted_users=frozenset(a.get("granted_users", [])), min_factor=a.get("min_factor"))
+                                  granted_users=frozenset(a.get("granted_users", [])), min_factor=a.get("min_factor"),
+                                  revoked_op_certs=_later(a))
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], unb64u(a["wsk_pub"], 65), now, dev)
         return {"binding_seq": s["binding_seq"], "status": s["status"]}

@@ -167,12 +167,17 @@ Signed by `HK_root` under `orch/v2/hub-op-cert|`. Fields:
 | `v`, `suite`, `kind`, `hv` | `2`, `2`, `"hub.op_cert"`, `0` |
 | `hub_id` | hex; MUST equal `hub_id(HK_root)` |
 | `cert_id` | hex, 16 random bytes |
+| `op_seq` | integer ≥ 1, strictly increasing per hub: each new `HK_op` gets the next one (L2-1) |
 | `hk_op_pub` | b64u, valid key |
 | `issued_ms`, `expires_ms` | integers, `expires_ms > issued_ms` |
 | `dev` | boolean |
 
 Verification (given the root key from the card, checked against the pin, §5): §2.2 steps 1–3; `hub_id` → `other_hub`;
 dev marker; time (§2.5); `cert_id` in the verifier's revoked set → `revoked`.
+
+**Rotation order is root-signed (L2-1).** `op_seq` is the only order between op certs; the `HK_op`-signed `card_seq`
+never is. A holder that accepted `op_seq` N refuses every op cert below N (`stale_op_cert`): accepting a rotation is
+an implicit revocation of every older `HK_op`, so a withheld `hub.op_revoked` cannot keep an old key alive.
 
 ### 4.2 `hub.op_revoked`
 
@@ -211,12 +216,18 @@ The card has exactly the three members `o`, `op_cert`, `sig` (an exception to §
 4. `op_cert` verifies under `hk_root_pub` (§4.1, including `revoked`, `cert_expired`, dev marker);
 5. `sig` under `op_cert.hk_op_pub` with `orch/v2/hub-card|` → `bad_signature`;
 6. field set → `malformed`; dev marker; `issued_ms ≤ now + 300 s` → `cert_invalid`;
-7. holders: a lower `card_seq` than the one held is ignored; the same `card_seq` with other content is
-   `stale_card` (v2 rule).
+7. against the card the holder already holds, if any (L2-1): another `hk_root_pub` → `other_hub`; a lower `op_seq`,
+   or the same `op_seq` under another `cert_id` → `stale_op_cert` (whatever its `card_seq`); within one op cert a
+   lower `card_seq`, or the same `card_seq` with other content → `stale_card`; a higher `op_seq` is accepted and
+   replaces the held card (and with it the TLS pin and `hxk_pub`).
+
+**Check at use (L2-1).** Every use of a held card (§6, §7, §8, §10) first checks the held card's op cert against the
+**current** revoked set → `revoked`. A revocation that arrives after the card was admitted stops it at once; no caller
+relies on having re-verified the card.
 
 **Pinning.** The host pins `hk_root_pub` at `hub join` (it arrives in the invite and is signed into `hub.joined`, §9.1).
 Only `orch hub repin` (PK only, spec §8) changes the pin. A new `HK_op` reaches the host as a new card (higher
-`card_seq`, new `op_cert`). The TLS pin follows the card: the host takes `tls_spki_sha256` only from a card it verified
+`op_seq`, new `op_cert`). The TLS pin follows the card: the host takes `tls_spki_sha256` only from a card it verified
 through the pinned root, and drops a pin that came from a revoked op cert.
 
 **H0 rule: one op cert at a time. DECIDED HERE.** Objects signed by `HK_op` (§6, §7, §10, §11) name
@@ -237,7 +248,8 @@ Fields `{v, suite, kind: "hub.uk_cert", hv, hub_id, op_cert_id, user_id, uk_pub,
 **DECIDED HERE:** UK certificates expire (`expires_ms`); the hub reissues before expiry. The spec lists
 `{user_id, uk_pub, hub_id, dev}`; `op_cert_id` and the times are added so the chain and expiry are checkable.
 
-Verification, under a card the verifier already verified (§5): §2.2 steps 1–3 under `HK_op`; `hub_id` equals the
+Verification, under a card the verifier already verified (§5): the held card's op cert is not revoked now →
+`revoked`; §2.2 steps 1–3 under `HK_op`; `hub_id` equals the
 card's → `other_hub`; `op_cert_id` equals the card's op cert → `stale_op_cert`; dev marker; time (§2.5).
 
 ### 6.2 `hub.channel_cert`

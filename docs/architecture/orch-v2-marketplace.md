@@ -202,12 +202,15 @@ URL in it, so the target is restricted three ways:
    it**: a list inside the index would be the attacker's. A company that hosts its marketplace and its add-ons on one git
    server needs no configuration.
 3. *Address* (`market.address_refused`, step 11): the installer resolves the name itself, checks every resulting address
-   and connects to a checked address (no second resolution between check and connect). It refuses anything that is not a
-   public unicast address: loopback, link-local (including the cloud metadata address 169.254.169.254), private ranges
-   (10/8, 172.16/12, 192.168/16, fc00::/7), carrier-grade NAT (100.64/10), unspecified, multicast, IPv4-mapped IPv6
-   forms of those, and anything that is not an address. HTTP redirects are not followed; a redirect is a refusal, so the
-   check cannot be bypassed by a public host that redirects inward. The same checks apply to the marketplace's own URL
-   when an index is added or refreshed, and to every dependency download (§8.2).
+   and connects only to a checked address (§5.1.1, no second resolution between check and connect). IPv4 must be global
+   unicast: not loopback, link-local (including the cloud metadata address 169.254.169.254), private (10/8, 172.16/12,
+   192.168/16), carrier-grade NAT (100.64/10), unspecified, multicast or reserved. **IPv6 is an allow list**: only
+   `2000::/3`, minus Teredo and the rest of `2001::/23`, documentation (`2001:db8::/32`, `3fff::/20`) and 6to4
+   (`2002::/16`). That refuses, without decoding them, every form that embeds or translates IPv4: NAT64
+   (`64:ff9b::/96`, `64:ff9b:1::/48`, which a DNS64 resolver synthesises from any A record), IPv4-compatible (`::/96`),
+   SIIT (`::ffff:0:0/96`) and site-local (`fec0::/10`). IPv4-mapped (`::ffff:a.b.c.d`) is decoded and judged as the IPv4
+   address it carries. Anything that is not an address is refused. HTTP redirects are refused; the same checks apply to
+   the marketplace's own URL when an index is added or refreshed, and to every dependency download (§8.2).
 
 **How git is run.**
 

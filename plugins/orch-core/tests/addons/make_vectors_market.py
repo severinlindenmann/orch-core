@@ -743,6 +743,17 @@ def build() -> None:
         ("ipv4_mapped_loopback", "::ffff:127.0.0.1"),
         ("not_an_address", "localhost"),
         ("multicast", "224.0.0.1"),
+        ("nat64_loopback", "64:ff9b::7f00:1"),
+        ("nat64_metadata", "64:ff9b::a9fe:a9fe"),
+        ("nat64_private", "64:ff9b::a00:1"),
+        ("nat64_local_use", "64:ff9b:1::a00:1"),
+        ("ipv4_compatible", "::127.0.0.1"),
+        ("siit_loopback", "::ffff:0:7f00:1"),
+        ("siit_metadata", "::ffff:0:a9fe:a9fe"),
+        ("site_local", "fec0::1"),
+        ("six_to_four", "2002:7f00:1::"),
+        ("teredo", "2001:0:4136:e378:8000:63bf:3fff:fdd2"),
+        ("ipv4_mapped_metadata", "::ffff:169.254.169.254"),
     ):
         add("address_refused_" + name, "address", {"ip": ip}, refuse("address_refused"))
     add("address_public_v4", "address", {"ip": "93.184.216.34"}, ok())

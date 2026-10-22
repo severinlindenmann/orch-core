@@ -190,15 +190,29 @@ def check_lock(kind: str, text: str) -> None:
 
 
 def check_address(ip: str) -> None:
-    """Section 5.1: the address a connection is about to use, after DNS resolution (and again after any redirect)."""
+    """Section 5.1: the address a connection is about to use, after DNS resolution (and again after any redirect).
+
+    IPv4 must be global unicast. IPv6 is an allow list: only 2000::/3, minus the ranges that embed or translate IPv4
+    or are special (Teredo and the 2001::/23 block, 6to4 2002::/16, documentation 3fff::/20). So NAT64 (64:ff9b::/96,
+    64:ff9b:1::/48), IPv4-compatible (::/96), SIIT (::ffff:0:0/96) and site-local (fec0::/10) are refused without
+    decoding. IPv4-mapped (::ffff:a.b.c.d) is decoded and judged as the IPv4 address it carries."""
     import ipaddress
 
     try:
         a = ipaddress.ip_address(ip)
     except ValueError:
         raise Refuse("market.address_refused") from None
-    if getattr(a, "ipv4_mapped", None) is not None:
-        a = a.ipv4_mapped
+    if isinstance(a, ipaddress.IPv6Address):
+        if a.ipv4_mapped is not None:
+            a = a.ipv4_mapped
+        else:
+            net = ipaddress.ip_network
+            ok = a in net("2000::/3") and not any(
+                a in net(n) for n in ("2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20")
+            )
+            if not ok or not a.is_global:
+                raise Refuse("market.address_refused")
+            return
     if not a.is_global or a.is_multicast:
         raise Refuse("market.address_refused")
 

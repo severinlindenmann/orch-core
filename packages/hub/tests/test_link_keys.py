@@ -17,7 +17,7 @@ def test_server_from_real_hubkeys(tmp_path):
     keys = HubKeys.init(tmp_path / "hub")
     ident = TlsIdentity.generate()
     reg = Registry()
-    srv = LinkServer.from_keys(keys, identity=ident, registry=reg, invites=Invites(inv=None)).start()
+    srv = LinkServer.from_keys(keys, identity=ident, registry=reg, invites=Invites(inv=None), dev_mode=True).start()
     c = None
     try:
         card = keys.card()  # re-issued with the real SPKI pin

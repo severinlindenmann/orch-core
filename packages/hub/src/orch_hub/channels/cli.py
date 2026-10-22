@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..audit import open_log
+from ..config import dev_of
 from ..keys import HubKeys
 from .service import CHANNELS_FILE, ChannelError, Channels
 
@@ -38,7 +39,9 @@ def add_channels_parsers(c: argparse._SubParsersAction, J: argparse.ArgumentPars
 
 def dispatch(args: argparse.Namespace, state: Path, acc: Any) -> Any:
     keys = HubKeys.open(state)
-    svc = Channels(keys, acc, state / CHANNELS_FILE, audit=open_log(state, keys))
+    svc = Channels(
+        keys, acc, state / CHANNELS_FILE, audit=open_log(state, keys, dev_mode=dev_of(keys)), dev_mode=dev_of(keys)
+    )
     try:
         c = args.cmd
         if args.group == "users":

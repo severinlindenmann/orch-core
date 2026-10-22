@@ -145,7 +145,7 @@ class CustodialEngine:
         mode_of: Callable[[str], str | None],
         now_ms: Callable[[], int] | None = None,
         ttl_ms: int = TTL_MS,
-        dev_mode: bool = True,
+        dev_mode: bool,
         notify: Callable[[str, str, str | None], None] | None = None,
     ) -> None:
         #: ``notify(user_id, "prepare", prepared_id)`` after a prepare is stored (push to the user's phones, D10)

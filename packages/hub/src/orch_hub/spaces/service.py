@@ -49,7 +49,7 @@ class SpaceService:
         op_cert_id: Callable[[], str],
         *,
         now_ms: Callable[[], int] | None = None,
-        dev_mode: bool = True,
+        dev_mode: bool,
         on_change: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.store, self._reg, self._acc = store, registry, access

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..access.store import Access, AccessError, require_state_owner
 from ..audit import open_log
+from ..config import dev_of
 from ..keys import HubKeys, KeysError, default_state_dir
 from .service import SpaceError, SpaceService
 from .store import SpaceStore
@@ -56,7 +57,7 @@ def run(args: argparse.Namespace, out=None) -> int:
         registry = Registry(str(state / "registry.db"))
         acc = Access(str(state / "access.db"))
         store = SpaceStore(str(state / SPACES_FILE))
-        log = open_log(state, keys)
+        log = open_log(state, keys, dev_mode=dev_of(keys))
         stores.append(log.store)
         svc = SpaceService(
             store,
@@ -66,6 +67,7 @@ def run(args: argparse.Namespace, out=None) -> int:
             keys.hub_id,
             lambda: keys.op_cert()["o"]["cert_id"],
             on_change=log.space_change,
+            dev_mode=dev_of(keys),
         )
         if args.cmd == "list":
             res: object = svc.list_all()

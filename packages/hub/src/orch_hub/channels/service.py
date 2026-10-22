@@ -126,8 +126,10 @@ class Channels:
         max_channels: int = MAX_CHANNELS,
         audit: Any = None,
         on_revoke: Callable[[str], None] | None = None,
+        dev_mode: bool,
     ) -> None:
         self.keys, self.acc = keys, access
+        self._dev = dev_mode
         #: called with the channel id after a revocation is final (the relay cleanup, orch_hub.relay); never raises out
         self.on_revoke = on_revoke
         self.audit = audit  # orch_hub.audit.AuditLog; None = no chain (tests of other things)
@@ -472,7 +474,7 @@ class Channels:
                     hub_id=self.keys.hub_id,
                     challenge=gate,
                     now_ms=now,
-                    dev_mode=True,
+                    dev_mode=self._dev,
                     revoked_channels=self.acc.revoked_channels(),
                     registered={cid0: owner[0][0]} if owner else None,
                 )
@@ -638,9 +640,9 @@ class Channels:
             if cert is None:
                 return None
             now = self.keys._now()
-            held = H.verify_card(self.keys.card(), now_ms=now, dev_mode=True, pinned_root=self.keys.hk_root_pub)
+            held = H.verify_card(self.keys.card(), now_ms=now, dev_mode=self._dev, pinned_root=self.keys.hk_root_pub)
             o = H.verify_channel_cert(
-                cert, held, now_ms=now, dev_mode=True, revoked_op_certs=self.keys.revoked_op_certs()
+                cert, held, now_ms=now, dev_mode=self._dev, revoked_op_certs=self.keys.revoked_op_certs()
             )
             if o["user_id"] != user_id or o["channel_id"] != channel_id:
                 return None

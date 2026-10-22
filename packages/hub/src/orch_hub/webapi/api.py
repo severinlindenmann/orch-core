@@ -343,6 +343,12 @@ class WebApi:
         self._busy: set[str] = set()  # sources holding a hashing slot right now (max 1 each), under _plock
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
 
+    def allow_origin(self, origin: str) -> None:
+        """Add one exact origin before the server starts (the loopback dev server learns its port only after it
+        binds). Origins and the Hosts derived from them are replaced as whole values, never edited in place."""
+        self.d.allowed_origins = self.d.allowed_origins | {origin}
+        self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in self.d.allowed_origins)
+
     # --- the request pipeline ----------------------------------------------------------------------------------------
 
     def error(self, status: int, code: str) -> tuple[int, list[tuple[str, str]], bytes]:

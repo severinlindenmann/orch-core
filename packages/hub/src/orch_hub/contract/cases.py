@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from . import hub as H
+from . import spaces as SP
+from . import suite as S
 from .canon import b64u, unb64u
 
 
@@ -54,6 +56,43 @@ def _apply_store(steps: list[dict[str, Any]], ws: str, wsk: bytes, now_ms: int, 
                 state, H.verify_unbound(st["unbound"], workspace_id=ws, wsk_pub=wsk, dev_mode=dev_mode)
             )
     return state
+
+
+def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
+    """The hub's rules over spaces: ``steps`` build the state (each must succeed), ``final`` is the call under test."""
+    dev = a.get("dev_mode", True)
+    held = _held(a)
+    sks = {int(e): bytes.fromhex(k) for e, k in a.get("sks", {}).items()}
+    pubs = {w: unb64u(k, 65) for w, k in a.get("wsk_pubs", {}).items()}
+    states: dict[str, Any] = {}
+
+    def step(st: dict[str, Any]) -> Any:
+        if "space" in st:
+            sid = st["space"]["o"]["space_id"]
+            prior = states[sid]["space"] if sid in states else None
+            o = SP.verify_space(st["space"], held, dev_mode=dev, prior=prior)
+            states[sid] = SP.apply_space(states[sid], o) if sid in states else SP.new_state(o)
+            return None
+        kind = next(k for k in ("put", "revoke", "get") if k in st)
+        c = st[kind]
+        cur = states.get(c["body"]["space_id"])
+        if kind == "get":
+            return SP.space_get(cur, c["ws"], c["body"])
+        if kind == "put":
+            new, reply = SP.space_put(cur, c["ws"], c["body"], sks=sks, wsk_pubs=pubs, dev_mode=dev)
+        else:
+            new, reply = SP.space_revoke(cur, c["ws"], c["body"])
+        states[c["body"]["space_id"]] = new
+        return reply
+
+    for st in a["steps"]:
+        step(st)
+    out = step(a["final"])
+    if out is None:
+        return {}
+    if "entries" in out:
+        return {"seqs": [e["seq"] for e in out["entries"]], "next": out["next"]}
+    return out
 
 
 def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
@@ -167,6 +206,39 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         if a.get("path") == "direct":
             return H.check_direct_publish(req, unb64u(a["cards"][a["workspace_id"]]["wsk_pub"], 65))
         return H.check_hub_publish(req, st, now_ms=now, dev_mode=dev)
+    if check == "space":
+        prior = None
+        if a.get("prior"):
+            prior = SP.verify_space(a["prior"], _held(a), dev_mode=dev)
+        o = SP.verify_space(a["signed"], _held(a), dev_mode=dev, prior=prior, revoked_op_certs=_later(a))
+        return {"epoch": o["epoch"], "members": o["members"]}
+    if check == "space_wrap":
+        held = _held(a)
+        space = SP.verify_space(a["space"], held, dev_mode=dev)
+        o, sk = SP.verify_space_wrap(
+            a["signed"],
+            held,
+            space,
+            workspace_id=a["workspace_id"],
+            wxk_priv=S.key_from_seed(bytes.fromhex(a["wxk_seed"])),
+            wxk_version=a["wxk_version"],
+            dev_mode=dev,
+        )
+        return {"epoch": o["epoch"], "sk_hex": sk.hex()}
+    if check == "space_item":
+        o = SP.verify_item(
+            a["sealed"],
+            sk=bytes.fromhex(a["sk_hex"]),
+            space_id=a["space_id"],
+            epoch=a["epoch"],
+            item_id=a["item_id"],
+            members=a["members"],
+            wsk_pubs={w: unb64u(k, 65) for w, k in a["wsk_pubs"].items()},
+            dev_mode=dev,
+        )
+        return {"author": o["workspace_id"]}
+    if check == "space_flow":
+        return _space_flow(a)
     raise ValueError(f"unknown check {check}")
 
 

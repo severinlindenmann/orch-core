@@ -204,6 +204,34 @@ FIELDS: dict[str, dict[str, Check]] = {
         "re": lambda x: x is None or _int_min(1)(x),
         "body": lambda x: type(x) is dict,
     },
+    "hub.space": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "space_id": _hex16,
+        "epoch": _int_min(1),
+        "members": lambda x: type(x) is list,
+        "sk_commit": _b64u_n(32),
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
+    "hub.space_wrap": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "space_id": _hex16,
+        "epoch": _int_min(1),
+        "workspace_id": _hex16,
+        "wxk_version": _int_min(1),
+        "sealed": _b64u_any,
+        "dev": _bool,
+    },
+    "space.item": {
+        "space_id": _hex16,
+        "item_id": _hex16,
+        "workspace_id": _hex16,
+        "created_ms": _int_min(0),
+        "body": lambda x: type(x) is dict,
+        "dev": _bool,
+    },
     "hub.publish_approval": {
         "workspace_id": _hex16,
         "hub_id": _hex16,
@@ -223,6 +251,9 @@ LABEL_OF_KIND = {
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
+    "hub.space": "sig_hub_space",
+    "hub.space_wrap": "sig_hub_space_wrap",
+    "space.item": "sig_space_item",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)
 }
 
@@ -814,6 +845,11 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
     "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
     "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)
+    "space_list": ("w2h", None, {}),
+    "space_put": ("w2h", None, {"space_id": _hex16, "epoch": _int_min(1), "item_id": _hex16, "sealed": _b64u_any}),
+    "space_revoke": ("w2h", None, {"space_id": _hex16, "item_id": _hex16}),
+    "space_get": ("w2h", None, {"space_id": _hex16, "since": _int_min(0)}),
 }
 
 

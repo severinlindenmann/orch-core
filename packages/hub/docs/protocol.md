@@ -33,6 +33,7 @@ byte string is canonical unpadded b64u, `lp16(x)` is a 2-byte big-endian length 
 | 9 | `hub.binding`, `hub.unbound` | `WSK` | publish, relay, hub | 2 |
 | 10 | link messages `hub.link`, link auth | `WSK` (w2h), `HK_op` (h2w) | hub, host | 2 |
 | 11 | publish through the hub, `hub.publish_approval` | `WSK`, `HK_op`, owner's device key | orch-publish | 2 |
+| 10.4 | shared spaces: `hub.space`, `hub.space_wrap`, `space.item` (V3-D8) | `HK_op`, `HK_op`, `WSK` | host, hub | 3 |
 
 Not in H0 (named so nobody builds them from guesswork): the hub audit chain object (D4; label reserved), snapshot
 generations (#910), the standalone signed alias (C4), the `webauthn` passkey channel contract (#908), hub↔hub
@@ -136,19 +137,24 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_link_auth` | `orch/v2/sig/hub-link-auth\|` | `WSK` | the link-open challenge, bound to TLS | 10 |
 | `sig_publish_hub` | `orch/v2/publish-hub\|` | `WSK` | a publish request on the hub path, with `hub_id` and the approval (L2-2) | 11 |
 | `sig_hub_publish_approval` | `orch/v2/sig/hub-publish-approval\|` | owner's `dk_sig` | `cj(o)` of `hub.publish_approval` | 11 |
+| `sig_hub_space` | `orch/v2/hub-space\|` | `HK_op` | `cj(o)` of `hub.space` | 10.4 |
+| `sig_hub_space_wrap` | `orch/v2/hub-space-wrap\|` | `HK_op` | `cj(o)` of `hub.space_wrap` | 10.4 |
+| `sig_space_item` | `orch/v2/sig/space-item\|` | `WSK` | `cj(o)` of `space.item` | 10.4 |
+| `h_sk_commit` | `orch/v2/hub-sk-commit\|` | hash | the commitment to `SK_e` in `hub.space` | 10.4 |
+| `aad_space` | `orch/v2/space-aad\|` | AAD | one sealed space item | 10.4 |
 | `h_hub_id` | `orch/v2/id/hub\|` | hash | `hub_id` | 2.3 |
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
 
-Reused unchanged: `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
+HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch) and `orch/v2/space-item-msg` (one item). Reused unchanged: `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
 
 **The custodial family.** `UK` signs only under `"orch/v2/hub-custodial|" || type || "|"`, and `type` must match
 `[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}` (so it never contains `|`; anything else is `malformed`). All
 members are prefix-free among themselves and with every fixed label. **A key signs under its own labels only:**
-`HK_root` under the two root labels, `HK_op` under the seven `hub-*` labels, `UK` under the custodial family, a channel
-key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels and `orch/v2/publish-hub|`, the owner's
+`HK_root` under the two root labels, `HK_op` under the nine `hub-*` labels, `UK` under the custodial family, a channel
+key under `hub-channel-proof`, `WSK` under its four `sig/hub-*` labels, `sig/space-item|` and `orch/v2/publish-hub|`, the owner's
 device key under `sig/hub-publish-approval|`.
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
@@ -545,6 +551,10 @@ unknown `op` is `unknown_op`.
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{}` |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
+| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
+| `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
+| `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 
 A reply's body is either the reply body above or `{"error": <code>}`; H0 fixes request bodies only (reply bodies are
 built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and the selective ops in phase 2 (share ops
@@ -568,6 +578,86 @@ Reply rules:
 - A refusal at steps 1–6 is not a reply: the hub sends an unsigned `{"t":"error","error":code}` frame and drops the link, never a signed reply. This holds above all for a peer that has not authenticated, whose input must not be answered with anything signed.
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
+
+### 10.4 Shared spaces (phase 3, V3-D8, spec D75)
+
+**What a space is.** A hub-hosted set of items that several member workspaces of this hub put into and read from.
+It has a `space_id`, a member list (workspaces of this hub) and, per **epoch**, a 32-byte key `SK_e` that the hub
+generates and holds. **Option B (spec §2, D75): the hub holds every `SK_e`, opens every item it stores and may index
+it.** What the hub never holds is a workspace's own keys: items enter only because a member **host** put them (below),
+and workspace traffic outside spaces stays E2E sealed (§10.3 envelopes).
+
+**Who creates and changes a space** is hub-side policy, not a wire object: a hub-admin, or a user with `admin` in
+**every** member workspace (D3's `Access`; a selective workspace gives hub roles nothing, so only the hub-admin path or
+its owner's own host applies there). **Creating a space or adding a member pulls no data.** An item exists only if a
+member host chose to `space_put` it; a host puts only into spaces its owner allowed locally (share rules name the
+`space_id`), so being listed in a `hub.space` is necessary to read or write at the hub, never sufficient for a host to
+publish anything. In a selective workspace `space_put` is accepted (the op exists in both modes) and what may be put is
+the owner's share rules at the host; the hub cannot check them, which is why the host decides what leaves it.
+
+**Epochs and rotation.** `epoch` starts at 1 and **rises on every membership change** (add, remove, a workspace that
+unbinds). The hub makes a fresh `SK_e`, signs a new `hub.space` and issues one `hub.space_wrap` per current member. A
+member host holds the `SK_e` of every epoch it was a member of. **A workspace that leaves loses all access to later
+epochs**: it gets no later wrap, and the hub answers its `space_get` / `space_put` / `space_revoke` with `not_member`.
+**Revocation cannot take back what was read:** a leaver (or a revoked item's earlier readers) keeps the plaintext and
+the old `SK_e` it already held; rotation only ends *future* access. A member added later gets wraps from its first epoch
+on and **no backfill**: items of earlier epochs are not returned to it (the hub could re-seal them; V3 does not).
+A workspace that leaves and returns reads the epochs it was in, not the gap.
+
+#### The objects
+
+```
+hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, epoch ≥ 1,
+                members: [workspace_id]  (sorted, unique, 1..64), sk_commit: b64u(32), issued_ms, dev}
+                signed by HK_op, label sig_hub_space
+hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
+                wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
+space.item     {v, suite, kind: "space.item", hv, space_id, item_id, workspace_id (the author), created_ms,
+                body: object (opaque to the contract), dev}                 signed by the author's WSK, sig_space_item
+```
+
+- `sk_commit = b64u(H("orch/v2/hub-sk-commit|" || suite || space_id || u32(epoch) || SK_e))`: in the signed record, so
+  every member opens a wrap to the same key (like v2's `ck_commit`).
+- **The wrap** is v2 §5.3 `seal_to` with a new purpose `space-sk` (an addition to that closed list; relay doc to be
+  amended): recipient = the member's `WXK` of `wxk_version`, recipient id = `workspace_id`, `object_id = space_id`,
+  `epoch = space epoch`, `extra = hub_id || u32(wxk_version)`, plaintext `SK_e`. A sealed blob proves nothing about its
+  sender (v2 §5.3); that is why the wrap object is signed by `HK_op`.
+- **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
+  `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
+  `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,
+  cj(signed space.item), AAD)` with `AAD = "orch/v2/space-aad|" || suite || space_id || u32(epoch) || item_id`.
+  The AAD binds space, epoch and item id: an item moved to another space, epoch or id fails (vectors
+  `space_item_wrong_epoch`, `…moved_to_other_item_id`, `…moved_to_other_space`). The signed inner object carries the
+  author, so a reader (or a later reader of the hub's store) can tell who wrote it, and a hub or a member cannot
+  plant an item in another workspace's name (vectors `space_item_signed_by_other_member`, `…author_not_member`).
+  An item is **immutable**: a change is a new `item_id` plus a `space_revoke` of the old one.
+
+#### Operations (§10.2 table; w2h; both modes)
+
+| Op | Rules, in order | Refusals |
+|---|---|---|
+| `space_list` | returns the current `hub.space` of every space the link's workspace is a member of | — |
+| `space_put` | the workspace is a member of the current epoch; `epoch` = the current epoch; size ≤ 256 KiB sealed; the hub opens the item (option B) and checks it is for this space and `item_id`, written and signed by **the link's workspace**; the same `(space_id, item_id)` with the same bytes is idempotent (same `seq`) | `not_member`, `stale_epoch` (older: refresh with `space_get` and re-seal), `malformed` (newer), `too_large`, `malformed` / `bad_signature` / `unknown_workspace` (the item), `other_workspace` (author ≠ link), `replay` (same id, other bytes) |
+| `space_revoke` | member; the item exists; the link's workspace is its author (a leaver can no longer revoke: revoke before leaving). The revocation is a new `seq`, so pollers see it. Idempotent | `not_member`, `unknown_item`, `other_workspace` |
+| `space_get` | member of the current epoch. Entries with `seq` > `since`, **only items of epochs in which the caller was a member**, oldest first, at most 100 entries and 1 MiB of sealed data per page. Reply `{"space": <current hub.space>, "wraps": [<hub.space_wrap> of the caller for the current epoch and each epoch an entry belongs to], "entries": [{"seq", "item_id", "epoch", "revoked", "sealed"?}], "next"}` (`sealed` absent when `revoked`; `next` = the last `seq` returned, or `since`) | `not_member` |
+
+**One answer for "no such space" and "not a member"** (`not_member`), so a workspace learns nothing about spaces it
+is not in. A host that gets `stale_epoch` or sees a higher `epoch` in a reply verifies the new `hub.space`
+(under the pinned hub card, epochs only rise: `stale_epoch` for a replayed older record, `space_conflict` for the same
+epoch with other bytes), then its wrap: signature, this workspace is listed, the wrap names this space, epoch,
+workspace and its `WXK` version (`bad_wxk_version` otherwise: rotate and ask again), the seal opens (`bad_wrap`) and the
+key matches `sk_commit` (`commit_mismatch`).
+
+The reference checks are `space`, `space_wrap`, `space_item` and `space_flow` (put / revoke / get over a space with
+rotations) in `orch_hub.contract.spaces`; the negative vectors cover non-member put and get, unknown space, stale and
+future epoch, a replayed put, an item from a workspace outside the space, a leaver's read after rotation, a late
+joiner's missing backfill and a rejoiner's gap.
+
+**Not in this section** (named so nobody guesses): hub↔hub spaces (D77, H7); re-sealing old items for new members;
+the hub-side audit of space reads (D4); the admin CLI and its authorization (D3 / D8 build, against this section).
+**Open for the L2 pass:** (a) `space-sk` in v2 §5.3's closed purpose list needs a relay-doc amendment; (b) whether a
+workspace that unbinds from the hub must be removed from every space in the same transaction as its `hub.unbound`
+(proposed: yes, one epoch step); (c) `space_list` is an addition to the op list the orchestrator named.
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -717,6 +807,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
+| `not_member`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish | §11.2 |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
@@ -739,7 +830,8 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
-| `cases` | 156 cases (30 positive, 126 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
+| `cases` | 220 cases (48 positive, 172 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

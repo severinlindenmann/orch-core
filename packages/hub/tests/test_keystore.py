@@ -25,6 +25,9 @@ SAMPLES = {
     "hub.uk_cert": G.uk_cert()["o"],
     "hub.channel_cert": G.channel_cert()["o"],
     "hub.snapshot": G.snapshot()["o"],
+    "hub.space": G.space_rec()["o"],
+    "hub.space_wrap": G.space_wrap()["o"],
+    "space.item": G.space_item_obj()["o"],
     "hub.binding": G.binding()["o"],
     "hub.unbound": G.unbound()["o"],
     "hub.publish_approval": G.approval()["o"],
@@ -33,10 +36,18 @@ SAMPLES = {
 }
 ALLOWED = {
     KS.RootSigner: {"hub.op_cert", "hub.op_revoked"},
-    KS.OpSigner: {"hub.card", "hub.uk_cert", "hub.channel_cert", "hub.snapshot", "link.h2w"},
+    KS.OpSigner: {
+        "hub.card",
+        "hub.uk_cert",
+        "hub.channel_cert",
+        "hub.snapshot",
+        "hub.space",
+        "hub.space_wrap",
+        "link.h2w",
+    },
     KS.UkSigner: set(),
     KS.ChannelSigner: set(),
-    KS.WskSigner: {"hub.binding", "hub.unbound", "link.w2h"},
+    KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
 KEY = {

@@ -81,6 +81,8 @@ class OpSigner(_Signer):
             "hub.uk_cert": "sig_hub_uk_cert",
             "hub.channel_cert": "sig_hub_channel_cert",
             "hub.snapshot": "sig_hub_snapshot",
+            "hub.space": "sig_hub_space",
+            "hub.space_wrap": "sig_hub_space_wrap",
         }
     )
     LINK_DIR = "h2w"
@@ -131,7 +133,9 @@ class ChannelSigner(_Signer):
 class WskSigner(_Signer):
     """A workspace's ``WSK`` (host side): binding, unbound, host->hub link messages, link auth, publish requests."""
 
-    KINDS = MappingProxyType({"hub.binding": "sig_hub_binding", "hub.unbound": "sig_hub_unbound"})
+    KINDS = MappingProxyType(
+        {"hub.binding": "sig_hub_binding", "hub.unbound": "sig_hub_unbound", "space.item": "sig_space_item"}
+    )
     LINK_DIR = "w2h"
 
     def link_auth(self, hub_id: str, workspace_id: str, challenge: bytes, exporter: bytes) -> bytes:

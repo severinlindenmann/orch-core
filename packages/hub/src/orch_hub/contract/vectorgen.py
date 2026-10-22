@@ -13,6 +13,7 @@ import sys
 from typing import Any
 
 from . import hub as H
+from . import spaces as SP
 from . import suite as S
 from .canon import b64u, cj
 from .cases import outcome
@@ -32,6 +33,7 @@ KEY_NAMES = (
     "wsk_a",
     "wsk_b",
     "wxk_a",
+    "wxk_b",
     "pk_alice",
     "dk_alice_mac.sig",
     "dk_alice_mac.kx",
@@ -62,6 +64,9 @@ HUB_ID = H.hub_id(K.pub["hk_root"])
 ROGUE_HUB_ID = H.hub_id(K.pub["hk_root_rogue"])
 WS_A = fake16("workspace_a")
 WS_B = fake16("workspace_b")
+WS_C = fake16("workspace_c")
+SPACE = fake16("space_1")
+SPACE_2 = fake16("space_2")
 U_ALICE = fake16("user_alice")
 U_BOB = fake16("user_bob")
 P_ALICE = H.person_id(K.pub["pk_alice"])
@@ -403,6 +408,98 @@ def link(
     }
     lk = label or ("sig_hub_link" if direction == "w2h" else "sig_hub_route")
     return signed(key, lk, o)
+
+
+# --- shared spaces (V3-D8) ------------------------------------------------------------------------------------------
+
+SK = {1: S.fake_seed("hub/sk_e1"), 2: S.fake_seed("hub/sk_e2"), 3: S.fake_seed("hub/sk_e3")}
+WSK_OF = {WS_A: "wsk_a", WS_B: "wsk_b"}
+
+
+def space_rec(epoch: int = 1, members: list[str] | None = None, sk: bytes | None = None, space: str = SPACE, **kw: Any):
+    mem = members if members is not None else [WS_A, WS_B]
+    o = {
+        **hdr("hub.space"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "space_id": space,
+        "epoch": epoch,
+        "members": sorted(mem),
+        "sk_commit": SP.sk_commit(space, epoch, sk or SK[epoch]),
+        "issued_ms": NOW - 60_000,
+        "dev": True,
+        **kw,
+    }
+    return signed("hk_op", "sig_hub_space", o)
+
+
+def space_wrap(
+    epoch: int = 1,
+    ws: str = WS_B,
+    wxk: str = "wxk_b",
+    version: int = 1,
+    sk: bytes | None = None,
+    space: str = SPACE,
+    signer: str = "hk_op",
+    **kw: Any,
+):
+    sealed = SP.seal_sk(
+        sk or SK[epoch],
+        hub_id=HUB_ID,
+        space_id=space,
+        epoch=epoch,
+        workspace_id=ws,
+        wxk_pub=K.pub[wxk],
+        wxk_version=version,
+        eph_seed=S.fake_seed(f"hub/eph/{space}/{epoch}/{ws}"),
+    )
+    o = {
+        **hdr("hub.space_wrap"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "space_id": space,
+        "epoch": epoch,
+        "workspace_id": ws,
+        "wxk_version": version,
+        "sealed": sealed,
+        "dev": True,
+        **kw,
+    }
+    return signed(signer, "sig_hub_space_wrap", o)
+
+
+def space_item_obj(ws: str = WS_A, item_id: str | None = None, space: str = SPACE, key: str | None = None, **kw: Any):
+    o = {
+        **hdr("space.item"),
+        "space_id": space,
+        "item_id": item_id or fake16("item_1"),
+        "workspace_id": ws,
+        "created_ms": NOW - 1000,
+        "body": {"kind": "ticket.summary", "title": "Reconcile March invoices", "status": "open"},
+        "dev": True,
+        **kw,
+    }
+    return signed(key or WSK_OF[ws], "sig_space_item", o)
+
+
+def sealed_item(
+    ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, sk: bytes | None = None, **kw: Any
+) -> str:
+    iid = item_id or fake16("item_1")
+    obj = space_item_obj(ws, iid, space, **kw)
+    return SP.seal_item(sk or SK[epoch], space, epoch, iid, obj, salt=S.fake_seed("hub/salt/" + iid + ws)[:16])
+
+
+def put_body(
+    ws: str = WS_A, item_id: str | None = None, epoch: int = 1, space: str = SPACE, **kw: Any
+) -> dict[str, Any]:
+    iid = item_id or fake16("item_1")
+    return {
+        "space_id": space,
+        "epoch": epoch,
+        "item_id": iid,
+        "sealed": sealed_item(ws, iid, epoch, space, **kw),
+    }
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1356,6 +1453,451 @@ def build() -> dict[str, Any]:
         2,
     )
 
+    # ---- shared spaces (phase 3, V3-D8, protocol.md §10.4)
+
+    sp_pubs = {WS_A: K.b("wsk_a"), WS_B: K.b("wsk_b")}
+    e1, e2 = space_rec(1), space_rec(2, [WS_A])
+    e2_abc = space_rec(2, [WS_A, WS_B, WS_C])
+    sks_hex = {str(k): v.hex() for k, v in SK.items()}
+    sp = {**with_card, "sks": sks_hex, "wsk_pubs": sp_pubs}
+
+    case(
+        "space_valid_e1", "space", {**with_card, "signed": e1}, {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}}, 3
+    )
+    case(
+        "space_rotation_e2_after_e1",
+        "space",
+        {**with_card, "signed": e2, "prior": e1},
+        {"ok": {"epoch": 2, "members": [WS_A]}},
+        3,
+    )
+    case(
+        "space_same_resend",
+        "space",
+        {**with_card, "signed": e1, "prior": e1},
+        {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}},
+        3,
+    )
+    case(
+        "space_older_epoch_replayed",
+        "space",
+        {**with_card, "signed": e1, "prior": e2},
+        {"error": "stale_epoch"},
+        3,
+        "a replayed record cannot bring a removed member back",
+    )
+    case(
+        "space_same_epoch_other_members",
+        "space",
+        {**with_card, "signed": space_rec(1, [WS_A]), "prior": e1},
+        {"error": "space_conflict"},
+        3,
+    )
+    case(
+        "space_other_space_as_prior",
+        "space",
+        {**with_card, "signed": space_rec(2, space=SPACE_2), "prior": e1},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_unsorted",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[WS_B, WS_A])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_duplicate",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[WS_A, WS_A])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_empty",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, members=[])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_members_too_many",
+        "space",
+        {
+            **with_card,
+            "signed": resign("hk_op", "sig_hub_space", e1, members=sorted(fake16(f"m{i}") for i in range(65))),
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_epoch_zero",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, epoch=0)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_under_snapshot_label",
+        "space",
+        {**with_card, "signed": signed("hk_op", "sig_hub_snapshot", e1["o"])},
+        {"error": "bad_signature"},
+        3,
+        "wrong domain",
+    )
+    case(
+        "space_signed_by_workspace_key",
+        "space",
+        {**with_card, "signed": signed("wsk_a", "sig_hub_space", e1["o"])},
+        {"error": "bad_signature"},
+        3,
+        "a workspace cannot make a space",
+    )
+    case(
+        "space_stale_op_cert",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT)},
+        {"error": "stale_op_cert"},
+        3,
+    )
+    case(
+        "space_missing_dev_marker",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, dev=DROP)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_extra_field",
+        "space",
+        {**with_card, "signed": resign("hk_op", "sig_hub_space", e1, name="finance")},
+        {"error": "malformed"},
+        3,
+    )
+
+    # the wrap of SK_e to one member's WXK
+    wr = {**with_card, "space": e1, "workspace_id": WS_B, "wxk_seed": K.seed["wxk_b"].hex(), "wxk_version": 1}
+    case(
+        "space_wrap_valid", "space_wrap", {**wr, "signed": space_wrap()}, {"ok": {"epoch": 1, "sk_hex": SK[1].hex()}}, 3
+    )
+    case(
+        "space_wrap_for_other_workspace",
+        "space_wrap",
+        {**wr, "signed": space_wrap(ws=WS_A, wxk="wxk_a")},
+        {"error": "other_workspace"},
+        3,
+        "B presented A's wrap",
+    )
+    case(
+        "space_wrap_to_non_member",
+        "space_wrap",
+        {**wr, "workspace_id": WS_C, "signed": space_wrap(ws=WS_C)},
+        {"error": "not_member"},
+        3,
+        "the record does not list C; a wrap for C is not a way in",
+    )
+    wr_bad = {**wr, "signed": space_wrap()}
+    wr_bad["wxk_seed"] = K.seed["wxk_a"].hex()
+    case("space_wrap_opened_with_other_wxk", "space_wrap", wr_bad, {"error": "bad_wrap"}, 3)
+    case(
+        "space_wrap_wxk_version_mismatch",
+        "space_wrap",
+        {**wr, "signed": space_wrap(), "wxk_version": 2},
+        {"error": "bad_wxk_version"},
+        3,
+        "a rotated WXK: the host asks for a new wrap",
+    )
+    case(
+        "space_wrap_other_key_than_committed",
+        "space_wrap",
+        {**wr, "signed": space_wrap(sk=SK[3])},
+        {"error": "commit_mismatch"},
+        3,
+        "the hub sealed another key than the record commits to",
+    )
+    case(
+        "space_wrap_old_epoch_under_new_record",
+        "space_wrap",
+        {
+            **wr,
+            "space": space_rec(2, [WS_A, WS_B]),
+            "signed": resign("hk_op", "sig_hub_space_wrap", space_wrap(1), epoch=2),
+        },
+        {"error": "bad_wrap"},
+        3,
+        "a wrap of epoch 1 relabelled epoch 2 fails the seal's AAD",
+    )
+    case(
+        "space_wrap_epoch_differs_from_record",
+        "space_wrap",
+        {**wr, "space": space_rec(2, [WS_A, WS_B]), "signed": space_wrap()},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_wrap_signed_by_workspace_key",
+        "space_wrap",
+        {**wr, "signed": space_wrap(signer="wsk_a")},
+        {"error": "bad_signature"},
+        3,
+    )
+    moved = space_wrap()
+    moved = resign("hk_op", "sig_hub_space_wrap", moved, space_id=SPACE_2)
+    case(
+        "space_wrap_moved_to_other_space",
+        "space_wrap",
+        {**wr, "space": space_rec(1, space=SPACE_2), "signed": moved},
+        {"error": "bad_wrap"},
+        3,
+        "the seal binds the space id",
+    )
+
+    # a sealed item
+    it = {
+        **with_card,
+        "sk_hex": SK[1].hex(),
+        "space_id": SPACE,
+        "epoch": 1,
+        "item_id": fake16("item_1"),
+        "members": sorted([WS_A, WS_B]),
+        "wsk_pubs": sp_pubs,
+    }
+    good = sealed_item()
+    case("space_item_valid", "space_item", {**it, "sealed": good}, {"ok": {"author": WS_A}}, 3)
+    case(
+        "space_item_wrong_epoch",
+        "space_item",
+        {**it, "sealed": good, "epoch": 2},
+        {"error": "malformed"},
+        3,
+        "the AAD binds the epoch",
+    )
+    case(
+        "space_item_moved_to_other_item_id",
+        "space_item",
+        {**it, "sealed": good, "item_id": fake16("item_2")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "space_item_moved_to_other_space",
+        "space_item",
+        {**it, "sealed": good, "space_id": SPACE_2},
+        {"error": "malformed"},
+        3,
+    )
+    case("space_item_wrong_key", "space_item", {**it, "sealed": good, "sk_hex": SK[2].hex()}, {"error": "malformed"}, 3)
+    flipped = bytearray(__import__("orch_hub.contract.canon", fromlist=["unb64u"]).unb64u(good))
+    flipped[40] ^= 1
+    case("space_item_tampered", "space_item", {**it, "sealed": b64u(bytes(flipped))}, {"error": "malformed"}, 3)
+    case(
+        "space_item_author_not_member",
+        "space_item",
+        {**it, "sealed": sealed_item(ws=WS_C, key="wsk_a"), "wsk_pubs": {**sp_pubs, WS_C: K.b("wsk_a")}},
+        {"error": "not_member"},
+        3,
+        "a rogue hub or member planting an item of a workspace outside the space",
+    )
+    case(
+        "space_item_author_unknown_key",
+        "space_item",
+        {**it, "sealed": good, "wsk_pubs": {WS_B: K.b("wsk_b")}},
+        {"error": "unknown_workspace"},
+        3,
+    )
+    case(
+        "space_item_signed_by_other_member",
+        "space_item",
+        {**it, "sealed": sealed_item(key="wsk_b")},
+        {"error": "bad_signature"},
+        3,
+        "B signed an item that names A",
+    )
+    case(
+        "space_item_under_wrong_label",
+        "space_item",
+        {
+            **it,
+            "sealed": SP.seal_item(
+                SK[1],
+                SPACE,
+                1,
+                fake16("item_1"),
+                signed("wsk_a", "sig_publish_hub", space_item_obj()["o"]),
+                salt=S.fake_seed("hub/salt/x")[:16],
+            ),
+        },
+        {"error": "bad_signature"},
+        3,
+    )
+
+    # the hub's rules over one space (steps build the state, final is the call under test)
+    s1 = {"space": e1}
+    put_a = {"put": {"ws": WS_A, "body": put_body()}}
+    put_b = {"put": {"ws": WS_B, "body": put_body(WS_B, fake16("item_2"))}}
+
+    def flow(name: str, steps: list[Any], final: dict[str, Any], expect: dict[str, Any], note: str = "") -> None:
+        case(name, "space_flow", {**sp, "steps": steps, "final": final}, expect, 3, note)
+
+    flow("space_put_ok", [s1], put_a, {"ok": {"seq": 1}})
+    flow("space_put_same_again_is_idempotent", [s1, put_a], put_a, {"ok": {"seq": 1}})
+    flow(
+        "space_put_same_id_other_bytes",
+        [s1, put_a],
+        {"put": {"ws": WS_A, "body": {**put_body(), "sealed": sealed_item(created_ms=NOW - 5)}}},
+        {"error": "replay"},
+        "an item is immutable: change = new id + revoke",
+    )
+    flow(
+        "space_put_by_non_member",
+        [s1],
+        {"put": {"ws": WS_C, "body": put_body(WS_C, key="wsk_a")}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_put_to_unknown_space",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(space=SPACE_2)}},
+        {"error": "not_member"},
+        "the same answer as for a space the caller is not in",
+    )
+    flow("space_put_stale_epoch", [s1, {"space": e2}], put_a, {"error": "stale_epoch"})
+    flow("space_put_future_epoch", [s1], {"put": {"ws": WS_A, "body": put_body(epoch=2)}}, {"error": "malformed"})
+    flow(
+        "space_put_item_authored_by_other_member",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(WS_B)}},
+        {"error": "other_workspace"},
+        "a member can only put what it wrote and signed",
+    )
+    flow(
+        "space_put_item_of_non_member_author",
+        [s1],
+        {"put": {"ws": WS_A, "body": put_body(WS_C, key="wsk_a")}},
+        {"error": "not_member"},
+        "the inner author is outside the space",
+    )
+    flow(
+        "space_put_after_rotation_at_new_epoch",
+        [s1, {"space": e2_abc}],
+        {"put": {"ws": WS_A, "body": put_body(epoch=2)}},
+        {"ok": {"seq": 1}},
+    )
+    flow(
+        "space_get_member",
+        [s1, put_a, put_b],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1, 2], "next": 2}},
+    )
+    flow(
+        "space_get_since",
+        [s1, put_a, put_b],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [2], "next": 2}},
+    )
+    flow(
+        "space_get_nothing_new",
+        [s1, put_a],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [], "next": 1}},
+    )
+    flow(
+        "space_get_by_non_member",
+        [s1, put_a],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_get_unknown_space",
+        [s1],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE_2, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_get_after_leaving",
+        [s1, put_a, {"space": e2}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+        "rotation: the leaver's future access ends (what it already read stays read)",
+    )
+    flow(
+        "space_put_after_leaving",
+        [s1, {"space": e2}],
+        {"put": {"ws": WS_B, "body": put_body(WS_B, epoch=2)}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_new_member_gets_no_backfill",
+        [s1, put_a, {"space": e2_abc}],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [], "next": 0}},
+        "an item of epoch 1 is not readable by a member of epoch 2 that was not in epoch 1",
+    )
+    flow(
+        "space_new_member_reads_its_epoch",
+        [s1, put_a, {"space": e2_abc}, {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"))}}],
+        {"get": {"ws": WS_C, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [2], "next": 2}},
+    )
+    flow(
+        "space_old_member_reads_across_rotation",
+        [s1, put_a, {"space": e2_abc}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+    )
+    flow(
+        "space_rejoined_member_misses_the_gap",
+        [
+            s1,
+            put_a,
+            {"space": e2},
+            {"put": {"ws": WS_A, "body": put_body(epoch=2, item_id=fake16("item_3"))}},
+            {"space": space_rec(3, [WS_A, WS_B])},
+        ],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+        "B read epoch 1, was out in epoch 2, and is back in epoch 3: epoch 2 stays closed to it",
+    )
+    flow("space_record_replayed_after_rotation", [s1, {"space": e2}], {"space": e1}, {"error": "stale_epoch"})
+    flow(
+        "space_revoke_ok",
+        [s1, put_a],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"ok": {"seq": 2}},
+    )
+    flow(
+        "space_revoke_idempotent",
+        [s1, put_a, {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}}],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"ok": {"seq": 2}},
+    )
+    flow(
+        "space_revoke_by_other_member",
+        [s1, put_a],
+        {"revoke": {"ws": WS_B, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"error": "other_workspace"},
+    )
+    flow(
+        "space_revoke_unknown_item",
+        [s1],
+        {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("nope")}}},
+        {"error": "unknown_item"},
+    )
+    flow(
+        "space_revoke_by_non_member",
+        [s1, put_a],
+        {"revoke": {"ws": WS_C, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_revocation_is_a_new_entry",
+        [s1, put_a, {"revoke": {"ws": WS_A, "body": {"space_id": SPACE, "item_id": fake16("item_1")}}}],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 1}}},
+        {"ok": {"seqs": [2], "next": 2}},
+        "pollers that already read seq 1 see the revocation at seq 2; it cannot take back what was read",
+    )
+
     # ---- publish through the hub (phase 2)
     cards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
@@ -1573,6 +2115,9 @@ def build() -> dict[str, Any]:
     sig_entry("unbound", "wsk_a", "sig_hub_unbound", u1)
     sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out)
     sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply)
+    sig_entry("space_e1", "hk_op", "sig_hub_space", space_rec(1))
+    sig_entry("space_wrap_b_e1", "hk_op", "sig_hub_space_wrap", space_wrap())
+    sig_entry("space_item_a", "wsk_a", "sig_space_item", space_item_obj())
     ap = approval()
     sig_entry("publish_approval", "dk_alice_mac.sig", "sig_hub_publish_approval", ap)
     sig_entry("device_cert_alice_mac", "pk_alice", "sig_device_cert", ap["device_cert"])
@@ -1622,6 +2167,30 @@ def build() -> dict[str, Any]:
         ),
     }
 
+    iid = fake16("item_1")
+    item_salt = S.fake_seed("hub/salt/" + iid + WS_A)[:16]
+    spaces_vec = {
+        "space_id": SPACE,
+        "sk": {str(e): k.hex() for e, k in SK.items()},
+        "sk_commit_e1": SP.sk_commit(SPACE, 1, SK[1]),
+        "item": {
+            "item_id": iid,
+            "epoch": 1,
+            "salt_hex": item_salt.hex(),
+            "item_key_hex": SP._item_key(SK[1], SPACE, 1, item_salt).hex(),
+            "aad_hex": SP._item_aad(SPACE, 1, iid).hex(),
+            "signed_item": space_item_obj(),
+            "sealed": sealed_item(),
+        },
+        "wrap_b_e1": {
+            "workspace_id": WS_B,
+            "wxk_version": 1,
+            "eph_seed_hex": S.fake_seed(f"hub/eph/{SPACE}/1/{WS_B}").hex(),
+            "aad_hex": SP._seal_aad("space-sk", bytes.fromhex(SPACE), 1, SP._wrap_extra(HUB_ID, 1)).hex(),
+            "sealed": space_wrap()["o"]["sealed"],
+        },
+    }
+
     challenge, exporter = S.fake_seed("hub/link_challenge"), S.fake_seed("hub/tls_exporter")
     la = H.link_auth_bytes(HUB_ID, WS_A, challenge, exporter)
     link_auth_vec = {
@@ -1657,6 +2226,9 @@ def build() -> dict[str, Any]:
             "channel_alice_phone": CH_ALICE,
             "channel_bob_browser": CH_BOB,
             "ticket": TICKET,
+            "workspace_c": WS_C,
+            "space_1": SPACE,
+            "space_2": SPACE_2,
         },
         "labels": {**HUB_LABELS, "custodial_family": "orch/v2/hub-custodial|<event type>|"},
         "objects": {
@@ -1669,12 +2241,16 @@ def build() -> dict[str, Any]:
             "unbound_a_1": u1,
             "op_revoked": rev,
             "publish_approval": ap,
+            "space_e1": space_rec(1),
+            "space_wrap_b_e1": space_wrap(),
+            "space_item_a": space_item_obj(),
         },
         "signatures": sigs,
         "custodial": custodial_vec,
         "hub_joined": joined_vec,
         "publish": publish_vec,
         "link_auth": link_auth_vec,
+        "spaces": spaces_vec,
         "cases": cases,
     }
 

@@ -16,7 +16,7 @@ from orch import canon
 
 from . import sequence, signer
 
-__all__ = ["sign_sequence", "unlocked_backend"]
+__all__ = ["request_backend", "sign_sequence", "unlocked_backend"]
 
 
 class _Unlocked:
@@ -30,6 +30,27 @@ class _Unlocked:
 
     def sign(self, key_id: str, payload: bytes, *, action: str) -> bytes:
         return self._raw(payload)
+
+
+@contextmanager
+def request_backend(
+    backend: Any, key_id: str, prepared: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str
+) -> Iterator[Any]:
+    """The backend to sign the events of ONE reviewed request (an Extend: the new grant and the take-back of the old):
+    one passphrase for them where the custody can do it. The batch may sign the event label of the request's log and no
+    other; the person has seen every event in the one review."""
+    import hashlib
+
+    label = "sig_ws_event" if prepared["log"] == "workspace" else "sig_ticket_event"
+    with unlocked_backend(
+        backend,
+        key_id,
+        digest=hashlib.sha256(canon.dumps(events)).hexdigest(),
+        fields=(("signatures", str(len(events))), ("workspace", workspace_id)),
+        action=f"{prepared['op']}: {len(events)} signatures, one review",
+        labels=(canon.LABELS[label].encode("ascii"),),
+    ) as be:
+        yield be
 
 
 def labels_for(intent: Mapping[str, Any]) -> tuple[bytes, ...]:

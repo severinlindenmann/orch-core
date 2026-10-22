@@ -58,9 +58,12 @@ class Host:
         self._sent_bytes: dict[str, bytes] = {}
         self.join = d["join"]
         self.svc = PeerService(
-            me=self.ws, wsk=self.wsk, wxk_for=lambda v: (self.wxk, None) if v == 1 else None, wxk_current=1,
+            me=self.ws, sign=self.sign, wxk_for=lambda v: (self.wxk, None) if v == 1 else None, wxk_current=1,
             mailbox=self.mb, save=lambda m: W.Mailbox.from_json(m.to_json()), connect=self.open,
         )  # fmt: skip
+
+    def sign(self, msg: bytes) -> bytes:
+        return suite.sign(self.wsk, msg)
 
     def open(self, first: bool = False) -> LinkClient:
         link = self._open(first)

@@ -14,6 +14,13 @@ CASES = {c["name"]: c for c in S2["ws_envelopes"]["cases"]}
 COSIGNED_OK = {"cosigned_by_device_key", "cosigned_by_webauthn"}  # positives need the chain check: refused here
 
 
+_KEY = suite.generate_private_key()
+
+
+def _any_sign(msg: bytes) -> bytes:
+    return suite.sign(_KEY, msg)
+
+
 def _steps(c: dict) -> list[dict]:
     return c.get("steps") or [{"envelope": c["envelope"], "now_ms": c["now_ms"], "expect": c["expect"]}]
 
@@ -49,11 +56,10 @@ def _matches(o: W.Outcome, expect: dict) -> bool:
 def test_relay_vectors(name: str) -> None:
     c = CASES[name]
     mb, st, keys = _mailbox(c)
-    me_wsk = suite.generate_private_key()
     for step in _steps(c):
         o = W.receive(
             bytes.fromhex(step["envelope"]), mailbox=mb, me=st["workspace"],
-            wxk_for=keys.get, wxk_current=st["wxk_version"], wsk=me_wsk, now_ms=step["now_ms"],
+            wxk_for=keys.get, wxk_current=st["wxk_version"], sign=_any_sign, now_ms=step["now_ms"],
         )  # fmt: skip
         assert _matches(o, step["expect"]), (name, o, step["expect"])
         if step["expect"]["result"] == "refuse" and o.reply is not None:
@@ -66,7 +72,7 @@ def test_cosigned_positive_vectors_are_refused_closed() -> None:
         mb, st, keys = _mailbox(c)
         o = W.receive(
             bytes.fromhex(c["envelope"]), mailbox=mb, me=st["workspace"], wxk_for=keys.get,
-            wxk_current=1, wsk=suite.generate_private_key(), now_ms=c["now_ms"],
+            wxk_current=1, sign=_any_sign, now_ms=c["now_ms"],
         )  # fmt: skip
         assert (o.action, o.code) == ("refuse", "bad_cosignature")
 
@@ -82,13 +88,16 @@ class Side:
         self.ws, self.wsk, self.wxk = ws, suite.generate_private_key(), suite.generate_private_key()
         self.mb = W.Mailbox()
 
+    def sign(self, msg: bytes) -> bytes:
+        return suite.sign(self.wsk, msg)
+
     def pin(self, other: Side) -> None:
         self.mb.pin_peer(other.ws, suite.public_bytes(other.wsk), suite.public_bytes(other.wxk), 1)
 
     def recv(self, env: bytes, now: int = NOW) -> W.Outcome:
         return W.receive(
             env, mailbox=self.mb, me=self.ws, wxk_for=lambda v: (self.wxk, None) if v == 1 else None,
-            wxk_current=1, wsk=self.wsk, now_ms=now,
+            wxk_current=1, sign=self.sign, now_ms=now,
         )  # fmt: skip
 
 
@@ -101,7 +110,7 @@ def pair() -> tuple[Side, Side]:
 
 def ticket(a: Side, size: int = 0) -> W.Built:
     body = W.new_ticket_body({"title": "t", "pad": "x" * size}, deadline_ms=NOW + 3_600_000)
-    return W.build_envelope(mailbox=a.mb, wsk=a.wsk, from_ws=A, to_ws=B, body=body)
+    return W.build_envelope(mailbox=a.mb, sign=a.sign, from_ws=A, to_ws=B, body=body)
 
 
 def test_ticket_and_result_round_trip() -> None:
@@ -110,13 +119,13 @@ def test_ticket_and_result_round_trip() -> None:
     a.mb.sent[t.envelope_id] = {"to": B, "consumed": [], "state": "waiting"}
     o = b.recv(t.envelope)
     assert o.action == "inbox" and o.item["sha256"] == t.sha256 and o.item["ticket"]["title"] == "t"
-    r = W.build_envelope(mailbox=b.mb, wsk=b.wsk, from_ws=B, to_ws=A,
+    r = W.build_envelope(mailbox=b.mb, sign=b.sign, from_ws=B, to_ws=A,
                          body=W.new_result_body(t.envelope_id, {"summary": "done"}, deadline_ms=NOW + 1))  # fmt: skip
     got = a.recv(r.envelope)
     assert got.action == "deliver" and got.item["result"] == {"summary": "done"} and not got.item["late"]
     assert a.mb.sent[t.envelope_id]["state"] == "answered"
     second = W.new_result_body(t.envelope_id, {"summary": "x"}, deadline_ms=NOW)
-    again = a.recv(W.build_envelope(mailbox=b.mb, wsk=b.wsk, from_ws=B, to_ws=A, body=second).envelope)
+    again = a.recv(W.build_envelope(mailbox=b.mb, sign=b.sign, from_ws=B, to_ws=A, body=second).envelope)
     assert (again.action, again.code) == ("refuse", "unknown_reply")
 
 
@@ -174,9 +183,9 @@ def test_same_envelope_id_from_two_senders_makes_two_items_and_one_from_one() ->
     b.pin(c)
     eid = bytes(range(16))
     body = W.new_ticket_body({"title": "from-a"}, deadline_ms=NOW + 3_600_000)
-    ea = W.build_envelope(mailbox=a.mb, wsk=a.wsk, from_ws=A, to_ws=B, body=body, env_id=eid)
+    ea = W.build_envelope(mailbox=a.mb, sign=a.sign, from_ws=A, to_ws=B, body=body, env_id=eid)
     body_c = W.new_ticket_body({"title": "from-c"}, deadline_ms=NOW + 3_600_000)
-    ec = W.build_envelope(mailbox=c.mb, wsk=c.wsk, from_ws=c.ws, to_ws=B, body=body_c, env_id=eid)
+    ec = W.build_envelope(mailbox=c.mb, sign=c.sign, from_ws=c.ws, to_ws=B, body=body_c, env_id=eid)
     assert b.recv(ea.envelope).action == "inbox"
     assert b.recv(ec.envelope).action == "inbox"
     assert b.recv(ea.envelope, NOW + 1).action == "duplicate"

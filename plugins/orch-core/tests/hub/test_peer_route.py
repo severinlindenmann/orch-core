@@ -16,7 +16,7 @@ class Node:
     def __init__(self, side: Side, hub: RouteHub) -> None:
         self.side, self.hub, self.saves = side, hub, 0
         self.svc = PeerService(
-            me=side.ws, wsk=side.wsk, wxk_for=lambda v: (side.wxk, None) if v == 1 else None, wxk_current=1,
+            me=side.ws, sign=side.sign, wxk_for=lambda v: (side.wxk, None) if v == 1 else None, wxk_current=1,
             mailbox=side.mb, save=self._save, connect=lambda: hub.link(side.ws), now_ms=lambda: NOW,
         )  # fmt: skip
 

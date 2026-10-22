@@ -45,7 +45,7 @@ class PeerService:
         self,
         *,
         me: str,
-        wsk: EllipticCurvePrivateKey,
+        sign: Callable[[bytes], bytes],
         wxk_for: Callable[[int], tuple[EllipticCurvePrivateKey, int | None] | None],
         wxk_current: int,
         mailbox: W.Mailbox,
@@ -53,7 +53,7 @@ class PeerService:
         connect: Callable[[], RouteLink],
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     ) -> None:
-        self.me, self._wsk, self._wxk_for, self._wxk_current = me, wsk, wxk_for, wxk_current
+        self.me, self._sign, self._wxk_for, self._wxk_current = me, sign, wxk_for, wxk_current
         self.mb, self._save, self._connect, self._now = mailbox, save, connect, now_ms
         self._mu = threading.RLock()  # the mailbox; never held across a blocking read
         self._link: RouteLink | None = None
@@ -101,7 +101,7 @@ class PeerService:
         self, to_ws: str, body: dict[str, Any], *, sent: dict[str, Any] | None, mark_replied: str | None = None
     ) -> dict[str, Any]:
         with self._mu:
-            built = W.build_envelope(mailbox=self.mb, wsk=self._wsk, from_ws=self.me, to_ws=to_ws, body=body)
+            built = W.build_envelope(mailbox=self.mb, sign=self._sign, from_ws=self.me, to_ws=to_ws, body=body)
             if sent is not None:
                 self.mb.sent[built.envelope_id] = {"to": to_ws, "consumed": [], "sha256": built.sha256, **sent}
             if mark_replied is not None:
@@ -174,7 +174,7 @@ class PeerService:
             with self._mu:
                 out = W.receive(
                     raw, mailbox=self.mb, me=self.me, wxk_for=self._wxk_for, wxk_current=self._wxk_current,
-                    wsk=self._wsk, now_ms=self._now(),
+                    sign=self._sign, now_ms=self._now(),
                 )  # fmt: skip
                 if out.action == "refuse" and out.reply is not None:
                     self.mb.outbox["r-" + raw[24:40].hex() + "-" + raw[8:24].hex()] = b64u(out.reply)

@@ -130,7 +130,7 @@ def _header(flags: int, env_id: bytes, from_ws: bytes, to_ws: bytes, wxk_version
 def build_envelope(
     *,
     mailbox: Mailbox,
-    wsk: EllipticCurvePrivateKey,
+    sign: Callable[[bytes], bytes],
     from_ws: str,
     to_ws: str,
     body: dict[str, Any],
@@ -151,7 +151,7 @@ def build_envelope(
         sealed = seal(unb64u(peer["wxk_pub"], 65), unhex(to_ws, 16), "ws-envelope", env_id, v, cj(body), hb)
     except (EncodingError, JcsError, suite.CryptoError, struct.error):
         raise EnvelopeError("malformed") from None
-    sig = suite.sign(wsk, L["sig_ws_envelope"] + hb + sealed)
+    sig = sign(L["sig_ws_envelope"] + hb + sealed)
     env = hb + struct.pack(">I", len(sealed)) + sealed + sig
     if len(env) > MAX_ENVELOPE:
         raise EnvelopeError("too_large")
@@ -166,7 +166,7 @@ def _body(kind: str, **kw: Any) -> dict[str, Any]:
 
 
 def build_refusal(
-    *, mailbox: Mailbox, wsk: EllipticCurvePrivateKey, me: str, sender: str, refused_id: str, code: str,
+    *, mailbox: Mailbox, sign: Callable[[bytes], bytes], me: str, sender: str, refused_id: str, code: str,
     now_ms: int, wxk_version: int | None = None,
 ) -> Built:  # fmt: skip
     """11.5: a sealed envelope to the sender with the signed REFUSAL flag. Never built for a REFUSAL envelope."""
@@ -174,7 +174,7 @@ def build_refusal(
     if wxk_version is not None:
         r["wxk_version"] = wxk_version
     body = _body("refusal", in_reply_to=refused_id, deadline_ms=now_ms, refusal=r)
-    return build_envelope(mailbox=mailbox, wsk=wsk, from_ws=me, to_ws=sender, body=body, flags=F_REFUSAL)
+    return build_envelope(mailbox=mailbox, sign=sign, from_ws=me, to_ws=sender, body=body, flags=F_REFUSAL)
 
 
 def new_ticket_body(ticket: dict[str, Any], *, deadline_ms: int, depth: int = 0) -> dict[str, Any]:
@@ -202,7 +202,7 @@ def receive(
     me: str,
     wxk_for: Callable[[int], tuple[EllipticCurvePrivateKey, int | None] | None],
     wxk_current: int,
-    wsk: EllipticCurvePrivateKey,
+    sign: Callable[[bytes], bytes],
     now_ms: int,
 ) -> Outcome:
     """11.4 in its normative order. ``wxk_for(version)`` returns ``(private key, retired_ms or None)`` or ``None``.
@@ -251,7 +251,7 @@ def receive(
         reply = None
         if not is_refusal:
             try:
-                reply = build_refusal(mailbox=mailbox, wsk=wsk, me=me, sender=from_ws, refused_id=env_id.hex(),
+                reply = build_refusal(mailbox=mailbox, sign=sign, me=me, sender=from_ws, refused_id=env_id.hex(),
                                       code=code, now_ms=now_ms, **extra).envelope  # fmt: skip
             except EnvelopeError:
                 reply = None  # the pin has no usable WXK: nothing to seal to, the refusal is still recorded

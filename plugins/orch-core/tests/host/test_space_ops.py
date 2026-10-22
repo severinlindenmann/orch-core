@@ -55,11 +55,11 @@ class SpaceHub:
         return self._signed("hub.space_wrap", SP.SIG_SPACE_WRAP, workspace_id=self.me, wxk_version=1,
                             sealed=crypto.b64u(blob))  # fmt: skip
 
-    def peer_item(self, name: str, data: bytes) -> None:
+    def peer_item(self, name: str, data: bytes, created_ms: int = 5) -> None:
         item_id, signed = SP.build_item(
             hub_id=self.hub.hub_id, space_id=self.space_id, epoch=self.epoch, members=self.members,
-            workspace_id=PEER_WS, body={"name": name, "size": len(data), "data": crypto.b64u(data)}, created_ms=5,
-            dev=True, sign=lambda m: suite.sign(priv("wsk_b.sig"), m),
+            workspace_id=PEER_WS, body={"name": name, "size": len(data), "data": crypto.b64u(data)},
+            created_ms=created_ms, dev=True, sign=lambda m: suite.sign(priv("wsk_b.sig"), m),
         )  # fmt: skip
         sealed = SP.seal_item(self.sk, self.space_id, self.epoch, item_id, signed)
         self.entries.append({"seq": len(self.entries) + 1, "item_id": item_id, "epoch": self.epoch, "revoked": False,
@@ -225,8 +225,27 @@ def test_an_agent_reads_but_never_shares_puts_revokes_or_accepts(served, full):
     assert full.puts == [] and full.accepts == []
 
 
-def test_dbg(served, full):
-    import faulthandler
-
-    faulthandler.dump_traceback_later(6, exit=False)
-    print(req(served, "space.list"))
+def test_names_are_per_author_and_the_hubs_seq_decides_nothing(served, full):
+    pin_peer(served)
+    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members}))
+    ok(req(served, "space.put", {"space_id": full.space_id, "name": "plan.md", "data": crypto.b64u(b"mine")}))
+    # the put went to the hub; play the hub storing it, then the peer shadows the name with its own file
+    sent = full.puts[0]
+    full.entries.append({"seq": 5, "item_id": sent["item_id"], "epoch": 1, "revoked": False, "sealed": sent["sealed"]})
+    full.peer_item("plan.md", b"theirs")
+    get = {"space_id": full.space_id, "name": "plan.md"}
+    res = req(served, "space.get", get)
+    assert err(res) == "invalid.input" and "ambiguous: 2 authors" in res["error"]["message"]
+    assert PEER_WS in res["error"]["message"] and served.wid in res["error"]["message"]
+    mine = ok(req(served, "space.get", {**get, "from": served.wid}))["data"]
+    theirs = ok(req(served, "space.get", {**get, "from": PEER_WS}))["data"]
+    assert crypto.unb64u(mine["data"]) == b"mine" and crypto.unb64u(theirs["data"]) == b"theirs"
+    # the hub reorders its cursor: nothing changes, and a newer item of the same author wins by its signed clock
+    full.entries[0]["seq"], full.entries[1]["seq"] = 9, 1
+    again = ok(req(served, "space.get", {**get, "from": PEER_WS}))["data"]
+    assert crypto.unb64u(again["data"]) == b"theirs"
+    full.peer_item("plan.md", b"theirs v2", created_ms=50)
+    full.entries[1]["seq"] = 8  # the old one now has the higher seq, the new one a low seq but the newer clock
+    full.entries[-1]["seq"] = 2
+    newest = ok(req(served, "space.get", {**get, "from": PEER_WS}))["data"]
+    assert crypto.unb64u(newest["data"]) == b"theirs v2"

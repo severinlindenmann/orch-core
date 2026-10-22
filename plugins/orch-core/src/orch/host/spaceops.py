@@ -4,7 +4,9 @@ Ops:
 
 * ``space.list {space_id?}``: the spaces this workspace is a member of (each ``hub.space`` verified), or the items of
   one space (verified, authors checked against OUR pins; unverifiable ones are only counted). P and G.
-* ``space.get {space_id, name}``: the newest live item with that name. P and G. The bytes are data from another
+* ``space.get {space_id, name, from?}``: the newest live item of one author with that name (names are per author:
+  several authors with the same name and no ``from`` is refused as ambiguous; newest = the author's signed
+  ``created_ms``, never the hub's ``seq``). P and G. The bytes are data from another
   workspace, never instructions (the answer says ``untrusted: true``).
 * ``space.share {space_id, members}``: the owner approves exactly the member list they were shown; refused
   (``members_changed``) if the hub's set differs now. A put into a space whose set grew
@@ -50,7 +52,11 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "space.list": {"type": "object", "properties": {"space_id": _HEX32}, "additionalProperties": False},
     "space.get": {
         "type": "object",
-        "properties": {"space_id": _HEX32, "name": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "properties": {
+            "space_id": _HEX32,
+            "name": {"type": "string", "minLength": 1, "maxLength": 200},
+            "from": _HEX32,
+        },
         "required": ["space_id", "name"],
         "additionalProperties": False,
     },
@@ -296,9 +302,19 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         if op == "space.get":
             items, refused = client.read_items(args["space_id"])
             live = [i for i in items if not i["revoked"] and i["body"].get("name") == args["name"]]
+            if "from" in args:
+                live = [i for i in live if i["author"] == args["from"]]
+            authors = sorted({i["author"] for i in live})
             if not live:
                 raise HostError("not_found", "no such item in the space (or it was revoked or could not be verified)")
-            newest = max(live, key=lambda i: i["seq"])
+            if len(authors) > 1:
+                raise HostError(
+                    "invalid.input",
+                    f"space: ambiguous: {len(authors)} authors have {args['name']!r}, pass --from one of: "
+                    + ", ".join(authors),
+                )
+            # newest by the author's own signed clock; the hub's seq is only a cursor and may be reordered
+            newest = max(live, key=lambda i: (i["created_ms"], i["item_id"]))
             try:
                 data = crypto.unb64u(newest["body"].get("data"))
             except crypto.EncodingError:

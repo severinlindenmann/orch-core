@@ -137,7 +137,7 @@ def _open_link(service: WorkspaceService) -> Any:
 
     from . import hubops
 
-    state = _hub_state(service)
+    state = _hub_state(service, full=False)  # the link itself is mode-agnostic; who may route is decided by the ops
     dev = bool(state.binding["o"]["dev"])
     addr = hubops._addr({}, state, dev)  # noqa: SLF001
     if not addr or not state.tls_spki:

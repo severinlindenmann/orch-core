@@ -1,7 +1,7 @@
 """``orch space``: files shared through a hub space (V3 C13; hub contract 10.4).
 
     orch space list [SPACE]                          a person or agent: the spaces you are in, or the items of one
-    orch space get SPACE NAME --out FILE             a person or agent: the newest live item called NAME
+    orch space get SPACE NAME --out FILE [--from WS]  a person or agent: the newest live item called NAME (per author)
     orch space put SPACE FILE [--name NAME]          a person: share a file (needs `share` first)
     orch space share SPACE [--members W1,W2]         a person: approve the space's member list as shown to you
     orch space revoke SPACE ITEM                     a person: withdraw an item this workspace wrote
@@ -30,8 +30,9 @@ from orch.cli.publish import PubError, _call, _confirm
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch space {list [SPACE] | get SPACE NAME --out FILE | put SPACE FILE [--name NAME] | share SPACE "
-    "[--members W1,W2] | revoke SPACE ITEM | accept SPACE --epoch N --prev-members W,.. --members W,..} [--json]"
+    "usage: orch space {list [SPACE] | get SPACE NAME --out FILE [--from WS] | put SPACE FILE [--name NAME] | "
+    "share SPACE [--members W1,W2] | revoke SPACE ITEM | "
+    "accept SPACE --epoch N --prev-members W,.. --members W,..} [--json]"
 )
 _ARGS = {"list": (0, 1), "get": (2, 2), "put": (2, 2), "share": (1, 1), "revoke": (2, 2), "accept": (1, 1)}
 _MAX_FILE = 190 * 1024
@@ -46,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("cmd", choices=tuple(_ARGS))
     p.add_argument("rest", nargs="*")
     p.add_argument("--out")
+    p.add_argument("--from", dest="author")
     p.add_argument("--name")
     p.add_argument("--members")
     p.add_argument("--prev-members")
@@ -116,7 +118,8 @@ def main(
         elif a.cmd == "get":
             if not a.out:
                 raise PubError("invalid.input", _USAGE, 2)
-            data = _call(target, "space.get", {"space_id": a.rest[0], "name": a.rest[1]}, env)
+            want = {"space_id": a.rest[0], "name": a.rest[1]} | ({"from": a.author} if a.author else {})
+            data = _call(target, "space.get", want, env)
             raw = base64.urlsafe_b64decode(data["data"] + "=" * (-len(data["data"]) % 4))
             try:
                 fd = os.open(a.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

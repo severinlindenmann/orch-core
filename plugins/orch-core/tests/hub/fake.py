@@ -82,6 +82,7 @@ class _Ws:
     snapshot: Json  # the newest signed hub.snapshot
     out_seq: int = 0
     wk_seals: list[Json] = field(default_factory=list)
+    wk: dict[int, bytes] = field(default_factory=dict)  # epoch -> the WK_e the hub unwrapped with its HXK (full mode)
     audit: list[Json] = field(default_factory=list)
     shares: dict[str, str] = field(default_factory=dict)
     routed: list[str] = field(default_factory=list)
@@ -389,7 +390,21 @@ class FakeHub:
 
     def _op_wk_seal(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         assert ws is not None
+        # section 10.2 / v2 5.3: the hub opens the wrap with HXK (purpose "wk", recipient = this hub, object = the
+        # workspace, the epoch of the body). Anything else (another hub's, another workspace's, another epoch) fails.
+        from cryptography.exceptions import InvalidTag
+
+        from orch import crypto
+
+        try:
+            wrap = unb64u(body["wrap"])
+            wk = crypto.open_sealed(
+                private_key("hxk"), bytes.fromhex(self.hub_id), "wk", bytes.fromhex(ws_id), body["epoch"], wrap
+            )
+        except (InvalidTag, ValueError, KeyError, TypeError, *H.CanonError, crypto.CryptoError):
+            raise H.Refused("bad_wrap") from None
         ws.wk_seals.append(body)
+        ws.wk[body["epoch"]] = wk
         return {}
 
     def _op_audit_ack(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:

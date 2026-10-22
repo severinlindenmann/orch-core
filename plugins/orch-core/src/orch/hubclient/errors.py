@@ -7,7 +7,8 @@ __all__ = ["HubRefused"]
 
 class HubRefused(Exception):
     """``code`` is a protocol section 14 code (``dev_mismatch``, ``other_hub``, ``wrong_mode``, ``unbound`` ...) or one
-    of the host-side codes ``full_mode_later`` and ``hub_unreachable``. The message never echoes input."""
+    of the host-side codes ``full_mode_later``, ``no_epoch``, ``rotation_pending`` and ``hub_unreachable``. The
+    message never echoes input."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)

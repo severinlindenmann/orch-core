@@ -307,6 +307,10 @@ def main(
         from orch.cli.hub import main as hub_main
 
         return hub_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["peer"]:  # ws->ws through the hub (V3 C12): a host client, not a registry op
+        from orch.cli.peer import main as peer_main
+
+        return peer_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["publish"]:  # the Publish add-on (P5): a host client, not a registry op
         from orch.cli.publish import main as publish_main
 

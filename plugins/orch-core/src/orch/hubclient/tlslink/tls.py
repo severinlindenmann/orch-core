@@ -98,6 +98,16 @@ class TlsConn:
         while off < len(view):
             off += self._run(partial(self._c.send, view[off:]), deadline)
 
+    def wait_readable(self, timeout: float) -> bool:
+        """True when a frame has started to arrive (decrypted bytes buffered, or the socket is readable). Lets a
+        poller wait without a read deadline cutting a frame in half."""
+        try:
+            if self._c.pending() > 0:
+                return True
+        except SSL.Error:
+            return True  # let the read report the failure
+        return fdwait.readable(self._s, max(timeout, 0.0))
+
     def exporter(self) -> bytes:
         """The TLS 1.3 exporter: label ``EXPORTER-orch-hub-link``, empty context, 32 bytes (section 10.1)."""
         return self._c.export_keying_material(EXPORTER_LABEL, EXPORTER_LEN, b"")

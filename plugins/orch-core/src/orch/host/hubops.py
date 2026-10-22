@@ -1,4 +1,4 @@
-"""The host's hub operations (V3 C2a; hub contract section 9, spec 8 and 8a). Selective mode only.
+"""The host's hub operations (V3 C2a, C2b; hub contract section 9, 10.2, spec 8 and 8a).
 
 The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.leave`` -> ``hub.left``, see
 :mod:`orch.ops.person_ops`); this module is the half that needs the host's keys and the network:
@@ -9,7 +9,10 @@ The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.
   hub being down is not an error (it stays queued in ``hub.json`` and is offered again).
 * ``hub.status {}``: the model's hub and the host's link state.
 
-Column P only. Nothing here handles ``WK_e`` or adds a member; the link refuses ``wk_seal`` in selective mode.
+Column P only. ``WK_e`` is touched only in full mode (:class:`_Epochs`: the key store seals it itself to the hub's
+``HXK`` and hands out the wrap; a leave from full mode raises the key store's ``rotate`` gate, so the next epoch is
+made by the normal membership machinery and never sealed to the hub). Selective mode never reaches it, and its link
+refuses ``wk_seal`` (``wrong_mode``).
 The workspace is a *dev* workspace only on a dev host that proves it (the same proof as the Simulator gate); every
 other workspace refuses a dev hub (hub contract 2.4). The real TLS link is C5: :data:`TRANSPORT` is its seam.
 """
@@ -63,7 +66,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "hub_card": {"type": "object"},
             "addr": {"type": "string", "minLength": 3, "maxLength": 300},
         },
-        "required": ["invite", "hub_card"],
+        "required": ["hub_card"],  # the invite is needed by a join only (not by a mode switch or a re-seal)
         "additionalProperties": False,
     },
     "hub.refresh": {  # fetch and pin the newest group snapshot; ``hub_card``: a newer hub card (rotated op cert)
@@ -295,7 +298,7 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
 
     return TlsTransport(
         addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
-        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"],
+        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
         now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
 
@@ -365,13 +368,86 @@ def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any,
     from orch.hubclient import HubLink
 
     wsk_pub, sign = _wsk_sign(service)
-    link = {"addr": route["addr"], "spki": route["spki"], "hk_op": route["hk_op"], "wsk_pub": wsk_pub, "sign": sign}
+    link = {"addr": route["addr"], "spki": route["spki"], "hk_op": route["hk_op"], "wsk_pub": wsk_pub, "sign": sign,
+            "mode": route["mode"]}  # fmt: skip
     transport = _transport(service, route["hub_id"], link)
     hub_link = HubLink(
         transport, hub_id=route["hub_id"], workspace_id=service.workspace_id, hk_op_pub=route["hk_op"], sign=sign,
         mode=route["mode"], now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
     return hub_link, transport, wsk_pub, sign
+
+
+# -- the epoch keys (full mode, C2b) ---------------------------------------------------------------------------------
+
+
+class _Epochs:
+    """:class:`orch.hubclient.EpochKeys` over the workspace's membership key store (R6a). ``WK_e`` never leaves it."""
+
+    def __init__(self, mk: Any, local_owner: str | None = None) -> None:
+        self._mk = mk
+        #: a relay-less workspace makes its own epochs (``MembershipKeys.advance_local``); ``None``: the relay path
+        #: (the publisher) makes them and a rotation is only requested through the gate
+        self._local_owner = local_owner
+
+    def ensure_epoch(self) -> None:
+        """The genesis epoch of a relay-less workspace, at its first full join (no-op when one exists)."""
+        if self._local_owner is not None and self._mk.current_epoch() < 1:
+            self._mk.advance_local(self._local_owner)
+
+    def current_epoch(self) -> int:
+        return int(self._mk.current_epoch())
+
+    def seal_to_hub(self, epoch: int, hxk_pub: bytes, hub_id: str) -> bytes:
+        from orch.hubclient import HubRefused
+        from orch.relay.r6.keystore import CustodyRefused
+
+        if epoch != self.current_epoch() or epoch < 1:
+            raise HubRefused("no_epoch")  # only the committed epoch is ever sealed
+        try:
+            return bytes(self._mk.sealed_wk(epoch, hxk_pub, hub_id))
+        except CustodyRefused:
+            raise HubRefused("no_epoch") from None
+
+    def rotate(self) -> None:
+        if self._local_owner is not None:
+            self._mk.advance_local(self._local_owner)  # relay-less: the next epoch, now
+        else:
+            self._mk.raise_gate("", "rotate")  # v2 5.4 explicit rotation: the membership machinery makes the epoch
+
+
+def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
+    """The key store of a workspace that has one (``membership/head.json`` exists), else ``None``: asking must not
+    create the key store. ``create`` (a full join only) lets a workspace that never had a relay open one: it then
+    makes its own genesis epoch locally (:meth:`_Epochs.ensure_epoch`). A relay-linked workspace never does."""
+    from orch import crypto
+
+    from . import relayr3, relayr6
+
+    exists = (relayr6.membership_path(service) / "head.json").is_file()
+    if not exists and not create:
+        return None
+    try:
+        mk = relayr6.keys_for(service)
+        owner = None
+        if not mk.previously_linked:  # fresh each call (the probe), never the answer cached at the first open
+            owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
+        return _Epochs(mk, owner)
+    except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
+        return None
+
+
+class _NoEpochs:
+    def current_epoch(self) -> int:
+        return 0
+
+    def seal_to_hub(self, epoch: int, hxk_pub: bytes, hub_id: str) -> bytes:
+        from orch.hubclient import HubRefused
+
+        raise HubRefused("no_epoch")
+
+    def rotate(self) -> None:
+        return None
 
 
 # -- checks --------------------------------------------------------------------------------------------------------
@@ -397,6 +473,12 @@ def _owner(call: Call) -> str:
 def _refused(code: str) -> HostError:
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
+    if code == "no_epoch":
+        return HostError("hub.no_epoch", "this workspace has no epoch key to give the hub (link a relay first)")
+    if code == "rotation_pending":
+        return HostError(
+            "hub.rotation_pending", "the workspace key of the hub you left is not replaced yet; try again shortly"
+        )
     return HostError("hub.refused", f"the hub is refused: {code}")
 
 
@@ -407,6 +489,25 @@ def _audit(call: Call, event: str, **more: Any) -> None:
     securitylog.record(
         s.state_dir, s.host_uid, s.clock(), event, workspace_id=s.workspace_id, principal=call.principal, **more
     )
+
+
+def _reseal_needed(service: WorkspaceService, state: Any) -> bool:
+    """A bound full hub whose newest sealed epoch is older than the committed one (a routine rotation happened): it
+    cannot read new content until ``orch hub connect`` seals the new epoch to it."""
+    if state is None or state.mode != "full" or state.status != "bound":
+        return False
+    epochs = epochs_for(service)
+    if epochs is None:
+        return False
+    return int(epochs.current_epoch()) > (state.sealed["epoch"] if state.sealed else 0)
+
+
+def _rotation(service: WorkspaceService, state: Any) -> str:
+    """``none`` | ``pending`` (a leave from full mode owes a new epoch) | ``done`` is never kept: it clears itself."""
+    if state is None or state.rotate_after is None:
+        return "none"
+    epochs = epochs_for(service)
+    return "none" if epochs is not None and epochs.current_epoch() > state.rotate_after else "pending"
 
 
 # -- the worker half -----------------------------------------------------------------------------------------------
@@ -445,6 +546,10 @@ def serve(call: Call) -> dict[str, Any]:
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),
                 "binding_seq": model.get("binding_seq"),
+                "member": bool(model.get("member")),  # full mode: the hub is a member of kind hub
+                "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],
+                "rotation": _rotation(service, state),
+                "reseal_needed": _reseal_needed(service, state),
                 "link": None if state is None else state.status,
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -462,8 +567,8 @@ def serve(call: Call) -> dict[str, Any]:
         plan.update(dev=workspace_dev(service), hub_card=args.get("hub_card"))
         return {"plan": plan}
     if op == "hub.unbind":
-        if state is not None and state.outbox:
-            return {"plan": plan}  # a signed unbound is still owed to a hub, whatever the model says now
+        if state is not None and (state.outbox or state.rotate_after is not None):
+            return {"plan": plan}  # a signed unbound or a rotation is still owed, whatever the model says now
         if not model or model.get("status") != "left":
             raise HostError("hub.not_joined", "sign `orch hub leave` first: the log has no hub.left")
         return {"plan": plan}
@@ -484,8 +589,22 @@ def serve(call: Call) -> dict[str, Any]:
         raise HostError("hub.no_card", "this workspace's directory card could not be had")
     from . import relayr3
 
+    kind = "join"
+    if "invite" not in args:  # no invite: a mode switch, or a re-seal of a bound full hub (never a new join)
+        same = state is not None and state.hub_id == model["hub_id"] and model["mode"] == "full"
+        if same and state.status == "bound" and state.mode == "full" and state.binding_seq == model["binding_seq"]:
+            kind = "seal"
+        elif same and (
+            (state.status == "bound" and state.mode == "selective" and state.binding_seq < model["binding_seq"])
+            or (state.status == "switching" and state.binding_seq == model["binding_seq"])
+        ):
+            kind = "switch"
+        else:
+            raise HostError("invalid.input", "hub.connect needs the invite code for a new join")
     plan.update(
-        invite=args["invite"],
+        kind=kind,
+        invite=args.get("invite"),
+        hxk=verified["card"].get("hxk_pub"),
         card=args["hub_card"],
         v2=v2,
         dev=dev,
@@ -525,22 +644,33 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 "hk_op": plan["hk_op"],
                 "wsk_pub": wsk_pub,
                 "sign": sign,
+                "mode": model["mode"],  # the link carries wk_seal only in full mode
             }
             transport = _transport(service, model["hub_id"], link)
             try:
-                r = _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
+                r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
             finally:
                 getattr(transport, "close", lambda: None)()
-            _audit(call, "hub.connect", hub_id=r.state.hub_id, binding_seq=r.state.binding_seq)
-            out = {"hub_id": r.state.hub_id, "status": r.state.status, "binding_seq": r.state.binding_seq}
-            out["snapshot_version"] = _first_snapshot(call, plan, r.state, wsk_pub, sign, now, save)
+            _stop_peers(service)  # a (re)binding: ws->ws restarts on the new binding at its next use
+            _audit(call, "hub.connect", hub_id=r.hub_id, binding_seq=r.binding_seq, mode=r.mode, kind=plan["kind"])
+            out = {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
+                   "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}  # fmt: skip
+            out["snapshot_version"] = _first_snapshot(call, plan, r, wsk_pub, sign, now, save)
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
-        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox))
+        out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
+        _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
+        return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+def _stop_peers(service: Any) -> None:
+    from . import peerops
+
+    peerops.stop(service)
 
 
 def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
@@ -549,7 +679,8 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
     from orch.hubclient import HubLink
 
     hk_op = unb64u(state.hk_op_pub, 65)
-    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign}
+    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign,
+            "mode": state.mode}  # fmt: skip
     transport = _transport(service, state.hub_id, link)
     hub_link = HubLink(
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
@@ -601,10 +732,59 @@ def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:
     def make(hub_id: str, e: dict[str, Any]) -> Any:
         link = {"addr": e["addr"],  # the entry's own address wins: ORCH_HUB_ADDR is for the hub being joined only
                  "spki": e["tls_spki"],
-                "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
+                "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign, "mode": e["mode"]}  # fmt: skip
         return _transport(service, hub_id, link)
 
     return make
+
+
+def _connect(
+    state: Any,
+    plan: dict[str, Any],
+    model: dict[str, Any],
+    service: Any,
+    wsk_pub: bytes,
+    sign: Any,
+    now: Any,
+    save: Any,
+    transport: Any,
+    aliases: list[dict[str, str]],
+) -> Any:
+    """Selective: the C2a join. Full: join + seal, mode switch + seal, or a repeat of the seal. Returns the state."""
+    from orch.hubclient import join_full, seal_to_hub, switch_full
+
+    if model["mode"] == "selective":
+        # an earlier FULL state is retired inside the join (rotation owed); selective itself never touches epochs
+        old_epochs = epochs_for(service) if state is not None and state.mode == "full" else None
+        return _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases, old_epochs).state
+    epochs = epochs_for(service, create=True)
+    if epochs is None:
+        raise _refused("no_epoch")
+    try:
+        epochs.ensure_epoch()  # relay-less: the workspace's own first epoch; relay-linked without one: no_epoch below
+    except Exception:  # noqa: BLE001 - the key store refused (unsafe, linked, exposed): nothing to give the hub
+        raise _refused("no_epoch") from None
+    if plan["kind"] == "seal":
+        seal_to_hub(
+            state=state, hub_card=plan["card"], workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=plan["dev"],
+            now_ms=now, transport=transport, save=save, epochs=epochs,
+        )  # fmt: skip
+        return state
+    if plan["kind"] == "switch":
+        return switch_full(
+            state=state, hub_card=plan["card"], workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
+            dev_mode=plan["dev"], now_ms=now, transport=transport, save=save, binding_seq=model["binding_seq"],
+            epochs=epochs,
+        )  # fmt: skip
+    from orch.crypto.encoding import unb64u
+
+    return join_full(
+        state=state, invite=plan["invite"], hub_card=plan["card"], v2_card=plan["v2"],
+        pk_pub=unb64u(plan["pk_pub"], 65), workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
+        dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
+        record_joined=lambda _payload: None, save=save, aliases=aliases, binding_seq=model["binding_seq"],
+        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs,
+    ).state  # fmt: skip
 
 
 def _join(
@@ -618,6 +798,7 @@ def _join(
     save: Any,
     transport: Any,
     aliases: list[dict[str, str]],
+    epochs: Any = None,
 ) -> Any:
     from orch.crypto.encoding import unb64u
     from orch.hubclient import join_selective
@@ -628,7 +809,7 @@ def _join(
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
         save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
-        old_transport=_transport_for(service, wsk_pub, sign),
+        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs,
     )  # fmt: skip
 
 
@@ -639,14 +820,26 @@ def _unbind(
     if state is None:  # never connected: there is no binding anywhere to end
         return {"hub_id": model["hub_id"], "unbound": False, "delivered": True, "reason": "never_connected", "owed": []}
     tf = _transport_for(service, wsk_pub, sign)
+    epochs = epochs_for(service) if state.mode == "full" or state.rotate_after is not None else None
     if model.get("status") == "left" and state.status != "unbound":
         leave(
             state=state, workspace_id=service.workspace_id, sign_wsk=sign,
             dev_mode=bool(state.binding["o"]["dev"]),  # the unbound keeps the binding's own dev marker
-            now_ms=now, transport_for=tf, record_left=lambda _p: None, save=save,
+            now_ms=now, transport_for=tf, record_left=lambda _p: None, save=save, epochs=epochs,
         )  # fmt: skip
     else:
+        from orch.hubclient import retire_full_state, settle_rotation
+
+        if state.status == "bound" and state.mode == "full" and model.get("binding_seq", 0) > state.binding_seq:
+            retire_full_state(state, epochs, save, "unbind")  # the log moved on to a newer binding: this one ended
         flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)
-    out = {"hub_id": state.hub_id, "unbound": True, "delivered": not state.outbox, "owed": sorted(state.outbox)}
+        if state.rotate_after is not None:  # a full hub was left: ask again, record when the new epoch is there
+            settle_rotation(state=state, epochs=epochs, save=save, request=True)
+    owed = state.rotate_after is not None
+    out = {
+        # not "unbound" while a key rotation is owed: the leave is not finished until the hub's key is replaced
+        "hub_id": state.hub_id, "unbound": not owed, "binding_ended": True, "delivered": not state.outbox,
+        "owed": sorted(state.outbox), "rotation": "pending" if owed else "none",
+    }  # fmt: skip
     _audit(call, "hub.unbind", hub_id=state.hub_id, delivered=out["delivered"])
     return out

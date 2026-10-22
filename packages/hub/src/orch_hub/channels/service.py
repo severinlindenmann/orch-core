@@ -51,6 +51,9 @@ PAIRING_TTL_MS = 10 * 60_000
 MAX_CHANNELS = 5
 MAX_FAILURES = 5
 FAIL_WINDOW_MS = 15 * 60_000
+#: "password right, TOTP wrong" per user, whatever the source: with a leaked password this bounds TOTP guessing.
+#: Only someone who knows the password can add to it, so it is no lockout lever for a stranger.
+MAX_TOTP_FAILURES = 10
 MIN_PASSWORD = 10
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
@@ -216,6 +219,18 @@ class Channels:
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, now)
             ).lastrowid
 
+    def _check_totp_lock(self, user: str) -> None:
+        now = self._now()
+        with self._tx() as db:
+            db.execute("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
+            (n,) = db.execute("SELECT COUNT(*) FROM failures WHERE kind='totp' AND subject=?", (user,)).fetchone()
+            if n >= MAX_TOTP_FAILURES:
+                raise ChannelError("rate_limited")
+
+    def _note_totp_failure(self, user: str) -> None:
+        with self._tx() as db:
+            db.execute("INSERT INTO failures(kind, subject, ts_ms) VALUES ('totp',?,?)", (user, self._now()))
+
     def _succeed(self, db: Any, kind: str, subject: str, rowid: int) -> None:
         """Inside the success transaction: drop this attempt and the earlier settled failures, not other attempts that
         are still in flight (they are indistinguishable from failures until they finish, so they stay counted)."""
@@ -234,6 +249,7 @@ class Channels:
         subject = u if not source else f"{u}|{str(source)[:64]}"
         if type(password) is not str or type(totp) is not str or len(password) > 1024:
             raise ChannelError("bad_credentials")
+        self._guard(lambda: self._check_totp_lock(u))
         rid = self._guard(lambda: self._reserve("login", subject))
         row = self._guard(
             lambda: self.db.q("SELECT pw_salt, pw_hash, totp_secret, totp_last FROM credentials WHERE user_id=?", (u,))
@@ -253,6 +269,8 @@ class Channels:
                 if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
                     match = c
         if not (ok_pw and match):
+            if ok_pw:  # only a caller who knew the password gets here: count it per user, not per source
+                self._guard(lambda: self._note_totp_failure(u))
             raise ChannelError("bad_credentials")  # the reserved attempt stays counted
         token = secrets.token_urlsafe(32)
         now = self._now()
@@ -267,6 +285,7 @@ class Channels:
                 ):
                     raise ChannelError("bad_credentials")
                 self._succeed(db, "login", subject, rid)
+                db.execute("DELETE FROM failures WHERE kind='totp' AND subject=?", (u,))
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",

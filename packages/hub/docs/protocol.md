@@ -391,7 +391,8 @@ build the same thing (design note `state/design-b-phone.md`). Reference `orch_hu
 
 **The pairing link (the operator's QR).** `orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>`, made at the hub's
 terminal by the state-dir owner for one user, with a fresh §6.3 pairing code (`xxxx-xxxx-xxxx`, 12 lower-case hex). The
-API origin is `https://<authority>` (`http://` only for a loopback host, dev). Strict: ASCII, ≤ 512 bytes, lower-case
+API origin is `https://<authority>`. A loopback host (`localhost`, `127.0.0.1`, `[::1]`) means plain `http://` and is
+accepted **only by a dev verifier**; a real build is https only and refuses it (`malformed`). Strict: ASCII, ≤ 512 bytes, lower-case
 host, port 1–65535 without a leading zero, no userinfo, path, query, percent-encoding or second `#`, exactly `h1` and
 lower-case hex; anything else is `malformed` (reference `parse_pair_link`). **`hub_id` is the phone's pin:** the phone
 fetches the card (`GET /api/v1/hub/card`, no session) and verifies it as a fresh holder (§5 steps 1–6) with
@@ -1554,7 +1555,7 @@ of this subsection, as for v2 push (after authentication).
 | `PUT /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | `{v, c, ttl_s}` | `200 {id, stored: true, expires_ms}` |
 | `GET /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, c, expires_ms}`; `404 not_found` |
 | `DELETE /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, deleted: true}` (also when absent) |
-| `DELETE /v2/hubs/{hub}/mailbox/{ch}` | yes | empty | `200 {channel_id, deleted: n}` (all messages of the channel) |
+| `DELETE /v2/hubs/{hub}/mailbox/{ch}` | yes | empty | `200 {channel_id, deleted: n}` (all messages of the channel); **also marks the channel revoked for this hub, permanently** (§10.8.4) |
 
 **Push target** (`PUT .../push/{ch}`). `env` is `sandbox` or `production`; `topic` is the relay's configured APNs topic
 (`[A-Za-z0-9.-]{1,155}`, anything else is `malformed`; a topic or env the relay is not configured for is `malformed`, as
@@ -1583,7 +1584,9 @@ there:** every hint it pushes (§10.8.2), under the same `id` and with the same 
 the Simulator) catches up from the mailbox and handles each id once.
 
 **Revocation.** When the hub revokes a channel (§6.3, §7) it sends `DELETE .../push/{ch}` and
-`DELETE .../mailbox/{ch}` for that channel. Both are idempotent, so the hub repeats them until the relay answers `200`.
+`DELETE .../mailbox/{ch}` for that channel. The mailbox purge is the hub's signed revocation notice to the relay (B
+stream): the relay records `(hub, ch)` as revoked, permanently (like §6.2, a revoked channel id never comes back), and
+refuses that channel's own requests from then on (§10.8.4). The hub sends the purge only on revocation. Both are idempotent, so the hub repeats them until the relay answers `200`.
 The hub also stops sending to the channel at once (it asks its own revocation list, not the relay).
 
 **Retry rules for the hub.** Every attempt is a new request: new `ts_ms`, new nonce (a replay is `401 replay`). It retries
@@ -1644,12 +1647,15 @@ empty. Emptying the whole mailbox stays the hub's (`DELETE` of the list is `404 
 | 3 | the held, current card of the target's hub, verified again for this request (§10.8 step 3) | 401 `unknown_hub` |
 | 4 | the certificate under that card (§6.2: signature, `hub_id`, the card's op cert, time, dev marker, `channel_id` of `key_pub`); it names the target's channel | 401 with its code (`bad_signature`, `other_hub`, `stale_op_cert`, `cert_invalid`, `cert_expired`, `dev_*`); 403 `other_user` |
 | 5 | the signature under the certificate's `key_pub` | 401 `bad_channel_signature` |
-| 6 | the nonce is unseen for this `(hub, channel)`; then recorded for 240 s | 401 `replay` |
-| 7 | the route: another path or method `404 not_found`; a body `400 malformed` | — |
+| 6 | the channel is not revoked by its hub (the hub's signed mailbox purge, §10.8.1) | 403 `channel_revoked` |
+| 7 | the nonce is unseen for this `(hub, channel)`; then recorded for 240 s | 401 `replay` |
+| 8 | the route: another path or method `404 not_found`; a body `400 malformed` | — |
 
-**Revocation (DECIDED HERE).** The relay holds no channel revocation list. When the hub revokes a channel it stops
-writing to it at once and deletes its mailbox and push target (§10.8.1), and certificates expire (31 days); what a
-revoked phone could still read is what was sealed to it before. A relay may rate-limit reads per `(hub, channel)`.
+**Revocation (DECIDED HERE).** The relay keeps, per hub, the channel ids the hub revoked: the hub's `HK_op`-signed
+`DELETE /v2/hubs/{hub}/mailbox/{ch}` (§10.8.1), which it sends on every revocation and repeats until `200` (and again
+at start for every revoked channel, L2 D10-6), records `ch` permanently. Step 6 then refuses the channel at once, not
+when its certificate expires (31 days). The check comes after the signature, so only the key holder learns it (the phone
+wipes on it, B6). A relay may rate-limit reads per `(hub, channel)`.
 
 ### 10.8.3 Cut-over of a workspace's direct relay path (phase 4, relay E3, orch-core #896)
 
@@ -1887,7 +1893,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `cut_over` (403) (p4) | relay, §10.8.3 | the workspace's direct relay path is closed (cut over to a hub); also a workspace `pending` over a `cut_over` |
 | `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
-| `bad_channel_signature` (401) (p4, B) | relay, §10.8.4 | a channel request whose signature does not verify under its certificate's key. Reused there: `malformed`, `stale_timestamp`, `unknown_hub`, the §6.2 certificate codes, `other_user`, `replay`, `not_found` |
+| `bad_channel_signature` (401) (p4, B) | relay, §10.8.4 | a channel request whose signature does not verify under its certificate's key. Reused there: `malformed`, `stale_timestamp`, `unknown_hub`, the §6.2 certificate codes, `other_user`, `channel_revoked` (403, revoked by the hub's mailbox purge), `replay`, `not_found` |
 
 Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of these travel on the link):
 
@@ -1932,7 +1938,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 839 cases (210 positive, 629 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 845 cases (212 positive, 633 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1995,7 +2001,7 @@ plus `selective_build`. The hub also runs `hub_join`. Each case carries its `pha
 | 40 | `log_sync` sender rules (C3b addendum, C14) | old pages kept across rotation; 1 MiB raw; no oversize line; resume probe instead of a head-read op; `reset` not tied to `restore`; one live link per workspace (§10.7) | orch-core #1027 |
 | 42 | Addendum review (l2-add) | L2-ADD-1: selective admission checks the target in the item's `f1` and the chain head (§8.3 step 7); L2-ADD-2: §10.8.3 carries the E3 fixes (fence, one gate with an allow-list, purge of hooks and Drop, `pending` TTL 24 h, registered `hub_id`, no state to anonymous callers); L2-ADD-3: a superseded item version is `event_changed`; L2-ADD-7: vector renamed | state/l2-review-p4.md "Addendum hub#34" |
 | 41 | Relay cut-over (E3) | workspace names the hub, the hub only confirms; `other_hub` for every workspace that did not name it; hub `PUT` body `{v: 2, state: "cut_over"}`; `cut_over` (403) (§10.8.3) | orch-relay #88 |
-| 43 | The phone side (B stream) | §6.4: operator pairing link pins `hub_id`; pairing session → channel session by a channel-key-signed, session-bound `hub.channel_auth` (12 h from the password sign-in, scope without registration or admin); a separate software push key named by `hub.channel_push` (the NSE runs locked; one key, one use), §10.8.2 seals to it; §10.8.4 channel-signed mailbox read under `/v2/hub-channels/`, certificate in a header, no relay revocation list; hints also left in the mailbox | state/design-b-phone.md, orch-core #861–#866 |
+| 43 | The phone side (B stream) | §6.4: operator pairing link pins `hub_id`; pairing session → channel session by a channel-key-signed, session-bound `hub.channel_auth` (12 h from the password sign-in, scope without registration or admin); a separate software push key named by `hub.channel_push` (the NSE runs locked; one key, one use), §10.8.2 seals to it; §10.8.4 channel-signed mailbox read under `/v2/hub-channels/`, certificate in a header; the hub's signed mailbox purge marks the channel revoked at the relay (`channel_revoked`); a real build refuses loopback/http pairing links; hints also left in the mailbox | state/design-b-phone.md, orch-core #861–#866 |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no

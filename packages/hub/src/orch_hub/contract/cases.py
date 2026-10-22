@@ -416,7 +416,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
     # ---- B stream (§6.4, §10.8.4): the phone's pairing link, channel sessions, push key, mailbox read
     if check == "pair_link":
-        return CA.parse_pair_link(a["link"])
+        return CA.parse_pair_link(a["link"], dev_mode=dev)
     if check == "channel_auth":
         return CA.verify_channel_auth(
             a["signed"],
@@ -442,6 +442,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         st = {
             "hub_cards": {a["hub_id"]: a["hub_card"]},
             "revoked_op_certs": a.get("revoked_op_certs", []),
+            "revoked_channels": a.get("revoked_channels", {}),
             "nonces": a.get("nonces", {}),
         }
         req = {

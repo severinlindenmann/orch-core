@@ -49604,6 +49604,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49620,6 +49621,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example:8443#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49636,6 +49638,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/127.0.0.1:8443#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49653,6 +49656,49 @@
   },
   {
    "args": {
+    "dev_mode": false,
+    "link": "orch://hub-pair/127.0.0.1:8443#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
+   },
+   "check": "pair_link",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pair_link_loopback_at_real_verifier",
+   "note": "a real build is https only: no loopback, no plain http",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": false,
+    "link": "orch://hub-pair/localhost:8443#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
+   },
+   "check": "pair_link",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pair_link_localhost_at_real_verifier",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": false,
+    "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
+   },
+   "check": "pair_link",
+   "expect": {
+    "ok": {
+     "api": "https://hub.dev.orch.example",
+     "code": "ab12-cd34-ef56",
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "user_id": "a368bd380588e5dabee62a516031e21f"
+    }
+   },
+   "name": "pair_link_https_host_at_real_verifier",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38D8ABED52CCFB538DA401FD54E64BDC.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49664,6 +49710,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/HUB.DEV.ORCH.EXAMPLE#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49675,6 +49722,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "https://hub.dev.orch.example/#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49686,6 +49734,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/mallory@hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49697,6 +49746,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example/x#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49708,6 +49758,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example?api=x#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49719,6 +49770,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h2.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49730,6 +49782,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f"
    },
    "check": "pair_link",
@@ -49741,6 +49794,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56.x"
    },
    "check": "pair_link",
@@ -49752,6 +49806,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.AB12-CD34-EF56"
    },
    "check": "pair_link",
@@ -49763,6 +49818,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example:0#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49774,6 +49830,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example:65536#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49785,6 +49842,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example:08443#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49796,6 +49854,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56#x"
    },
    "check": "pair_link",
@@ -49807,6 +49866,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example"
    },
    "check": "pair_link",
@@ -49818,6 +49878,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49829,6 +49890,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub.dev.orch.example.#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49840,6 +49902,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/h\u00fcb.example#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -49851,6 +49914,7 @@
   },
   {
    "args": {
+    "dev_mode": true,
     "link": "orch://hub-pair/hub%2eexample#h1.38d8abed52ccfb538da401fd54e64bdc.a368bd380588e5dabee62a516031e21f.ab12-cd34-ef56"
    },
    "check": "pair_link",
@@ -51464,6 +51528,202 @@
     "error": "stale_timestamp"
    },
    "name": "channel_request_stale",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "now_ms": 1790000000000,
+    "request": {
+     "body_hex": "",
+     "headers": {
+      "Orch-Channel-Cert": "eyJvIjp7ImNoYW5uZWxfaWQiOiJhNTIxMjA4NDQ0YmZmYWZjMjE4OGZlNmI1ZjFmMjg2ZiIsImRldiI6dHJ1ZSwiZXhwaXJlc19tcyI6MTc5MjU5MjAwMDAwMCwiZmFjdG9yIjoic2UtdW5sb2NrZWQiLCJodWJfaWQiOiIzOGQ4YWJlZDUyY2NmYjUzOGRhNDAxZmQ1NGU2NGJkYyIsImh2IjowLCJpc3N1ZWRfbXMiOjE3ODk5MTM2MDAwMDAsImtleV9wdWIiOiJCSnJfX0NxQlB6NGZiczBkV2dnOHlTNlRvb1NqYU1XTUl1U0wwUzVJdzctNkY2ZF9zRno5aWxOaEkwajRHbFg2RzhycFpaX1FZOUpudmFXTFhiMmNkWkEiLCJraW5kIjoiaHViLmNoYW5uZWxfY2VydCIsIm9wX2NlcnRfaWQiOiJkZDk2M2Y3MzY1YjE5ZGJhMzQ3YTRiYTU4MGNjN2MyYiIsInN1aXRlIjoyLCJ1c2VyX2lkIjoiYTM2OGJkMzgwNTg4ZTVkYWJlZTYyYTUxNjAzMWUyMWYiLCJ2IjoyfSwic2lnIjoibnFyMXFBLWU1eVhQbzl2U3ppYVhZTENGcVFQUXhjcl9Menc3M0x0T1Z4OHhGd3J4OENiaTJObHZiRjVNYjJacW04Rlk5eEhQS3hpN3ViWkpjeDVQYmcifQ",
+      "Orch-Channel-Nonce": "7b0614dc2be801c01dffbb4f0336a4e8",
+      "Orch-Channel-Signature": "8ftmOqiW0_7681XJTElPYWqcwJf4SqOXmJjq6BN46hoJmt1C4iwi_kvjPixzi4ayYxDpJJ4lYAxOcPdVO_zl2w",
+      "Orch-Channel-Ts": "1790000000000"
+     },
+     "method": "GET",
+     "target": "/v2/hub-channels/38d8abed52ccfb538da401fd54e64bdc/a521208444bffafc2188fe6b5f1f286f/mailbox"
+    },
+    "revoked_channels": {
+     "38d8abed52ccfb538da401fd54e64bdc": [
+      "a521208444bffafc2188fe6b5f1f286f"
+     ]
+    }
+   },
+   "check": "channel_request",
+   "expect": {
+    "error": "channel_revoked"
+   },
+   "name": "channel_request_revoked_channel",
+   "note": "the hub's signed mailbox purge on revoke (\u00a710.8.1) marks the channel revoked: no read until the cert expires",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "now_ms": 1790000000000,
+    "request": {
+     "body_hex": "",
+     "headers": {
+      "Orch-Channel-Cert": "eyJvIjp7ImNoYW5uZWxfaWQiOiJhNTIxMjA4NDQ0YmZmYWZjMjE4OGZlNmI1ZjFmMjg2ZiIsImRldiI6dHJ1ZSwiZXhwaXJlc19tcyI6MTc5MjU5MjAwMDAwMCwiZmFjdG9yIjoic2UtdW5sb2NrZWQiLCJodWJfaWQiOiIzOGQ4YWJlZDUyY2NmYjUzOGRhNDAxZmQ1NGU2NGJkYyIsImh2IjowLCJpc3N1ZWRfbXMiOjE3ODk5MTM2MDAwMDAsImtleV9wdWIiOiJCSnJfX0NxQlB6NGZiczBkV2dnOHlTNlRvb1NqYU1XTUl1U0wwUzVJdzctNkY2ZF9zRno5aWxOaEkwajRHbFg2RzhycFpaX1FZOUpudmFXTFhiMmNkWkEiLCJraW5kIjoiaHViLmNoYW5uZWxfY2VydCIsIm9wX2NlcnRfaWQiOiJkZDk2M2Y3MzY1YjE5ZGJhMzQ3YTRiYTU4MGNjN2MyYiIsInN1aXRlIjoyLCJ1c2VyX2lkIjoiYTM2OGJkMzgwNTg4ZTVkYWJlZTYyYTUxNjAzMWUyMWYiLCJ2IjoyfSwic2lnIjoibnFyMXFBLWU1eVhQbzl2U3ppYVhZTENGcVFQUXhjcl9Menc3M0x0T1Z4OHhGd3J4OENiaTJObHZiRjVNYjJacW04Rlk5eEhQS3hpN3ViWkpjeDVQYmcifQ",
+      "Orch-Channel-Nonce": "7b0614dc2be801c01dffbb4f0336a4e8",
+      "Orch-Channel-Signature": "_OjAUUQA7bJudRd8Ar0nYy7J946IPJw6MaBKDBkltd7B9N3-sT65MF1ZT8SLvWTnv3PA71UijUWRP-QMsfwNiw",
+      "Orch-Channel-Ts": "1790000000000"
+     },
+     "method": "GET",
+     "target": "/v2/hub-channels/38d8abed52ccfb538da401fd54e64bdc/a521208444bffafc2188fe6b5f1f286f/mailbox"
+    },
+    "revoked_channels": {
+     "38d8abed52ccfb538da401fd54e64bdc": [
+      "a521208444bffafc2188fe6b5f1f286f"
+     ]
+    }
+   },
+   "check": "channel_request",
+   "expect": {
+    "error": "bad_channel_signature"
+   },
+   "name": "channel_request_revoked_channel_bad_signature",
+   "note": "a stranger learns nothing about the revocation",
+   "phase": 4
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "now_ms": 1790000000000,
+    "request": {
+     "body_hex": "",
+     "headers": {
+      "Orch-Channel-Cert": "eyJvIjp7ImNoYW5uZWxfaWQiOiJhNTIxMjA4NDQ0YmZmYWZjMjE4OGZlNmI1ZjFmMjg2ZiIsImRldiI6dHJ1ZSwiZXhwaXJlc19tcyI6MTc5MjU5MjAwMDAwMCwiZmFjdG9yIjoic2UtdW5sb2NrZWQiLCJodWJfaWQiOiIzOGQ4YWJlZDUyY2NmYjUzOGRhNDAxZmQ1NGU2NGJkYyIsImh2IjowLCJpc3N1ZWRfbXMiOjE3ODk5MTM2MDAwMDAsImtleV9wdWIiOiJCSnJfX0NxQlB6NGZiczBkV2dnOHlTNlRvb1NqYU1XTUl1U0wwUzVJdzctNkY2ZF9zRno5aWxOaEkwajRHbFg2RzhycFpaX1FZOUpudmFXTFhiMmNkWkEiLCJraW5kIjoiaHViLmNoYW5uZWxfY2VydCIsIm9wX2NlcnRfaWQiOiJkZDk2M2Y3MzY1YjE5ZGJhMzQ3YTRiYTU4MGNjN2MyYiIsInN1aXRlIjoyLCJ1c2VyX2lkIjoiYTM2OGJkMzgwNTg4ZTVkYWJlZTYyYTUxNjAzMWUyMWYiLCJ2IjoyfSwic2lnIjoibnFyMXFBLWU1eVhQbzl2U3ppYVhZTENGcVFQUXhjcl9Menc3M0x0T1Z4OHhGd3J4OENiaTJObHZiRjVNYjJacW04Rlk5eEhQS3hpN3ViWkpjeDVQYmcifQ",
+      "Orch-Channel-Nonce": "7b0614dc2be801c01dffbb4f0336a4e8",
+      "Orch-Channel-Signature": "8ftmOqiW0_7681XJTElPYWqcwJf4SqOXmJjq6BN46hoJmt1C4iwi_kvjPixzi4ayYxDpJJ4lYAxOcPdVO_zl2w",
+      "Orch-Channel-Ts": "1790000000000"
+     },
+     "method": "GET",
+     "target": "/v2/hub-channels/38d8abed52ccfb538da401fd54e64bdc/a521208444bffafc2188fe6b5f1f286f/mailbox"
+    },
+    "revoked_channels": {
+     "1dbfd208a8b8fa614b0fd5566178200f": [
+      "a521208444bffafc2188fe6b5f1f286f"
+     ],
+     "38d8abed52ccfb538da401fd54e64bdc": [
+      "c72ad10c81df68629a1f93fcf97ce881"
+     ]
+    }
+   },
+   "check": "channel_request",
+   "expect": {
+    "ok": {
+     "channel_id": "a521208444bffafc2188fe6b5f1f286f",
+     "hub": "38d8abed52ccfb538da401fd54e64bdc",
+     "nonce": "7b0614dc2be801c01dffbb4f0336a4e8"
+    }
+   },
+   "name": "channel_request_other_channel_revoked",
+   "note": "a revocation is per (hub, channel)",
    "phase": 4
   },
   {

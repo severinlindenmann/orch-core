@@ -46,11 +46,11 @@ _FRAGMENT = re.compile(
 )
 
 
-def parse_pair_link(text: Any) -> dict[str, str]:
+def parse_pair_link(text: Any, *, dev_mode: bool) -> dict[str, str]:
     """``orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>`` → ``{api, hub_id, user_id, code}``.
 
-    Strict: ASCII, at most 512 bytes, lower-case host (``https://`` is implied; plain ``http://`` only for a loopback
-    host, dev), an optional port 1–65535 without leading zero, no userinfo, path, query or second ``#``; the fragment
+    Strict: ASCII, at most 512 bytes, lower-case host (``https://`` is implied; a loopback host means plain
+    ``http://`` and is accepted only by a dev verifier, ``dev_mode``: a real build is https only), an optional port 1–65535 without leading zero, no userinfo, path, query or second ``#``; the fragment
     exactly ``h1`` and lower-case hex ids and the hub's 12-hex pairing code. Anything else is ``malformed``. The
     ``hub_id`` is the pin (§6.4): the app verifies the card it fetches from ``api`` against it."""
     if type(text) is not str or not text.isascii() or len(text) > PAIR_MAX or not text.startswith(PAIR_PREFIX):
@@ -65,6 +65,8 @@ def parse_pair_link(text: Any) -> dict[str, str]:
     if a["port"] is not None and int(a["port"]) > 65535:
         raise Refused("malformed")
     if a["host"] == "[::1]" and a["port"] is None:
+        raise Refused("malformed")
+    if a["host"] in _LOOPBACK and dev_mode is not True:
         raise Refused("malformed")
     scheme = "http://" if a["host"] in _LOOPBACK else "https://"
     return {"api": scheme + authority, "hub_id": f["hub"], "user_id": f["user"], "code": f["code"]}
@@ -229,13 +231,15 @@ def check_channel_request(
     req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: int, dev_mode: bool
 ) -> dict[str, Any]:
     """The relay's check of a channel request (§10.8.4), in order. ``req`` = {method, target, headers, body (bytes)};
-    ``st`` = {hub_cards: {hub_id: signed card}, revoked_op_certs: [..], nonces: {"<hub>/<ch>": {nonce hex: ts_ms}}}.
+    ``st`` = {hub_cards: {hub_id: signed card}, revoked_op_certs: [..], revoked_channels: {hub_id: [channel ids the
+    hub revoked by its signed mailbox purge, §10.8.1]}, nonces: {"<hub>/<ch>": {nonce hex: ts_ms}}}.
 
     1 header syntax, method, canonical target, the certificate's encoding → ``malformed``; 2 ``|now − ts| ≤ 120 s`` →
     ``stale_timestamp``; 3 the held card of the target's hub, verified again → ``unknown_hub``; 4 the certificate under
     that card (§6.2: ``bad_signature``, ``other_hub``, ``stale_op_cert``, ``revoked``, ``cert_invalid``,
     ``cert_expired``, dev marker) and naming the target's channel → ``other_user``; 5 the signature under its key →
-    ``bad_channel_signature``; 6 the nonce unseen for this (hub, channel) → ``replay``. Returns the hub, the channel
+    ``bad_channel_signature``; 6 the channel not revoked by its hub → ``channel_revoked`` (after the signature, so only
+    the key holder learns it); 7 the nonce unseen for this (hub, channel) → ``replay``. Returns the hub, the channel
     and the nonce to record for :data:`CHANNEL_NONCE_RETENTION_MS`."""
     h = {str(k).lower(): v for k, v in req["headers"].items()}
     try:
@@ -266,6 +270,8 @@ def check_channel_request(
         raise Refused("other_user")
     if not S.verify(unb64u(o["key_pub"], 65), sig, msg):
         raise Refused("bad_channel_signature")
+    if ch in set(st.get("revoked_channels", {}).get(hub, [])):
+        raise Refused("channel_revoked")
     seen = st.get("nonces", {}).get(f"{hub}/{ch}", {})
     if nonce.hex() in seen and now_ms - seen[nonce.hex()] < CHANNEL_NONCE_RETENTION_MS:
         raise Refused("replay")

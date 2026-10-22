@@ -111,8 +111,8 @@ def build_b(
     base = {"now_ms": NOW, "dev_mode": True}
 
     # ---- §6.4 the pairing link (operator QR); the app parses it before anything else
-    def pl(name: str, link: Any, expect: dict[str, Any], note: str = "") -> None:
-        case(name, "pair_link", {"link": link}, expect, 4, note)
+    def pl(name: str, link: Any, expect: dict[str, Any], note: str = "", dev_mode: bool = True) -> None:
+        case(name, "pair_link", {"link": link, "dev_mode": dev_mode}, expect, 4, note)
 
     ok_link = {"api": f"https://{API_HOST}", "hub_id": HUB_ID, "user_id": U_ALICE, "code": CODE}
     pl("pair_link_valid", LINK, {"ok": ok_link})
@@ -127,6 +127,16 @@ def build_b(
         {"ok": {**ok_link, "api": "http://127.0.0.1:8443"}},
         "dev only: a loopback host is plain http, every other host https",
     )
+    pl(
+        "pair_link_loopback_at_real_verifier",
+        LINK.replace(API_HOST, "127.0.0.1:8443"),
+        {"error": "malformed"},
+        "a real build is https only: no loopback, no plain http",
+        dev_mode=False,
+    )
+    pl("pair_link_localhost_at_real_verifier", LINK.replace(API_HOST, "localhost:8443"), {"error": "malformed"},
+       dev_mode=False)  # fmt: skip
+    pl("pair_link_https_host_at_real_verifier", LINK, {"ok": ok_link}, dev_mode=False)
     frag = f"#h1.{HUB_ID}.{U_ALICE}.{CODE}"
     bad = {
         "upper_case_hub_id": LINK.replace(HUB_ID, HUB_ID.upper()),
@@ -278,6 +288,27 @@ def build_b(
         nonces={f"{HUB_ID}/{CH_ALICE}": {CH_NONCE.hex(): NOW - 1000}},
     )
     cr("channel_request_stale", channel_req(ts=NOW - 121_000), {"error": "stale_timestamp"})
+    cr(
+        "channel_request_revoked_channel",
+        channel_req(),
+        {"error": "channel_revoked"},
+        "the hub's signed mailbox purge on revoke (§10.8.1) marks the channel revoked: no read until the cert expires",
+        revoked_channels={HUB_ID: [CH_ALICE]},
+    )
+    cr(
+        "channel_request_revoked_channel_bad_signature",
+        channel_req(key="channel_bob_browser"),
+        {"error": "bad_channel_signature"},
+        "a stranger learns nothing about the revocation",
+        revoked_channels={HUB_ID: [CH_ALICE]},
+    )
+    cr(
+        "channel_request_other_channel_revoked",
+        channel_req(),
+        r_ok,
+        "a revocation is per (hub, channel)",
+        revoked_channels={HUB_ID: [CH_BOB], fake16("other_hub"): [CH_ALICE]},
+    )
     cr(
         "channel_request_target_swapped",
         channel_req(target=mailbox_target(mid=MID), signed_target=mailbox_target(mid=fake16("other_msg"))),

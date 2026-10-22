@@ -184,7 +184,8 @@ def test_deeply_nested_signed_doc_is_a_refusal_not_a_crash():
         b'{"addons":{"x":'
         + b"[" * depth
         + b"]" * depth
-        + b'},"channel":"develop","expires_at":"2026-11-11T07:40:00Z","format":"orch.addon-catalog/1","issued_at":"2026-10-21T07:40:00Z","seq":7}'
+        + b'},"channel":"develop","expires_at":"2026-11-11T07:40:00Z","format":"orch.addon-catalog/1",'
+        + b'"issued_at":"2026-10-21T07:40:00Z","seq":7}'
     )
     env = env_bytes(deep, "ck-1", domain=GEN.DOMAIN["addon-catalog"])
     try:

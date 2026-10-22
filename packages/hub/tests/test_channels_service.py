@@ -230,3 +230,48 @@ def test_private_db_file_modes(env, tmp_path):
     assert "bad_private_file" in str(ei.value)
     db.chmod(0o600)
     env.svc = Channels(env.keys, env.acc, db, now_ms=env.clock)
+
+
+def _race(n, fn):
+    import threading
+
+    barrier, out = threading.Barrier(n), []
+
+    def work():
+        barrier.wait()
+        try:
+            out.append(("ok", fn()))
+        except ChannelError as e:
+            out.append(("err", e.code))
+
+    ts = [threading.Thread(target=work) for _ in range(n)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    return out
+
+
+def test_parallel_sign_ins_with_one_totp_code_yield_one_session(env):
+    u = env.user("ann")
+    code = env.next_code(u)
+    out = _race(8, lambda: env.svc.sign_in(u, PW, code))
+    assert [k for k, _ in out].count("ok") == 1, out
+    assert {v for k, v in out if k == "err"} <= {"bad_credentials", "rate_limited"}
+    assert env.db_count("sessions", u) == 1
+
+
+def test_parallel_wrong_attempts_cannot_exceed_the_failure_limit(env):
+    u = env.user("ann")
+    out = _race(12, lambda: env.svc.sign_in(u, "wrong password!!", "000000"))
+    codes = [v for _, v in out]
+    assert codes.count("bad_credentials") == 5 and codes.count("rate_limited") == 7, codes
+    # right credentials racing the lockout also lose
+    out = _race(4, lambda: env.svc.sign_in(u, PW, env.code(u, 1)))
+    assert all(k == "err" for k, _ in out)
+
+
+def test_parallel_pairing_guesses_are_limited(env):
+    u = env.user("ann")
+    s = new_channel()
+    out = _race(10, lambda: env.svc.begin_phone_registration(u, "1111-1111-1111", s.public))
+    codes = [v for _, v in out]
+    assert codes.count("bad_pairing_code") == 5 and codes.count("rate_limited") == 5, codes

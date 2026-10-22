@@ -60,6 +60,9 @@ class Env:
     def sign_in(self, u: str) -> str:
         return self.svc.sign_in(u, PW, self.next_code(u))["token"]
 
+    def db_count(self, table: str, user: str) -> int:
+        return self.svc.db.q(f"SELECT COUNT(*) FROM {table} WHERE user_id=?", (user,))[0][0]
+
     def close(self) -> None:
         self.svc.close()
         self.acc.close()

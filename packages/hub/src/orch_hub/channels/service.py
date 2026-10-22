@@ -194,14 +194,24 @@ class Channels:
 
     # --- rate limiting ---------------------------------------------------------------------------------------------
 
-    def _limited(self, kind: str, subject: str) -> bool:
+    def _reserve(self, kind: str, subject: str) -> int:
+        """Count and record the attempt in ONE immediate transaction before any expensive work, so parallel attempts
+        cannot all pass the check. The row stays counted (a failure) unless :meth:`_succeed` removes it."""
         now = self._now()
-        self.db.w("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
-        (n,) = self.db.q("SELECT COUNT(*) FROM failures WHERE kind=? AND subject=?", (kind, subject))[0]
-        return n >= MAX_FAILURES
+        with self._tx() as db:
+            db.execute("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
+            (n,) = db.execute("SELECT COUNT(*) FROM failures WHERE kind=? AND subject=?", (kind, subject)).fetchone()
+            if n >= MAX_FAILURES:
+                raise ChannelError("rate_limited")
+            return db.execute(
+                "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, now)
+            ).lastrowid
 
-    def _fail(self, kind: str, subject: str) -> None:
-        self.db.w("INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, self._now()))
+    def _succeed(self, db: Any, kind: str, subject: str, rowid: int) -> None:
+        """Inside the success transaction: drop this attempt and the earlier settled failures, not other attempts that
+        are still in flight (they are indistinguishable from failures until they finish, so they stay counted)."""
+        db.execute("DELETE FROM failures WHERE id=?", (rowid,))
+        db.execute("DELETE FROM failures WHERE kind=? AND subject=? AND id<?", (kind, subject, rowid))
 
     # --- sessions --------------------------------------------------------------------------------------------------
 
@@ -212,8 +222,7 @@ class Channels:
         u = self._user(user_id)
         if type(password) is not str or type(totp) is not str or len(password) > 1024:
             raise ChannelError("bad_credentials")
-        if self._guard(lambda: self._limited("login", u)):
-            raise ChannelError("rate_limited")
+        rid = self._guard(lambda: self._reserve("login", u))
         row = self._guard(
             lambda: self.db.q("SELECT pw_salt, pw_hash, totp_secret, totp_last FROM credentials WHERE user_id=?", (u,))
         )
@@ -232,19 +241,25 @@ class Channels:
                 if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
                     match = c
         if not (ok_pw and match):
-            self._guard(lambda: self._fail("login", u))
-            raise ChannelError("bad_credentials")
+            raise ChannelError("bad_credentials")  # the reserved attempt stays counted
         token = secrets.token_urlsafe(32)
         now = self._now()
 
         def go() -> None:
-            self.db.w("UPDATE credentials SET totp_last=? WHERE user_id=? AND totp_last<?", (match, u, match))
-            self.db.w("DELETE FROM failures WHERE kind='login' AND subject=?", (u,))
-            self.db.w("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
-            self.db.w(
-                "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",
-                (_sha(token), u, now, now + SESSION_TTL_MS),
-            )
+            with self._tx() as db:  # one transaction: claim the code, then the session; a lost race is a failure
+                if (
+                    db.execute(
+                        "UPDATE credentials SET totp_last=? WHERE user_id=? AND totp_last<?", (match, u, match)
+                    ).rowcount
+                    != 1
+                ):
+                    raise ChannelError("bad_credentials")
+                self._succeed(db, "login", u, rid)
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS),
+                )
 
         self._guard(go)
         return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
@@ -289,11 +304,11 @@ class Channels:
         u = self._user(user_id)
         if type(pairing_code) is not str or len(pairing_code) > 64:
             raise ChannelError("bad_pairing_code")
-        if self._guard(lambda: self._limited("pair", u)):
-            raise ChannelError("rate_limited")
+        rid = self._guard(lambda: self._reserve("pair", u))
         if not self._pairing_valid(u, _sha(pairing_code)):
-            self._guard(lambda: self._fail("pair", u))
-            raise ChannelError("bad_pairing_code")
+            raise ChannelError("bad_pairing_code")  # the reserved attempt stays counted
+        with self._tx() as db:
+            self._succeed(db, "pair", u, rid)
         return self._begin(u, "phone", key_pub, _sha(pairing_code), label)
 
     def _pairing_valid(self, u: str, code_hash: str) -> bool:

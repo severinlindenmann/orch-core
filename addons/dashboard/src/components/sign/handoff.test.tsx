@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/types'
 import { setFeatures } from '@/api/features'
 import { can } from '@/api/permissions'
+import { STALE_HOPS } from './useHandoff'
 import { CODE, fakeRequest, mount, refusal, spies, state } from '@/test/handoffHarness'
 
 const T = { timeout: 5000 }
@@ -281,6 +282,46 @@ describe('the hand-off dialog (real host)', () => {
     expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign CCCC-DDDD')
     expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
     expect(screen.queryByText('Cancelled')).toBeNull()
+  })
+
+  it('opening the action again after several cancels walks past every earlier ended attempt to a fresh request', async () => {
+    // e2e run 4 pass 2: an action cancelled twice before showed "Cancelled" on the next open and needed Try again 1-2x.
+    const ended = (n: number, st: 'cancelled' | 'expired') => ({ ...fakeRequest({ id: 'hr_' + '0'.repeat(25) + n }), state: st })
+    const fresh = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '9', code: 'EEEE-FFFF' })
+    s.prepare
+      .mockResolvedValueOnce(ended(5, 'cancelled'))
+      .mockResolvedValueOnce(ended(6, 'cancelled'))
+      .mockResolvedValueOnce(ended(7, 'expired'))
+      .mockResolvedValueOnce(fresh)
+    s.get.mockResolvedValue(state(fresh))
+    await mount(PLAN)
+    expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign EEEE-FFFF')
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1, 2, 3])
+    expect(screen.queryByText('Cancelled')).toBeNull()
+    // an ended request is left as it is: nothing resurrects or cancels it again
+    expect(s.cancel.mock.calls.map((c) => c[1]).filter((id) => /[567]$/.test(String(id)))).toEqual([])
+  })
+
+  it('Try again after a cancel also walks past earlier ended attempts of the same action', async () => {
+    const first = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '1' })
+    const fresh = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '3', code: 'GGGG-HHHH' })
+    s.prepare
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce({ ...fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2' }), state: 'cancelled' })
+      .mockResolvedValueOnce(fresh)
+    s.get.mockResolvedValueOnce(state(first, { state: 'cancelled' })).mockResolvedValue(state(fresh))
+    const { user } = await mount(PLAN)
+    expect(await screen.findByText('Cancelled', {}, { timeout: 9000 })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign GGGG-HHHH')
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1, 2])
+  }, 15000)
+
+  it('the walk past ended attempts is bounded: a host that only answers cancelled ends at Cancelled', async () => {
+    s.prepare.mockResolvedValue({ ...fakeRequest(), state: 'cancelled' })
+    await mount(PLAN)
+    expect(await screen.findByText('Cancelled', {}, T)).toBeInTheDocument()
+    expect(s.prepare).toHaveBeenCalledTimes(STALE_HOPS + 1)
   })
 
   it('shows Expired with Start again, and prepares again only when the person asks', async () => {

@@ -5,6 +5,7 @@ import { ARM_MS, CLICK_RISK, clickProblem, type ClickViewAnswer } from '@/api/cl
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
 import { fakeRequest, mount, spies, state } from '@/test/handoffHarness'
+import { STALE_HOPS } from '@/components/sign/useHandoff'
 
 const T = { timeout: 5000 }
 const PLAN = { kind: 'approve', gate: 'plan' } as const
@@ -434,12 +435,21 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(m.dialog).not.toHaveTextContent('The earlier attempt ended')
   })
 
-  it('an attempt that ended twice is said, with an explicit Start again (no loop)', async () => {
+  it('an action cancelled several times before opens straight to a fresh review (walks past every ended attempt)', async () => {
+    const ended = () => new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5)
+    c.prepare.mockRejectedValueOnce(ended()).mockRejectedValueOnce(ended()).mockRejectedValueOnce(ended())
+    const m = await open()
+    await within(m.dialog).findByTestId('click-panel', {}, T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1, 2, 3])
+    expect(m.dialog).not.toHaveTextContent('The earlier attempt ended')
+  })
+
+  it('a host that only answers "ended" is said after a bounded walk, with an explicit Start again (no endless loop)', async () => {
     c.prepare.mockRejectedValue(new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5))
     const m = await open()
     fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
-    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(3), T)
-    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1, 2])
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(STALE_HOPS + 2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([...Array(STALE_HOPS + 2).keys()])
   })
 
   it('retention expiry waits for Start again before preparing with retry 1', async () => {

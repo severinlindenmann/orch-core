@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { STALE_HOPS } from './useHandoff'
 import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
@@ -125,11 +126,22 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
       // An explicit change of signing method advances the shared action intent.
       attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
-      const { retry } = attempt.current
       attempt.current.lost = false
-      let again = false
+      const current = attempt.current
       try {
-        const got = await api.prepareClick(ws, action, retry)
+        let got: ClickPrepared | undefined
+        // The person's own open of the dialog is a new intent: earlier attempts of this action that were cancelled or
+        // expired (the host says so by name, `intent.ended`) are not a reason to make them press "Start again" before
+        // seeing anything. Step past EVERY such attempt (an action cancelled twice must not need two presses), bounded;
+        // never past a signed, failed, open or unknown one.
+        for (let hops = 0; got === undefined; hops++) {
+          try {
+            got = await api.prepareClick(ws, action, current.retry)
+          } catch (e) {
+            if (!(freshIfEnded && hops < STALE_HOPS && e instanceof ApiError && e.code === 'intent.ended' && mounted.current && wsNow.current === ws)) throw e
+            current.retry += 1
+          }
+        }
         if (!mounted.current || wsNow.current !== ws) {
           void api.cancelClick(ws, got.request_id).catch(() => {}) // nobody will see this request
           if (mounted.current) {
@@ -147,19 +159,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
         // action is done, its attempt ended) moves on only by an explicit click, which advances the counter.
         if (attempt.current) attempt.current.lost = !(e instanceof ApiError) || e.retryable
-        // The person's own open of the dialog is a new intent: an earlier attempt that was cancelled or expired (the host
-        // says so by name) is not a reason to make them press "Start again" before seeing anything. Once, never for a
-        // signed or failed attempt.
-        if (freshIfEnded && e instanceof ApiError && e.code === 'intent.ended' && attempt.current) {
-          attempt.current.retry += 1
-          again = true
-        } else fail(e)
+        fail(e)
       } finally {
         busy.current = false
-      }
-      if (again) {
-        setPhase('idle')
-        await start(action, attempt.current?.retry ?? 0)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

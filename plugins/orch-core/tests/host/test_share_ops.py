@@ -495,3 +495,22 @@ def test_shareable_is_the_viewers_workspace_visible_tickets_only():
     assert shareops._shareable(state, "p_a") == {"u1": pub}  # noqa: SLF001  (A's own restricted ticket stays out)
     assert shareops._shareable(state, "p_b") == {"u1": pub}  # noqa: SLF001
     assert shareops._shareable(state, None) == {"u1": pub}  # noqa: SLF001
+
+# --- l2-c14 adversarial (Opus security review of the C6 follow-ups, 22 Oct) -----------------------------------------
+
+
+def test_l2_c6fu_1_a_ticket_restricted_after_the_confirmation_is_not_auto_sent(served, selective, quick_auto):
+    """L2-C6fu-1 (P1): the owner confirmed a workspace-visible ticket. Someone then restricts it (a strong "this is
+    sensitive now" signal) and its title changes. An automatic pass must not push the restricted ticket's new content to
+    the hub (it should withdraw it, or hold it for the owner's confirm): the owner never confirmed sharing a restricted
+    ticket, and the hub's share readers are not on its list."""
+    uid, key = labelled(served, "Public note", "public")
+    ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
+    assert selective.count("share_put") == 1
+    served.restrict(uid, [served.lab.owner])
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Merger with ACME, price 4.2M"]}))  # the owner's agent sees it
+    _, other = served.ticket("Unrelated")
+    ok(agent(served, "set", {"ref": other, "pairs": ["title=Unrelated, edited"]}))  # any commit wakes the pass
+    settle(served, quick_auto)
+    sent_titles = [i["content"].get("title") for i in selective.opened]
+    assert "Merger with ACME, price 4.2M" not in sent_titles, sent_titles

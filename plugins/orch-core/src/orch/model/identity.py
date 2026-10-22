@@ -11,9 +11,9 @@ from .types import WsCore
 
 
 def canonical(ws: WsCore, ident: str) -> str:
-    """``p_<person>`` for an aliased ``u_<user>`` of this workspace's hub, else ``ident`` unchanged."""
+    """``p_<person>`` for an aliased ``u_<user>`` of the hub joined now (none after ``hub.left``), else ``ident``."""
     if ident.startswith("u_"):
-        aliases = ws.hub.get("aliases") if ws.hub else None
+        aliases = ws.hub.get("aliases") if ws.hub and ws.hub.get("status") == "joined" else None
         if aliases:
             for pid, uid in aliases.items():
                 if "u_" + uid == ident:

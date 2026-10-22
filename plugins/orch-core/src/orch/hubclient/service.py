@@ -280,7 +280,8 @@ def _join(
         new.hxk_pub = b64u(_hxk(verified))
         new.card = hub_card
     else:
-        prior = {} if state is None else state.aliases
+        # a user id means something only on the hub that chose it: another hub starts with no aliases (L2P4-C1)
+        prior = state.aliases if state is not None and state.hub_id == wire.hub_id(root) else {}
         seq = binding_seq or (1 if state is None else state.binding_seq + 1)  # strictly increasing (9.2)
         if state is not None and seq <= state.binding_seq:
             raise HubRefused("stale_binding")

@@ -458,7 +458,9 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
     if e["binding_seq"] <= h.get("binding_seq", 0):
         return Refusal(Code.HUB_INVALID, "binding_seq must be higher than every earlier binding of this workspace")
-    aliases = dict(h.get("aliases", {}))
+    # aliases belong to their hub (L2P4-C1): a rejoin restores this hub's own, another hub starts empty
+    book = {k: dict(v) for k, v in h.get("alias_book", {}).items()}
+    aliases = dict(book.get(e["hub_id"], {}))
     users = {u: p for p, u in aliases.items()}
     for a in e["aliases"]:
         pid, uid = a["person_id"], a["user_id"]
@@ -474,6 +476,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "binding_seq": e["binding_seq"],
         "status": "joined",
         "aliases": aliases,
+        "alias_book": {**book, e["hub_id"]: dict(aliases)},
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None
